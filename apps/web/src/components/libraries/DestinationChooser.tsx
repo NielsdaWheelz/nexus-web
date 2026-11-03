@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
-import { forwardRef, type MouseEventHandler } from "react";
-import { ChevronDown } from "lucide-react";
+import { forwardRef, type MouseEventHandler, type RefObject } from "react";
 import { Failed } from "@/components/feedback/Fact";
 import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -36,7 +36,7 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
     aria-label={`${props.accessibleLabel ?? props.label}: ${names.length === 0 ? props.emptyLabel : names.join(", ")}`}
     disabled={props.disabled} onClick={props.onToggle}>
     <span className={styles.label}>{props.label}</span><span className={styles.summary}>{summary}</span>
-    <ChevronDown size={15} aria-hidden="true" data-open={props.expanded || undefined} />
+    <Icon.Choose size={16} aria-hidden="true" />
   </button>;
 });
 
@@ -44,8 +44,9 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
  * read waits and fails in the list region, a refresh does both nowhere, though creation, which
  * needs the current catalog, waits on it and says so. `error` is only for callers outside
  * this lane until they stop passing it. */
-export default function DestinationChooser({ context, selection, onSet, disabled, create, error }: {
+export default function DestinationChooser({ context, selection, onSet, disabled, create, error, scrollRef }: {
   readonly context: string;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly selection: DestinationSelection;
   readonly onSet: (change: DestinationChange) => boolean;
   readonly disabled: boolean;
@@ -74,7 +75,7 @@ export default function DestinationChooser({ context, selection, onSet, disabled
     };
   });
   const names = entries.filter(entry => entry.included > 0).map(entry => entry.destination).toSorted(compareLibraryNames).map(destination => destination.name);
-  return <LibraryChooser context={context} membershipKind="Chosen" rows={rows}
+  return <LibraryChooser scrollRef={scrollRef} context={context} membershipKind="Chosen" rows={rows}
     onToggle={({ id, included }) => {
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });

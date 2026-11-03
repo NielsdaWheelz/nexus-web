@@ -10,7 +10,6 @@ import { isAbortError } from "@/lib/errors";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -353,11 +352,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
               anchorKey={text}
               collectionBusy={worksBusy}
               surface={false}
-              notice={<MediaSummaryNotice
-                error={summaries.error}
-                retry={summaries.retry}
-                busy={summaries.retrying}
-              />}
               empty={works.status === "failed"
                 ? <Failed error={works.error} noun="works" retry={{ run: retryWorks, busy: worksBusy }} />
                 : <Fact line={{ fact: text ? "no works match this filter." : "no works to show." }} />}

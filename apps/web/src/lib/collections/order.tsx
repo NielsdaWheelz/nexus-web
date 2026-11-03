@@ -1,5 +1,6 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 // Collection order (docs/modules/library.md): a library's or the lectern's custom
 // order is fenced by an order revision from one global sequence. A move names its
 // item and successor and applies only at the exact revision the reader saw; it is
@@ -19,15 +20,14 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { publishChange } from "@/lib/api/changes";
-import { admissionRefusal, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
+
 import { libraryOrder, moveEntry } from "@/lib/libraries/api";
 import { refuseLibrary } from "@/lib/libraries/errors";
-import { remoteAttemptAllowed } from "@/lib/native/admission";
 import type { OrderPresentation } from "./types";
 
 export type OrderRevision = string;
@@ -125,8 +125,6 @@ export async function deliver<T>(input: {
   readonly send: (signal: AbortSignal) => Promise<T>;
   readonly signal: AbortSignal;
 }): Promise<Delivery<T>> {
-  // apiFetch decides the same in this same tick.
-  if (!input.checking && !remoteAttemptAllowed()) return { kind: "Refused", error: admissionRefusal() };
   try {
     return await requestWithDeadline({ signal: input.signal, timeoutMs: WRITE_DEADLINE_MS, request: async signal => {
       if (input.checking && compareRevision(await input.current(signal), input.expected) > 0)
@@ -232,11 +230,11 @@ export function orderStatus(order: OrderPresentation | undefined): string | null
 
 /** An unknown move, held until its retry lands or a read settles it. */
 export function MoveHold({ pending, check }: { readonly pending: PendingMove; readonly check: () => void }) {
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const id = `collection-move:${pending.command.itemId}:${pending.command.expectedRevision}`;
   return <Hold id={id} attempt={pending.unconfirmed - 1}
-    line={{ fact: `not sure moving “${pending.title}” saved.`, reason: "it may have gone through." }}
-    verbs={resendVerbs({ label: "retry", commandKey: id, busy: pending.phase === "Checking", run: check })} />;
+    {...resendFeedback({ line: { fact: `not sure moving “${pending.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON },
+      resend: { label: "retry", commandKey: id, busy: pending.phase === "Checking", run: check } })} />;
 }
 
 // Library moves: one pending move per library for the account, outliving the
@@ -324,7 +322,7 @@ export function LibraryOrderProvider({ children }: { readonly children: ReactNod
   const latestOutcome = useRef(outcome);
   latestOutcome.current = outcome;
   const [orders] = useState(() => createLibraryOrders(fail, (pending, error) =>
-    refuseLibrary(latestOutcome.current, error, `couldn’t move “${pending.title}”.`, "the list changed meanwhile.")));
+    refuseLibrary(latestOutcome.current, error, `couldn’t move “${pending.title}”.`)));
   useSyncExternalStore(orders.subscribe, orders.version, orders.version);
   useEffect(() => orders.start(), [orders]);
   return <Context.Provider value={orders}>

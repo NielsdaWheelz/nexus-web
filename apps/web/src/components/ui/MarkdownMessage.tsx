@@ -22,7 +22,7 @@ import type {
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
-import { Check, Copy } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "./Button";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { Announcement, useOutcome } from "@/components/feedback/Feedback";
@@ -126,7 +126,7 @@ function CodeBlock({
     <div className={styles.codeBlock}>
       <div className={styles.codeHeader} data-pane-find-exclude="true">
         <span>{language}</span>
-        <Button iconOnly icon={copy.copied ? <Check /> : <Copy />} aria-label="copy code"
+        <Button iconOnly icon={copy.copied ? <Icon.Check /> : <Icon.Copy />} aria-label="copy code"
           className={styles.copy} onClick={() => void onCopy()} />
         {copy.occurrence ? <Announcement text="copied" level="Polite" occurrence={copy.occurrence} /> : null}
       </div>

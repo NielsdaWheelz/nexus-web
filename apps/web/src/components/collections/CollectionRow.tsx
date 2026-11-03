@@ -85,7 +85,7 @@ export default function CollectionRow({
   const primary = typeLabel !== null && row.primary.kind !== "static"
     ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;
   const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
-    ? "couldn’t process it; open metadata for details"
+    ? "couldn’t process this. see its metadata."
     : row.exceptionalStatus !== null ? "last episode check didn’t finish; check again from show details"
     : row.activity !== null ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
   const sections: readonly ContextActionSection[] = [

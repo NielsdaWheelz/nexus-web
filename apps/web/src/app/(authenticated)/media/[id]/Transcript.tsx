@@ -4,7 +4,6 @@ import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
-import { Captions } from "lucide-react";
 import { Hold, useActiveRegion, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import HtmlRenderer from "@/components/HtmlRenderer";
@@ -71,7 +70,7 @@ export function TranscriptState({ media, holdFocus }: {
   const requestable = !noCaptions && (state === "not_requested" || state === "failed_provider");
   return <div ref={owner}>
     {state === "not_requested" && requestable
-      ? <Button icon={<Captions />} aria-busy={busy} aria-disabled={busy} onClick={() => void request()}>transcribe</Button>
+      ? <Button aria-busy={busy} aria-disabled={busy} onClick={() => void request()}>transcribe</Button>
       : state === "failed_provider" && requestable ? <Fact line={{ fact: "couldn’t transcribe this episode." }} speak={speak} verbs={[retry]} />
       : <Fact speak={speak} line={{ fact: noCaptions ? "this video has no captions." : state === "queued" ? "transcript queued."
         : state === "running" ? "transcribing." : state === "unavailable" ? "no transcript is available for this episode." : "preparing the transcript." }} />}

@@ -1,15 +1,15 @@
 "use client";
 
 // One occurrence of a resource in an outline branch. Historical items render their
-// supplied evidence; ordinary authored refs render from the local store. Other
-// refs render their server item; by ref they show the local source stub's literal
-// label until it arrives.
+// supplied evidence; ordinary authored refs render from the local store, or from a
+// projection the host already holds. Other refs render their server item; by ref
+// they show the local source stub's literal label until it arrives.
 // The occurrence owns only its relationship menu (its outline's unlink, server-fact
 // removal); structure keys, selection and ordering belong to the outline's rootProps.
 // Rows also disclose server facts.
 // Local occurrence actions never wait for a remote resource menu.
 import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref} from "react";
-import {ChevronRight, CornerLeftUp, History, Unlink} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import MachineText from "@/components/ui/MachineText";
 import {Fact, Failed} from "@/components/feedback/Fact";
 import {Hold, useOutcome} from "@/components/feedback/Feedback";
@@ -20,6 +20,7 @@ import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import BoundPageTitleEditor from "@/components/notes/BoundPageTitleEditor";
 import NoteBodyPreview from "@/components/notes/NoteBodyPreview";
 import {parseBody} from "@nexus/authored/body";
+import type {ResourceProjection} from "@nexus/authored/types";
 import {selectedExcerpt, type ExcerptView} from "@nexus/authored/excerpt";
 import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
@@ -38,7 +39,7 @@ import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
 import {mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
-import {parseResourceRef} from "@/lib/resourceGraph/resourceRef";
+import {hasAuthoredContent, parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {resourceMetadata} from "@/lib/resources/metadata";
@@ -51,6 +52,7 @@ import {cx} from "@/lib/ui/cx";
 import RemoteConnections, {useRemoteConnections} from "@/components/connections/RemoteConnections";
 import ContextualActionMenu, {type ContextActionSection} from "./ContextualActionMenu";
 import { FullResourceBody } from "./ExcerptDisclosure";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { authoredItem } from "@/lib/notes/presentation";
 import ReaderExcerpt from "./ReaderExcerpt";
 import {ResourceTypeIcon} from "./ResourceType";
@@ -95,15 +97,19 @@ type Shared = {
   onAnnotationClose?: () => void;
   /** The body of a containing outline row, which owns the leading column: this row's controls trail its content. */
   inRow?: boolean;
+  /** Initial disclosure only; retained user choices take precedence. */
+  defaultOpen?: boolean;
 };
 type Props = Shared & (
-  | {item: Item; resourceRef?: never; historical?: boolean}
-  | {resourceRef: string; item?: never; historical?: false}
+  | {item: Item; resourceRef?: never; resource?: never; historical?: boolean}
+  | {resourceRef: string; item?: never; resource?: never; historical?: false}
+  | {resource: ResourceProjection; item?: never; resourceRef?: never; historical?: false}
 );
 /** What the shared occurrence chrome shows for one resource. */
 interface Presentation {
   ref: string;
-  label: string;
+  /** null: nothing names it yet, so the row names its type, never its raw ref. */
+  label: string | null;
   href: string | null;
   primary: ReactNode;
   item: Item | null;
@@ -112,7 +118,6 @@ interface Presentation {
   status: ReactNode;
 }
 
-const AUTHORED = /^(note_block|page|highlight|passage_anchor):/u;
 /** A server fact's removal, when its owner offers one; local links unlink through their outline. */
 function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: WritingRuntime): {id: string; label: string; run(): Promise<unknown>} | null {
   const mutation = incoming.mutation;
@@ -125,25 +130,27 @@ function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: Writi
   }
 }
 
-export default function ResourceOutlineRow({item, resourceRef, ...shared}: Props) {
+export default function ResourceOutlineRow({item, resourceRef, resource, ...shared}: Props) {
   shared.readingRef = item?.preview.body.kind === "passage" ? item.preview.body.reading_ref : shared.readingRef ?? null;
   if(item!==undefined&&shared.historical)return <RemoteRow {...shared} item={item}/>;
-  if(item!==undefined)return item.authored_by_viewer&&AUTHORED.test(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
+  if(item!==undefined)return item.authored_by_viewer&&hasAuthoredContent(item.ref)?<LocalRow {...shared} authoredByViewer subject={item.ref}/>:<RemoteRow {...shared} item={item}/>;
+  // a link's projection can be a source stub.
+  if(resource!==undefined)return resource.authored_by_viewer?<AuthoredRow {...shared} subject={resource.ref} resource={resource} answered status={null}/>:<ReferenceRow {...shared} subject={resource.ref}/>;
   return <LocalRow {...shared} subject={resourceRef!}/>;
 }
 
 function LocalRow(props:Shared&{subject:string}){
   const read=useAuthoredQuery(props.readingRef && /^(highlight|passage_anchor):/u.test(props.subject) ? {kind:"excerpt",ref:props.subject,reading_ref:props.readingRef} : {kind:"resource",ref:props.subject});
-  const resource=read.data?.rows[0]?.resource;
+  const resource=read.data?.rows[0]?.resource??null;
   const [ownedRef,setOwnedRef]=useState<string|null>(null);
   useLayoutEffect(()=>{if(resource?.authored_by_viewer)setOwnedRef(props.subject);},[resource?.authored_by_viewer,props.subject]);
   // A storage failure speaks only until the row has shown; a defect throws whenever it comes.
   if(read.error!==null&&!isAuthoredStorageFailure(read.error))throw read.error;
-  if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} read={read}/>;
-  if(read.data)return <ReferenceRow {...props}/>;
   const type=resourceTypeName(resourceType(parseResourceRef(props.subject)!.scheme,null));
-  return <Occurrence {...props} presentation={{ref:props.subject,label:props.subject,href:null,item:null,highlightId:null,primary:<span data-resource-primary>{props.subject}</span>,
-    status:<AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/>}}/>;
+  const status=read.data === null ? <AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/> : null;
+  if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} resource={resource} answered={read.data?.scope_available===true} status={status}/>;
+  if(read.data)return <ReferenceRow {...props}/>;
+  return <Occurrence {...props} presentation={{ref:props.subject,label:null,href:null,item:null,highlightId:null,primary:<span data-resource-primary className={styles.pending}/>,status}}/>;
 }
 
 /** The row's one link to its resource; a null href renders its children alone. */
@@ -209,30 +216,34 @@ function ReferenceRow(props: Shared & {subject: string}) {
   // The stub read is auxiliary: its storage failure says nothing, its defect throws.
   if (local.error !== null && !isAuthoredStorageFailure(local.error)) throw local.error;
   const stub = local.data?.rows[0]?.resource ?? null;
-  // Until the server item arrives the row shows the stub's label, else the literal ref; its status says why.
-  const label = stub ? localResourceLabel(stub) : props.subject;
-  if(remote.status==="ready"&&remote.data.authored_by_viewer&&AUTHORED.test(props.subject))return <LocalRow {...props} authoredByViewer/>;
+  // Absent locally and still being read remotely is not yet "unavailable": the row names its type, never its ref.
+  const failed = remote.status === "failed";
+  const label = stub ? localResourceLabel(stub) : failed ? "unavailable resource" : null;
+  if(remote.status==="ready"&&remote.data.authored_by_viewer&&hasAuthoredContent(props.subject))return <LocalRow {...props} authoredByViewer/>;
   return <Occurrence {...props} presentation={remote.status === "ready" ? {...remotePresentation(remote.data, props), ref: props.subject} : {
     ref: props.subject, label,
     href: stub ? localResourceHref(stub) : null, item: null, highlightId: null,
-    primary: <span data-resource-primary className={factualStyles.named}>{label}</span>,
+    primary: label === null ? <span data-resource-primary className={styles.pending}/> : <span data-resource-primary className={factualStyles.named}>{label}</span>,
     status: remote.status === "failed" ? <Failed error={remote.error} noun="this item’s details" retry={{run: remote.refetch, busy: remote.retrying}}/> : null,
   }}/>;
 }
 
-function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnType<typeof useAuthoredQuery>}) {
-  const resource = read.data?.rows[0]?.resource ?? null;
-  const source = useAuthoredQuery(!props.inSource && resource?.kind === "highlight" && resource.source_ref ? {kind: "resource", ref: resource.source_ref} : null);
+/** `answered`: the host has proved absence, so a null resource is gone rather than pending. */
+function AuthoredRow({resource, answered, status, ...props}: Shared & {subject: string; resource: ResourceProjection | null; answered: boolean; status: ReactNode}) {
+  const prepared = useContext(PreparedResourcesContext);
+  const sourceRef = !props.inSource && resource?.kind === "highlight" ? resource.source_ref : null;
+  const heldSource = sourceRef !== null && (prepared?.has(sourceRef) ?? false);
+  const source = useAuthoredQuery(sourceRef && !heldSource ? {kind: "resource", ref: sourceRef} : null);
   const branch = useContext(ResourceBranch);
+  const outline = useContext(ResourceOutlineContext);
   const parsed = parseResourceRef(props.subject)!;
   const type = resourceTypeName(resourceType(parsed.scheme, null));
   const label = resource ? localResourceLabel(resource) : type;
   const terminal = classifyOutlineOccurrence({branch, targetRef: props.subject, edgeId: null}).kind === "reference";
   const editable = (props.editable ?? true) && !props.historical && !terminal;
   const href = resource ? localResourceHref(resource, { activationRef: props.readingRef ?? null }) : null;
-  const sourceLabel = source.data?.rows[0]?.resource;
-  // Absence is a fact only in a hydrated scope; before it, absent and not yet read look alike.
-  const primary = !resource ? read.data?.scope_available ? <Fact line={{fact: `this ${type} isn’t on this device.`}}/> : null
+  const sourceLabel = heldSource ? prepared!.get(sourceRef!)?.resource : source.data?.rows[0]?.resource;
+  const primary = !resource ? answered ? <Fact line={{fact: `this ${type} isn’t on this device.`}}/> : null
     : resource.kind === "note" ? editable ? <BoundNoteEditor noteRef={props.subject} label={`edit note: ${label}`} editable/>
       : <NoteBodyPreview body={parseBody(resource.body_pm_json)}/>
     : resource.kind === "page" ? editable ? <BoundPageTitleEditor pageRef={props.subject} label={`edit page title: ${label}`} editable
@@ -242,25 +253,26 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
         {sourceLabel || href ? <PrimaryLink href={href} label={label}>{sourceLabel ? localResourceLabel(sourceLabel) : "highlight"}</PrimaryLink> : null}
         <FullResourceBody item={authoredItem(resource, props.readingRef ?? null, href)} />
       </>}
-      <HighlightAnnotation highlightRef={props.subject} occurrenceKey={props.occurrenceKey} editable={editable} offerBlank={!props.inSource} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
+      <HighlightAnnotation highlightRef={props.subject} resource={resource} rest={outline?.settled(props.occurrenceKey) ?? true} occurrenceKey={props.occurrenceKey} editable={editable} offerBlank={!props.inSource} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
     </div>
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
   return <Occurrence {...props} presentation={{
     ref: props.subject, label, href, item: null, primary,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
-    status: read.data === null ? <AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/> : null,
+    status,
   }}/>;
 }
 
 function Occurrence({presentation, occurrenceKey, incoming, connection, onChanged,
   sourceContent, resourceDetails, details, rootProps, rowRef,
   historical = false, editable: _editable = true, annotationFocusRequest: _annotationFocusRequest = null, onAnnotationClose: _onAnnotationClose, rowActions, inRow = false, ...props}: Shared & {presentation: Presentation}) {
-  const {ref, label, href, item, highlightId} = presentation;
+  const {ref, href, item, highlightId} = presentation;
   const parsed = parseResourceRef(ref);
   // justify-defect: every occurrence names a canonical displayed resource.
   if (parsed === null) throw new Error(`invalid canonical resource ref: ${ref}`);
   const type = resourceType(parsed.scheme, item === null ? null : itemMediaKind(item));
   const identity = resourceTypeName(type);
+  const label = presentation.label ?? identity;
   const marker = parsed.scheme === "note_block" ? "•" : <ResourceTypeIcon type={type}/>;
   const runtime = usePaneRuntime();
   const touch = useTouchCapable();
@@ -315,12 +327,14 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   // shows latches open at its first child, so removing the last keeps its history and focus.
   if (props.inSource && hasChildren && localOpen === null) setLocalOpen(true);
   const open = projection.kind === "resource" &&
-    (outline?.view.folds.get(occurrenceKey) ?? localOpen ?? (highlightId !== null && !props.inSource));
+    (outline?.view.folds.get(occurrenceKey) ?? localOpen ?? props.defaultOpen ?? (highlightId !== null && !props.inSource));
   useLayoutEffect(()=>{
     if(!hasControl&&lostArrowFocus.current&&element.current)outlineRowFocusTarget(element.current).focus({preventScroll:true});
     lostArrowFocus.current=false;
   },[hasControl]);
   const childrenId = useId();
+  // one way, so a row flown past reads none of its children.
+  const rested = useRef(false); rested.current ||= outline?.settled(occurrenceKey) ?? true;
   const removal = incoming?.kind === "edge" && writing !== null && !historical ? factRemoval(incoming, writing) : null;
   async function toggle() {
     if (disclosureDisabled) return;
@@ -374,12 +388,12 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   }
   const commands: ActionDescriptor[] = [];
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
-    label: `Unlink from ${incoming.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
-  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Unlink size={16} aria-hidden="true" />,
+    label: `Unlink from ${incoming.parentLabel}`, icon: <Icon.Remove size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
+  if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Icon.Remove size={16} aria-hidden="true" />,
     disabled: busy, busy, disabledReason: busy ? "removing" : undefined,
     restoreFocusOnClose: false, onSelect: () => void mutate(removal.run)});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
-  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: <History size={16} aria-hidden="true" />,
+  if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: null,
     href: made.conversation_id && made.message_id
       ? `/conversations/${made.conversation_id}?message=${made.message_id}`
       : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});
@@ -393,18 +407,18 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       className={cx(styles.control, styles.bullet)} aria-label={`actions for ${identity}: ${label}`} data-row-focusable="true">{marker}</button>;
   const disclosure = terminal ? <button ref={attachDisclosure} type="button" className={styles.control}
     disabled={disclosureDisabled} aria-label={`show earlier occurrence of ${label}`}
-    onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><CornerLeftUp size={14}/></button>
+    onClick={() => outline?.reveal(projection.target)} data-row-focusable="true"><Icon.Locate size={14}/></button>
     : hasChildren ? <button ref={attachDisclosure} type="button" className={styles.control}
       aria-label={`${open ? "collapse" : "expand"} linked resources for ${label}`} aria-expanded={open}
       aria-controls={open ? childrenId : undefined} disabled={item?.missing === true || disclosureDisabled}
-      onClick={toggle} data-row-focusable="true"><ChevronRight size={14} className={styles.arrow} data-open={open || undefined}/></button>
+      onClick={toggle} data-row-focusable="true"><Icon.Disclose open={open} size={14}/></button>
     : null;
   const anchor = commands.length ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
     sections={[{id: "Occurrence", actions: commands}]}
     label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({});
   if (projection.kind === "omit") return null;
   return <ResourceBranch value={childrenBranch}>
-    <li {...rootProps} ref={attachRow} className={cx(styles.row, inRow && styles.inRow, rootProps?.className)}
+    <li {...rootProps} ref={attachRow} className={cx(styles.row, props.inSource && styles.inSource, inRow && styles.inRow, rootProps?.className)}
       tabIndex={rootProps?.tabIndex ?? 0} aria-label={rootProps?.["aria-label"] ?? `outline item: ${label}`}
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref}>
       <div className={styles.head}>
@@ -431,7 +445,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
           {inRow ? anchor : null}{disclosure}</div>
       </div>
       {open ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
-        <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/></section></div> : null}
+        {rested.current ? <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
     </li>
   </ResourceBranch>;
 }

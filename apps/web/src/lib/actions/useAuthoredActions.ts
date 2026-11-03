@@ -66,7 +66,7 @@ export function useAuthoredActions(ref: string | null): {
       const disabledReason = busy.has(actionId) ? BLOCKED_COPY.Busy : options.blocked;
       return {
         kind: "command", id: actionId, label,
-        icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+        icon: entry.icon && createElement(entry.icon, { "aria-hidden": true }),
         tone: entry.group === "Danger" ? "danger" : "default",
         separatorBefore: entry.group === "Danger" || undefined,
         disabled: disabledReason !== undefined || undefined, disabledReason, waiting: busy.has(actionId) || undefined,

@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { forwardRef, useId, useImperativeHandle, useRef, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, RotateCcw, TextSearch, X } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -154,8 +154,8 @@ const FindBar = forwardRef<
         } : undefined}
         actions={<>
           <div className={styles.group} role="group" aria-label="Match navigation">
-            <Button iconOnly aria-label="Previous match" tooltip={{ text: "Previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<ChevronUp size={15} aria-hidden="true" />} />
-            <Button iconOnly aria-label="Next match" tooltip={{ text: "Next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<ChevronDown size={15} aria-hidden="true" />} />
+            <Button iconOnly aria-label="Previous match" tooltip={{ text: "Previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<Icon.Up aria-hidden="true" />} />
+            <Button iconOnly aria-label="Next match" tooltip={{ text: "Next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<Icon.Down aria-hidden="true" />} />
           </div>
           {find?.result.kind === "Failed" ? <Button onClick={() => {
             inputRef.current?.focus({ preventScroll: true });
@@ -163,16 +163,16 @@ const FindBar = forwardRef<
           }}>Retry</Button> : null}
         </>}
         trailingActions={<>
-          <Button iconOnly aria-label="Show search results" disabled={count === 0} icon={<TextSearch size={15} aria-hidden="true" />} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)} />
+          <Button aria-label="Show search results" tooltip={{ text: "Show search results" }} disabled={count === 0} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>results</Button>
           {find?.returnable ? (
             <Button iconOnly aria-label="Return to reading position" onClick={() => {
               inputRef.current?.focus({ preventScroll: true });
               find.goBack();
             }}
-              icon={<RotateCcw size={15} aria-hidden="true" />} />
+              icon={<Icon.Locate aria-hidden="true" />} />
           ) : null}
           {onClose ? (
-            <Button iconOnly aria-label="Close find" onClick={onClose} icon={<X size={15} aria-hidden="true" />} />
+            <Button iconOnly aria-label="Close find" onClick={onClose} icon={<Icon.Dismiss aria-hidden="true" />} />
           ) : null}
         </>}
       />

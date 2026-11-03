@@ -1,10 +1,10 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 // The phone's palette: a sheet that opens keyboard-down on the armed row and reads upward to its field.
 // Rank 1 touches the field; continuations, places and the account sit farthest. Pages render in the
 // same sheet with their headers.
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent } from "react";
-import { X } from "lucide-react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import { isAccountDestinationId } from "@/components/appnav/navModel";
 import { NexusQuerySpinner, NexusNotices, NexusRowBody, nexusRowAlias, nexusRowName, nexusRowVerbs } from "@/components/nexus/NexusRow";
@@ -42,6 +42,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const inputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const addBody = useRef<HTMLElement>(null);
   const composing = useRef(false);
   const placementPress = useRef<string | null>(null);
   const taskPointerId = useRef<number | null>(null);
@@ -173,7 +174,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
               <Button iconOnly data-nexus-control={`ClosePane:${item.secondary.paneId}`} aria-label={`close ${paneRowName(controller, item)}`}
                 onKeyDown={(event) => { if (event.repeat && event.key === "Enter") event.preventDefault(); }}
                 onClick={event => { event.currentTarget.focus({ preventScroll: true }); if (item.secondary?.kind === "ClosePane") controller.closePane(item.secondary.paneId); }}
-                icon={<X size={16} aria-hidden="true" />} />
+                icon={<Icon.Dismiss aria-hidden="true" />} />
             ) : item.secondary?.kind === "TargetMenu" ? (
               <OverflowMenuButton data-nexus-control={`Rail:${item.key}`} aria-label={`more actions for ${item.label}`}
                 aria-expanded={verbs !== null} aria-controls={verbs !== null ? RAIL_ID : undefined}
@@ -194,7 +195,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const root = <>
     <h2 ref={headingRef} className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
     <div className="sr-only" role="status" aria-label="search status" aria-live="polite" aria-atomic="true">
-      {[controller.announcement, typed && !controller.pending ? `${results} results shown.` : null].filter(Boolean).join(" ")}
+      {typed && !controller.pending ? `${results} results shown.` : null}
     </div>
     <NexusPaneDrag controller={controller} scrollport={() => listRef.current} mobile>
       {/* Typed, the continuations are a band above the scrollport: farthest, and arrivals never move them. */}
@@ -286,13 +287,14 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
           }
         }}
       />
-      {controller.query ? <Button iconOnly icon={<X size={16} aria-hidden="true" />} className={styles.clear} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : <span />}
+      {controller.query ? <Button iconOnly icon={<Icon.Dismiss aria-hidden="true" />} className={styles.clear} aria-label="clear search" onClick={() => { controller.setQuery(""); inputRef.current?.focus(); }} /> : <span />}
     </div>
     {excerpt ? <ExcerptDialog item={excerpt} onClose={() => setExcerpt(null)} returnFocusTo={() => controller.armed === null ? headingRef.current : control(controller.armed)} /> : null}
   </>;
 
   return (
     <MobileSheet active={controller.open} panelId="Nexus" handleLabel="close nexus" heightLimit="available" flushBottom={controller.page.kind === "Root"}
+      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Add" ? addBody : undefined}
       interactionLayer={controller.interactionLayer} onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>
@@ -300,7 +302,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         onPointerDownCapture={(event) => { taskPointerId.current = event.pointerId; }}
         onPointerCancelCapture={(event) => { if (taskPointerId.current === event.pointerId) taskPointerId.current = null; }}
         onClickCapture={admitClick}>
-        {controller.page.kind === "Root" ? root : <NexusPages controller={controller} mobile />}
+        {controller.page.kind === "Root" ? root : <NexusPages scrollRef={addBody} controller={controller} mobile />}
       </div>
     </MobileSheet>
   );

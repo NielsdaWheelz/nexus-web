@@ -24,6 +24,15 @@ recorded private inputs, socket directory and matching checkout lock removed.
 no shared slot state, daemon settings or unrelated runtime changed. the
 interrupted qualification run has no final result and must be rerun.
 
+a different checkout observed on 2026-11-03 at 04:27 utc: run `20261102-202534-7e1839c3d588`
+failed before its driver with `lab slot 4 port 31030 unavailable`.
+container `c0ea2872190a` (`nexus-lab-20261102-201924-92036acadcdd-postgres-1`)
+held that port; the other runtime's auth/storage/workers also remained. no owning
+disposable-runtime process remained, and codex child 27208 had ppid 1. this
+establishes occupied capacity after admission release, not the cause of that
+supervisor's exit. that observer changed nothing in the foreign runtime;
+the owning feedback build performed the recorded recovery above.
+
 accepted limit of the parallel-labs change: hard kills require manual recovery.
 the operator reconciles exact recorded ownership before reusing the affected
 checkout or ports; never kill a saved pid blindly. automatic prevention would

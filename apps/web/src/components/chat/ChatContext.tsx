@@ -1,6 +1,5 @@
 "use client";
-
-import { Minus, Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useRef, useState } from "react";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -48,7 +47,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   });
   const entries = context.status === "ready" ? context.data.items : [];
   return <section ref={root} aria-label="Chat context" {...attachments.dropProps}>
-    <div className={styles.tools}><ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "Add to future context", icon: <Plus size={16} aria-hidden="true" />, onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
+    <div className={styles.tools}><ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "Add to future context", icon: <Icon.Add aria-hidden="true" />, onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
     <p className={styles.metadata}>available to future replies</p>
     {context.status === "failed" ? <Failed error={context.error} noun="context items" retry={{ run: () => void context.refetch(), busy: context.retrying }} /> : null}
     {context.status === "ready" ? <ResourceList ariaLabel="Chat context">
@@ -130,7 +129,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
     {unknown > 0 ? <Hold id={`remove:${entry.item.ref}`} attempt={unknown} line={{ fact: `not sure “${label}” was removed.`, reason: MAY_HAVE }} verbs={[retry]} /> : null}
     {authored ? <AuthoredReadFailure {...authored} title="couldn’t load this item." /> : null}
     <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
-    primaryControl={entry.mutation ? <Button ref={removeButton} iconOnly icon={<Minus />}
+    primaryControl={entry.mutation ? <Button ref={removeButton} iconOnly icon={<Icon.Remove />}
       aria-label={`${unknown > 0 ? "retry removing" : "remove from future context"}: ${label}`}
       aria-disabled={busy || undefined} aria-busy={busy || undefined}
       onClick={() => void remove()} /> : undefined}

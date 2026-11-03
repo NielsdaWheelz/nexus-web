@@ -1,10 +1,10 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 // The desktop palette: a card with the query, one scrollport of rows and, while typed, the
 // continuations pinned below it so arrivals never move them. The query edits text and arms rows;
 // → or tab opens the armed row's rail; native controls own their actions.
 import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { X } from "lucide-react";
 import { ExcerptDialog } from "@/components/resources/ExcerptDisclosure";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -42,6 +42,8 @@ function count(n: number, noun: string): string {
 
 export default function DesktopNexus({ controller }: { controller: NexusController }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const workflowRef = useRef<HTMLDivElement>(null);
+  const addBody = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   /** The query's text selection when the rail opened; the rail's exit restores it. */
@@ -207,7 +209,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                 controller.arm(item.key);
                 if (item.secondary?.kind === "ClosePane") controller.closePane(item.secondary.paneId);
               }}
-              icon={<X size={16} aria-hidden="true" />} />
+              icon={<Icon.Dismiss aria-hidden="true" />} />
             : item.secondary?.kind === "TargetMenu" ? <OverflowMenuButton
               tabIndex={-1}
               aria-label={`options for ${item.label}`}
@@ -348,7 +350,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       </NexusPaneDrag>
       <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => inputRef.current} />
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {[controller.announcement, controller.pending ? null : status].filter(Boolean).join(" ")}
+        {controller.pending ? null : status}
       </div>
       {excerpt ? <ExcerptDialog item={excerpt} onClose={() => setExcerpt(null)} returnFocusTo={() => inputRef.current} /> : null}
     </>
@@ -362,6 +364,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       scope="Nexus"
       onDismiss={controller.escape}
       label={controller.dialogLabel}
+      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Add" ? addBody : workflowRef}
       initialFocus={controller.initialFocus}
       skipReturnFocus={controller.suppressReturnFocus}
       returnFocusTo={controller.returnFocusTo}
@@ -373,8 +376,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       {controller.page.kind === "Root" ? (
         root
       ) : (
-        <div className={styles.workflow}>
-          <NexusPages controller={controller} mobile={false} />
+        <div ref={workflowRef} className={styles.workflow}>
+          <NexusPages scrollRef={addBody} controller={controller} mobile={false} />
         </div>
       )}
     </ModalFrame>

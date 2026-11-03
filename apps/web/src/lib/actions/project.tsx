@@ -1,7 +1,7 @@
 import type { Line } from "@/components/feedback/stage";
 import { parseResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assertNever } from "@/lib/assertNever";
-import { installedApp, remoteReady } from "@/lib/native/admission";
+import { installedApp, remoteAdmission, remoteReady } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
 import type { PodcastActionFacts, PodcastActionFocus } from "./inlineActions";
 import PodcastSubscriptionIcon from "@/components/podcasts/PodcastSubscriptionIcon";
@@ -10,7 +10,7 @@ import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/ap
 import type { EpisodeState } from "@/lib/podcasts/api";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
-import { Minus, Undo2, type LucideIcon } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   ACTION_CATALOG,
   admissionReason,
@@ -25,13 +25,13 @@ import type {
 } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { apiFetch, isStaleBuild } from "@/lib/api/client";
-import { staleBuild } from "@/lib/api/failure";
+import { admissionReason as currentAdmissionReason, staleBuild, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   openConversationAbout,
   deleteConversation,
 } from "@/lib/chat/conversationIndex";
-import { getConversationCommands, readConversationTree, repeatMessage, type CommandOutcome } from "@/lib/chat/commands";
+import { getConversationCommands, readConversationTree, repeatMessage, sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
 import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { lecternFull } from "@/lib/lectern/lectern";
@@ -46,9 +46,9 @@ import {
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
 import { getWritingRuntime } from "@/lib/notes/runtime";
-import { localMutation, type LocalItem } from "@/lib/offline/localContent";
+import { LocalMutationObservationError, localMutation, type LocalItem } from "@/lib/offline/localContent";
 import type { PlaybackSource } from "./playbackSource";
-import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
+import { queueBlock, type PlayerDescriptor } from "@/lib/player/playerRuntime";
 import {
   requestPodcastRefresh,
 } from "@/lib/podcasts/api";
@@ -88,7 +88,10 @@ export interface ActionCommand {
   readonly afterRemoval?: ReturnFocusTarget;
   /** Opening an overlay, navigating or handing a pane an entry is untracked. */
   readonly tracked: boolean;
-  readonly execute: () => unknown;
+  /** A raw, repeatable remote write whose outcome this execution owner retains. */
+  readonly rawWrite?: true;
+  /** Only an accepted raw write calls this, before later reads or navigation. Void proves nothing. */
+  readonly execute: (acknowledged: () => void) => unknown;
 }
 
 /** A modeled local refusal, in its owner's words; the runtime says it where the verb was invoked. */
@@ -96,8 +99,13 @@ export class ResourceActionFailure extends Error {
   constructor(readonly line: Line) { super(line.fact); }
 }
 
+/** The native command left without a receipt; only its surviving account owner holds it. */
+export class ResourceActionUnknown extends Error {
+  constructor(readonly line: Line) { super(line.fact); }
+}
+
 interface Options {
-  readonly state?: { readonly label: string; readonly icon: LucideIcon };
+  readonly state?: { readonly label: string; readonly icon: Icon.Glyph | null };
   /** A client fact blocking the verb; the server's reason wins. */
   readonly blocked?: BlockedReason;
   /** Copy that explains a block better than the generic reason. */
@@ -107,9 +115,10 @@ interface Options {
   readonly confirmation?: Confirmation | null;
   readonly tracked?: boolean;
   readonly afterRemoval?: ReturnFocusTarget;
+  readonly rawWrite?: true;
 }
 type Verb = readonly [
-  execute: (detail: ActionSelectDetail) => unknown,
+  execute: (detail: ActionSelectDetail, acknowledged: () => void) => unknown,
   options?: Options,
 ];
 
@@ -132,13 +141,8 @@ export function projectLecternAction({
   const disconnected = installedApp && !ctx.online;
   const retry = !disconnected && !request && collectionPending === null && blocked === null && !busy.has("LecternMembership") && needsRead && read.status === "failed";
   const state = ACTION_CATALOG.LecternMembership.states[currentIntent === "Ensure" ? "Absent" : "Present"];
-  const copy = currentIntent === "Ensure" ? { sending: "Adding…", check: "Check add" } : { sending: "Removing…", check: "Check removal" };
   const label = request
-    ? {
-        Sending: copy.sending,
-        Checking: copy.check,
-        Unconfirmed: copy.check,
-      }[request.phase]
+    ? "retry"
     : disconnected ? "Lectern"
     : collectionPending !== null ? state.label
     : retry ? "Retry checking Lectern"
@@ -146,7 +150,10 @@ export function projectLecternAction({
   let disabledReason: string | undefined;
   let waiting = false;
   const wait = (reason: string) => { disabledReason = reason; waiting = true; };
-  if (disconnected) disabledReason = admissionReason();
+  if (request && !remoteReady()) {
+    disabledReason = currentAdmissionReason() ?? "checking your session.";
+    waiting = remoteAdmission() === "Checking";
+  } else if (disconnected) disabledReason = admissionReason();
   else if (request && request.phase !== "Unconfirmed") wait("a lectern change is in progress.");
   else if (busy.has("LecternMembership")) wait(BLOCKED_COPY.Busy);
   else if (!request) {
@@ -161,7 +168,7 @@ export function projectLecternAction({
     kind: "command",
     id: "LecternMembership",
     label,
-    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    icon: createElement(retry ? Icon.Again : state.icon, { "aria-hidden": true }),
     disabled: retry ? read.retrying || undefined : disabledReason !== undefined || undefined,
     disabledReason,
     waiting: waiting || undefined,
@@ -212,7 +219,7 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
     : needsRemote && !ctx.online ? admissionReason() : undefined;
   return {
     kind: "command", id: "Playback", label: state.label,
-    icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+    icon: createElement(state.icon, { "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason,
     onSelect: () => {
       if (needsRemote && !remoteReady()) return;
@@ -256,12 +263,11 @@ export function projectCollectionConsumptionAction({ selection, desiredState, ti
   ctx: ActionContext; run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const id = desiredState === "finished" ? "MarkCollectionFinished" : "MarkCollectionUnread";
-  const entry = ACTION_CATALOG[id];
   const status = selection.kind === "Podcast" ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
   const label = selection.kind === "Podcast" && selection.state !== "all"
     ? `Mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
     : `Mark all ${status}…`;
-  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
@@ -279,7 +285,7 @@ export function projectPodcastTranscriptAction({ podcastId, state, title, blocke
   const id = "TranscribePodcastEpisodes";
   const entry = ACTION_CATALOG[id];
   const label = state === "all" ? entry.label : `Transcribe ${state.replaceAll("_", " ")} episodes…`;
-  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+  return { kind: "command", id: state === "all" ? id : `View.${id}.${state}`, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
@@ -298,9 +304,9 @@ export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
   const facts = supplied.kind_facts;
   const result: ActionDescriptor[] = [];
   if (facts.website_href !== null) result.push({ kind: "link", id: "OpenSource", label: ACTION_CATALOG.OpenSource.label,
-    icon: createElement(ACTION_CATALOG.OpenSource.icon, { size: 16, "aria-hidden": true }), href: facts.website_href });
+    icon: null, href: facts.website_href });
   result.push({ kind: "command", id: "Metadata", label: ACTION_CATALOG.Metadata.label,
-    icon: createElement(ACTION_CATALOG.Metadata.icon, { size: 16, "aria-hidden": true }),
+    icon: null,
     onSelect: ({ triggerEl }) => {
       const focus = invocationFocus(triggerEl, returnFocus);
       const metadata: MetadataSubject = subject.kind === "DiscoveryPodcast" ? { kind: "DiscoveryPodcast", candidate: subject.candidate } : { kind: "DiscoveryPodcastPreview", preview: subject.preview };
@@ -308,7 +314,7 @@ export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
     },
   });
   result.push({ kind: "link", id: "OpenPodcastFeed", label: ACTION_CATALOG.OpenPodcastFeed.label,
-    icon: createElement(ACTION_CATALOG.OpenPodcastFeed.icon, { size: 16, "aria-hidden": true }), href: facts.feed_href });
+    icon: null, href: facts.feed_href });
 
   return result;
 }
@@ -379,7 +385,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
   disabledReason = installedApp && !ctx.online ? admissionReason() : disabledReason;
   return {
     kind: "command", id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label,
-    icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { size: 16, "aria-hidden": true }),
+    icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { "aria-hidden": true }),
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined, restoreFocusOnClose: false,
     onSelect: detail => {
       if (disabledReason !== null) return;
@@ -413,7 +419,7 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
   return {
     kind: "command", id: "PodcastLibraryRemoval", label,
     accessibleLabel: `Remove ${title} from ${libraryName}`,
-    icon: createElement(Minus, { size: 16, "aria-hidden": true }),
+    icon: createElement(Icon.Remove, { "aria-hidden": true }),
     disabled: disabledReason !== undefined || undefined, disabledReason, restoreFocusOnClose: false,
     onSelect: detail => {
       if (disabledReason !== undefined) return;
@@ -460,12 +466,12 @@ export function projectResourceActions(
   const make = (
     actionId: ActionId,
     blocked: Action["blocked"],
-    execute: (detail: ActionSelectDetail) => unknown,
+    execute: (detail: ActionSelectDetail, acknowledged: () => void) => unknown,
     options: Options = {},
   ): Extract<ActionDescriptor, { kind: "command" }> => {
     const entry: {
       readonly label: string;
-      readonly icon: LucideIcon;
+      readonly icon: Icon.Glyph | null;
       readonly group: string;
       readonly confirmation?: Confirmation;
     } = { ...ACTION_CATALOG[actionId], ...options.state };
@@ -478,7 +484,7 @@ export function projectResourceActions(
       kind: "command",
       id: actionId,
       label: entry.label,
-      icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+      icon: entry.icon && createElement(entry.icon, { "aria-hidden": true }),
       tone: entry.group === "Danger" ? "danger" : "default",
       disabled: disabledReason !== undefined || undefined,
       disabledReason,
@@ -494,8 +500,9 @@ export function projectResourceActions(
             ? entry.confirmation ?? null
             : options.confirmation,
           tracked: options.tracked ?? true,
+          rawWrite: options.rawWrite,
           afterRemoval: options.afterRemoval,
-          execute: () => execute(detail),
+          execute: acknowledged => execute(detail, acknowledged),
         }),
     };
   };
@@ -534,11 +541,12 @@ export function projectResourceActions(
     { tracked: false, ...options },
   ];
   const deleted = (
-    remove: () => Promise<unknown>,
+    remove: (acknowledged: () => void) => Promise<unknown>,
     fallbackHref: string,
+    rawWrite?: true,
   ): Verb => [
-    async () => {
-      await remove();
+    async (_, acknowledged) => {
+      await remove(acknowledged);
       if (!ctx.isActive()) return;
       settleDeletedResourcePanes({
         workspace: ctx.workspace(),
@@ -546,7 +554,7 @@ export function projectResourceActions(
         fallbackHref,
       });
     },
-    { afterRemoval: podcastFocus?.afterRemoval },
+    { afterRemoval: podcastFocus?.afterRemoval, rawWrite },
   ];
   const deleteChat = async () => {
     const owner = getConversationCommands(ctx.accountId, id);
@@ -555,7 +563,7 @@ export function projectResourceActions(
       if (outcome.kind === "Gone") {
         settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
       } else if (outcome.kind === "Failed") {
-        ctx.feedback.say({ fact: outcome.feedback.title, reason: outcome.feedback.message });
+        sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id, title: facts.label, owner, present });
       }
@@ -570,7 +578,7 @@ export function projectResourceActions(
     const present = (outcome: CommandOutcome) => {
       if (!ctx.isActive()) return;
       if (outcome.kind === "Failed") {
-        ctx.feedback.say({ fact: outcome.feedback.title, reason: outcome.feedback.message });
+        sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
           retry: requested => {
@@ -626,13 +634,7 @@ export function projectResourceActions(
   };
 
   const { queue } = ctx.player;
-  const queueWait = !queue.known ? queue.error === null : queue.phase === "Preparing" || queue.phase === "Saving";
-  const queueDisabled = !queue.known
-    ? queue.error === null ? "the queue is still loading." : "the last queue change didn’t settle."
-    : queue.phase === "Ready" ? undefined
-    : queue.phase === "Uncertain" ? "the last queue change didn’t settle."
-    : queue.phase === "Preparing" ? "the queue is still loading."
-    : queue.phase === "Saving" ? "the queue is saving." : "the player isn’t available.";
+  const queueBlocked = queueBlock(queue, ctx.player.state, "Queue");
   const append = (next: boolean) => {
     const entry = { id: crypto.randomUUID(), media_id: id };
     const header = queue.header;
@@ -647,8 +649,8 @@ export function projectResourceActions(
       ({ triggerEl }) => metadata(triggerEl),
       { tracked: false },
     ],
-    AddToQueue: [() => append(false), { disabledReason: queueDisabled, waiting: queueWait }],
-    PlayNext: [() => append(true), { disabledReason: queueDisabled, waiting: queueWait }],
+    AddToQueue: [() => append(false), { disabledReason: queueBlocked?.reason, waiting: queueBlocked?.waiting }],
+    PlayNext: [() => append(true), { disabledReason: queueBlocked?.reason, waiting: queueBlocked?.waiting }],
     ResetProgress: [() => ctx.consumption.resetProgress(id)],
     LibraryPlacement: [
       ({ triggerEl }) => {
@@ -682,14 +684,14 @@ export function projectResourceActions(
         window.location.assign(response.data.url);
       },
     ],
-    LeaveLibrary: deleted(() => leaveLibrary(id), "/libraries"),
+    LeaveLibrary: deleted(async acknowledged => { await leaveLibrary(id); acknowledged(); }, "/libraries", true),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
     AddEpisodeToAll: [async () => {
       if (ctx.podcasts.pending(`episode-save:${id}`) !== null) return;
       const snapshot = await placements({ kind: "Media", id }, ctx.sessionSignal());
       if (!ctx.isActive() || snapshot.all_membership.included) return;
-      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: `${facts.label} · all`, command: {
+      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: facts.label, library: null, command: {
         kind: "EpisodeSave", mediaId: id, libraryId: snapshot.all_membership.library_id,
         body: { included: true, expected_order_revision: snapshot.all_membership.order_revision,
           expected_removal_revision: snapshot.removal_revision },
@@ -697,14 +699,16 @@ export function projectResourceActions(
     }],
     RemoveEpisodeFromAll: overlay({ kind: "RemoveEpisodeFromAll", mediaId: id, title: facts.label }),
     RemovePodcastEpisodes: overlay({ kind: "RemovePodcastEpisodes", podcastId: id, title: facts.label }),
-    RefreshPodcast: [
-      () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
-    ],
-    RemoveMedia: deleted(async () => {
+    RefreshPodcast: [async (_, acknowledged) => {
+      await requestPodcastRefresh({ kind: "Podcast", podcast_id: id });
+      acknowledged();
+    }, { rawWrite: true }],
+    RemoveMedia: deleted(async acknowledged => {
       await deleteMedia(id);
+      acknowledged();
       if (ctx.isActive()) ctx.mediaContinuations.forgetDeletedMedia(id);
-    }, "/libraries"),
-    DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
+    }, "/libraries", true),
+    DeleteLibrary: deleted(async acknowledged => { await deleteLibrary(id); acknowledged(); }, "/libraries", true),
     DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(getWritingRuntime(ctx.accountId), id), "/notes"),
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
@@ -737,14 +741,14 @@ export function projectResourceActions(
     if (isStaleBuild(pending.error)) {
       const reload = ctx.remedy === "Reload";
       return make(actionId, null, () => { if (reload) window.location.reload(); }, {
-        state: { label: reload ? "Reload" : "Update Nexus", icon: ACTION_CATALOG.RefreshSource.icon },
+        state: { label: reload ? "Reload" : "Update Nexus", icon: null },
         disabledReason: reload ? undefined : staleBuild(),
         tracked: false,
       });
     }
     const sending = pending.kind === "sending";
     return make(actionId, null, () => ctx.admissions.retry(pending.key), {
-      state: { label: "Retry", icon: ACTION_CATALOG[actionId].icon },
+      state: { label: "Retry", icon: Icon.Again },
       tracked: false,
       disabledReason: sending ? "already sending." : !ctx.online ? admissionReason() : undefined,
       waiting: sending,
@@ -794,10 +798,11 @@ export function projectResourceActions(
           blocked,
           opens
             ? follow("Follow")
-            : async () => {
+            : async (_, acknowledged) => {
                 await apiFetch(`/api/media/${id}/transcript/request`, {
                   method: "POST",
                 });
+                acknowledged();
                 if (!ctx.isActive()) return;
                 // Imports shows the transcript's work; open panes follow it again.
                 publishImportsInvalidation();
@@ -805,6 +810,7 @@ export function projectResourceActions(
           {
             state: ACTION_CATALOG.Transcript.states[state],
             tracked: !opens,
+            rawWrite: opens ? undefined : true,
             blocked:
               state === "queued" || state === "running"
                 ? "Processing"
@@ -863,7 +869,8 @@ export function projectResourceActions(
             tracked: false,
             state: {
               label: metadataResearchLabel(null, retry.purpose),
-              icon: ACTION_CATALOG.RetryMetadata.icon,
+              // Search reads true of research, not of generating a title (law 2).
+              icon: retry.purpose === "title" ? null : ACTION_CATALOG.RetryMetadata.icon,
             },
             blocked: ctx.online ? undefined : "RequiresOnline",
             disabledReason:
@@ -895,14 +902,16 @@ export function projectResourceActions(
         );
       }
       case "ReviewMetadataResult":
-        return make("ReviewMetadataResult", blocked, () =>
-          submitMetadataResultReview(id, action.job_id),
-        );
+        return make("ReviewMetadataResult", blocked, (_, acknowledged) =>
+          submitMetadataResultReview(id, action.job_id, acknowledged), { rawWrite: true });
       case "Recovery":
         if (action.offer.kind === "BrowserCapture") return { kind: "link", id: "BrowserCapture", label: ACTION_CATALOG.BrowserCapture.label,
-          icon: createElement(ACTION_CATALOG.BrowserCapture.icon, { size: 16, "aria-hidden": true }), href: action.offer.source_url, target: "_blank" };
+          icon: null, href: action.offer.source_url, target: "_blank" };
         const offer = action.offer;
-        return make(offer.kind, blocked, () => recoverMedia(id, offer));
+        return make(offer.kind, blocked, async (_, acknowledged) => {
+          await recoverMedia(id, offer);
+          acknowledged();
+        }, { rawWrite: true });
       default: {
         const [execute, options] = verbs[action.kind];
         const descriptor = make(action.kind, blocked, execute, options);
@@ -957,7 +966,7 @@ export function projectConsumptionUndoActions(target: ActionContext["consumption
     return target.kind === "Podcast" && item.target.podcast_id === target.podcast_id;
   }).map(item => {
     const disabledReason = !ctx.online ? admissionReason() : undefined;
-    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel, icon: createElement(Undo2, { size: 16, "aria-hidden": true }),
+    return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel, icon: createElement(Icon.Undo, { "aria-hidden": true }),
       disabled: disabledReason !== undefined || item.phase === "Sending", disabledReason, busy: item.phase === "Sending",
       onSelect: () => { if (disabledReason === undefined && item.phase !== "Sending") ctx.consumption.undo(item.commandKey); },
     };
@@ -981,13 +990,13 @@ export function projectDownloadActions(input: {
   const { mediaId, title, ctx, busy, run, server } = input;
   const states = ACTION_CATALOG.Download.states;
   const command = (
-    state: { readonly label: string; readonly icon: LucideIcon },
+    state: { readonly label: string; readonly icon: Icon.Glyph | null },
     execute: () => Promise<void>,
     options: { readonly id?: string; readonly confirmation?: Confirmation; readonly disabledReason?: string; readonly waiting?: boolean; readonly tone?: "danger" } = {},
   ): Extract<ActionDescriptor, { kind: "command" }> => {
     const disabledReason = busy.has("Download") ? BLOCKED_COPY.Busy : options.disabledReason;
     return {
-      kind: "command", id: options.id ?? "Download", label: state.label, icon: createElement(state.icon, { size: 16, "aria-hidden": true }),
+      kind: "command", id: options.id ?? "Download", label: state.label, icon: state.icon && createElement(state.icon, { "aria-hidden": true }),
       tone: options.tone ?? "default", disabled: disabledReason !== undefined || undefined, disabledReason,
       waiting: busy.has("Download") || options.waiting || undefined,
       onSelect: () => run({ ref: `media:${mediaId}`, id: "Download", label: state.label, title,
@@ -1000,6 +1009,10 @@ export function projectDownloadActions(input: {
       await localMutation(op, args);
     } catch (error) {
       if (!ctx.isActive()) return;
+      if (error instanceof LocalMutationObservationError) {
+        if (error.observation.receipt !== null) return;
+        throw new ResourceActionUnknown({ fact: `not sure the download change for “${title}” saved.`, reason: UNKNOWN_OUTCOME_REASON });
+      }
       const code = error instanceof Error ? error.message : "";
       throw new ResourceActionFailure(code === "Storage" ? { fact: `couldn’t download “${title}”.`, reason: "this device is out of storage." }
         : { fact: `couldn’t change the download of “${title}”.`, reason: code === "Unsupported" ? "this item can’t be downloaded."

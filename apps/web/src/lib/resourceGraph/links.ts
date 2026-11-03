@@ -11,7 +11,7 @@ import { linkId, sortedEndpoints, normalizeQuote, passageId, passageKey } from "
 import type { PassageCapture } from "@nexus/authored/types";
 import type { LinkState } from "@nexus/authored/types";
 import { type WritingRuntime, selectStates } from "@/lib/notes/runtime";
-import { parseResourceRef } from "./resourceRef";
+import { parseResourceRef, resourceTypeLabel } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
@@ -127,7 +127,7 @@ export async function prepareLink(runtime: WritingRuntime, input: LinkRequest, s
     if(parsed.scheme==="passage_anchor")continue;
     const existing=capturedSources.source_stubs.find(source=>source.source_ref===ref);
     if(existing && label===null)continue;
-    intents.push({ kind: "capture_source", source_ref: ref, capture: { kind: parsed.scheme, label: label ?? ref, publication: existing?.capture.value.publication??null } });
+    intents.push({ kind: "capture_source", source_ref: ref, capture: { kind: parsed.scheme, label: label ?? resourceTypeLabel(parsed.scheme), publication: existing?.capture.value.publication??null } });
   }
   return { link_id: id, intents };
 }
@@ -200,7 +200,7 @@ export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget)
   const source = parseResourceRef(source_ref);
   if (!source) throw new TypeError("Invalid passage source");
   const sources=await store.readStates(selectStates({source_refs:[source_ref]}));
-  const stub:Intent[] = /^(note_block|page|highlight):/u.test(source_ref) || sources.source_stubs.some(stub=>stub.source_ref===source_ref) ? [] : [{kind:"capture_source",source_ref,capture:{kind:source.scheme,label:source_ref,publication}}];
+  const stub:Intent[] = /^(note_block|page|highlight):/u.test(source_ref) || sources.source_stubs.some(stub=>stub.source_ref===source_ref) ? [] : [{kind:"capture_source",source_ref,capture:{kind:source.scheme,label:resourceTypeLabel(source.scheme),publication}}];
   return { ref: `passage_anchor:${anchor_id}`, intents: [
     ...stub,
     { kind: "capture_passage", anchor_id, source_ref, normalized_exact, prefix, suffix, capture },

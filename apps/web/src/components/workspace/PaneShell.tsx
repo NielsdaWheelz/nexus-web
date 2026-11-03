@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw, Search, Share2, Download } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   createContext,
   useCallback,
@@ -357,7 +357,7 @@ function PaneView({
       kind: "command",
       id: "Pane.Search",
       label: "Find",
-      icon: <Search size={16} aria-hidden="true" />,
+      icon: <Icon.Search aria-hidden="true" />,
       disabled: resolving || undefined,
       disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
       waiting: resolving || undefined,
@@ -373,14 +373,14 @@ function PaneView({
       kind: "command",
       id: "Pane.SearchReturn",
       label: "Go back to reading position",
-      icon: <RotateCcw size={16} aria-hidden="true" />,
+      icon: <Icon.Locate aria-hidden="true" />,
       onSelect: find.goBack,
     });
   }
   if (refresh.command) paneActions.push(refresh.command);
   if (installedApp) paneActions.push({
     kind: "command", id: "Catalog.Save", label: "Save catalog for offline",
-    icon: <Download size={16} aria-hidden="true" />,
+    icon: <Icon.Download aria-hidden="true" />,
     disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
     disabledReason: admission !== "Ready" ? admissionReason() : catalog.accepting || catalog.status?.refreshing ? "the catalog is updating." : undefined,
     waiting: admission === "Ready" && (catalog.accepting || catalog.status?.refreshing === true) || undefined,
@@ -392,7 +392,7 @@ function PaneView({
       kind: "command",
       id: "RouteAction.Share",
       label: "Share…",
-      icon: <Share2 size={16} aria-hidden="true" />,
+      icon: <Icon.Share aria-hidden="true" />,
       onSelect: ({ triggerEl }) =>
         openShare(share, {
           returnFocusTo: () => triggerEl,

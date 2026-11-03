@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import {
   useCallback,
@@ -12,7 +13,6 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import * as Icon from "lucide-react";
 import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { type Line, type Verbs } from "@/components/feedback/stage";
@@ -126,21 +126,21 @@ function Transport({ compact = false }: { compact?: boolean }) {
   const canPlay = offerPause || loaded !== null || (queueReady && header !== null && header.current_entry_id !== null);
   const canSkip = loaded !== null && playbackSubject !== null;
   return <div className={styles.transport} role="group" aria-label="media player controls">
-    {episode ? <Button size="comfortable" iconOnly icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous}
+    {episode ? <Button size="comfortable" iconOnly icon={<Icon.Previous />} aria-label="previous" onClick={commands.previous}
       disabled={!queueReady || header === null || header.count === 0} /> : null}
-    {compact ? null : <Button size="comfortable" iconOnly aria-label="back 15 seconds" disabled={!canSkip}
+    {compact ? null : <Button size="comfortable" iconOnly className={styles.skip} aria-label="back 15 seconds" disabled={!canSkip}
       onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
-      icon={<span className={styles.numberedSkip}><Icon.RotateCcw /><span>15</span></span>} />}
+      icon={<Icon.SeekBack15 />} />}
     <Button emphasis="strong" size="comfortable" iconOnly className={styles.playPause}
       onClick={offerPause ? commands.pause : commands.resume} disabled={!canPlay}
       data-player-play="true" aria-busy={loaded?.phase === "Buffering" || preparingPlayback || undefined}
       aria-description={preparingPlayback ? "preparing playback" : loaded?.phase === "Buffering" ? "buffering" : undefined}
       aria-label={offerPause ? "pause media player" : "play media player"}
       icon={offerPause ? <Icon.Pause fill="currentColor" /> : <Icon.Play fill="currentColor" />} />
-    {compact ? null : <Button size="comfortable" iconOnly aria-label="forward 30 seconds" disabled={!canSkip}
+    {compact ? null : <Button size="comfortable" iconOnly className={styles.skip} aria-label="forward 30 seconds" disabled={!canSkip}
       onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
-      icon={<span className={styles.numberedSkip}><Icon.RotateCw /><span>30</span></span>} />}
-    {episode ? <Button size="comfortable" iconOnly icon={<Icon.SkipForward />} aria-label="next" onClick={commands.next}
+      icon={<Icon.SeekForward30 />} />}
+    {episode ? <Button size="comfortable" iconOnly icon={<Icon.Next />} aria-label="next" onClick={commands.next}
       disabled={!queueReady || header === null || header.current_index === null || header.current_index + 1 >= header.count} /> : null}
   </div>;
 }
@@ -433,7 +433,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   }, [state, identity, title, queuePlaybackFailure]);
 
   const idleCopy = queue.phase === "Unavailable" ? <Fact line={{ fact: "this browser can’t run the player." }} /> : null;
-  const openQueue = <Button ref={queueRef} size="comfortable" icon={<Icon.ListMusic />} aria-label="up next"
+  const openQueue = <Button ref={queueRef} size="comfortable" icon={<Icon.UpNext />} aria-label="up next"
     aria-haspopup="dialog" aria-expanded={isMobile ? sheetShown : queueOpen}
     onClick={() => { sourceOpened.current = false; if (isMobile) { setSheetTarget("Queue"); setSheetOpen(true); } else setQueueOpen(value => !value); }}>up next</Button>;
   const absentCopy = pendingPlayback !== null || !queue.known ? ""
@@ -442,8 +442,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   let utilities: ReactNode = <>
     {openQueue}
     <Button size="comfortable" className={styles.rateBadge} aria-label="playback settings" disabled>speed</Button>
-    <Button size="comfortable" iconOnly aria-label="chapters" icon={<Icon.ListMusic />} disabled />
-    <Button size="comfortable" iconOnly aria-label="stop playback" icon={<Icon.Square />} disabled />
+    <Button size="comfortable" iconOnly aria-label="chapters" icon={<Icon.Chapters />} disabled />
+    <Button size="comfortable" iconOnly aria-label="stop playback" icon={<Icon.Stop />} disabled />
   </>;
   let contents: ReactNode = null;
   let overlays: ReactNode = null;
@@ -455,10 +455,10 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       });
       if (pendingPlayback !== null) sheetPlayerContent = <><p>{absentCopy}</p><Transport compact /></>;
       contents = <div className={styles.idle}>
-        <Icon.Headphones className={styles.idleGlyph} aria-hidden="true" />
+        <Icon.Player className={styles.idleGlyph} aria-hidden="true" />
         {idleCopy ?? <span className={styles.idleCopy}>{absentCopy}</span>}
         {pendingPlayback !== null ? <Transport compact /> : <>
-          {retained ? <Button iconOnly size="comfortable" icon={<Icon.SkipBack />} aria-label="previous" onClick={commands.previous} disabled={queue.phase !== "Ready"} /> : null}
+          {retained ? <Button iconOnly size="comfortable" icon={<Icon.Previous />} aria-label="previous" onClick={commands.previous} disabled={queue.phase !== "Ready"} /> : null}
           {retained ? <Button onClick={commands.resume} disabled={queue.phase !== "Ready" || queue.header?.current_entry_id === null}>resume</Button> : null}
         </>}
         {openQueue}
@@ -467,7 +467,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           // eslint-disable-next-line @next/next/no-html-link-for-pages
           <a {...help} href="/lectern" className={buttonClassName({ size: "comfortable", iconOnly: true })}
             aria-label="open lectern" data-workspace-rich-target="true" onClick={openLectern} onKeyDown={openLectern}>
-            <Icon.ListMusic size={20} aria-hidden="true" />
+            <Icon.Lectern size={20} aria-hidden="true" />
           </a>
         )} />
       </div>;
@@ -493,7 +493,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
       const identityButton = <Identity state={state} size={44}
         label={`open ${source.descriptor.title}`} href={sourceHref} onOpen={openSource} />;
 
-      const stop = <Button size="comfortable" iconOnly icon={<Icon.Square />} aria-label="stop playback" onClick={commands.stop} />;
+      const stop = <Button size="comfortable" iconOnly icon={<Icon.Stop />} aria-label="stop playback" onClick={commands.stop} />;
       desktopSource = identityButton;
       const episode = source.kind === "Episode" ? source.descriptor : null;
       const podcast = episode?.subtitle ?? "this podcast";
@@ -575,7 +575,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         {episode && (!isMobile || (episode.chapters.length > 0 && playbackSubject !== null)) ? <Button ref={chaptersRef} size="comfortable" iconOnly
           aria-label="chapters" aria-expanded={shownPicker === "Chapters"} aria-controls={chaptersId} aria-haspopup={isMobile ? undefined : "dialog"}
           disabled={episode.chapters.length === 0 || playbackSubject === null}
-          onClick={() => toggle("Chapters")} icon={<Icon.ListMusic />} /> : null}
+          onClick={() => toggle("Chapters")} icon={<Icon.Chapters />} /> : null}
         {stop}
       </>;
       contents = isMobile ? <>
@@ -631,7 +631,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     <div className={styles.listening}><Seek active={presentation.visible} /></div>
     <div className={styles.options}>
       {utilities}
-      <Button size="comfortable" iconOnly icon={<Icon.X />} aria-label="hide player"
+      <Button size="comfortable" iconOnly icon={<Icon.Dismiss />} aria-label="hide player"
         tooltip={{ text: loaded?.phase === "Playing" || loaded?.phase === "Buffering" ? "hide player; playback continues" : "hide player" }}
         onClick={presentation.hide} />
     </div>

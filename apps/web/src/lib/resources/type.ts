@@ -2,7 +2,7 @@
  * What a resource is called and drawn as: its scheme, narrowed for `media` by that
  * media's own kind. A null kind is a modeled state: the surface does not hold the medium.
  */
-import type { LucideIcon } from "lucide-react";
+import type * as Icon from "@/lib/ui/icons";
 import { mediaKindGlyph, mediaKindLabel, type MediaKind } from "@/lib/media/kind";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { resourceIconForScheme, resourceTypeLabel, type ResourceScheme } from "@/lib/resourceGraph/resourceRef";
@@ -15,7 +15,7 @@ export type ResourceType =
 export const resourceType = (scheme: ResourceScheme, mediaKind: MediaKind | null): ResourceType =>
   scheme === "media" ? { scheme, mediaKind } : { scheme, mediaKind: null };
 
-export const resourceTypeGlyph = ({ scheme, mediaKind }: ResourceType): LucideIcon =>
+export const resourceTypeGlyph = ({ scheme, mediaKind }: ResourceType): Icon.Glyph =>
   mediaKind !== null ? mediaKindGlyph(mediaKind) : resourceIconForScheme(scheme);
 
 export const resourceTypeName = ({ scheme, mediaKind }: ResourceType): string =>
@@ -28,5 +28,5 @@ export const itemMediaKind = (item: ResourceItem): MediaKind | null => {
     : source?.media_kind ?? (body.kind === "named" ? body.media_kind : null);
 };
 
-export const paneGlyph = (href: string, mediaKind: MediaKind | undefined): LucideIcon =>
+export const paneGlyph = (href: string, mediaKind: MediaKind | undefined): Icon.Glyph =>
   mediaKind !== undefined ? mediaKindGlyph(mediaKind) : getPaneRouteIcon(href);

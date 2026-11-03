@@ -545,7 +545,7 @@ writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
 
-pdf navigation exposes direct minus, scale/fit-width reset and plus controls.
+pdf navigation exposes direct zoom out, scale/fit-width reset and zoom in controls.
 `Reader.setZoom` and its surface capability accept `number | null`: numbers
 use the existing bounds, null selects responsive `page-width` fitting. chosen
 mode participates in equality and restore even when fixed and fitted scales
@@ -716,11 +716,13 @@ the existing permission fence.
 
 filter identity uses the document-map count keys: `highlights`, `citations`,
 `links`, `machine_links`, in that order. `evidence/model.ts` owns the typed labels
-`highlights`, `citations`, `links`, `librarian links` and glyphs `Highlighter`,
-`NotebookTabs`, `Link`, `Glasses`; controls read each count directly by its key.
+`highlights`, `citations`, `links`, `librarian links`. the first three draw
+`Icon.Highlight`, `Icon.SourceReference` and `Icon.Link`; librarian links has no
+sign and keeps its visible word. controls read each count directly by its key.
 hidden filters, exact-fact reveals and marker classification share those keys;
-presentation labels and glyphs never determine membership. each filter is a
-`ChoiceField` `Facet` named by its visually hidden label alone. its count
+presentation labels and glyphs never determine membership. signed filters are
+`ChoiceField` facets named by their visually hidden labels; librarian links is an
+inline checkbox named by its visible label. its count
 describes the current view; an exact count, zero included, shows as an aria-hidden
 numeral and is described separately (`1 item`, `{n} items`). zero never disables
 a filter.
@@ -822,11 +824,11 @@ give their rail position and order.
   tokens on `.frame[data-theme]` in `documentReader.module.css`. pdf pages keep
   their source colours; the theme paints the frame around them.
 - **view menu.** for every readable item, pdfs included, the view section opens
-  with the `Reader theme` [menu choice](overlays.md#surfaces), "Light" (`Sun`) or
-  "Dark" (`Moon`), which sets the profile theme absolutely; without `editable` it
+  with the `Reader theme` [menu choice](overlays.md#surfaces), the words "Light" or
+  "Dark", which sets the profile theme absolutely; without `editable` it
   is disabled with "requires a connection". an unreadable item has no theme row.
   the "Reader settings" link to `/settings/reader` follows, carrying that route's
-  icon (`ALargeSmall`), the destination's one glyph.
+  sign (`ReaderSettings`), the destination's one glyph.
 
 ## verification
 

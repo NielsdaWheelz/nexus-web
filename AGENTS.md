@@ -43,6 +43,8 @@ Binding owner decisions for every new or changed line.
 - **Docs.** Module docs hold purpose, contract and invariants. Do not commit
   plans, verification receipts or evidence dumps: a change's plan and proof go
   in its PR body.
+- **Glyphs.** one drawing, one gloss, in `lib/ui/icons.tsx`; a menu row paints a
+  sign only if that sign is read bare somewhere.
 
 ## Record what you find
 

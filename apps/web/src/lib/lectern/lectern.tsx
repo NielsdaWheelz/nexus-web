@@ -9,11 +9,11 @@
 // blocks the lane, and holds at the account, until its retry (past its revision it
 // settled, else it is resent) or a read past its revision settles it. A refused
 // write's caller hears the refusal. The server refuses a membership write as a
-// conflict only when the revision moved, so the lane then waits for a read past it;
-// a move's conflict can come at an unchanged revision (its row went hidden), so it
-// leaves the floor.
+// conflict without identifying its cause. A refused membership write waits for an accepted
+// reread before another write uses its floor.
 
-import { remoteAdmission, remoteAttemptAllowed, remoteReady, subscribeAdmission } from "@/lib/native/admission";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import {
   createContext,
   useContext,
@@ -25,8 +25,8 @@ import {
   type ReactNode,
 } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import type { CommandVerb } from "@/components/feedback/stage";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import type { Verbs, CommandVerb } from "@/components/feedback/stage";
 import { invalidateReads, publishChange, useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import {
@@ -44,7 +44,6 @@ import {
 import { admissionRefusal, isApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { catalogLine } from "@/lib/catalog/copy";
-import { resendVerbs } from "@/lib/collections/admissionReason";
 import type { HeldWrite } from "@/lib/consumption/collectionCommands";
 import { refuseLibrary } from "@/lib/libraries/errors";
 import { useWorkGuard } from "@/lib/unsavedWork";
@@ -92,9 +91,8 @@ export interface LecternCommands {
   readonly receipts: ReadonlyMap<string, LecternReceipt>;
   /** The one collection append in the lane, whichever collection it targets. */
   readonly collectionPending: { readonly target: Schema<"CollectionLecternRequest">["target"]; readonly title: string; readonly attempt: number; readonly phase: "Sending" | "Checking" | "Unconfirmed"; readonly check: () => Promise<LecternOutcome> } | null;
-  /** The unknown collection append, for the account to hold. `content` and `actions` restate it
-   * for the old presenter that still mounts it, and leave with it. */
-  readonly collectionFailure: (HeldWrite & { readonly content: { tone: "Warning"; title: string; message?: string }; readonly actions: readonly [{ label: string; onClick: CommandVerb["run"]; busy?: boolean; disabledReason?: string; commandKey: string }] }) | null;
+  /** The unknown collection append, projected by this render owner for the account to hold. */
+  readonly collectionFailure: (Omit<HeldWrite, "resend"> & { readonly verbs: Verbs | null }) | null;
   /** Rejects with the transport's error when the server refuses, or admission does. */
   readonly addCollection: (input: { readonly title: string; readonly request: Schema<"CollectionLecternRequest">; readonly onAcknowledged?: () => void }) => Promise<LecternOutcome | CollectionRefusal>;
   readonly ensure: (input: Input) => Promise<LecternOutcome>;
@@ -127,11 +125,11 @@ interface CollectionRequest {
 interface Lane extends MoveEntry {
   readonly requests: Map<string, Request>;
   collection: CollectionRequest | null;
-  /** The newest read's revision, as the last commit saw it. */
-  read: OrderRevision | null;
+  /** The newest accepted read, as the last commit saw it. */
+  read: { readonly revision: OrderRevision; readonly generation: number } | null;
   lastAck: OrderRevision | null;
-  /** A membership write's refused revision: writes wait for a read past it. */
-  conflict: OrderRevision | null;
+  /** The accepted-read generation at refusal; a later accepted read releases its floor. */
+  conflict: number | null;
   readonly receipts: Map<string, LecternReceipt>;
 }
 interface Context {
@@ -146,10 +144,9 @@ const newer = (a: OrderRevision | null, b: OrderRevision | null) =>
   a === null || (b !== null && compareRevision(b, a) > 0) ? b : a;
 const past = (read: OrderRevision | null, revision: OrderRevision) =>
   read !== null && compareRevision(read, revision) > 0;
-/** The revision writes go at: null until a read, and after a membership write's
- * conflict until a read passes it. */
+/** The revision writes go at; a refusal fences it until a later read is accepted. */
 const floorOf = (lane: Lane, read: OrderRevision | null) =>
-  lane.conflict !== null && !past(read, lane.conflict)
+  lane.conflict !== null
     ? null
     : newer(newer(read, lane.lastAck), lane.acked?.revision ?? null);
 
@@ -164,6 +161,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const read: ServerValue<Lectern> = stamped.status === "ready" ? { ...stamped, data: stamped.data.data } : stamped;
   const consumptionRevision = stamped.status === "ready" ? stamped.data.consumption_revision : null;
   const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   const guard = useWorkGuard();
   // Subscribed, so the holds' resends read admission as it stands.
   const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
@@ -184,6 +182,11 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const [collectionListeners] = useState(() => new Set<() => void>());
   const emit = () => { setVersion(value => value + 1); for (const listener of collectionListeners) listener(); };
   const current = async (signal: AbortSignal) => (await readLectern(signal)).data.order_revision;
+
+  function rereadAfterRefusal() {
+    lane.conflict = lane.read?.generation ?? 0;
+    read.refetch();
+  }
 
   function finish(request: Request, settled: LecternOutcome) {
     lane.requests.delete(request.mediaId);
@@ -236,10 +239,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         request.settle("Unconfirmed");
         break;
       case "Refused":
-        if (result.error.code === "E_RESOURCE_CONFLICT") {
-          lane.conflict = expected;
-          read.refetch();
-        }
+        if (result.error.code === "E_RESOURCE_CONFLICT") rereadAfterRefusal();
         lane.requests.delete(request.mediaId);
         request.reject(result.error);
         break;
@@ -279,7 +279,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         return "Unconfirmed";
       case "Refused":
         lane.collection = null; request.unregister();
-        if (result.error.code === "E_RESOURCE_CONFLICT") { lane.conflict = request.expected; read.refetch(); }
+        if (result.error.code === "E_RESOURCE_CONFLICT") rereadAfterRefusal();
         emit(); pump(); throw result.error;
       case "Defect":
         // Delivery may have crossed the boundary before the defect; keep the lane blocked.
@@ -314,7 +314,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   /** Send the head when nothing else is in flight and the floor is known. */
   function pump() {
     if (!remoteReady()) return;
-    const floor = floorOf(lane, lane.read);
+    const floor = floorOf(lane, lane.read?.revision ?? null);
     const head = lane.requests.values().next().value;
     if (lane.collection === null && lane.pending === null && floor !== null && head?.phase === "Queued")
       void send(head, floor, false);
@@ -361,7 +361,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       signal: alive.signal,
       fail,
       emit,
-      refused: error => refuseLibrary(outcome, error, `couldn’t move “${pending.title}”.`, "the list changed meanwhile."),
+      refused: error => refuseLibrary(outcome, error, `couldn’t move “${pending.title}”.`),
     });
     pump();
     if (moved === "Acknowledged" || moved === "Rejected") publishChange("Lectern");
@@ -371,8 +371,12 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   // Every commit: record the read, settle what it passed, drop the receipts it
   // covers, and send the next queued intent.
   useEffect(() => {
-    lane.read = readRevision;
+    lane.read = read.status === "ready" ? { revision: read.data.order_revision, generation: read.generation } : null;
     let changed = false;
+    if (lane.conflict !== null && lane.read !== null && lane.read.generation > lane.conflict) {
+      lane.conflict = null;
+      changed = true;
+    }
     if (readRevision !== null) {
       if (lane.collection?.phase === "Unconfirmed" && past(readRevision, lane.collection.expected)) {
         const request = lane.collection; lane.collection = null; request.unregister();
@@ -468,7 +472,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
     }),
     // The lane is mutable and `version` is its change; the closures read it live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stamped, revision, readRevision, version, defect, admission],
+    [stamped, revision, readRevision, version, defect, admission, resendFeedback],
   );
   const holds = [...lane.requests.values()].filter(request => request.unconfirmed > 0);
   return (
@@ -477,24 +481,22 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       {holds.map(request => {
         const id = `lectern-membership:${request.mediaId}`;
         return <Hold key={id} id={id} attempt={request.unconfirmed - 1}
-          line={{ fact: request.intent.kind === "Remove" ? `not sure removing “${request.title}” from the lectern saved.` : `not sure adding “${request.title}” to the lectern saved.`,
-            reason: "it may have gone through." }}
-          verbs={resendVerbs({ label: "retry", commandKey: id, busy: request.phase !== "Unconfirmed",
-            run: () => void check(request).catch((error: unknown) => fail({ error })) }, remoteAttemptAllowed)} />;
+          {...resendFeedback({ line: { fact: request.intent.kind === "Remove" ? `not sure removing “${request.title}” from the lectern saved.` : `not sure adding “${request.title}” to the lectern saved.`,
+            reason: UNKNOWN_OUTCOME_REASON }, resend: { label: "retry", commandKey: id, busy: request.phase !== "Unconfirmed",
+            run: () => void check(request).catch((error: unknown) => fail({ error })) } })} />;
       })}
       {lane.pending !== null && lane.pending.unconfirmed > 0 ? <MoveHold pending={lane.pending} check={value.order.state.check} /> : null}
     </LecternContext.Provider>
   );
 
   function collectionHold(request: CollectionRequest): NonNullable<LecternCommands["collectionFailure"]> {
-    const verbs = resendVerbs({ label: "retry", commandKey: "lectern-collection", busy: request.phase !== "Unconfirmed", run: () => {
-      if (lane.collection === request && request.phase === "Unconfirmed") void sendCollection(request, true).catch((error: unknown) => fail({ error }));
-    } }, remoteAttemptAllowed);
-    const [verb] = verbs;
-    const line = { fact: `not sure adding “${request.title}” to the lectern saved.`, reason: "it may have gone through." };
-    return { key: "lectern-collection", occurrence: request, attempt: Math.max(0, request.unconfirmed - 1), line, verbs,
-      content: { tone: "Warning", title: line.fact, message: line.reason },
-      actions: [{ label: verb.label, onClick: verb.run, busy: verb.busy, disabledReason: verb.disabledReason, commandKey: verb.commandKey }] };
+    return { key: "lectern-collection", occurrence: request, attempt: Math.max(0, request.unconfirmed - 1),
+      ...resendFeedback({ line: { fact: `not sure adding “${request.title}” to the lectern saved.`, reason: UNKNOWN_OUTCOME_REASON },
+        resend: { label: "retry", commandKey: "lectern-collection", busy: request.phase !== "Unconfirmed", run: () => {
+          if (lane.collection === request && request.phase === "Unconfirmed") void sendCollection(request, true).catch((error: unknown) => fail({ error }));
+        } },
+      }),
+    };
   }
 }
 

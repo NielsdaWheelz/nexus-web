@@ -2,7 +2,7 @@
 // google first, then email and password, then the other provider.
 // native handoff context selects the current credential attempt; the browser
 // user agent grants no identity and never selects an auth protocol.
-import { Eye, EyeOff } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Link from "next/link";
 import { useId, useRef, useState, type ReactNode } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
@@ -303,7 +303,7 @@ export default function LoginPageClient({
                   className={authStyles.reveal}
                   size="comfortable"
                   iconOnly
-                  icon={revealed ? <EyeOff /> : <Eye />}
+                  icon={revealed ? <Icon.Hide /> : <Icon.Show />}
                   disabled={completedTarget === null}
                   aria-label={revealed ? "Hide password" : "Show password"}
                   aria-controls="password-sign-in-password"

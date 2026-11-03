@@ -2,10 +2,10 @@
 
 /** One outer outline batches mounted occurrence probes. Local committed links are
  * authoritative; remote facts fail separately and never decide local emptiness.
- * Descriptor identity fences results from a previous occurrence's exclusions. A probe
- * is auxiliary to rows already shown: one that fails in storage proves nothing and says
+ * Proofs outlive their mount for the list’s life; descriptor identity fences results
+ * from a previous occurrence’s exclusions. A probe is auxiliary to rows already shown: one that fails in storage proves nothing and says
  * nothing; a defect throws to the boundary. */
-import {useCallback, useEffect, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import {useAuthoredStore, useAuthoredAccountId} from "@/lib/authored/provider";
 import {apiFetch} from "@/lib/api/client";
 import type {ApiJson,Schema} from "@/lib/api/wire";
@@ -44,15 +44,10 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
   });
   const readyRemote=remote.status==="ready"?remote.data:null;
   const [retainedRemote,setRetainedRemote]=useState<ReadonlyMap<string,{identity:string;proof:RemoteProof}>>(()=>new Map());
+  // failed refreshes keep what was proved.
   useEffect(()=>{
-    setRetainedRemote(current=>{
-      const next=new Map<string,{identity:string;proof:RemoteProof}>();
-      for(const [id,descriptor]of entries){const incoming=readyRemote?.get(id),proof=incoming?.identity===descriptor.identity?incoming:current.get(id);if(proof?.identity===descriptor.identity)next.set(id,proof);}
-      return next.size===current.size&&[...next].every(([id,proof])=>current.get(id)===proof)?current:next;
-    });
-    // The serialized mounted descriptors own retention; failed refreshes do not.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[key,readyRemote]);
+    if(readyRemote)setRetainedRemote(current=>[...readyRemote].every(([id,proof])=>current.get(id)===proof)?current:new Map([...current,...readyRemote]));
+  },[readyRemote]);
   const proofFor=(id:string,identity:string)=>{const incoming=readyRemote?.get(id);return incoming?.identity===identity?incoming:retainedRemote.get(id);};
   const occurrences:(OutlineChildrenOccurrence&{key:string})[]=entries.map(([id,descriptor])=>{
     const retained=proofFor(id,descriptor.identity);
@@ -64,8 +59,7 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
   const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;accountId:string|null}>(()=>({proofs:new Map(),accountId}));
   useEffect(()=>{
     let active=true;const stops:(()=>void)[]=[];
-    const mounted=new Set(occurrences.map(item=>item.key));
-    setLocal(current=>({accountId,proofs:new Map(current.accountId===accountId?[...current.proofs].filter(([id])=>mounted.has(id)):[])}));
+    setLocal(current=>({accountId,proofs:current.accountId===accountId?current.proofs:new Map()}));
     for(let offset=0;offset<occurrences.length;offset+=100){
       const chunk=occurrences.slice(offset,offset+100),query={kind:"outline_children" as const,occurrences:chunk.map(({refs,excluded_link_ids})=>({refs,excluded_link_ids}))};
       let revision:bigint|null=null;
@@ -86,14 +80,15 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[store,localKey,attempt,throwLater]);
   const localQueries=new Map(occurrences.map(item=>[item.key,item]));
-  const items=new Map<string,Proof>();
+  const seen=useRef(new Map<string,Proof>());
+  // over current entries only: a retired id has no local query.
   for(const [id,descriptor]of entries){
     const retained=proofFor(id,descriptor.identity);
     const fact=retained?.identity===descriptor.identity?retained.proof:null;
     const localProof=local.accountId===accountId?local.proofs.get(id):null,query=localQueries.get(id)!;
     const localPositive=localProof?.value===true&&JSON.stringify(localProof.query.excluded_link_ids)===JSON.stringify(query.excluded_link_ids)&&localProof.query.refs.every(ref=>query.refs.includes(ref));
-    items.set(id,{identity:descriptor.identity,value:localPositive||fact?.has_children===true,local_ref:fact?.local_ref??null});
+    seen.current.set(id,{identity:descriptor.identity,value:localPositive||fact?.has_children===true,local_ref:fact?.local_ref??null});
   }
   const retry=useCallback(()=>setAttempt(n=>n+1),[]);
-  return {items,retry};
+  return {items:seen.current,retry};
 }

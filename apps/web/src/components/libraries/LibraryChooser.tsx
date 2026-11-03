@@ -1,7 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, CircleAlert, Lock, Minus, Plus } from "lucide-react";
+import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Fact, Field } from "@/components/feedback/Fact";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -31,6 +31,7 @@ export interface ChooserRow {
 /** Only for callers outside this lane until they pass `failure`; L7 deletes it. */
 export interface ChooserError {
   readonly occurrence: object;
+  readonly attempt?: number;
   readonly content: FeedbackContent;
   readonly retry: (() => void) | null;
   readonly retryLabel?: string;
@@ -74,10 +75,11 @@ function progress(row: ChooserRow): string | null {
  * is the owner's read; a command's outcome speaks where its owner raises it. A create row its owner
  * gates stands disabled with the reason. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, failure, error, create, empty,
+  context, membershipKind, rows, onToggle, loading, summary, failure, error, create, empty, scrollRef,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly membershipKind: "Confirmed" | "Chosen";
   readonly rows: readonly ChooserRow[];
   readonly onToggle: (change: { id: string; included: boolean }) => boolean;
@@ -168,6 +170,7 @@ export default function LibraryChooser({
           }}
         />
       </div>
+      <div ref={scrollRef} className={styles.body}>
       {summary !== null ? <p className={`${styles.summary} ${collection.detail}`}>{summary}</p> : null}
       {shownFailure ? <div className={styles.region}>{shownFailure}</div> : null}
       {loading && rows.length === 0 && !shownFailure ? <div className={styles.ruling}><Ruling /></div> : null}
@@ -190,16 +193,16 @@ export default function LibraryChooser({
             </span>
             <span className={`${collection.adornment} ${styles.marks}`} aria-hidden="true">
               <ControlContents busy={row.progress === "Pending"}
-                icon={row.progress === "Uncertain" ? <CircleAlert /> : row.action.kind === "Locked" ? <Lock /> : undefined} />
-              <span className={styles.mark}>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Check size={16} />
-                : count.included > 0 ? <Minus size={16} /> : null}</span>
+                icon={row.progress === "Uncertain" ? <Icon.Warning /> : row.action.kind === "Locked" ? <Icon.Blocked /> : undefined} />
+              <span className={styles.mark}>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Icon.Check size={16} />
+                : count.included > 0 ? <Icon.Remove size={16} /> : null}</span>
             </span>
           </div>;
         })}
         {canCreate || createGate !== null ? <div {...navigation.optionProps(createKey)}
           aria-label={`create “${name}”`} aria-describedby={createGate === null ? undefined : `${base}-create-gate`}
           className={collection.row} data-tone="accent">
-          <Plus className={collection.adornment} size={16} aria-hidden="true" />
+          <Icon.Add className={collection.adornment} size={16} aria-hidden="true" />
           <span className={collection.content}>
             <span>create “{name}”</span>
             {createGate === null ? null : <span id={`${base}-create-gate`} className={collection.detail}>{createGate}</span>}
@@ -209,6 +212,7 @@ export default function LibraryChooser({
       {nothing ? <div className={styles.region}>{refused
         ? <Field id={invalidId} line={{ fact: invalid }} />
         : <Fact line={{ fact: q === "" ? empty : "no libraries match." }} />}</div> : null}
+      </div>
     </div>
   );
 }

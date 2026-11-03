@@ -1,24 +1,23 @@
-# highlight rows outside the open source read their excerpt twice
+# highlight rows outside the source repeat excerpt reads
 
-status: open; source audit, not measured.
+status: open; remaining paths established by source review.
 
-a highlight row placed in its open source opens two authored subscriptions. any other
-highlight row opens four:
+reader connections passes placed highlight projections to `ResourceOutlineRow` and
+`HighlightAnnotation`; neither owns a per-row excerpt/resource subscription there.
+clipped captures are filled once by `lib/documentReader/annotations.ts`.
 
-- `{kind:"excerpt"}` in `LocalRow`: `apps/web/src/components/resources/ResourceOutlineRow.tsx:131`
-- the identical query again in `useFullExcerpt`: `apps/web/src/components/resources/ExcerptDisclosure.tsx:29`
-- `{kind:"resource"}` for the source label: `ResourceOutlineRow.tsx:216`
-- `{kind:"resource"}` in `apps/web/src/components/notes/HighlightAnnotation.tsx:35`
+outside that held path, `components/resources/ResourceOutlineRow.tsx:LocalRow`
+can query `{kind:"excerpt"}` when it has a reading ref. its `AuthoredRow` then
+renders `FullResourceBody`, whose `ExcerptDisclosure.tsx:useFullExcerpt` queries
+the same excerpt. it can also read the source label. `HighlightAnnotation`'s
+former resource query is deleted. store-side subscription deduplication has not
+been measured. remote passage bodies still read the full server item.
 
-`useAuthoredQuery` subscribes once per hook (`apps/web/src/lib/notes/hooks.ts:29`).
-store-side dedupe was not checked. the duplicate is costly in contained readings,
-where `excerptQuery` pages intervals and quote windows
-(`node/authored/src/queries.ts:472-507`). remote passage rows outside the source also
-issue one full `/resource-items` GET each (`ExcerptDisclosure.tsx:42`).
+impact: avoidable per-row work on unplaced highlights and other workspace surfaces,
+especially contained readings whose excerpt query pages intervals and quote windows.
+`OutlineEditorRow` also needs full bodies, so removing disclosure's query globally
+would discard its ownership contract.
 
-impact: per-row cost on large books, for unplaced rows and on other surfaces.
-`OutlineEditorRow` still needs `FullResourceBody`, so the row can't simply reuse its
-own read everywhere. related: [large reader connections](large-reader-connections-blocks-ui.md).
-
-resolved when a mounted highlight row opens one excerpt read, proved by a subscription
-count on a representative book.
+resolved when the host supplies the already-proved full excerpt where it has one,
+and representative mounted rows issue one excerpt read, with failures and capture
+revision checks preserved.

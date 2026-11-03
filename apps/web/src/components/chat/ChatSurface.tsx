@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import {
   createContext,
@@ -13,7 +14,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowDown } from "lucide-react";
 import { StageAnchor } from "@/components/feedback/Slips";
 import Button from "@/components/ui/Button";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -134,7 +134,7 @@ const ChatSurface = forwardRef<
           </div>
           {scroll.latestBelow ? (
             <div className={styles.latest}>
-              <Button icon={<ArrowDown size={14} aria-hidden="true" />} onClick={scroll.toLatest}>
+              <Button icon={<Icon.Down aria-hidden="true" />} onClick={scroll.toLatest}>
                 Latest
               </Button>
             </div>

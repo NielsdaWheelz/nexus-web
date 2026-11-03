@@ -1,12 +1,11 @@
 "use client";
-
-import { ArrowLeft } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useId, type FormEvent } from "react";
 import Button from "@/components/ui/Button";
 import { Field } from "@/components/feedback/Fact";
-import { Announcement, Hold } from "@/components/feedback/Feedback";
-import { transportVerbs } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./Switchboard.module.css";
@@ -26,6 +25,10 @@ export default function CreateLibraryPanel({
   onSubmit: (intent: OpenIntent) => void;
   mobile: boolean;
 }) {
+  const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
+  const admission = useRemoteAdmission();
+  const gated = admission === "UpdateRequired" || admission === "SignInRequired";
   const running = submit.kind === "Running";
   const failed = submit.kind === "Running" || submit.kind === "Retryable" ? submit : null;
   const failure = failed?.failure ?? null;
@@ -38,20 +41,20 @@ export default function CreateLibraryPanel({
     : failure?.kind === "Transport" && transport !== null ? TRANSPORT_LINES[transport].command(failure.fact) : null;
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (name.trim() && !running) onSubmit("default");
+    if (name.trim() && !running && !gated) onSubmit("default");
   };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Consume") event.preventDefault();
     else if (activation.kind === "Open" && activation.intent === "new_pane") {
       event.preventDefault();
-      if (name.trim() && !running) onSubmit(activation.intent);
+      if (name.trim() && !running && !gated) onSubmit(activation.intent);
     }
   };
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label={mobile ? "back" : "Back"} onClick={onBack} />
+        <Button iconOnly icon={<Icon.Left />} className={styles.iconButton} aria-label={mobile ? "back" : "Back"} onClick={onBack} />
         <h2 tabIndex={-1} data-switchboard-heading>
           {mobile ? "new library" : "New library"}
         </h2>
@@ -68,13 +71,10 @@ export default function CreateLibraryPanel({
             onChange={(event) => onName(event.currentTarget.value)}
           />
         </label>
-        {refusal && failure ? <>
-          <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport, { signIn: null }) ?? undefined : undefined} />
-          <Announcement text={refusal.reason ? `${refusal.fact} ${refusal.reason}` : refusal.fact} level="Polite" occurrence={failure} />
-        </> : null}
-        {failure?.kind === "Unknown" ? <Hold id="create-library" attempt={failed?.failures} line={{ fact: "not sure the library was created.", reason: "it may have gone through." }} /> : null}
+        {refusal ? <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport) ?? undefined : undefined} /> : null}
+        {failure?.kind === "Unknown" ? <Hold id="create-library" attempt={failed?.failures} {...resendFeedback({ line: { fact: "not sure the library was created.", reason: UNKNOWN_OUTCOME_REASON }, resend: null })} /> : null}
         <Button emphasis="strong" type="submit" aria-busy={running || undefined}
-          disabled={!name.trim() || running} onClick={submitGesture}>{mobile ? "create" : "Create"}</Button>
+          disabled={!name.trim() || running || gated} onClick={submitGesture}>{mobile ? "create" : "Create"}</Button>
       </form>
     </div>
   );

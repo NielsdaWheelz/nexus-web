@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import IndexBibliography from "@/components/resources/IndexBibliography";
 import {
   collectionActivityText,
@@ -25,7 +25,7 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
   }
   return <span className={styles.facts}>
     {remaining ? <span aria-hidden="true">{remaining.visible}</span> : null}
-    {state === "Finished" ? <Check className={styles.glyph} aria-hidden="true" focusable="false" /> : <svg
+    {state === "Finished" ? <Icon.Check className={styles.glyph} aria-hidden="true" focusable="false" /> : <svg
       className={styles.glyph} viewBox="0 0 16 16" aria-hidden="true" focusable="false"
     >
       <circle cx="8" cy="8" r="6" fill={state === "Unread" || progress === 0 ? "currentColor" : "none"}

@@ -1,44 +1,8 @@
-import {
-  ArrowUpRight,
-  Captions,
-  CircleCheck,
-  CircleX,
-  Download,
-  ExternalLink,
-  FileDown,
-  FilePenLine,
-  GitFork,
-  Highlighter,
-  Info,
-  Library,
-  ListMinus,
-  ListPlus,
-  ListStart,
-  MessageCircle,
-  NotebookPen,
-  PanelsTopLeft,
-  Pencil,
-  Play,
-  Pause,
-  RefreshCw,
-  RotateCcw,
-  Rss,
-  Search,
-  Settings,
-  Share2,
-  Sparkles,
-  SquareDashedText,
-  Trash2,
-  Undo2,
-  Upload,
-  Wrench,
-  type LucideIcon,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
+
 import type { Line } from "@/components/feedback/stage";
 import { outcomeUnknown, type ApiError } from "@/lib/api/client";
-import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import { CONFLICT_NOTICE } from "@/lib/imports/copy";
-import { remoteAdmission } from "@/lib/native/admission";
+import { admissionReason as currentAdmissionReason } from "@/lib/api/failure";
 
 type Group =
   | "Navigate"
@@ -57,197 +21,199 @@ export interface Confirmation {
 
 interface Entry {
   readonly label: string;
-  readonly icon: LucideIcon;
+  readonly icon: Icon.Glyph | null;
   readonly group: Group;
   readonly confirmation?: Confirmation;
   readonly states?: Readonly<
-    Record<string, { readonly label: string; readonly icon: LucideIcon }>
+    Record<string, { readonly label: string; readonly icon: Icon.Glyph | null }>
   >;
 }
 
 /**
  * Every verb's copy, keyed by the server's action kind (a recovery offer by its
- * offer kind). Insertion order is menu order; groups are separated.
+ * offer kind). Insertion order is menu order; groups are separated. A `null` icon
+ * is a word: its row keeps a blank slot. `as const` keeps the `null` literal, so a
+ * direct read of a wordless entry does not compile where a glyph is required.
  */
 export const ACTION_CATALOG = {
-  Open: { label: "Open", icon: ArrowUpRight, group: "Navigate" },
+  Open: { label: "Open", icon: null, group: "Navigate" },
   OpenInNewPane: {
     label: "Open in new pane",
-    icon: PanelsTopLeft,
+    icon: null,
     group: "Navigate",
   },
-  OpenSource: { label: "Open source", icon: ExternalLink, group: "Navigate" },
-  BrowserCapture: { label: "Open source in new tab", icon: ExternalLink, group: "Navigate" },
-  OpenPodcastFeed: { label: "Open feed", icon: Rss, group: "Navigate" },
-  Metadata: { label: "Metadata…", icon: Info, group: "Navigate" },
+  OpenSource: { label: "Open source", icon: null, group: "Navigate" },
+  BrowserCapture: { label: "Open source in new tab", icon: null, group: "Navigate" },
+  OpenPodcastFeed: { label: "Open feed", icon: null, group: "Navigate" },
+  Metadata: { label: "Metadata…", icon: null, group: "Navigate" },
   Playback: {
     label: "Play",
-    icon: Play,
+    icon: Icon.Play,
     group: "Consume",
     states: {
-      Idle: { label: "Play", icon: Play },
-      Playing: { label: "Pause", icon: Pause },
-      Buffering: { label: "Pause", icon: Pause },
-      Paused: { label: "Resume", icon: Play },
-      Ended: { label: "Replay", icon: RotateCcw },
+      Idle: { label: "Play", icon: Icon.Play },
+      Playing: { label: "Pause", icon: Icon.Pause },
+      Buffering: { label: "Pause", icon: Icon.Pause },
+      Paused: { label: "Resume", icon: Icon.Play },
+      Ended: { label: "Replay", icon: Icon.Play },
     },
   },
-  PlayFromHere: { label: "Play from here", icon: Play, group: "Consume" },
-  AddToQueue: { label: "Add to queue", icon: ListPlus, group: "Consume" },
-  PlayNext: { label: "Play next", icon: ListStart, group: "Consume" },
+  PlayFromHere: { label: "Play from here", icon: Icon.Play, group: "Consume" },
+  AddToQueue: { label: "Add to queue", icon: null, group: "Consume" },
+  PlayNext: { label: "Play next", icon: null, group: "Consume" },
   Consumption: {
     label: "Mark as finished",
-    icon: CircleCheck,
+    icon: null,
     group: "Consume",
     states: {
-      DocumentIncomplete: { label: "Mark as finished", icon: CircleCheck },
-      DocumentFinished: { label: "Mark as unread", icon: Undo2 },
-      EpisodeUnplayed: { label: "Mark as played", icon: CircleCheck },
-      EpisodePlayed: { label: "Mark as unplayed", icon: Undo2 },
+      DocumentIncomplete: { label: "Mark as finished", icon: null },
+      DocumentFinished: { label: "Mark as unread", icon: null },
+      EpisodeUnplayed: { label: "Mark as played", icon: null },
+      EpisodePlayed: { label: "Mark as unplayed", icon: null },
     },
   },
-  MarkCollectionFinished: { label: "Mark all finished…", icon: CircleCheck, group: "Consume" },
-  MarkCollectionUnread: { label: "Mark all unread…", icon: Undo2, group: "Consume" },
-  ResetProgress: { label: "Reset progress", icon: RotateCcw, group: "Consume" },
+  MarkCollectionFinished: { label: "Mark all finished…", icon: null, group: "Consume" },
+  MarkCollectionUnread: { label: "Mark all unread…", icon: null, group: "Consume" },
+  ResetProgress: { label: "Reset progress", icon: null, group: "Consume" },
   Transcript: {
     label: "Request transcript…",
-    icon: Captions,
+    icon: null,
     group: "Consume",
     states: {
-      not_requested: { label: "Request transcript…", icon: Captions },
-      queued: { label: "Transcript queued", icon: Captions },
-      running: { label: "Transcript processing", icon: Captions },
-      ready: { label: "Open transcript", icon: Captions },
-      partial: { label: "Open transcript", icon: Captions },
-      unavailable: { label: "Transcript unavailable", icon: Captions },
-      failed_provider: { label: "Retry transcript", icon: RotateCcw },
+      not_requested: { label: "Request transcript…", icon: null },
+      queued: { label: "Transcript queued", icon: null },
+      running: { label: "Transcript processing", icon: null },
+      ready: { label: "Open transcript", icon: null },
+      partial: { label: "Open transcript", icon: null },
+      unavailable: { label: "Transcript unavailable", icon: null },
+      failed_provider: { label: "Retry transcript", icon: Icon.Again },
     },
   },
-  TranscribePodcastEpisodes: { label: "Transcribe all episodes…", icon: Captions, group: "Consume" },
+  TranscribePodcastEpisodes: { label: "Transcribe all episodes…", icon: null, group: "Consume" },
   Download: {
     label: "Download for offline",
-    icon: Download,
+    icon: Icon.Download,
     group: "Consume",
     states: {
-      Downloading: { label: "Cancel download", icon: CircleX },
-      Failed: { label: "Retry download", icon: RotateCcw },
-      Ready: { label: "Remove download", icon: Trash2 },
+      Downloading: { label: "Cancel download", icon: Icon.Dismiss },
+      Failed: { label: "Retry download", icon: Icon.Again },
+      Ready: { label: "Remove download", icon: null },
     },
   },
-  AddEpisodeToAll: { label: "Add to All", icon: ListPlus, group: "Organize" },
-  RemoveEpisodeFromAll: { label: "Remove from All…", icon: ListMinus, group: "Danger" },
-  LibraryPlacement: { label: "Libraries…", icon: Library, group: "Organize" },
+  AddEpisodeToAll: { label: "Add to All", icon: Icon.Add, group: "Organize" },
+  RemoveEpisodeFromAll: { label: "Remove from All…", icon: Icon.Remove, group: "Danger" },
+  LibraryPlacement: { label: "Libraries…", icon: Icon.Library, group: "Organize" },
   LecternMembership: {
     label: "Add to Lectern",
-    icon: ListPlus,
+    icon: Icon.AddToLectern,
     group: "Organize",
     states: {
-      Absent: { label: "Add to Lectern", icon: ListPlus },
-      Present: { label: "Remove from Lectern", icon: ListMinus },
+      Absent: { label: "Add to Lectern", icon: Icon.AddToLectern },
+      Present: { label: "Remove from Lectern", icon: Icon.RemoveFromLectern },
     },
   },
-  AddUnfinishedToLectern: { label: "Add unfinished contents to Lectern…", icon: ListPlus, group: "Organize" },
-  PodcastLibraries: { label: "Add to library…", icon: Library, group: "Organize" },
-  SubscribePodcast: { label: "Subscribe", icon: Rss, group: "Organize" },
-  UnsubscribePodcast: { label: "Unsubscribe", icon: Rss, group: "Organize" },
+  AddUnfinishedToLectern: { label: "Add unfinished contents to Lectern…", icon: Icon.AddToLectern, group: "Organize" },
+  PodcastLibraries: { label: "Add to library…", icon: Icon.Library, group: "Organize" },
+  SubscribePodcast: { label: "Subscribe", icon: null, group: "Organize" },
+  UnsubscribePodcast: { label: "Unsubscribe", icon: null, group: "Organize" },
   Chat: {
     label: "Chat about this…",
-    icon: MessageCircle,
+    icon: Icon.NewChat,
     group: "CreateTransform",
   },
   EditHighlight: {
     label: "Edit highlight…",
-    icon: Highlighter,
+    icon: Icon.Highlight,
     group: "CreateTransform",
   },
   EditHighlightAnnotation: {
     label: "Annotate",
-    icon: NotebookPen,
+    icon: Icon.Note,
     group: "CreateTransform",
   },
   EditHighlightBounds: {
     label: "Edit bounds",
-    icon: SquareDashedText,
+    icon: null,
     group: "CreateTransform",
   },
   ForkMessage: {
     label: "Fork from here",
-    icon: GitFork,
+    icon: Icon.Forks,
     group: "CreateTransform",
   },
-  RerunMessage: { label: "Rerun", icon: RefreshCw, group: "CreateTransform" },
+  RerunMessage: { label: "Rerun", icon: Icon.Again, group: "CreateTransform" },
   RegenerateMessage: {
     label: "Regenerate",
-    icon: Sparkles,
+    icon: Icon.Again,
     group: "CreateTransform",
   },
   EditPageTitle: {
     label: "Edit title…",
-    icon: Pencil,
+    icon: null,
     group: "CreateTransform",
   },
   EditNoteBody: {
     label: "Edit note",
-    icon: FilePenLine,
+    icon: null,
     group: "CreateTransform",
   },
-  Share: { label: "Share…", icon: Share2, group: "ShareExport" },
+  Share: { label: "Share…", icon: Icon.Share, group: "ShareExport" },
   DownloadOriginal: {
     label: "Download original",
-    icon: FileDown,
+    icon: Icon.Download,
     group: "ShareExport",
   },
   RetrySource: {
     label: "Retry source processing",
-    icon: RotateCcw,
+    icon: Icon.Again,
     group: "Manage",
   },
   RepairSource: {
     label: "Retry stopped processing",
-    icon: Wrench,
+    icon: Icon.Again,
     group: "Manage",
   },
   RepairSearch: {
     label: "Rebuild search index",
-    icon: Search,
+    icon: Icon.Again,
     group: "Manage",
   },
-  RefreshSource: { label: "Refresh source", icon: RefreshCw, group: "Manage" },
+  RefreshSource: { label: "Refresh source", icon: Icon.Again, group: "Manage" },
   // Imports runs the two upload commands on this runtime; no resource menu offers them.
-  RetryUpload: { label: "Retry upload", icon: Upload, group: "Manage" },
+  RetryUpload: { label: "Retry upload", icon: Icon.Again, group: "Manage" },
   RetryMetadata: {
     label: "Research metadata",
-    icon: Sparkles,
+    icon: Icon.Search,
     group: "Manage",
   },
   ReviewMetadataResult: {
     label: "Mark reviewed",
-    icon: CircleCheck,
+    icon: null,
     group: "Manage",
   },
-  LeaveLibrary: { label: "Leave library…", icon: ListMinus, group: "Manage", confirmation: {
+  LeaveLibrary: { label: "Leave library…", icon: null, group: "Manage", confirmation: {
     title: "leave library?", body: "leave “{title}”? its contents remain in the library. you may lose access to items held only here.",
   } },
   LibrarySettings: {
     label: "Library settings…",
-    icon: Settings,
+    icon: Icon.Settings,
     group: "Manage",
   },
   PodcastSettings: {
     label: "Playback defaults…",
-    icon: Settings,
+    icon: Icon.Settings,
     group: "Manage",
   },
   RefreshPodcast: {
     label: "Check for new episodes",
-    icon: RefreshCw,
+    icon: Icon.Again,
     group: "Manage",
   },
-  RemovePodcastEpisodes: { label: "Remove episodes from libraries…", icon: Trash2, group: "Danger" },
-  RemoveUpload: { label: "Remove import", icon: Trash2, group: "Danger" },
+  RemovePodcastEpisodes: { label: "Remove episodes from libraries…", icon: Icon.Remove, group: "Danger" },
+  RemoveUpload: { label: "Remove import", icon: null, group: "Danger" },
   RemoveMedia: {
     label: "Remove from Nexus",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "remove from nexus",
@@ -256,7 +222,7 @@ export const ACTION_CATALOG = {
   },
   DeleteLibrary: {
     label: "Delete library",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "Delete Library?",
@@ -265,7 +231,7 @@ export const ACTION_CATALOG = {
   },
   DeleteConversation: {
     label: "Delete chat",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "delete chat?",
@@ -274,7 +240,7 @@ export const ACTION_CATALOG = {
   },
   DeleteMessage: {
     label: "Delete message and replies",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "delete message and replies?",
@@ -283,7 +249,7 @@ export const ACTION_CATALOG = {
   },
   DeleteHighlight: {
     label: "Delete highlight",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "Delete highlight?",
@@ -292,7 +258,7 @@ export const ACTION_CATALOG = {
   },
   DeletePage: {
     label: "Delete page",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "Delete page?",
@@ -301,7 +267,7 @@ export const ACTION_CATALOG = {
   },
   DeleteNote: {
     label: "Delete note",
-    icon: Trash2,
+    icon: null,
     group: "Danger",
     confirmation: {
       title: "Delete note?",
@@ -332,15 +298,7 @@ export type BlockedReason = keyof typeof BLOCKED_COPY;
 /** Why a remote verb is unavailable, from admission. A browser offline while admitted lacks a
  * connection too. A durable reason, shown. */
 export function admissionReason(): string {
-  const admission = remoteAdmission();
-  switch (admission) {
-    case "SignInRequired": return "sign in to use this.";
-    case "UpdateRequired": return staleBuild();
-    case "Checking":
-    case "Unavailable":
-    case "Ready":
-      return BLOCKED_COPY.RequiresOnline;
-  }
+  return currentAdmissionReason() ?? BLOCKED_COPY.RequiresOnline;
 }
 
 /** What a failed verb tells. `Domain` is the verb's own line, translated from a domain code ahead
@@ -351,21 +309,18 @@ export type ActionOutcome =
   | { readonly kind: "Transport"; readonly fact: string; readonly retry: boolean }
   | { readonly kind: "Unknown"; readonly line: Line };
 
-export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError): ActionOutcome {
+export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError, rawWrite: boolean): ActionOutcome {
   const named = `“${label.replace(/…$/, "")}”`;
   const fact = `couldn’t complete ${named}.`;
   const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
   if (id === "Playback") switch (error.code) {
     case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
-    case "E_PLAYBACK_REFUSED":
-    case "E_PLAYBACK_STALE": return domain({ fact: `couldn’t ${label.replace(/…$/, "").toLowerCase()}.`, reason: error.message }, true);
-    case "E_PLAYBACK_UNCONFIRMED": return { kind: "Unknown", line: { fact: "not sure playback started.", reason: "it may have gone through." } };
   }
   if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact: "couldn’t change the lectern.", reason: "it changed since this menu opened." });
+    return domain({ fact: "couldn’t change the lectern." });
   if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact: CONFLICT_NOTICE.title, reason: CONFLICT_NOTICE.message });
-  if (outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
+    return domain({ fact });
+  if (rawWrite && outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
   switch (error.code) {
     case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu was out of date. reopen it." });
     case "E_FORBIDDEN":
@@ -375,11 +330,4 @@ export function actionOutcome(id: ActionId, label: string, title: string, error:
     case "E_LIMIT": return domain({ fact, reason: "the destination is full." });
   }
   return { kind: "Transport", fact, retry: id === "Playback" };
-}
-
-/** The player's one sentence for a refused verb; lib/player reads its title until L7. */
-export function actionFailure(id: ActionId, label: string, error: ApiError): { readonly title: string } {
-  const outcome = actionOutcome(id, label, label, error);
-  const line = outcome.kind === "Transport" ? TRANSPORT_LINES[transportOf(error)].command(outcome.fact) : outcome.line;
-  return { title: line.reason ? `${line.fact} ${line.reason}` : line.fact };
 }

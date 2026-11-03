@@ -5,7 +5,7 @@
  *
  * Invariants: a line speaks once per sentence it shows, so a changed line speaks again. A verb
  * that withdraws while it holds focus gives focus to its nearest home, if it has one. */
-import { Check } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -116,7 +116,7 @@ export function VerbControl({ verb, contextId, onActivated, withdrawal }: { verb
     >{shown.label}</ButtonLink> : <Button
       {...events}
       key={shown.commandKey}
-      icon={shown.copied ? <Check /> : undefined}
+      icon={shown.copied ? <Icon.Check /> : undefined}
       aria-busy={shown.busy || undefined}
       aria-disabled={blocked || undefined}
       aria-describedby={describedBy}

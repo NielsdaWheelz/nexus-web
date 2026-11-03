@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { focusableElements, useOverlay, useOverlayContainer } from "@/lib/ui/overlay";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import ModalFrame from "./ModalFrame";
 import styles from "./HoverPreview.module.css";
 
@@ -38,6 +39,8 @@ export function useHoverPreview(enabled: boolean, label: string): {
   close(options?: { restoreFocus?: boolean }): void;
   render(body: ReactNode): ReactNode;
 } {
+  const sheetBody = useRef<HTMLDivElement>(null);
+  const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
@@ -121,10 +124,12 @@ export function useHoverPreview(enabled: boolean, label: string): {
           onDismiss={() => close()}
           skipReturnFocus={() => !enabledRef.current || skipReturnFocus.current}
           label={label}
+          slipContent={sheetBody}
           backdropClassName={styles.sheetBackdrop}
+          backdropStyle={{ top: visualViewportTopPx, bottom: keyboardBottomInsetPx }}
           className={styles.sheet}
         >
-          <div className={styles.sheetBody}>{body}</div>
+          <div ref={sheetBody} className={styles.sheetBody}>{body}</div>
         </ModalFrame>
       ) : container ? (
         createPortal(

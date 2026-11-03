@@ -9,25 +9,25 @@
  * Each write publishes `Consumption` (and `Lectern` when a row moves).
  */
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { useOutcome, type FeedbackActions, type FeedbackContent, type Outcome } from "@/components/feedback/Feedback";
+import { useOutcome, useResendFeedback, type Outcome } from "@/components/feedback/Feedback";
 import type { Verbs } from "@/components/feedback/stage";
 import {
   admissionRefusal,
   apiFetch,
-  isRefusal,
+  outcomeUnknown,
   requestWithDeadline,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { resendVerbs } from "@/lib/collections/admissionReason";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { createCollectionCommands, type HeldWrite, type StateChange } from "./collectionCommands";
+import { createCollectionCommands, type HeldWrite } from "./collectionCommands";
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
-import type { ApiJson, Schema } from "@/lib/api/wire";
-import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
+import type { ApiJson } from "@/lib/api/wire";
+import { remoteReady } from "@/lib/native/admission";
 import type { CollectionTarget } from "./api";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -37,7 +37,6 @@ export interface ProgressHolder {
 }
 
 const holders = new Set<ProgressHolder>();
-const stateSettled = new Set<(change: StateChange) => void>();
 
 /** Register a mounted reader or player; returns its unregister. */
 export function holdProgress(holder: ProgressHolder): () => void {
@@ -60,27 +59,6 @@ export async function withProgressFence<T>(mediaIds: readonly string[], write: (
   } finally {
     await Promise.allSettled(prepared.map(({ holder, mediaId }) => holder.reconcile(mediaId)));
   }
-}
-
-/** 200 settled (with the canonical observation), 409 superseded (a later unread, reset or
- * finish), 404 gone; others throw. */
-export async function settleNaturalEnd(
-  mediaId: string,
-  body: Schema<"NaturalEndIn">,
-): Promise<"Settled" | "Superseded" | "Gone"> {
-  const observers = [...stateSettled];
-  let revision: number | null;
-  try {
-    revision = (await apiFetch<ApiJson<"/media/{media_id}/natural-end", "post">>(`/api/media/${mediaId}/natural-end`, { method: "POST", body: JSON.stringify(body) }))
-      .data.state.consumption_override_revision;
-  } catch (error) {
-    if (isApiError(error) && error.status === 409) return "Superseded";
-    if (isApiError(error) && error.status === 404) return "Gone";
-    throw error;
-  }
-  if (revision !== null) for (const listener of observers) if (stateSettled.has(listener)) listener({ mediaId, revision });
-  publishChange("Consumption", "Podcasts", "Lectern");
-  return "Settled";
 }
 
 export interface ConsumptionUndo {
@@ -127,8 +105,8 @@ function createConsumptionCommands(
         scopeLabel: null, changedCount: 1, phase: entry.status === "Offered" ? "Available" : entry.status })),
       holds: [...entries.values()].flatMap((entry): HeldWrite[] => entry.unconfirmed === 0 ? [] : [{
         key: entry.commandKey, occurrence: entry, attempt: entry.unconfirmed - 1,
-        line: { fact: `not sure undoing “${entry.title}” saved.`, reason: "it may have gone through." },
-        verbs: resendVerbs({ label: "retry", commandKey: entry.commandKey, busy: entry.status === "Sending", run: () => void undo(entry) }, remoteReady),
+        line: { fact: `not sure undoing “${entry.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON },
+        resend: { label: "retry", commandKey: entry.commandKey, busy: entry.status === "Sending", run: () => void undo(entry) },
       }]),
     };
     for (const listener of listeners) listener();
@@ -153,7 +131,6 @@ function createConsumptionCommands(
     const scope = lifetime;
     if (scope === null || scope.signal.aborted || entries.get(entry.commandKey) !== entry || entry.status === "Sending" || !remoteReady()) return;
     entry.status = "Sending"; publish();
-    let sent = false;
     let restoredRevision: number;
     try {
       const response = await withProgressFence([entry.mediaId], () => {
@@ -161,9 +138,9 @@ function createConsumptionCommands(
         if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return Promise.resolve(null);
         if (!remoteReady()) throw admissionRefusal();
         return requestWithDeadline<ApiJson<"/media/{media_id}/finish/undo", "post">>({ signal: scope.signal, timeoutMs: 30_000,
-          request: signal => { sent = true; return apiFetch<ApiJson<"/media/{media_id}/finish/undo", "post">>(`/api/media/${entry.mediaId}/finish/undo`, {
+          request: signal => apiFetch<ApiJson<"/media/{media_id}/finish/undo", "post">>(`/api/media/${entry.mediaId}/finish/undo`, {
             method: "POST", body: JSON.stringify(entry.receipt), signal,
-          }); },
+          }),
         });
       });
       if (response === null) return;
@@ -171,15 +148,15 @@ function createConsumptionCommands(
     } catch (error) {
       if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return;
       const defect = !(error instanceof ProgressPreparationError) && (!isApiError(error) || isSameSystemApiDefect(error));
-      const refused = !sent || isRefusal(error);
-      if (sent) handleUnauthenticatedApiError(error);
+      if (defect) { fail({ error }); return; }
+      handleUnauthenticatedApiError(error);
       const fact = `couldn’t undo finishing “${entry.title}”.`;
       const gone = `can’t undo finishing “${entry.title}”.`;
-      if (!refused || entry.unconfirmed > 0) {
+      if (outcomeUnknown(error) || entry.unconfirmed > 0) {
         entry.unconfirmed += 1;
         entry.status = "Unconfirmed";
         publish();
-      } else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT" || entry.observed !== null && entry.observed > entry.receipt.revision) {
+      } else if (entry.observed !== null && entry.observed > entry.receipt.revision) {
         retire(entry);
         outcome.say({ fact: gone, reason: "its state changed since." });
       } else if (isApiError(error) && error.status === 404) {
@@ -190,9 +167,8 @@ function createConsumptionCommands(
         publish();
         if (error instanceof ProgressPreparationError) outcome.say({ fact, reason: "a reading or listening position isn’t saved yet." }, retry(entry));
         else if (isApiError(error) && error.code === "E_LIMIT") outcome.say({ fact, reason: "the lectern is full." }, retry(entry));
-        else if (!defect) outcome.fail(error, fact, retry(entry)[0]);
+        else outcome.fail(error, fact, retry(entry)[0]);
       }
-      if (defect) fail({ error });
       return;
     }
     if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return;
@@ -251,13 +227,9 @@ function createConsumptionCommands(
     attach() {
       const scope = new AbortController(); lifetime = scope;
       const stopCollections = collections.start();
-      const settled = (change: StateChange) => collections.supersede([change]);
-      stateSettled.add(settled);
-      // A hold's retry states admission's reason, which moves without any entry moving.
-      const unsubscribe = subscribeAdmission(publish);
       return () => {
-        unsubscribe(); scope.abort(); if (lifetime !== scope) return; lifetime = null;
-        stopCollections(); stateSettled.delete(settled);
+        scope.abort(); if (lifetime !== scope) return; lifetime = null;
+        stopCollections();
         for (const entry of entries.values()) entry.unregister();
         entries.clear(); finishes.clear(); publish();
       };
@@ -266,10 +238,11 @@ function createConsumptionCommands(
 }
 
 /** `collectionFailures` is every unknown undo or mark this account holds, for one mount at the
- * workspace to render as `Hold`s from `line`, `verbs` and `attempt`. `content` and `actions` restate
- * them for that mount's old presenter, and leave with it. */
+ * workspace to render as `Hold`s from `line`, `verbs` and `attempt`. The stores retain the exact
+ * resend; this render owner projects the current shell and admission remedy. */
 export function useConsumptionCommands(reportDefect: (failure: { error: unknown }) => void) {
   const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   // The owner reads the latest outcome, so a new shell verb never rebuilds it: a rebuild drops
   // every held write and offered undo.
   const latestOutcome = useRef(outcome);
@@ -283,10 +256,9 @@ export function useConsumptionCommands(reportDefect: (failure: { error: unknown 
   const bulk = useSyncExternalStore(owner.collections.subscribe, owner.collections.snapshot, owner.collections.snapshot);
   const single = useSyncExternalStore(owner.subscribe, owner.snapshot, owner.snapshot);
   const undoItems = useMemo(() => [...single.undoItems, ...bulk.undoItems], [single.undoItems, bulk.undoItems]);
-  const collectionFailures = useMemo(() => [...single.holds, ...bulk.failures].map(held => ({ ...held,
-    content: { tone: "Warning", title: held.line.fact, message: held.line.reason } satisfies FeedbackContent,
-    actions: [{ label: held.verbs[0].label, onClick: held.verbs[0].run, busy: held.verbs[0].busy, disabledReason: held.verbs[0].disabledReason, commandKey: held.verbs[0].commandKey }] satisfies FeedbackActions,
-  })), [single.holds, bulk.failures]);
+  const collectionFailures = useMemo(() => [...single.holds, ...bulk.failures].map(({ resend, ...held }) => ({ ...held,
+    ...resendFeedback({ line: held.line, resend, sends: remoteReady }),
+  })), [single.holds, bulk.failures, resendFeedback]);
   useLayoutEffect(() => owner.attach(), [owner]);
   return { commands: owner.commands, undoItems, collectionFailures };
 }

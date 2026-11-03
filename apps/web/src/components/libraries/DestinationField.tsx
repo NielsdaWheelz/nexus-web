@@ -1,11 +1,11 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Hold } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser, { DestinationTrigger, type DestinationChange } from "@/components/libraries/DestinationChooser";
 import type { ChooserCreation, ChooserError } from "@/components/libraries/LibraryChooser";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
+
 import type { LibraryDestination } from "@/lib/libraries/api";
 
 /** A destination picker behind its trigger. `error` is a form's unknown creation, restated by
@@ -23,15 +23,16 @@ export default function DestinationField({ context, label, emptyLabel, chosen, o
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const resendVerbs = useResendVerbs();
+  const slipContent = useRef<HTMLDivElement>(null);
+  const resendFeedback = useResendFeedback();
   const holdId = error?.commandKey ?? "library-creation";
   return <div style={{ minWidth: 0 }}>
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
-    <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
-      <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled} create={create} />
+    <PickerSurface slipContent={slipContent} active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
+      <DestinationChooser scrollRef={slipContent} context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled} create={create} />
     </PickerSurface>
-    {error ? <Hold id={holdId} line={{ fact: error.content.title, reason: error.content.message }}
-      verbs={error.retry ? resendVerbs({ label: "retry", commandKey: holdId, run: error.retry, busy: error.busy }) : undefined} /> : null}
+    {error ? <Hold id={holdId} attempt={error.attempt} {...resendFeedback({ line: { fact: error.content.title, reason: error.content.message },
+      resend: error.retry ? { label: "retry", commandKey: holdId, run: error.retry, busy: error.busy } : null })} /> : null}
   </div>;
 }

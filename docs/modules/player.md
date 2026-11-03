@@ -417,7 +417,13 @@ finish, undo, unread, reset and settle publish `Consumption`.
   estimate, with no episode, precise or cross-device claim. episode up-next
   lives inside playback; chapter context lives in chapters.
   preview exposes rate only, with no queue advancement, chapters or default save.
-  numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
+  the skips draw their numerals, `SeekBack15` and `SeekForward30`, at 28px in
+  44px controls; transport draws `Previous`, `Play`/`Pause` and `Next`. up next
+  draws `UpNext`, chapters `Chapters`, stop `Stop`, hide `Dismiss`; the idle
+  player draws `Player` and its lectern link `Lectern`. the artwork badge draws
+  `Warning` only for a failure; buffering and paused sync have no sign and stay
+  in the identity's description. a failed queue row's
+  retry and an ended row's `Replay` draw `Play`: both play. ordinary pending
   work uses control markers and shared app feedback. preparing and saving mark
   up next busy; other pending activation marks transport busy independently of
   loaded buffering. routine work adds no footer row. failures expose their reason

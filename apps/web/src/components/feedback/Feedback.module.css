@@ -85,10 +85,6 @@
   margin-inline-start: var(--space-1);
 }
 
-.expanded {
-  transform: rotate(180deg);
-}
-
 .status {
   color: var(--ink-muted);
 }

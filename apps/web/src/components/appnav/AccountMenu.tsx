@@ -1,8 +1,8 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { createContext, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { CircleUser, Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
@@ -201,7 +201,7 @@ export default function AccountMenu(props: {
       id: "signout",
       label: "Sign out",
       tone: "danger",
-      icon: <LogOut size={16} aria-hidden="true" />,
+      icon: null,
       separatorBefore: true,
       onSelect: signOut.request,
       disabled: signOut.busy,
@@ -213,7 +213,7 @@ export default function AccountMenu(props: {
       id: "downloads",
       label: "Downloads",
       href: "/downloads",
-      icon: <Download size={16} aria-hidden="true" />,
+      icon: <Icon.Download aria-hidden="true" />,
       onActivate: (event) => activateTargetLink({
         event, target: { href: "/downloads" }, runtime: {
           activateTarget: ({ target, disposition }) => workspace.activateWorkspaceTarget({
@@ -236,7 +236,7 @@ export default function AccountMenu(props: {
           ...trigger,
           "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
         }, <span className={accountStyles.mark} aria-hidden="true">
-          <CircleUser size={20} />
+          <Icon.Account size={20} />
           <span className={accountStyles.attention} data-shape={shape} data-mark={mark ?? undefined} />
         </span>)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}

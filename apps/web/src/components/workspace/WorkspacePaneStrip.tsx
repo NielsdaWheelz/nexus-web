@@ -70,7 +70,7 @@ function ChipIdentity({ item }: { readonly item: StripItem }) {
   const Glyph = paneGlyph(item.href, item.mediaKind);
   return (
     <>
-      <Glyph aria-hidden size={16} strokeWidth={1.75} className={styles.icon} />
+      <Glyph aria-hidden size={16} className={styles.icon} />
       <span className={styles.title}>{item.label}</span>
     </>
   );
@@ -135,12 +135,12 @@ function PaneChip(props: {
       </button>
       <div className={styles.actions}>
         {props.controls.map((control) => {
-          const Icon = control.icon;
+          const Glyph = control.icon;
           return <Button
             key={control.slot}
             ref={(node) => props.register(control.slot, node)}
             iconOnly
-            icon={<Icon aria-hidden size={16} strokeWidth={1.75} />}
+            icon={<Glyph aria-hidden />}
             className={styles.action}
             tabIndex={props.focusable === control.slot ? 0 : -1}
             aria-label={control.label}
@@ -435,8 +435,8 @@ export default function WorkspacePaneStrip(props: {
             <span className={cx(styles.activator, selection.target)}><ChipIdentity item={draggedItem} /></span>
             <span className={styles.actions}>
               {paneControls({ state: props.state, paneId: draggedItem.paneId, title: draggedItem.label, desktopMaximized: props.isMaximized }).map((control) => {
-                const Icon = control.icon;
-                return <span key={control.slot} className={styles.action}><Icon size={16} strokeWidth={1.75} aria-hidden /></span>;
+                const Glyph = control.icon;
+                return <span key={control.slot} className={styles.action}><Glyph size={16} aria-hidden /></span>;
               })}
             </span>
           </div>

@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowRightLeft, UserMinus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 // The Members tab for an admin of a named library: invite an existing user, the
 // people (role, remove, transfer ownership) and the pending invitations (revoke).
@@ -35,8 +36,9 @@ import {
   type LibraryMember,
   type LibraryRole,
 } from "@/lib/libraries/api";
+import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { mayHaveLanded, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
+import { refuseLibrary } from "@/lib/libraries/errors";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LibraryMembers.module.css";
@@ -88,14 +90,14 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   useEffect(() => { if (unknown !== null && settled) setUnknown(null); }, [unknown, settled]);
   /** Runs one command; true when it landed. `fact` says what a refusal couldn't do. */
   const run = async (fact: string, command: () => Promise<void>) => {
-    if (busy || refusedUnsent(outcome, fact)) return false;
+    if (busy) return false;
     setBusy(true);
     try {
       await command();
       return true;
     } catch (error) {
       handleUnauthenticatedApiError(error);
-      if (mayHaveLanded(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+      if (outcomeUnknown(error)) setUnknown(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
       else refuseLibrary(outcome, error, fact);
       return false;
     } finally {
@@ -106,7 +108,7 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   };
   if (!shown || library === null) return null;
   const held: ReactNode = unknown === null ? null : <Hold id={`library-members:${library.id}`} attempt={unknown.attempt}
-    line={{ fact: "not sure that saved.", reason: "it may have gone through." }} />;
+    line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }} />;
   return { library, members, invitations, busy, held, run };
 }
 
@@ -287,7 +289,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                       {
                         kind: "command",
                         id: `LibraryMember.Remove.${member.user_id}`,
-                        label: "Remove member…", icon: <UserMinus size={16} aria-hidden="true" />,
+                        label: "Remove member…", icon: <Icon.Remove aria-hidden="true" />,
                         tone: "danger",
                         restoreFocusOnClose: false,
                         onSelect: ask({
@@ -307,7 +309,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                             {
                               kind: "command" as const,
                               id: `LibraryMember.Transfer.${member.user_id}`,
-                              label: "Transfer ownership…", icon: <ArrowRightLeft size={16} aria-hidden="true" />,
+                              label: "Transfer ownership…", icon: null,
                               tone: "danger" as const,
                               restoreFocusOnClose: false,
                               onSelect: ask({

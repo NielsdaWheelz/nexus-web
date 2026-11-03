@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 // Where a picker shows: on desktop a panel anchored beside its trigger
 // (a transient layer: Escape, an outside press and, inside a modal, Back close
@@ -7,9 +8,8 @@
 // would move the control the press meant to reach). Content owns its semantics
 // and initial focus; the surface owns placement and the existing overlay layer.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import {
@@ -38,10 +38,13 @@ export default function PickerSurface({
   initialFocus,
   desktopRole = "dialog",
   heightLimit,
+  slipContent,
   className,
   children,
 }: {
   readonly active: boolean;
+  /** The scrolling body, excluding a picker's fixed fields and footer. */
+  readonly slipContent?: RefObject<HTMLElement | null>;
   /** A region in the caller's layout, not the anchored panel or the sheet. */
   readonly inline?: boolean;
   readonly onClose: () => void;
@@ -125,7 +128,7 @@ export default function PickerSurface({
           <h3 className={styles.title}>{title}</h3>
           <Button
             iconOnly
-            icon={<X />}
+            icon={<Icon.Dismiss />}
             className={styles.close}
             aria-label={`close ${title}`}
             onClick={onClose}
@@ -164,6 +167,7 @@ export default function PickerSurface({
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}
         heightLimit={heightLimit}
+        slipContent={slipContent}
       >
         {children}
       </MobileSheet>

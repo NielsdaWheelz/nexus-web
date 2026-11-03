@@ -5,9 +5,8 @@
 // answer means: only a sent attempt can be unknown. The name rule is `libraryNameError`
 // (views).
 
-import { admissionRefusal, isRefusal, type ApiError } from "@/lib/api/client";
+import { isRefusal, type ApiError } from "@/lib/api/client";
 import { createLibrary, type Library } from "@/lib/libraries/api";
-import { remoteAttemptAllowed } from "@/lib/native/admission";
 
 const DEADLINE_MS = 30_000;
 
@@ -27,8 +26,6 @@ type CreationOutcome =
 export async function sendCreation(
   attempt: CreationAttempt,
 ): Promise<CreationOutcome> {
-  // What apiFetch would refuse unsent in this same tick never landed.
-  if (!remoteAttemptAllowed()) return { kind: "Refused", error: admissionRefusal() };
   try {
     const library = await createLibrary(
       { id: attempt.id, name: attempt.name, initial_items: [...attempt.initial_items], expected_removal_revision: attempt.expected_removal_revision },

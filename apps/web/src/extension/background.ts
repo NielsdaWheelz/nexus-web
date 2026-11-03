@@ -18,6 +18,7 @@
 // - a command that needs origins waits for the grant the popup requests, before
 //   its first network call; a denial changes nothing; one long command at a time
 
+import { writeRefused } from "@/lib/api/writeOutcome";
 import { isAbortError } from "@/lib/errors";
 import type { Schema } from "@/lib/api/wire";
 import {
@@ -1063,7 +1064,7 @@ async function save(signal: AbortSignal): Promise<void> {
     } else if (shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_STORAGE_MISSING" ||
                shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED") {
       recovery = "Recapture";
-    } else if ((confirming || current.submission?.createUncertain === true) && (!(error instanceof CaptureFailureError) || error.status === null || error.status === 401 || error.status >= 500 || shown.code === "E_UNKNOWN")) {
+    } else if ((confirming || current.submission?.createUncertain === true) && (!(error instanceof CaptureFailureError) || !writeRefused({ sent: true, status: error.status, code: error.failure.code }))) {
       recovery = "Check";
     } else {
       recovery = TERMINAL.has(shown.code) ? "Discard" : "Retry";
