@@ -107,7 +107,7 @@ export default function HighlightPaneBody() {
     {capture.current ? <ReaderExcerpt excerpt={capture.current} color={resource?.color ?? null} full />
       : read.data === null && read.error === null ? <Ruling/> : null}
     {!resource && read.data?.scope_available ? <Fact line={{fact: "this highlight isn’t on this device."}}/> : null}
-    {capture.current ? null : <AuthoredReadFailure {...read} title="couldn’t open this highlight on this device."/>}
+    {capture.current ? null : <AuthoredReadFailure {...read} noun="this highlight"/>}
     {source ? <a href={source}>view in source</a> : null}
     {unresolved ? <blockquote aria-label="captured annotation passage">{unresolved}</blockquote> : null}
     {read.data ? <HighlightAnnotation highlightRef={ref} resource={resource ?? null} occurrenceKey={`detail:${ref}`} focusRequest={focus} inspection={inspection} onFocused={() => {pending.current = null;}} mayFocus={() => pending.current?.mayFocus() ?? true}/> : null}

@@ -92,7 +92,7 @@ function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boo
   // A storage failure speaks only while nothing full has shown; a defect throws whenever it comes.
   if (loaded.query.error !== null && !isAuthoredStorageFailure(loaded.query.error)) throw loaded.query.error;
   return <>
-    {loaded.query.data === null ? <AuthoredReadFailure error={loaded.query.error} occurrence={loaded.query.occurrence} pending={loaded.query.pending} retry={loaded.query.retry} title="couldn’t open the full excerpt on this device." /> : null}
+    {loaded.query.data === null ? <AuthoredReadFailure error={loaded.query.error} pending={loaded.query.pending} retry={loaded.query.retry} noun="the full excerpt" /> : null}
     {loaded.error ? <Failed error={loaded.error} noun="full excerpts" retry={{ run: loaded.retry, busy: loaded.pending }} /> : null}
     {loaded.conflict ? <Fact line={{ fact: "this excerpt has changed." }} verbs={[{ label: "show new version", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending }]} />
       : loaded.absent ? <Fact line={{ fact: "no excerpt here for this reading." }} />

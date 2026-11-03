@@ -1,4 +1,6 @@
 "use client";
+
+import {UNKNOWN_OUTCOME_REASON} from "@/lib/api/failure";
 import * as Icon from "@/lib/ui/icons";
 
 // User links, mentions and embeds are local authored facts and render from the
@@ -72,7 +74,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       </div>
 
       {scan.held}
-      {unread ? <AuthoredReadFailure {...unread} title="couldn’t open connections on this device."
+      {unread ? <AuthoredReadFailure {...unread} noun="connections"
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
       {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
       <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
@@ -168,7 +170,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     phase,
     start: () => void begin("StartScan"),
     held: held && <Hold id={`Connections.Scan:${selfRef}:${held.kind}`} attempt={held.attempt}
-      line={held.kind === "Unsure" ? { fact: "not sure the scan started.", reason: "it may have gone through." } : { fact: "still finding connections." }}
+      line={held.kind === "Unsure" ? { fact: "not sure the scan started.", reason: UNKNOWN_OUTCOME_REASON } : { fact: "still finding connections." }}
       verbs={[{ ...verb(held.kind === "Unsure" ? "StartScan" : "ScanStatus"), busy: phase !== "idle" }]} />,
   };
 }
