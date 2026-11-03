@@ -9,8 +9,28 @@
   --stage-floor: calc(var(--stage-bottom-clearance, 0px) + var(--stage-pane-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
 }
 
-/* A modal anchor is portaled clear of every projection: it uses its floor alone, and its panel clips. */
-.modalAnchor { --stage-ceiling: 100%; }
+/* A dialog has no actions region a frame could stand clear of, so a modal anchor stands in flow
+   at its panel's end, clear of every projection: its frame and tab take room below the panel's
+   content, and only while they stand, rather than cover its controls. A panel at its height
+   limit gives that room from its scrolling body. */
+.modalAnchor {
+  position: relative;
+  inset: auto;
+  flex: none;
+  --stage-ceiling: 100dvb;
+}
+
+.modalAnchor > .frame {
+  position: relative;
+  inset: auto;
+  margin: 0 auto 12px;
+}
+
+.modalAnchor > .tab {
+  position: relative;
+  inset: auto;
+  display: block;
+}
 
 /* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {
@@ -85,10 +105,12 @@
   font-weight: var(--weight-regular);
 }
 
+/* Never a pointer's target: it leaves under a still pointer, and would take the frame's leave with it. */
 .outgoing {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  pointer-events: none;
   animation: fade-out var(--duration-base) var(--ease-glide) forwards;
 }
 

@@ -11,9 +11,9 @@ import Button from "@/components/ui/Button";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { OverlayContext, topModal } from "@/lib/ui/overlay";
+import { OverlayContext } from "@/lib/ui/overlay";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
-import { VerbControl } from "./Fact";
+import { takeFocus, useFocusReturn, VerbControl } from "./Fact";
 import { Announcement } from "./Feedback";
 import { useStage, type Anchor, type RoomView, type SlipView, type Speech, type Verb } from "./stage";
 import styles from "./Slips.module.css";
@@ -25,27 +25,6 @@ const SWIPE_DISMISSES_PX_PER_MS = 0.11;
  * one quick sample is no flick. */
 const SWIPE_SPEED_SPAN_MS = 100;
 const SWIPE_UPWARD_FRICTION = 0.3;
-
-const takeFocus = (element: HTMLElement) => element.focus({ preventScroll: true });
-
-/** Withdrawal restores only owned focus: what `owner` held passes to `target`, unless a command
- * already handed it elsewhere, or a modal now owns it. */
-function useFocusReturn(owner: RefObject<HTMLElement | null>, target: () => HTMLElement | null, give = takeFocus) {
-  const latest = useRef({ target, give });
-  latest.current = { target, give };
-  useLayoutEffect(() => () => {
-    const focused = document.activeElement;
-    if (!owner.current?.contains(focused)) return;
-    queueMicrotask(() => {
-      const current = document.activeElement;
-      if (current !== focused && current !== document.body && current?.isConnected) return;
-      const next = latest.current.target();
-      const modal = topModal();
-      if (!next?.isConnected || next.closest("[hidden], [inert]") || modal && !modal.element?.contains(next)) return;
-      latest.current.give(next);
-    });
-  }, [owner]);
-}
 
 /** The frame on the finger, or back in place. */
 function follow(element: HTMLElement | null, offset: number | null) {
