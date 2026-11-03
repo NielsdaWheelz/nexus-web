@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Hold } from "@/components/feedback/Feedback";
-import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { changedLine, commandKey, heldUnknown, unsureFact, type CommandOutcome, type CommandState, type ConversationCommands } from "./commands";
+import { changedLine, commandKey, unsureFact, type CommandOutcome, type CommandState, type ConversationCommands } from "./commands";
 
 export interface ChatCommandObservation {
   readonly id: string;
@@ -46,6 +46,8 @@ function PendingCommand({ observation, remove, fail }: {
   fail: (failure: { error: unknown }) => void;
 }) {
   const { id, owner, commandKey: key, present, retry } = observation;
+  const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
   const viewed = useSyncExternalStore(owner.subscribe, owner.isViewed, owner.isViewed);
   const current: Exclude<CommandState, { kind: "Idle" }> | null =
@@ -60,7 +62,7 @@ function PendingCommand({ observation, remove, fail }: {
     void settling.catch((error: unknown) => owner.isActive() && fail({ error }));
   }, [retry, owner, present, fail]);
   // reads wake: a failed read after the command reads again on focus and reconnection
-  useFailedReadRepair(current !== null && !viewed && current.standing?.kind === "Unread", current?.kind === "Busy", () => again("default"));
+  useFailedReadRepair(current !== null && !viewed && current.standing?.kind === "Unread", current?.kind === "Busy", () => { void owner.refresh().catch((error: unknown) => owner.isActive() && fail({ error })); });
   if (current === null || current.standing === null || viewed) return null;
   const { standing, command } = current;
   const verb = (label: string): CommandVerb => ({
@@ -69,12 +71,13 @@ function PendingCommand({ observation, remove, fail }: {
     busy: current.kind === "Busy",
     run: (intent: OpenIntent) => { if (owner.getSnapshot() === current && current.kind !== "Busy") again(intent); },
   });
-  const held = (line: Line, verbs: Verbs | undefined) => <Hold id={`${key}:${standing.kind}`} attempt={current.attempt} line={line} verbs={verbs} />;
+  const held = (line: Line, verbs: Verbs | null) => <Hold id={`${key}:${standing.kind}`} attempt={current.attempt} line={line} verbs={verbs} />;
   switch (standing.kind) {
     case "Unknown": {
-      const { line, verbs } = heldUnknown(unsureFact(command), standing.refused, command.kind === "Send"
-        ? [verb("retry"), { label: "discard send", commandKey: `discard ${key}`, run: () => owner.discard() }]
-        : [verb("retry")]);
+      const { line, verbs } = resendFeedback({
+        line: { fact: unsureFact(command), reason: UNKNOWN_OUTCOME_REASON }, resend: verb("retry"),
+        ...(command.kind === "Send" ? { secondary: { label: "discard send", commandKey: `discard ${key}`, run: () => owner.discard() } } : {}),
+      });
       return held(line, verbs);
     }
     case "Changed":
@@ -83,7 +86,7 @@ function PendingCommand({ observation, remove, fail }: {
       // the command was answered; the read that follows it failed, so this is a read's line
       const transport = transportOf(standing.error);
       const noun = command.kind === "DeleteChat" ? `“${command.title}”’s messages` : "messages";
-      return held(TRANSPORT_LINES[transport].read(noun), transportVerbs(transport, { retry: verb("retry"), signIn: null }) ?? undefined);
+      return held(TRANSPORT_LINES[transport].read(noun), transportVerbs(transport, { retry: verb("retry") }));
     }
   }
 }

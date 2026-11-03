@@ -1,14 +1,15 @@
 "use client";
 
-import { memo, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import * as Icon from "@/lib/ui/icons";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { MarkdownPreview, TextPreview } from "@/components/ui/MarkdownMessage";
-import { MAY_HAVE, sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
 import { anchorQuote, outline, type Alternative, type Children } from "@/lib/chat/tree";
 import { conversationViewHref } from "@/lib/chat/view";
 import type { ChatFailure, Message } from "@/lib/chat/wire";
@@ -153,25 +154,37 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   } | null>(`Chat.ForkTitle:${conversationId}`, () => null,
     value => ({ changed: value !== null && value.title !== (value.baseline ?? ""), unconfirmed: value !== null && value.request !== null, stopsBrowserWork: false }));
   const editing = edit.value;
+  const waitsId = useId();
+  const resendFeedback = useResendFeedback();
   const guard = useWorkGuard();
   const dismiss = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set(null); };
   const rename = async () => {
     const current = edit.read();
-    if (!current || current.pending) return;
+    if (!current || current.pending || (current.unknown > 0 && renameWaits)) return;
     const request = current.request ?? { title: current.title.trim() || null, expectedTitle: current.baseline };
     edit.set({ ...current, request, pending: true });
     const failure = await onRename(current.id, request.title, request.expectedTitle);
+    if (failure?.kind === "Defect") return void fail(failure.error, UNRENAMED);
     edit.set(value => {
       if (!value || value.id !== current.id || value.request !== request) return value;
       if (failure === null) return value.title === current.title ? null : { ...value, baseline: request.title, request: null, pending: false, unknown: 0 };
-      return failure.kind === "Unknown" ? { ...value, pending: false, unknown: value.unknown + 1 } : { ...value, request: null, pending: false, unknown: 0 };
+      return failure.kind === "Unknown" || ((failure.kind === "Refused" || failure.kind === "Handled") && value.unknown > 0) ? { ...value, pending: false, unknown: value.unknown + 1 } : { ...value, request: null, pending: false, unknown: 0 };
     });
-    if (failure === null || failure.kind === "Unknown" || failure.kind === "Handled") return;
+    if (failure === null || failure.kind === "Unknown" || failure.kind === "Handled" || current.unknown > 0) return;
     if (failure.kind === "Missing") return void say({ fact: UNRENAMED, reason: "it doesn’t exist." });
-    if (failure.kind === "Refused" && failure.error.code === "E_RESOURCE_CONFLICT") return void say({ fact: UNRENAMED, reason: "it was renamed meanwhile." });
+    if (failure.kind === "Refused" && failure.error.code === "E_RESOURCE_CONFLICT") return void say({ fact: UNRENAMED });
     if (failure.kind === "Refused" && failure.error.code === "E_MESSAGE_NOT_FOUND") return void say({ fact: UNRENAMED, reason: "it doesn’t exist." });
     fail(failure.error, UNRENAMED, { label: "retry", commandKey: `rename ${current.id}`, run: () => void rename() });
   };
+  const renameKey = editing ? `rename ${editing.id}` : "";
+  const recovery = editing?.request && editing.unknown > 0 ? resendFeedback({
+    line: { fact: "not sure the fork was renamed.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: renameKey, busy: editing.pending, run: () => void rename() },
+  }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === renameKey ? primary : null;
+  const renameWaits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
   const needle = query.trim().toLowerCase();
   const activate = (event: TargetActivationEvent, leafId: string, userId: string) => {
     if (!conversationId) return;
@@ -186,9 +199,8 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   const found = `${visible.length} ${visible.length === 1 ? "fork" : "forks"} found`;
   return (
     <div className={styles.panel}>
-      {editing?.request && editing.unknown > 0 ? <Hold id={`rename:${editing.id}`} attempt={editing.unknown}
-        line={{ fact: "not sure the fork was renamed.", reason: MAY_HAVE }}
-        verbs={[{ label: "retry", commandKey: `rename ${editing.id}`, busy: editing.pending, run: () => void rename() }]} /> : null}
+      {editing && recovery ? <Hold id={`rename:${editing.id}`} attempt={editing.unknown} {...recovery} /> : null}
+      {renameWaits ? <span id={waitsId} className="sr-only">{waitReason}</span> : null}
       <label className={styles.search}>
         <Icon.Search size={14} aria-hidden="true" />
         <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search forks" placeholder="Search forks" />
@@ -217,7 +229,7 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
                     onChange={(event) => edit.set({ ...editing, title: event.target.value })}
                     aria-label={`Rename fork ${title}`}
                   />
-                  <Button emphasis="strong" type="submit" disabled={editing.pending} aria-label={`Save fork ${title}`}>{editing.request ? "retry" : "Save"}</Button>
+                  <Button emphasis="strong" type="submit" disabled={editing.pending || renameWaits} aria-busy={editing.pending || replay?.busy} aria-describedby={renameWaits ? waitsId : undefined} aria-label={`Save fork ${title}`}>{editing.request ? "retry" : "Save"}</Button>
                   <Button onClick={dismiss}>Cancel</Button>
                 </form>
               ) : (

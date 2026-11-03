@@ -3,11 +3,12 @@ import * as Icon from "@/lib/ui/icons";
 
 import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import PickerSurface from "@/components/ui/PickerSurface";
+import { ControlContents } from "@/components/ui/control";
 import { choiceUnavailable, modelKeyOf, type ModelVariant, type SelectionEditor } from "@/lib/chat/selection";
 import styles from "./EffortPicker.module.css";
 
-/** One ordered effort dimension; the model control owns mode. While its choices wait the chevron
- * spins and the trigger stays pressable; `unready` stands in the panel until the catalog lands. */
+/** One ordered effort dimension; the model control owns mode. While its choices wait the shared busy
+ * mark stands and the trigger stays pressable; `unready` stands in the panel until the catalog lands. */
 export default function EffortPicker({
   variant,
   value,
@@ -99,7 +100,7 @@ export default function EffortPicker({
             ) : null}
             <circle cx="12" cy="15" r="1.5" fill="currentColor" />
           </svg>
-          <span>{label}</span><Icon.Choose size={13} aria-hidden="true" className={styles.chevron} />
+          <span>{label}</span><span className={styles.chevron}><ControlContents busy={waiting} icon={<Icon.Choose size={13} aria-hidden="true" />} /></span>
         </button>
       )}
       <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}
