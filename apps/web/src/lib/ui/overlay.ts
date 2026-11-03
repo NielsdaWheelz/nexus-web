@@ -598,7 +598,10 @@ export function useOverlay(
         modal || (current.returnFocus === true && layer.reason !== "outside" && layer.reason !== "tab" && layer.reason !== "navigation");
       layers.splice(layers.indexOf(layer), 1);
       if (exposed && wanted && !current.skipReturnFocus?.()) {
-        restoreFocus(layer);
+        // A modal's close can expose a sibling trigger later in this commit.
+        // Menus return synchronously, before their chosen command takes focus.
+        if (modal) queueMicrotask(() => { if (unfocused()) restoreFocus(layer); });
+        else restoreFocus(layer);
         // The last modal's close traverses history; restore once it lands.
         if (modal && topModal() === null) {
           settlements.push(() => restoreFocus(layer));

@@ -134,7 +134,8 @@ button) the focusable element the last press landed on. at close, focus goes to 
 layer being exposed: a modal that was topmost, or a transient that opted in
 (`returnFocus`) whose modal is topmost and that no outside press closed.
 `skipReturnFocus()` vetoes (a navigating close already put focus at the
-destination). the last modal's restore runs again after its history traversal
+destination). a modal chooses its return target after the close commit has exposed
+its trigger, and only while focus is still lost. the last modal's restore runs again after its history traversal
 if focus fell to the body. an inert-uncover retry retires when another control
 claims focus, even if that control later detaches. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
