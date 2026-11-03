@@ -405,14 +405,33 @@ remain content. canonical refs use the existing resolver instead of text search;
 pending enter waits, and unavailable refs keep their exact disabled target.
 full search treats commands and refs as content.
 
-ordinary find composes at most eight principal results, then two continuations:
-`search all results` and `use this text…`. relevance precedes truncation: explicit
-intent, exact name, prefix/token, substring, literal evidence, fuzzy/synonym
-navigation, semantic evidence. each tier interleaves stream ordinals, then fixed
-navigation/local/resources/saved/passages order and key; unrelated scores never
-mix. canonical authority chooses duplicate ownership, not relevance. local
-writing wins over server projections; readable remote resources replace source
-stubs. source/passage deduplication preserves exact matching-passage activation.
+ordinary find composes at most eight principal rows, plus the two continuations
+owned by [app navigation](app-navigation.md#nexus-content-grammar).
+`rank.ts` owns one comparator across navigation, local, recent, resources, saved
+and passages: explicit intent, latched, exact, prefix/token, abbreviation,
+substring, lexical, semantic; within a tier, frecency, recency, stream and key.
+unrelated source scores are never added. bylines count only as substring;
+hrefs do not match names. abbreviation gaps land on word boundaries and must
+pass the score threshold. canonical authority chooses duplicate ownership:
+local writing wins over server projections, readable remote resources replace
+source stubs, and source/passage deduplication preserves the exact passage target.
+
+`GET /me/nexus-ranking` takes no query and returns the viewer's usage map once
+per open. the server keeps the newest 500 untyped and 500 typed rows whose newest
+use is within 90 days; each carries use count, mean age points from its last ten
+visits and last-used time. `remember` posts the existing selection shape and
+applies accepted use to that held map. other windows' selections are seen on the
+next open; no ranking request is sent on a keystroke.
+
+a target picked at least twice under a typed string latches for queries that
+are its prefix or extension. longest recorded string wins, then use-count ×
+points, newer last use and lexical href. known panes, recents, places and
+commands can enter synchronously without a name match; server-only targets await
+arrival. frecency uses the untyped aggregate, scaled as v / (v + 100).
+`canonicalHref` mirrors the server's structural canonicalization for both
+lookup and remembering: trim, remove trailing path slashes beyond root, sort
+query pairs, requote fragments; media identity keeps its path alone.
+the map, comparator and two-band spine replace per-query ranking and list freezing.
 
 launcher local acquisition uses the nonpaged authored `search_preview` query.
 it inspects bounded literal-name batches before truncation, reuses scoped/evidence
@@ -421,6 +440,19 @@ covers the compound read. local name matching uses trim and unicode lowercase;
 remote names retain unicode casefold. cross-source unicode equivalence is not
 promised. ordinary full-search/picker `search` retains its existing cursor.
 server preview excludes viewer-authored projections before its limits.
+
+palette exact refs and the at-most-eight-row local preview use
+`localSearch.useLocalSourceAdmission` to resolve captured passages' authored
+note/page/highlight sources. source proof must be at least the resource result's
+store revision before projection. one explicit admitted href supplies both
+`LocalMatch` and `authoredItem`; rendering an item never reconstructs a route.
+a removed source makes primary navigation unavailable while the retained
+excerpt remains readable. selected-reading and x-capture routes retain their
+existing authority. the existing local feedback owner handles failure/retry.
+this is a bounded palette projection, not a corpus-wide source scan.
+full search and raw links retain their
+[source-liveness gap](../issues/local-passage-links-assume-source-live.md);
+they do not inherit this palette admission guarantee.
 
 local capture candidates resolve their scoped frozen excerpt before consuming an
 admission slot. preview and held-ref admission use the same resolution as ordinary
@@ -436,15 +468,35 @@ name tier, then later phase; explicit unavailability supersedes old evidence.
 never splice activation and evidence from different snapshots. closed/hidden
 surfaces abort reads; composition dispatches only committed input.
 
-account, raw text, filters, scope and intent form query identity. before interaction,
-results and defaults can improve. afterward the whole displayed list holds its
-identity, order, evidence and geometry until explicit refresh/new query/reopen.
-explicit pane operations retain their own committed successor/focus rules.
-capped omission does not mean deletion; the bounded local `search_admission` query distinguishes
-revoked query/scope/evidence admission from preview omission. unavailable/removal never selects a
-replacement action. desktop enter acts on the displayed eligible selection;
-mobile input retains parsed-intent/full-search submission. repeat/composition
-never activate; shift retains its captured opening disposition.
+account, raw text, filters, scope and intent form query identity. `list.ts`
+owns held and arriving bands. each keystroke retains still-name-matching or
+latched rows, releases content-only evidence rows, and re-ranks held plus new
+synchronous candidates once. retained rows stay actionable because the new name
+match is checked synchronously; this is the palette's exception to dim/inert
+preceding-query rows. later arrivals append in ranked batches after shown rows,
+with 200ms opacity onset; updates preserve shown position and geometry.
+deliberate arming never freezes arrivals.
+
+the keystroke arms the best row with latency and remembers the old armed row
+while it remains shown. a better-tier arrival in the first 200ms may re-arm;
+later arrivals do not change the armed key. arrows, tab, printable input and
+pointer travel of at least 8px since the last keystroke are deliberate; modifiers
+alone and a resting pointer are not. `select(list, key, now)` records
+`armedAt = now`, marks the selection deliberate and forgets the previous row.
+that timestamp does not impose a perception delay: deliberate enter fires at once.
+
+enter fires a deliberately armed row immediately, or an automatic row armed for
+at least 120ms. before that it fires the remembered previous row if still shown;
+otherwise it waits until the later of armed-at + 120ms and painted-at + 200ms,
+then fires once. with no row to fire it is a silent no-op and keeps field focus.
+desktop enter and mobile go use that same target decision. repeat/composition
+never activate; shift retains the captured fresh-pane disposition.
+
+explicit pane operations retain their committed successor/focus rules. capped
+omission does not mean deletion: bounded local `search_admission` distinguishes
+revoked query/scope/evidence admission from preview omission. removal retires the
+armed action without selecting a replacement; its enter announces retirement.
+there is no interaction-frozen branch, legacy ranker or compatibility mode.
 
 command and lookup views are separate from retrieval. exact slash heads accept
 end-of-input or whitespace; unknown heads retain command lookup, never search.
@@ -487,9 +539,8 @@ media ref, not its source ref.
 match excerpt equals that rendered part. other evidence stays separate from the
 canonical body, including for custom bodies and live note editors. own and nested
 witnesses wrap without clipping; equal inline evidence also releases row clamps,
-including name-only evidence with no emphasis ranges. mobile nexus assigns one
-description id, preferring the matching passage, then separate own evidence,
-then the rendered body. source and activation remain the canonical item's.
+including name-only evidence with no emphasis ranges. nexus rows assign one description id to the selected supplement: matching
+passage or separate own evidence, otherwise facts. source and activation remain the canonical item's.
 
 ## text publication
 
