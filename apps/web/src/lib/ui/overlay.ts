@@ -441,18 +441,18 @@ function onKeyDown(event: KeyboardEvent): void {
 export function handleModalTab(
   event: Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
 ): void {
-  const panel = topModal()?.element;
-  if (event.key !== "Tab" || !panel) return;
-  // The Tab trap: focus wraps inside the top modal's panel.
-  const items = focusableElements(panel);
+  const room = topModal()?.element;
+  if (event.key !== "Tab" || !room) return;
+  // The Tab trap: focus wraps inside the top modal's room.
+  const items = focusableElements(room);
   const first = items[0];
   const last = items.at(-1);
   const active = document.activeElement as HTMLElement;
   if (!first || !last) {
     event.preventDefault();
-    panel.focus();
+    room.focus();
   } else if (
-    !panel.contains(active) ||
+    !room.contains(active) ||
     active === (event.shiftKey ? first : last) ||
     // A programmatic trigger may have tabindex=-1. Let native Tab continue
     // from its position unless no tabbable remains in that direction.

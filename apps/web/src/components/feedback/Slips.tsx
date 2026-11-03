@@ -114,6 +114,7 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
     if (!anchor || !room || !panel) return;
     const viewport = window.visualViewport;
     let selected: number | null = null;
+    let observedFrame: HTMLElement | null = null;
     const place = (geometry = false) => {
       if (!geometry && anchor.hasAttribute("data-stage-held") && selected !== null) return;
       const bounds = room.getBoundingClientRect();
@@ -132,13 +133,28 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
         { left: Math.max(left, p.right), right, top, bottom },
         { left, right: Math.min(right, p.left), top, bottom },
       ];
+      const apply = (band: typeof bands[number]) => Object.assign(anchor.style, {
+        left: `${band.left - bounds.left}px`, top: `${band.top - bounds.top}px`,
+        width: `${Math.max(0, band.right - band.left)}px`, height: `${Math.max(0, band.bottom - band.top)}px`,
+      });
       const frame = anchor.querySelector<HTMLElement>("[aria-label='notices']");
-      if (frame) observer.observe(frame);
-      const rowHeight = frame ? Math.max(...Array.from(frame.children, child => child.getBoundingClientRect().height)) : 0;
-      const minimumHeight = Math.max(rowHeight, matchMedia("(any-pointer: coarse)").matches ? 52 : 40) + 26;
-      const minimumWidth = Math.min(352, right - left - 24) + 24;
-      const fits = (band: typeof bands[number]) => band.bottom - band.top >= minimumHeight && band.right - band.left >= minimumWidth;
-      const index = selected !== null && selected >= 0 && selected < bands.length && fits(bands[selected]) ? selected : bands.findIndex(fits);
+      if (frame !== observedFrame) {
+        if (observedFrame) observer.unobserve(observedFrame);
+        if (frame) observer.observe(frame);
+        observedFrame = frame;
+      }
+      const coarse = matchMedia("(any-pointer: coarse)").matches;
+      const fits = (index: number) => {
+        const band = bands[index];
+        if (band.right - band.left < (coarse ? 48 : 44) + 24) return false;
+        apply(band);
+        const rowHeight = frame ? Math.max(...Array.from(frame.children, child => child.getBoundingClientRect().height)) : 0;
+        return band.bottom - band.top >= Math.max(rowHeight, coarse ? 52 : 40) + 26
+          && (!frame || frame.scrollWidth <= frame.clientWidth);
+      };
+      const order = [0, 1, 2, 3];
+      if (selected !== null && selected >= 0) order.unshift(...order.splice(order.indexOf(selected), 1));
+      const index = order.find(fits) ?? -1;
       let band = bands[index];
       if (index < 0) {
         // This rectangle is an explicit family contract, never inferred from modal descendants.
@@ -150,8 +166,7 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
           top: Math.max(top, c.top - moving.top + p.top), bottom: Math.min(bottom, c.bottom - moving.top + p.top) };
       }
       selected = index;
-      Object.assign(anchor.style, { left: `${band.left - bounds.left}px`, top: `${band.top - bounds.top}px`,
-        width: `${Math.max(0, band.right - band.left)}px`, height: `${Math.max(0, band.bottom - band.top)}px` });
+      apply(band);
     };
     const observer = new ResizeObserver(entries => place(entries.some(({ target }) => target === room || target === panel || target === content.current)));
     observer.observe(room);
@@ -159,16 +174,13 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
     if (content.current) observer.observe(content.current);
     const changes = new MutationObserver(() => place());
     changes.observe(anchor, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-stage-held"] });
-    // Switching content inside an unchanged panel can replace the owner's content ref.
-    const contents = new MutationObserver(() => { if (content.current) observer.observe(content.current); place(true); });
-    contents.observe(panel, { childList: true, subtree: true });
     const geometry = () => place(true);
     window.addEventListener("resize", geometry);
     viewport?.addEventListener("resize", geometry);
     viewport?.addEventListener("scroll", geometry);
     place(true);
     return () => {
-      observer.disconnect(); changes.disconnect(); contents.disconnect();
+      observer.disconnect(); changes.disconnect();
       window.removeEventListener("resize", geometry);
       viewport?.removeEventListener("resize", geometry);
       viewport?.removeEventListener("scroll", geometry);
