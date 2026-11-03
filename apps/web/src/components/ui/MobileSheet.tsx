@@ -47,7 +47,7 @@ export default function MobileSheet({
 }) {
   const content = useRef<HTMLDivElement>(null);
   const handle = useRef<HTMLButtonElement>(null);
-  useCollectionLayout(content, active);
+  const wholeBodyScrolls = useCollectionLayout(content, active);
   const dragStart = useRef<{
     readonly pointerId: number;
     readonly x: number;
@@ -71,7 +71,7 @@ export default function MobileSheet({
   return (
     <ModalFrame
       {...modal}
-      slipContent={modal.slipContent ?? content}
+      slipContent={wholeBodyScrolls ? content : modal.slipContent ?? content}
       open={active}
       label={ariaLabel}
       id={panelId}

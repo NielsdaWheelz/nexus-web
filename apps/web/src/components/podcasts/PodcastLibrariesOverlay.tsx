@@ -33,6 +33,7 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
   readonly successFocus?: ReturnFocusTarget;
 }) {
   const { ctx } = useActionRuntime();
+  const slipContent = useRef<HTMLDivElement>(null);
   const { say } = useOutcome();
   const [occurrence] = useState({});
   const [step, setStep] = useState<Step>({ kind: "Choose" });
@@ -77,10 +78,10 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
   };
   switch (step.kind) {
     case "Choose":
-      return <PickerSurface active title="add to library" onClose={dismiss}
+      return <PickerSurface slipContent={slipContent} active title="add to library" onClose={dismiss}
         anchor={returnFocusTo} returnFocusFallback={returnFocusFallback}
         skipReturnFocus={() => !session.current.choosing}>
-        <LibraryChooser context={`podcast-libraries:${scope}`} membershipKind="Chosen" rows={rows} loading={loading}
+        <LibraryChooser scrollRef={slipContent} context={`podcast-libraries:${scope}`} membershipKind="Chosen" rows={rows} loading={loading}
           summary={null} empty="no libraries."
           error={readError ?? creation.error}
           onToggle={({ id }) => {

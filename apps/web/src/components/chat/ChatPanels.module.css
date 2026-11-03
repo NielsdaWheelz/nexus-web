@@ -130,3 +130,11 @@
   flex-wrap: wrap;
   gap: var(--space-1);
 }
+
+.destinationBody {
+  display: flex;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-block-size: 0;
+  flex-direction: column;
+}

@@ -20,16 +20,19 @@
   --stage-floor: 0px;
 }
 
+/* A constrained content bound spends no height on backdrop separation. */
+.modalAnchor[data-constrained] { --stage-gap: 0px; }
+
 /* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {
   position: absolute;
   z-index: 1;
   inset-inline: 12px;
-  inset-block-end: calc(12px + var(--stage-floor));
+  inset-block-end: calc(var(--stage-gap, 12px) + var(--stage-floor));
   box-sizing: border-box;
   inline-size: fit-content;
   max-inline-size: min(22rem, 100% - 24px);
-  max-block-size: calc(var(--stage-ceiling) - 24px);
+  max-block-size: calc(var(--stage-ceiling) - 2 * var(--stage-gap, 12px));
   margin-inline: auto;
   overflow-y: auto;
   overscroll-behavior: contain;

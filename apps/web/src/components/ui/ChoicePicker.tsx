@@ -113,6 +113,7 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
       <ChevronDown size={14} aria-hidden="true" className={styles.chevron} />
     </button>
     <PickerSurface
+      slipContent={list}
       active={open}
       onClose={() => setOpen(false)}
       anchor={() => trigger.current}

@@ -115,8 +115,14 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
     const viewport = window.visualViewport;
     let selected: number | null = null;
     let observedFrame: HTMLElement | null = null;
+    let observedContent: HTMLElement | null = null;
     const place = (geometry = false) => {
       if (!geometry && anchor.hasAttribute("data-stage-held") && selected !== null) return;
+      if (content.current !== observedContent) {
+        if (observedContent) observer.unobserve(observedContent);
+        if (content.current) observer.observe(content.current);
+        observedContent = content.current;
+      }
       const bounds = room.getBoundingClientRect();
       const safe = getComputedStyle(anchor);
       const left = Math.max(bounds.left, viewport?.offsetLeft ?? 0) + parseFloat(safe.paddingLeft);
@@ -166,12 +172,12 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
           top: Math.max(top, c.top - moving.top + p.top), bottom: Math.min(bottom, c.bottom - moving.top + p.top) };
       }
       selected = index;
+      anchor.toggleAttribute("data-constrained", index < 0);
       apply(band);
     };
     const observer = new ResizeObserver(entries => place(entries.some(({ target }) => target === room || target === panel || target === content.current)));
     observer.observe(room);
     observer.observe(panel);
-    if (content.current) observer.observe(content.current);
     const changes = new MutationObserver(() => place());
     changes.observe(anchor, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-stage-held"] });
     const geometry = () => place(true);
@@ -310,7 +316,7 @@ function Frame({ room, typing, focus }: { room: RoomView; typing: boolean; focus
     const third = element.children[2];
     if (!room.held || !end.current?.isConnected) end.current = third instanceof HTMLElement ? third : null;
     element.style.maxBlockSize = element.children.length > 3 && end.current
-      ? `min(${end.current.offsetTop + end.current.offsetHeight + 2 * element.clientTop}px, var(--stage-ceiling) - 24px)` : "";
+      ? `min(${end.current.offsetTop + end.current.offsetHeight + 2 * element.clientTop}px, var(--stage-ceiling) - 2 * var(--stage-gap, 12px))` : "";
   }, [frame, room.slips, room.held]);
   useEffect(() => {
     standing.current = true;

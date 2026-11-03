@@ -43,6 +43,7 @@ function count(n: number, noun: string): string {
 export default function DesktopNexus({ controller }: { controller: NexusController }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const workflowRef = useRef<HTMLDivElement>(null);
+  const addBody = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   /** The query's text selection when the rail opened; the rail's exit restores it. */
@@ -363,7 +364,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       scope="Nexus"
       onDismiss={controller.escape}
       label={controller.dialogLabel}
-      slipContent={controller.page.kind === "Root" ? listRef : workflowRef}
+      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Add" ? addBody : workflowRef}
       initialFocus={controller.initialFocus}
       skipReturnFocus={controller.suppressReturnFocus}
       returnFocusTo={controller.returnFocusTo}
@@ -376,7 +377,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         root
       ) : (
         <div ref={workflowRef} className={styles.workflow}>
-          <NexusPages controller={controller} mobile={false} />
+          <NexusPages scrollRef={addBody} controller={controller} mobile={false} />
         </div>
       )}
     </ModalFrame>
