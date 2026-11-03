@@ -57,7 +57,8 @@
   padding: 6px 6px 6px 12px;
 }
 
-.row + .row { border-block-start: 1px solid var(--edge-subtle); }
+/* Newest on top, so a landing row brings its own rule and a standing row's box never changes. */
+.row:not(:last-child) { border-block-end: 1px solid var(--edge-subtle); }
 
 .row[data-weight="Held"],
 .row[data-weight="Risk"] {
