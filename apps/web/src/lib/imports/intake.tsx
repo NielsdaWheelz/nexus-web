@@ -148,6 +148,8 @@ type State = {
   /** Running, plus accepted and not yet settled: the rail's and root row's count. */
   readonly unsettled: number;
   readonly defect: { readonly error: unknown } | null;
+  /** First observed whole-batch settlement; retrying drops it until settled again. */
+  readonly settledAt: ReadonlyMap<string, number>;
   /** Batches whose held slip stands: settled with an unknown, while no surface showed them. */
   readonly held: readonly string[];
 };
@@ -158,7 +160,7 @@ type Host = {
 };
 
 const ANSWER_MS = 30_000;
-const EMPTY: State = { lines: [], field: "", into: [], running: 0, unsettled: 0, defect: null, held: [] };
+const EMPTY: State = { lines: [], field: "", into: [], running: 0, unsettled: 0, defect: null, settledAt: new Map(), held: [] };
 
 /** The address the server keys a link by: no fragment, normalized host. */
 const address = (url: string) => { const parsed = new URL(url); parsed.hash = ""; return parsed.href; };
@@ -201,7 +203,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   let slot: Promise<unknown> = Promise.resolve();
   let truthRunning = false;
   let truthAgain = false;
-  let settledBatches = new Set<string>();
+  let settledBatches = new Map<string, number>();
   /** Settled while no surface showed it: its slip was raised, or is held. */
   let unseen = new Set<string>();
   /** Accepted something since its last drain: drained, it invalidates Imports once more. */
@@ -214,7 +216,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     const batches = new Map<string, Entry[]>();
     for (const line of entries) batches.set(line.batch, [...batches.get(line.batch) ?? [], line]);
     accepting = new Set([...accepting].filter(batch => batches.has(batch)));
-    const settledNow = new Set<string>();
+    const settledNow = new Map<string, number>();
     for (const [batch, lines] of batches) {
       const phases = lines.map(line => linePhase(line.stage));
       if (accepting.has(batch) && !phases.includes("Running")) {
@@ -223,7 +225,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         publishChange("Entries");
       }
       if (phases.some(phase => phase !== "Settled")) continue;
-      settledNow.add(batch);
+      settledNow.set(batch, settledBatches.get(batch) ?? Date.now());
       if (settledBatches.has(batch) || viewers > 0) continue;
       unseen.add(batch);
       host?.settled(lines);
@@ -232,7 +234,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     unseen = new Set([...unseen].filter(batch => settledNow.has(batch)));
     const running = entries.filter(line => linePhase(line.stage) === "Running").length;
     state = {
-      lines: entries, field, into, defect, running,
+      lines: entries, field, into, defect, running, settledAt: settledNow,
       unsettled: entries.filter(line => linePhase(line.stage) !== "Settled").length,
       held: viewers > 0 ? [] : [...unseen].filter(batch => batches.get(batch)!.some(line => line.stage.kind === "Unknown")),
     };
@@ -492,10 +494,10 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   /** Every read answers within ANSWER_MS. A line whose own read fails waits for the next
    * clock advance and holds no other line back; a failed summaries read fails the pass. */
   async function truthPass(signal: AbortSignal) {
-    // a link whose source read failed may have moved, so its last media's summary could
-    // settle it falsely: it sits this pass out
-    const unread = new Set<string>();
-    const open = () => entries.flatMap(line => line.stage.kind === "Accepted" && linePhase(line.stage) === "Accepted" && !unread.has(line.id) ? [{ line, stage: line.stage }] : []);
+    // freeze membership, not identity: arrivals wait for their own source read next pass.
+    // a failed source read sits this pass out because its last media may no longer be its own.
+    const reading = new Set(entries.filter(line => linePhase(line.stage) === "Accepted").map(line => line.id));
+    const open = () => entries.flatMap(line => line.stage.kind === "Accepted" && linePhase(line.stage) === "Accepted" && reading.has(line.id) ? [{ line, stage: line.stage }] : []);
     const links = open().flatMap(({ line, stage }) => line.sourceAttemptId === null ? [] : [{ id: line.id, attempt: line.sourceAttemptId, mediaId: stage.mediaId }]);
     const sources = await runBoundedTasks({ items: links, concurrency: 2,
       run: link => requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal => fetchAcceptedSource(link.attempt, signal) }) });
@@ -505,7 +507,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         accepted(id, mediaId, stage => ({ ...stage, mediaId: source.value.media_id, importRef: source.value.import_ref,
           href: `/media/${source.value.media_id}?source_attempt_id=${encodeURIComponent(attempt)}` }));
       else if (isApiError(source.error) && source.error.status === 404) accepted(id, mediaId, stage => ({ ...stage, truth: { kind: "Removed" } }));
-      else if (isApiError(source.error) && !isSameSystemApiDefect(source.error)) unread.add(id);
+      else if (isApiError(source.error) && !isSameSystemApiDefect(source.error)) reading.delete(id);
       else throw source.error;
     });
     const ids = [...new Set(open().map(({ stage }) => stage.mediaId))];
@@ -580,7 +582,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     queue = [...queue, ...added.filter(entry => entry.stage.kind === "Waiting").map(entry => entry.id)];
     // a batch settled at admission (files refused at the door) is its door's to show, since
     // every door shows what it admits, the page before it has mounted: no slip
-    if (added.every(entry => linePhase(entry.stage) === "Settled")) settledBatches.add(batch);
+    if (added.every(entry => linePhase(entry.stage) === "Settled")) settledBatches = new Map(settledBatches).set(batch, Date.now());
     publish();
     pump();
   }
@@ -689,7 +691,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         lifetime = null;
         entries = []; queue = []; deferred = []; field = ""; into = [];
         freezing = false; linkSending = false; filesSending = 0;
-        settledBatches = new Set(); unseen = new Set(); accepting = new Set();
+        settledBatches = new Map(); unseen = new Set(); accepting = new Set();
         publish();
       };
     },
@@ -815,6 +817,7 @@ export function useImportIntake() {
   const state = useSyncExternalStore(intake.subscribe, intake.snapshot, intake.snapshot);
   return {
     lines: state.lines, field: state.field, into: state.into, running: state.running, unsettled: state.unsettled, defect: state.defect,
+    settledAt: (batch: string): number | null => state.settledAt.get(batch) ?? null,
     setField: intake.setField, setInto: intake.setInto, admit: intake.admit, retry: intake.retry, retryWithout: intake.retryWithout,
     reselect: intake.reselect, stop: intake.stop, remove: intake.remove, arm: intake.arm, disarm: intake.disarm, endVisit: intake.endVisit,
   };

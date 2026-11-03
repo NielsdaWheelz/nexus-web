@@ -118,7 +118,7 @@ export default function ImportPage({ controller, page, mobile }: {
   }
   for (const batch of batches) {
     batch.forEach((line, at) => rows.push({ kind: "Line", key: lineKey(line), line, fall: present.has(line.id) ? null : Math.min(at, 7) }));
-    const text = colophon(batch, new Date(), displayTimeZone);
+    const text = colophon(batch, intake.settledAt(batch[0]!.batch), displayTimeZone);
     if (text !== null) rows.push({ kind: "Colophon", key: `Colophon:${batch[0]!.batch}`, text });
   }
   rows.push({ kind: "Choose", key: "Choose" });
@@ -152,7 +152,7 @@ export default function ImportPage({ controller, page, mobile }: {
     for (const batch of batches) {
       if (!now.has(batch[0]!.batch) || before.has(batch[0]!.batch)) continue;
       const slip = batch.length === 1 ? batchSlip(batch) : null;
-      const said = batch.length > 1 ? colophon(batch, new Date(), displayTimeZone) : slip === null ? null : sentence(slip.line);
+      const said = batch.length > 1 ? colophon(batch, intake.settledAt(batch[0]!.batch), displayTimeZone) : slip === null ? null : sentence(slip.line);
       if (said !== null) announce(said);
     }
   });

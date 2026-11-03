@@ -208,11 +208,11 @@ function ledger(lines: readonly IntakeLine[], day: string | null): string {
   return `${(other > 0 ? [...named, `${spokenCount(other)} other`] : named).join(", ")}.`;
 }
 
-/** The page's close of a settled batch of two or more, null before then. The day is the
- * reader's, day before month. */
-export function colophon(lines: readonly IntakeLine[], now: Date, timeZone: string): string | null {
-  if (lines.length < 2 || lines.some(line => linePhase(line.stage) !== "Settled")) return null;
-  const parts = new Intl.DateTimeFormat("en", { timeZone, weekday: "long", day: "numeric", month: "long" }).formatToParts(now);
+/** The page's close of a settled batch of two or more, dated at its first observed
+ * settlement in the reader's zone, day before month. */
+export function colophon(lines: readonly IntakeLine[], settledAt: number | null, timeZone: string): string | null {
+  if (settledAt === null || lines.length < 2 || lines.some(line => linePhase(line.stage) !== "Settled")) return null;
+  const parts = new Intl.DateTimeFormat("en", { timeZone, weekday: "long", day: "numeric", month: "long" }).formatToParts(settledAt);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(entry => entry.type === type)!.value.toLowerCase();
   return ledger(lines, `${part("weekday")} ${part("day")} ${part("month")}`);
 }

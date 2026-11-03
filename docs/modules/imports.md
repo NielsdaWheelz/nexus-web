@@ -153,18 +153,24 @@ for every surface and for the intake's slips. nothing survives a reload.
   failed rereads. `retryWithout` drops every library the refusal's reread found missing.
   `reselect` starts a fresh session; the expired one stays in imports.
 - **truth.** for accepted, unsettled lines, on acceptance and each clock advance, one pass
-  at a time: `GET /media/source-attempts/{id}` per link, two at a time, following
+  at a time, with membership frozen at its start: `GET /media/source-attempts/{id}` per link, two at a time, following
   supersession; `POST /media/summaries/resolve` over the media ids, 100 a request; and for
   a failed or dead run one `GET /imports/{ref}`, which decides readable, the reason or
   removed. each read answers within 30 s. a line whose own read fails sits the pass out,
   holding no other back; a failed summaries read fails the pass. either waits for the next
-  advance. the host retains the observer while any accepted line is unsettled.
+  advance. new arrivals wait for the next pass; summaries use the included lines' current
+  identities after their source reads. the host retains the observer while any accepted line is unsettled.
 - **slips.** a batch wholly settled while no surface shows lines (`useImportLinesShown`)
   raises one slip through `useOutcome().say`; with an unknown line it holds one, whose
   `retry` replays that batch's unknown lines. a batch that settles while a surface shows
   lines never slips, then or later: that surface speaks its settle. nor does a batch admit
   settles at once (files refused at the door): every door shows what it admits, so a door
   need not register before it admits.
+- **settlement date.** the intake records when it first observes a wholly settled batch,
+  not the server's completion time. the page's displayed and spoken colophon use that
+  instant in the reader's zone. edits, back and partial dismissal retain it; retrying an
+  unsettled batch drops it until settlement recurs. a batch with no remaining lines and
+  account teardown discard it. published snapshots keep their timestamps immutable.
 - **`×`** removes a waiting or settled line. forgetting an unknown line, or a waiting replay
   of one, asks `window.confirm` first, since either may have landed.
 - **endVisit**, on the palette's close edge, resets the field and `into`; readable, held and
