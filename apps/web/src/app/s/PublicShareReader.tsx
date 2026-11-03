@@ -260,12 +260,12 @@ function SharedDocument({
     try {
       const response = await publicFetch(`/apparatus/${ordinal}?expected_identity=${encodeURIComponent(identity)}`,
         token, controller.signal, { "X-Nexus-Wire": String(WIRE_REVISION) });
-      if (response.status === 409) { onContentChanged(token); return; }
       const body = await readResponse<ApiJson<"/public/resource-share/apparatus/{ordinal}", "get">>(response);
       if (!controller.signal.aborted) { setNote(body.data); setNoteFailure(null); }
     } catch (error) {
       if (controller.signal.aborted || isAbortError(error)) return;
       if (!isApiError(error)) { throwLater({ error }); return; }
+      if (error.code === "E_READER_CONTENT_CHANGED") { onContentChanged(token); return; }
       setNoteFailure({ ordinal, error, retrying: false });
     }
   }, [identity, onContentChanged, token, throwLater]);
