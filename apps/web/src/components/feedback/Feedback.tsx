@@ -260,9 +260,10 @@ export function useResendVerbs(): (resend: CommandVerb, sends?: () => boolean) =
 }
 
 /** A fact that stands while its owner holds it: mounted is present, unmounted is resolved. `id`
- * keys the row, so an owner that moves between parents in one commit keeps its row, its tuck and
- * its speech, and stands it where it now renders; two owners of one id share one row, standing
- * where the earlier renders. `attempt` keys speech, so a failed retry speaks again. */
+ * keys the row, so an owner that moves between parents keeps its row, its tuck and its speech,
+ * and stands it where it now renders; two owners of one id share one row, standing where the
+ * earlier renders; an owner whose id changes lets the old row go at once. `attempt` keys speech,
+ * so a failed retry speaks again. */
 export function Hold({ id, attempt = 0, line, verbs, risk = false }: { id: string; attempt?: number; line: Line; verbs?: Verbs; risk?: boolean }) {
   const stage = useStage();
   const address = useAddress();

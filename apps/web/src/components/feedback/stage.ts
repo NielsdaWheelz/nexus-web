@@ -82,6 +82,8 @@ const VERB_MS = 8000;
 const HELD_MS = 8000;
 const TYPING_PAUSE_MS = 1200;
 const TYPING_WAIT_MS = 8000;
+/** An owner of an id that mounts this soon after its last owner left takes the row as it stands. */
+const HANDOFF_MS = 100;
 
 type Clock = { remaining: number; running: { since: number; timer: ReturnType<typeof setTimeout> } | null };
 type Room = { id: number; anchor: Anchor; element: HTMLElement; holds: Set<HoldKind> };
@@ -146,8 +148,9 @@ export function createStage() {
   const unsaid: Record<keyof Speech, Set<string>> = { Polite: new Set(), Assertive: new Set() };
   let speaker: Room | null = null;
   let view: StageView = { rooms: [], typing: false, speech };
-  /** Mounted owners per held id, earliest first. */
-  const owners = new Map<string, Owner[]>();
+  /** Mounted owners per held id, earliest first, and, once none is left, the last of them and the
+   * dismissal that waits out a handoff. */
+  const owners = new Map<string, { mounted: Owner[]; leaving: { owner: Owner; timer: ReturnType<typeof setTimeout> } | null }>();
 
   const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
   const renewClock = (slip: Slip) => {
@@ -255,6 +258,12 @@ export function createStage() {
     settle();
   }
   const slipOf = (key: object | string) => slips.find(slip => slip.row.key === key);
+  /** No owner holds `id` any longer. */
+  const resolve = (id: string) => {
+    owners.delete(id);
+    const slip = slipOf(id);
+    if (slip) leave(slip, "Dismissed");
+  };
   const pause = () => {
     if (typing === null) return;
     clearTimeout(typing);
@@ -303,7 +312,7 @@ export function createStage() {
      * into a dialog takes its row there. Turning to risk presents and speaks whatever the row had
      * settled into. */
     hold({ key, owner, frame, risk, line, verbs, attempt }: Pick<Row, "line" | "verbs" | "attempt"> & { key: string; owner: Owner; frame: Layer | null; risk: boolean }): void {
-      const earliest = owners.get(key)?.[0];
+      const earliest = owners.get(key)?.mounted[0];
       const existing = slipOf(key);
       const { address } = earliest ?? owner;
       const modal = earliest && existing ? existing.row.modal : frame === null || onOverlayStack(frame) ? topModal() : frame;
@@ -325,16 +334,23 @@ export function createStage() {
       if (slip) leave(slip, "Dismissed");
     },
     /** A mounted owner of `id`. Its row passes to the next owner when the earliest leaves, keeping
-     * its modal. It resolves as the commit its last owner left in ends with none mounted, so a
-     * holder moving between parents keeps its row, tuck and speech, and a resolution or a changed
-     * id leaves at once. */
+     * its modal, and resolves once its last owner leaves and no other mounts within the handoff,
+     * so a holder moving between parents, or to the pane its owner's store picks next, keeps its
+     * row, tuck and speech. An owner that turns to a new id resolves its old one at once. */
     own(id: string, owner: Owner): Retract {
-      const mounted = owners.get(id) ?? [];
-      owners.set(id, mounted);
-      mounted.push(owner);
+      for (const [other, { leaving }] of owners)
+        if (other !== id && leaving?.owner === owner) {
+          clearTimeout(leaving.timer);
+          resolve(other);
+        }
+      const entry = owners.get(id) ?? { mounted: [], leaving: null };
+      owners.set(id, entry);
+      if (entry.leaving !== null) clearTimeout(entry.leaving.timer);
+      entry.leaving = null;
+      entry.mounted.push(owner);
       return () => {
-        mounted.splice(mounted.indexOf(owner), 1);
-        const [next] = mounted;
+        entry.mounted.splice(entry.mounted.indexOf(owner), 1);
+        const [next] = entry.mounted;
         if (next !== undefined) {
           const slip = slipOf(id);
           if (slip && !sameAddress(slip.row.address, next.address)) {
@@ -343,13 +359,7 @@ export function createStage() {
           }
           return;
         }
-        // A commit runs its layout effects together, so an owner mounting in it has come by now.
-        queueMicrotask(() => {
-          if (owners.get(id) !== mounted || mounted.length > 0) return;
-          owners.delete(id);
-          const slip = slipOf(id);
-          if (slip) leave(slip, "Dismissed");
-        });
+        entry.leaving = { owner, timer: setTimeout(() => resolve(id), HANDOFF_MS) };
       };
     },
     tuck(key: object | string): void {
