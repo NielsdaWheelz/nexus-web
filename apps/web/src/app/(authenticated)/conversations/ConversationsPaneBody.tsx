@@ -2,6 +2,7 @@
 
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { Plus } from "lucide-react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
@@ -145,14 +146,11 @@ export default function ConversationsPaneBody() {
   const execute = useCallback<PaneRefreshExecute>(async () => {
     try {
       await refetch();
-      return { kind: "Complete", announcement: "Conversations refreshed" };
     } catch (error) {
-      if (isAbortError(error)) throw error;
-      return {
-        kind: "Failed",
-        announcement: "Conversations failed to refresh",
-      };
+      if (isAbortError(error) || !isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      // justify-ignore-error: the displayed read retains its failure and heals on demand.
     }
+    return null;
   }, [refetch]);
   usePaneChrome({
     query: invalid ? undefined : {

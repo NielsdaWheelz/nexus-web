@@ -3,6 +3,8 @@
 // The viewer's libraries in the url's sort. Creation and filtering belong to
 // this visit, independently of whether its collection is available.
 
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { useCallback, useId, useState } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
@@ -102,10 +104,11 @@ export default function LibrariesPaneBody() {
   const execute = useCallback<PaneRefreshExecute>(async () => {
     try {
       await refetch();
-      return { kind: "Complete", announcement: "" };
-    } catch {
-      return { kind: "Failed", announcement: "" };
+    } catch (error) {
+      if (isAbortError(error) || !isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      // justify-ignore-error: the displayed read retains its failure and heals on demand.
     }
+    return null;
   }, [refetch]);
   usePaneChrome({
     primaryAction: creation.primaryAction,
