@@ -12,7 +12,7 @@
  * is heard once: a region keeps what it carried, and the next room takes only what none has. */
 import { createContext, useContext, useLayoutEffect } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
-import { updateRemedy } from "@/lib/native/admission";
+import { updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
 import { onOverlayStack, subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
@@ -65,14 +65,15 @@ export function anchorOf(row: Row, world: World): Anchor | null {
 
 const RELOAD: Verb = { label: "reload", commandKey: "Reload", run: () => window.location.reload() };
 
-/** A transport's verb. `retry` is the owner's; `Update` reloads only where reload can work. */
-export function transportVerbs(transport: Transport, { retry, signIn }: { retry?: Verb; signIn: Verb | null }): Verbs | null {
+/** A transport's verb. `retry` is the owner's; `Update` reloads only where reload can work, by
+ * `remedy`, the update remedy as it stands unless given. */
+export function transportVerbs(transport: Transport, { retry, signIn, remedy = updateRemedy() }: { retry?: Verb; signIn: Verb | null; remedy?: UpdateRemedy }): Verbs | null {
   const kind = TRANSPORT_LINES[transport].verb;
   switch (kind) {
     case null: return null;
     case "Retry": return retry ? [retry] : null;
     case "SignIn": return signIn ? [signIn] : null;
-    case "Update": return updateRemedy() === "Reload" ? [RELOAD] : null;
+    case "Update": return remedy === "Reload" ? [RELOAD] : null;
   }
 }
 

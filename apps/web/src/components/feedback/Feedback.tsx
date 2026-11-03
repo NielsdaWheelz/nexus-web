@@ -220,12 +220,13 @@ export function useOutcome(): Outcome {
 }
 
 /** A transport's verbs, for a lane that builds a line itself: the owner's `retry`, the shell's
- * sign-in, or reload where reload can work. One function per shell, so a callback or a list may
- * call it; it reads admission when called, and its owner renders again as admission moves. */
+ * sign-in, or reload where reload can work. Its owner renders again as the update remedy moves,
+ * and the function changes whenever its output would, with the shell or the remedy, so a
+ * callback, a list or a memo may hold it. */
 export function useTransportVerbs(): (transport: Transport, options?: { retry?: Verb }) => Verbs | null {
   const { signIn } = useContext(ShellContext);
-  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
-  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => transportVerbs(transport, { retry, signIn }), [signIn]);
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => transportVerbs(transport, { retry, signIn, remedy }), [signIn, remedy]);
 }
 
 /** What admission refuses remote work for now. F2's mapping in lib/api replaces this. */
@@ -239,23 +240,23 @@ function admissionTransport(admission: RemoteAdmission): Transport | null {
   }
 }
 
-/** A held write's verb as admission stands when called: a stale build offers reload alone, where
- * reload can work; a lapsed session, the shell's sign-in; otherwise `resend` itself, busy while
- * admission checks, and disabled with admission's reason while the press would stay unsent:
- * offline, or refused by `sends`, its owner's own gate, by default whether a fetch may leave. One
- * verb, so an owner may set its own beside it. One function per shell, as `useTransportVerbs` is. */
+/** A held write's verb as admission stood at its owner's render: a stale build offers reload
+ * alone, where reload can work; a lapsed session, the shell's sign-in; otherwise `resend` itself,
+ * busy while admission checks, and disabled with admission's reason while the press would stay
+ * unsent: offline, or refused by `sends`, its owner's own gate, by default whether a fetch may
+ * leave. One verb, so an owner may set its own beside it. Its owner renders again as admission
+ * moves, and the function changes with admission, as `useTransportVerbs`'s does with the shell. */
 export function useResendVerbs(): (resend: CommandVerb, sends?: () => boolean) => readonly [Verb] {
   const verbsFor = useTransportVerbs();
-  useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
   return useCallback((resend: CommandVerb, sends: () => boolean = remoteAttemptAllowed): readonly [Verb] => {
-    const admission = remoteAdmission();
     const transport = admissionTransport(admission);
     const [instead] = transport === "SignIn" || transport === "Update" ? verbsFor(transport) ?? [] : [];
     if (instead) return [instead];
     const unsent = transport !== null && (transport === "Offline" || !sends());
     return [{ ...resend, busy: resend.busy || admission === "Checking",
       disabledReason: unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason }];
-  }, [verbsFor]);
+  }, [verbsFor, admission]);
 }
 
 /** A fact that stands while its owner holds it: mounted is present, unmounted is resolved. `id`
