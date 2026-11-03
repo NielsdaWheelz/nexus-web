@@ -23,7 +23,7 @@ export default function DestinationField({ context, label, emptyLabel, chosen, o
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
     <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
-      <DestinationChooser context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled}
+      <DestinationChooser context={context} chosen={chosen} onSet={onSet} disabled={disabled}
         create={create} error={error} />
     </PickerSurface>
     {!open && error ? <FeedbackFailure scope="Local" occurrence={error.occurrence} content={error.content} announcement="Assertive"

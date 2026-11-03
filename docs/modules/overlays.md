@@ -39,6 +39,11 @@ always a `ModalFrame`), a **transient** (a brief choice), or a **tooltip** (pass
 help). transients and tooltips belong to the modal they render inside (react
 context from the frame) or to the page.
 
+shell-hosted surfaces use `getModalForTarget` to capture the live modal containing
+their stable opener, including a temporarily covered modal. their ui owner uses
+`subscribeOverlayStack` and `onOverlayStack` to retire that session when the exact
+modal departs. the lookup does not transfer command or creation ownership.
+
 the **owner** answers Escape, Back and global commands: the newest eligible
 transient of the newest modal, else that modal; with no modal, the newest
 eligible page transient. a transient of a covered modal never outranks a newer

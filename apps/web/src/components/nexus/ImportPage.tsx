@@ -39,6 +39,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
+import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import ImportLine, { lineName, type ButtonVerb } from "./ImportLine";
 import type { NexusController } from "./useNexusController";
@@ -84,6 +85,7 @@ export default function ImportPage({ controller, page, mobile }: {
   const filesRef = useRef<HTMLInputElement>(null);
   const againRef = useRef<HTMLInputElement>(null);
   const intoRef = useRef<HTMLButtonElement>(null);
+  useActionFocusRecovery(scrollRef, () => inputRef.current);
   /** The expired line whose file is being chosen again. */
   const again = useRef<string | null>(null);
   const composing = useRef(false);
@@ -327,7 +329,7 @@ export default function ImportPage({ controller, page, mobile }: {
           verbs={creation.error.retry ? [{ label: "retry", commandKey: creation.error.commandKey ?? "import-into-create", busy: creation.error.busy, run: creation.error.retry }] : undefined} /> : null}
       </div> : null}
       <PickerSurface active={choosing} onClose={() => setChoosing(false)} anchor={() => intoRef.current} title="libraries" align="end">
-        <DestinationChooser context="import-into" selection={{ kind: "Item", chosen: intake.into }} disabled={false}
+        <DestinationChooser context="import-into" chosen={intake.into} alwaysIncludesAll disabled={false}
           onSet={change => { intake.setInto(setDestination(intake.into, change)); return true; }}
           create={{ available: true, pendingNames: creation.pendingNames, onCreate: name => creation.admit({ name, scope: "import-into" }) }}
           error={creation.error} />

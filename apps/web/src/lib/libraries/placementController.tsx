@@ -26,7 +26,7 @@ import { libraryErrorFeedback } from "@/lib/libraries/errors";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { pluralize } from "@/lib/text/pluralize";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
-import type { ReturnFocusTarget } from "@/lib/ui/overlay";
+import { getModalForTarget, onOverlayStack, OverlayContext, subscribeOverlayStack, type Layer, type ReturnFocusTarget } from "@/lib/ui/overlay";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 
@@ -34,10 +34,11 @@ export interface LibraryPlacementOpenOptions {
   readonly anchor: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget | null;
 }
-export interface LibraryPlacementSession {
+interface LibraryPlacementSession {
   readonly key: number;
   readonly targets: readonly LibraryPlacementTarget[];
   readonly options: LibraryPlacementOpenOptions;
+  readonly modal: Layer | null;
 }
 interface Change {
   readonly occurrence: object;
@@ -374,6 +375,7 @@ interface ExternalPlacementSession {
   readonly key: number;
   readonly target: string;
   readonly options: LibraryPlacementOpenOptions;
+  readonly modal: Layer | null;
   readonly choose: (destination: LibraryDestination, sessionKey: number) => void;
   readonly pending: boolean;
 }
@@ -404,6 +406,21 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const [external, setExternal] = useState<ExternalPlacementSession | null>(null);
   const externalRef = useRef(external);
   externalRef.current = external;
+  useLayoutEffect(() => {
+    const captured = session ?? external;
+    if (captured === null || captured.modal === null) return;
+    const modal = captured.modal;
+    const retire = () => {
+      if (onOverlayStack(modal)) return;
+      // Retire presentation only; accepted commands and creation keep their account lifetime.
+      if (externalRef.current?.key === captured.key) externalRef.current = null;
+      setSession(current => current?.key === captured.key ? null : current);
+      setExternal(current => current?.key === captured.key ? null : current);
+    };
+    const unsubscribe = subscribeOverlayStack(retire);
+    retire();
+    return unsubscribe;
+  }, [session, external]);
   const [destinationCreation] = useState(createDestinationCreation);
   const creation = useDestinationCreation("external-media", destinationCreation);
   const workGuard = useWorkGuard();
@@ -432,7 +449,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       setReviewTargets(null);
       externalRef.current = null;
       setExternal(null);
-      setSession({ key: lastKey.current, targets: [...targets], options });
+      setSession({ key: lastKey.current, targets: [...targets], options, modal: getModalForTarget(options.anchor()) });
     },
     addToLibrary: owner.addToLibrary,
     hasPendingExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target),
@@ -442,7 +459,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       setReviewTargets(null);
       setSession(null);
       const next = { key: lastKey.current, target: input.target,
-        choose: input.choose, pending: input.pending, options };
+        choose: input.choose, pending: input.pending, options, modal: getModalForTarget(options.anchor()) };
       externalRef.current = next;
       setExternal(next);
     },
@@ -451,7 +468,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       if (current?.key !== sessionKey) return;
       externalRef.current = null;
       setExternal(null);
-      setSession({ key: current.key, targets: [target], options: current.options });
+      setSession({ key: current.key, targets: [target], options: current.options, modal: current.modal });
     },
   }));
   const chooseExternal = (destination: LibraryDestination, captured: ExternalPlacementSession) => {
@@ -484,12 +501,13 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   if (defect !== null) throw defect.error;
   return <Context.Provider value={{ owner, controller }}>
     {children}
+    <OverlayContext.Provider value={session?.modal ?? external?.modal ?? null}>
     <PickerSurface active={external !== null || session !== null} title="libraries"
       focusKey={session !== null ? `stored:${session.key}` : external?.key}
       anchor={session?.options.anchor ?? external?.options.anchor ?? (() => null)}
       returnFocusFallback={session?.options.returnFocusFallback ?? external?.options.returnFocusFallback ?? undefined}
       onClose={() => { externalRef.current = null; setExternal(null); setSession(null); }}>
-      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
+      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser context={JSON.stringify([external.key, external.target])} chosen={[]}
         disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
         onSet={({ destination, included }) => included && chooseExternal(destination, external)}
         error={creation.error}
@@ -505,6 +523,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
           },
         }} /> : null}
     </PickerSurface>
+    </OverlayContext.Provider>
     <Dialog open={reviewTargets !== null} onClose={() => setReviewTargets(null)} title="library changes"
       initialFocus={panel => panel.querySelector<HTMLInputElement>("input")}
       returnFocusFallback={() => findPaneLandmarkFocusTarget(workspace().state.active_primary_pane_id)}>

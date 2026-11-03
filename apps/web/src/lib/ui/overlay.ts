@@ -107,6 +107,11 @@ export function topModal(): Layer | null {
 export function onOverlayStack(layer: Layer): boolean {
   return layers.includes(layer);
 }
+/** A hosted surface inherits its stable opener's modal, including while covered. */
+export function getModalForTarget(target: ReturnType<ReturnFocusTarget>): Layer | null {
+  const element = target instanceof HTMLElement ? target : target?.element;
+  return element ? layers.findLast(layer => isModal(layer) && layer.element?.contains(element)) ?? null : null;
+}
 function topmost(layer: Layer): boolean {
   if (topModal() !== (isModal(layer) ? layer : layer.parent)) return false;
   const options = layer.options.current;

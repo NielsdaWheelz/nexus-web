@@ -58,7 +58,7 @@ function progress(row: ChooserRow): string | null {
 
 /** Search actions retain their query. Checks show confirmed membership or an explicitly chosen draft destination; highlight is the current suggestion. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, error, create, empty,
+  context, membershipKind, rows, onToggle, loading, summary, error, create, empty, alwaysIncludesAll = false,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
@@ -70,6 +70,7 @@ export default function LibraryChooser({
   readonly error: ChooserError | null;
   readonly create: ChooserCreation | null;
   readonly empty: string;
+  readonly alwaysIncludesAll?: boolean;
   readonly label?: string;
 }) {
   const base = useId();
@@ -147,6 +148,11 @@ export default function LibraryChooser({
         actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy ?? loading, commandKey: error.commandKey }] : undefined} /> : null}
       <div ref={navigation.listRef} {...navigation.listProps}
         aria-busy={loading || undefined} className={collection.compactViewport}>
+        {alwaysIncludesAll ? <div role="option" aria-disabled="true" aria-selected={false}
+          aria-label="All, always included" className={collection.row} data-selected>
+          <span className={collection.content}><span>All</span><span className={collection.detail} aria-hidden="true">always</span></span>
+          <Check className={collection.adornment} size={16} aria-hidden="true" />
+        </div> : null}
         {matching.map(row => {
           const binding = navigation.optionProps(row.id);
           const count = membershipKind === "Confirmed" ? row.confirmed : row.intended;
