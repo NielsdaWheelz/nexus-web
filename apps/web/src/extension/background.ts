@@ -1023,13 +1023,12 @@ async function save(signal: AbortSignal): Promise<void> {
     const creating = submission?.createUncertain === true;
     if (submission !== null) submission.createUncertain = false;
     let recovery: Extract<CapturePhase, { kind: "failed" }>["recovery"];
-    // a recorded rejection or a generation advanced under the publication lock
-    // fences this confirmation. expiry's unlocked read cannot settle an overlap.
+    // these refusals hold the publication lock and fence an earlier confirmation.
     if (submission !== null && confirming && error instanceof CaptureFailureError && error.status !== null &&
-        (VERIFICATION_REJECTIONS.has(shown.code) || shown.code === "E_UPLOAD_GENERATION_STALE")) {
+        (VERIFICATION_REJECTIONS.has(shown.code) || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_UPLOAD_CAPABILITY_EXPIRED")) {
       submission.confirmationUncertain = false;
       submission.createOutcomeUnknown = false;
-      recovery = shown.code === "E_UPLOAD_GENERATION_STALE" ? "Recapture" : "Discard";
+      recovery = VERIFICATION_REJECTIONS.has(shown.code) ? "Discard" : "Recapture";
     } else if (submission?.confirmationUncertain || submission?.createOutcomeUnknown) {
       recovery = "Check";
     } else if (error instanceof CaptureFailureError && (error.status === 401 ||
