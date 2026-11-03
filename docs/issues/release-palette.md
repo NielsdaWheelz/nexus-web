@@ -22,6 +22,10 @@ chromium touch emulation cannot establish this keyboard-up behavior.
 [spoken accessibility](search-screen-reader-acceptance.md) retain their existing
 owner deferrals; neither is implied by browser assertions.
 
+main’s resource-media owners now supply palette resource, pane and recent glyphs,
+including retained immutable media kinds during title revalidation. the full
+glyph lexicon and feedback-homes have not landed at main `523a4f4b9`.
+
 the glyph lexicon sweep replaces the palette's direct lucide imports with its
 sign owners and deletes the single 1.5px stroke override in `Nexus.module.css`.
 palette rows retain 16px glyphs. feedback-homes' handoff replaces the one

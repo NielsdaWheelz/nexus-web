@@ -46,7 +46,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const composing = useRef(false);
   const placementPress = useRef<string | null>(null);
   const taskPointerId = useRef<number | null>(null);
-  const previousQuery = useRef(controller.query);
   const [excerpt, setExcerpt] = useState<ResourceItem | null>(null);
   if (!controller.open && excerpt !== null) setExcerpt(null);
   const typed = controller.rootMode === "Typed";
@@ -64,8 +63,6 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
     const list = listRef.current;
     if (!controller.open || controller.page.kind !== "Root" || !list || !composed) return;
     const positions = controller.rootScroll.current;
-    if (previousQuery.current !== controller.query) positions.Typed = 0;
-    previousQuery.current = controller.query;
     list.scrollTop = positions[controller.rootMode];
     positions[controller.rootMode] = list.scrollTop;
   }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll, composed]);
@@ -205,7 +202,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
       {pinned ? <div id={CONTINUATIONS_ID} role="rowgroup" aria-label="query actions" className={cx(nexus.grid, styles.grid, styles.continuations)} onFocusCapture={trackFocus}>
         {controller.continuations.map((item, rowIndex) => row(item, "Continuations", rowIndex))}
       </div> : null}
-      <div ref={listRef} className={styles.list} aria-busy={controller.busy || undefined} onFocusCapture={trackFocus}>
+      <div ref={listRef} onScroll={event => { controller.rootScroll.current[controller.rootMode] = event.currentTarget.scrollTop; }} className={styles.list} aria-busy={controller.busy || undefined} onFocusCapture={trackFocus}>
         <div id={GRID_ID} role="grid" aria-label={typed ? "find results" : "nexus options"} aria-colcount={1} aria-owns={pinned ? CONTINUATIONS_ID : undefined} className={cx(nexus.grid, styles.grid)}
           style={{ "--arrival-onset": `${ARRIVAL_ONSET_MS}ms` } as CSSProperties}>
           {controller.groups.filter(group => (controller.reorder.placement === null || group.id === "Open") && !(pinned && group.id === "Continuations")).map(group => <Fragment key={group.id}>

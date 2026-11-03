@@ -50,13 +50,14 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const caret = useRef<{ readonly start: number; readonly end: number; readonly direction: "forward" | "backward" | "none" } | null>(null);
   const [excerpt, setExcerpt] = useState<ResourceItem | null>(null);
   if (!controller.open && excerpt !== null) setExcerpt(null);
+  const composed = controller.groups.length > 0;
   useLayoutEffect(() => {
     const port = listRef.current;
-    if (!controller.open || controller.page.kind !== "Root" || !port) return;
+    if (!controller.open || controller.page.kind !== "Root" || !port || !composed) return;
     const positions = controller.rootScroll.current;
-    port.scrollTop = positions.Typed;
-    return () => { positions.Typed = port.scrollTop; };
-  }, [controller.open, controller.page.kind, controller.query, controller.rootScroll]);
+    port.scrollTop = positions[controller.rootMode];
+    positions[controller.rootMode] = port.scrollTop;
+  }, [controller.open, controller.page.kind, controller.rootMode, controller.query, controller.rootScroll, composed]);
   const pointerPress = useRef<{ readonly key: string; readonly x: number; readonly y: number; moved: boolean } | null>(null);
   // Law 3: the pointer is deliberate once it has travelled 8px since the last keystroke; at rest it is not.
   const pointerRest = useRef<{ readonly x: number; readonly y: number } | "Travelled" | null>(null);
@@ -319,6 +320,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         <div className={styles.body}>
           <div
             ref={listRef}
+            onScroll={event => { controller.rootScroll.current[controller.rootMode] = event.currentTarget.scrollTop; }}
             aria-busy={controller.busy || undefined}
             className={styles.list}
             onFocusCapture={event => { if (event.target instanceof HTMLElement) focusedNative.current = event.target; }}

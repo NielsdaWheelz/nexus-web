@@ -762,7 +762,7 @@ export function useNexusController() {
       setQuery(sent ? "" : text);
       // Search on a phone rests in its input. Otherwise the row: the one that opened
       // this page, or the import row if that row left with the query or never existed.
-      rootFocus.current = viewport.isMobile && mode === "Typed" ? "Search"
+      rootFocus.current = viewport.isMobile && !sent && mode === "Typed" ? "Search"
         : sent || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control;
     }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
