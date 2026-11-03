@@ -1,5 +1,5 @@
 /* A region sets --ruling-pitch to its row or reader line pitch. --ruling-elapsed is how long the
-   region's wait has run, so a ruling that continues one starts its clocks partway. */
+   wait this ruling continues has run, so it starts its clocks partway. */
 .ruling {
   --pitch: var(--ruling-pitch, var(--size-xl));
   position: relative;

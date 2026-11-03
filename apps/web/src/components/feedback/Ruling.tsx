@@ -3,10 +3,11 @@
 /** Nothing to show yet, in the empty region. Six hairlines that css alone brings in, so a fast
  * read paints nothing; it unmounts the frame content lands. The active region says `opening` once.
  *
- * A region (its modal, else its pane, else the host) has one wait: every ruling in it, and one
- * that mounts within a frame of the last leaving, shows that wait's clock. So a cold open that
- * passes through several reads is one wait: it fades in once, says `opening` once, and shows
- * `still opening` 8s after it began. */
+ * A region (its modal, else its pane, else the host) carries a wait across a handoff: a ruling
+ * that mounts within a frame of the region's last one leaving continues that one's clock, so a
+ * cold open that passes through several reads fades in once and shows `still opening` 8s after it
+ * began. A ruling that mounts beside one still standing keeps its own clock, so a fast read there
+ * paints nothing. While any of a region's rulings stand, it says `opening` once. */
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { OverlayContext } from "@/lib/ui/overlay";
@@ -14,7 +15,9 @@ import { Announcement, useActiveRegion } from "./Feedback";
 import styles from "./Ruling.module.css";
 
 const OPENING_MS = 2000;
-type Wait = { start: number; said: boolean; rulings: number; ending: number | null };
+/** A region's standing rulings, whether it said `opening`, and, for a frame after the last of
+ * them left, that one's clock and the frame that ends the offer. */
+type Wait = { said: boolean; rulings: number; ending: { start: number; frame: number } | null };
 const waits = new Map<object | string, Wait>();
 const HOST = {};
 
@@ -24,29 +27,30 @@ export function Ruling() {
   const region = overlay ?? paneId ?? HOST;
   const active = useActiveRegion();
   const element = useRef<HTMLDivElement>(null);
-  const joined = useRef<Wait | null>(null);
+  const joined = useRef<{ wait: Wait; start: number } | null>(null);
   const [opening, setOpening] = useState<object | null>(null);
   useLayoutEffect(() => {
-    const wait = waits.get(region) ?? { start: performance.now(), said: false, rulings: 0, ending: null };
-    if (wait.ending !== null) cancelAnimationFrame(wait.ending);
+    const wait = waits.get(region) ?? { said: false, rulings: 0, ending: null };
+    const start = wait.ending?.start ?? performance.now();
+    if (wait.ending !== null) cancelAnimationFrame(wait.ending.frame);
     wait.ending = null;
     wait.rulings += 1;
     waits.set(region, wait);
-    joined.current = wait;
-    element.current?.style.setProperty("--ruling-elapsed", `${performance.now() - wait.start}ms`);
+    joined.current = { wait, start };
+    element.current?.style.setProperty("--ruling-elapsed", `${performance.now() - start}ms`);
     return () => {
       wait.rulings -= 1;
-      if (wait.rulings === 0) wait.ending = requestAnimationFrame(() => waits.delete(region));
+      if (wait.rulings === 0) wait.ending = { start, frame: requestAnimationFrame(() => waits.delete(region)) };
     };
   }, [region]);
   useEffect(() => {
-    const wait = joined.current;
-    if (!active || wait === null || wait.said) return;
+    if (!active || joined.current === null || joined.current.wait.said) return;
+    const { wait, start } = joined.current;
     const timer = setTimeout(() => {
       if (wait.said) return;
       wait.said = true;
       setOpening({});
-    }, OPENING_MS - (performance.now() - wait.start));
+    }, OPENING_MS - (performance.now() - start));
     return () => clearTimeout(timer);
   }, [active, region]);
   return <>
