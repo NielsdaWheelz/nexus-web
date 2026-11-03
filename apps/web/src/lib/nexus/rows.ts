@@ -155,7 +155,7 @@ function localRow(match: LocalMatch, panes: readonly NexusPane[], tier: RankTier
   const pane = matching.find((pane) => pane.current) ?? matching[0];
   return {
     key: `Resource:${ref}`, localMatch: match, label: match.label,
-    item: authoredItem(match.resource, match.readingRef),
+    item: authoredItem(match.resource, match.readingRef, match.href),
     match: excerpt === null ? null : { excerpt: { text: excerpt.text, truncated_before: excerpt.before, truncated_after: excerpt.after }, ranges: excerpt.marks.map(([start, end]) => ({ start: Array.from(excerpt.text.slice(0, start)).length, end: Array.from(excerpt.text.slice(0, end)).length })) },
     icon: resourceIconForScheme(parseResourceRef(ref)!.scheme),
     state: pane ? paneState(pane) : undefined,

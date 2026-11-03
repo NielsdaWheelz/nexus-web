@@ -1,6 +1,7 @@
 "use client";
 
 import { FullResourceBody } from "@/components/resources/ExcerptDisclosure";
+import { localResourceHref } from "@/lib/resources/localResource";
 import { authoredItem } from "@/lib/notes/presentation";
 import { FeedbackStatus } from "@/components/feedback/Feedback";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
@@ -15,7 +16,7 @@ export const PLACEMENT_COPY: Record<Exclude<ReaderAnnotation["placement"]["kind"
 /** The literal captured quote, never the current source text. */
 export function AnnotationQuote({ annotation }: { readonly annotation: ReaderAnnotation }) {
   return <>
-    <FullResourceBody item={authoredItem(annotation.projection, annotation.readingRef)} />
+    <FullResourceBody item={authoredItem(annotation.projection, annotation.readingRef, localResourceHref(annotation.projection, { activationRef: annotation.readingRef }))} />
     {annotation.placement.kind === "unlocated" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unlocated }} announcement="None" /> : null}
   </>;
 }

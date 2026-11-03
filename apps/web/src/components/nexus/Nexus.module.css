@@ -167,7 +167,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .backdrop, .surface, .grid .row, .rail { animation: none; }
+  .backdrop, .surface, .grid .row, .grid .row[data-band="arriving"], .rail { animation: none; }
 }
 
 @media (forced-colors: active) {

@@ -62,7 +62,7 @@ function useFullExcerpt(observed: ResourceItem) {
   }, [subject, local, body, readingRef, request, fail]);
   const resource = query.data?.rows[0]?.resource;
   const conflict = local ? resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision : remote.conflict;
-  const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef)) : null : remote.item;
+  const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)) : null : remote.item;
   const retry = () => {
     if (local) query.retry();
     else {
@@ -72,7 +72,7 @@ function useFullExcerpt(observed: ResourceItem) {
   };
   const reload = () => {
     if (local) {
-      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef)));
+      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)));
       query.retry();
     } else {
       setRemote(previous => ({ ...previous, pending: true }));

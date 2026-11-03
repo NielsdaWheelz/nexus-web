@@ -233,7 +233,7 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
     : resource.excerpt !== null ? <div className={props.inSource ? styles.quotation : styles.reference}>
       {props.inSource ? <SelectedQuote excerpt={resource.excerpt} color={resource.color} href={href} label={label}/> : <>
         {sourceLabel || href ? <PrimaryLink href={href} label={label}>{sourceLabel ? localResourceLabel(sourceLabel) : "highlight"}</PrimaryLink> : null}
-        <FullResourceBody item={authoredItem(resource, props.readingRef ?? null)} />
+        <FullResourceBody item={authoredItem(resource, props.readingRef ?? null, href)} />
       </>}
       <HighlightAnnotation highlightRef={props.subject} occurrenceKey={props.occurrenceKey} editable={editable} offerBlank={!props.inSource} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
     </div>

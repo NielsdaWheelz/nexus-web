@@ -183,7 +183,7 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
       onOpenChange={open => { if (open) setHeld(new Set(reads.map(verb => verb.id))); else onClose(false); }} renderTrigger={trigger =>
         <button {...trigger} data-action-id={MORE} tabIndex={focus === MORE ? 0 : -1}
           className={cx(selection.surface, selection.target, styles.verb, focus === MORE && selection.selected)}
-          onFocus={() => { if (focus !== MORE) focusRail(MORE); }}><Ellipsis size={16} strokeWidth={1.5} aria-hidden="true" />{MORE}</button>} /> : null}
+          onFocus={() => { if (focus !== MORE) focusRail(MORE); }}><span className={styles.glyph}><Ellipsis size={16} aria-hidden="true" /></span>{MORE}</button>} /> : null}
     <span className={styles.railBusy} aria-hidden="true"><ControlContents reserveIcon busy={busy} busyKey={id} /></span>
     {mobile ? null : <span id={`${id}-help`} className="sr-only">type to filter. enter runs the focused option. left or escape returns to the query.</span>}
   </div>;
