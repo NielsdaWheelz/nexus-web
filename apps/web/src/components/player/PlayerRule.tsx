@@ -112,21 +112,20 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the clock settles the release it names
   }, [hold, positionMs]);
 
-  const cancel = () => {
-    const captured = scrub.current;
-    scrub.current = null;
-    setScrubbing(false);
-    setBubble(false);
-    setPoint(null);
-    if (captured !== null && rail.current?.hasPointerCapture(captured.pointerId)) rail.current.releasePointerCapture(captured.pointerId);
-    onDraft(null);
-  };
   const leave = () => {
     if (dwell.current !== null) clearTimeout(dwell.current);
     dwell.current = null;
     if (bubble) bubbleLeft.current = performance.now();
     setBubble(false);
     setPoint(null);
+  };
+  const cancel = () => {
+    const captured = scrub.current;
+    scrub.current = null;
+    setScrubbing(false);
+    leave();
+    if (captured !== null && rail.current?.hasPointerCapture(captured.pointerId)) rail.current.releasePointerCapture(captured.pointerId);
+    onDraft(null);
   };
   // a scrub belongs to one load; esc during it belongs to the rail.
   useEffect(() => {
@@ -139,7 +138,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- cancel reads refs and stable setters
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- one escape listener per scrub
   }, [scrubbing]);
   // a pointer resting on the rail may never move or leave, so a change of what the rail shows drops
   // its pose: a new subject retires the old load's scrub, hold and hover, and an inert rail keeps none.
@@ -179,7 +178,8 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     data-cold={clock.cold} data-inert={!seekable} data-approach={point !== null && !scrubbing} data-scrub={scrubbing}
     onPointerMove={event => {
       if (!seekable) return;
-      if (scrub.current?.pointerId === event.pointerId) {
+      if (scrub.current !== null) {
+        if (scrub.current.pointerId !== event.pointerId) return;
         const next = pointAt(event);
         setPoint(next);
         onDraft(next.positionMs);
@@ -192,8 +192,9 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     }}
     onPointerLeave={() => { if (scrub.current === null) leave(); }}
     onPointerDown={event => {
-      if (!seekable || playbackSubject === null || !event.isPrimary || event.button !== 0 || onMark(event)) return;
+      if (scrub.current !== null || !seekable || playbackSubject === null || !event.isPrimary || event.button !== 0 || onMark(event)) return;
       event.preventDefault();
+      leave();
       event.currentTarget.setPointerCapture(event.pointerId);
       scrub.current = { pointerId: event.pointerId, subject: playbackSubject };
       const next = pointAt(event);
@@ -210,8 +211,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
       const release = pointAt(event);
       scrub.current = null;
       setScrubbing(false);
-      setBubble(false);
-      setPoint(null);
+      leave();
       if (captured.subject !== playbackSubject) { onDraft(null); return; }
       onDraft(release.positionMs);
       setHold({ targetMs: release.positionMs });
