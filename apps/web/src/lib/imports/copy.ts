@@ -28,6 +28,7 @@ import {
   type SafeFailureCode,
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import {
   METADATA_FAILURE_COPY,
   metadataOperationName,
@@ -74,7 +75,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Nothing about the source caused this.",
   },
   E_FILE_TOO_LARGE: {
-    reason: "the file is too big",
+    reason: IMPORT_WORDS.tooBig,
     title: "This file exceeds the import limit.",
     explanation: "Remove this import and start a new one with a smaller file.",
   },
@@ -115,7 +116,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
       "Import an article, a PDF, an EPUB, a podcast episode or a video.",
   },
   E_INVALID_REQUEST: {
-    reason: "nexus refused it",
+    reason: IMPORT_WORDS.refused,
     title: "This import request was refused.",
     explanation: "Start a new import from the source you want.",
   },
@@ -193,7 +194,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     reason: "this page blocked the import",
     title: "This page blocked the import.",
     explanation:
-      "Open the original page in your browser and use Nexus Capture there.",
+      "The Nexus extension for Firefox can import it from the open page.",
   },
   E_SOURCE_FETCH_FAILED: {
     reason: "the download failed",
@@ -207,7 +208,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
       "Its address answered that nothing is there. Use another copy.",
   },
   E_SOURCE_INTEGRITY: {
-    reason: "what arrived doesn’t match the file",
+    reason: IMPORT_WORDS.integrity,
     title: "Nexus could not verify the uploaded bytes.",
     explanation: "Remove this import and start a new one.",
   },
@@ -259,7 +260,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "It can be played; search and quoting need a transcript.",
   },
   E_UPLOAD_CAPABILITY_EXPIRED: {
-    reason: "upload timed out",
+    reason: IMPORT_WORDS.timedOut,
     title: "The upload link expired.",
     explanation: "Choose the original file to upload it again.",
   },
@@ -638,8 +639,8 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
   UploadRejected: "This upload was rejected. Remove it and start a new import.",
 };
 
-function offerLine(offer: RecoveryOffer): string {
-  if (offer.kind === "BrowserCapture") return "when the article is visible, use nexus capture to finish this import.";
+export function offerLine(offer: RecoveryOffer): string {
+  if (offer.kind === "BrowserCapture") return "the nexus extension for firefox can finish this from the open article.";
   const stored = offer.input === "StoredSource";
   switch (offer.kind) {
     case "RetryUpload":
@@ -1127,10 +1128,10 @@ const CAPTURE_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
  * defect to `captureErrorFeedback`.
  */
 export const CAPTURE_REFUSAL = {
-  E_RESOURCE_CONFLICT: "something changed while this was sending.",
+  E_RESOURCE_CONFLICT: IMPORT_WORDS.changed,
   E_SOURCE_IMPORT_ACTIVE: "another import of this is running",
   E_SOURCE_TARGET_AMBIGUOUS: "more than one import uses this address",
-  E_MEDIA_DELETING: "this is being removed",
+  E_MEDIA_DELETING: IMPORT_WORDS.deleting,
   E_INVALID_REQUEST: "nexus can’t import from this address.",
   E_X_ARTICLE_POST_LINK_REQUIRED: "x articles import through their post’s link.",
   E_X_IDENTITY_CONFLICT: "this post is in more than one imported thread.",

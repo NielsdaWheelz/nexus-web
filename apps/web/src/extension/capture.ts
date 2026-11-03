@@ -67,6 +67,8 @@ export type CapturePhase =
   | { kind: "failed"; failure: CaptureFailure; recovery: "Retry" | "Check" | "Review" | "Recapture" | "Discard" };
 
 export interface ViewState {
+  /** a permission wait permits a new gesture to ask again; running work does not */
+  activity: "idle" | "awaiting_origins" | "running";
   account: {
     userId: string;
     email: string | null;
@@ -100,8 +102,6 @@ export type Command =
   | { kind: "retry_checking" }
   | { kind: "stop_checking" }
   | { kind: "login" }
-  | { kind: "retry" }
-  | { kind: "review" }
   | { kind: "discard" }
   | { kind: "capture_again" }
   | { kind: "disconnect" };
@@ -112,7 +112,7 @@ export type CommandResult =
   | { kind: "recovery_targets"; page: Schema<"RecoveryCandidatePage"> }
   | { kind: "failure"; failure: CaptureFailure };
 
-/** Selection and its save barrier share this port's ordered message stream. */
+/** selection, save and recovery share this port's ordered command stream. */
 export type ViewCommand = {
   sequence: number;
   draftId: string;
@@ -120,7 +120,7 @@ export type ViewCommand = {
 } & (
   | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null }
   | { kind: "set_destination"; destination: LibraryDestination; included: boolean }
-  | { kind: "save" }
+  | { kind: "save" | "retry" | "review" }
 );
 
 export interface ViewMessage {
@@ -241,15 +241,7 @@ function readFailure(code: string, message: string): DocumentRead {
   return { kind: "failed", failure: { code, message, requestId: null } };
 }
 
-function notADocument(response: Response): DocumentRead {
-  const type = response.headers.get("content-type")?.split(";")[0].trim();
-  return readFailure(
-    "E_INVALID_FILE_TYPE",
-    type
-      ? `The link returned ${type}, not a PDF or EPUB.`
-      : "The link did not return a PDF or EPUB.",
-  );
-}
+const NOT_A_DOCUMENT = readFailure("E_INVALID_FILE_TYPE", "the link isn’t a pdf or epub.");
 
 /** The last path segment of `url`, decoded, or null. */
 export function urlFilename(url: string): string | null {
@@ -297,13 +289,8 @@ export async function readDocument(
   response: Response,
   limits: Record<DocumentKind, number>,
 ): Promise<DocumentRead> {
-  if (!response.ok) {
-    return readFailure(
-      "E_CAPTURE_HTTP",
-      `The link answered HTTP ${response.status}.`,
-    );
-  }
-  if (response.body === null) return notADocument(response);
+  if (!response.ok) return readFailure("E_CAPTURE_HTTP", "the site didn’t return the file.");
+  if (response.body === null) return NOT_A_DOCUMENT;
   const reader = response.body.getReader();
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let size = 0;
@@ -317,22 +304,18 @@ export async function readDocument(
       kind = classify(chunks);
       if (kind === null) {
         await reader.cancel();
-        return notADocument(response);
+        return NOT_A_DOCUMENT;
       }
     }
     const limit =
       kind === null ? Math.max(limits.pdf, limits.epub) : limits[kind];
     if (size > limit) {
       await reader.cancel();
-      const megabytes = Math.round(limit / 2 ** 20);
-      return readFailure(
-        "E_FILE_TOO_LARGE",
-        `The ${kind ?? "file"} is larger than ${megabytes} MB.`,
-      );
+      return readFailure("E_FILE_TOO_LARGE", `too big · ${kind ?? "file"}s up to ${Math.round(limit / 2 ** 20)} mb`);
     }
   }
   kind ??= classify(chunks);
-  if (kind === null) return notADocument(response);
+  if (kind === null) return NOT_A_DOCUMENT;
   return {
     kind: "document",
     documentKind: kind,
