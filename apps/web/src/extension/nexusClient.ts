@@ -236,11 +236,11 @@ export async function putBytes(
     if (signal.aborted) throw error;
     throw failure(
       "E_UPLOAD_TRANSPORT",
-      "the upload didn’t finish.",
+      "couldn’t confirm the upload.",
     );
   }
   if (!response.ok) {
-    const message = "the upload didn’t finish.";
+    const message = "couldn’t confirm the upload.";
     throw failure("E_UPLOAD_TRANSPORT", message);
   }
 }
