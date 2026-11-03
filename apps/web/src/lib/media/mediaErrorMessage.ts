@@ -1,10 +1,8 @@
 /**
  * What a reader is told about a media's stopped import or its text search, as one line each.
- * The words per failure code are `lib/imports/copy.ts`'s; recovery commands are named by the
- * action catalog, and Imports offers them.
+ * The words per failure code are `lib/imports/copy.ts`'s. Search state alone grants no recovery.
  */
 
-import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import type { Line } from "@/components/feedback/stage";
 import { FAILURE_COPY, isSafeFailureCode } from "@/lib/imports/copy";
 import type { MediaDetail } from "./mediaDetail";
@@ -13,8 +11,8 @@ const SEARCH: Record<string, Line | null> = {
   ready: null,
   pending: { fact: "preparing text search." },
   indexing: { fact: "preparing text search." },
-  failed: { fact: "text search stopped.", reason: "imports can resume it." },
-  suspended: { fact: "text search stopped.", reason: `${ACTION_CATALOG.RepairSearch.label} in imports resumes it.` },
+  failed: { fact: "text search stopped." },
+  suspended: { fact: "text search stopped." },
   no_text: { fact: "this copy has no searchable text." },
   ocr_required: { fact: "this copy needs text recognition before it can be searched." },
 };

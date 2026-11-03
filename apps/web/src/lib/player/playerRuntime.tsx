@@ -266,7 +266,7 @@ export interface PlayerCommands {
   queueCommand(request: QueueRequest): Promise<PressOutcome>;
   retryQueueIndex(): Promise<void>;
   stop(): void;
-  /** Settles the queue with its owner: a browser's unanswered change replays, anything else reads. */
+  /** Settles an unanswered queue change: browsers replay; native reconciliation may pause playback. */
   checkQueue(): void;
   cancelQueuePreparation(): void;
   playPreviewAudio(input: { target: string; resolveDescriptor: () => Promise<PreviewAudioDescriptor> }): Promise<"Installed" | "Superseded" | "Refused">;
@@ -882,7 +882,7 @@ export function GlobalPlayerProvider({
     return read.promise;
   }, [throwLater, publishQueue]);
 
-  /** Reads the native queue. Over an unanswered change the read is its check, busy as it runs. */
+  /** Reads the native queue, or reconciles an unanswered change by pausing and checkpointing. */
   const readNativeQueue = useCallback(async (target: Engine, retry = false) => {
     if (target.queue === null) return;
     const before = queueViewRef.current;

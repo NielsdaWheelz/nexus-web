@@ -522,8 +522,8 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
         const unread = operation?.kind === "ReadFailed" && operation.reason === "Conflict";
         const fact: Line | null = replaced ? { fact: "these defaults were replaced elsewhere.", reason: "reopen to edit them." }
           : missing ? { fact: "this podcast isn’t available." }
-          : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "these defaults changed elsewhere." : "the saved defaults differ from this change." }
-          : unread ? { fact: "these defaults changed elsewhere.", reason: "couldn’t load the current ones." }
+          : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "couldn’t save these defaults." : "the saved defaults differ from this change." }
+          : unread ? { fact: "couldn’t save these defaults.", reason: "couldn’t load the current ones." }
           : null;
         const readFailed = !missing && settingsRead.status !== "loading" && settingsRead.error !== null ? settingsRead.error : null;
         playbackPanel = <section className={styles.panel} aria-label="playback">
@@ -724,7 +724,7 @@ function PlayerOutcomes() {
       line={{ fact: `couldn’t save your place in “${title}”.` }} verbs={[{ label: "retry", commandKey: "retry place", run: commands.retry }]} /> : null}
     {queue.unanswered > 0 ? <Hold id={`queue:${queue.header?.queue_id ?? "new"}`} attempt={queue.unanswered}
       {...androidShell ? { line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
-        verbs: [{ label: "check", commandKey: "check queue", run: commands.checkQueue, busy: queue.phase === "Saving" }] as const }
+        verbs: [{ label: "retry", commandKey: "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" }] as const }
         : resendFeedback({ line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
           resend: { label: "retry", commandKey: "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" } })} /> : null}
   </>;

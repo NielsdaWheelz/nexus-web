@@ -105,8 +105,8 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
   const fact: Line | null = reloadRequired ? { fact: staleBuild() }
     : replaced ? { fact: "these defaults were replaced elsewhere." }
     : absent ? { fact: "this podcast isn’t available." }
-    : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "these defaults changed elsewhere." : "the saved defaults differ from this change." }
-    : unread ? { fact: "these defaults changed elsewhere.", reason: "couldn’t load the current ones." }
+    : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "couldn’t save these defaults." : "the saved defaults differ from this change." }
+    : unread ? { fact: "couldn’t save these defaults.", reason: "couldn’t load the current ones." }
     : needsCheck ? { fact: "check the saved defaults before saving again." }
     : null;
   const check = { label: "check", commandKey: `check podcast defaults ${podcastId}`, run: save.check };
