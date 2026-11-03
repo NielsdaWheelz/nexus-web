@@ -214,6 +214,8 @@ doors reject more than 100 files into the visit's field feedback without admitti
 
 the first attempt read shows a `Ruling`; an accepted unsettled source shows its waiting
 fact and `all imports`. only a settled identity replaces the route with its reader;
+an exact dead source job settles identity without declaring content usable or successful.
+explicit repair, retry or refresh can reopen identity work.
 that passive replacement preserves the active pane and its open controls. the
 poll returns its read promise, so a slow source read completes before another starts.
 the read's busy state gates polling across pane visibility changes as well.
