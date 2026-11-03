@@ -49,7 +49,7 @@ export type World = {
   single: boolean;
 };
 export type Retract = () => void;
-export type Shell = { signIn: Verb | null };
+export type Shell = { signIn: Verb | null; signInBusy?: boolean };
 /** A mounted holder of an id, where it renders now. */
 export type Owner = { address: Address };
 export type HoldKind = "Pointer" | "Focus" | "Press";
