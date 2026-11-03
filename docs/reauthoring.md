@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-feedback homes against `3ba73e379`: +1,237 net authored runtime lines
-(13,221 added, 11,984 deleted). all 353 changed runtime paths are attributed
+feedback homes against `3ba73e379`: +1,279 net authored runtime lines
+(13,269 added, 11,990 deleted). all 353 changed runtime paths are attributed
 once across the 42 touched rows. this includes the shared authored type change
 in `node/authored` (+3), under notes pages and index; older counts retain their
 stated scope. configuration, tooling, docs, generated files and locks are excluded.
@@ -795,7 +795,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | dossiers | 0 | removed | articles, instructions, builds, ideas, ui, routes, resource identities and owned storage deleted; shared inspector and media intelligence retained | deleted |
 | sharing: members, invitations, grants | 3,121 | reauthored #409 #591 | x threads +13 · shift-open +1 · #700 -12 · python auth -12 · db substrate -1 · collection loading -3 · durable writing +89 · dropdown primitives -67 · native control cutover · x captures: bounded audience admission and frozen public manifests · menu actions +2 · feedback homes +76 | keep |
 | one-time repair and cutover tooling | 0 | deleted by the purge (cleanup/repair-purge) | — | done |
-| firefox extension | 3,139 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 · libraries retention +182 · dropdown primitives +5 · native control cutover · podcast catalogue +7 · browser recovery · feedback homes -79 | keep |
+| firefox extension | 3,139 | reauthored #600 | #632 +97 · #670 +107 · python auth -3 · libraries retention +182 · dropdown primitives +5 · native control cutover · podcast catalogue +7 · browser recovery · feedback homes -37 | keep |
 | oracle | 2,835 | reauthored #531 | #646 -54 · shift-open +20 · resource insertion +5 · unsaved work +12 · durable writing +0 · contained works +0 · feedback homes -3 | keep |
 | db substrate (models, session) | 1,448 | re-sliced (cleanup/db-substrate-reslice) | durable writing +11 · libraries retention +1 · podcast libraries +76 · playback queue +11 · author editing -2 · offline episodes +1 · contained works +75 · x captures: immutable capture, fragment and grant-manifest relations · selection memory +12 | keep |
 | player | 3,222 | reauthored #534 | #538 +102 · shift-open -8 · #700 -4 · playback settings +349 · persistent player +130 · player redesign +60 · media controls +72 · podcast collection +10 · podcast silence -5 · dropdown primitives -3 · native control cutover · playback queue +1514 · mobile reader chrome · popup sizing +0 · bounded indexes +30 · resource menu parity · offline episodes +198 · feedback activity · quiet feedback +13 · session transaction -4 · podcast catalogue -5 · queue index +376 · pane controls -23 · menu actions +2 · recent: actual explicit playback acceptance · connections scroll: shared synchronous scroll-frame primitive · feedback homes +227 | keep |
