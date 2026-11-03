@@ -12,7 +12,7 @@ export function libraryNameError(text: string): string | null {
   const name = text.trim();
   if (name === "") return "a name can’t be blank.";
   if ([...name].length > 100) return "100 characters at most.";
-  return name.toLowerCase() === "all" ? "that name belongs to the All view." : null;
+  return name.toLowerCase() === "all" ? "that name belongs to the all view." : null;
 }
 
 export const INDEX_SORTS: Options = [
@@ -65,7 +65,7 @@ export function offered(options: Options, value: string): Options {
 
 /** What each type is called where a view of it is empty. */
 const TYPE_PLURALS: Readonly<Record<string, string>> = {
-  web_article: "web articles", epub: "EPUBs", pdf: "PDFs", video: "videos", podcast_episode: "podcast episodes",
+  web_article: "web articles", epub: "epubs", pdf: "pdfs", video: "videos", podcast_episode: "podcast episodes",
 };
 
 /** A complete view's empty state: what it lacks, and the way back. */

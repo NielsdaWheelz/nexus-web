@@ -81,6 +81,8 @@ export interface ActionCommand {
   readonly ref: string;
   readonly id: ActionId;
   readonly label: string;
+  /** Lowercase product prose for feedback; interpolated user text keeps its case. */
+  readonly feedbackLabel: string;
   /** The resource's label, for `{title}` in the confirmation. */
   readonly title: string;
   readonly confirmation: Confirmation | null;
@@ -180,6 +182,7 @@ export function projectLecternAction({
         ref: `media:${mediaId}`,
         id: "LecternMembership",
         label,
+        feedbackLabel: label.toLowerCase(),
         title,
         confirmation: null,
         tracked: true,
@@ -224,7 +227,7 @@ export function projectPlaybackAction({ mediaId, title, descriptor, blocked, pla
     onSelect: () => {
       if (needsRemote && !remoteReady()) return;
       run({
-        ref: `media:${mediaId}`, id: "Playback", label: state.label, title,
+        ref: `media:${mediaId}`, id: "Playback", label: state.label, feedbackLabel: state.label.toLowerCase(), title,
         confirmation: null, tracked: false,
         execute: () => pausing ? ctx.player.commands.pause() :
           ctx.player.commands.playAudio({ mediaId, knownDescriptor: descriptor, positionMs: null, source: playbackSource === null ? null : () => playbackSource(mediaId), recapture: false }),
@@ -271,7 +274,7 @@ export function projectCollectionConsumptionAction({ selection, desiredState, ti
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
-      run({ ref: `collection:${JSON.stringify(selection)}`, id, label, title, confirmation: null, tracked: false,
+      run({ ref: `collection:${JSON.stringify(selection)}`, id, label, feedbackLabel: label.toLowerCase(), title, confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "CollectionConsumption", selection, desiredState, title }, invocationFocus(triggerEl, returnFocus)) });
     },
   };
@@ -289,7 +292,7 @@ export function projectPodcastTranscriptAction({ podcastId, state, title, blocke
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
-      run({ ref: `podcast:${podcastId}`, id, label, title, confirmation: null, tracked: false,
+      run({ ref: `podcast:${podcastId}`, id, label, feedbackLabel: label.toLowerCase(), title, confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "TranscribePodcastEpisodes", podcastId, state, title }, invocationFocus(triggerEl, returnFocus)) });
     },
   };
@@ -370,7 +373,7 @@ export function projectPodcastSubscriptionAction({ target, title, facts, disable
         ? { kind: "UnsubscribePodcast", podcastId: target.podcast_id, title, libraryId: null, successFocus: focus?.afterRemoval }
         : { kind: "SubscribePodcast", target, title, libraryId: null };
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id, label: entry.label, title,
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id, label: entry.label, feedbackLabel: entry.label.toLowerCase(), title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open(overlay, focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
       });
@@ -391,7 +394,7 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
       if (disabledReason !== null) return;
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
       const successFocus = focus?.afterRemoval;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label, title,
+      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label, feedbackLabel: ACTION_CATALOG.PodcastLibraries.label.toLowerCase(), title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "PodcastLibraries", target, title, successFocus },
           focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
@@ -425,7 +428,7 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
       if (disabledReason !== undefined) return;
       const successFocus = focus.afterRemoval;
       const trigger = detail.triggerEl ?? focus.trigger;
-      run({ ref: `podcast:${podcastId}`, id: "UnsubscribePodcast", label, title,
+      run({ ref: `podcast:${podcastId}`, id: "UnsubscribePodcast", label, feedbackLabel: `remove from ${libraryName}`, title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title, libraryId, successFocus },
           { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
@@ -495,6 +498,7 @@ export function projectResourceActions(
           ref,
           id: actionId,
           label: entry.label,
+          feedbackLabel: entry.label.toLowerCase(),
           title: facts.label,
           confirmation: options.confirmation === undefined
             ? entry.confirmation ?? null
@@ -999,7 +1003,7 @@ export function projectDownloadActions(input: {
       kind: "command", id: options.id ?? "Download", label: state.label, icon: state.icon && createElement(state.icon, { "aria-hidden": true }),
       tone: options.tone ?? "default", disabled: disabledReason !== undefined || undefined, disabledReason,
       waiting: busy.has("Download") || options.waiting || undefined,
-      onSelect: () => run({ ref: `media:${mediaId}`, id: "Download", label: state.label, title,
+      onSelect: () => run({ ref: `media:${mediaId}`, id: "Download", label: state.label, feedbackLabel: state.label.toLowerCase(), title,
         confirmation: options.confirmation ?? null, tracked: true, execute }),
     };
   };

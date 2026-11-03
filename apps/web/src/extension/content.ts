@@ -108,7 +108,7 @@ function extract(request: Extract<ContentRequest, { kind: "extract" }>): Content
   const baseUri = document.baseURI;
   const xArticle = request.x_article ? extractXArticle(clone, request.source_url) : null;
   if (request.x_article && xArticle === null)
-    return { kind: "unreadable", message: "couldn’t read this article layout. open its reading view, then capture again." };
+    return { kind: "unreadable", message: "open its reading view, then capture again." };
   const sourceHtml = sourceEvidence(clone, baseUri, xArticle?.sourceRoot ?? clone); // first: Readability mutates the clone
   const article = xArticle ?? extractArticle(clone);
   if (!article?.content) {

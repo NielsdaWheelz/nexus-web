@@ -314,7 +314,7 @@ export async function readDocument(
     if (size > limit) {
       await reader.cancel();
       const megabytes = Math.round(limit / 2 ** 20);
-      return readFailure("E_FILE_TOO_LARGE", `this ${kind ?? "file"} is over ${megabytes} MB.`);
+      return readFailure("E_FILE_TOO_LARGE", `this ${kind ?? "file"} is over ${megabytes} megabytes.`);
     }
   }
   kind ??= classify(chunks);
