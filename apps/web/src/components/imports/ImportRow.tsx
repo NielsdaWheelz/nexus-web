@@ -76,7 +76,6 @@ export default function ImportRow({
             <time dateTime={age.dateTime}>{age.text}</time>
           </span>
         </div>
-        {actions.held}
       </> }}
       controls={<>{actions.shortcuts}{actions.menu}</>}
     />

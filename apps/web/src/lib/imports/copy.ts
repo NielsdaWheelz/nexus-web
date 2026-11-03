@@ -8,8 +8,8 @@
 
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
-import { isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
+import { isApiError, outcomeUnknown, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON, type Transport } from "@/lib/api/failure";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -920,11 +920,11 @@ export function countText(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-/** Why a command on an import was refused: its work moved on since it was shown
- * (services/content_indexing.py, media_source_ingest.py). The command's owner states the fact. */
+/** An import revision conflict, only when owner evidence establishes it. A generic
+ * E_RESOURCE_CONFLICT can instead be an edge busy refusal and proves no revision change. */
 export const CONFLICT_REASON = "this import changed since it was shown.";
 /** Until L7: the action catalog still reads this shape. */
-export const CONFLICT_NOTICE: FeedbackContent = { tone: "Warning", title: CONFLICT_REASON };
+export const CONFLICT_NOTICE: FeedbackContent = { tone: "Warning", title: "couldn’t update this import." };
 
 /** An empty view, stated, never advised. */
 export function emptyLine(view: ImportsView, hasSearch: boolean, hasFilters: boolean): string {
@@ -953,12 +953,20 @@ const content = ({ fact, reason }: Line, transport: Transport | null = null): Fe
 
 /** A failed saved-source read: the server has no saved source by that id (services/imports.py),
  * or the transport speaks for the noun `source details`. Defects rethrow. */
-export function savedSourceReadFailure(error: unknown): FeedbackContent {
+export function savedSourceReadLine(error: unknown): Line {
   const failure = modeled(error);
   if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST")
-    return content({ fact: "couldn’t load source details.", reason: "this saved source isn’t available." });
+    return { fact: "this saved source isn’t available." };
   const transport = transportOf(failure);
-  return content(TRANSPORT_LINES[transport].read("source details"), transport);
+  return TRANSPORT_LINES[transport].read("source details");
+}
+
+/** Until L7: external consumers still read FeedbackContent. */
+export function savedSourceReadFailure(error: unknown): FeedbackContent {
+  const failure = modeled(error);
+  const line = savedSourceReadLine(failure);
+  return content(failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST"
+    ? { fact: "couldn’t load source details.", reason: line.fact } : line, transportOf(failure));
 }
 
 /** What verification said about the stored bytes, as a reason. */
@@ -1049,13 +1057,18 @@ const CAPTURE_REFUSAL: Readonly<Record<string, string | null>> = {
  * A failed capture or attachment: the operation's fact, with its domain code or upload outcome as
  * the reason, ahead of the transport. A malformed intent and same-system defects rethrow.
  */
-export function captureErrorFeedback(error: unknown, operation: CaptureOperation): FeedbackContent {
+export function captureErrorLine(error: unknown, operation: CaptureOperation): Line {
   const fact = CAPTURE_FACT[operation];
-  if (error instanceof UploadSessionError) return content({ fact, reason: outcomeReason(error) });
+  if (error instanceof UploadSessionError) return { fact, reason: outcomeReason(error) };
   const failure = modeled(error);
-  if (Object.hasOwn(CAPTURE_REFUSAL, failure.code)) return content({ fact, reason: CAPTURE_REFUSAL[failure.code] ?? undefined });
+  if (Object.hasOwn(CAPTURE_REFUSAL, failure.code)) return { fact, reason: CAPTURE_REFUSAL[failure.code] ?? undefined };
   const transport = transportOf(failure);
-  return content(TRANSPORT_LINES[transport].command(fact), transport);
+  return TRANSPORT_LINES[transport].command(fact);
+}
+
+/** Until L7: external consumers still read FeedbackContent. */
+export function captureErrorFeedback(error: unknown, operation: CaptureOperation): FeedbackContent {
+  return content(captureErrorLine(error, operation), isApiError(error) ? transportOf(error) : null);
 }
 
 /** Acceptance records a saved source, independently of processing success. */
@@ -1073,19 +1086,23 @@ export type AcceptanceFailure =
   | { readonly kind: "Superseded" };
 
 /** An Add whose acceptance is unknown: resending its id answers the same acceptance. */
-export const UNCONFIRMED: FeedbackContent = content({ fact: "not sure that saved.", reason: "it may have gone through." });
+export const UNCONFIRMED_LINE: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
+export const UNCONFIRMED: FeedbackContent = content(UNCONFIRMED_LINE);
 
 /** An added file's fact, apart from a link's. */
 const ADDED_FILE = "couldn’t save this file.";
 
 /**
  * Why an Add acceptance did not land: refused, unknown (send its id again to find out), or
- * superseded. Only a refusal says it did not land (`isRefusal`); anything else sent leaves it
- * unknown, since a pool timeout answers 503 after a commit too. A 401 ran nothing, yet stays
- * unknown here, unlike other writes: Add freezes its intent through sign-in and replays the same
- * id (components/nexus/useAddContentSession.ts). Defects and a malformed intent rethrow.
+ * superseded. Only a sent unknown holds; unsent and 4xx refusals are rejected. A pool timeout
+ * can answer 503 after a commit. Defects and a malformed intent rethrow.
  */
-export function acceptanceFailure(error: unknown): AcceptanceFailure {
+export type AcceptanceLineFailure =
+  | { readonly kind: "Rejected"; readonly line: Line }
+  | { readonly kind: "AcceptanceUnresolved"; readonly reason: "StatusUnknown" | "UploadIncomplete"; readonly line: Line }
+  | { readonly kind: "Superseded" };
+
+export function acceptanceFailureLine(error: unknown): AcceptanceLineFailure {
   if (error instanceof UploadSessionError) {
     const outcome = error.outcome;
     switch (outcome.kind) {
@@ -1094,11 +1111,19 @@ export function acceptanceFailure(error: unknown): AcceptanceFailure {
       case "Unresolved":
       case "BytesMissing": return {
         kind: "AcceptanceUnresolved", reason: outcome.kind === "Unresolved" ? "StatusUnknown" : "UploadIncomplete",
-        feedback: content({ fact: ADDED_FILE, reason: OUTCOME_REASON[outcome.kind] }),
+        line: { fact: ADDED_FILE, reason: OUTCOME_REASON[outcome.kind] },
       };
-      default: return { kind: "Rejected", feedback: content({ fact: ADDED_FILE, reason: outcomeReason(error) }) };
+      default: return { kind: "Rejected", line: { fact: ADDED_FILE, reason: outcomeReason(error) } };
     }
   }
-  if (!isRefusal(modeled(error))) return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", feedback: UNCONFIRMED };
-  return { kind: "Rejected", feedback: captureErrorFeedback(error, "SaveSource") };
+  if (outcomeUnknown(modeled(error))) return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", line: UNCONFIRMED_LINE };
+  return { kind: "Rejected", line: captureErrorLine(error, "SaveSource") };
+}
+
+/** Until L7: Add still reads FeedbackContent. */
+export function acceptanceFailure(error: unknown): AcceptanceFailure {
+  const failure = acceptanceFailureLine(error);
+  if (failure.kind === "Superseded") return failure;
+  const { line, ...rest } = failure;
+  return { ...rest, feedback: content(line, isApiError(error) ? transportOf(error) : null) };
 }

@@ -6,19 +6,22 @@
 import { useEffect, useRef, useState } from "react";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { resolvePodcast, resolvePodcastEpisode } from "@/lib/podcasts/api";
-import { useCommand } from "@/lib/podcasts/paneState";
 import MediaActions from "@/components/media/MediaActions";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import { transportVerbs, type Verbs } from "@/components/feedback/stage";
+import { useTransportVerbs } from "@/components/feedback/Feedback";
+import type { Verbs } from "@/components/feedback/stage";
+import type { ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { catalogLine } from "@/lib/catalog/copy";
 import YouTubeEmbedFrame from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { modeledApiError, useThrowLater, usePaneFreeServerValue } from "@/lib/api/serverState";
 import {
   fetchBrowsePreview,
   type BrowsePreview,
@@ -54,17 +57,28 @@ export default function BrowsePreviewPaneBody() {
   const [videoLoaded, setVideoLoaded] = useState(false);
   const preview = resource.status === "ready" ? resource.data : null;
   const owned = preview !== null && preview.resolution.kind !== "Preview" ? preview.resolution.href : null;
-  const opening = useCommand();
+  const throwLater = useThrowLater();
+  const transportVerbs = useTransportVerbs();
+  const busy = useRef(false);
+  const [opening, setOpening] = useState(false);
+  const [openingError, setOpeningError] = useState<ApiError | null>(null);
   const attempted = useRef(false);
   const resolve = () => {
     if (preview === null || (preview.kind !== "Podcast" && preview.kind !== "Episode") || owned !== null) return;
-    opening.run(preview.kind === "Podcast" ? "couldn’t open this podcast." : "couldn’t open this episode.", async () => {
+    if (busy.current) return;
+    busy.current = true;
+    setOpening(true);
+    setOpeningError(null);
+    void (async () => {
       const resolved = preview.kind === "Podcast" ? await resolvePodcast(preview.target, ctx.sessionSignal()) : await resolvePodcastEpisode(preview.target, ctx.sessionSignal());
       if (!ctx.isActive()) return;
       const current = ctx.workspace().state.panes.find(item => item.id === pane.paneId)?.current_visit;
       if (current?.id !== pane.visitId || current.href !== pane.href) return;
       router.replace(resolved.href, { labelHint: preview.title, activate: false });
-    });
+    })().catch((error: unknown) => {
+      const modeled = modeledApiError(error, throwLater);
+      if (modeled !== null) setOpeningError(modeled);
+    }).finally(() => { busy.current = false; setOpening(false); });
   };
   useEffect(() => {
     if (owned !== null) { router.replace(owned, { labelHint: preview?.title, activate: false }); return; }
@@ -119,9 +133,11 @@ export default function BrowsePreviewPaneBody() {
     return (
       <PaneSurface
         state={
-          opening.failure !== null ? <Fact line={{ fact: opening.failure.title, reason: opening.failure.message }}
-            verbs={opening.failure.reload ? transportVerbs("Update", { signIn: null }) ?? undefined
-              : [{ label: "retry", commandKey: "retry opening", run: resolve, busy: opening.running !== null }]} />
+          openingError !== null ? <Fact line={catalogLine(openingError) ?? TRANSPORT_LINES[transportOf(openingError)].command(
+            preview?.kind === "Podcast" ? "couldn’t open this podcast." : "couldn’t open this episode.",
+          )} verbs={transportVerbs(transportOf(openingError), {
+            retry: { label: "retry", commandKey: "retry opening", run: resolve, busy: opening },
+          }) ?? undefined} />
             : <Ruling />
         }
       />

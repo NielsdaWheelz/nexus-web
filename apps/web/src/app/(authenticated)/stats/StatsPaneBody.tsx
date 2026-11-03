@@ -12,7 +12,7 @@ import * as Icon from "@/lib/ui/icons";
 // in shows it landed. A new view keeps the last view's figures, dimmed and inert, until its own land;
 // if its read fails they leave for its `Failed`.
 
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import AppliedFilters from "@/components/ui/AppliedFilters";
@@ -21,10 +21,14 @@ import useCollectionReadFeedback from "@/components/collections/useCollectionRea
 import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { apiFetch, isApiError, outcomeUnknown, isSameSystemApiDefect } from "@/lib/api/client";
+import { transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { requirePaneRuntime } from "@/lib/panes/paneRuntime";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import {
   useServerValue,
@@ -822,6 +826,7 @@ export default function StatsPaneBody() {
     };
   }, []);
   const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   const throwLater = useThrowLater();
   const timeZone = useHydratedBrowserTimeZone();
   const isActive = usePaneIsActive();
@@ -829,10 +834,15 @@ export default function StatsPaneBody() {
   const view = readStatsView(usePaneSearchParams());
   const refresh = useRefreshStamp(isActive, 0);
   const consumption = useChangeStamp("Consumption");
-  // One correction at a time. The guard is a ref: a slip's verb keeps the render it was raised in.
-  const running = useRef(false);
-  const [correcting, setCorrecting] = useState(false);
-  const [unconfirmed, setUnconfirmed] = useState<readonly Unconfirmed[]>([]);
+  const { ctx } = useActionRuntime();
+  const pane = requirePaneRuntime(usePaneRuntime(), "StatsCorrections");
+  const draft = useResourceDraft<{ sending: Correction | null; unconfirmed: readonly Unconfirmed[] }>(
+    "Stats.Corrections", () => ({ sending: null, unconfirmed: [] }), value => ({
+      changed: false, unconfirmed: value.sending !== null || value.unconfirmed.length > 0, stopsBrowserWork: false,
+    }),
+  );
+  const { unconfirmed } = draft.value;
+  const correcting = draft.value.sending !== null;
   // The id resent for a session until it is known to have landed. A landed id is a no-op when sent
   // again, even after its exclusion was restored (python/nexus/services/consumption/activity.py).
   const exclusionIds = useRef(new Map<string, string>());
@@ -891,34 +901,33 @@ export default function StatsPaneBody() {
   const landed = (correction: Unconfirmed) => last !== null && last.query === correction.query &&
     (correction.kind === "Exclude") === last.data.activity.active_exclusions.some((row) => row.id === correction.id);
   const resolved = unconfirmed.filter(landed);
-  if (resolved.length > 0) {
+  useLayoutEffect(() => {
+    if (resolved.length === 0) return;
     for (const correction of resolved) retire(correction.id);
-    setUnconfirmed(unconfirmed.filter((correction) => !landed(correction)));
-  }
+    draft.set(value => ({ ...value, unconfirmed: value.unconfirmed.filter(correction => !landed(correction)) }));
+  });
 
   // The refreshed timeline shows a landed correction; only a failure reports.
   const send = async (correction: Correction) => {
-    if (!mounted.current || running.current) return;
-    running.current = true;
-    setCorrecting(true);
+    if (!mounted.current || !ctx.isActive() || draft.read().sending !== null) return;
+    const current = ctx.workspace().state.panes.find(item => item.id === pane.paneId)?.current_visit;
+    if (current?.id !== pane.visitId || resolvePaneRouteModel(current.href).id !== "stats") return;
+    draft.set(value => ({ ...value, sending: correction }));
     const others = (held: readonly Unconfirmed[]) => held.filter((item) => item.id !== correction.id);
     try {
       await correction.send();
       retire(correction.id);
-      if (!mounted.current) return;
-      setUnconfirmed(others);
+      draft.set(value => ({ ...value, unconfirmed: others(value.unconfirmed) }));
       publishChange("Consumption");
     } catch (error) {
-      if (!mounted.current) return;
-      if (handleUnauthenticatedApiError(error)) return;
+      if (!ctx.isActive() || handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) return throwLater({ error });
-      // Refused, or signed out before the handler ran, nothing changed. Anything else may have
-      // landed: a pool timeout answers 503 after a commit too.
-      if (!isRefusal(error) && !isUnauthenticatedApiError(error)) {
-        setUnconfirmed((held) => [...others(held), { ...correction, attempt: (held.find((item) => item.id === correction.id)?.attempt ?? -1) + 1 }]);
+      if (outcomeUnknown(error)) {
+        draft.set(value => ({ ...value, unconfirmed: [...others(value.unconfirmed), {
+          ...correction, attempt: (value.unconfirmed.find(item => item.id === correction.id)?.attempt ?? -1) + 1,
+        }] }));
         return;
       }
-      setUnconfirmed(others);
       const fact = CORRECTION_FACT[correction.kind];
       if (transportOf(error) !== "Refused") {
         outcome.fail(error, fact, { label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction) });
@@ -929,12 +938,11 @@ export default function StatsPaneBody() {
         publishChange("Consumption");
       } else throwLater({ error });
     } finally {
-      running.current = false;
-      if (mounted.current) setCorrecting(false);
+      draft.set(value => ({ ...value, sending: null }));
     }
   };
   const correct = (correction: Correction, confirmation: string) => {
-    if (!running.current && window.confirm(confirmation)) void send(correction);
+    if (draft.read().sending === null && window.confirm(confirmation)) void send(correction);
   };
   const exclude = (row: Session) => {
     const key = sessionKey(row);
@@ -1022,8 +1030,8 @@ export default function StatsPaneBody() {
         <Failed error={stats.error} noun="statistics" retry={{ run: () => { void stats.refetch().catch(() => {}); }, busy: stats.retrying }} />
       ) : null}
       {unconfirmed.map((correction) => <Hold key={correction.id} id={correction.id} attempt={correction.attempt}
-        line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-        verbs={[{ label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: correcting }]} />)}
+        {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: `retry ${correction.id}`, run: () => void send(correction), busy: correcting } })} />)}
       <div className={otherView ? styles.stale : undefined} inert={otherView || undefined}>
         {totals?.recorded_active_ms === 0 ? (
           <Fact line={{ fact: data!.activity.applied_filters.length > 1 ? "no activity matches these filters." : "no activity recorded in this period." }} />
