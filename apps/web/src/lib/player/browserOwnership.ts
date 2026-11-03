@@ -17,16 +17,16 @@ interface BrowserSnapshot { readonly queue: PlayerQueue; readonly engine: Engine
 
 /** An error as a channel carries it: structured clone keeps no class, so it travels as fields. */
 type SentFailure =
-  | { readonly kind: "Api"; readonly message: string; readonly status: number; readonly code: string; readonly request_id: string | null }
+  | { readonly kind: "Api"; readonly message: string; readonly status: number; readonly code: string; readonly request_id: string | null; readonly sent: boolean; readonly offline: boolean }
   | { readonly kind: "Queue"; readonly refusal: QueueRefusal };
 type SentError = SentFailure | { readonly kind: "Defect"; readonly message: string };
 const sendFailure = (error: ApiError | QueueCommandError): SentFailure => error instanceof QueueCommandError
   ? { kind: "Queue", refusal: error.refusal }
-  : { kind: "Api", message: error.message, status: error.status, code: error.code, request_id: error.requestId ?? null };
+  : { kind: "Api", message: error.message, status: error.status, code: error.code, request_id: error.requestId ?? null, sent: error.sent, offline: error.offline };
 const sendError = (error: unknown): SentError => error instanceof QueueCommandError || isApiError(error) && !isSameSystemApiDefect(error)
   ? sendFailure(error) : { kind: "Defect", message: error instanceof Error ? error.message : String(error) };
 const receiveFailure = (error: SentFailure) => error.kind === "Api"
-  ? new ApiError(error.status, error.code, error.message, error.request_id ?? undefined) : new QueueCommandError(error.refusal);
+  ? new ApiError(error.status, error.code, error.message, { requestId: error.request_id ?? undefined, sent: error.sent, offline: error.offline }) : new QueueCommandError(error.refusal);
 
 /** A failed queue index carries its error as sent fields. */
 type SentIndex = Exclude<PlayerQueue["index"], { kind: "Failed" }> | (Omit<Extract<PlayerQueue["index"], { kind: "Failed" }>, "error"> & { readonly error: SentFailure });

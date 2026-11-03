@@ -7,7 +7,7 @@ import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useFailedReadRepair, useServerValue, type Visit } from "@/lib/api/serverState";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
 import { remoteReady } from "@/lib/native/admission";
@@ -436,12 +436,12 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   if (state.defect) throw state.defect.error;
   if (savedOnly) {
     const absent = saved !== null ? null
-      : catalogErrorFeedback(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" });
+      : catalogLine(savedCatalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : savedCatalog.error ?? { code: "E_CATALOG_UNAVAILABLE" });
     return <div className={styles.pane}>
       <div className={styles.lanes}>
         {saved === null ? null : <h1>{saved.title || "untitled chat"}</h1>}
         <Fact speak={isPaneActive} line={saved !== null ? { fact: "this chat’s messages aren’t saved on this device." }
-          : absent !== null ? { fact: absent.title, reason: absent.message } : { fact: "couldn’t open saved chats." }} />
+          : absent ?? { fact: "couldn’t open saved chats." }} />
       </div>
     </div>;
   }

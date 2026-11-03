@@ -43,7 +43,7 @@ import {
 } from "@/lib/collections/order";
 import { admissionRefusal, isApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { catalogLine } from "@/lib/catalog/copy";
 import { resendVerbs } from "@/lib/collections/admissionReason";
 import type { HeldWrite } from "@/lib/consumption/collectionCommands";
 import { refuseLibrary } from "@/lib/libraries/errors";
@@ -501,8 +501,8 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
 /** The lectern read's failure where its rows would stand: a saved catalog's own line, else
  * `Failed`. */
 export function LecternReadFailure({ error, retry }: { readonly error: unknown; readonly retry: Pick<CommandVerb, "run" | "busy"> }) {
-  const catalog = isApiError(error) ? catalogErrorFeedback(error) : null;
-  return catalog !== null ? <Fact line={{ fact: catalog.title, reason: catalog.message }} />
+  const catalog = isApiError(error) ? catalogLine(error) : null;
+  return catalog !== null ? <Fact line={catalog} />
     : <Failed error={error} noun="lectern items" retry={retry} />;
 }
 

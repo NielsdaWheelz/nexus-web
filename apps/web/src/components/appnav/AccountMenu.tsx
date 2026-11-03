@@ -33,9 +33,6 @@ import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 import accountStyles from "./AccountMenu.module.css";
 
-/** `syncDetail` states a running preparation after the writing it follows; the row says the
- * preparation alone. Healthy sync's other details stay in no row. */
-const SYNCED = "your writing is synced; ";
 const SignOutContext = createContext<{ request: () => void; busy: boolean } | null>(null);
 
 /** The person declined discarding device-only writing; nothing was retired. */
@@ -152,7 +149,8 @@ export default function AccountMenu(props: {
   const [shape, setShape] = useState<Mark>("Solid");
   if (mark !== null && mark !== shape) setShape(mark);
   const state = condition !== null ? conditionLine(condition, commitFailed).fact : STATUS_COPY[status];
-  const preparation = status === "syncing" && detail?.startsWith(SYNCED) ? detail.slice(SYNCED.length) : null;
+  // `syncDetail` gives `syncing` no detail but a running preparation's clause.
+  const preparation = status === "syncing" ? detail : null;
   const live = accountRows(condition, commitFailed, preparation, {
     signIn: { busy: signingIn || (signOut?.busy ?? false), run: signIn },
     restart: () => { if (guard.confirmDocumentExit()) window.location.reload(); },
