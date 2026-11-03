@@ -3,15 +3,16 @@
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { Unlink } from "lucide-react";
 
-import { useState } from "react";
+import { useEffect } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import ButtonLink from "@/components/ui/ButtonLink";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import { apiFetch, outcomeUnknown } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { OAUTH_PROVIDERS, oauthPath, PROVIDER_NAMES } from "@/lib/auth/urls";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
@@ -30,6 +31,7 @@ import styles from "./page.module.css";
 const VISIT = definePaneVisitDataKey<Visit<LinkedIdentity[]>>(
   "Settings.Identities",
 );
+type UnlinkCommand = { identity: LinkedIdentity; phase: "Sending" | "Unknown" | "Retrying"; attempt: number };
 const UNLINK_FAILED = "couldn’t unlink this identity.";
 
 async function readIdentities(): Promise<LinkedIdentity[]> {
@@ -47,34 +49,51 @@ async function readIdentities(): Promise<LinkedIdentity[]> {
 export default function SettingsIdentitiesPaneBody() {
   const display = useRenderEnvironment();
   const { accountId } = useAuthenticatedAccount();
-  const { say, fail } = useOutcome();
+  const { fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const identities = useServerValue({
     key: "identities",
     stale: "",
     visit: VISIT,
     load: readIdentities,
   });
-  const [unlinking, setUnlinking] = useState<string | null>(null);
-  // The row's `Unlink` is an unknown outcome's retry.
-  const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
+  const draft = useResourceDraft<{ command: UnlinkCommand | null }>("Settings.Identities.Unlink", () => ({ command: null }), value => ({
+    changed: false, unconfirmed: value.command !== null, stopsBrowserWork: false,
+  }));
+  const command = draft.value.command;
   usePaneReturnReady(identities.status !== "loading");
+  // This unfiltered successful read proves the idempotent delete's desired state.
+  useEffect(() => {
+    if (identities.status !== "ready" || identities.refreshing || identities.error !== null) return;
+    const pending = draft.read().command;
+    if (pending !== null && pending.phase !== "Sending" && !identities.data.some(identity => identity.id === pending.identity.id)) draft.set({ command: null });
+  }, [identities, draft]);
 
   const unlink = async (identity: LinkedIdentity) => {
-    setUnlinking(identity.id);
+    const previous = draft.read().command;
+    if (previous !== null && (previous.phase !== "Unknown" || previous.identity.id !== identity.id)) return;
+    const running: UnlinkCommand = { identity: previous?.identity ?? identity, phase: previous === null ? "Sending" : "Retrying", attempt: previous?.attempt ?? 0 };
+    draft.set({ command: running });
     try {
       const { data: { outcome } } = installedApp
-        ? await accountIdentityDelete(identity.id)
-        : await apiFetch<{ data: IdentityDeleteResult }>(`/api/me/identities/${encodeURIComponent(identity.id)}`, { method: "DELETE" });
-      setUnknown(null);
-      if (outcome === "Unlinked") identities.refetch();
-      else say({ fact: UNLINK_FAILED });
+        ? await accountIdentityDelete(running.identity.id)
+        : await apiFetch<{ data: IdentityDeleteResult }>(`/api/me/identities/${encodeURIComponent(running.identity.id)}`, { method: "DELETE" });
+      if (draft.read().command !== running) return;
+      if (outcome === "Unlinked") { draft.set({ command: null }); void identities.refetch(); }
+      // Failed includes provider silence after sending, so it proves no refusal.
+      else draft.set({ command: { ...running, phase: "Unknown", attempt: running.attempt + 1 } });
     } catch (error) {
-      if (outcomeUnknown(error)) setUnknown(current => ({ id: identity.id, attempt: current?.id === identity.id ? current.attempt + 1 : 0 }));
-      else { setUnknown(null); fail(error, UNLINK_FAILED); }
-    } finally {
-      setUnlinking(null);
+      if (draft.read().command !== running) return;
+      if (previous !== null || outcomeUnknown(error)) {
+        draft.set({ command: { ...running, phase: "Unknown", attempt: running.attempt + 1 } });
+        if (!isApiError(error) || isSameSystemApiDefect(error)) fail(error, UNLINK_FAILED);
+      } else { draft.set({ command: null }); fail(error, UNLINK_FAILED); }
     }
   };
+  const held = command === null || command.phase === "Sending" ? null : resendFeedback({
+    line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: `UnlinkIdentity:${command.identity.id}`, busy: command.phase === "Retrying", run: () => { void unlink(command.identity); } },
+  });
 
   const ready = identities.status === "ready" ? identities : null;
   const missing = OAUTH_PROVIDERS.filter(
@@ -88,7 +107,7 @@ export default function SettingsIdentitiesPaneBody() {
           {identities.status === "loading" ? <Ruling />
             : identities.status === "failed" ? <Failed error={identities.error} noun="linked identities" retry={{ run: identities.refetch, busy: identities.retrying }} />
             : null}
-          {unknown === null ? null : <Hold id={`unlink-identity:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }} />}
+          {held === null || command === null ? null : <Hold id={`${draft.owner}:unlink:${command.identity.id}`} attempt={command.attempt} {...held} />}
           {ready === null ? null : (
             <>
               {ready.data.length === 0 ? (
@@ -122,7 +141,7 @@ export default function SettingsIdentitiesPaneBody() {
                                 label: "Unlink",
                                 tone: "danger",
                                 disabled:
-                                  unlinking !== null || ready.refreshing,
+                                  command !== null || ready.refreshing,
                                 onSelect: () => void unlink(identity),
                               },
                             ]
