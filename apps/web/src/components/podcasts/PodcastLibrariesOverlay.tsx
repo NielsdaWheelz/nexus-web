@@ -6,7 +6,7 @@ import PickerSurface from "@/components/ui/PickerSurface";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { Failed } from "@/components/feedback/Fact";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
@@ -34,7 +34,6 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
 }) {
   const { ctx } = useActionRuntime();
   const { say } = useOutcome();
-  const [occurrence] = useState({});
   const [step, setStep] = useState<Step>({ kind: "Choose" });
   const session = useRef<{ active: boolean; choosing: boolean }>({ active: true, choosing: true });
   useLayoutEffect(() => { const current = session.current; current.active = true; return () => { current.active = false; }; }, []);
@@ -67,14 +66,6 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
       note: included ? `podcast subscription${item.writable ? "" : " · read only"}` : reason === "couldn’t refresh libraries." ? reason : undefined,
       action: reason === null ? { kind: "Set", included: true, label: "choose destination" } : { kind: "Blocked", reason } };
   });
-  // Coexistence until L5a's chooser takes a `failure` node: the read's `Failed` line, by transport,
-  // and `retry` only where the transport offers it. Sign-in and reload verbs wait for that node.
-  const transport = source.status === "failed" ? TRANSPORT_LINES[transportOf(source.error)] : null;
-  const readLine = transport?.read("libraries");
-  const readError = transport === null || readLine === undefined ? null : {
-    occurrence, content: { tone: "Warning" as const, title: readLine.fact, message: readLine.reason },
-    retry: transport.verb === "Retry" ? source.refetch : null, busy: loading,
-  };
   switch (step.kind) {
     case "Choose":
       return <PickerSurface active title="add to library" onClose={dismiss}
@@ -82,7 +73,7 @@ export default function PodcastLibrariesOverlay({ target, title, returnFocusTo, 
         skipReturnFocus={() => !session.current.choosing}>
         <LibraryChooser context={`podcast-libraries:${scope}`} membershipKind="Chosen" rows={rows} loading={loading}
           summary={null} empty="no libraries."
-          error={readError ?? creation.error}
+          failure={source.status === "failed" ? <Failed error={source.error} noun="libraries" retry={{ run: source.refetch, busy: loading }} /> : null}
           onToggle={({ id }) => {
             const row = rows.find(item => item.id === id);
             if (row?.action.kind !== "Set") return false;

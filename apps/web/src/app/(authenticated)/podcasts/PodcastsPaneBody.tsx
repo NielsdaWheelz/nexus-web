@@ -17,6 +17,7 @@ import { PODCAST_BROWSE_ACTION } from "@/lib/podcasts/navigation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
+import { libraryReason } from "@/lib/libraries/errors";
 import { getLibrary, librariesIndex, type Library } from "@/lib/libraries/api";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
@@ -187,6 +188,7 @@ export default function PodcastsPaneBody() {
     : list.status === "loading"
       ? { kind: "Pending" }
       : { kind: "None" };
+  const libraryFailureReason = libraries.status === "failed" ? libraryReason(libraries.error) : null;
   const queryControls = {
     kind: "Controls" as const,
     focusInput,
@@ -199,7 +201,9 @@ export default function PodcastsPaneBody() {
         content: <>
           <RadioGroup label="Show" value={filter} choices={showChoices} onChange={(value) => replaceView({ filter: value === "all" ? null : value })} />
           <RadioGroup label="Library" value={libraryId ?? ""} choices={libraryChoices} disabled={libraries.status === "loading"} onChange={(value) => replaceView({ library_id: value || null })} />
-          {libraries.status === "failed" ? <Failed error={libraries.error} noun="libraries" retry={{ run: retryLibraries, busy: indexReading(libraries) }} /> : null}
+          {libraries.status === "failed" ? libraryFailureReason !== null
+            ? <Fact line={{ fact: "couldn’t load libraries.", reason: libraryFailureReason }} />
+            : <Failed error={libraries.error} noun="libraries" retry={{ run: retryLibraries, busy: indexReading(libraries) }} /> : null}
         </>,
       }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_episode" ? null : value }) }}

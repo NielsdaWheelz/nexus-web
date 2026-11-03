@@ -10,7 +10,7 @@
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import type { LinkVerb } from "@/components/feedback/stage";
-import { ApiError, isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
+import { isRefusal, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -20,7 +20,7 @@ import { requestEpisodeTranscripts } from "@/lib/podcasts/api";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace, type WorkspaceStoreValue } from "@/lib/workspace/store";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { remoteReady } from "@/lib/native/admission";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 type Command = { kind: "Transcripts"; body: Schema<"PodcastEpisodeQueryTranscriptRequest"> };
@@ -78,15 +78,12 @@ function createCommands(accountId: string, guard: WorkGuard, fail: (input: { err
     if (!current(entry, scope)) return;
     entry.phase = "sending";
     publish();
-    let sent = false;
     let acknowledged = false;
     try {
       const write = async () => {
         if (!current(entry, scope)) return null;
         return requestWithDeadline<Schema<"PodcastEpisodeQueryTranscriptRequestOut"> | null>({ signal: scope.signal, timeoutMs: REQUEST_TIMEOUT_MS, request: signal => {
           if (!current(entry, scope)) return Promise.resolve(null);
-          if (!remoteReady()) throw new ApiError(0, "E_NETWORK", "requires a connection");
-          sent = true;
           return requestEpisodeTranscripts(entry.body, signal);
         } });
       };
@@ -96,24 +93,21 @@ function createCommands(accountId: string, guard: WorkGuard, fail: (input: { err
       retire(entry);
     } catch (error) {
       if (!current(entry, scope)) return;
-      if (sent) handleUnauthenticatedApiError(error);
-      const unauthenticated = sent && isUnauthenticatedApiError(error);
-      const defect = (!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error);
-      if (!sent) {
-        retire(entry);
-        outcome.say({ fact: transcriptsRefused(entry.title), reason: "nothing was sent." });
-      } else if (isRefusal(error)) {
+      handleUnauthenticatedApiError(error);
+      if (isRefusal(error)) {
         retire(entry);
         if (error.code === "E_RESOURCE_CONFLICT" || error.code === "E_SELECTION_CHANGED" || error.code === "E_CONFLICT")
           outcome.say({ fact: transcriptsRefused(entry.title), reason: "the eligible episodes changed." });
         else outcome.fail(error, transcriptsRefused(entry.title));
-      } else {
+      } else if (outcomeUnknown(error)) {
         entry.phase = "unconfirmed";
         publish();
+      } else {
+        retire(entry);
+        if (!isAbortError(error)) fail({ error });
       }
-      if (defect || (sent && !isRefusal(error) && !outcomeUnknown(error) && !isAbortError(error) && !unauthenticated)) fail({ error });
     } finally {
-      if (sent && lifetime === scope && !scope.signal.aborted) {
+      if (lifetime === scope && !scope.signal.aborted) {
         if (acknowledged) {
           publishChange("PodcastEpisodes"); publishImportsInvalidation();
         } else inspectEntry();
@@ -137,10 +131,9 @@ function createCommands(accountId: string, guard: WorkGuard, fail: (input: { err
       };
     },
     commands: {
-      submit(input: { podcastId: string; title: string; command: Command }): "Started" | "Pending" | "OwnerGone" | "Unavailable" {
+      submit(input: { podcastId: string; title: string; command: Command }): "Started" | "Pending" | "OwnerGone" {
         const scope = lifetime;
         if (scope === null || scope.signal.aborted) return "OwnerGone";
-        if (!remoteReady()) return "Unavailable";
         if (entries.has(input.podcastId)) return "Pending";
         const commandKey = `podcast-episodes:${accountId}:${crypto.randomUUID()}`;
         const entry: Entry = {
@@ -182,7 +175,7 @@ export function usePodcastEpisodeCommands(accountId: string, reportDefect: (inpu
   const commands = { ...owner.commands };
   return { commands, feedback: entries.filter(entry => entry.phase === "unconfirmed").map(entry =>
     <Hold key={entry.commandKey} id={entry.commandKey}
-      line={{ fact: `not sure the transcript request for “${entry.title}” saved.`, reason: "it may have gone through." }}
+      line={{ fact: `not sure the transcript request for “${entry.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON }}
       verbs={[viewImports(workspace, () => commands.inspect(entry.commandKey)),
         { label: "stop tracking", commandKey: `forget ${entry.commandKey}`, run: () => commands.forget(entry.commandKey) }]} />) };
 }

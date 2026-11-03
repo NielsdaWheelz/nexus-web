@@ -8,10 +8,11 @@
  * a read settles it. Mount `feedback` once.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendVerbs, type Outcome } from "@/components/feedback/Feedback";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { type ApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
 import { modeledApiError, requestWithRetry } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
@@ -144,6 +145,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
 export function usePodcastSettingsOwner(accountId: string, fail: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
   const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   const owner = useMemo(() => createOwner(accountId, guard, fail, outcome), [accountId, guard, fail, outcome]);
   useLayoutEffect(() => owner.start(), [owner]);
   // Its dialog and the player read `state`; a fresh command object re-renders them.
@@ -151,8 +153,8 @@ export function usePodcastSettingsOwner(accountId: string, fail: (input: { error
   const commands = { ...owner.commands };
   return { commands, feedback: entries.filter(entry => unconfirmed(entry.state)).map(entry =>
     <Hold key={entry.ownerId} id={entry.ownerId} attempt={entry.attempt}
-      line={{ fact: `not sure the defaults for “${entry.title}” saved.`, reason: "it may have gone through." }}
-      verbs={[{ label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId), busy: entry.state.kind === "Reading" }]} />) };
+      line={{ fact: `not sure the defaults for “${entry.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON }}
+      verbs={resendVerbs({ label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId), busy: entry.state.kind === "Reading" })} />) };
 }
 
 /** `shown` is true while the calling surface stands to show the save's Facts. */
