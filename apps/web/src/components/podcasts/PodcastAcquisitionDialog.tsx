@@ -2,7 +2,7 @@
 
 /** One reviewed destination. The primary subscribe action fixes follow mode;
  * library organization chooses podcast or once-only episodes before admission. */
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useId, useCallback, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -59,6 +59,7 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
 }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
+  const waitingId = useId();
   const live = useRef(false);
   useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [dispatched, setDispatched] = useState(false);
@@ -113,9 +114,10 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
     {operation !== null ? <PodcastImportProgress operation={operation} title={title} /> : null}
     {source.error !== null ? <Fact line={{ fact: "couldn’t refresh library details.", reason: "they may be out of date." }}
       verbs={[{ label: "retry", commandKey: "retry library details", run: source.refetch }]} /> : null}
+    {source.refreshing ? <span id={waitingId} className="sr-only">checking library details</span> : null}
     <CommandRefusal subject={subject} reread={source.refetch} />
     <div className={styles.actions}>
-      <Button emphasis="strong" aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "add episodes"}</Button>
+      <Button emphasis="strong" aria-describedby={source.refreshing ? waitingId : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "add episodes"}</Button>
       {following && onUnsubscribe ? <Button disabled={sending || pending !== null || source.error !== null || source.refreshing || !facts.can_add_content} onClick={onUnsubscribe}>unsubscribe…</Button> : null}
       <Button onClick={onClose}>cancel</Button>
     </div>

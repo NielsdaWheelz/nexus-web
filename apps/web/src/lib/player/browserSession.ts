@@ -10,7 +10,7 @@
  * retained request's sends that had no answer.
  * Only the account's Web Lock holder may call this owner.
  */
-import { apiFetch, isApiError, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { transportOf } from "@/lib/api/failure";
 import { isAbortError } from "@/lib/errors";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -82,13 +82,13 @@ export function createBrowserSession(accountId: string, changed: () => void) {
         phase = "Uncertain";
         publish();
       };
-      if (isSameSystemApiDefect(cause) || (!isApiError(cause) && !isAbortError(cause))) {
-        stayUnanswered();
-        throw cause;
-      }
-      if (!isApiError(cause) || cause.status === 0 || cause.status >= 500) {
+      if (isAbortError(cause) || outcomeUnknown(cause)) {
         stayUnanswered();
         throw new QueueCommandError("Unsettled");
+      }
+      if (!isRefusal(cause)) {
+        stayUnanswered();
+        throw cause;
       }
       // Sign-in, a stale build or load turned this send away unread. A first send left nothing; a
       // replay's first send may still have landed, so it stays unanswered. Either way the

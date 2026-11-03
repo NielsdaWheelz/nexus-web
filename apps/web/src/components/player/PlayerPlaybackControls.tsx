@@ -233,7 +233,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
         }).catch((error: unknown) => {
           if (signal.aborted || handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-          setPreparation({ kind: "Failed", request: signal, feedback: { tone: "Warning", title: "actions couldn’t load." } });
+          setPreparation({ kind: "Failed", request: signal, error });
         });
       },
     }} />

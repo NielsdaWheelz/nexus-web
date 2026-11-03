@@ -2,14 +2,12 @@
 
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { forecastEpisodeTranscripts, type EpisodeState } from "@/lib/podcasts/api";
 import { installedApp } from "@/lib/native/admission";
-import { transcriptsRefused } from "@/lib/podcasts/episodeCommands";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "./PodcastCommands.module.css";
 
@@ -24,7 +22,6 @@ export default function PodcastTranscriptDialog({ podcastId, title, state, retur
 }) {
   const { ctx } = useActionRuntime();
   const source = usePaneFreeServerValue({ key: `podcast-transcript-review:${ctx.accountId}:${podcastId}:${state}`, stale: "", load: signal => forecastEpisodeTranscripts(podcastId, state, signal) });
-  const { say } = useOutcome();
   const pending = ctx.podcastEpisodes.pending(podcastId);
   const connectionRequired = installedApp && !ctx.online;
   const scopeLabel = state === "all" ? "all episodes" : `all ${state === "in_progress" ? "in-progress" : state} episodes`;
@@ -34,8 +31,6 @@ export default function PodcastTranscriptDialog({ podcastId, title, state, retur
       target: { kind: "PodcastEpisodeQuery", podcast_id: podcastId, selection: { state }, reason: "search" }, selection_fingerprint: source.data.selection_fingerprint,
     } } });
     if (outcome === "Started") onClose();
-    // `Pending` stands as its held line; `OwnerGone` has no account to tell.
-    if (outcome === "Unavailable") say({ fact: transcriptsRefused(title), reason: "nothing was sent." });
   };
   return <Dialog open title="transcribe episodes" onClose={onClose} returnFocusTo={returnFocusTo} returnFocusFallback={returnFocusFallback}>
     <div className={styles.form}>
