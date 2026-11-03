@@ -114,4 +114,4 @@
   color: var(--ink-on-accent);
 }
 
-.capture { position: relative; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.capture { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }

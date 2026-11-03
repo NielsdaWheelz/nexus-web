@@ -79,7 +79,7 @@ import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBound
 import { readAcquisitionGuard } from "@/lib/libraries/api";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
-import { captureErrorFeedback } from "@/lib/imports/copy";
+import { captureErrorLine } from "@/lib/imports/copy";
 import {
   bodyFromNode,
   bodyText,
@@ -683,7 +683,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         else if (task.upload.review_required) hold({ fact: NOT_ADDED });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
         else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
-          const line = { fact: NOT_ADDED, reason: captureErrorFeedback(error, "AddAttachment").message };
+          const line = { fact: NOT_ADDED, reason: captureErrorLine(error, "AddAttachment").reason };
           if (task.upload.confirmation_unsettled || error.outcome.kind === "Unresolved") hold(UNKNOWN);
           else if (error.outcome.kind === "BytesMissing") hold(line);
           else { setAttachment(null); say(line); }

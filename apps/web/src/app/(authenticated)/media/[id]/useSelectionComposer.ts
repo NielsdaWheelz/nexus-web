@@ -32,7 +32,7 @@ import { chatView } from "@/lib/chat/tree";
 import { assertNever } from "@/lib/assertNever";
 import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
-import { chatFailure, type Catalog } from "@/lib/chat/wire";
+import { readFailureOf, type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
@@ -475,7 +475,7 @@ export function useSelectionComposer(input: {
             ? { kind: "Missing", line: { fact: "this chat isn’t available." } }
             : outcome.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || outcome.rejection === "E_INVALID_GENERATION_SELECTION"
               ? { kind: "Model", line: { fact: "this model isn’t available." }, destination: attempt?.destination ?? target, selection: attempt?.selection ?? { kind: "Uninitialized" } }
-              : { kind: "Failed", line: { fact: outcome.feedback.title, reason: outcome.feedback.message } };
+              : { kind: "Failed", line: outcome.line };
         store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held,
           destination: target === "Existing" && outcome.rejection === "E_CONVERSATION_NOT_FOUND" && value.destination.kind === "Selected"
             ? { ...value.destination, snapshot: { kind: "Failed" } } : value.destination,
@@ -609,7 +609,7 @@ export function useSelectionComposer(input: {
             destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
-      ctx.observeChatCommand({id: `reader-send:${runId}`, title: "question", owner,
+      ctx.observeChatCommand({id: `reader-send:${runId}`, owner,
         present: outcome => {chatOutcome(entry, outcome, target, true);},
         retry: async intent => {await openAsyncResult({ctx, intent, disposition: "Fork", create: async () => {
           const outcome = await owner.retry(intent);
@@ -625,7 +625,7 @@ export function useSelectionComposer(input: {
     } catch (error) {
       if (ctx.sessionSignal().aborted) return;
       store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", line: { fact: "couldn’t open the chat.", reason: "your question is kept." } } }));
-      const failure = chatFailure(error, "couldn’t open the chat.");
+      const failure = readFailureOf(error);
       if (failure.kind === "Defect") onError(failure.error, "couldn’t open the chat.");
     }
     finally {
@@ -690,7 +690,7 @@ export function useSelectionComposer(input: {
     refreshChat,
     retryCatalog: refreshCatalog,
     retryRecall: memory.enter,
-    recallFailed: memory.failureOccurrence !== null,
+    recallFailed: memory.read.status !== "loading" && memory.read.error !== null,
     recallPending: memoryRead.status === "loading" || (memoryRead.status === "ready" ? memoryRead.refreshing : memoryRead.retrying),
     recoverModel() {
       const issue = draft?.chatIssue;

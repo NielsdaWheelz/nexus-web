@@ -3,7 +3,7 @@ import * as Icon from "@/lib/ui/icons";
 
 import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Fact, Field } from "@/components/feedback/Fact";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+
 import { Ruling } from "@/components/feedback/Ruling";
 import { ControlContents } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
@@ -27,16 +27,6 @@ export interface ChooserRow {
     | { readonly kind: "Set"; readonly included: boolean; readonly label: string }
     | { readonly kind: "Blocked"; readonly reason: string | null }
     | { readonly kind: "Locked"; readonly reason: string };
-}
-/** Only for callers outside this lane until they pass `failure`; L7 deletes it. */
-export interface ChooserError {
-  readonly occurrence: object;
-  readonly attempt?: number;
-  readonly content: FeedbackContent;
-  readonly retry: (() => void) | null;
-  readonly retryLabel?: string;
-  readonly busy?: boolean;
-  readonly commandKey?: string;
 }
 export interface ChooserCreation {
   readonly available: boolean;
@@ -75,7 +65,7 @@ function progress(row: ChooserRow): string | null {
  * is the owner's read; a command's outcome speaks where its owner raises it. A create row its owner
  * gates stands disabled with the reason. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, failure, error, create, empty, scrollRef,
+  context, membershipKind, rows, onToggle, loading, summary, failure, create, empty, scrollRef,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
@@ -87,7 +77,6 @@ export default function LibraryChooser({
   readonly summary: string | null;
   /** The owner's read failure: its `Failed`, or a domain `Fact`. */
   readonly failure?: ReactNode;
-  readonly error?: ChooserError | null;
   readonly create: ChooserCreation | null;
   readonly empty: string;
   readonly label?: string;
@@ -138,9 +127,7 @@ export default function LibraryChooser({
       if (row?.action.kind === "Set") onToggle({ id: row.id, included: row.action.included });
     },
   });
-  const legacy = error ? <Fact line={{ fact: error.content.title, reason: error.content.message }}
-    verbs={error.retry ? [{ label: error.retryLabel ?? "retry", commandKey: error.commandKey ?? "library-read", run: error.retry, busy: error.busy ?? loading }] : undefined} /> : null;
-  const shownFailure = failure ?? legacy;
+  const shownFailure = failure;
   const invalidId = `${base}-invalid`;
   const nothing = !loading && !shownFailure && matching.length === 0 && !canCreate && createGate === null;
   const refused = nothing && invalid !== null;

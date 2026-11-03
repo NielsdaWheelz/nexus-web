@@ -7,8 +7,7 @@ import styles from "./Imports.module.css";
 /**
  * Account's passive Imports label and count. The count stands only while something needs
  * attention, with one complete accessible description that speaks the exact count. A failed
- * refresh over a shown count says nothing. `refresh_failed` is read by nothing: optional so the
- * account menu can stop passing it, then deleted (L7).
+ * refresh over a shown count says nothing.
  */
 export default function ImportsBadge({
   label,
@@ -16,7 +15,6 @@ export default function ImportsBadge({
 }: {
   readonly label: string;
   readonly count: number | null;
-  readonly refresh_failed?: boolean;
 }) {
   const attention = count !== null && count > 0 ? count : null;
   return (

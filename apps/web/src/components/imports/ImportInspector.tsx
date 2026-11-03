@@ -235,7 +235,7 @@ export default function ImportInspector({
       {issues.length > 0 ? (
         <section className={styles.inspectorSection}>
           <h3>Source quality</h3>
-          <SourceIssuesNotice issues={issues} readable={item.can_read} />
+          <SourceIssuesNotice issues={issues} />
         </section>
       ) : null}
       {(["source", "search"] as const).map((key) => {
@@ -313,7 +313,7 @@ export default function ImportInspector({
       >
         <summary ref={historySummary}>History</summary>
         {historyOpen ? (
-          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} returnFocus={() => historySummary.current} />
+          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
         ) : null}
       </details>
       <details className={styles.diagnostics}>
@@ -395,12 +395,10 @@ function Attempts({
   importRef,
   mediaId,
   matched,
-  returnFocus,
 }: {
   readonly importRef: string;
   readonly mediaId: string | null;
   readonly matched: ImportItem["matched_event"];
-  readonly returnFocus: () => HTMLElement | null;
 }) {
   const { observation, revision } = useImports();
   const history = useServerList<HistoryEntry>({
@@ -422,9 +420,7 @@ function Attempts({
   }, [observation, revalidate]);
   const error = history.failure?.error ?? null;
   const entries = history.items;
-  const feedback = useCollectionReadFeedback({
-    list: history, unit: HISTORY_UNIT, waiting: false, outcome: null, returnFocus,
-  });
+  const feedback = useCollectionReadFeedback({ list: history, unit: HISTORY_UNIT, waiting: false, outcome: null });
   const outside =
     matched !== null && !entries.some((entry) => entry.id === matched.id);
   const event = (entry: HistoryEntry) => (

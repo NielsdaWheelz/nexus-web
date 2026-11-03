@@ -14,7 +14,7 @@ import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { MODAL_GEOMETRY_CHANGE, OverlayContext } from "@/lib/ui/overlay";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { takeFocus, useFocusReturn, VerbControl } from "./Fact";
-import { Announcement } from "./Feedback";
+import { Announcement } from "./Announcement";
 import { useStage, type Anchor, type RoomView, type SlipView, type Speech, type Verb } from "./stage";
 import styles from "./Slips.module.css";
 

@@ -5,7 +5,8 @@
 // departure; this disclosure neither adopts a reading place nor writes progress.
 import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";

@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
 import type { Shell } from "@/components/feedback/stage";
@@ -62,8 +61,6 @@ export default function PublicShareReader() {
   const [attempt, setAttempt] = useState(0);
   const throwLater = useThrowLater();
   const shell = useRef<HTMLDivElement>(null);
-  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
-  const bindShell = useCallback((element: HTMLDivElement | null) => { shell.current = element; setBounds(element); }, []);
   const reloadedToken = useRef<string | null>(null);
   const contentChanged = useCallback((token: string) => {
     if (reloadedToken.current === token) {
@@ -126,10 +123,7 @@ export default function PublicShareReader() {
 
   const title = state.kind === "Ready" ? state.share.title : state.kind === "Absent" ? "Share unavailable" : "Shared reading";
   return (
-    <FeedbackProvider shell={SHELL}><div className={styles.shell} ref={bindShell} tabIndex={-1}>
-      <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-        protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header, main." + styles.header)] : []}
-        returnFocus={() => shell.current}>
+    <FeedbackProvider shell={SHELL}><div className={styles.shell} ref={shell} tabIndex={-1}>
       {/* The route emits no metadata title, so this is the document's only one. */}
       <title>{`${title} · Nexus`}</title>
       {state.kind === "Ready" ? (
@@ -152,8 +146,7 @@ export default function PublicShareReader() {
           <Gate state={state} reread={reread} />
         </main>
       )}
-      </FeedbackSurface>
-      <div className={styles.stage}><StageAnchor kind="Root" /></div>
+        <div className={styles.stage}><StageAnchor kind="Root" /></div>
     </div></FeedbackProvider>
   );
 }

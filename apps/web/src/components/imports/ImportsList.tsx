@@ -273,11 +273,7 @@ export default function ImportsList({
 
   const filtered = chips.some((chip) => chip.id !== "q");
   const searched = state.q !== undefined;
-  const readFeedback = useCollectionReadFeedback({
-    list: rows, unit: UNIT, waiting: rows.status === "loading",
-    outcome: null,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useCollectionReadFeedback({ list: rows, unit: UNIT, waiting: rows.status === "loading", outcome: null });
   return (
     <div
       ref={listRef}

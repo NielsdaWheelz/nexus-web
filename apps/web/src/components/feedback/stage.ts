@@ -10,12 +10,13 @@
  * late row lifts nothing. Only a row's first showing replaces, and only the plain row directly
  * beneath it, once that row has stood there. Rows that land together stack. A line
  * is heard once: a region keeps what it carried, and the next room takes only what none has. */
-import { createContext, useContext, useLayoutEffect } from "react";
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
-import { updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
+import { subscribeAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
-import { onOverlayStack, subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
+import { OverlayContext, onOverlayStack, subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
 import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
 
 export type Address = { kind: "Pane"; paneId: string } | { kind: "Workspace" };
@@ -67,7 +68,7 @@ const RELOAD: Verb = { label: "reload", commandKey: "Reload", run: () => window.
 
 /** A transport's verb. `retry` is the owner's; `Update` reloads only where reload can work, by
  * `remedy`, the update remedy as it stands unless given. */
-export function transportVerbs(transport: Transport, { retry, signIn, remedy = updateRemedy() }: { retry?: Verb; signIn: Verb | null; remedy?: UpdateRemedy }): Verbs | null {
+export function verbsForTransport(transport: Transport, { retry, signIn, remedy = updateRemedy() }: { retry?: Verb; signIn: Verb | null; remedy?: UpdateRemedy }): Verbs | null {
   const kind = TRANSPORT_LINES[transport].verb;
   switch (kind) {
     case null: return null;
@@ -456,7 +457,7 @@ export function createStage() {
 export type Stage = ReturnType<typeof createStage>;
 
 export const StageContext = createContext<Stage | null>(null);
-export const ShellContext = createContext<Shell>({ signIn: null });
+export const ShellContext = createContext<Shell | null>(null);
 
 export function useStage(): Stage {
   const stage = useContext(StageContext);
@@ -468,4 +469,35 @@ export function useStage(): Stage {
 export function useStageWorkspace({ inView, active, single }: { inView: ReadonlySet<string>; active: string; single: boolean }): void {
   const stage = useStage();
   useLayoutEffect(() => stage.workspace({ inView, active, single }), [stage, inView, active, single]);
+}
+
+/** A transport consumer always belongs to an explicitly configured host. */
+export function useShell(): Shell {
+  const shell = useContext(ShellContext);
+  if (shell === null) throw new Error("feedback requires its host shell");
+  return shell;
+}
+
+/** Whether this region may speak now: a modal's while it is topmost; under none, the active pane's,
+ * or any region of a host without panes. In-flow feedback is storeless, so it may sit outside a stage. */
+export function useActiveRegion(): boolean {
+  const stage = useContext(StageContext);
+  const overlay = useContext(OverlayContext);
+  const paneId = usePaneRuntime()?.paneId ?? null;
+  const active = () => {
+    const modal = topModal();
+    return overlay ? overlay === modal : modal === null && (paneId === null || stage?.activePane() === paneId);
+  };
+  return useSyncExternalStore(stage?.subscribe ?? subscribeOverlayStack, active, active);
+}
+
+/** A transport's verbs, for a lane that builds a line itself: the owner's `retry`, the shell's
+ * sign-in, or reload where reload can work. Its owner renders again as the update remedy moves,
+ * and the function changes whenever its output would, with the shell or the remedy, so a
+ * callback, a list or a memo may hold it. */
+export function useTransportVerbs(): (transport: Transport, options?: { retry?: Verb }) => Verbs | null {
+  const { signIn, signInBusy } = useShell();
+  const verb = useMemo(() => signIn !== null && signInBusy ? { ...signIn, busy: true } : signIn, [signIn, signInBusy]);
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => verbsForTransport(transport, { retry, signIn: verb, remedy }), [verb, remedy]);
 }

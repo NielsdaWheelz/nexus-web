@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
@@ -10,8 +11,6 @@ import { changedLine, commandKey, unsureFact, type CommandOutcome, type CommandS
 
 export interface ChatCommandObservation {
   readonly id: string;
-  /** Until L7: the caller's label. A held line names its command, and a deletion the title the viewer confirmed. */
-  readonly title: string;
   readonly owner: ConversationCommands;
   readonly present: (outcome: CommandOutcome) => void;
   /** The surface's own retry, which lands its result; else the owner retries and `present` answers. */

@@ -21,7 +21,6 @@ import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { StageAnchor } from "@/components/feedback/Slips";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import compact from "@/components/ui/CompactChrome.module.css";
 import Companion, {
@@ -78,7 +77,7 @@ import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/l
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { PaneVisit, WorkspacePane } from "@/lib/workspace/model";
-import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
@@ -185,7 +184,6 @@ function PaneView({
   readonly companionMaxWidthPx: number;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
-  const [feedbackBounds, setFeedbackBounds] = useState<HTMLDivElement | null>(null);
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
   const activateHistory = (back: boolean, event: TargetActivationEvent) => {
@@ -252,7 +250,6 @@ function PaneView({
   const controlsFrameRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const scrollportRef = useRef<HTMLDivElement>(null);
-  const bindFeedbackBounds = useCallback((element: HTMLDivElement | null) => { scrollportRef.current = element; setFeedbackBounds(element); }, []);
   const contentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const focusFrame = useRef(0);
@@ -517,9 +514,6 @@ function PaneView({
   const railPx = rail ? Math.ceil(rail.widthPx) : 0;
 
   return (
-    <FeedbackSurface bounds={feedbackBounds} interaction={null} modal={null} active={isActive}
-      protectedTargets={() => [chromeRef.current, paneRef.current?.querySelector<HTMLElement>("[data-feedback-recovery]") ?? null].filter((element): element is HTMLElement => element !== null)}
-      returnFocus={() => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id)}>
     <section
       ref={paneRef}
       className={styles.paneShell}
@@ -596,7 +590,7 @@ function PaneView({
           }}
         >
           <div
-            ref={bindFeedbackBounds}
+            ref={scrollportRef}
             id={bodyId}
             className={styles.body}
             data-body-mode={route.bodyMode}
@@ -644,7 +638,6 @@ function PaneView({
         resourceRef={body?.resourceRef}
       />
     </section>
-    </FeedbackSurface>
   );
 }
 

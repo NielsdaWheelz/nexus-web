@@ -17,7 +17,8 @@ import {
   useSyncExternalStore,
   type FocusEvent,
 } from "react";
-import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { Line, Retract } from "@/components/feedback/stage";
@@ -69,7 +70,7 @@ import { mediaSourceLine } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
-import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { savedSourceReadLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import {
   paneSourceKey,
@@ -159,7 +160,7 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   const settled = result?.settled === true;
   const error = source.status === "loading" ? null : source.error;
   // imports' domain codes come ahead of transport: a refusal, first read or refresh, is the
-  // attempt's absence. savedSourceReadFailure answers only refusals here.
+  // attempt's absence. savedSourceReadLine answers only refusals here.
   const refusal = error !== null && !isSameSystemApiDefect(error) && transportOf(error) === "Refused" ? error : null;
   const viewImports = { label: "view imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
     activateTargetLink({ event, runtime, target: { href: "/imports" } }) };
@@ -178,8 +179,8 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   }, [result, runtime.router, settled]);
   const speak = useActiveRegion();
   if (refusal !== null) {
-    const domain = savedSourceReadFailure(refusal);
-    return <Fact line={{ fact: domain.title, reason: domain.message }} verbs={[viewImports]} speak={speak} />;
+    const domain = savedSourceReadLine(refusal);
+    return <Fact line={domain} verbs={[viewImports]} speak={speak} />;
   }
   if (source.status === "failed")
     return <Failed error={source.error} noun="import details" retry={{ run: source.refetch, busy: source.retrying }} />;
@@ -289,9 +290,8 @@ function UnavailableSavedMedia({ error }: { readonly error: { readonly code: str
   usePaneChrome({ displayTitle: "source", header: { kind: "Resource", resource: { status: "Unavailable" } } });
   usePaneReturnReady(true);
   const speak = useActiveRegion();
-  // the fallback is for a non-catalog error the catalog read carries (readCatalogStatus,
-  // refreshCatalog); it has no home until L7.
-  return <Fact line={catalogLine(error) ?? { fact: "couldn’t open the saved catalog." }} speak={speak} />;
+  const line = catalogLine(error);
+  return line === null ? <Failed error={error} noun="the saved catalog" /> : <Fact line={line} speak={speak} />;
 }
 
 function SavedMedia({ summary, record }: { readonly summary: MediaSummary; readonly record: ServerValue<MediaDetail> }) {

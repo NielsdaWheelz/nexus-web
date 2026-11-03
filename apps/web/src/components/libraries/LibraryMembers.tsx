@@ -169,17 +169,9 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
   const triggers = useRef(new Map<string, HTMLElement>());
   const heading = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
-  const memberFeedback = useCollectionReadFeedback({
-    list: members, unit: { singular: "member", plural: "members" },
-    waiting: members.status === "loading", outcome: null,
-    returnFocus: () => heading.current,
-  });
+  const memberFeedback = useCollectionReadFeedback({ list: members, unit: { singular: "member", plural: "members" }, waiting: members.status === "loading", outcome: null });
   const invitationsEmpty = invitations.complete && invitations.items.length === 0;
-  const invitationFeedback = useCollectionReadFeedback({
-    list: invitations, unit: { singular: "invitation", plural: "invitations" },
-    waiting: invitations.status === "loading", outcome: invitationsEmpty ? "no pending invitations." : null,
-    returnFocus: () => heading.current,
-  });
+  const invitationFeedback = useCollectionReadFeedback({ list: invitations, unit: { singular: "invitation", plural: "invitations" }, waiting: invitations.status === "loading", outcome: invitationsEmpty ? "no pending invitations." : null });
   const trigger = (key: string) => (node: HTMLElement | null) => {
     if (node) triggers.current.set(key, node);
     else triggers.current.delete(key);

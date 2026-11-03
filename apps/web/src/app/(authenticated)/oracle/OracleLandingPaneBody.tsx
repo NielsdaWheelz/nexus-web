@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { ControlContents } from "@/components/ui/control";
 import MediaImage from "@/components/ui/MediaImage";

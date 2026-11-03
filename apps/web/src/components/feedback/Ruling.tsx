@@ -13,7 +13,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { paneSourceKey, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { OverlayContext } from "@/lib/ui/overlay";
-import { Announcement, useActiveRegion } from "./Feedback";
+import { Announcement } from "./Announcement";
+import { useActiveRegion } from "./stage";
 import styles from "./Ruling.module.css";
 
 const OPENING_MS = 2000;

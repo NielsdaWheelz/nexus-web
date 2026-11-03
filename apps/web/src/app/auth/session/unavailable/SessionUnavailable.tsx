@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import EntryFailure from "@/components/EntryFailure";
-import { Announcement } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Failed } from "@/components/feedback/Fact";
-import { Announcement, useActiveRegion } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
+import { useActiveRegion } from "@/components/feedback/stage";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { ServerList } from "@/lib/api/useServerList";
 import type { PaneFilterRowsUnit } from "@/lib/panes/paneFilterRows";
@@ -14,15 +15,12 @@ import type { PaneFilterRowsUnit } from "@/lib/panes/paneFilterRows";
  * Each wait belongs to its requested key; changing the key retires that wait. Inactivity retires
  * its episode for good. Only the host's `outcome` is spoken, from the active region alone, and
  * once: a region that goes quiet under a modal and speaks again never repeats it.
- * `returnFocus` is unread, and `useIndexReadFeedback`'s `notice` is always null: both stay
- * only until their callers stop passing and reading them.
  */
 export default function useCollectionReadFeedback({ list, unit, waiting, outcome }: {
   readonly list: ServerList<unknown, unknown>;
   readonly unit: PaneFilterRowsUnit;
   readonly waiting: boolean;
   readonly outcome: string | null;
-  readonly returnFocus: () => HTMLElement | null;
 }): { notice: ReactNode | null; announcement: ReactNode } {
   const { requestedKey, active, current, failure } = list;
   const announcement = useReadOutcome({ requestedKey, active, current, failed: failure !== null, waiting, outcome });
@@ -85,12 +83,10 @@ export function useIndexReadFeedback({ value, requestedKey, active, waiting, out
   readonly value: ServerValue<unknown>;
   readonly requestedKey: string | null;
   readonly active: boolean;
-  readonly unit: PaneFilterRowsUnit;
   readonly waiting: boolean;
   readonly outcome: string | null;
-  readonly returnFocus: () => HTMLElement | null;
-}): { notice: ReactNode | null; announcement: ReactNode } {
+}): { announcement: ReactNode } {
   const error = value.status === "loading" ? null : value.error;
   const announcement = useReadOutcome({ requestedKey, active, current: value.status === "ready", failed: error !== null, waiting, outcome });
-  return { notice: null, announcement };
+  return { announcement };
 }

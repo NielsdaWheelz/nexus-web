@@ -299,11 +299,7 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
   const filtered = query.requestedKinds !== null || query.formats.length + query.authors.length + query.roles.length > 0 || query.scope !== "all";
   const clearFilters: Verbs = [{ label: "clear filters", commandKey: "clear filters", run: () => commit({ ...emptySearchQuery(), text: query.text, view: query.view }) }];
   const noun = query.view === "passages" ? "passages" : "results";
-  const readFeedback = useCollectionReadFeedback({
-    list: rejectedCursor ? { ...selected, retry: refreshResults } : selected,
-    unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" },
-    waiting: false, outcome: null, returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useCollectionReadFeedback({ list: rejectedCursor ? { ...selected, retry: refreshResults } : selected, unit: query.view === "passages" ? { singular: "passage", plural: "passages" } : { singular: "result", plural: "results" }, waiting: false, outcome: null });
   const show = held && candidate !== null && !rejectedCursor && !prefixFailure ? () => { returning.current = false; adopt(candidate, true); } : null;
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
@@ -363,7 +359,7 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
 function LocalResults({ local, remote, more }: { local: ReturnType<typeof useLocalSearch>; remote: readonly Row[]; more: () => void }) {
   const runtime = usePaneRuntime();
   if (local.scopeAvailable === false) return <Fact line={{ fact: "can’t search inside this item on this device." }} />;
-  const failure = <AuthoredReadFailure error={local.error} occurrence={local.occurrence} retry={local.retry} pending={local.pending} title="couldn’t search this device."/>;
+  const failure = <AuthoredReadFailure error={local.error} retry={local.retry} pending={local.pending} noun="search results"/>;
   const remoteRefs = new Set(remote.map(row => row.item.ref));
   const shown = (local.matches ?? []).filter(match => match.resource.authored_by_viewer || !remoteRefs.has(match.resource.ref));
   if (!shown.length) return failure;

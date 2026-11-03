@@ -73,9 +73,7 @@ export default function AssistantWrites({
   useEffect(() => {
     if (pending && writes.some(write => write.id === pending.id && write.reverted_at !== null)) setPending(null);
   }, [pending, writes, setPending]);
-  const readFeedback = useCollectionReadFeedback({
-    list, unit: UNIT, waiting: false, outcome: null, returnFocus: () => landmark.current,
-  });
+  const readFeedback = useCollectionReadFeedback({ list, unit: UNIT, waiting: false, outcome: null });
   const found = list.current && writes.some((write) => write.id === toolCallId);
   useEffect(() => {
     if (!found || !list.active || didFocus.current) return;

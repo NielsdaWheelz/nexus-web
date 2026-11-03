@@ -3,7 +3,7 @@ import * as Icon from "@/lib/ui/icons";
 
 import { forwardRef, type MouseEventHandler, type RefObject } from "react";
 import { Failed } from "@/components/feedback/Fact";
-import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
+import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { libraryDestinations, type LibraryDestination } from "@/lib/libraries/api";
@@ -44,14 +44,13 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
  * read waits and fails in the list region, a refresh does both nowhere, though creation, which
  * needs the current catalog, waits on it and says so. `error` is only for callers outside
  * this lane until they stop passing it. */
-export default function DestinationChooser({ context, selection, onSet, disabled, create, error, scrollRef }: {
+export default function DestinationChooser({ context, selection, onSet, disabled, create, scrollRef }: {
   readonly context: string;
   readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly selection: DestinationSelection;
   readonly onSet: (change: DestinationChange) => boolean;
   readonly disabled: boolean;
   readonly create: ChooserCreation | null;
-  readonly error?: ChooserError | null;
 }) {
   const stamp = useChangeStamp("Libraries");
   const catalog = usePaneFreeServerValue({ key: "/libraries/destinations", stale: stamp, load: libraryDestinations });
@@ -83,7 +82,6 @@ export default function DestinationChooser({ context, selection, onSet, disabled
     loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying}
     summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : null}
     failure={catalog.status === "failed" ? <Failed error={catalog.error} noun="libraries" retry={{ run: catalog.refetch, busy: catalog.retrying }} /> : null}
-    error={error}
     create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null,
       gate: catalog.status === "ready" && catalog.error !== null ? "the libraries couldn’t refresh." : undefined }}
     empty="no libraries yet." />;

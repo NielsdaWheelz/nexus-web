@@ -4,7 +4,8 @@ import { memo, useId, useMemo, useRef, useState, type CSSProperties } from "reac
 import * as Icon from "@/lib/ui/icons";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { Announcement, Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { MarkdownPreview, TextPreview } from "@/components/ui/MarkdownMessage";

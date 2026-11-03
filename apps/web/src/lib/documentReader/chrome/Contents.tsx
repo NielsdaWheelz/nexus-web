@@ -65,8 +65,6 @@ export function Contents({ reader, onNavigate }: { readonly reader: Reader; read
 /** What this copy lacks, at the head of its contents. */
 export function SourceIssuesNotice({ issues }: {
   readonly issues: readonly SourceIssue[];
-  /** Read by nothing; imports and shelf pass it until L7. */
-  readonly readable?: boolean;
 }): ReactElement | null {
   if (issues.length === 0) return null;
   const images = issues.filter((issue) => issue.kind === "MissingImage").length;

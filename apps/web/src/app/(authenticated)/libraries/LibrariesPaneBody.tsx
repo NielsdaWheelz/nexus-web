@@ -80,11 +80,7 @@ export default function LibrariesPaneBody() {
   const queryStatusId = useId();
   // Every account has its default library, so only a filter empties the index.
   const emptyTitle = text ? "no libraries match this filter." : null;
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active: usePaneIsActive(), unit: UNIT, waiting: list.status === "loading" && !invalid,
-    outcome: visible.length > 0 ? null : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: usePaneIsActive(), waiting: list.status === "loading" && !invalid, outcome: visible.length > 0 ? null : emptyTitle });
   const canReset = Boolean(sort);
   // The count describes the complete view, never a subset.
   const headerMeta: PaneHeaderMeta = invalid

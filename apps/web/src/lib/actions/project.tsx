@@ -565,7 +565,7 @@ export function projectResourceActions(
       } else if (outcome.kind === "Failed") {
         sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
-        ctx.observeChatCommand({ id, title: facts.label, owner, present });
+        ctx.observeChatCommand({ id, owner, present });
       }
     };
     present(await deleteConversation(ctx.accountId, id));
@@ -580,7 +580,7 @@ export function projectResourceActions(
       if (outcome.kind === "Failed") {
         sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
-        ctx.observeChatCommand({ id: conversationId, title: facts.label, owner, present,
+        ctx.observeChatCommand({ id: conversationId, owner, present,
           retry: requested => {
             const current = owner.getSnapshot();
             if (current.kind === "Idle" || current.command.kind !== "Repeat") return Promise.resolve();
@@ -608,7 +608,7 @@ export function projectResourceActions(
       if (!ctx.isActive()) return { kind: "Handled" };
       const message = tree?.messages.find(message => message.id === id);
       if (!tree || !message) return {
-        kind: "Failed", feedback: { tone: "Warning", title: `couldn’t ${operation}.`, message: "that message is gone." }, rejection: null,
+        kind: "Failed", line: { fact: `couldn’t ${operation}.`, reason: "that message is gone." }, error: null, rejection: null,
       };
       return repeatMessage(ctx.accountId, tree.conversation, message, operation, null, intent);
     });
@@ -863,7 +863,7 @@ export function projectResourceActions(
             if (retry.status !== "allowed") return;
             const result = await ctx.admissions.admit({ kind: "MetadataResearch", mediaId: id, request: { expected_job_id: retry.expected_job_id } });
             if (!ctx.isActive()) return;
-            if (result.kind === "LocalFailure") throw new ResourceActionFailure({ fact: result.content.title, reason: result.content.message });
+            if (result.kind === "LocalFailure") throw new ResourceActionFailure(result.line);
           },
           {
             tracked: false,
@@ -890,7 +890,7 @@ export function projectResourceActions(
             if (action.expected_attempt_id === null) return;
             const result = await ctx.admissions.admit({ kind: "SourceRefresh", mediaId: id, request: { expected_attempt_id: action.expected_attempt_id } });
             if (!ctx.isActive()) return;
-            if (result.kind === "LocalFailure") throw new ResourceActionFailure({ fact: result.content.title, reason: result.content.message });
+            if (result.kind === "LocalFailure") throw new ResourceActionFailure(result.line);
           },
           {
             tracked: false,

@@ -36,8 +36,6 @@ export interface ReaderProfileCapability {
     | { readonly state: "SaveFailed"; readonly failure: ApiError; readonly attempt: number };
   readonly editable: boolean;
   readonly saving: boolean;
-  /** Kept for the settings pane's old mount until L7. */
-  readonly connectionOccurrence: object | null;
   readonly unavailableReason: string | null;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
@@ -64,9 +62,6 @@ export function ReaderProvider({
   const heldSaveFailure = useHeldSaveFailure();
   const admission = useRemoteAdmission();
   const editable = admission === "Ready";
-  const blocked = admission !== "Ready" && admission !== "Checking";
-  const blockedOccurrence = useMemo(() => blocked ? {} : null, [blocked]);
-  const connectionOccurrence = admission === "Unavailable" ? blockedOccurrence : null;
   const unavailableReason = admission === "Checking" ? "still checking the connection." : admissionReason();
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
@@ -149,7 +144,6 @@ export function ReaderProvider({
       persistence,
       editable,
       saving,
-      connectionOccurrence,
       unavailableReason,
       setTheme: (theme) => intend({ theme }),
       setFontFamily: (font_family) => intend({ font_family }),
@@ -160,7 +154,7 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [editable, intend, persistence, profile, send, saving, connectionOccurrence, unavailableReason],
+    [editable, intend, persistence, profile, send, saving, unavailableReason],
   );
   if (defect) throw defect.error;
   const retry: CommandVerb = { label: "retry", commandKey: "RetryReaderSettings", run: () => void send(), busy: saving };
@@ -187,9 +181,3 @@ const SAVE_COPY = {
   unsure: { fact: "not sure reader settings saved.", reason: UNKNOWN_OUTCOME_REASON },
   kept: { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." },
 };
-
-/** The provider's held slip is this failure's one home; the settings pane's mount says nothing
- * more. The export stands until L7 removes that mount. */
-export function ReaderSettingsFailure() {
-  return null;
-}

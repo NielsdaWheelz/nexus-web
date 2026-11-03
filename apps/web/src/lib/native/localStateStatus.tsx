@@ -5,8 +5,6 @@
 import { useState } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { retryListeningRead, useListening } from "@/lib/consumption/listening";
-/** A refresh over the saved catalog renders nothing; L5's downloads pane mounts this until L7. */
-export function DeviceCatalogStatus() { return null; }
 export function DeviceListeningStatus() {
   const listening = useListening();
   const [busy, setBusy] = useState(false);

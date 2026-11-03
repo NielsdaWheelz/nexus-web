@@ -50,9 +50,7 @@ export function useLibraryInvitations() {
     key: "invitations", stale: `${useChangeStamp("Libraries")}:${answered}`, pageSize: 100,
     active: usePaneIsActive(), visit: VISIT, id: invitation => invitation.id, fetchPage: viewerInvitationsPage,
   });
-  const readFeedback = useCollectionReadFeedback({
-    list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null, returnFocus: () => null,
-  });
+  const readFeedback = useCollectionReadFeedback({ list, unit: { singular: "invitation", plural: "invitations" }, waiting: false, outcome: null });
   async function send(command: Answer, previous: Pending | null): Promise<boolean> {
     if (!mounted.current || !owns() || read() !== previous || previous?.running ||
       remoteAdmission() === "Checking" || !remoteAttemptAllowed() || !navigator.onLine) return false;

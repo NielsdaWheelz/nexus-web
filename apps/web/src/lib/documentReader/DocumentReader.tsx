@@ -18,7 +18,8 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";

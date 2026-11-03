@@ -1,11 +1,10 @@
 "use client";
 
-import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
+import type { Outcome } from "@/components/feedback/Feedback";
 import type { Line, Verb } from "@/components/feedback/stage";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, type ApiError, type ApiPath } from "@/lib/api/client";
-import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
@@ -16,7 +15,6 @@ import { isSelectable, type Route } from "./selection";
 import {
   failureOf,
   readFailureOf,
-  feedbackContent,
   rejected,
   refusal,
   type AcceptedReceipt,
@@ -77,11 +75,9 @@ export type CommandOutcome =
   | { readonly kind: "Accepted"; readonly receipt: AcceptedReceipt }
   | {
       readonly kind: "Failed";
-      /** Until L7 the line travels as content, `title` its fact and `message` its reason: L1 builds
-       * one, and L1 and L2 read it. Here only `failed` writes it and `refusalOf` reads it. */
-      readonly feedback: FeedbackContent;
+      readonly line: Line;
       /** The failure whose transport gave the reason; a domain or local reason has none. */
-      readonly error?: ApiError;
+      readonly error: ApiError | null;
       readonly rejection: RejectionCode | null;
     };
 /**
@@ -95,12 +91,8 @@ export type Standing =
   | { readonly kind: "Unread"; readonly error: ApiError };
 type Pending = {
   readonly command: ChatCommand;
-  /** Until L7, the reader dock (L2) keys its card by it. */
-  readonly occurrence: object;
   /** How many attempts left it unknown: a failed retry speaks again. */
   readonly attempt: number;
-  /** Until L7, the reader dock's card (L2) reads the standing as content. */
-  readonly feedback: FeedbackContent | null;
 };
 /** The incident survives landing changes; a retry stands on the last standing until it answers. */
 export type CommandState =
@@ -119,11 +111,11 @@ const UNREAD = "couldn’t load messages.";
 
 /** A refused outcome. */
 export const failed = (answer: Refusal, rejection: RejectionCode | null = null): CommandOutcome =>
-  ({ kind: "Failed", feedback: feedbackContent(answer), ...(answer.error === null ? {} : { error: answer.error }), rejection });
+  ({ kind: "Failed", line: answer.line, error: answer.error, rejection });
 
 /** What a refused outcome says: its line, and the failure whose transport gave its reason. */
-export const refusalOf = ({ feedback, error }: Extract<CommandOutcome, { kind: "Failed" }>): Refusal =>
-  ({ line: { fact: feedback.title, reason: feedback.message }, error: error ?? null });
+export const refusalOf = ({ line, error }: Extract<CommandOutcome, { kind: "Failed" }>): Refusal =>
+  ({ line, error });
 
 /** Says a refused outcome where it was asked, a plain slip or the topmost modal's: a domain line
  * alone, a transport's reason with its verbs, `retry` among them where the caller has one. */
@@ -172,15 +164,6 @@ export function commandKey(command: ChatCommand): string {
 /** What a changed chat says to whoever holds the command it stopped: a menu's deletion names itself. */
 export const changedLine = (command: ChatCommand): Line => command.kind === "DeleteChat"
   ? { fact: `couldn’t delete “${command.title}”.`, reason: "it changed meanwhile." } : { fact: CHANGED };
-
-/** Until L7, the reader dock (L2) reads the standing as content. */
-function told(command: ChatCommand, standing: Standing): FeedbackContent {
-  switch (standing.kind) {
-    case "Unknown": return feedbackContent({ line: { fact: unsureFact(command), reason: UNKNOWN_OUTCOME_REASON }, error: standing.refused?.error ?? null });
-    case "Changed": return feedbackContent({ line: changedLine(command), error: null });
-    case "Unread": return feedbackContent(refusal(UNREAD, standing.error));
-  }
-}
 const MISSING = new Set(["E_CONVERSATION_NOT_FOUND", "E_MESSAGE_NOT_FOUND"]);
 const owners = new Map<string, { accountId: string; key: string; owner: ConversationCommands; release: (() => void) | null }>();
 let workGuard: WorkGuard | null = null;
@@ -339,7 +322,6 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   let state: CommandState = IDLE_COMMAND;
   let pending: {
     command: ChatCommand;
-    occurrence: object;
     attempt: number;
     body: string | null;
     unconfirmed: boolean;
@@ -378,16 +360,15 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   const stand = (standing: Standing): CommandOutcome => {
     if (!pending) throw new Error("Chat command state without a pending command");
     pending.attempt += 1;
-    const { command, occurrence, attempt } = pending;
-    const feedback = told(command, standing);
+    const { command, attempt } = pending;
     set(standing.kind === "Unknown"
-      ? { kind: "Unconfirmed", command, occurrence, attempt, standing, feedback }
-      : { kind: "RefreshRequired", command, occurrence, attempt, standing, feedback });
+      ? { kind: "Unconfirmed", command, attempt, standing }
+      : { kind: "RefreshRequired", command, attempt, standing });
     return PENDING;
   };
   /** A retry stands on what its command last stood on, until it answers. */
-  const busy = ({ command, occurrence, attempt }: NonNullable<typeof pending>) => set({ kind: "Busy", command, occurrence, attempt,
-    standing: state.kind === "Idle" ? null : state.standing, feedback: state.kind === "Idle" ? null : state.feedback });
+  const busy = ({ command, attempt }: NonNullable<typeof pending>) => set({ kind: "Busy", command, attempt,
+    standing: state.kind === "Idle" ? null : state.standing });
   const deliver = (tree: ConversationTree | null) => {
     handoff = { tree };
     for (const listener of listeners) listener.viewer?.settled(tree);
@@ -598,7 +579,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         : null;
       const authored_prefix=accountId!==null && (command.kind==="Send"||command.kind==="Repeat") ? getWritingRuntime(accountId).committedPrefix() : null;
       void authored_prefix?.catch(()=>{});
-      pending = { command, occurrence: {}, attempt: 0, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
+      pending = { command, attempt: 0, body, unconfirmed: false, accepted: null, onAcceptance, authored_prefix, fence:new AbortController() };
       return run(send);
     },
     /** Unconfirmed resends the frozen command; RefreshRequired rereads the tree. */

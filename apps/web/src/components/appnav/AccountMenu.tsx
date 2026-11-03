@@ -6,7 +6,8 @@ import { createContext, useContext, useEffect, useId, useRef, useState, useSyncE
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
-import { Hold, useOutcome, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { CommandVerb, Line, Verb } from "@/components/feedback/stage";
 import { isApiError } from "@/lib/api/client";
 import { conditionLine, MARK, useCondition, type Condition, type Mark } from "@/lib/account/condition";

@@ -218,12 +218,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const invalidView =
     works.status === "failed" && works.error.code === "E_INVALID_REQUEST";
   const visible = matches(text);
-  const readFeedback = useIndexReadFeedback({
-    value: works, requestedKey: descriptors.works.key, active, unit: { singular: "work", plural: "works" },
-    waiting: !invalidView && works.status === "loading",
-    outcome: null,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: works, requestedKey: descriptors.works.key, active, waiting: !invalidView && works.status === "loading", outcome: null });
   const canReset = view.length > 0;
   const headerMeta: PaneHeaderMeta = complete && !invalidView
     ? { kind: "Count", value: rows.length, unit: "work" }

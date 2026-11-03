@@ -3,15 +3,16 @@
  * opens without credentials; first provisioning requires verified server data.
  * Remote pane facts settle once before publication; a modeled failure admits local
  * writing with the title reader’s existing failure/retry state. */
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
-import { useTransportVerbs } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
-import { apiFetch, isApiError, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
 import { subscribeAdmission, subscribeRepair, updateRemedy } from "@/lib/native/admission";
@@ -29,7 +30,6 @@ const OPEN_FAILED = "couldn’t open your workspace.";
 const INITIAL_FACTS_TIMEOUT_MS = 5_000;
 
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
-  const transportVerbs = useTransportVerbs();
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string; presentations: InitialPresentations }) | null>(null);
   const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
@@ -111,8 +111,9 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   // A failed read heals: a repair (focus, back online) reads again.
   useEffect(() => failure !== null && isApiError(failure) ? subscribeRepair(() => retry(value => value + 1)) : undefined, [failure]);
   useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
-  const signIn = () => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); };
-  const signInVerb: CommandVerb = { label: "sign in", commandKey: "BrowserSignIn", run: signIn };
+  const signIn = useCallback(() => { void beginBrowserSignIn().then(() => window.location.assign("/login?switch_account=1")).catch(error => setFailure(error)); }, []);
+  const signInVerb = useMemo<CommandVerb>(() => ({ label: "sign in", commandKey: "BrowserSignIn", run: signIn }), [signIn]);
+  const shell = useMemo(() => ({ signIn: signInVerb }), [signInVerb]);
   const retryVerb: CommandVerb = { label: "retry", commandKey: "RetryBrowserWorkspace", run: () => retry(value => value + 1) };
   const fact = (line: Line, verbs?: Verbs) => <Fact line={line} verbs={verbs} speak />;
   // Retiring is no opening: a ruling's `still opening` would be false here.
@@ -123,13 +124,19 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   if (signedOut) return <Fact line={{ fact: "signed out on this device." }} verbs={[signInVerb]} />;
   if (failure) {
     if (!isApiError(failure)) return fact({ fact: OPEN_FAILED }, [retryVerb, signInVerb]);
-    const transport = transportOf(failure);
-    return fact(TRANSPORT_LINES[transport].command(OPEN_FAILED), transport === "SignIn" ? [signInVerb] : transportVerbs(transport, { retry: retryVerb }) ?? undefined);
+    return <FeedbackProvider shell={shell}><StartupFailure error={failure} retry={retryVerb} /></FeedbackProvider>;
   }
   if (!binding) return <Ruling />;
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
     account={{ accountId: binding.account.account_id, calendarTimeZone: binding.account.calendar_time_zone }}
     browserLifetime={binding.lifetime} readerProfile={binding.reader_profile} renderEnvironment={renderEnvironment} initialState={binding.workspace}
-    initialPresentations={binding.presentations} seeds={{}} entryFailure={null} locationLinkFailure={locationFailure}
+    initialPresentations={binding.presentations} locationLinkFailure={locationFailure}
   /></AuthenticatedWorkspaceErrorBoundary></WorkProvider>;
+}
+
+/** Startup recovery belongs to the browser's sign-in owner before the account shell opens. */
+function StartupFailure({ error, retry }: { error: ApiError; retry: CommandVerb }) {
+  const verbs = useTransportVerbs();
+  const transport = transportOf(error);
+  return <Fact line={TRANSPORT_LINES[transport].command(OPEN_FAILED)} verbs={verbs(transport, { retry }) ?? undefined} speak />;
 }

@@ -8,7 +8,9 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Announcement, FeedbackProvider, Hold, useTransportVerbs, useResendFeedback } from "@/components/feedback/Feedback";
+import { FeedbackProvider, Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
@@ -21,7 +23,7 @@ import { createDestinationCreation, useDestinationCreation } from "@/components/
 import { captureApiAccount, isCurrentApiAccount, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
-import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
+import { captureErrorLine, captureStatusLine } from "@/lib/imports/copy";
 import { addMediaFromUrl, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance, type AcceptedIngest } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
@@ -59,7 +61,7 @@ function failed(label: string, error: unknown, attempt = 0, unknown = outcomeUnk
   if (!isApiError(error)) throw error;
   const transport = transportOf(error);
   const review = ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code);
-  const domain = transport === "Refused" ? captureErrorFeedback(error, "SaveSource").message : undefined;
+  const domain = transport === "Refused" ? captureErrorLine(error, "SaveSource").reason : undefined;
   const line = unknown ? { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }
     : transport === "SignIn" ? { fact: "sign in to save this." }
     : transport !== "Refused" ? TRANSPORT_LINES[transport].command(SAVE_FAILED)
@@ -75,9 +77,9 @@ type ShareAccount = { user_id: string; calendar_time_zone: string; capture: {not
 /** Sign-in belongs to the workspace: capture's verb opens it. */
 const SHELL: Shell = { signIn: { label: "open workspace", commandKey: "OpenWorkspace", run: () => window.location.assign("nexus-share://open?path=%2Fdownloads") } };
 export default function ShareCapture(props: { text: string; isShell: boolean }) {
-  return <FeedbackProvider shell={SHELL}><div tabIndex={-1} className={styles.capture}>
+  return <FeedbackProvider shell={SHELL}><div tabIndex={-1} className={styles.backdrop}>
     <StageAnchor kind="Root" />
-    <ShareCaptureAdmission {...props} />
+    <main className={styles.card}><div className={styles.capture}><ShareCaptureAdmission {...props} /></div></main>
   </div></FeedbackProvider>;
 }
 const NOT_OPENED = "couldn’t open your notes on this device.";

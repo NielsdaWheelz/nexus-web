@@ -27,8 +27,7 @@ export type ControlHelp = {
   openDelayMs?: number;
 };
 
-/** `reserveIcon` and `busyKey` are retired: ignored here until the last caller migrates. */
-export type ControlContent = { reserveIcon?: boolean; busyKey?: unknown } & (
+export type ControlContent =
   | {
       iconOnly: true;
       icon: ReactElement;
@@ -42,8 +41,7 @@ export type ControlContent = { reserveIcon?: boolean; busyKey?: unknown } & (
       "aria-label"?: string;
       children: ReactNode;
       tooltip?: ControlHelp;
-    }
-);
+    };
 
 type Trigger = HTMLButtonElement | HTMLAnchorElement;
 
@@ -61,9 +59,7 @@ export function buttonClassName({ emphasis, tone, size, iconOnly }: ControlAppea
  * width. A new subject is a keyed remount of the control. */
 export function ControlContents({ icon, busy, children }: {
   icon?: ReactElement;
-  reserveIcon?: boolean;
   busy: boolean;
-  busyKey?: unknown;
   children?: ReactNode;
 }) {
   const spinner = busy ? <span className={styles.busy} aria-hidden="true" /> : null;

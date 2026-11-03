@@ -1,7 +1,7 @@
 "use client";
 
 // One account owns live refresh/research submissions. Retries send the original
-// bytes. An unconfirmed attempt holds a slip until it is accepted or forgotten.
+// bytes. An unconfirmed attempt holds a slip until it is accepted or its guarded owner leaves.
 // Only the captured, still-current entry may settle itself. Canonical reads are
 // invalidated after every sent attempt while the original account remains active.
 import {
@@ -13,7 +13,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Hold, useOutcome, useResendFeedback, useTransportVerbs, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import {
   apiFetch,
@@ -45,10 +46,8 @@ export type AdmissionIntent =
 export type AdmissionResult =
   | { kind: "Accepted" }
   | { kind: "Pending"; key: string }
-  /** Nothing started. `error` is set where its transport says why (`fail` it with `line.fact`);
-   * otherwise `line` and `verbs` are the whole of it. `content` is the same line for the
-   * resource-action runtime until L7. */
-  | { kind: "LocalFailure"; line: Line; verbs: Verbs | null; error: ApiError | null; content: FeedbackContent }
+  /** Nothing started; error retains transport authority, otherwise line and verbs are complete. */
+  | { kind: "LocalFailure"; line: Line; verbs: Verbs | null; error: ApiError | null }
   | { kind: "OwnerGone" };
 interface AdmissionEntry {
   readonly key: string;
@@ -109,7 +108,7 @@ export function useHeldSaveFailure() {
 }
 
 function localFailure(line: Line, verbs: Verbs | null, error: ApiError | null): AdmissionResult {
-  return { kind: "LocalFailure", line, verbs, error, content: { tone: "Warning", title: line.fact, message: line.reason } };
+  return { kind: "LocalFailure", line, verbs, error };
 }
 
 function createAdmissions(accountId: string, guard: WorkGuard) {
@@ -179,7 +178,7 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
           : localFailure(TRANSPORT_LINES[transportOf(error)].command(FACT[intent.kind]), null, error);
       }
       // The existing defect boundary owns unexpected replies; uncertainty remains
-      // registered until explicit dismissal or account teardown.
+      // registered until guarded account departure.
       throw error;
     } finally {
       if (live(scope)) {
@@ -232,10 +231,6 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
       if (scope === null || entry === undefined || entry.kind === "sending" || isStaleBuild(entry.error)) return;
       await send(entry, false, scope);
     },
-    forget(key: string): void {
-      const entry = entries.get(key);
-      if (entry !== undefined && guard.confirmLoss({ scopes: [], ownerIds: [entry.key] })) retire(entry);
-    },
   };
 }
 
@@ -261,10 +256,10 @@ function useOwner() {
 export function useMediaAdmissions() {
   const owner = useOwner();
   useSyncExternalStore(owner.subscribe, owner.getSnapshot, () => EMPTY);
-  return { admit: owner.admit, retry: owner.retry, pending: owner.pending, forget: owner.forget };
+  return { admit: owner.admit, retry: owner.retry, pending: owner.pending };
 }
 
-/** Each unconfirmed attempt holds one slip until it is accepted or forgotten, even after its
+/** Each unconfirmed attempt holds one slip until it is accepted or its guarded owner leaves, even after its
  * initiator closed. A stale build's refusal is said once instead: reload is its only remedy. */
 export function MediaAdmissionsHost() {
   const owner = useOwner();
