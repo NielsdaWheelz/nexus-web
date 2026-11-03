@@ -17,6 +17,7 @@ import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
+import { UploadSessionError } from "@/lib/imports/api";
 import {
   UNCONFIRMED,
   acceptanceFailure,
@@ -738,9 +739,11 @@ export function useAddContentSession(): AddContentSessionController {
       item(frozen);
       if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
       const failure = acceptanceFailure(error);
-      if (row.kind === "AcceptanceUnresolved" && row.reason === "StatusUnknown" && failure.kind === "Rejected") {
+      const publicationFenced = error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+        || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected");
+      if (row.kind === "AcceptanceUnresolved" && row.reason === "StatusUnknown" && !publicationFenced) {
         item({ ...frozen, attempt: row.attempt + 1 });
-        outcome.say({ fact: intent.source.kind === "Url" ? "couldn’t retry saving this link." : "couldn’t retry saving this file." });
+        if (failure.kind === "Rejected") outcome.say({ fact: intent.source.kind === "Url" ? "couldn’t retry saving this link." : "couldn’t retry saving this file." });
         return;
       }
       if (failure.kind === "Superseded") {

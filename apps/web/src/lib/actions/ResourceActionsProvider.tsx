@@ -482,7 +482,9 @@ export default function ResourceActionsProvider({
     retainedFeedback: <>{[...localUnknown].map(([key, held]) => <Hold key={key} id={key} attempt={held.attempt} line={held.line} />)}
       {[...attempts].filter(([, attempt]) => attempt.line !== null).map(([key, attempt]) => <Hold key={key} id={key} attempt={attempt.attempt}
         {...resendFeedback({ line: attempt.line!, resend: { label: "retry", commandKey: `retry ${key}`, busy: busyKeys.has(key),
-          run: () => run(attempt.command, attempt.outcome) } })} />)}
+          run: () => {
+            if (attempts.get(key) === attempt && attempt.line !== null) run(attempt.command, attempt.outcome);
+          } } })} />)}
       {chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
       {consumption.collectionFailures.filter(failure => failure.key !== consumptionReviewKey).map(failure =>
         <Hold key={failure.key} id={failure.key} attempt={failure.attempt} line={failure.line} verbs={failure.verbs} />)}
