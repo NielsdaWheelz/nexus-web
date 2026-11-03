@@ -320,6 +320,13 @@ edge, preserving siblings and both resources. discovery has no suppression
 preferences; future scans, including one already running, may publish a new edge.
 retrying removal of the old uuid never removes that replacement.
 
+`useFactRemovals` retains server-fact removal in the existing visit draft above
+filtered rows. dispatch and uncertainty carry the work guard; the held command
+keeps its exact edge or context version. initial row removal stays disabled while
+that command is unresolved, and only its held recovery may replay it. read
+freshness alone is not settlement. authored unlink keeps its own local command
+owner; generic outline presentation supplies no removal authority.
+
 | api | result |
 | --- | --- |
 | `POST /connection-discovery/scans {ref}` | `202 {data:{status,outcome}}` |

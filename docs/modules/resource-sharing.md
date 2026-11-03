@@ -170,6 +170,14 @@ person grants, received access with decline, the public link (copy, native
 share and X behind bearer warnings, turn off), and library People. One change
 runs at a time; every other control waits for it.
 
+the controller retains an unanswered grant command's exact subject, id and body.
+an unchanged sharing read does not settle it. initial create/revoke controls stay
+disabled until settlement; only its held recovery can replay the command, through
+the current shared sign-in, update or retry remedy. a callback for a retired request
+cannot send a newer request. closing or replacing an unresolved sharing session
+uses the existing work-loss question; declining preserves recovery, while accepting
+stops local tracking without cancelling server work. tucking only hides the line.
+
 People search (`GET /users/search?q&limit≤20`, `components/users/PeopleSearch`,
 shared with the library Members tab) finds users whose display name contains
 `q` (at least 3 characters) or whose email is exactly `q`, never the viewer. It

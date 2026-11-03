@@ -70,8 +70,11 @@ selection scope while execution keeps the same catalog command ids.
   remain exact. rounding buckets cannot define measurement equality.
   available action sheets derive their fractional layout top from their fixed,
   bottom-aligned backdrop and panel height, independently of entrance translation.
-  non-menu highlight actions and metadata remedies own their visible read lifetimes and
-  local pending/failure/retry feedback. `lib/actions/catalog.ts` owns copy, icons, groups,
+  non-menu highlight actions and metadata remedies own their visible read lifetimes.
+  marking metadata reviewed uses the existing raw-command owner: the exact media/job
+  command and its dispatch/uncertainty guard survive the initiating button or overlay.
+  accepted completion settles it; a later refusal alone cannot settle prior uncertainty.
+  `lib/actions/catalog.ts` owns copy, icons, groups,
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
   the overlays (metadata, library settings, podcast settings and fixed
