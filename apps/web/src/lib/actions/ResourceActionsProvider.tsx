@@ -416,7 +416,6 @@ export default function ResourceActionsProvider({
       previous?.release();
       if (command.tracked || command.rawWrite || previous?.line) busy.set(key, command.tracked || command.rawWrite === true);
       const named = `“${command.label.replace(/…$/, "")}”`;
-      const fact = `couldn’t complete ${named}.`;
       const report = (raise: () => Retract) => {
         if (!signal.aborted && attempts.get(key) === attempt) attempt.retract = raise();
       };
