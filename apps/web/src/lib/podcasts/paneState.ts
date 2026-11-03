@@ -39,8 +39,6 @@ export function podcastRefusalReason(error: ApiError): string | undefined {
       return "the podcast directory is busy.";
     case "E_FORBIDDEN":
       return "this account can’t make that change.";
-    case "E_RESOURCE_CONFLICT":
-    case "E_CONFLICT":
     case "E_SELECTION_CHANGED":
       return "it changed meanwhile.";
     case "E_MEDIA_NOT_READY":

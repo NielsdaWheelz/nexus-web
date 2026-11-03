@@ -36,7 +36,7 @@ interface Entry {
 const EMPTY: readonly Entry[] = [];
 
 /** The one fact for a request that did not go through. */
-export const transcriptsRefused = (title: string) => `couldn’t request transcripts for “${title}”.`;
+export const transcriptsRefused = (title: string) => `couldn’t start transcription for “${title}”.`;
 
 /** Imports own the evidence for an unconfirmed request; opening them rereads it. */
 function viewImports(workspace: () => WorkspaceStoreValue, inspect: () => void): LinkVerb {
@@ -96,7 +96,7 @@ function createCommands(accountId: string, guard: WorkGuard, fail: (input: { err
       handleUnauthenticatedApiError(error);
       if (isRefusal(error)) {
         retire(entry);
-        if (error.code === "E_RESOURCE_CONFLICT" || error.code === "E_SELECTION_CHANGED" || error.code === "E_CONFLICT")
+        if (error.code === "E_SELECTION_CHANGED")
           outcome.say({ fact: transcriptsRefused(entry.title), reason: "the eligible episodes changed." });
         else outcome.fail(error, transcriptsRefused(entry.title));
       } else if (outcomeUnknown(error)) {
@@ -175,7 +175,7 @@ export function usePodcastEpisodeCommands(accountId: string, reportDefect: (inpu
   const commands = { ...owner.commands };
   return { commands, feedback: entries.filter(entry => entry.phase === "unconfirmed").map(entry =>
     <Hold key={entry.commandKey} id={entry.commandKey}
-      line={{ fact: `not sure the transcript request for “${entry.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON }}
+      line={{ fact: `not sure transcription for “${entry.title}” started.`, reason: UNKNOWN_OUTCOME_REASON }}
       verbs={[viewImports(workspace, () => commands.inspect(entry.commandKey)),
         { label: "stop tracking", commandKey: `forget ${entry.commandKey}`, run: () => commands.forget(entry.commandKey) }]} />) };
 }

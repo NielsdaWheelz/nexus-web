@@ -6,7 +6,7 @@
  *
  * Listening writes are fenced by the reset epoch alone, so they are idempotent samples: one
  * flight at a time carrying the newest sample, at once on pause, seek and rate, every 15 s while
- * playing, and with `keepalive` on pagehide. A stale epoch (409) adopts the server's position.
+ * playing, and with `keepalive` on pagehide. A typed stale epoch adopts the server's position.
  * Only the attached episode samples the element; a detached one sends what it already holds.
  * Command preparation holds only acknowledged/superseded progress; failure releases the hold
  * and retains the sample as `Unsaved`, which holds a resume and a timed play until the sample is
@@ -179,9 +179,9 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
           if (current === episode) set({ synced: false });
           if (handleUnauthenticatedApiError(error)) return;
           const status = isApiError(error) ? error.status : 0;
-          if (isApiError(error) && status === 409) {
+          if (isApiError(error) && error.code === "E_STALE_LISTENING_REVISION") {
             // The listening was reset elsewhere: the reset wins, so take its position and epoch.
-            // justify-type-assertion: the 409 carries this route's canonical observation.
+            // justify-type-assertion: this typed refusal carries the route's canonical observation.
             const { state: server } = error.details?.current as Schema<"EpisodeConsumptionObservation">;
             current.queued = null; // sampled under the old epoch
             adoptInto(current, { position_ms: server.position_ms ?? 0, reset_epoch: server.reset_epoch,
@@ -602,7 +602,7 @@ export function createBrowserEngine(deps: BrowserEngineDeps): Engine {
         throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
       if (current.fenced) throw new ApiError(409, "E_PLAYBACK_REFUSED",
         state.error?.kind === "Unread" ? "its saved place couldn’t load." : "its progress is changing.");
-      if (state.playbackFailed) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its playback failed.");
+      if (state.playbackFailed) throw new ApiError(409, "E_PLAYBACK_REFUSED", "the audio couldn’t play.");
       if (unsentDrain(current)) throw new ApiError(409, "E_PLAYBACK_REFUSED", "its place isn’t saved yet.");
       const admission = ++asked;
       advanceAllowed = true;

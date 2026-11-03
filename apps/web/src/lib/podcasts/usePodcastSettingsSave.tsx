@@ -76,7 +76,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
       }
       entry.state = { kind: "Review", command, reason, current: value }; emit();
       // An unanswered save that reads back otherwise may never have landed: nothing says who changed them.
-      tell(entry, reason === "Conflict" ? { fact: unsaved(entry), reason: "they changed elsewhere." }
+      tell(entry, reason === "Conflict" ? { fact: unsaved(entry) }
         : { fact: `the saved defaults for “${entry.title}” differ from this change.` });
     } catch (caught) {
       if (!current(entry, scope)) return null;
@@ -90,7 +90,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
       entry.state = { kind: "ReadFailed", command, reason, error };
       if (reason === "Unknown") entry.attempt += 1;
       emit();
-      if (reason === "Conflict") tell(entry, { fact: unsaved(entry), reason: "they changed elsewhere." },
+      if (reason === "Conflict") tell(entry, { fact: unsaved(entry) },
         [{ label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId) }]);
     }
     return null;

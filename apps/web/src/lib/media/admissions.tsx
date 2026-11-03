@@ -78,12 +78,12 @@ const FACT: Readonly<Record<AdmissionIntent["kind"], string>> = {
   MetadataResearch: "couldn’t start the metadata search.",
 };
 
-function refusalReason(error: ApiError): string {
+function refusalReason(error: ApiError): string | undefined {
   switch (error.code) {
     case "E_MEDIA_NOT_FOUND": return "this item isn’t available to you.";
     case "E_OWNER_REQUIRED":
     case "E_FORBIDDEN": return "only the item’s owner can do this.";
-    case "E_RESOURCE_CONFLICT": return "this item changed.";
+    case "E_RESOURCE_CONFLICT": return undefined;
     case "E_REPAIR_NOT_ALLOWED": return "its published text can’t be replaced.";
     default: return "it can’t start in this item’s current state.";
   }

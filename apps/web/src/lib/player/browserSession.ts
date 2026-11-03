@@ -1,13 +1,13 @@
 /**
  * This device's durable browser queue. Every write replaces absolute state at an
  * exact revision. A lost answer retains the identical request and blocks later
- * edits; check resends it, including terminal consumption, without rebasing.
+ * edits; retry resends it, including terminal consumption, without rebasing.
  * Knowledge begins with a successful read or acknowledged save; failed reads
  * retain the last confirmed state, and the first one's error stands as `unread`
- * until a read lands. A write the queue refused throws its refusal and keeps nothing; one the
- * transport turned away (sign-in, a stale build, load) throws the transport's error, and keeps
- * its request only if it is a replay, whose first send may have landed. `unanswered` counts the
- * retained request's sends that had no answer.
+ * until a read lands. A first refused write keeps nothing. A refused replay retains its
+ * original uncertainty until acceptance or an authoritative identity/revision fence proves
+ * it cannot still apply. Equal queue state alone cannot confirm terminal consumption.
+ * `unanswered` counts recovery attempts for the retained unanswered write.
  * Only the account's Web Lock holder may call this owner.
  */
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline, type ApiError } from "@/lib/api/client";
@@ -34,13 +34,14 @@ export function createBrowserSession(accountId: string, changed: () => void) {
   let previous: QueueState | null = null;
   let unanswered = 0;
   const publish = () => changed();
+  const load = async () => (await readSharedValue({ accountId, key: "/me/playback-session", signal: new AbortController().signal, timeoutMs: 5_000, invalidate: true,
+    load: signal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal, cache: "no-store" }) })).data;
   const read = async () => {
     if (pending !== null) throw new QueueCommandError("Unsettled");
     try {
-      const response = await readSharedValue({ accountId, key: "/me/playback-session", signal: new AbortController().signal, timeoutMs: 5_000, invalidate: true,
-        load: signal => apiFetch<ApiJson<"/me/playback-session", "get">>("/api/me/playback-session", { signal, cache: "no-store" }) });
-      if (saved?.state.queue_id !== response.data?.state.queue_id || saved?.revision !== response.data?.revision) previous = null;
-      saved = response.data;
+      const current = await load();
+      if (saved?.state.queue_id !== current?.state.queue_id || saved?.revision !== current?.revision) previous = null;
+      saved = current;
       known = true;
       unread = null;
       phase = "Ready";
@@ -90,11 +91,36 @@ export function createBrowserSession(accountId: string, changed: () => void) {
         stayUnanswered();
         throw cause;
       }
-      // Sign-in, a stale build or load turned this send away unread. A first send left nothing; a
-      // replay's first send may still have landed, so it stays unanswered. Either way the
-      // transport says why, with its verb.
       const answered = transportOf(cause) === "Refused";
-      if (!answered && unanswered > 0) {
+      if (unanswered > 0) {
+        if (cause.status === 409) {
+          let current: Session | null;
+          try { current = await load(); }
+          catch (error) {
+            handleUnauthenticatedApiError(error);
+            stayUnanswered();
+            throw error;
+          }
+          const desired = request.state;
+          const sameState = current !== null && current.state.queue_id === desired.queue_id &&
+            current.state.current_entry_id === desired.current_entry_id && current.state.entries.length === desired.entries.length &&
+            current.state.entries.every((entry, index) => entry.id === desired.entries[index].id && entry.media_id === desired.entries[index].media_id);
+          // A different identity or advanced incompatible revision fences the old CAS. An
+          // unchanged head, absence or equal terminal queue cannot settle the original send.
+          if (current !== null && (current.id !== request.id || current.revision !== request.expected_revision && !sameState)) {
+            saved = current;
+            known = true;
+            unread = null;
+            previous = null;
+            pending = null;
+            frozenBody = null;
+            pendingPrevious = null;
+            unanswered = 0;
+            phase = "Ready";
+            publish();
+            throw new QueueCommandError("Changed");
+          }
+        }
         stayUnanswered();
         throw cause;
       }
@@ -107,9 +133,9 @@ export function createBrowserSession(accountId: string, changed: () => void) {
       if (!answered) throw cause;
       if (cause.code === "E_LIMIT") throw new QueueCommandError("TooMany");
       if (cause.status !== 409) throw new QueueCommandError("Refused");
-      // Refresh reports the other writer's result. The refused command is never reapplied.
+      // A generic conflict proves no change. Read current state without reapplying the refusal.
       await read();
-      throw new QueueCommandError("Changed");
+      throw new QueueCommandError("Refused");
     }
   };
   return {

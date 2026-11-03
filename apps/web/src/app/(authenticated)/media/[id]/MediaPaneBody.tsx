@@ -141,7 +141,7 @@ function FailedSource({ mediaId, code, line }: { mediaId: string; code: string |
   const offer = detail.status === "ready" ? detail.data.item.obligations.source?.recovery : null;
   if (offer?.kind !== "BrowserCapture") return <Fact line={line} speak={speak} />;
   const fact = code === "E_SOURCE_ACCESS_DENIED" ? "this page blocked the import."
-    : code === "E_SOURCE_NOT_READABLE" ? "nexus found no readable article on this page." : line.fact;
+    : code === "E_SOURCE_NOT_READABLE" ? "nexus found no readable article." : line.fact;
   return <Fact line={{ fact, reason: "nexus capture can save it from your browser." }} speak={speak}
     verbs={[{ label: "open source", href: offer.source_url, target: "_blank" }]} />;
 }
