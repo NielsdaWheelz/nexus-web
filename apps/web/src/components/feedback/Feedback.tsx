@@ -203,9 +203,10 @@ export interface Outcome {
 export function useOutcome(): Outcome {
   const stage = useStage();
   const address = useAddress();
-  const verbsFor = useTransportVerbs();
+  const { signIn } = useContext(ShellContext);
   const throwLater = useThrowLater();
   const say = useCallback<Outcome["say"]>((line, verbs) => stage.say({ address, line, verbs: verbs ?? null }), [stage, address]);
+  // Admission is read as `fail` is called, so no owner renders again as it moves.
   const fail = useCallback<Outcome["fail"]>((error, title, verb) => {
     if (isAbortError(error)) return () => {};
     if (!isApiError(error) || isSameSystemApiDefect(error)) {
@@ -213,8 +214,8 @@ export function useOutcome(): Outcome {
       return () => {};
     }
     const transport = transportOf(error);
-    return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: verbsFor(transport, { retry: verb }) });
-  }, [stage, address, verbsFor, throwLater]);
+    return stage.say({ address, line: TRANSPORT_LINES[transport].command(title), verbs: transportVerbs(transport, { retry: verb, signIn }) });
+  }, [stage, address, signIn, throwLater]);
   return useMemo(() => ({ say, fail }), [say, fail]);
 }
 
@@ -238,19 +239,20 @@ function admissionTransport(admission: RemoteAdmission): Transport | null {
   }
 }
 
-/** A held write's verbs as admission stands when called: a stale build offers reload alone,
- * where reload can work; a lapsed session, the shell's sign-in; otherwise `resend` itself, busy
- * while admission checks, and disabled with admission's reason while the press could not leave
- * this device. One function per shell, as `useTransportVerbs` is. */
-export function useResendVerbs(): (resend: CommandVerb) => Verbs {
+/** A held write's verb as admission stands when called: a stale build offers reload alone, where
+ * reload can work; a lapsed session, the shell's sign-in; otherwise `resend` itself, busy while
+ * admission checks, and disabled with admission's reason while the press would stay unsent:
+ * offline, or refused by `sends`, its owner's own gate, by default whether a fetch may leave. One
+ * verb, so an owner may set its own beside it. One function per shell, as `useTransportVerbs` is. */
+export function useResendVerbs(): (resend: CommandVerb, sends?: () => boolean) => readonly [Verb] {
   const verbsFor = useTransportVerbs();
   useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
-  return useCallback((resend: CommandVerb): Verbs => {
+  return useCallback((resend: CommandVerb, sends: () => boolean = remoteAttemptAllowed): readonly [Verb] => {
     const admission = remoteAdmission();
     const transport = admissionTransport(admission);
-    const instead = transport === "SignIn" || transport === "Update" ? verbsFor(transport) : null;
-    if (instead) return instead;
-    const unsent = transport !== null && (transport === "Offline" || !remoteAttemptAllowed());
+    const [instead] = transport === "SignIn" || transport === "Update" ? verbsFor(transport) ?? [] : [];
+    if (instead) return [instead];
+    const unsent = transport !== null && (transport === "Offline" || !sends());
     return [{ ...resend, busy: resend.busy || admission === "Checking",
       disabledReason: unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason }];
   }, [verbsFor]);
