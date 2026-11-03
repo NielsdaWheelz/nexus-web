@@ -6,7 +6,8 @@
 // A refused first send speaks once, an unsent one included. An unknown outcome holds in this
 // dialog with its resend; a resend that fails, refused or unsent, holds again, since the first
 // send may have landed. An acknowledgement settles it; an unavailable read leaves its
-// recovery and loss guard intact. The draft name survives all of it.
+// recovery and loss guard intact. An unanswered command excludes the other kind.
+// The draft name survives all of it.
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useLayoutEffect } from "react";
@@ -102,6 +103,7 @@ export default function LibrarySettingsDialog({
 
   const rename = async () => {
     const value = state.read();
+    if (value.busy !== null || value.unknown?.command === "Delete") return;
     const request = value.request ?? (current === null ? null : {
       name: (value.draft ?? current.name).trim(), rawDraft: value.draft,
       expectedName: current.name !== value.baseline ? current.name : value.baseline, unconfirmed: false,
@@ -131,6 +133,8 @@ export default function LibrarySettingsDialog({
     }
   };
   const remove = async () => {
+    const value = state.read();
+    if (value.busy !== null || value.request !== null) return;
     const fact = current === null ? "couldn’t delete this library." : `couldn’t delete “${current.name}”.`;
     const signal = ctx.sessionSignal();
     setBusy("Delete");
@@ -204,7 +208,7 @@ export default function LibrarySettingsDialog({
               <Button
                 emphasis="strong"
                 aria-busy={busy === "Rename" || undefined}
-                disabled={invalid !== null || renameRequest === null && name === baseline || busy !== null}
+                disabled={invalid !== null || renameRequest === null && name === baseline || busy !== null || unknown?.command === "Delete"}
                 onClick={() => void rename()}
               >
                 {renameLabel}
@@ -227,7 +231,7 @@ export default function LibrarySettingsDialog({
                   emphasis="strong"
                   tone="danger"
                   aria-busy={busy === "Delete" || undefined}
-                  disabled={busy !== null}
+                  disabled={busy !== null || renameRequest !== null}
                   onClick={() => void remove()}
                 >
                   Delete library
@@ -240,7 +244,7 @@ export default function LibrarySettingsDialog({
                 </Button>
               </div>
             ) : (
-              <Button tone="danger" onClick={() => setConfirming(true)}>
+              <Button tone="danger" disabled={busy !== null || renameRequest !== null} onClick={() => setConfirming(true)}>
                 Delete library…
               </Button>
             )}
