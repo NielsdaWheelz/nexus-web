@@ -60,7 +60,18 @@
 
 .line2 { color: var(--ink-muted); font-size: var(--text-xs); line-height: 1.3; }
 
-.link { color: var(--accent); }
+/* line 2 is a link only in `Empty` and `UpdateRequired`, whose words never truncate. the press
+   reaches 24px, centred on the word, without growing the line. */
+.line2:has(> .link) { overflow: visible; }
+
+.link { position: relative; color: var(--accent); }
+
+.link::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block: calc(50% - 12px);
+}
 
 .muted .title { color: var(--ink-muted); }
 .muted .art { opacity: 0.6; }

@@ -39,15 +39,16 @@
   background: var(--surface-1);
 }
 
-/* one 80px row, every state centred on y=40; enlarged text grows it, never clips it. the side
-   columns share the width, so the disc sits at the centre of the slot. */
+/* one 44px row at y=18..62 of 80, every state centred on y=40. the 18px above it are the rail's
+   band, which does not scale with text, so enlarged text grows the bar downward and never under the
+   band. the side columns share the width, so the disc sits at the centre of the slot. */
 .bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   column-gap: var(--space-6);
   min-height: 80px;
-  padding-inline: var(--space-4);
+  padding: 18px var(--space-4);
 }
 
 @container player (width < 60rem) {
