@@ -51,11 +51,12 @@ export function MetadataReviewButton({ mediaId, jobId }: { readonly mediaId: str
       throw error;
     }),
   }), [ref, mediaId, jobId]);
-  const presentation = resendFeedback({ line: { fact: METADATA_REVIEW_HELP }, resend: { label: "mark reviewed", commandKey: `review metadata:${mediaId}:${jobId}`,
+  const presentation = resendFeedback({ line: { fact: "metadata review." }, resend: { label: "mark reviewed", commandKey: `review metadata:${mediaId}:${jobId}`,
     run: () => run(command), busy } });
+  const line = presentation.line.reason ? presentation.line : { fact: METADATA_REVIEW_HELP };
   return <>
-    <span id={contextId} className="sr-only">{sentence(presentation.line)}</span>
-    {presentation.verbs === null ? <div data-metadata-action=""><Fact line={presentation.line} /></div>
+    <span id={contextId} className="sr-only">{sentence(line)}</span>
+    {presentation.verbs === null ? <div data-metadata-action=""><Fact line={line} /></div>
       : <span data-metadata-action=""><VerbControl contextId={contextId} verb={presentation.verbs[0]} /></span>}
   </>;
 }
