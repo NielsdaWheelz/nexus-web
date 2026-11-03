@@ -5,6 +5,8 @@
 // PUT the bytes to the signed url -> confirm. A missing confirmation retries its
 // frozen command; a revision refusal requires explicit review, then confirms the
 // same generation and bytes. A failed byte PUT recreates only the upload window.
+// Same-system defects stop new commands until this background restarts; an
+// admitted save still settles, and its memory-only bytes/uncertainty stay owned.
 // The popup renders the state
 // pushed on its port and sends Commands; content scripts never see the bearer.
 //
@@ -45,6 +47,7 @@ import {
 } from "@/extension/capture";
 import {
   nexus,
+  isCaptureDefect,
   putBytes,
   type ExtensionSession,
   type CaptureTarget,
@@ -135,6 +138,7 @@ let token: string | null = null;
 let accountEpoch = 0;
 let session: (ExtensionSession & { client: Nexus }) | null = null;
 let revocationFailure: ViewState["revocationFailure"] = null;
+let stopped: CaptureFailure | null = null;
 let draft: Draft | null = null;
 let unsupported: string | null = null;
 let checkingFailed = false;
@@ -180,6 +184,10 @@ browser.runtime.onConnect.addListener((port) => {
       // justify-type-assertion: this sender and port belong to the same extension build
       const sent = message as ViewCommand;
       view.acknowledged = sent.sequence;
+      if (stopped !== null) {
+        pushState();
+        return;
+      }
       if (draft?.id !== sent.draftId || session?.user_id !== sent.accountId ||
           (draft.target.kind === "article" && draft.captureTarget?.accountEpoch !== accountEpoch) ||
           (draft.submission !== null && draft.submission.accountEpoch !== accountEpoch)) {
@@ -226,6 +234,7 @@ browser.menus.onClicked.addListener((info, tab) => void menuClick(info, tab));
 
 async function handle(sent: Command): Promise<CommandResult> {
   await ready;
+  if (stopped !== null) return { kind: "failure", failure: stopped };
   const credential = token;
   try {
     switch (sent.kind) {
@@ -287,7 +296,9 @@ async function exclusive(
   run: (signal: AbortSignal) => Promise<void>,
   takesOverGrantWait = false,
 ): Promise<void> {
+  if (stopped !== null) throw new CaptureFailureError(stopped);
   if (active !== null && awaitingGrant && takesOverGrantWait) await interrupt();
+  if (stopped !== null) throw new CaptureFailureError(stopped);
   // Another takeover may have claimed the slot while this one awaited release.
   if (active !== null) {
     throw failure("E_CAPTURE_BUSY", "nexus is still working on this capture.");
@@ -375,7 +386,7 @@ function pushState(failedPort?: browser.runtime.Port, failure: CaptureFailure | 
       const state = await viewState();
       for (const { port, acknowledged } of views) {
         try {
-          const message: ViewMessage = { state, acknowledged, failure: port === failedPort ? failure : null };
+          const message: ViewMessage = { state, acknowledged, failure: stopped ?? (port === failedPort ? failure : null) };
           port.postMessage(message);
         } catch {
           // justify-ignore-error: Firefox marks a port dead before onDisconnect fires
@@ -453,16 +464,24 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
 /** The failure to show; a 401 also forgets the credential nexus no longer honours. */
 async function describe(error: unknown, credential = token): Promise<CaptureFailure> {
   if (error instanceof CaptureFailureError) {
-    if (error.status === 401 && credential === token) await forgetCredential();
+    if (isCaptureDefect(error.failure.code)) {
+      const shown = { ...error.failure, message: "nexus capture stopped unexpectedly." };
+      stopped ??= shown;
+      pushState();
+      return shown;
+    } else if (error.status === 401 && credential === token) await forgetCredential();
     return error.failure;
   }
   if (isAbortError(error)) return INTERRUPTED;
   console.error("capture failed:", error);
-  return {
+  const shown: CaptureFailure = {
     code: "E_CAPTURE_DEFECT",
     message: "nexus capture stopped unexpectedly.",
     requestId: null, status: null, offline: false,
   };
+  stopped ??= shown;
+  pushState();
+  return shown;
 }
 
 /** The page script answered outside its contract: a defect, whose detail goes to the console. */
@@ -617,6 +636,7 @@ async function activate(): Promise<void> {
     // Identity uses the same owner as disconnect, so a late read cannot reconnect
     // a revoked credential. An unreachable account still permits source preview.
     await ensureSession(signal).catch(describe);
+    if (stopped !== null) return;
     signal.throwIfAborted();
     if (draft !== null && draft.phase.kind !== "saved") return;
     const [tab] = await browser.tabs.query({
@@ -665,6 +685,7 @@ async function activate(): Promise<void> {
       } catch (error) {
         if (isAbortError(error)) throw error;
         await describe(error, credential);
+        if (stopped !== null) return;
         return setDraft(null, "retry checking before saving.", true);
       }
       reply = await injection.request({ kind: "extract", source_url: url,
@@ -800,7 +821,8 @@ async function menuClick(
         setDraft(documentDraft(windowId, linkUrl, source, label));
       });
     } catch (error) {
-      setDraft(null, (await describe(error)).message);
+      const shown = await describe(error);
+      if (stopped === null) setDraft(null, shown.message);
     }
   }
   await reopenPopup(windowId);
