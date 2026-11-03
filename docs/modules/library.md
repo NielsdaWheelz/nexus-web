@@ -112,6 +112,20 @@ owns account-scoped per-library queues, frozen commands and unknown recovery.
 only acknowledged local predecessors may supply dependent revisions. external
 changes require a new choice. closing presentation preserves accepted work.
 
+member commands and invitation answers retain one immutable command in their
+pane visit's resource draft. original controls cannot replace it while running or
+unanswered; the held retry uses the same ids, body and expected role. inspector
+closure, filtering and loss of the management body preserve that owner. local
+confirmation dismissal changes presentation only; running alone paints busy.
+
+fresh opposite lists do not settle uncertainty. invitation answers settle on an
+acknowledgement or typed terminal invitation result. member desired-state proof
+requires fresh complete authorized lists and the exact subject; remove/revoke
+absence alone is insufficient. a receipt proves that request accepted, and a
+desired-state read proves the current postcondition. neither permanently fences
+a separate still-running role or transfer command: those writers compare mutable
+values, not monotone revisions.
+
 canonical media/show relations feed search scopes, atlas and suggestions.
 `library_listing` owns complete media lenses and their atomic pane aggregate. `library_members` owns invitations,
 leaving/transfer; passive membership changes acquire nothing. resource grants,
