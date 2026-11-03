@@ -48,7 +48,7 @@ from nexus.db.models import (
     ProcessingStatus,
     XArticleInspection,
 )
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import get_repeatable_read_db, transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
@@ -678,7 +678,8 @@ def confirm_session(
     is 409 ``E_UPLOAD_CAPABILITY_EXPIRED``. A stale generation is 409 ``E_UPLOAD_GENERATION_STALE``; a recorded rejection
     answers its code again.
     """
-    with transaction(db):
+
+    def read_current() -> Published | _Generation:
         session = _owned(db, viewer_id, origin_kind, session_id)
         binding_payload = session.input_origin.get("capture_binding")
         is_recovery = (
@@ -693,7 +694,11 @@ def confirm_session(
         if session.published_at is not None:
             return _published(db, viewer_id, session)
         _require_current(db, session, generation)
-        current = _Generation.of(session)
+        return _Generation.of(session)
+
+    current = retry_read_committed(db, "upload.confirm.read", read_current)
+    if isinstance(current, Published):
+        return current
     client = get_storage_client()
     candidate_path = build_upload_verification_candidate_storage_path(
         current.candidate_media_id, new_uuid7(), _EXTENSIONS[current.kind]
