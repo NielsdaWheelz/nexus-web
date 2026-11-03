@@ -4,17 +4,20 @@
  * Identity follows nearby and current/focused/open occurrences.
  * Every edit captures the displayed manifest's authority; playback owns feedback. */
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
-import { ArrowDown, ArrowUp, Ellipsis, Pause, Play, Trash2, ListStart } from "lucide-react";
 import { PlayerFailures } from "./PlayerFailures";
 import Button from "@/components/ui/Button";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ActionMenu from "@/components/ui/ActionMenu";
-import MediaIdentity, { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
+import { MediaTitle } from "@/components/media/MediaIdentity";
+import IndexBibliography from "@/components/resources/IndexBibliography";
 import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
+import { mediaByline } from "@/lib/media/mediaByline";
+import * as Icon from "@/lib/ui/icons";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
@@ -57,39 +60,40 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   const move = (beforeEntryId: string | null, message: string) => {
     void dispatch({ kind: "move-before", entry_id: entry.id, before_entry_id: beforeEntryId }, [entry.id], message);
   };
-  const action = (id: string, label: string, icon: ReactElement, onSelect: () => void): ActionDescriptor => ({
+  const action = (id: string, label: string, icon: ReactElement | null, onSelect: () => void): ActionDescriptor => ({
     kind: "command", id, label, icon, disabled: !ready,
     disabledReason: ready ? undefined : "wait for the queue change to finish", onSelect,
   });
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
   if (future && index > currentIndex + 1) {
-    options.push(action("next", "Play next", <ListStart />, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
-    options.push(action("earlier", "Move earlier", <ArrowUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
+    options.push(action("next", "play next", null, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
+    options.push(action("earlier", "move earlier", <Icon.MoveUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
   }
   if (future && index < manifest.entries.length - 1)
-    options.push(action("later", "Move later", <ArrowDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
-  if (future || failed) options.push(action("remove", "Remove from queue", <Trash2 />, () => {
+    options.push(action("later", "move later", <Icon.MoveDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
+  if (future || failed) options.push(action("remove", "remove from queue", null, () => {
     const neighbors = [manifest.entries[index + 1], manifest.entries[index - 1]].flatMap(item => item === undefined ? [] : [item.id]);
     void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors, `removed “${title}” from queue`);
   }));
   const returnFocus = () => rowElement(entry.id)?.querySelector<HTMLElement>('[data-queue-action="more"]')
     ?? rowElement(entry.id)?.querySelector<HTMLElement>("[data-row-focusable]") ?? null;
   return <ResourceRow density="compact" primary={{ kind: "link", href: `/media/${entry.media_id}` }}
+    leadingVisual={<Artwork size={44} title={summary === null ? "" : summary.show?.title ?? summary.title} source={remoteArtwork(summary?.show?.image_url ?? null)} />}
     title={subject === null ? title : <MediaTitle subject={subject} />}
-    content={{ kind: "Index", metadata: subject === null ? null : <MediaIdentity subject={subject} returnFocus={returnFocus} />, facts: summary === null ? null : <MediaFacts summary={summary} /> }} selected={current}
+    content={{ kind: "Index", metadata: summary === null || summary.show === null ? null : <IndexBibliography byline={mediaByline(summary, null)} originalPublishedDate={null} returnFocus={returnFocus} /> }} selected={current}
     rootProps={{ "data-collection-row-id": entry.id, "aria-current": current ? "true" : undefined,
       "aria-posinset": index + 1, "aria-setsize": manifest.entries.length,
       "data-queue-initial-target": initialTarget ? "true" : undefined }}
     controls={<>
-      <Button iconOnly icon={playing ? <Pause /> : <Play />} aria-label={`${failed ? "retry" : playing ? "pause" : "play"} “${title}”`}
+      <Button iconOnly icon={playing ? <Icon.Pause /> : <Icon.Play />} aria-label={`${failed ? "retry" : playing ? "pause" : "play"} “${title}”`}
         data-queue-entry={entry.id} data-queue-action="play" aria-disabled={!ready || undefined}
         onClick={() => { void dispatch({ kind: "select", entry_id: entry.id, play: !playing, position_ms: null }, null, null); }} />
       {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus} label={`more actions for “${title}”`}
         triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
         triggerDisabled={!ready} triggerDisabledReason="wait for the queue change to finish"
         onOpenChange={open => menuChanged(entry.id, open)}
-        renderTrigger={props => <Button {...props} iconOnly icon={<Ellipsis />} />}
+        renderTrigger={props => <Button {...props} iconOnly icon={<Icon.More />} />}
         source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${ready}`, title: "queue actions",
           content: { sections: [{ id: "Queue", label: null, options }] } }} /> : null}
     </>} />;

@@ -105,7 +105,8 @@ function useTranscriptPlayback(mediaId: string, reader: Reader, expectedKey: str
     ? transcriptUnitAtTime(doc.units, positionMs) : null;
   const identity = unit !== null && doc !== null ? doc.identity : null;
   const unitId = unit?.id ?? null;
-  const playback = useMemo(() => identity !== null && unitId !== null ? { identity, unit: unitId } : null, [identity, unitId]);
+  const warm = loaded && !state.playbackFailed && (state.phase === "Playing" || state.phase === "Buffering");
+  const playback = useMemo(() => identity !== null && unitId !== null ? { identity, unit: unitId, warm } : null, [identity, unitId, warm]);
   return { loaded, playback };
 }
 

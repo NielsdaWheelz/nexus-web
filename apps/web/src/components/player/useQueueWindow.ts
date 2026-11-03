@@ -1,7 +1,7 @@
 "use client";
 
 /** A complete queue's measured window. Compact queue rows have uniform border-box
- * geometry: bounded title/metadata lines, no artwork or expanded content. Only an
+ * geometry: fixed artwork and bounded title/metadata lines, no expanded content. Only an
  * actual row supplies height. Ordered presentation gaps account for omitted ranks;
  * endpoints and focused/menu neighbors preserve native Tab order and exact nodes.
  * One observer/scroll lifetime owns geometry and the visible occurrence anchor. */

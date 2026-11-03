@@ -21,13 +21,6 @@
   font-weight: var(--weight-semibold);
 }
 
-.eyebrow {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
 .chapters {
   display: grid;
   margin: 0;
@@ -37,14 +30,19 @@
 
 .chapterRow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
 }
 
 .chapter {
   justify-content: space-between;
-  flex: 1 1 auto;
+  flex: 1 1 10rem;
+  min-block-size: 44px;
 }
+
+.read { flex: 0 0 auto; white-space: nowrap; }
 
 .chapter > span:first-child {
   min-width: 0;
@@ -52,6 +50,7 @@
 }
 
 .time {
+  white-space: nowrap;
   color: var(--ink-muted);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
