@@ -7,8 +7,9 @@
  * (`release`). Sign-in, a stale build and a busy server are always the slip's, with their verb.
  * Unanswered, it stays `Unknown`, a held line in `feedback` until a replay settles it or `stop
  * tracking` forgets it, never undoing it. A replay sends the same body and ids; an import is
- * checked by reading its operation. Under a stale build neither can go out, so reload stands in
- * for them, where reload can work. So when `submit` resolves false, `pending(subject)` names
+ * checked by reading its operation. Under a stale build neither can go out, so reload stands alone
+ * where reload can work. Current admission recovery outranks a replay's domain refusal.
+ * So when `submit` resolves false, `pending(subject)` names
  * the outcome's one home: `Refused` is the sender's, `Unknown` is the held line's, and null was
  * said as a slip. Mount `feedback` once. Dismissal changes presentation only.
  */
@@ -18,10 +19,11 @@ import { type Line, type Verbs } from "@/components/feedback/stage";
 import { assertNever } from "@/lib/assertNever";
 import { isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { invalidateReads, publishChange } from "@/lib/api/changes";
-import { UNKNOWN_OUTCOME_REASON, transportOf } from "@/lib/api/failure";
+import { UNKNOWN_OUTCOME_REASON, admissionTransport, transportOf } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
+import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import { admitPodcast, changePodcastImport, getPodcastImport, stopPodcast, removeEpisodeFromAll } from "./api";
 import { podcastRefusalReason } from "./paneState";
 import { setPlacement } from "@/lib/libraries/api";
@@ -228,12 +230,15 @@ export function usePodcastCommands(accountId: string, defect: (input: { error: u
   // A fresh command object per published change re-renders the subjects that read `pending`.
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => EMPTY);
   const resendVerbs = useResendVerbs();
+  const transport = admissionTransport(useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission));
   const commands = { ...owner.commands };
   return { commands, feedback: entries.filter(entry => entry.uncertain).map(entry => {
     const forget = { label: "stop tracking", commandKey: `forget ${entry.key}`, run: () => commands.review(entry.key) };
-    const verbs: Verbs = entry.replayRefused && entry.command.kind !== "Import" ? [forget]
-      : [...resendVerbs({ label: entry.command.kind === "Import" ? "check" : "retry", commandKey: `check ${entry.key}`,
-        run: () => void commands.check(entry.key), busy: entry.phase === "Sending" }), forget];
+    const resolve = resendVerbs({ label: entry.command.kind === "Import" ? "check" : "retry", commandKey: `check ${entry.key}`,
+      run: () => void commands.check(entry.key), busy: entry.phase === "Sending" });
+    const verbs: Verbs = transport === "Update" ? resolve
+      : entry.replayRefused && entry.command.kind !== "Import" && transport !== "SignIn" ? [forget]
+      : [...resolve, forget];
     return <Hold key={entry.key} id={entry.key} attempt={entry.attempt}
       line={{ fact: `not sure ${unsettledThing(entry)} saved.`, reason: UNKNOWN_OUTCOME_REASON }} verbs={verbs} />;
   }) };
