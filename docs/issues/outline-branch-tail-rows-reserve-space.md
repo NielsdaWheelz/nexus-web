@@ -1,5 +1,7 @@
 # every open branch reserves a write row
 
+priority: deferred design follow-up; not a release gate. prefer one empty root entry, preserving nested entries while they hold writing. change the controller only when revisiting density, with return/removal/paste still reaching each branch.
+
 problem: each open parent ends with its own tail row, a full-height "write or @ to
 link" field (`outlineController.ts`, the tail rows `rebuild` emits per open
 window). a page with five open branches shows five empty write rows between its

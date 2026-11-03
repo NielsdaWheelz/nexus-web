@@ -9,7 +9,7 @@
 // Excerpts use separate literal matching text; canonical labels/captures stay intact.
 // search activation retains the selected reading and the canonical saved occurrence.
 import { useMemo } from "react";
-import type { AuthoredQuery, ResourceProjection, ResourceRef } from "@nexus/authored/types";
+import type { AuthoredQuery, QueryResult, ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import type { SearchFamily, SearchScope } from "@nexus/authored/scope";
 import { capturedHighlightText, searchName, searchNameMatch } from "@nexus/authored/queries";
 import { useAuthoredPrefix, useAuthoredQuery } from "@/lib/notes/hooks";
@@ -73,14 +73,13 @@ export interface LocalMatch {
 }
 
 /** One local row's match; null when its ref names no discovery family (e.g. a fragment stub). */
-export function localResult(resource: ResourceProjection, text: string): LocalMatch | null {
+export function localResult(resource: ResourceProjection, text: string, href: string | null): LocalMatch | null {
   const kind = kindOf(resource);
-  return kind === null ? null : localMatch(resource, kind, text);
+  return kind === null ? null : localMatch(resource, kind, text, { matchText: null, activationRef: null, matchedField: null, href });
 }
 
 export function localMatch(resource: ResourceProjection, kind: SearchKind, text: string,
-  { matchText, activationRef, matchedField, activationField }: { matchText: string | null; activationRef: ResourceRef | null; matchedField: "quote" | "annotation" | null; activationField: "annotation" | null } = { matchText: null, activationRef: null, matchedField: null, activationField: null }): LocalMatch {
-  const href = resource.kind === "highlight" && activationField === "annotation" ? `/highlights/${resource.ref.split(":")[1]}#annotation` : localResourceHref(resource, {activationRef});
+  { matchText, activationRef, matchedField, href }: { matchText: string | null; activationRef: ResourceRef | null; matchedField: "quote" | "annotation" | null; href: string | null }): LocalMatch {
   const body = matchText ?? (resource.kind === "highlight" && resource.selection ? capturedHighlightText(resource) : resource.kind === "note" ? resource.body_text ?? ""
     : searchName(resource) ?? resource.title ?? "");
   const nameMatch = searchNameMatch(resource, text);
@@ -109,6 +108,29 @@ export function localMatch(resource: ResourceProjection, kind: SearchKind, text:
     excerpt: { text: slice, marks: kept, before: start > 0, after: end < body.length } };
 }
 
+/** A captured passage retains its text after its local source disappears. The exact-ref
+ * owner supplies one row; search_preview supplies at most eight (the shared query caps it).
+ * Resolve only those local sources, and never publish an older source proof with newer rows. */
+export function useLocalSourceAdmission(result: QueryResult | null) {
+  const refs = [...new Set((result?.rows ?? []).flatMap(({ resource }) =>
+    resource.ref.startsWith("passage_anchor:") && resource.source_ref !== null && /^(note_block|page|highlight):/u.test(resource.source_ref)
+      ? [resource.source_ref] : []))].sort();
+  const read = useAuthoredQuery(refs.length ? { kind: "resolve", refs } : null);
+  const refsKey = JSON.stringify(refs);
+  const admission = useMemo(() => {
+    if (refs.length && (read.data === null || result === null || BigInt(read.data.store_revision) < BigInt(result.store_revision))) return null;
+    const available = new Set(read.data?.rows.map(row => row.resource.ref) ?? []);
+    return { href(resource: ResourceProjection, activationRef: ResourceRef | null, activationField: "annotation" | null): string | null {
+      if (resource.ref.startsWith("passage_anchor:") && resource.source_ref !== null && (activationRef === null || activationRef === resource.source_ref) && refs.includes(resource.source_ref) && !available.has(resource.source_ref)) return null;
+      return resource.kind === "highlight" && activationField === "annotation" ? `/highlights/${resource.ref.split(":")[1]}#annotation`
+        : localResourceHref(resource, { activationRef });
+    } };
+    // The closed query key owns the source set; the row revision owns proof freshness.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refsKey, read.data, result?.store_revision]);
+  return { admission, read };
+}
+
 /** Launcher admission is one nonpaged read at one local store revision. */
 export function useLocalSearchPreview(text: string | null, kinds: SearchQuery["requestedKinds"], scope: string): {
   readonly matches: readonly LocalMatch[] | null;
@@ -125,13 +147,18 @@ export function useLocalSearchPreview(text: string | null, kinds: SearchQuery["r
   const query: Extract<AuthoredQuery, {kind: "search_preview"}> | null = text === null || scopes === null ? null
     : {kind: "search_preview", text, limit: 8, scopes, families};
   const result = useAuthoredQuery(query);
-  const matches = useMemo(() => result.data === null ? null : result.data.rows.flatMap(({resource, match_text, activation_ref, matched_field, activation_field}) => {
-    const kind = kindOf(resource);
-    return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", {matchText: match_text, activationRef: activation_ref, matchedField: matched_field, activationField: activation_field})] : [];
-  }), [result.data, kinds, text]);
+  const source = useLocalSourceAdmission(result.data);
+  const matches = useMemo(() => {
+    const admission = source.admission;
+    if (result.data === null || admission === null) return null;
+    return result.data.rows.flatMap(({resource, match_text, activation_ref, matched_field, activation_field}) => {
+      const kind = kindOf(resource);
+      return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", {matchText: match_text, activationRef: activation_ref, matchedField: matched_field, href: admission.href(resource, activation_ref, activation_field)})] : [];
+    });
+  }, [result.data, kinds, text, source.admission]);
   if (text !== null && scopes === null) return {matches: [], storeRevision: null, complete: true, pending: false, occurrence: null, scopeAvailable: false, error: null, retry: result.retry};
-  return {matches, storeRevision: result.data?.store_revision ?? null, complete: result.data !== null, pending: result.pending, occurrence: result.occurrence, scopeAvailable: result.error !== null || result.data === null ? null : result.data.scope_available,
-    error: result.error, retry: result.retry};
+  return {matches, storeRevision: result.data?.store_revision ?? null, complete: result.data !== null && source.admission !== null, pending: result.pending || source.read.pending, occurrence: result.occurrence ?? source.read.occurrence, scopeAvailable: result.error !== null || result.data === null ? null : result.data.scope_available,
+    error: result.error ?? source.read.error, retry: () => { result.retry(); source.read.retry(); }};
 }
 
 /** Every local match of the requested authored kinds, a page at a time, re-read whenever
@@ -152,7 +179,7 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
   const prefix = useAuthoredPrefix(query, pages);
   const matches = useMemo(() => prefix.data === null ? null : prefix.data.rows.flatMap(({ resource, match_text, activation_ref, matched_field, activation_field }) => {
     const kind = kindOf(resource);
-    return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref, matchedField: matched_field, activationField: activation_field })] : [];
+    return kind !== null && (kinds === null || kinds.has(kind)) ? [localMatch(resource, kind, text ?? "", { matchText: match_text, activationRef: activation_ref, matchedField: matched_field, href: resource.kind === "highlight" && activation_field === "annotation" ? `/highlights/${resource.ref.split(":")[1]}#annotation` : localResourceHref(resource, { activationRef: activation_ref }) })] : [];
   }), [prefix.data, kinds, text]);
   if (text !== null && scopes === null) return { matches: [], complete: true, pending: false, occurrence: null, scopeAvailable: false, error: null, retry: prefix.retry };
   return { matches, complete: prefix.data?.next_cursor === null, pending: prefix.pending, occurrence: prefix.occurrence, scopeAvailable: prefix.error !== null || prefix.data === null ? null : prefix.data.scope_available,

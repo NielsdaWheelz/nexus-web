@@ -59,8 +59,11 @@
   letter-spacing: var(--tracking-tight);
 }
 
+/* The asterism: the brand link's and the Nexus entry's; css sizes it, its dots fill currentColor. */
 .brandMark {
   flex-shrink: 0;
+  inline-size: 20px;
+  block-size: 20px;
   color: var(--accent);
 }
 

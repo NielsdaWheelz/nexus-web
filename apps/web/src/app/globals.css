@@ -82,9 +82,7 @@
   --z-overlay: 100; /* mobile chrome */
   --z-popover: 900; /* page menus, floating surfaces, previews */
   --z-modal: 1000; /* modal frames stack at calc(var(--z-modal) + depth) */
-  --z-nexus: 1100; /* the quick-note handoff input, above every frame */
 
-  --overlay-scrim: rgb(0 0 0 / 0.5);
   --overlay-scrim-soft: rgb(0 0 0 / 0.24); /* the mobile secondary sheet */
 
   --navbar-width: 240px;
@@ -126,6 +124,7 @@
   --pane-section-title-font:
     normal 600 var(--text-lg) / var(--leading-snug) var(--font-sans);
 
+  --overlay-scrim: rgb(0 0 0 / 0.5);
   --surface-canvas: #0e0e10;
   --surface-1: #161618;
   --surface-2: #1c1c1f;
@@ -177,6 +176,8 @@
   --pane-section-title-font:
     normal 500 var(--text-2xl) / var(--leading-tight) var(--font-eb-garamond),
     Charter, Georgia, "Times New Roman", serif;
+  /* warm and light: a .5 black scrim over the study reads as a crash */
+  --overlay-scrim: rgb(60 50 30 / 0.22);
   --surface-canvas: #faf8f3;
   --surface-1: #ffffff;
   --surface-2: #f4f4f0;
@@ -223,6 +224,8 @@
 [data-theme="elvish"] {
   /* Native controls must not punch white through the canopy. */
   color-scheme: dark;
+  /* green-black: the canopy */
+  --overlay-scrim: rgb(5 15 10 / 0.45);
   --surface-canvas: #15201b;
   --surface-1: #1a2620;
   --surface-2: #1f2d26;

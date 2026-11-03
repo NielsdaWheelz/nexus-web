@@ -13,6 +13,7 @@ const LITERALS_ALLOWED =
 // installed at runtime (next/font on the root layout, or inline styles); not declared in css.
 const RUNTIME = new Set([
   "--anchored-max-width",
+  "--arrival-onset",
   "--font-cormorant",
   "--font-eb-garamond",
   "--font-im-fell",

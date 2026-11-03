@@ -1,5 +1,7 @@
 # the drag keeps its own copy of the topmost-selection walk
 
+priority: deferred maintenance; leave alone until selection or drag ownership changes. no present behavior defect is established.
+
 problem: `OutlineController.roots()` consolidated the topmost selected occurrences
 for fold and clipboard; `OutlineDrag.tsx`'s `liftedRows` still walks ancestors
 itself to find the same roots.

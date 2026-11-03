@@ -1,5 +1,7 @@
 # keys pressed during a mouse drag edit the caret's row and cancel the drag
 
+priority: deferred rare interaction. ordinary typing undo is the recovery; investigate if encountered during use or when drag keyboard handling changes.
+
 problem: an admitted mouse press on a bullet prevents its mousedown default, so
 focus stays in the editor through the drag (`OutlineDrag.tsx`; this is what keeps
 a chord after a drop working). keys pressed while the button is still down

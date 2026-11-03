@@ -31,7 +31,11 @@ export interface OutlinePlacement {
 }
 export interface OutlineChange {before: InputBookmark; after: InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?: readonly OccurrenceBookmark[]}
 export interface OutlineVisibility {show: readonly OccurrenceBookmark[]; hide: readonly OccurrenceBookmark[]}
-export interface OutlineBirthChange {before: InputBookmark; after(document: WritingDocument): InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?(document: WritingDocument): readonly OccurrenceBookmark[]}
+export interface OutlineBirthChange {
+  before: InputBookmark; after(document: WritingDocument): InputBookmark;
+  placements_before?: readonly OccurrenceBookmark[]; placements_after?(document: WritingDocument): readonly OccurrenceBookmark[];
+  resolvePlacement?(document: WritingDocument): Promise<{placement: OutlinePlacement; placements_before: readonly OccurrenceBookmark[]; placements_after: readonly OccurrenceBookmark[]}>;
+}
 export interface OutlineBirthsChange {before: InputBookmark; after(documents: readonly WritingDocument[]): InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?(documents: readonly WritingDocument[], links: readonly Promise<LinkState>[]): readonly OccurrenceBookmark[]}
 /** A birth is a newborn note (`body`) or an existing resource linked again (`ref`); it names its parent
  * and anchors by ref, or by the index of an earlier birth in the same call. */
@@ -348,8 +352,17 @@ export class OutlineHistory {
     const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [{body, origin}],
       mutate: () => {if (source) Y.applyUpdate(source.document.doc, source.update, origin);},
       prepare: async refs => {
-        const position = await this.placement(placement);
-        const prepared = await prepareLink(this.runtime, {source_ref: placement.parent_ref, target_ref: refs[0]!, source_label: null, target_label: null, ...position});
+        const settled = await resolved;
+        const at = settled?.placement ?? placement;
+        if (settled) {
+          this.hold(group, [at.parent]);
+          if (!group.refs.includes(at.parent_ref)) group.refs.push(at.parent_ref);
+          group.placements_before = settled.placements_before;
+          group.placements_after = this.relationship(settled.placements_after, link);
+          group.added = group.placements_after;
+        }
+        const position = await this.placement(at);
+        const prepared = await prepareLink(this.runtime, {source_ref: at.parent_ref, target_ref: refs[0]!, source_label: null, target_label: null, ...position});
         relationship = prepared.link_id; group.coverage.links.set(relationship, {});
         return prepared.intents;
       }});
@@ -371,6 +384,8 @@ export class OutlineHistory {
     const completion = this.track(group, admitted.result, eligible), link = this.createdLink(completion, () => relationship);
     group.placements_after = this.relationship(group.placements_after, link);
     group.added = group.placements_after;
+    const resolved = change.resolvePlacement?.(document);
+    void resolved?.catch(() => {});
     return {document, result: admitted.result, committed: completion, link};
   }
   /** Several births in one command, for paste: one admission, one batch of positions
@@ -501,7 +516,7 @@ export class OutlineHistory {
   }
   range(args: {
     plan: RangePlan; documents: readonly WritingDocument[]; snapshot: RangeSnapshot; metadata(): unknown; canRetain(): boolean;
-    prepare(): Promise<{kind: "plan"; plan: RangePlan; snapshot: RangeSnapshot; occurrences: readonly OccurrenceBookmark[]} | {kind: "refusal"; reason: RangeReason}>;
+    prepare(readLinks: (link_ids: readonly string[]) => Promise<readonly LinkState[]>): Promise<{kind: "plan"; plan: RangePlan; snapshot: RangeSnapshot; occurrences: readonly OccurrenceBookmark[]} | {kind: "refusal"; reason: RangeReason}>;
     active(): boolean;
     publication: RangePublication; reserve(action: "undo" | "redo"): RangePublication;
     refused(reason: RangeReason): void;
@@ -594,7 +609,8 @@ export class OutlineHistory {
     const mayFocus = this.focus?.lease() ?? (() => false), eligible = this.groups();
     const admission = this.runtime.admitGraph<RangeReason>({active: () => !this.closed && args.active(), retired: "retired", changed: "changed", capacity: "capacity",
       prepare: async () => {
-        const prepared = await args.prepare();
+        const store = await this.runtime.store, replica = await store.readReplica();
+        const prepared = await args.prepare(async link_ids => (await store.readStates({refs: [], link_ids: [...link_ids], anchor_ids: [], source_refs: []})).links);
         if (prepared.kind === "refusal") return prepared;
         plan = prepared.plan; sourceSnapshot = prepared.snapshot; group.before = plan.selection_before; group.after = plan.selection_after;
         const rows = new Map(prepared.occurrences.map(row => [row.row_id, row]));
@@ -603,7 +619,6 @@ export class OutlineHistory {
           if (link) byOccurrence.set(id, link);
         }
         const intents: GraphIntent[] = [], destinations = new Set<string>();
-        const store = await this.runtime.store, replica = await store.readReplica();
         for (const change of plan.changes) {
           const occurrence = rows.get(change.before.row_id), source = await occurrence?.link;
           if (!source || occurrence?.ref !== change.before.ref || (source.endpoint_a === change.before.ref ? source.endpoint_b : source.endpoint_a) !== change.before.parent_ref)
@@ -638,6 +653,9 @@ export class OutlineHistory {
           const [a, b] = change.after.parent_ref < change.after.ref ? [change.after.parent_ref, change.after.ref] : [change.after.ref, change.after.parent_ref];
           const target = (await store.readStates({refs: [], link_ids: [id], anchor_ids: [], source_refs: []})).links[0];
           const linked = target !== undefined && isVisible(target.add_vv, target.remove_vv);
+          // Reviving a removed pair writes both endpoint positions; undo must restore them before an older removal is undone.
+          if (target && !linked) for (const endpoint of [target.endpoint_a, target.endpoint_b])
+            if (positionAt(target, endpoint)) previous.set(endpoint + "/" + id, {link: target, endpoint});
           const fresh = {link_id: id, endpoint_a: a, endpoint_b: b, add_vv: {}, remove_vv: {}, position_a: null, position_b: null};
           // Same pair, same link: the destination's existing visible link is repositioned, never re-added.
           if (change.mirror) {

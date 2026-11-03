@@ -94,8 +94,3 @@ export function ResourceIndexBody({ body }: { body: Body }) {
     case "reference": return body.label && hasExcerpt(body.label) ? <ExcerptText excerpt={body.label} /> : body.target_ref;
   }
 }
-
-/** Distinct literal evidence keeps its own omission marks and codepoint ranges. */
-export function ResourceMatchEvidence({ match }: { match: ResourceMatch }) {
-  return <div className={styles.matchEvidence}><ExcerptText excerpt={match.excerpt} match={match} /></div>;
-}

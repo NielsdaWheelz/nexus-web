@@ -6,7 +6,7 @@ Returns information about the authenticated viewer including profile fields.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import DeviceId
@@ -14,7 +14,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.responses import Data
-from nexus.schemas.nexus_ranking import NexusRankingOut, NexusSelectionRecordRequest
+from nexus.schemas.nexus_ranking import NexusSelectionRecordRequest, NexusUsageMapOut
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest, UserProfileOut
 from nexus.schemas.workspace_presentations import (
@@ -95,10 +95,9 @@ def patch_reader_profile(
 def get_nexus_ranking(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-    query: Annotated[str | None, Query(max_length=500)] = None,
-) -> Data[NexusRankingOut]:
-    """Get Nexus selection ranking for the current viewer."""
-    return Data(data=nexus_ranking_service.get_ranking_for_viewer(db, viewer.user_id, query))
+) -> Data[NexusUsageMapOut]:
+    """The viewer's whole Nexus usage map, read once per palette open."""
+    return Data(data=nexus_ranking_service.get_usage_map_for_viewer(db, viewer.user_id))
 
 
 @router.post("/me/nexus-selections", status_code=204)

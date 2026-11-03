@@ -1,0 +1,101 @@
+"use client";
+
+// One MenuSource for a subject from the existing descriptors: the caller's known navigation and
+// occurrence/view choices publish immediately; authoritative resource verbs retain their prepared
+// snapshot and source label. An owned authored principal publishes its local verbs as soon as one
+// local read settles; the server's verbs settle in the trailing region (loading, ready or failed),
+// never gating, reordering or replacing the local snapshot. The menu and the verb rail both project it.
+import { useCallback, useState } from "react";
+import { isStaleBuild } from "@/lib/api/client";
+import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
+import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
+import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
+import { usePaneSubject } from "@/lib/panes/paneChrome";
+import type { CanonicalResourceRef } from "@/lib/sharing/types";
+import type { ActionDescriptor, MenuContent, MenuOption, MenuSource, TrailingState } from "@/lib/ui/actionDescriptor";
+
+export type DisplayedNavigation = {
+  readonly key: string;
+  readonly fork: Extract<ActionDescriptor, { kind: "link" }> | null;
+};
+
+export interface ContextActionSection {
+  readonly id: "Pane" | "Occurrence" | "View";
+  readonly actions: readonly MenuOption[];
+}
+
+export interface ContextualActionsInput {
+  readonly title: string;
+  readonly subjectKey: string;
+  readonly sections: readonly ContextActionSection[];
+  readonly resourceRef?: CanonicalResourceRef;
+  readonly navigation: DisplayedNavigation | null;
+  readonly omitResourceActions?: readonly string[];
+  readonly showSourceSubject?: boolean;
+  readonly actionFocus?: PodcastActionFocus;
+  /** Loading defects belong to the resource's pane, even outside its provider. */
+  readonly onDefect?: (defect: { readonly error: unknown }) => void;
+}
+
+export function useContextualActions({
+  sections, resourceRef, title, subjectKey, onDefect, actionFocus, omitResourceActions = [], showSourceSubject = false, navigation,
+}: ContextualActionsInput): MenuSource {
+  const paneSubject = usePaneSubject();
+  const resource = useResourceActions(resourceRef ?? null, onDefect, actionFocus);
+  const state = resource.state;
+  const client = useClientActions(resourceRef ?? null, title);
+  const authored = useAuthoredActions(resourceRef ?? null);
+  const [request, setRequest] = useState<AbortSignal | null>(null);
+  const prepareAuthored = authored.prepare, prepareRemote = resource.prepare;
+  const prepare = useCallback((signal: AbortSignal) => {
+    setRequest(signal);
+    prepareAuthored(signal);
+    prepareRemote(signal);
+  }, [prepareAuthored, prepareRemote]);
+  const initial: MenuContent = { sections: [
+    ...sections.filter(section => section.actions.length > 0).map(section => ({ id: section.id, label: null, options: section.actions })),
+    ...(navigation?.fork ? [{ id: "Navigation", label: null, options: [navigation.fork] }] : []),
+  ] };
+  const groups: MenuContent["sections"][number][] = [];
+  // An owned authored resource publishes its local verbs once the local read settles; the
+  // server's facts settle separately in the trailing region and cannot gate them.
+  const local = request !== null && authored.read?.request === request ? authored.read : null;
+  // A caller that omits every local verb gets the server-backed menu, whose copies it omits too.
+  const verbs = local?.actions.filter((action) => !omitResourceActions.includes(action.id)) ?? [];
+  const owned = local !== null && verbs.length > 0;
+  const remote = state !== null && state.request === request ? state : null;
+  if (owned && local.label === null) throw new Error("local resource actions require their resource label");
+  if (owned) {
+    groups.push({ id: "Resource", label: showSourceSubject ? `source: ${local.label}` : null, options: verbs });
+  } else if (remote?.kind === "Ready") {
+    const options = remote.options.filter((action) => !omitResourceActions.includes(action.id) && !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)));
+    if (options.length > 0) groups.push({
+      id: "Resource", label: showSourceSubject ? `source: ${remote.facts.label}` : null, options,
+    });
+  }
+  // Client-owned facts compose beside the remote facts; a remote verb with the same id wins.
+  // A published local snapshot cannot depend on server facts that settle after it.
+  const remoteIds = new Set(!owned && remote?.kind === "Ready" ? remote.options.map(action => action.id) : []);
+  const device = client.filter(action => !remoteIds.has(action.id) && !omitResourceActions.includes(action.id));
+  if (device.length > 0) groups.push({ id: "Device", label: null, options: device });
+  const content: MenuContent = { sections: groups };
+  const identity = { title, subjectKey };
+  const trailingFailure = remote?.kind === "Failed" ? remote : remote?.kind === "Loading" ? remote.failure : null;
+  const trailing: TrailingState = request === null ? null : remote?.kind === "Ready" ? {
+    kind: "Ready", request, label: showSourceSubject && owned ? `source: ${local.label}` : null,
+    options: remote.options.filter((action) => !omitResourceActions.includes(action.id) &&
+      !((navigation !== null || resourceRef === paneSubject) && ["Open", "OpenInNewPane"].includes(action.id)) && !AUTHORED_ACTION_IDS.has(action.id)),
+  } : trailingFailure ? {
+    kind: "Failed", request, feedback: trailingFailure.feedback, pending: remote?.kind === "Loading",
+    retry: trailingFailure.error && isStaleBuild(trailingFailure.error) ? null : () => resource.prepare(request),
+  } : { kind: "Loading", request };
+  // Verified device actions remain usable while the same remote owner retries.
+  if (!resourceRef) return { ...identity, kind: "Immediate", content: initial };
+  if (local !== null && (owned || device.length > 0 && trailing?.kind === "Failed"))
+    return { ...identity, kind: "Prepared", initial, prepare, state: { kind: "Ready", request: local.request, content }, trailing };
+  return {
+    ...identity, kind: "Prepared", initial, prepare,
+    state: request === null ? null : local === null ? { kind: "Loading", request }
+      : remote?.kind === "Ready" ? { kind: "Ready", request, content } : remote,
+  };
+}

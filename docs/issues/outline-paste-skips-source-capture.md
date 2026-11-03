@@ -1,5 +1,7 @@
 # pasting a non-authored reference relies on an existing source stub
 
+priority: deferred source-capture edge, not an observed paste failure. investigate on a foreign-reference reproduction or when changing that paste path.
+
 problem: paste by reference links every copied ref through
 `OutlineHistory.createMany` (`apps/web/src/lib/notes/structure.ts`), which lowers
 `add_link` alone. `prepareLink` (`apps/web/src/lib/resourceGraph/links.ts`) also

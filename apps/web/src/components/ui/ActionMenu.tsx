@@ -24,7 +24,7 @@ import { FeedbackState, FeedbackFailure, FeedbackBusy, FeedbackRecoveryControl, 
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import {
-  prepareActionSelect,
+  activateDescriptor,
   projectActionControlState,
   type MenuContent,
   type MenuOption,
@@ -969,17 +969,9 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
         return;
       }
       if (action.disabled || action.busy) { if (!("key" in event) || ["Enter", " "].includes(event.key)) event.preventDefault(); return; }
-      if (action.kind === "link") {
-        const result = action.onActivate?.(event) ?? "unhandled";
-        if (result === "consumed" || (result === "unhandled" && "key" in event)) return;
-        close(result === "unhandled" && action.restoreFocusOnClose !== false);
-        return;
-      }
-      const detail = prepareActionSelect(event, trigger.current);
-      if (!detail) return;
-      // Retire the menu owner before an async command captures attention.
-      flushSync(() => close(action.restoreFocusOnClose !== false));
-      action.onSelect(detail);
+      const result = activateDescriptor(action, event, trigger.current, close);
+      if (result === "selected" || result === "consumed" || (result === "unhandled" && "key" in event)) return;
+      close(result === "unhandled" && action.restoreFocusOnClose !== false);
     };
     const common = {
       ...attributes,

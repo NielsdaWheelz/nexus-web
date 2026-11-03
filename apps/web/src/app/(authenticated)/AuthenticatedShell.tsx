@@ -56,6 +56,7 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
+import type { InitialPresentations } from "@/lib/workspace/presentationRead";
 import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
@@ -67,6 +68,7 @@ export default function AuthenticatedShell(props: {
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
+  initialPresentations?: InitialPresentations;
   seeds: Record<string, Record<string, unknown>>;
   entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
@@ -85,7 +87,7 @@ export default function AuthenticatedShell(props: {
                     <ServerSeedsProvider seeds={props.seeds}>
                       <ReaderProvider initialProfile={props.readerProfile}>
                         <Workspace accountId={props.account.accountId} initialState={props.initialState}
-                          entryFailure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
+                          initialPresentations={props.initialPresentations} entryFailure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
                       </ReaderProvider>
                     </ServerSeedsProvider>
                   </MediaAdmissionsProvider>
@@ -103,6 +105,7 @@ export default function AuthenticatedShell(props: {
 function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
+  initialPresentations?: InitialPresentations;
   entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
@@ -161,7 +164,7 @@ function Workspace(props: {
                               <MediaAdmissionsHost />
                               <ImportsProvider>
                                 <MediaContinuationHost />
-                                <WorkspacePresentationsProvider key={accountId} accountId={accountId}>
+                                <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
                                   <WorkspaceNavigation>
                                     <Nexus />
                                     <WorkspaceCanvas />

@@ -1,6 +1,6 @@
 "use client";
 
-// The Nexus mount: one controller, the desktop palette or the mobile switchboard.
+// The Nexus mount: one controller, the desktop palette or the phone's sheet and disc.
 import { useRef } from "react";
 import NexusButton from "@/components/switchboard/NexusButton";
 import SwitchboardTask from "@/components/switchboard/SwitchboardTask";
@@ -24,7 +24,12 @@ export default function Nexus() {
           buttonRef.current?.focus({ preventScroll: true });
           controller.openRoot();
         }}
-        onSwipe={controller.activateAdjacentPane}
+        onSwipe={input => {
+          const result = controller.activateAdjacentPane(input);
+          if (result.kind === "Unchanged") return input.direction === "Next" ? "last pane" : "first pane";
+          const title = controller.panes.find(pane => pane.id === result.paneId)?.presentation.title;
+          return title ? title : null;
+        }}
       />
     </>
   );

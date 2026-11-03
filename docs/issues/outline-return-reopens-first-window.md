@@ -1,5 +1,7 @@
 # back to a long outline reopens its first 48 rows
 
+priority: deferred navigation inconvenience: show more items again. prioritize if long outlines make it recurrent; the 48-row capacity limit itself remains intentional.
+
 problem: an outline that showed more than one window (60 rows typed in place, or
 `show more items`) is rebuilt on back with a fresh controller whose root request
 reads the first 48 rows (`useLocalOutlineRoot`'s default request,

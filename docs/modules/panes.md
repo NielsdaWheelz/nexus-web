@@ -4,9 +4,9 @@
 
 primary panes are workspace-owned route containers. the desktop strip owns
 switching and pane management; the store owns order, visibility and selection.
-pane names the workspace object, its strip chip and its management; tab means
-only a browser tab, an aria tab/tablist (inspector tabs, `ui/Tabs`) or the Tab
-key.
+pane names the workspace object, its strip chip and its management. `tabs` is
+the palette's established heading for its pane list; elsewhere tab means a browser
+tab, an aria tab/tablist (inspector tabs, `ui/Tabs`) or the tab key.
 
 ## Desktop Pane Strip
 
@@ -161,13 +161,22 @@ path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.
 
-mobile nexus opens to a keyboard-down workspace overview with up to three visible
-panes around current. desktop previews the first five panes. `expand` reveals all
-panes, including minimized, in workspace order inside the existing scrollport;
-`collapse` restores the preview. omit disclosure when nothing is hidden. disclosure
-state lasts through same-opening search/page visits and responsive handoff, and
-resets on explicit reopening. mobile search retains its query on return to overview;
-the presented collection, not query emptiness, determines reorder eligibility.
+blank nexus shows the current pane separately as `here`, then other panes under
+`tabs · {total}` in most-recently-active order. the controller owns that order
+for the session, seeded from layout order; it is not workspace persistence.
+the most recently active other pane is armed at open, so mod+k then enter returns
+there. desktop and mobile preview up to five other panes; expand reveals all
+including minimized panes, and collapse restores the preview. omit disclosure
+when nothing is hidden. disclosure lasts through same-opening query/page visits
+and responsive handoff, and resets on explicit reopening.
+
+`reorder` or hold-drag switches the blank pane section to complete layout order,
+including the current pane, for the transaction. completion/cancellation returns
+to most-recently-active order. completeness compares the presented ids with
+layout ids; an mru permutation containing all panes is still complete.
+ranked typed results cannot reorder. phone tab rows keep × and no verb rail;
+the current resource row retains its resource verbs. the
+[sheet](app-navigation.md#nexus-content-grammar) opens keyboard-down.
 
 the row body opens/restores its exact pane; only the independent × closes it.
 closing keeps nexus open and adopts the store's committed successor, including

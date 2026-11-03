@@ -5,6 +5,8 @@
 // local matches lead and readable peer previews retain their remote owner. Unavailable
 // local scope inputs are explicit. Exact authored refs resolve locally;
 // other exact refs use the existing resource resolver and never enter textual discovery.
+// The viewer's usage map is read once per open and held through it; `remember` applies
+// an accepted selection to the held map, so no ranking request follows a keystroke.
 import type { SearchFamily } from "@nexus/authored/scope";
 import type { AuthoredQuery } from "@nexus/authored/types";
 import { remoteReady } from "@/lib/native/admission";
@@ -23,15 +25,17 @@ import { SEARCH_READ_TIMEOUT_MS } from "@/lib/search/policy";
 import { searchProgress, type SearchProgress } from "@/lib/search/progress";
 import { fetchSearchPreview } from "@/lib/search/searchApi";
 import { searchQueryToParams } from "@/lib/search/searchParams";
-import { WRITING_REF, localResult, localSearchApplies, localSearchScopes, useLocalSearchPreview, type LocalMatch } from "@/lib/search/localSearch";
+import { WRITING_REF, localResult, useLocalSourceAdmission, localSearchApplies, localSearchScopes, useLocalSearchPreview, type LocalMatch } from "@/lib/search/localSearch";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
-import type { NexusSource } from "./model";
+import type { NexusSource, UsageMap } from "./model";
 import type { NexusQuery } from "./query";
+import { canonicalHref, normalizeQuery } from "./rank";
 
-type Ranking = ApiJson<"/me/nexus-ranking", "get">;
+type Usage = ApiJson<"/me/nexus-ranking", "get">;
 type RetainedLocalTarget = Extract<AuthoredQuery, {kind: "search_admission"}>["targets"][number];
+/** Selections accepted since the map of `generation` landed; the next map includes them. */
+type Applied = { readonly generation: number; readonly uses: readonly { readonly query: string; readonly href: string; readonly at: string }[] };
 
-const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
 const EMPTY_LOCAL: readonly LocalMatch[] = [];
 /** A remote row's matching passage may be the server's copy of authored text; local owns that. */
 const withoutAuthoredPassage = <Row extends { matching_passage: { item: { authored_by_viewer: boolean } } | null }>(row: Row): Row =>
@@ -40,7 +44,21 @@ const PREVIEW_SETTLE_MS = { direct: 80, lexical: 120, hybrid: 160 } as const;
 const PREVIEW_PHASE_RANK = { direct: 0, lexical: 1, hybrid: 2 } as const;
 export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"];
 
-export function useNexusFind({ open, query, retainedLocalTargets }: { open: boolean; query: NexusQuery; retainedLocalTargets: readonly RetainedLocalTarget[] }) {
+/** The server's record, mirrored: one more visit at 100 points joins the mean of the last ten. */
+function applyUses(map: UsageMap, uses: Applied["uses"]): UsageMap {
+  if (uses.length === 0) return map;
+  const next: Record<string, Record<string, UsageMap[string][string]>> = { ...map };
+  for (const { query, href, at } of uses) {
+    const targets = { ...next[query] };
+    const before = targets[href];
+    const visits = Math.min(before?.use_count ?? 0, 9);
+    targets[href] = { use_count: (before?.use_count ?? 0) + 1, points: ((before?.points ?? 0) * visits + 100) / (visits + 1), last_used: at };
+    next[query] = targets;
+  }
+  return next;
+}
+
+export function useNexusFind({ open, composing, query, retainedLocalTargets }: { open: boolean; composing: boolean; query: NexusQuery; retainedLocalTargets: readonly RetainedLocalTarget[] }) {
   const { accountId } = useAuthenticatedAccount();
   const live = useRef(true);
   useLayoutEffect(() => {
@@ -49,32 +67,45 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   }, []);
   const feedback = useFeedback();
   const latestSelection = useRef<(() => Promise<void>) | null>(null);
-  const [rankingWanted, setRankingWanted] = useState(false);
-  const [revision, setRevision] = useState(0);
   const fail = useThrowLater();
+
+  const [usageWanted, setUsageWanted] = useState(false);
+  const usageRead = usePaneFreeServerValue<Usage>({
+    key: usageWanted ? `${accountId}:nexus-usage` : null,
+    stale: "",
+    load: (signal) => apiFetch<Usage>("/api/me/nexus-ranking", { signal }),
+  });
+  const refetchUsage = useRef(usageRead.refetch);
+  refetchUsage.current = usageRead.refetch;
+  // One GET per open: the first open starts the read, later opens re-run it over the held map.
   useEffect(() => {
-    if (open) setRankingWanted(true);
+    if (!open) return;
+    if (usageWanted) void refetchUsage.current().catch(() => { /* the owner renders a modeled failure */ });
+    else setUsageWanted(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the open is the cause, not the wanted flag
   }, [open]);
+  const usageData = usageRead.status === "ready" ? usageRead.data.data.usages : null;
+  const usageGeneration = usageRead.status === "ready" ? usageRead.generation : -1;
+  const generation = useRef(usageGeneration);
+  generation.current = usageGeneration;
+  const [applied, setApplied] = useState<Applied>({ generation: -1, uses: [] });
+  const usage = useMemo(() => usageData && applyUses(usageData, applied.generation === usageGeneration ? applied.uses : []), [usageData, usageGeneration, applied]);
 
   const text = query.text;
-  const base = usePaneFreeServerValue<Ranking>({
-    key: rankingWanted ? `${accountId}:nexus-ranking` : null,
-    stale: String(revision),
-    load: (signal) => apiFetch<Ranking>("/api/me/nexus-ranking", { signal }),
-  });
-
   const referenceRef = query.intent.kind === "Resource" ? query.intent.ref : null;
   const localRef = referenceRef !== null && WRITING_REF.test(referenceRef) ? referenceRef : null;
-  const localRead = useAuthoredQuery(open && localRef ? { kind: "resource", ref: localRef } : null);
+  const localRead = useAuthoredQuery(open && !composing && localRef ? { kind: "resource", ref: localRef } : null);
   const localRow = localRead.data?.rows[0]?.resource ?? null;
+  const localSource = useLocalSourceAdmission(localRead.data);
   // stable while its row is unchanged; the launcher merges rows on identity.
-  const localReference = useMemo(() => localRow?.authored_by_viewer ? localResult(localRow, "") : null, [localRow]);
-  const local = useLocalSearchPreview(open && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, query.searchQuery.scope);
+  const localReference = useMemo(() => localRow?.authored_by_viewer && localSource.admission !== null
+    ? localResult(localRow, "", localSource.admission.href(localRow, null, null)) : null, [localRow, localSource.admission]);
+  const local = useLocalSearchPreview(open && !composing && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, query.searchQuery.scope);
   const scopes = localSearchScopes(query.searchQuery.scope);
   const families: SearchFamily[] | null = query.searchQuery.requestedKinds === null ? null : [...query.searchQuery.requestedKinds].filter(kind => kind !== "web").sort();
-  const retainedLocal = useAuthoredQuery(open && query.intent.kind === "Search" && retainedLocalTargets.length && scopes !== null && localSearchApplies(query.searchQuery)
+  const retainedLocal = useAuthoredQuery(open && !composing && query.intent.kind === "Search" && retainedLocalTargets.length && scopes !== null && localSearchApplies(query.searchQuery)
     ? { kind: "search_admission", text: query.searchQuery.text.trim(), targets: [...retainedLocalTargets], scopes, families } : null);
-  const localValidationReady = query.intent.kind === "Resource" ? localRead.data !== null
+  const localValidationReady = query.intent.kind === "Resource" ? localRead.data !== null && localSource.admission !== null
     : retainedLocal.data !== null && (local.storeRevision === null || BigInt(retainedLocal.data.store_revision) >= BigInt(local.storeRevision));
   const missingLocal = useMemo(() => {
     if (local.scopeAvailable === false) return new Set(retainedLocalTargets.map(target => target.ref));
@@ -85,7 +116,7 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localValidationReady, retainedLocal.data, local.scopeAvailable]);
   const reference = usePaneFreeServerValue<ResourceItem>({
-    key: open && referenceRef && !localRow?.authored_by_viewer ? `${accountId}:nexus-ref:${referenceRef}` : null,
+    key: open && !composing && referenceRef && !localRow?.authored_by_viewer ? `${accountId}:nexus-ref:${referenceRef}` : null,
     stale: "",
     load: (signal) => resolveResourceItem(referenceRef!, signal),
   });
@@ -94,14 +125,12 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   params.delete("view");
   params.set("phase", "lexical");
   const previewHref = `/api/search/preview?${params}`;
-  const rankingHref: `/api/${string}` = `/api/me/nexus-ranking?${new URLSearchParams({ query: text })}`;
-  // Search must fit both its GET transports and its eventual workspace address.
+  // Search must fit both its GET transport and its eventual workspace address.
   // Explicit authoring commands never send their arguments through discovery.
-  const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH &&
-    rankingHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
-  const searchUnavailable = open && text !== "" && query.intent.kind === "Search" && !supported;
+  const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
+  const searchUnavailable = open && !composing && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
-  const identityKey = open && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
+  const identityKey = open && !composing && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
   const directAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.direct);
   const lexicalAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.lexical);
   const hybridAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.hybrid);
@@ -154,12 +183,6 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
   const directSettled = directKey !== null && direct.status !== "loading";
   const lexicalSettled = lexicalKey !== null && lexical.status !== "loading";
   const hybridSettled = hybridKey !== null && hybrid.status !== "loading";
-  const typedId = identityKey !== null && (wantsLexical ? lexicalSettled && (!wantsHybrid || hybridSettled) : directSettled) ? text : null;
-  const typed = usePaneFreeServerValue<Ranking>({
-    key: typedId === null ? null : `${accountId}:nexus-ranking:${typedId}`,
-    stale: String(revision),
-    load: signal => apiFetch<Ranking>(rankingHref, { signal }),
-  });
   // remote search reads synchronized projections; local authored rows are canonical.
   const preview = useMemo(() => remotePreview && { ...remotePreview,
     resources: remotePreview.resources.filter(row => !row.item.authored_by_viewer).map(withoutAuthoredPassage),
@@ -171,12 +194,12 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     return local.matches.filter(match => match.resource.authored_by_viewer || !remote.has(match.resource.ref));
   }, [local.matches, preview]);
   const remoteBusy = identityKey !== null && best?.phase !== "hybrid" && ((best?.phase !== "lexical" && !directSettled) || (wantsLexical && !lexicalSettled) || (wantsHybrid && !hybridSettled))
-    || (open && referenceRef !== null && localReference === null && reference.status === "loading");
-  const pending = remoteBusy || local.pending || retainedLocal.pending || localRead.pending;
+    || (open && !composing && referenceRef !== null && !localRow?.authored_by_viewer && reference.status === "loading");
+  const pending = remoteBusy || local.pending || retainedLocal.pending || localRead.pending || localSource.read.pending;
   const [incidents,setIncidents] = useState<ReadonlyMap<NexusSource,{identity: string; error: ApiError; occurrence: object}>>(() => new Map());
   const readFailures = new Map<NexusSource,{identity: string; error: ApiError; occurrence: object}>();
   const retrying = new Set<NexusSource>();
-  for (const [source,value,wanted] of [["Direct",direct,identityKey!==null],["Lexical",lexical,wantsLexical],["Hybrid",hybrid,wantsHybrid],["Reference",reference,open&&referenceRef!==null&&!localRow?.authored_by_viewer]] as const) {
+  for (const [source,value,wanted] of [["Direct",direct,identityKey!==null],["Lexical",lexical,wantsLexical],["Hybrid",hybrid,wantsHybrid],["Reference",reference,open&&!composing&&referenceRef!==null&&!localRow?.authored_by_viewer]] as const) {
     if (!wanted) continue;
     if (source !== "Reference" && best !== null && PREVIEW_PHASE_RANK[best.phase] > PREVIEW_PHASE_RANK[source === "Direct" ? "direct" : source === "Lexical" ? "lexical" : "hybrid"]) continue;
     const identity = source === "Reference" ? `${accountId}:nexus-ref:${referenceRef}` : identityKey!;
@@ -200,10 +223,8 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     const phase = source === "Direct" ? "direct" : source === "Lexical" ? "lexical" : "hybrid";
     setAttempts(current => ({ ...current, [phase]: current[phase] + 1 }));
   };
-  const baseData = base.status === "ready" ? base.data.data : null;
-  const typedFrecency = typedId !== null && typed.status === "ready" ? typed.data.data.frecency_by_href : null;
 
-  /** Record an accepted selection now; a transport failure offers one retry (a retry after a lost answer counts twice). */
+  /** Record an accepted selection now and apply it to the held map; a transport failure offers one retry (a retry after a lost answer counts twice). */
   const remember = (selection: Schema<"NexusSelectionRecordRequest">) => {
     if (!live.current || !remoteReady()) return;
     const body = JSON.stringify(selection);
@@ -213,7 +234,11 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
       if (sending) return sending;
       sending =
       apiFetch<void>("/api/me/nexus-selections", { method: "POST", keepalive: true, body }).then(
-        () => { if (live.current) setRevision((value) => value + 1); },
+        () => {
+          if (!live.current) return;
+          const use = { query: normalizeQuery(selection.query), href: canonicalHref(selection.target_href), at: new Date().toISOString() };
+          setApplied(current => ({ generation: generation.current, uses: [...(current.generation === generation.current ? current.uses : []), use] }));
+        },
         (error: unknown) => {
           if (!live.current) return;
           if (handleUnauthenticatedApiError(error)) return;
@@ -240,7 +265,7 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     presentation = { kind: null, text: "", action: null };
 
   return {
-    frecency: typedFrecency ?? baseData?.frecency_by_href ?? EMPTY_FRECENCY,
+    usage,
     preview,
     reference: referenceRef !== null && reference.status === "ready" && !reference.data.authored_by_viewer ? reference.data : null,
     referenceFailed: localReference === null && referenceRef !== null && reference.status === "failed",
@@ -253,12 +278,13 @@ export function useNexusFind({ open, query, retainedLocalTargets }: { open: bool
     queryIdentity: identityKey ?? `${accountId}:nexus-ref:${referenceRef}`,
     readFailures,
     localFailures: [
+      {key: "reference-source", error: localSource.read.error, occurrence: localSource.read.occurrence, pending: localSource.read.pending, retry: localSource.read.retry},
       {key: "reference", error: localRead.error, occurrence: localRead.occurrence, pending: localRead.pending, retry: localRead.retry},
       {key: "preview", error: local.error, occurrence: local.occurrence, pending: local.pending, retry: local.retry},
       {key: "admission", error: retainedLocal.error, occurrence: retainedLocal.occurrence, pending: retainedLocal.pending, retry: retainedLocal.retry},
     ],
     progress: presentation,
-    retrySearch: () => { if (local.error) local.retry(); if (retainedLocal.error) retainedLocal.retry(); if (localRead.error) localRead.retry(); for (const source of failures) retry(source); },
+    retrySearch: () => { if (local.error) local.retry(); if (retainedLocal.error) retainedLocal.retry(); if (localRead.error) localRead.retry(); if (localSource.read.error) localSource.read.retry(); for (const source of failures) retry(source); },
     retryRelated: () => retry("Hybrid"),
     busy: pending,
     pending,

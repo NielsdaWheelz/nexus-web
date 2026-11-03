@@ -32,7 +32,10 @@ export const NEXUS_COMMANDS: Record<
   "Nexus.Quick.Page": {
     label: "new page", aliases: ["/p"], argumentLabel: "title", icon: FilePlus2,
     keywords: ["page", "new page", "create page", "document"],
-    action: (argument) => ({ kind: "Available", target: { kind: "CreatePage", titleDraft: argument } }),
+    action: (argument) => ({ kind: "Available", target: {
+      kind: "InternalHref", href: "/pages/new",
+      ...(argument ? { entry: { kind: "ComposePage", title: argument } as const } : {}),
+    } }),
   },
   "Nexus.Quick.Chat": {
     label: "new chat", aliases: ["/c", "/a"], argumentLabel: "message", icon: MessageSquarePlus,
