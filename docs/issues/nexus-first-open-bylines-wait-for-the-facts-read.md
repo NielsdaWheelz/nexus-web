@@ -23,10 +23,14 @@ narrow repair: opening no longer restarts an adequate pending read; freshness
 normalizes empty recents, ignores unrelated authored/capture revisions and layout
 order, and retains remote recent revision checks needed for removal safety.
 
-blocker: an explicit admission policy is pending owner choice. initial bootstrap
-can supply remote facts before publishing a cold workspace, or palette admission
-can wait for them. do not add hidden delays, guess authors, or add a desktop cache.
+owner decision: fetch initial remote facts before publishing the desktop workspace.
+`BrowserWorkspace` now does this for first provisioning and saved-binding reloads,
+after resolving the entry href. the single read has a five-second deadline;
+modeled metadata, network or authentication failure still admits the local
+workspace and seeds the existing title failure/retry owner. local authored and
+capture facts retain their existing authority. ordinary palette opens are ungated.
 
-resolved when the chosen admission contract preserves local authored authority
-and ordinary offline opening, and palette-10 and palette-07 pass in both engines
-without weakening first-frame byline assertions.
+pending proof: successful cold boot and saved-binding reload preserve first-frame
+bylines in both engines; a metadata outage still admits local writing and exposes
+title retry, which recovers in the same workspace once the endpoint returns.
+then remove this record. unknown same-system defects still reach the boundary.

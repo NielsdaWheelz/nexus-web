@@ -180,6 +180,8 @@ export function nexusRowVerbs(
   };
   const tab = row.secondary?.kind === "ClosePane" ? row.secondary.paneId : null;
   const closing = tab ?? (here ? controller.panes.find(pane => pane.current)?.id ?? null : null);
+  const paneRef = tab === null ? null : controller.panes.find(pane => pane.id === tab)?.resourceRef ?? null;
+  const resourceRef = row.secondary?.kind === "TargetMenu" ? row.secondary.resourceRef : paneRef === null ? null : assumeCanonicalResourceRef(paneRef);
   const occurrence: MenuOption[] = [];
   if (row.matchingPassage) {
     const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
@@ -202,10 +204,10 @@ export function nexusRowVerbs(
   const capture = row.matchingPassage?.item ?? row.item;
   if (capture?.preview.body.kind === "passage" && capture.preview.body.capture_revision !== null)
     occurrence.push({ kind: "command", id: "Nexus.ShowExcerpt", label: "show excerpt", icon: null, hasPopup: "dialog", restoreFocusOnClose: false, onSelect: () => showExcerpt(capture) });
-  if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes)
+  if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes) {
+    if (here && resourceRef === null && pane.id === closing) continue;
     occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
-  const paneRef = tab === null ? null : controller.panes.find(pane => pane.id === tab)?.resourceRef ?? null;
-  const resourceRef = row.secondary?.kind === "TargetMenu" ? row.secondary.resourceRef : paneRef === null ? null : assumeCanonicalResourceRef(paneRef);
+  }
   return {
     pair: [...(here ? [] : [verb(false)]), ...(imports ? [] : [verb(true)])],
     close: closing === null ? null : { name: `close ${paneName}`,

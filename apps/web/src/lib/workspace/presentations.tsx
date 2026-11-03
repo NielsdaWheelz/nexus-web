@@ -5,10 +5,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { localResourceLabel } from "@/lib/resources/localResource";
-import { ApiError, apiFetch } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { Schema } from "@/lib/api/wire";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
@@ -22,6 +22,7 @@ import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
 import { recentValueForHref } from "@/lib/panes/paneRouteModel";
 import { normalizeVisitTitleHint, type PaneVisit } from "@/lib/workspace/model";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import { authoredPresentation as authored, remotePresentation, readPresentationFacts, type InitialPresentations } from "./presentationRead";
 import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
@@ -33,7 +34,6 @@ type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: strin
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
   return resource ? {ref: resource.ref, title: resource.title ?? (resource.kind === "highlight" ? localResourceLabel(resource) : resource.body_text?.split("\n")[0] ?? ""), local_date: resource.local_date} : null;
 }
-function authored(locator: PanePresentationLocator): boolean { return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref); }
 /** One locator owns one bounded read; sibling pane changes do not restart it. */
 function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevision, publish }: {
   store: AuthoredStore; locatorKey: string; kind: "daily" | "resource"; value: string; usedRevision: string | undefined;
@@ -48,7 +48,7 @@ function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevisio
   }, [store, locatorKey, kind, value, usedRevision, publish]);
   return null;
 }
-export function WorkspacePresentationsProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
+export function WorkspacePresentationsProvider({ accountId, initial = null, children }: { accountId: string; initial?: InitialPresentations | null; children: ReactNode }) {
   const { state, setVisitTitleHint } = useWorkspaceStore();
   const recent = useRecent();
   const store = useAuthoredStore();
@@ -79,7 +79,7 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
       return {entries: new Map(previous.entries).set(key, {facts, store_revision: storeRevision, used_revision: usedRevision ?? before?.used_revision}), semanticRevision: previous.semanticRevision + (unchanged && usedRevision === undefined ? 0 : 1)};
     });
   }, []);
-  const remoteLocators = locators.filter(locator => !authored(locator) && locator.kind !== "x_capture")
+  const remoteLocators = locators.filter(remotePresentation)
     .sort((a, b) => panePresentationLocatorKey(a).localeCompare(panePresentationLocatorKey(b)));
   const captureLocators = locators.filter(locator => locator.kind === "x_capture")
     .sort((a, b) => panePresentationLocatorKey(a).localeCompare(panePresentationLocatorKey(b)));
@@ -88,14 +88,12 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     .filter(entry => entry.target.kind !== "preview" && entry.target.kind !== "x_capture" && !authored(entry.target))
     .map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort();
   const remoteKey = JSON.stringify([accountId, remoteLocators, recentRemoteRevisions, changes, observation, foreground]);
-  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${accountId}`, stale: remoteKey, load: async signal => {
-    const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
-    for (let offset = 0; offset < remoteLocators.length; offset += 100) {
-      const result = await apiFetch<ApiJson<"/me/workspace-presentations", "post">>("/api/me/workspace-presentations", { method: "POST", body: JSON.stringify({ locators: remoteLocators.slice(offset, offset + 100) }), signal });
-      items.push(...result.data.items);
-    }
-    return new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]));
-  } });
+  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${accountId}`, stale: remoteKey,
+    initialRead: initial === null ? undefined : initial.status === "failure" ? initial : {
+      ...initial, acceptedStale: remoteLocators.every(locator => initial.data.has(panePresentationLocatorKey(locator))) ? remoteKey : null,
+    },
+    load: signal => readPresentationFacts(remoteLocators, signal, accountId),
+  });
   const captureKey = JSON.stringify([accountId, captureLocators, (recent.snapshot?.entries ?? []).filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort(), changes, foreground]);
   const captures = usePaneFreeServerValue({ key: captureLocators.length ? `capture-presentations:${accountId}` : null, stale: captureKey, load: async signal => {
     while (!signal.aborted) {
@@ -110,12 +108,8 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
         if (unavailable) throw new ApiError(0, "E_NETWORK", "capture presentation unavailable");
         throw error;
       }
-      const items: ApiJson<"/me/workspace-presentations", "post">["data"]["items"] = [];
-      for (let offset = 0; offset < captureLocators.length; offset += 100) {
-        const result = await apiFetch<ApiJson<"/me/workspace-presentations", "post">>("/api/me/workspace-presentations", { method: "POST", body: JSON.stringify({ locators: captureLocators.slice(offset, offset + 100) }), signal });
-        items.push(...result.data.items);
-      }
-      if ((await store.readReplica()).command_seq === command_seq) return new Map(items.map(item => [panePresentationLocatorKey(item.locator), item.presentation]));
+      const facts = await readPresentationFacts(captureLocators, signal, accountId);
+      if ((await store.readReplica()).command_seq === command_seq) return facts;
     }
     throw new DOMException("aborted", "AbortError");
   } });

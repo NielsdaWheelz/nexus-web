@@ -118,8 +118,11 @@
 /* A verb never shrinks: `.target`'s explicit min size would let it squeeze under its label, so a
    crowded rail scrolls instead. */
 .rail .verb { flex: none; gap: var(--space-2); min-block-size: 32px; font-size: var(--text-sm); white-space: nowrap; transition: none; }
-.rail .verb:not([aria-disabled="true"]) { color: var(--ink); }
-.railBusy { flex: 0 0 28px; align-self: stretch; }
+/* Forced colours belong to Selection, including its selected HighlightText. */
+@media (forced-colors: none) {
+  .rail .verb:not([aria-disabled="true"]) { color: var(--ink); }
+}
+.railBusy { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; align-self: stretch; }
 
 .notices { display: grid; flex: 0 0 auto; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 40px; overflow-wrap: anywhere; }
 .notices:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
@@ -170,4 +173,5 @@
 @media (forced-colors: active) {
   .surface, .rail { border-color: CanvasText; background: Canvas; box-shadow: none; }
   .gutter, .sub { color: CanvasText; }
+  .rail .kbd { color: inherit; }
 }
