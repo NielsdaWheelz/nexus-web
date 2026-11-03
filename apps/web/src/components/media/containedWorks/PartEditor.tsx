@@ -5,7 +5,7 @@ import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 // changes available geometry, never the user's title or a reviewed generation.
 // A confirmed save stays busy until refresh and close settle together.
 import { useEffect, useId, useMemo, useState } from "react";
-import { Hold, useResendVerbs, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Dialog from "@/components/ui/Dialog";
@@ -68,7 +68,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   readonly readError: ApiError | null; readonly readPending: boolean; readonly returnFocusTo: ReturnFocusTarget;
 }) {
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const fieldId = useId();
   const blockedId = useId();
   const navigation = page?.navigation ?? null;
@@ -196,8 +196,8 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
         <p>{savedLabels !== null && savedLabels.length > 0 && savedLabels.every(label => label !== null) ? savedLabels.join(" through ") : "saved range"}</p>
         <Button disabled={blocking || readError !== null || readPending || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} onClick={() => state.set(value => ({ ...value, version: definition.version, baselineSelection: definition.selection, conflict: false, failed: false }))}>keep my changes</Button>
       </section> : null}
-      {request !== null && failed ? <Hold id={`part-editor:${source}`} attempt={state.value.attempt} line={request.kind === "prepare" ? unsure("not sure preparation started.") : UNSURE}
-        verbs={resendVerbs({ label: "retry", commandKey: "RetryPartCommand", busy, run: () => void run(request, true) })} /> : null}
+      {request !== null && failed ? <Hold id={`part-editor:${source}`} attempt={state.value.attempt} {...resendFeedback({ line: request.kind === "prepare" ? unsure("not sure preparation started.") : UNSURE,
+          resend: { label: "retry", commandKey: "RetryPartCommand", busy, run: () => void run(request, true) } })} /> : null}
       <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy}
         aria-describedby={[freshChoice ? fieldId : null, canBounds && blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} onClick={save}>{definition === null ? "extract" : "save"}</Button>
     </div>

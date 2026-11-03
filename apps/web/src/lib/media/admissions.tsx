@@ -13,7 +13,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Hold, useOutcome, useResendVerbs, useTransportVerbs, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback, useTransportVerbs, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import {
   apiFetch,
@@ -92,19 +92,19 @@ function refusalReason(error: ApiError): string {
 /** A kept save uses the shared write partition and the shell's current remedies. */
 export function useHeldSaveFailure() {
   const transportVerbs = useTransportVerbs();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   return (error: ApiError, retry: CommandVerb, copy: {
     readonly fact: string; readonly unsure: Line; readonly kept: Line;
   }): { line: Line; verbs: Verbs | null } => {
-    if (outcomeUnknown(error)) return { line: copy.unsure, verbs: resendVerbs(retry) };
+    if (outcomeUnknown(error)) return resendFeedback({ line: copy.unsure, resend: retry });
     const transport = transportOf(error);
     if (transport === "SignIn" && admissionTransport(remoteAdmission()) !== "SignIn")
-      return { line: copy.kept, verbs: resendVerbs(retry) };
+      return resendFeedback({ line: copy.kept, resend: retry });
     if (transport === "Offline") return navigator.onLine === false
       ? { line: TRANSPORT_LINES.Offline.command(copy.fact), verbs: null }
-      : { line: copy.kept, verbs: resendVerbs(retry) };
-    return { line: transport === "Refused" ? copy.kept : TRANSPORT_LINES[transport].command(copy.fact),
-      verbs: transport === "Update" ? transportVerbs(transport) : resendVerbs(retry) };
+      : resendFeedback({ line: copy.kept, resend: retry });
+    const line = transport === "Refused" ? copy.kept : TRANSPORT_LINES[transport].command(copy.fact);
+    return transport === "Update" ? { line, verbs: transportVerbs(transport) } : resendFeedback({ line, resend: retry });
   };
 }
 
@@ -274,7 +274,7 @@ export function MediaAdmissionsHost() {
 
 function AdmissionReport({ entry }: { entry: AdmissionEntry }) {
   const owner = useMediaAdmissions();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const throwLater = useThrowLater();
   const { fail } = useOutcome();
   const resource = usePaneFreeServerValue({
@@ -289,7 +289,7 @@ function AdmissionReport({ entry }: { entry: AdmissionEntry }) {
   if (entry.unconfirmed === 0) return null;
   const subject = entry.intent.kind === "SourceRefresh" ? "the source refresh" : "the metadata search";
   return <Hold id={entry.key} attempt={entry.unconfirmed}
-    line={{ fact: label === null ? `not sure ${subject} started.` : `not sure ${subject} started for “${label}”.`, reason: UNKNOWN_OUTCOME_REASON }}
-    verbs={resendVerbs({ label: "retry", commandKey: `retry ${entry.key}`, busy: entry.kind === "sending",
-      run: () => { void owner.retry(entry.key).catch(error => throwLater({ error })); } })} />;
+    {...resendFeedback({ line: { fact: label === null ? `not sure ${subject} started.` : `not sure ${subject} started for “${label}”.`, reason: UNKNOWN_OUTCOME_REASON },
+      resend: { label: "retry", commandKey: `retry ${entry.key}`, busy: entry.kind === "sending",
+        run: () => { void owner.retry(entry.key).catch(error => throwLater({ error })); } } })} />;
 }

@@ -17,7 +17,7 @@ import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { Hold, useResendVerbs, useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { isAbortError } from "@/lib/errors";
@@ -46,7 +46,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   const returnedPart = useRef<string | null>(null);
   const capturedLink = useRef<HTMLElement | null>(null);
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const commands = useResourceDraft<{ request: Command | null; busy: boolean; attempt: number }>(`contents-commands:${source}`,
     () => ({ request: null, busy: false, attempt: 0 }), value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   const mounted = useReaderState(reader, state => state.document);
@@ -215,8 +215,8 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
       </> : null}
     </> : null}
     {commands.value.request !== null && commands.value.attempt > 0 ? <Hold id={`contents-command:${source}`} attempt={commands.value.attempt}
-      line={commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE}
-      verbs={resendVerbs({ label: "retry", commandKey: "RetryContentsCommand", busy: commands.value.busy, run: () => void run(commands.value.request!, true) })} /> : null}
+      {...resendFeedback({ line: commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE,
+        resend: { label: "retry", commandKey: "RetryContentsCommand", busy: commands.value.busy, run: () => void run(commands.value.request!, true) } })} /> : null}
     {intent?.kind === "manual" ? <PartEditor key={`manual:${source}:${intent.section}`} source={source} initialSection={intent.section} initialTitle={intent.title} initialSelection={intent.selection} page={page} definition={null}
       onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} onRefresh={refresh} readError={contents.status === "failed" ? contents.error : null} readPending={contents.status === "ready" && contents.refreshing} returnFocusTo={focusTarget} /> : null}
     {intent?.kind === "review" ? <CandidateReview key={`${source}:${intent.candidate}`} source={source} candidate={intent.candidate} onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} returnFocusTo={focusTarget}
