@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { MODAL_GEOMETRY_CHANGE } from "@/lib/ui/overlay";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
@@ -65,7 +66,10 @@ export default function MobileSheet({
   }, [active]);
   const drag = (event: PointerEvent<HTMLElement>, offset: number | null) => {
     const panel = event.currentTarget.parentElement;
-    if (panel) panel.style.transform = offset === null ? "" : `translateY(${offset}px)`;
+    if (panel) {
+      panel.style.transform = offset === null ? "" : `translateY(${offset}px)`;
+      panel.dispatchEvent(new Event(MODAL_GEOMETRY_CHANGE));
+    }
   };
 
   return (

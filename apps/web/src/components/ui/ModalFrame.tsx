@@ -58,6 +58,7 @@ export default function ModalFrame({
   interactionLayer,
   label,
   slipContent,
+  motionElement,
   scope,
   id,
   keepMounted = false,
@@ -68,6 +69,8 @@ export default function ModalFrame({
 }: ModalProps & {
   readonly label: string;
   readonly slipContent: RefObject<HTMLElement | null>;
+  /** The family's one finite CSS entrance owner; defaults to the visual panel. */
+  readonly motionElement?: RefObject<HTMLElement | null>;
   readonly id?: string;
   /** After the first open, keep the content mounted (hidden) while closed. */
   readonly keepMounted?: boolean;
@@ -154,7 +157,7 @@ export default function ModalFrame({
             {typeof children === "function" ? children(dismissByControl) : children}
           </FeedbackSurface> : typeof children === "function" ? children(dismissByControl) : children}
         </section>
-        {feedback ? <StageAnchor kind="Modal" panel={panel} content={slipContent} /> : null}
+        {feedback ? <StageAnchor kind="Modal" panel={panel} content={slipContent} motionElement={motionElement} /> : null}
       </div>
     </OverlayContext>,
     document.body,

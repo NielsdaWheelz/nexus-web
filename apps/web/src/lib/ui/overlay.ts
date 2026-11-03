@@ -28,6 +28,9 @@ import {
   useSyncExternalStore,
 } from "react";
 
+/** A modal family dispatches this on its panel immediately after moving it imperatively. */
+export const MODAL_GEOMETRY_CHANGE = "nexus-modal-geometry-change";
+
 export type DismissDecision = "accepted" | "blocked";
 export type DismissReason = "escape" | "back" | "outside" | "tab" | "navigation";
 export type ReturnFocusTarget = () =>

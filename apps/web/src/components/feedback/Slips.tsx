@@ -11,7 +11,7 @@ import Button from "@/components/ui/Button";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { OverlayContext } from "@/lib/ui/overlay";
+import { MODAL_GEOMETRY_CHANGE, OverlayContext } from "@/lib/ui/overlay";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { takeFocus, useFocusReturn, VerbControl } from "./Fact";
 import { Announcement } from "./Feedback";
@@ -104,7 +104,7 @@ function PaneAnchor({ paneId, floor }: { paneId: string; floor?: true }) {
 /** The visual panel owns layout; its sibling anchor owns placement. A constrained room borrows
  * only the owner's content rectangle, which excludes fixed controls. Geometry changes can move a
  * held frame; feedback changes cannot. The band's clip also contains swipe and tuck travel. */
-function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: RefObject<HTMLElement | null> }) {
+function ModalAnchor({ panel, content, motionElement }: { panel: HTMLElement | null; content: RefObject<HTMLElement | null>; motionElement?: RefObject<HTMLElement | null> }) {
   const layer = useContext(OverlayContext);
   if (!layer) throw new Error("a modal stage anchor requires its ModalFrame");
   const element = useRoom(useMemo(() => ({ kind: "Modal", layer }), [layer]));
@@ -140,10 +140,7 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
       const right = Math.min(bounds.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? innerWidth)) - parseFloat(safe.paddingRight);
       const top = Math.max(bounds.top, viewport?.offsetTop ?? 0) + parseFloat(safe.paddingTop);
       const bottom = Math.min(bounds.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight)) - parseFloat(safe.paddingBottom);
-      // Layout coordinates exclude the panel's entrance/drag transform. Sheets move downward;
-      // the palette's 4px entrance stays inside the frame's 12px separation.
-      const p = { left: bounds.left + panel.offsetLeft, top: bounds.top + panel.offsetTop,
-        right: bounds.left + panel.offsetLeft + panel.offsetWidth, bottom: bounds.top + panel.offsetTop + panel.offsetHeight };
+      const p = panel.getBoundingClientRect();
       const bands = [
         { left, right, top: Math.max(top, p.bottom), bottom },
         { left, right, top, bottom: Math.min(bottom, p.top) },
@@ -171,9 +168,8 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
       if (index < 0) {
         // This rectangle is an explicit family contract, never inferred from modal descendants.
         const c = body.getBoundingClientRect();
-        const moving = panel.getBoundingClientRect();
-        band = { left: Math.max(left, c.left - moving.left + p.left), right: Math.min(right, c.right - moving.left + p.left),
-          top: Math.max(top, c.top - moving.top + p.top), bottom: Math.min(bottom, c.bottom - moving.top + p.top) };
+        band = { left: Math.max(left, c.left), right: Math.min(right, c.right),
+          top: Math.max(top, c.top), bottom: Math.min(bottom, c.bottom) };
       }
       selected = index;
       anchor.toggleAttribute("data-constrained", index < 0);
@@ -186,17 +182,44 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
     const changes = new MutationObserver(() => place());
     changes.observe(anchor, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-stage-held"] });
     const geometry = () => place(true);
+    const motion = motionElement?.current ?? panel;
+    let animationFrame: number | null = null;
+    // justify-polling: CSS transform travel has no geometry event. Sample the family's exact
+    // finite entrance at paint cadence, only until its end, cancellation or unmount.
+    const followEntrance = () => {
+      geometry();
+      animationFrame = requestAnimationFrame(followEntrance);
+    };
+    const startEntrance = (event: AnimationEvent) => {
+      if (event.target === motion && animationFrame === null) followEntrance();
+    };
+    const endEntrance = (event: AnimationEvent) => {
+      if (event.target !== motion) return;
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+      animationFrame = null;
+      geometry();
+    };
+    panel.addEventListener(MODAL_GEOMETRY_CHANGE, geometry);
+    motion.addEventListener("animationstart", startEntrance);
+    motion.addEventListener("animationend", endEntrance);
+    motion.addEventListener("animationcancel", endEntrance);
+    if (motion.getAnimations().some(animation => animation.playState === "running")) followEntrance();
     window.addEventListener("resize", geometry);
     viewport?.addEventListener("resize", geometry);
     viewport?.addEventListener("scroll", geometry);
     place(true);
     return () => {
       observer.disconnect(); changes.disconnect();
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+      panel.removeEventListener(MODAL_GEOMETRY_CHANGE, geometry);
+      motion.removeEventListener("animationstart", startEntrance);
+      motion.removeEventListener("animationend", endEntrance);
+      motion.removeEventListener("animationcancel", endEntrance);
       window.removeEventListener("resize", geometry);
       viewport?.removeEventListener("resize", geometry);
       viewport?.removeEventListener("scroll", geometry);
     };
-  }, [content, element, layer, panel]);
+  }, [content, element, layer, motionElement, panel]);
   return <div ref={element} className={`${styles.anchor} ${styles.modalAnchor}`} />;
 }
 
@@ -204,11 +227,11 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
  * focus back from a frame whose origin is gone. Modal sits beside its panel, borrowing only scrollable content when constrained. Pane sits above its
  * content: `floor` is the shell's own, and any composer's stands over it while it stands, the
  * latest of them winning. A composer's is a zero-height box at its top edge, outside any clip. */
-export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string; floor?: true } | { kind: "Modal"; panel: HTMLElement | null; content: RefObject<HTMLElement | null> }) {
+export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string; floor?: true } | { kind: "Modal"; panel: HTMLElement | null; content: RefObject<HTMLElement | null>; motionElement?: RefObject<HTMLElement | null> }) {
   switch (props.kind) {
     case "Root": return <RootAnchor />;
     case "Pane": return <PaneAnchor paneId={props.paneId} floor={props.floor} />;
-    case "Modal": return <ModalAnchor panel={props.panel} content={props.content} />;
+    case "Modal": return <ModalAnchor panel={props.panel} content={props.content} motionElement={props.motionElement} />;
   }
 }
 
