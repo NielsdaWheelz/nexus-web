@@ -4,10 +4,11 @@ import { FeedbackProvider, Hold, useOutcome } from "@/components/feedback/Feedba
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { Shell } from "@/components/feedback/stage";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
-import { localCall, localMutation, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
+import { localCall, localMutation, LocalMutationObservationError, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
 import ShelfReader from "./ShelfReader";
 import styles from "./shelf.module.css";
 
@@ -73,14 +74,19 @@ function ShelfContent() {
   const remove = () => {
     if (item === null) return;
     void localMutation("remove", { media_id: item.media_id }).then(() => { setRemoval(null); back(); },
-      () => setRemoval(current => ({ attempt: current === null ? 0 : current.attempt + 1 })));
+      error => {
+        if (error instanceof LocalMutationObservationError) {
+          if (error.observation.receipt !== null) { setRemoval(null); back(); }
+          else setRemoval(current => ({ attempt: current === null ? 0 : current.attempt + 1 }));
+        } else say({ fact: "couldn’t remove this downloaded copy." });
+      });
   };
   return <>
     <header className={styles.readerHeader}>
       <Button onClick={back}>downloads</Button>
       {item === null ? null : <h1>{item.title}</h1>}
     </header>
-    {removal === null ? null : <Hold id="shelf-removal" attempt={removal.attempt} line={{ fact: "not sure that saved. it may have gone through." }}
+    {removal === null ? null : <Hold id="shelf-removal" attempt={removal.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
       verbs={[{ label: "open downloads", commandKey: "OpenDownloads", run: back }]} />}
     {item !== null ? <ShelfReader key={item.media_id} item={item} onRemove={() => { if (item.progress !== null && item.progress.kind !== "Canonical") setConfirmRemoval(true); else remove(); }} />
       : openFailed !== null && openFailed === availableId ? <Fact line={{ fact: "couldn’t open this downloaded copy." }} verbs={[{ label: "retry", commandKey: "RetryOpenCopy", busy: opening, run: () => retryOpen(value => value + 1) }]} speak />

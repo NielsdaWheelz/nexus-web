@@ -16,7 +16,7 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { localCall, localContentAvailable, localMutation, useLocalContent, type FailureReason, type LocalItem } from "@/lib/offline/localContent";
+import { localCall, localContentAvailable, localMutation, LocalMutationObservationError, useLocalContent, type FailureReason, type LocalItem } from "@/lib/offline/localContent";
 import { useListening } from "@/lib/consumption/listening";
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
@@ -81,7 +81,7 @@ export default function DownloadsPaneBody() {
     if (busy !== null) return;
     setBusy(key);
     try { await localMutation(op, args); }
-    catch { outcome.say({ fact }); }
+    catch (error) { if (!(error instanceof LocalMutationObservationError)) outcome.say({ fact }); }
     finally { setBusy(null); }
   }
   async function remove(item: LocalItem, trigger: HTMLElement) {
