@@ -8,7 +8,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import type { ChooserError, ChooserRow } from "@/components/libraries/LibraryChooser";
-import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
+import PlacementEditor from "@/components/libraries/PlacementEditor";
 import Dialog from "@/components/ui/Dialog";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser from "@/components/libraries/DestinationChooser";
