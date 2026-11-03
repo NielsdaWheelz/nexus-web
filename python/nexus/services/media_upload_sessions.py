@@ -679,7 +679,7 @@ def confirm_session(
     answers its code again.
     """
     with transaction(db):
-        session = _owned(db, viewer_id, origin_kind, session_id, lock=False)
+        session = _owned(db, viewer_id, origin_kind, session_id)
         binding_payload = session.input_origin.get("capture_binding")
         is_recovery = (
             session.input_origin.get("kind") == "BrowserCapture"
@@ -1055,8 +1055,6 @@ def _owned(
     viewer_id: UUID,
     origin_kind: OriginKind | None,
     session_id: UUID,
-    *,
-    lock: bool = True,
 ) -> MediaUploadSession:
     """The viewer's own session, row-locked, of the caller's origin when it has one;
     anything else (another origin included) is not found."""
@@ -1065,20 +1063,19 @@ def _owned(
     )
     if origin_kind is not None:
         query = query.where(MediaUploadSession.input_origin["kind"].astext == origin_kind)
-    session = db.scalar(
-        (query.with_for_update() if lock else query).execution_options(populate_existing=True)
-    )
+    session = db.scalar(query.with_for_update().execution_options(populate_existing=True))
     if session is None:
         raise NotFoundError(ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found.")
     return session
 
 
 def _require_current(db: Session, session: MediaUploadSession, generation: int) -> None:
+    """Check the locked generation's deadline after any preceding lock waits."""
     if generation != session.upload_generation:
         raise ConflictError(
             ApiErrorCode.E_UPLOAD_GENERATION_STALE, "Upload generation is no longer current."
         )
-    if session.upload_url_expires_at <= _now(db):
+    if session.upload_url_expires_at <= db.execute(select(func.clock_timestamp())).scalar_one():
         raise ConflictError(
             ApiErrorCode.E_UPLOAD_CAPABILITY_EXPIRED, "Upload expired. Choose the file again."
         )
