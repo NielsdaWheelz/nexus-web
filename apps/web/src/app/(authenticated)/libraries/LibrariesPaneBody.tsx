@@ -9,7 +9,7 @@ import { useCallback, useId, useState } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import LibraryInvitations from "@/components/libraries/LibraryInvitations";
+import LibraryInvitations, { useLibraryInvitations } from "@/components/libraries/LibraryInvitations";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
@@ -42,6 +42,7 @@ const UNIT = { singular: "library", plural: "libraries" };
 export default function LibrariesPaneBody() {
   const router = usePaneRouter();
   const creation = useLibraryCreation();
+  const invitations = useLibraryInvitations();
   const params = usePaneSearchParams();
   const sort = params.get("sort");
   const query = indexPaneQuery("libraries", params)!;
@@ -139,6 +140,7 @@ export default function LibrariesPaneBody() {
       <>
         {readFeedback.announcement}
         {creation.content}
+        {invitations.held}
         <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: "libraries-view-reset", run: reset }]} />
       </>
     );
@@ -147,7 +149,8 @@ export default function LibrariesPaneBody() {
     <>
       {readFeedback.announcement}
       {creation.content}
-      <LibraryInvitations />
+      {invitations.held}
+      <LibraryInvitations state={invitations} />
       <CollectionView geometry="UniformIndex"
         returnScope="Libraries.Items"
         rows={visible.map(presentLibrary)}

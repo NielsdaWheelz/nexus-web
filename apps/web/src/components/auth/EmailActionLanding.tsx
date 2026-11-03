@@ -16,7 +16,7 @@ const COPY = {
     description: "Accept this invitation to continue and choose a password.",
     action: "Accept invitation",
     invalidTitle: "This invitation link can’t be used",
-    invalid: { fact: "it may have expired or been used.", reason: "ask the nexus owner for a new invitation." },
+    invalid: { fact: "it may have expired or been used.", reason: "ask the owner for a new invitation." },
     unavailable: "couldn’t accept the invitation.",
   },
   recovery: {

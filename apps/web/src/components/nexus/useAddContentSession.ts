@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useOutcome } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
@@ -367,7 +368,7 @@ export function useAddContentSession(): AddContentSessionController {
         if (row.kind !== "Submitting") return row;
         return {
           kind: "AcceptanceUnresolved", id: row.id, intent: row.intent, importRef: row.importRef,
-          reason: "StatusUnknown", attempt: 0, feedback: { fact: "change not confirmed", reason: "check save to retry the original request." },
+          reason: "StatusUnknown", attempt: 0, feedback: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
         };
       }),
     }));
@@ -376,7 +377,7 @@ export function useAddContentSession(): AddContentSessionController {
     if (current.current.mutation.kind === "Idle") return true;
     update((snapshot) => ({
       ...snapshot,
-      intakeFeedback: { fact: "Wait for this operation to finish, or stop it before adding items." },
+      intakeFeedback: { fact: "wait for this to finish, or stop it before adding items." },
     }));
     return false;
   }
@@ -395,10 +396,8 @@ export function useAddContentSession(): AddContentSessionController {
     update((snapshot) => ({
       ...snapshot,
       intakeFeedback: {
-        fact: `Add up to ${MAX_ADD_ITEMS} items at a time.`,
-        reason: `${places} ${places === 1 ? "place" : "places"} left. ${
-          count === 1 ? "This item wasn’t" : `These ${count} items weren’t`
-        } added.`,
+        fact: `add up to ${MAX_ADD_ITEMS} items.`,
+        reason: `${places} places left; these items weren’t added.`,
       },
     }));
     return false;
@@ -536,7 +535,7 @@ export function useAddContentSession(): AddContentSessionController {
     ) {
       update((snapshot) => ({
         ...snapshot,
-        intakeFeedback: { fact: "Select the whole link to paste a list." },
+        intakeFeedback: { fact: "select the whole link to paste a list." },
       }));
       return { kind: "Rejected" };
     }
