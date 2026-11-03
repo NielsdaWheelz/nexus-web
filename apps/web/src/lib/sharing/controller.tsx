@@ -6,6 +6,7 @@
 // The loss guard covers dispatch before apiFetch can trigger an automatic reload.
 import {createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode} from "react";
 import ShareOverlay from "@/components/sharing/ShareOverlay";
+import type {Retract} from "@/components/feedback/stage";
 import {useOutcome} from "@/components/feedback/Feedback";
 import {apiFetch, isApiError, outcomeUnknown, type ApiPath} from "@/lib/api/client";
 import type {ApiJson, Schema} from "@/lib/api/wire";
@@ -54,6 +55,7 @@ export function ShareControllerProvider({children}: {children: ReactNode}) {
   const currentSession = useRef<ShareSession | null>(null);
   const [pending, setPending] = useState<ShareCommand | null>(null);
   const currentCommand = useRef<ShareCommand | null>(null);
+  const report = useRef<Retract | null>(null);
   const listeners = useRef(new Set<() => void>());
   const lifetime = useRef(new AbortController());
   const active = useRef(false);
@@ -76,6 +78,7 @@ export function ShareControllerProvider({children}: {children: ReactNode}) {
   const abandon = useCallback(() => {
     if (!active.current || !guard.confirmLoss({scopes: [], ownerIds: [ownerId]})) return false;
     lifetime.current.abort();
+    report.current?.(); report.current = null;
     lifetime.current = new AbortController();
     publish(null);
     return true;
@@ -102,6 +105,7 @@ export function ShareControllerProvider({children}: {children: ReactNode}) {
   async function send(command: ShareCommand): Promise<ShareChange | null> {
     if (!active.current || currentSession.current?.key !== command.sessionKey || command.running) return null;
     const signal = lifetime.current.signal;
+    report.current?.(); report.current = null;
     const sending = {...command, running: true};
     publish(sending);
     const owned = () => active.current && !signal.aborted && currentCommand.current === sending
@@ -127,8 +131,8 @@ export function ShareControllerProvider({children}: {children: ReactNode}) {
         publish(command.unknown > 0 ? {...command, running: false, unknown: command.unknown + 1} : null);
         if (!handleUnauthenticatedApiError(error)) {
           if (isApiError(error) && error.code === "E_USER_NOT_FOUND")
-            outcome.say({fact: command.fact, reason: "this account no longer exists."});
-          else outcome.fail(error, command.fact);
+            report.current = outcome.say({fact: command.fact, reason: "this account no longer exists."});
+          else report.current = outcome.fail(error, command.fact);
         }
       }
       return null;

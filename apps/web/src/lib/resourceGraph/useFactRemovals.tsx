@@ -38,7 +38,7 @@ export function useFactRemovals(scopeName: string) {
   const resendFeedback = useResendFeedback();
   const owner = useResourceDraft<ReadonlyMap<string, Removal>>(`FactRemovals:${scopeName}`, () => new Map(), removals => ({
     changed: false,
-    unconfirmed: removals.size > 0,
+    unconfirmed: [...removals.values()].some(removal => removal.running || removal.unknown > 0),
     stopsBrowserWork: [...removals.values()].some(removal => removal.running),
   }));
   const account = ctx.sessionSignal();
@@ -48,13 +48,12 @@ export function useFactRemovals(scopeName: string) {
   const publish = () => owner.set(current => new Map(current));
   const forget = (removal: Removal) => owner.set(current => {
     if (current.get(removal.key) !== removal) return current;
+    removal.report?.(); removal.report = null;
     const next = new Map(current); next.delete(removal.key); return next;
   });
   const retry = (removal: Removal) => ({
     label: "retry", commandKey: `Resource.Relation.retry:${owner.owner}:${removal.key}`,
     run: () => {
-      if (!ownsVisit() || writing === null) return;
-      if (!owner.read().has(removal.key)) owner.set(current => new Map(current).set(removal.key, removal));
       if (owner.read().get(removal.key) === removal) void run(removal);
     },
     busy: removal.running,
@@ -89,8 +88,8 @@ export function useFactRemovals(scopeName: string) {
         removal.settled(false);
         return;
       }
-      if (removal.unknown === 0) forget(removal);
-      else { removal.unknown++; publish(); }
+      if (removal.unknown > 0) removal.unknown++;
+      publish();
       if (!handleUnauthenticatedApiError(error))
         removal.report = outcome.fail(error, "couldn’t remove this connection.", retry(removal));
     } finally {
@@ -107,7 +106,8 @@ export function useFactRemovals(scopeName: string) {
     remove(key: string, command: FactRemovalCommand, settled: (untouched: boolean) => void) {
       if (!ownsVisit() || writing === null) return;
       const existing = owner.read().get(key);
-      if (existing) { void run(existing); return; }
+      if (existing?.running || existing && existing.unknown > 0) { void run(existing); return; }
+      if (existing) forget(existing);
       const removal: Removal = {key, command, settled, running: false, unknown: 0, report: null};
       owner.set(current => new Map(current).set(key, removal));
       void run(removal);

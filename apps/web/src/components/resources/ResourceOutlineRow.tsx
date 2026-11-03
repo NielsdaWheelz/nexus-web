@@ -288,7 +288,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const pendingRemoval = removals?.pending.get(occurrenceKey);
   const busy = pendingRemoval?.running ?? false;
   const rowWindow = useIndexRowWindow();
-  const unsettled = pendingRemoval !== undefined;
+  const unsettled = busy || (pendingRemoval?.unknown ?? 0) > 0;
   useLayoutEffect(() => unsettled ? rowWindow?.pin() : undefined, [rowWindow, unsettled]);
   const element = useRef<HTMLLIElement | null>(null);
   const attachRow = useCallback((node: HTMLLIElement | null) => {
