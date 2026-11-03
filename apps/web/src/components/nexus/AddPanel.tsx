@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ArrowLeft, ChevronDown, FileText, Link, Upload, X } from "lucide-react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
-import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Hold, useActiveRegion, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import { staleBuild } from "@/lib/api/failure";
 import type { ApiError } from "@/lib/api/client";
@@ -120,6 +120,7 @@ export default function AddPanel({
   onDefect(error: unknown): void;
 }): React.ReactElement {
   const { state } = session;
+  const active = useActiveRegion();
   const id = useId();
   const admission = useRemoteAdmission();
   const transportVerbs = useTransportVerbs();
@@ -464,7 +465,7 @@ export default function AddPanel({
           {status && feedback === null ? <Fact line={{ fact: status }} /> : null}
           {observation ? <>
             {item.kind === "AcceptedUnobserved" && item.feedback ? <Fact line={{ fact: "saved." }} /> : null}
-            <Fact line={observation.line} verbs={observation.verbs ?? undefined} />
+            <Fact line={observation.line} verbs={observation.verbs ?? undefined} speak={active && item.kind === "AcceptedUnobserved" && item.feedback !== null} />
           </> : null}
           {feedback && feedbackId ? editable
             ? <Field id={feedbackId} line={feedback} />
