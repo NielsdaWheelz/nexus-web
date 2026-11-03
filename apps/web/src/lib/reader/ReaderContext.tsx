@@ -21,7 +21,7 @@ import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import type { CommandVerb } from "@/components/feedback/stage";
 import { admissionError, apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { admissionReason, admissionTransport, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useHeldSaveFailure } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -60,7 +60,7 @@ export function ReaderProvider({
   readonly children: ReactNode;
 }) {
   const refreshSettings = useSettingsRefresh();
-  const { fail } = useOutcome();
+  const { fail, say } = useOutcome();
   const heldSaveFailure = useHeldSaveFailure();
   const admission = useRemoteAdmission();
   const editable = admission === "Ready";
@@ -117,7 +117,10 @@ export function ReaderProvider({
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
       if (!remoteReady()) {
-        fail(admissionError(remoteAdmission()), "couldn’t change reader settings.");
+        const current = remoteAdmission();
+        const fact = "couldn’t change reader settings.";
+        if (admissionTransport(current) === null) say({ fact });
+        else fail(admissionError(current), fact);
         return;
       }
       setProfile((current) => ({ ...current, ...patch }));
@@ -126,7 +129,7 @@ export function ReaderProvider({
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void send(), SAVE_DELAY_MS);
     },
-    [fail, send],
+    [fail, say, send],
   );
 
   useEffect(() => {

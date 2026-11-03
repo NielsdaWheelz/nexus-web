@@ -24,7 +24,8 @@ import {
   requestWithDeadline,
   type ApiError,
 } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { admissionTransport, TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { remoteAdmission } from "@/lib/native/admission";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -97,11 +98,13 @@ export function useHeldSaveFailure() {
   }): { line: Line; verbs: Verbs | null } => {
     if (outcomeUnknown(error)) return { line: copy.unsure, verbs: resendVerbs(retry) };
     const transport = transportOf(error);
+    if (transport === "SignIn" && admissionTransport(remoteAdmission()) !== "SignIn")
+      return { line: copy.kept, verbs: resendVerbs(retry) };
     if (transport === "Offline") return navigator.onLine === false
       ? { line: TRANSPORT_LINES.Offline.command(copy.fact), verbs: null }
       : { line: copy.kept, verbs: resendVerbs(retry) };
     return { line: transport === "Refused" ? copy.kept : TRANSPORT_LINES[transport].command(copy.fact),
-      verbs: transportVerbs(transport, { retry }) };
+      verbs: transport === "Update" ? transportVerbs(transport) : resendVerbs(retry) };
   };
 }
 

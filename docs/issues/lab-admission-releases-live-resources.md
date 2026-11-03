@@ -29,3 +29,9 @@ one controlled retry was exhausted. no runtime, daemon, slot or process
 was changed. this confirms occupied capacity after admission, not the
 supervisor-loss cause above. normal admission and scoped cleanup must succeed
 before the pending reader qualification can claim green.
+
+root traced that listener to l4's recorded orphaned
+`20261102-201924-92036acadcdd-postgres-1` and performed its exact scoped recovery.
+normal admission and cleanup then succeeded for reader run
+`20261102-203346-4f6ba6330105`. this restores qualification capacity; it does not
+prove or repair the supervisor-loss cause.
