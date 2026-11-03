@@ -9,10 +9,10 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import {
   apiTransportFeedback,
   isApiError,
+  isRefusal,
   isSameSystemApiDefect,
   type ApiError,
 } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { catalogLine } from "@/lib/catalog/copy";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -140,13 +140,14 @@ export function podcastRefresh(scope: PodcastRefreshScope): PaneRefreshExecute {
   return async ({ signal }) => {
     try {
       await requestPodcastRefresh(scope, signal);
-      return { kind: "Complete", announcement: "" };
+      return null;
     } catch (error) {
       if (isAbortError(error) || !isApiError(error)) throw error;
       if (isSameSystemApiDefect(error)) throw error;
       handleUnauthenticatedApiError(error);
-      const line = TRANSPORT_LINES[transportOf(error)].command("couldn’t check for new episodes.");
-      return { kind: "Failed", announcement: line.reason === undefined ? line.fact : `${line.fact} ${line.reason}` };
+      return isRefusal(error)
+        ? { kind: "Refused", error, fact: "couldn’t check for new episodes." }
+        : { kind: "Unknown", fact: "not sure the episode check started." };
     }
   };
 }

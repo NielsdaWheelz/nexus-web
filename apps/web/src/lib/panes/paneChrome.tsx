@@ -15,6 +15,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import type { ApiError } from "@/lib/api/client";
 import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorTypes";
 import type { FindController } from "@/lib/find/useFind";
 import { FIND_QUERY_LIMIT } from "@/lib/find/find";
@@ -54,10 +55,12 @@ export type PaneRefreshProgress =
       readonly requestedCount: number;
     };
 
-export interface PaneRefreshResult {
-  readonly kind: "Complete" | "Partial" | "Failed" | "ObservationLost";
-  readonly announcement: string;
-}
+/** Reads over shown data and accepted commands are quiet. Only commands report outcomes;
+ * an unknown write stays with the pane until acceptance or its route/source owner retires. */
+export type PaneRefreshResult =
+  | { readonly kind: "Refused"; readonly error: ApiError; readonly fact: string }
+  | { readonly kind: "Unknown"; readonly fact: string }
+  | null;
 
 export type PaneRefreshExecute = (input: {
   readonly signal: AbortSignal;
