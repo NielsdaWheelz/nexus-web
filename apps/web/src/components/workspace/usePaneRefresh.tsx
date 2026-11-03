@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useId,
   useSyncExternalStore,
   useRef,
@@ -72,6 +73,7 @@ export function usePaneRefresh(input: {
 } {
   const { refresh, pull, scrollportRef } = input;
   const fence = `${input.routeKey}|${refresh?.kind === "Refreshable" ? refresh.sourceKey : ""}`;
+  const owner = useMemo(() => ({ fence, active: false }), [fence]);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   const [state, setStateValue] = useState<State>({ kind: "Idle" });
@@ -84,13 +86,14 @@ export function usePaneRefresh(input: {
   const execution = useRef<AbortController | null>(null);
   const { fail } = useOutcome();
   const heldId = useId();
-  const [held, setHeld] = useState<{ fact: string; attempt: number } | null>(null);
+  const [held, setHeld] = useState<{ fact: string; attempt: number; fence: string; retry: () => void } | null>(null);
   const refusal = useRef<Retract | null>(null);
   const resendVerbs = useResendVerbs();
   const transportVerbs = useTransportVerbs();
   const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
 
   const start = useCallback(() => {
+    if (!owner.active) return;
     const current = refreshRef.current;
     if (current?.kind !== "Refreshable" || execution.current) return;
     const controller = new AbortController();
@@ -117,7 +120,7 @@ export function usePaneRefresh(input: {
               refusal.current = fail(result.error, result.fact, { label: "retry", commandKey: "Pane.Refresh", run: start });
               return;
             case "Unknown":
-              setHeld(previous => ({ fact: result.fact, attempt: (previous?.attempt ?? 0) + 1 }));
+              setHeld(previous => ({ fact: result.fact, attempt: (previous?.attempt ?? 0) + 1, fence: owner.fence, retry: start }));
               return;
             default: return assertNever(result);
           }
@@ -129,11 +132,12 @@ export function usePaneRefresh(input: {
           if (!isAbortError(error)) setDefect({ error });
         },
       );
-  }, [setState, fail]);
+  }, [setState, fail, owner]);
 
   // a new route or source aborts the running refresh and drops what it showed.
   useLayoutEffect(() => {
     const abort = () => {
+      owner.active = false;
       execution.current?.abort(
         new DOMException("Pane refresh target changed.", "AbortError"),
       );
@@ -142,10 +146,11 @@ export function usePaneRefresh(input: {
       refusal.current = null;
     };
     abort();
+    owner.active = true;
     setState({ kind: "Idle" });
     setHeld(null);
     return abort;
-  }, [fence, setState]);
+  }, [owner, setState]);
 
   useEffect(() => {
     const port = scrollportRef.current;
@@ -258,9 +263,9 @@ export function usePaneRefresh(input: {
           {text}
         </span>
       </div>
-      {held && <Hold id={`${heldId}:${fence}`} attempt={held.attempt}
+      {held && <Hold id={`${heldId}:${held.fence}`} attempt={held.attempt}
         line={admission === "UpdateRequired" ? { fact: staleBuild() } : { fact: held.fact, reason: UNKNOWN_OUTCOME_REASON }}
-        verbs={(admission === "UpdateRequired" ? transportVerbs("Update") : resendVerbs({ label: "retry", commandKey: "Pane.Refresh", run: start, busy: refreshing !== null })) ?? undefined} />}
+        verbs={(admission === "UpdateRequired" ? transportVerbs("Update") : resendVerbs({ label: "retry", commandKey: "Pane.Refresh", run: held.retry, busy: refreshing !== null })) ?? undefined} />}
       </>
     ),
   };
