@@ -353,12 +353,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     : known === "all"
         ? "no episodes."
         : `no ${known === "in_progress" ? "in-progress" : known} episodes.`;
-  const readFeedback = useIndexReadFeedback({
-    value: episodes, requestedKey: descriptor.key, active, unit: { singular: "episode", plural: "episodes" },
-    waiting: known !== undefined && episodes.status === "loading",
-    outcome: visible.length > 0 ? "results updated." : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: episodes, requestedKey: descriptor.key, active, waiting: known !== undefined && episodes.status === "loading", outcome: visible.length > 0 ? "results updated." : emptyTitle });
   const checkAgain = () => {
     if (checking) return;
     setChecking(true);

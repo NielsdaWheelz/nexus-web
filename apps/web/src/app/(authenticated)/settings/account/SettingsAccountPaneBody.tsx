@@ -3,7 +3,8 @@ import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useId, useState, type ComponentProps, type FormEvent } from "react";
-import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { Line } from "@/components/feedback/stage";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";

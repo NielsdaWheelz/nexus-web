@@ -9,7 +9,7 @@
 // Link preparation owns availability, never action feedback. Busy activation is
 // consumed; unavailable activation enters the same navigator as resolved links.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
-import { useActiveRegion } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
 import { useFailedReadRepair } from "@/lib/api/serverState";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";

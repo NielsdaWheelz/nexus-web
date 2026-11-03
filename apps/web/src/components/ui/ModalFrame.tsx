@@ -2,8 +2,7 @@
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
-import { Session } from "@/components/feedback/scope";
+import { StageContext } from "@/components/feedback/stage";
 import { StageAnchor } from "@/components/feedback/Slips";
 import { cx } from "@/lib/ui/cx";
 import {
@@ -80,7 +79,7 @@ export default function ModalFrame({
   readonly children: ReactNode | ((requestDismiss: () => void) => ReactNode);
 }) {
   const [panel, setPanel] = useState<HTMLElement | null>(null);
-  const feedback = useContext(Session);
+  const feedback = useContext(StageContext);
   const requestDismiss = (reason: DismissRequestReason) => {
     if (onDismissRequest?.(reason) !== "blocked") onDismiss();
   };
@@ -151,11 +150,7 @@ export default function ModalFrame({
           className={cx(styles.panel, className)}
           tabIndex={-1}
         >
-          {feedback ? <FeedbackSurface bounds={panel} interaction={layer} modal={layer} active={open}
-            protectedTargets={() => panel ? [...panel.querySelectorAll<HTMLElement>("header, [data-feedback-controls]")] : []}
-            returnFocus={() => panel}>
-            {typeof children === "function" ? children(dismissByControl) : children}
-          </FeedbackSurface> : typeof children === "function" ? children(dismissByControl) : children}
+          {typeof children === "function" ? children(dismissByControl) : children}
         </section>
         {feedback ? <StageAnchor kind="Modal" panel={panel} content={slipContent} motionElement={motionElement} /> : null}
       </div>

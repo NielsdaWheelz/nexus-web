@@ -87,7 +87,7 @@ export default function MobileSheet({
       {(requestDismiss) => (
         <>
           <div
-            data-feedback-controls="true"
+
             className={handleLabel === undefined ? styles.header : `${styles.header} ${styles.handleHeader}`}
             onPointerDown={(event) => {
               if (!event.isPrimary || event.button !== 0 || dragStart.current) return;

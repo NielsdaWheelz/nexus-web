@@ -3,7 +3,8 @@ import * as Icon from "@/lib/ui/icons";
 
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
-import { Hold, useActiveRegion, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { useActiveRegion, useTransportVerbs } from "@/components/feedback/stage";
 import type { Line } from "@/components/feedback/stage";
 import { staleBuild } from "@/lib/api/failure";
 import type { ApiError } from "@/lib/api/client";

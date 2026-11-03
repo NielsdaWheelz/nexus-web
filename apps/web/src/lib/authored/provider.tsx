@@ -18,7 +18,8 @@ import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime, isAuthor
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { discardFailedAuthoredSetup } from "./signOut";
 import { AuthoredSetupError, openAuthoredStore } from "./client";
-import { Hold, useOutcome, useTransportVerbs } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";

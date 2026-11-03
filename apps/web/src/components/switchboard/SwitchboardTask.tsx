@@ -248,7 +248,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         <NexusNotices controller={controller} id={NOTICE_ID} returnFocus={() => headingRef.current} />
       </div>
     </NexusPaneDrag>
-    <div className={styles.field} data-feedback-controls="true">
+    <div className={styles.field}>
       <span className={cx(nexus.gutter, styles.fieldGutter)} aria-hidden="true"><NexusQuerySpinner pending={controller.pending} /></span>
       <input
         ref={inputRef}

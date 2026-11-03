@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef } from "react";
-import { useOutcome, useTransportVerbs, useResendFeedback } from "@/components/feedback/Feedback";
+import { useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import { Fact, Failed, VerbControl } from "@/components/feedback/Fact";
 import { sentence } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";

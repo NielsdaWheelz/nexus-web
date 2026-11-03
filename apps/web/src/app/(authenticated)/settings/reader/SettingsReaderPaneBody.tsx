@@ -6,11 +6,7 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import RadioGroup from "@/components/ui/RadioGroup";
 import Toggle from "@/components/ui/Toggle";
 import { READER_FONT_STACKS } from "@/lib/reader/typography";
-import {
-  ReaderSettingsFailure,
-  useReaderContext,
-  type ReaderProfile,
-} from "@/lib/reader/ReaderContext";
+import { useReaderContext, type ReaderProfile } from "@/lib/reader/ReaderContext";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
@@ -34,7 +30,7 @@ export default function SettingsReaderPaneBody() {
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
-        <ReaderSettingsFailure />
+
         {reader.unavailableReason !== null ? <span id={connectionReason} className="sr-only">{reader.unavailableReason}</span> : null}
         <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable} aria-describedby={!reader.editable ? connectionReason : undefined}>
           <RadioGroup

@@ -124,11 +124,7 @@ export default function ConversationsPaneBody() {
   const emptyTitle = filtering
     ? "no chats match this filter."
     : "no chats yet.";
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active: usePaneIsActive(), unit: UNIT, waiting: list.status === "loading" && !invalid,
-    outcome: visible.length > 0 ? null : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: usePaneIsActive(), waiting: list.status === "loading" && !invalid, outcome: visible.length > 0 ? null : emptyTitle });
   const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }

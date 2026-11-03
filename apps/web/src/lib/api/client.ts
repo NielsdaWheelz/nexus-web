@@ -7,7 +7,7 @@ import { writeRefused } from "./writeOutcome";
 import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess, checkSession, whenChecked } from "@/lib/native/admission";
 import type { RemoteAdmission } from "@/lib/native/contracts";
 import { androidShellDocument } from "@/lib/androidShell";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { isRecord } from "@/lib/validation";
@@ -149,64 +149,10 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError & {
 
 /**
  * A tab built for another wire (426) that did not reload: no defect, and every
- * request fails alike until a reload. A caller that models it shows
- * `apiTransportFeedback`; one that throws it reaches a render boundary. Both
- * show `STALE_BUILD_FEEDBACK`.
+ * request fails alike until the host applies its update remedy.
  */
 export function isStaleBuild(error: unknown): error is ApiError & { readonly code: "E_WIRE_MISMATCH" } {
   return isApiError(error) && error.code === "E_WIRE_MISMATCH";
-}
-
-/** Hosted delivery reloads; installed delivery requires an APK update and retains work. */
-export const STALE_BUILD_FEEDBACK: FeedbackContent = {
-  tone: "Warning",
-  title: installedApp || androidShellDocument ? "update nexus to reconnect" : "Nexus was updated. Reload this page to continue.",
-  ...(installedApp || androidShellDocument ? { message: "install the current nexus apk, then reopen the app." } : { reload: true }),
-};
-
-/** Copy for the transport failures every command answers alike; null for domain codes. */
-export function apiTransportFeedback(
-  error: ApiError,
-  title: string,
-): FeedbackContent | null {
-  const { requestId } = error;
-  switch (error.code) {
-    case "E_UNAUTHENTICATED":
-    case "E_ACCOUNT_MISMATCH":
-      return {
-        tone: "Warning",
-        title,
-        message: "sign in to reconnect.",
-        requestId,
-      };
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and try again.",
-        requestId,
-      };
-    case "E_DATABASE_BUSY":
-      return {
-        tone: "Warning",
-        title,
-        message: "nexus is busy. wait a moment, then retry.",
-        requestId,
-      };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Please wait a moment, then try again.",
-        requestId,
-      };
-    case "E_WIRE_MISMATCH":
-      return STALE_BUILD_FEEDBACK;
-    default:
-      return null;
-  }
 }
 
 let reloadHeld: () => boolean = () => false;

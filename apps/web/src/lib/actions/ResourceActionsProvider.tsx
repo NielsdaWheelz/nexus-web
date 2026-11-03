@@ -56,7 +56,7 @@ import {
   usePlayerCommands,
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
-import { ReaderSettingsFailure } from "@/lib/reader/ReaderContext";
+
 import { usePodcastSettingsOwner } from "@/lib/podcasts/usePodcastSettingsSave";
 import { usePodcastCommands } from "@/lib/podcasts/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -513,5 +513,5 @@ export default function ResourceActionsProvider({
 
 /** Account command owners' standing reports, mounted once, at the workspace. */
 export function RetainedActionFeedback() {
-  return <>{useActionRuntime().retainedFeedback}<ReaderSettingsFailure /></>;
+  return <>{useActionRuntime().retainedFeedback}</>;
 }

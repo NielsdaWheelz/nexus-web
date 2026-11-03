@@ -6,10 +6,10 @@
  * `SafeFailureCode`, so a new server code is a type error until it is worded.
  */
 
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+
 import type { Line } from "@/components/feedback/stage";
 import { isApiError, outcomeUnknown, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON, type Transport } from "@/lib/api/failure";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -28,7 +28,6 @@ import {
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
 import type { AcceptedIngest } from "@/lib/imports/ingest";
-import { updateRemedy } from "@/lib/native/admission";
 import {
   METADATA_FAILURE_COPY,
   metadataOperationName,
@@ -903,7 +902,7 @@ export function attentionPhrase(count: number): string {
 
 /** The complete description of a positive Imports attention observation. `_refreshFailed`
  * stays until the account menu stops passing it (L7): a failed refresh says nothing. */
-export function importAttentionDescription(count: number, _refreshFailed?: boolean): string {
+export function importAttentionDescription(count: number): string {
   return `imports: ${attentionPhrase(count)}`;
 }
 
@@ -915,8 +914,6 @@ export function countText(count: number): string {
 /** An import revision conflict, only when owner evidence establishes it. A generic
  * E_RESOURCE_CONFLICT can instead be an edge busy refusal and proves no revision change. */
 export const CONFLICT_REASON = "this import changed since it was shown.";
-/** Until L7: the action catalog still reads this shape. */
-export const CONFLICT_NOTICE: FeedbackContent = { tone: "Warning", title: "couldn’t update this import." };
 
 /** An empty view, stated, never advised. */
 export function emptyLine(view: ImportsView, hasSearch: boolean, hasFilters: boolean): string {
@@ -937,12 +934,6 @@ function modeled(error: unknown): ApiError {
   return error;
 }
 
-/** Until L7, the shape consumers outside lib/imports read: `title` the command's or read's fact,
- * `message` the domain or transport reason, and `reload` on a stale build only where reload can
- * work, as `transportVerbs` decides: an old renderer then offers reload alone. */
-const content = ({ fact, reason }: Line, transport: Transport | null = null): FeedbackContent =>
-  ({ tone: "Warning", title: fact, message: reason, ...(transport === "Update" && updateRemedy() === "Reload" ? { reload: true as const } : {}) });
-
 /** A failed saved-source read: the server has no saved source by that id (services/imports.py),
  * or the transport speaks for the noun `source details`. Defects rethrow. */
 export function savedSourceReadLine(error: unknown): Line {
@@ -951,14 +942,6 @@ export function savedSourceReadLine(error: unknown): Line {
     return { fact: "this saved source isn’t available." };
   const transport = transportOf(failure);
   return TRANSPORT_LINES[transport].read("source details");
-}
-
-/** Until L7: external consumers still read FeedbackContent. */
-export function savedSourceReadFailure(error: unknown): FeedbackContent {
-  const failure = modeled(error);
-  const line = savedSourceReadLine(failure);
-  return content(failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST"
-    ? { fact: "couldn’t load source details.", reason: line.fact } : line, transportOf(failure));
 }
 
 /** What verification said about the stored bytes, as a reason. */
@@ -1062,28 +1045,13 @@ export function captureErrorLine(error: unknown, operation: CaptureOperation): L
   return TRANSPORT_LINES[transport].command(fact);
 }
 
-/** Until L7: external consumers still read FeedbackContent. */
-export function captureErrorFeedback(error: unknown, operation: CaptureOperation): FeedbackContent {
-  return content(captureErrorLine(error, operation), isApiError(error) ? transportOf(error) : null);
-}
-
 /** Acceptance records a saved source, independently of processing success. */
 export function captureStatusLine(result: AcceptedIngest): string {
   return !result.available ? "saved, then removed." : result.processing === "failed" ? "saved. nexus couldn’t process it." : "saved.";
 }
 
-export type AcceptanceFailure =
-  | { readonly kind: "Rejected"; readonly feedback: FeedbackContent }
-  | {
-      readonly kind: "AcceptanceUnresolved";
-      readonly reason: "StatusUnknown" | "UploadIncomplete";
-      readonly feedback: FeedbackContent;
-    }
-  | { readonly kind: "Superseded" };
-
 /** An Add whose acceptance is unknown: resending its id answers the same acceptance. */
 export const UNCONFIRMED_LINE: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
-export const UNCONFIRMED: FeedbackContent = content(UNCONFIRMED_LINE);
 
 /** An added file's fact, apart from a link's. */
 const ADDED_FILE = "couldn’t save this file.";
@@ -1114,12 +1082,4 @@ export function acceptanceFailureLine(error: unknown): AcceptanceLineFailure {
   }
   if (outcomeUnknown(modeled(error))) return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", line: UNCONFIRMED_LINE };
   return { kind: "Rejected", line: captureErrorLine(error, "SaveSource") };
-}
-
-/** Until L7: Add still reads FeedbackContent. */
-export function acceptanceFailure(error: unknown): AcceptanceFailure {
-  const failure = acceptanceFailureLine(error);
-  if (failure.kind === "Superseded") return failure;
-  const { line, ...rest } = failure;
-  return { ...rest, feedback: content(line, isApiError(error) ? transportOf(error) : null) };
 }

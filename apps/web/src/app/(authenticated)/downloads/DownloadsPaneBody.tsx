@@ -1,13 +1,14 @@
 "use client";
 
-import { DeviceCatalogStatus, DeviceListeningStatus } from "@/lib/native/localStateStatus";
+import { DeviceListeningStatus } from "@/lib/native/localStateStatus";
 
 // Device-owned downloads, independent of catalog coverage and remote admission. Each row
 // carries its own status; a refused change speaks once and the native index shows the truth.
 // Native error text goes to the log, never to the page.
 import { useEffect, useRef, useState } from "react";
 import { Fact } from "@/components/feedback/Fact";
-import { Announcement, useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -98,7 +99,7 @@ export default function DownloadsPaneBody() {
   if (!localContentAvailable) return <Fact line={{ fact: "downloads need the android app." }} />;
   if (index === null) return error === null ? <Ruling /> : <Fact line={{ fact: "couldn’t read downloads on this device." }} speak />;
   return <div ref={root} className={styles.body}>
-    <DeviceCatalogStatus /><DeviceListeningStatus />
+    <DeviceListeningStatus />
     <h1 ref={heading} tabIndex={-1}>downloads</h1>
     <Announcement text={announcement} level="Polite" />
     {index.auth_required ? <Fact line={{ fact: "sign in to download and sync progress.", reason: "what’s downloaded stays here." }} /> : null}

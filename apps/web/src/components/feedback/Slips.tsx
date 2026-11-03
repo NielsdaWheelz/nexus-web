@@ -14,7 +14,7 @@ import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { MODAL_GEOMETRY_CHANGE, OverlayContext } from "@/lib/ui/overlay";
 import { findActivePaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { takeFocus, useFocusReturn, VerbControl } from "./Fact";
-import { Announcement } from "./Feedback";
+import { Announcement } from "./Announcement";
 import { useStage, type Anchor, type RoomView, type SlipView, type Speech, type Verb } from "./stage";
 import styles from "./Slips.module.css";
 
@@ -255,7 +255,7 @@ export default function Slips() {
   useLayoutEffect(() => {
     const root = view.rooms.findLast(({ anchor }) => anchor.kind === "Root");
     if (!root || root.held) return;
-    const tops = view.rooms.flatMap(({ anchor, element }) => anchor.kind === "Pane" ? [...element.children].map(child => child.getBoundingClientRect().top) : []);
+    const tops = view.rooms.flatMap(({ anchor, element }) => anchor.kind === "Pane" ? [...element.querySelectorAll<HTMLElement>(`.${styles.frame}, .${styles.tab}`)].map(child => child.getBoundingClientRect().top) : []);
     const clearance = tops.length > 0 ? root.element.getBoundingClientRect().bottom - Math.min(...tops) : 0;
     root.element.style.setProperty("--stage-pane-clearance", `${clearance}px`);
   }, [view]);
@@ -323,7 +323,7 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
       <Announcement text={polite?.text ?? ""} level="Polite" occurrence={polite?.occurrence} onPublish={() => stage.delivered("Polite")} />
       <Announcement text={assertive?.text ?? ""} level="Assertive" occurrence={assertive?.occurrence} onPublish={() => stage.delivered("Assertive")} />
     </>}
-    {room.anchor.kind === "Modal" ? <div className={styles.modalGroup}>{controls}</div> : controls}
+    <div className={styles.group}>{controls}</div>
   </>;
 }
 

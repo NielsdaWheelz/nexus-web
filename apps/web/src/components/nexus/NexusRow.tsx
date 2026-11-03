@@ -221,7 +221,7 @@ export function NexusNotices({ controller, returnFocus, id }: {
   const { blank, snapshot, readFailure, read } = controller.recentStatus;
   const back = () => returnFocus()?.focus({ preventScroll: true });
   return <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
-    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device." />)}
+    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} noun="search results" />)}
     {[...controller.searchFailures].map(([source, failure]) => source === "Reference" && ["E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(failure.error.code)
       ? <Fact key={source} line={{ fact: "nothing in nexus matches that link." }} speak />
       : <Failed key={source} error={failure.error} noun={SOURCE_NOUNS[source] ?? "search results"}

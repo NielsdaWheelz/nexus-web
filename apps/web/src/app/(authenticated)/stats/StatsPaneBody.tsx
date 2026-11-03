@@ -461,10 +461,7 @@ function Sessions(props: {
 }) {
   const { sessions, correcting } = props;
   const section = useRef<HTMLDivElement>(null);
-  const readFeedback = useCollectionReadFeedback({
-    list: sessions, unit: { singular: "session", plural: "sessions" }, waiting: false, outcome: null,
-    returnFocus: () => section.current,
-  });
+  const readFeedback = useCollectionReadFeedback({ list: sessions, unit: { singular: "session", plural: "sessions" }, waiting: false, outcome: null });
   const exclude = (row: Session) =>
     row.continues_before_range || row.continues_after_range ? null : (
       <ActionMenu

@@ -16,7 +16,6 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import { StageAnchor } from "@/components/feedback/Slips";
 import { useStageWorkspace } from "@/components/feedback/stage";
 import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
@@ -87,7 +86,6 @@ export default function WorkspaceHost() {
   const isMobile = useIsMobileViewport();
   const latestWorkspace = useLatestWorkspace();
   const interactionOwner = useInteractionOwner();
-  const [canvasViewport, setCanvasViewport] = useState<HTMLDivElement | null>(null);
   const maximized = store.desktopMaximized && !isMobile;
   const panes = useMemo(
     () =>
@@ -289,7 +287,7 @@ export default function WorkspaceHost() {
           onClose={store.closePane}
         />
       )}
-      <div ref={setCanvasViewport} className={styles.canvasViewport}>
+      <div className={styles.canvasViewport}>
         <WorkspacePaneCanvas
           canvasRef={canvas.ref}
           panes={rendered.map(({ pane, bodyKey, isVisible }) => ({
@@ -370,13 +368,8 @@ export default function WorkspaceHost() {
           <div className={styles.edgeFade} data-side="end" />
         ) : null}
         <StageAnchor kind="Root" />
-        {/* Account owners' standing reports, once, at the workspace. Owners that still publish
-            to the old host need it until L7. */}
-        <FeedbackSurface bounds={canvasViewport} interaction={null} modal={null} active protectedTargets={() => []}
-          returnFocus={() => findPaneLandmarkFocusTarget(activeId)}>
           <RetainedActionFeedback />
           <WorkspaceSessionNotice />
-        </FeedbackSurface>
       </div>
     </section>
   );

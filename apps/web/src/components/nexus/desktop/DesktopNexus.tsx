@@ -231,7 +231,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const root = (
     <>
       <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>Nexus</h2>
-      <div className={styles.query} data-feedback-controls="true">
+      <div className={styles.query}>
         <span className={styles.gutter} aria-hidden="true"><NexusQuerySpinner pending={controller.pending} /></span>
         <Input
           ref={inputRef}
