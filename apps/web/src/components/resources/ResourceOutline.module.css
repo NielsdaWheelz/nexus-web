@@ -8,10 +8,15 @@
 }
 .row {position: relative; min-width: 0; padding-block: var(--outline-gap); color: var(--ink);}
 .head {position: relative; display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0; min-block-size: var(--outline-control-block-size);}
-.head:has(> .actions > .control) {min-block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap));}
+.row:not(.inRow) > .head:has(> .actions > .control) {min-block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap));}
 .row[hidden] {display: none;}
 .row[data-selected="true"] > .head {background: var(--accent-muted);}
 .row:focus-visible {outline: var(--focus-ring-width) solid var(--ring); outline-offset: calc(-1 * var(--focus-ring-width));}
+/* the body of an outline row: its text takes the row's type and sits on the row's first line. */
+.inRow {padding-block: 0;}
+.inRow > .head > .content {padding-top: 0; font-size: inherit; line-height: inherit;}
+.inRow > .head > .content::before {display: none;}
+.inRow > .head > .actions {position: static; flex-direction: row; align-items: flex-start;}
 .reference {display: inline; white-space: normal;}
 /* margins, not a grid's gap: a grid would refuse the hole's float. */
 .quotation > * + * {margin-block-start: var(--space-1);}

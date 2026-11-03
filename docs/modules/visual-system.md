@@ -163,7 +163,7 @@ companion sets `--content-font-size` 13px, `--content-meta-font-size` 12px and
 `--content-line-height` `--leading-snug` on its contents, and `--excerpt-scale`
 `.875` and `--excerpt-max-size` `--text-md` for quotes ([highlight](highlight.md)). a `FullScreen`
 companion replaces the text, so it is a page and sets none. resource outline rows,
-notes and page titles read the tokens with their own sizes as fallback. notes
+ordinary note bodies and page titles read the tokens with their own sizes as fallback. notes
 outside a companion use one 14px/1.5 type; chrome and targets never read these tokens.
 
 `PaneQueryToolbar` groups controls by pane width. its boxed input always reserves
@@ -294,8 +294,9 @@ ordinary prose links and specialized widgets retain their own semantics.
 quiet is the default. `emphasis="strong"` marks a principal commitment;
 `tone="danger"` marks destruction independently. `size="comfortable"` has a 44px
 minimum; compact controls use their host minimum or 32px. any coarse pointer
-enforces at least 44px in both axes. the existing dense outline exception is
-24px with fine input; mobile headers remain 48px. geometry hooks are
+enforces at least 44px in both axes, except for controls inside authored outline
+rows, which follow the row geometry below. the existing dense outline exception
+is 24px with fine input; mobile headers remain 48px. geometry hooks are
 `--control-min-size`, `--control-icon-size`, `--control-font-size` and
 `--control-radius`. callers own layout and adornments, never internal selectors
 or competing interaction paint. fields retain their separate density tokens.
@@ -370,12 +371,16 @@ and intrinsic search, details and outline presentations keep their own layout.
 the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
 outline styles own control minima: 24px with a fine pointer, 44px with any coarse
-pointer. each control basis is the maximum of that minimum and one `--text-md`
-glyph plus two `--space-1` gaps. every outline control shares the basis in both
-dimensions; enlarged type can widen existing columns. `OutlineEditorRow` has
-leading and trailing slots. `ResourceOutlineRow`'s control column and text measure
-belong to its [anatomy](resource-references.md#controls-and-composition).
-default geometry and nesting increments are unchanged. note-pane margins follow containing width,
+pointer. each resource-outline control basis is the maximum of that minimum and
+one `--text-md` glyph plus two `--space-1` gaps; enlarged type can widen existing
+columns. `ResourceOutlineRow`'s control column and text measure belong to its
+[anatomy](resource-references.md#controls-and-composition).
+authored outline rows instead size their controls to the line, in 25px rows with
+a fine pointer and 32px rows with any coarse pointer, where the 28px bullet spans
+its row and no disclose slot is drawn. their type remains 14px fine / 16px coarse
+at 1.5 line height, including inside a companion. an embedded resource row keeps
+its controls inline at the far end of the authored row.
+note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
 also inheriting the parent body column's leading and trailing control gutters.
