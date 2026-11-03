@@ -619,10 +619,10 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
    * a replay until it is re-frozen. */
   const resent = (line: Entry): Entry => ({ ...line, stage: { kind: "Waiting" }, replay: line.replay || line.stage.kind === "Unknown" });
   /** A fresh guard at the next freeze: a link takes a fresh id, an upload keeps its session
-   * and generation once a refusal opened it to review. */
+   * and generation once an authoritative refusal opened it to review. */
   const refrozen = (line: Entry): Entry => {
     if (line.upload !== null) reviewUploadAttempt(line.upload);
-    return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID(), replay: false };
+    return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID(), replay: false, confirmUnanswered: false };
   };
   const refusalOf = (line: Entry) => line.stage.kind === "Refused" ? line.stage.refusal.kind : null;
 
