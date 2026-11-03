@@ -11,6 +11,7 @@ import ResourceList from "@/components/ui/ResourceList";
 import ResourceComposer from "@/components/resources/ResourceComposer";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import Button from "@/components/ui/Button";
+import { Ruling } from "@/components/feedback/Ruling";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -102,6 +103,7 @@ export default function ChatContext({ conversationId, refreshKey }: { conversati
   return <section ref={root} aria-label="Chat context" {...attachments.dropProps}>
     <div className={styles.tools}><ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="chat context" subjectKey={`context:${selfRef}`} label="more actions for chat context" sections={[{ id: "Pane", actions: [{ kind: "command", id: "Context.Add", label: "Add to future context", icon: <Icon.Add aria-hidden="true" />, onSelect: () => setAdding(true) }] }]} />{attachments.control}</div>
     <p className={styles.metadata}>available to future replies</p>
+    {context.status === "loading" ? <Ruling /> : null}
     {context.status === "failed" ? <Failed error={context.error} noun="context items" retry={{ run: () => void context.refetch(), busy: context.retrying }} /> : null}
     {[...removals.value].map(([ref, removal]) => removal.attempt > 0 ? <Hold key={ref} id={`remove:${conversationId}:${ref}`} attempt={removal.attempt} {...feedbackFor(ref, removal)} /> : null)}
     {context.status === "ready" ? <ResourceList ariaLabel="Chat context">
@@ -152,16 +154,17 @@ function ContextIndexItem({ entry, conversationId, pending, recovery, onRemove, 
     if (pending?.busy || waits) return;
     if (await onRemove(label) && document.activeElement === removeButton.current) afterRemoval()?.focus({ preventScroll: true });
   };
-  const status = authored?.data ? `${type} unavailable` : type;
+  const absent = authored?.data?.scope_available === true && item === null;
+  const status = absent ? `${type} unavailable` : type;
   const supporting = <>
-    {authored?.data && item === null ? <span>not on this device.</span> : null}
+    {absent ? <span>not on this device.</span> : null}
     {annotation ? <a className={styles.note} href={`/highlights/${parsed.id}#annotation`} data-workspace-rich-target="true"
       onClick={event => activateTargetLink({event, runtime: pane, target: {href: `/highlights/${parsed.id}#annotation`, labelHint: item?.label}})}
       onKeyDown={event => activateTargetLink({event, runtime: pane, target: {href: `/highlights/${parsed.id}#annotation`, labelHint: item?.label}})}>
       <span className={styles.notePrefix}>annotation: </span>{annotation.body_text || "rich annotation"}
     </a> : null}
   </>;
-  const hasSupport = Boolean(authored?.data && item === null || annotation);
+  const hasSupport = Boolean(absent || annotation);
   return <>
     {waits ? <span id={waitsId} className="sr-only">{waitReason}</span> : null}
     {authored ? <AuthoredReadFailure {...authored} title="couldn’t load this item." /> : null}
