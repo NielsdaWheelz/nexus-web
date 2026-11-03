@@ -1837,13 +1837,16 @@ open over Resume and never become panes.
   host's pane-activity capability, which reader progress uses for
   adoption-versus-handoff arbitration. `MobileViewportProvider`
   (`lib/mobileShell/viewport.tsx`) resolves mobile bottom geometry in one
-  ordered pass: the normal-flow MiniPlayer and persistent feedback rectangles
+  ordered pass: the normal-flow MiniPlayer and safe area
   place the fixed Nexus wrapper (`--mobile-nexus-bottom-offset`), the placed
   Nexus wrapper plus safe area and active mobile-overlay keyboard inset form the
   root content clearance (`--mobile-content-bottom-clearance`), and that
   protected band projects into an element-local clearance on each registered
   mobile pane content surface. The flow Player is never added to content
-  clearance, so it is counted exactly once. Text entry keeps playback alive
+  clearance, so it is counted exactly once. the shown control envelope and
+  keyboard inset separately project `--stage-bottom-clearance` onto registered
+  root and pane anchors. slips overlay that floor without changing content
+  clearance or moving the Nexus wrapper. Text entry keeps playback alive
   while hiding and unregistering the MiniPlayer.
   `MobileChromeProvider` (`lib/mobileShell/chrome.tsx`) writes reader collapse,
   `inert` and phase straight onto the registered top bar, the active contextual

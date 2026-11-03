@@ -8,17 +8,30 @@ releases its slot while its services can survive. another checkout can acquire
 that slot and fail on its fixed ports (`665-677`); released admission also does
 not prove released memory. checkout recovery is explicitly manual (`38-42`).
 
-the supervisor-loss mechanism is source-derived, not an executed crash reproduction.
-reproduce with an owned disposable lab: kill only its supervisor, inspect its
-surviving resources, then request another lab from a different checkout.
+observed during feedback-homes qualification on 2026-11-02: runner pid27016
+for `20261102-201924-92036acadcdd` disappeared while its recorded host groups
+and detached stores survived. why the runner exited is unknown; this was not
+a deliberate crash test. a different checkout acquired unlocked slot4 and
+failed before its driver because `127.0.0.1:31030` remained held by
+`c0ea2872190a`, the exact run's postgres container. its compose working directory
+was the owning `p2-l4/docker`. several later runs hit the same occupied port.
 
-observed on 2026-11-03 at 04:27 utc: run `20261102-202534-7e1839c3d588`
+the owner verified current commands and working directories against the run's
+`launches.json`, drained only those groups, and ran both recorded recovery
+commands successfully. container, volume and network queries for its exact
+compose/auth labels were empty; the port had no listener. only then were the
+recorded private inputs, socket directory and matching checkout lock removed.
+no shared slot state, daemon settings or unrelated runtime changed. the
+interrupted qualification run has no final result and must be rerun.
+
+a different checkout observed on 2026-11-03 at 04:27 utc: run `20261102-202534-7e1839c3d588`
 failed before its driver with `lab slot 4 port 31030 unavailable`.
 container `c0ea2872190a` (`nexus-lab-20261102-201924-92036acadcdd-postgres-1`)
 held that port; the other runtime's auth/storage/workers also remained. no owning
 disposable-runtime process remained, and codex child 27208 had ppid 1. this
 establishes occupied capacity after admission release, not the cause of that
-supervisor's exit. nothing in the foreign runtime was stopped or changed.
+supervisor's exit. that observer changed nothing in the foreign runtime;
+the owning feedback build performed the recorded recovery above.
 
 accepted limit of the parallel-labs change: hard kills require manual recovery.
 the operator reconciles exact recorded ownership before reusing the affected

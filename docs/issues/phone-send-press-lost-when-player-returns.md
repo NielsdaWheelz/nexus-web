@@ -26,3 +26,11 @@ reproduce: open `/conversations/new` at 390x844 with a mouse, type, press send.
 
 resolved when: a press on send at phone width posts the first time, with the composer
 focused, in chromium and firefox, and on the emulator by tap.
+
+current repair: `GlobalPlayerSurfaces.tsx:323-338` defers the mini-player return
+until the initiating pointer gesture's click task finishes. phase-two l5b
+`67548eee0` introduced that ownership; l3's current browser proof sends the first
+and second messages at phone width, using chromium touch and firefox's narrow
+screen handler path. the old desktop-send-then-narrow workaround no longer
+qualifies this case. actual emulator tap with the keyboard and player remains
+the final unresolved part of this record.

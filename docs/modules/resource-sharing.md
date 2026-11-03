@@ -97,6 +97,10 @@ after the token passes. text asset/apparatus reads require the exact
 `expected_identity` of the mounted reader; callers cannot nominate a capture,
 storage path or upstream URL. standalone captures have no public-link product.
 
+only typed `E_READER_CONTENT_CHANGED` enters the public reader’s identity refresh
+flow. a generic conflict retains ordinary read recovery; it proves no content
+change. an auxiliary image may remain unfilled without retiring admitted text.
+
 a public read takes the ordered media-family `FOR UPDATE` barrier, then reads
 its facts in a fresh statement.
 Article and transcript publication takes a conflicting parent
@@ -169,6 +173,14 @@ leaves them ample. A flat-tree scan past ~600 pages still exceeds its limit
 person grants, received access with decline, the public link (copy, native
 share and X behind bearer warnings, turn off), and library People. One change
 runs at a time; every other control waits for it.
+
+the controller retains an unanswered grant command's exact subject, id and body.
+an unchanged sharing read does not settle it. initial create/revoke controls stay
+disabled until settlement; only its held recovery can replay the command, through
+the current shared sign-in, update or retry remedy. a callback for a retired request
+cannot send a newer request. closing or replacing an unresolved sharing session
+uses the existing work-loss question; declining preserves recovery, while accepting
+stops local tracking without cancelling server work. tucking only hides the line.
 
 People search (`GET /users/search?q&limit≤20`, `components/users/PeopleSearch`,
 shared with the library Members tab) finds users whose display name contains
