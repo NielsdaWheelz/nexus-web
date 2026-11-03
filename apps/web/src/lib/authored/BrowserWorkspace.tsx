@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
+import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { useTransportVerbs } from "@/components/feedback/stage";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
@@ -124,7 +125,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   if (signedOut) return <Fact line={{ fact: "signed out on this device." }} verbs={[signInVerb]} />;
   if (failure) {
     if (!isApiError(failure)) return fact({ fact: OPEN_FAILED }, [retryVerb, signInVerb]);
-    return <FeedbackProvider shell={shell}><StartupFailure error={failure} retry={retryVerb} /></FeedbackProvider>;
+    return <RenderEnvironmentProvider value={renderEnvironment}><FeedbackProvider shell={shell}><StartupFailure error={failure} retry={retryVerb} /></FeedbackProvider></RenderEnvironmentProvider>;
   }
   if (!binding) return <Ruling />;
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell
