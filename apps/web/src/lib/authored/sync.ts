@@ -27,7 +27,6 @@ export class Sync {
   private retired = false;
   private foreground = true;
   private failures = 0;
-  private commitError = false;
   private annotationsRevision: string | null = null;
   private scopeCheckedAt = 0;
   private normalization: {revision: string; reading: string; interval: ScopeNormalizationInterval; normalizer: ScopeTextNormalizer; after: number | null; nextRaw: number} | null = null;
@@ -41,7 +40,6 @@ export class Sync {
     if (this.running) { this.rerun = true; return; }
     this.completion = this.run();
   }
-  localFailure(failed: boolean) { this.commitError = failed; this.facts.local_error = failed; }
   setForeground(active: boolean) { this.foreground = active; if (!active && this.timer !== null) { clearTimeout(this.timer); this.timer = null; } if (active) this.wake(); }
   stopped(): Promise<void> { return this.completion; }
   private local<T>(operation: () => Promise<T>): Promise<T> { return this.serialize(() => { if (this.retired) throw new DOMException("authored synchronization stopped", "AbortError"); return operation(); }); }
@@ -68,7 +66,7 @@ export class Sync {
       const writing = upload.status === "rejected" ? upload : download.status === "rejected" ? download : null;
       failed = writing !== null || scope.status === "rejected";
       if (writing !== null) this.fail(writing.reason);
-      else { this.facts.local_error = this.commitError; this.last_error = null; this.facts.failure = null; }
+      else { this.facts.local_error = false; this.last_error = null; this.facts.failure = null; }
       if (!failed) this.failures = 0;
     } catch (error) { failed = true; this.fail(error); }
     finally {

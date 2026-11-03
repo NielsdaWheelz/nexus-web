@@ -14,7 +14,7 @@ import { bindApiAccount, isApiError, isSameSystemApiDefect } from "@/lib/api/cli
 import { staleBuild, TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { conditionLine, useCondition, useLagging } from "@/lib/account/condition";
 import { bindBrowserAdmission, installedApp, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
-import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime, isAuthoredStorageFailure, writingStoreStopped } from "@/lib/notes/runtime";
+import { closeWritingRuntime, discardWritingRuntime, getWritingRuntime, isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { discardFailedAuthoredSetup } from "./signOut";
 import { AuthoredSetupError, openAuthoredStore } from "./client";
@@ -197,7 +197,7 @@ function AccountSlips({ accountId, signIn }: { accountId: string; signIn: Comman
   }, [say, restart, signIn, condition, updateRemedyKey]);
   if (defect) throw defect.error;
   if (writing.error === null) return null;
-  const stopped = writingStoreStopped(writing.error);
+  const stopped = condition === "Stopped";
   const copyText: CommandVerb = { label: "copy text", commandKey: "CopyUncommittedText", copied: copied.occurrence ?? undefined, run: () => {
     void runtime.uncommittedText().then(async text => {
       try { await copied.copy(text); }

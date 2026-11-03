@@ -2,17 +2,20 @@
 /** The account's one standing condition: a total order over admission, sync status, local
  * writing, the sync failure, connectivity and a waiting shell update. Only `Update`, `SignIn`,
  * `Refused` and `SyncLocal` ask a person for anything; `Lagging` and `Offline` heal. A failed
- * commit that has not stopped is no condition: its owner speaks. Each condition has one sentence,
+ * commit that has not stopped is no condition: its owner speaks, and `SyncLocal` waits behind it.
+ * `SyncLocal` is a sync turn's own local failure, which no save sets or clears, so saving never
+ * moves it. Each condition has one sentence,
  * which its account row and its slip both say. Must render inside an open authored account. */
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { SyncFailure, SyncStatus } from "@nexus/authored/types";
 import { staleBuild } from "@/lib/api/failure";
+import { authoredStoreStopped } from "@/lib/authored/client";
 import { useAuthoredAccountId, useAuthoredStore } from "@/lib/authored/provider";
 import { LAGGING_AFTER_MS } from "@/lib/authored/status";
 import { subscribeAdmission, updateWaiting } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import type { RemoteAdmission } from "@/lib/native/contracts";
-import { getWritingRuntime, writingStoreStopped } from "@/lib/notes/runtime";
+import { getWritingRuntime } from "@/lib/notes/runtime";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 
 export type Condition = "Stopped" | "SyncLocal" | "Update" | "SignIn" | "Refused" | "Lagging" | "UpdateReady" | "Offline";
@@ -27,15 +30,18 @@ interface Facts {
   readonly admission: RemoteAdmission;
   readonly status: SyncStatus;
   readonly failure: SyncFailure;
+  readonly stopped: boolean;
   readonly lagging: boolean;
-  readonly writing: { readonly saving: boolean; readonly error: unknown | null };
+  readonly writing: { readonly error: unknown | null };
   readonly online: boolean;
   readonly updateWaiting: boolean;
 }
 
-function conditionOf({ admission, status, failure, lagging, writing, online, updateWaiting }: Facts): Condition | null {
-  if (writing.error !== null && writingStoreStopped(writing.error)) return "Stopped";
-  if (status === "local_error" && writing.error === null && !writing.saving) return "SyncLocal";
+/** `Stopped` is words at risk in a stopped store, whichever failed first: a commit whose own op
+ * timed out while the store still answered is stopped too once the store stops. */
+function conditionOf({ admission, status, failure, stopped, lagging, writing, online, updateWaiting }: Facts): Condition | null {
+  if (writing.error !== null && stopped) return "Stopped";
+  if (status === "local_error" && writing.error === null) return "SyncLocal";
   if (admission === "UpdateRequired" || status === "update_required") return "Update";
   if (admission === "SignInRequired" || status === "sign_in_required") return "SignIn";
   if (failure?.kind === "Refused") return "Refused";
@@ -66,10 +72,10 @@ export function useCondition(): Condition | null {
   const admission = useRemoteAdmission();
   const online = useConnectivity() === "Online";
   const waiting = useSyncExternalStore(subscribeAdmission, updateWaiting, updateWaiting);
-  const [sync, setSync] = useState<{ status: SyncStatus; failure: SyncFailure }>({ status: "preparing", failure: null });
-  useEffect(() => store.sync_status((status, _detail, failure) => setSync({ status, failure })), [store]);
+  const [sync, setSync] = useState<{ status: SyncStatus; failure: SyncFailure; stopped: boolean }>({ status: "preparing", failure: null, stopped: false });
+  useEffect(() => store.sync_status((status, _detail, failure) => setSync({ status, failure, stopped: authoredStoreStopped(accountId) })), [store, accountId]);
   const lagging = useLagging(sync.failure);
-  return conditionOf({ admission, status: sync.status, failure: sync.failure, lagging, writing, online, updateWaiting: waiting });
+  return conditionOf({ admission, status: sync.status, failure: sync.failure, stopped: sync.stopped, lagging, writing, online, updateWaiting: waiting });
 }
 
 /** A condition's one sentence. `Update` reads the remedy now, so a caller re-reads it on
