@@ -97,6 +97,10 @@ after the token passes. text asset/apparatus reads require the exact
 `expected_identity` of the mounted reader; callers cannot nominate a capture,
 storage path or upstream URL. standalone captures have no public-link product.
 
+only typed `E_READER_CONTENT_CHANGED` enters the public reader’s identity refresh
+flow. a generic conflict retains ordinary read recovery; it proves no content
+change. an auxiliary image may remain unfilled without retiring admitted text.
+
 a public read takes the ordered media-family `FOR UPDATE` barrier, then reads
 its facts in a fresh statement.
 Article and transcript publication takes a conflicting parent

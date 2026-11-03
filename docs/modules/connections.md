@@ -300,6 +300,14 @@ pdf highlight creation, media-unit readiness and note reindexing enqueue scans.
 the ui refreshes after settlement and announces success only for outcome `ok`;
 an idle queue alone proves no successful generation.
 
+scan starts belong to the existing visit resource draft. dispatch and an unanswered
+start retain their exact source and work guard across inspector retirement; the
+held recovery is visible again when the surface reopens. current shared admission
+gates both start and retry. check and wake read status only. passive idle or terminal
+status cannot answer an earlier request; an acknowledged retry answers that retry.
+without a replay identity it cannot fence a separate still-running original. null
+outcome says no result is available, never that a scan completed.
+
 - only discovery writes `origin=discovery`: source is media, page, note or an
   owned highlight; target is media, note or evidence span; snapshot rationale is
   the stored rationale.
