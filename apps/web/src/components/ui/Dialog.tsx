@@ -25,6 +25,7 @@ export default function Dialog({
   return (
     <ModalFrame
       {...modal}
+      slipContent={modal.slipContent ?? body}
       onDismiss={onClose}
       label={title}
       backdropClassName={styles.backdrop}

@@ -3,14 +3,14 @@
 /** Nothing to show yet, in the empty region. Six hairlines that css alone brings in, so a fast
  * read paints nothing; it unmounts the frame content lands. The active region says `opening` once.
  *
- * A region is its modal, else the source its pane shows, else the host, so a navigation begins a
+ * A region is its explicit object, else its modal, else the source its pane shows, else the host, so a navigation begins a
  * new wait whatever stood before it. A region carries a wait across a handoff: a ruling that
  * mounts within a frame of another leaving the region continues the clock of the one that left
  * last, whatever else stands there, so a cold open that passes through several reads fades in once
  * and shows `still opening` 8s after it began. Any other ruling keeps its own clock, so a fast read
  * beside one standing paints nothing. While any of a region's rulings stand, it says `opening`
  * once; a region with none standing and none just left has ended its wait. */
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { paneSourceKey, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { OverlayContext } from "@/lib/ui/overlay";
 import { Announcement, useActiveRegion } from "./Feedback";
@@ -27,10 +27,13 @@ type Wait = { said: boolean; rulings: number; left: { start: number; at: number 
 const waits = new Map<object | string, Wait>();
 const HOST = {};
 
+/** A distinct object inside a pane or modal owns its own wait and sequential read handoffs. */
+export const RulingRegion = createContext<string | null>(null);
+
 export function Ruling() {
   const overlay = useContext(OverlayContext);
   const runtime = usePaneRuntime();
-  const region = overlay ?? (runtime ? paneSourceKey(runtime) : HOST);
+  const region = useContext(RulingRegion) ?? overlay ?? (runtime ? paneSourceKey(runtime) : HOST);
   const active = useActiveRegion();
   const element = useRef<HTMLDivElement>(null);
   const joined = useRef<{ wait: Wait; start: number } | null>(null);

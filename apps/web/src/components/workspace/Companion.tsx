@@ -22,6 +22,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { RulingRegion } from "@/components/feedback/Ruling";
+import { paneSourceKey, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { FindResults } from "@/components/find/FindBar";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
@@ -337,6 +339,9 @@ export default function Companion(props: {
     element.className = styles.host;
     return element;
   });
+  const slipContent = useRef(host);
+  const runtime = usePaneRuntime();
+  const source = runtime ? paneSourceKey(runtime) : paneId;
   const [portalParent, setPortalParent] = useState<Layer | null>(null);
   const focusAfterMove = useRef<HTMLElement | null>(null);
   const [admitted, setAdmitted] = useState(false);
@@ -349,6 +354,7 @@ export default function Companion(props: {
     : durable && secondary
       ? shownSurface(durable, secondary)
       : null;
+  const rulingRegion = JSON.stringify([source, activeId, props.resourceRef ?? null, companion?.groupId ?? null]);
   const open = resultsShown
     ? results.expanded
     : durable !== null && secondary?.visibility === "visible";
@@ -573,7 +579,7 @@ export default function Companion(props: {
       className={styles.body}
       hidden={id !== activeId}
     >
-      {id === activeId ? body : null}
+      {id === activeId ? <RulingRegion value={rulingRegion}>{body}</RulingRegion> : null}
     </div>
   ));
 
@@ -617,6 +623,7 @@ export default function Companion(props: {
         </MobileSheet>
       ) : presentation === "FullScreen" ? (
         <MobileFullScreenTask
+          slipContent={slipContent}
           active={coveringActive}
           panelId={regionId}
           onDismiss={close}

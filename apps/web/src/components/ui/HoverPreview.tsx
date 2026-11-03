@@ -38,6 +38,7 @@ export function useHoverPreview(enabled: boolean, label: string): {
   close(options?: { restoreFocus?: boolean }): void;
   render(body: ReactNode): ReactNode;
 } {
+  const sheetBody = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
@@ -121,10 +122,11 @@ export function useHoverPreview(enabled: boolean, label: string): {
           onDismiss={() => close()}
           skipReturnFocus={() => !enabledRef.current || skipReturnFocus.current}
           label={label}
+          slipContent={sheetBody}
           backdropClassName={styles.sheetBackdrop}
           className={styles.sheet}
         >
-          <div className={styles.sheetBody}>{body}</div>
+          <div ref={sheetBody} className={styles.sheetBody}>{body}</div>
         </ModalFrame>
       ) : container ? (
         createPortal(

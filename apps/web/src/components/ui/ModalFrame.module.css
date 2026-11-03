@@ -1,6 +1,4 @@
-/* Zero specificity: a panel's own position wins. The stage's modal anchor needs a positioned box,
-   and stands on the panel's floor only while the panel clips: a body scrolls inside it, never the
-   panel itself, or the anchor scrolls away with the content. */
+/* A panel keeps its family positioning; the semantic room owns the modal anchor. */
 :where(.panel) {
   position: relative;
 }

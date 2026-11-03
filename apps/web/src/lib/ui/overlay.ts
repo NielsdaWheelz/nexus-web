@@ -84,7 +84,7 @@ export interface Layer {
   /** The modal this layer renders inside (React context), or null on the page. */
   parent: Layer | null;
   readonly options: { readonly current: OverlayOptions };
-  /** A modal's role="dialog" panel: the Tab trap root and its transients' container. */
+  /** A modal's semantic role="dialog" room: the Tab trap root and its transients' container. */
   element: HTMLElement | null;
   /** The interactive layer's trigger, captured at open; tooltips keep null. */
   opener: ReturnType<ReturnFocusTarget>;
@@ -491,7 +491,7 @@ function onPointerDown(event: PointerEvent): void {
       if (kind === "transient") closed = true;
     }
   }
-  if (!closed && modal && target === modal.element?.parentElement) {
+  if (!closed && modal && target === modal.element) {
     scrimPress = modal;
   }
 }
@@ -504,7 +504,7 @@ function onClick(event: MouseEvent): void {
   if (
     modal &&
     modal === topModal() &&
-    event.target === modal.element?.parentElement
+    event.target === modal.element
   ) {
     dispatch(modal, "outside");
   }

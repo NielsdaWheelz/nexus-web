@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./MobileFullScreenTask.module.css";
@@ -18,6 +18,7 @@ export default function MobileFullScreenTask({
   ...modal
 }: Omit<ModalProps, "open" | "initialFocus"> & {
   readonly active: boolean;
+  readonly slipContent: RefObject<HTMLElement | null>;
   readonly panelId?: string;
   readonly initialFocus: NonNullable<ModalProps["initialFocus"]>;
   readonly focusKey: unknown;

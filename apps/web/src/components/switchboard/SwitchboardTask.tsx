@@ -293,6 +293,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
 
   return (
     <MobileSheet active={controller.open} panelId="Nexus" handleLabel="close nexus" heightLimit="available" flushBottom={controller.page.kind === "Root"}
+      slipContent={controller.page.kind === "Root" ? listRef : undefined}
       interactionLayer={controller.interactionLayer} onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
       ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>

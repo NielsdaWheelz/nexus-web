@@ -101,22 +101,91 @@ function PaneAnchor({ paneId, floor }: { paneId: string; floor?: true }) {
   return <div ref={element} className={styles.anchor} />;
 }
 
-function ModalAnchor() {
+/** The visual panel owns layout; its sibling anchor owns placement. A constrained room borrows
+ * only the owner's content rectangle, which excludes fixed controls. Geometry changes can move a
+ * held frame; feedback changes cannot. The band's clip also contains swipe and tuck travel. */
+function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: RefObject<HTMLElement | null> }) {
   const layer = useContext(OverlayContext);
   if (!layer) throw new Error("a modal stage anchor requires its ModalFrame");
   const element = useRoom(useMemo(() => ({ kind: "Modal", layer }), [layer]));
+  useLayoutEffect(() => {
+    const anchor = element.current;
+    const room = layer.element;
+    if (!anchor || !room || !panel) return;
+    const viewport = window.visualViewport;
+    let selected: number | null = null;
+    const place = (geometry = false) => {
+      if (!geometry && anchor.hasAttribute("data-stage-held") && selected !== null) return;
+      const bounds = room.getBoundingClientRect();
+      const safe = getComputedStyle(anchor);
+      const left = Math.max(bounds.left, viewport?.offsetLeft ?? 0) + parseFloat(safe.paddingLeft);
+      const right = Math.min(bounds.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? innerWidth)) - parseFloat(safe.paddingRight);
+      const top = Math.max(bounds.top, viewport?.offsetTop ?? 0) + parseFloat(safe.paddingTop);
+      const bottom = Math.min(bounds.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight)) - parseFloat(safe.paddingBottom);
+      // Layout coordinates exclude the panel's entrance/drag transform. Sheets move downward;
+      // the palette's 4px entrance stays inside the frame's 12px separation.
+      const p = { left: bounds.left + panel.offsetLeft, top: bounds.top + panel.offsetTop,
+        right: bounds.left + panel.offsetLeft + panel.offsetWidth, bottom: bounds.top + panel.offsetTop + panel.offsetHeight };
+      const bands = [
+        { left, right, top: Math.max(top, p.bottom), bottom },
+        { left, right, top, bottom: Math.min(bottom, p.top) },
+        { left: Math.max(left, p.right), right, top, bottom },
+        { left, right: Math.min(right, p.left), top, bottom },
+      ];
+      const frame = anchor.querySelector<HTMLElement>("[aria-label='notices']");
+      if (frame) observer.observe(frame);
+      const rowHeight = frame ? Math.max(...Array.from(frame.children, child => child.getBoundingClientRect().height)) : 0;
+      const minimumHeight = Math.max(rowHeight, matchMedia("(any-pointer: coarse)").matches ? 52 : 40) + 26;
+      const minimumWidth = Math.min(352, right - left - 24) + 24;
+      const fits = (band: typeof bands[number]) => band.bottom - band.top >= minimumHeight && band.right - band.left >= minimumWidth;
+      const index = selected !== null && selected >= 0 && selected < bands.length && fits(bands[selected]) ? selected : bands.findIndex(fits);
+      let band = bands[index];
+      if (index < 0) {
+        // This rectangle is an explicit family contract, never inferred from modal descendants.
+        const body = content.current;
+        if (!body) return;
+        const c = body.getBoundingClientRect();
+        const moving = panel.getBoundingClientRect();
+        band = { left: Math.max(left, c.left - moving.left + p.left), right: Math.min(right, c.right - moving.left + p.left),
+          top: Math.max(top, c.top - moving.top + p.top), bottom: Math.min(bottom, c.bottom - moving.top + p.top) };
+      }
+      selected = index;
+      Object.assign(anchor.style, { left: `${band.left - bounds.left}px`, top: `${band.top - bounds.top}px`,
+        width: `${Math.max(0, band.right - band.left)}px`, height: `${Math.max(0, band.bottom - band.top)}px` });
+    };
+    const observer = new ResizeObserver(entries => place(entries.some(({ target }) => target === room || target === panel || target === content.current)));
+    observer.observe(room);
+    observer.observe(panel);
+    if (content.current) observer.observe(content.current);
+    const changes = new MutationObserver(() => place());
+    changes.observe(anchor, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-stage-held"] });
+    // Switching content inside an unchanged panel can replace the owner's content ref.
+    const contents = new MutationObserver(() => { if (content.current) observer.observe(content.current); place(true); });
+    contents.observe(panel, { childList: true, subtree: true });
+    const geometry = () => place(true);
+    window.addEventListener("resize", geometry);
+    viewport?.addEventListener("resize", geometry);
+    viewport?.addEventListener("scroll", geometry);
+    place(true);
+    return () => {
+      observer.disconnect(); changes.disconnect(); contents.disconnect();
+      window.removeEventListener("resize", geometry);
+      viewport?.removeEventListener("resize", geometry);
+      viewport?.removeEventListener("scroll", geometry);
+    };
+  }, [content, element, layer, panel]);
   return <div ref={element} className={`${styles.anchor} ${styles.modalAnchor}`} />;
 }
 
 /** Where slips land. Root is the canvas, or a host's root element, which keeps tabindex -1 to take
- * focus back from a frame whose origin is gone. Modal sits in its panel. Pane sits above its
+ * focus back from a frame whose origin is gone. Modal sits beside its panel, borrowing only scrollable content when constrained. Pane sits above its
  * content: `floor` is the shell's own, and any composer's stands over it while it stands, the
  * latest of them winning. A composer's is a zero-height box at its top edge, outside any clip. */
-export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string; floor?: true } | { kind: "Modal" }) {
+export function StageAnchor(props: { kind: "Root" } | { kind: "Pane"; paneId: string; floor?: true } | { kind: "Modal"; panel: HTMLElement | null; content: RefObject<HTMLElement | null> }) {
   switch (props.kind) {
     case "Root": return <RootAnchor />;
     case "Pane": return <PaneAnchor paneId={props.paneId} floor={props.floor} />;
-    case "Modal": return <ModalAnchor />;
+    case "Modal": return <ModalAnchor panel={props.panel} content={props.content} />;
   }
 }
 
@@ -165,6 +234,7 @@ type FocusHome = {
 
 function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speech: Speech }) {
   const stage = useStage();
+  useLayoutEffect(() => { room.element.toggleAttribute("data-stage-held", room.held); }, [room.element, room.held]);
   const frame = useRef<HTMLElement>(null);
   const origin = useRef<HTMLElement>(null);
   const navigated = useRef(false);

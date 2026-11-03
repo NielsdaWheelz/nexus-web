@@ -9,8 +9,16 @@
   --stage-floor: calc(var(--stage-bottom-clearance, 0px) + var(--stage-pane-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
 }
 
-/* A modal anchor is portaled clear of every projection: it uses its floor alone, and its panel clips. */
-.modalAnchor { --stage-ceiling: 100%; }
+/* Modal placement owns this rectangle; clipping keeps travel clear of the visual panel. Safe
+   padding is measured as resolved pixels; absolute children use the rectangle's border box. */
+.modalAnchor {
+  inset: auto;
+  box-sizing: border-box;
+  overflow: clip;
+  padding: var(--viewport-safe-top, 0px) var(--viewport-safe-right, 0px) var(--viewport-safe-bottom, 0px) var(--viewport-safe-left, 0px);
+  --stage-ceiling: 100%;
+  --stage-floor: 0px;
+}
 
 /* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {

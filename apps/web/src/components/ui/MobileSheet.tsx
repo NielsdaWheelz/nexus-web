@@ -71,6 +71,7 @@ export default function MobileSheet({
   return (
     <ModalFrame
       {...modal}
+      slipContent={modal.slipContent ?? content}
       open={active}
       label={ariaLabel}
       id={panelId}
