@@ -11,6 +11,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkGuard } from "@/lib/unsavedWork";
+import { useOutcome } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -20,15 +21,18 @@ import {
   UNCONFIRMED,
   acceptanceFailure,
   captureErrorFeedback,
-  type AcceptanceFailure,
+  savedSourceReadFailure,
 } from "@/lib/imports/copy";
 import {
   addMediaFromUrl,
+  fetchAcceptedSource,
+  mediaAcquisitionAvailable,
   createUploadAttempt,
   reviewUploadAttempt,
   type UploadAttempt,
   uploadIngestFile,
   type AcceptedIngest,
+  type MediaAcceptance,
   type UploadFileKind,
   type UploadPhase,
 } from "@/lib/imports/ingest";
@@ -113,6 +117,13 @@ export type AddItem =
       attempt: number;
       feedback: Line;
       importRef: string | null;
+    }
+  | {
+      kind: "AcceptedUnobserved";
+      id: string;
+      intent: UrlIntent;
+      receipt: Extract<MediaAcceptance, { kind: "Url" }>;
+      feedback: Line | null;
     }
   | {
       kind: "Accepted";
@@ -227,6 +238,7 @@ export function isPopulatedAddItem(row: AddItem): boolean {
     case "Submitting":
     case "Rejected":
     case "AcceptanceUnresolved":
+    case "AcceptedUnobserved":
     case "Accepted":
       return true;
   }
@@ -254,6 +266,7 @@ export function useAddContentSession(): AddContentSessionController {
   const [state, setState] = useState(() => initialState(EMPTY_SEED));
   const current = useRef(state);
   const guard = useWorkGuard();
+  const outcome = useOutcome();
   const workListeners = useRef(new Set<() => void>());
   const itemWorkId = (id: string) => `add-item:${current.current.sessionId}:${id}`;
   const abort = useRef(new AbortController());
@@ -322,7 +335,7 @@ export function useAddContentSession(): AddContentSessionController {
     }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
       read: () => {
         const item = current.current.items.find(item => item.id === row.id);
-        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item)
+        return { changed: item !== undefined && item.kind !== "Accepted" && item.kind !== "AcceptedUnobserved" && isPopulatedAddItem(item)
             && !(item.kind === "Draft" && item.seeded && !current.current.sent),
           unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
           stopsBrowserWork: false };
@@ -630,32 +643,44 @@ export function useAddContentSession(): AddContentSessionController {
     return true;
   }
 
-  /** Sends one frozen intent; an unknown outcome keeps it for exact replay. */
+  /** Replays an unknown intent exactly; a known receipt needs only observation reads. */
   async function accept(
-    row: Extract<AddItem, { kind: "Queued" | "AcceptanceUnresolved" }>,
+    row: Extract<AddItem, { kind: "Queued" | "AcceptanceUnresolved" | "AcceptedUnobserved" }>,
     signal: AbortSignal,
   ) {
     if (!active(signal)) return;
     const { id, intent } = row;
     let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
+    let accepted: Extract<AddItem, { kind: "AcceptedUnobserved" }> | null = row.kind === "AcceptedUnobserved" ? row : null;
 
     try {
       let result: AcceptedIngest;
       const source = intent.source;
-      if (source.kind === "Url") {
+      if (accepted !== null) {
+        const current = await fetchAcceptedSource(accepted.receipt.sourceAttemptId, signal);
+        if (!active(signal)) return;
+        const available = await mediaAcquisitionAvailable(current.media_id, signal);
+        result = { ...accepted.receipt, mediaId: current.media_id, importRef: current.import_ref,
+          href: `/media/${current.media_id}?source_attempt_id=${encodeURIComponent(accepted.receipt.sourceAttemptId)}`, available };
+      } else if (source.kind === "Url") {
         const phase =
           row.kind === "AcceptanceUnresolved" ? "Checking" : "Saving";
-        item({ kind: "Submitting", id, intent: { ...intent, source }, phase, importRef });
+        if (row.kind !== "AcceptanceUnresolved") item({ kind: "Submitting", id, intent: { ...intent, source }, phase, importRef });
         result = await addMediaFromUrl({
           url: source.url,
           guard: intent.guard,
           id: intent.id,
           signal,
+          onAccepted: receipt => {
+            if (!active(signal)) return;
+            accepted = { kind: "AcceptedUnobserved", id, intent: { ...intent, source }, receipt, feedback: null };
+            item(accepted);
+          },
         });
       } else {
         const fileIntent: FileIntent = { ...intent, source };
         const onPhaseChange = (phase: UploadPhase) => {
-          if (active(signal))
+          if (active(signal) && row.kind !== "AcceptanceUnresolved")
             item({ kind: "Submitting", id, intent: fileIntent, phase, importRef });
         };
         onPhaseChange("Preparing");
@@ -690,7 +715,15 @@ export function useAddContentSession(): AddContentSessionController {
       });
     } catch (error) {
       if (!active(signal)) return;
-      const frozen: AddItem =
+      if (accepted !== null) {
+        item(accepted);
+        if (isAbortError(error)) return;
+        const feedback = savedSourceReadFailure(error);
+        item({ ...accepted, feedback: { fact: feedback.title, reason: feedback.message } });
+        handleUnauthenticatedApiError(error);
+        return;
+      }
+      const frozen: Extract<AddItem, { kind: "AcceptanceUnresolved" }> =
         row.kind === "AcceptanceUnresolved"
           ? { ...row, importRef }
           : {
@@ -702,16 +735,13 @@ export function useAddContentSession(): AddContentSessionController {
               attempt: 0,
               feedback: { fact: UNCONFIRMED.title, reason: UNCONFIRMED.message },
             };
-      if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
-        item(frozen);
+      item(frozen);
+      if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
+      const failure = acceptanceFailure(error);
+      if (row.kind === "AcceptanceUnresolved" && row.reason === "StatusUnknown" && failure.kind === "Rejected") {
+        item({ ...frozen, attempt: row.attempt + 1 });
+        outcome.say({ fact: intent.source.kind === "Url" ? "couldn’t retry saving this link." : "couldn’t retry saving this file." });
         return;
-      }
-      let failure: AcceptanceFailure;
-      try {
-        failure = acceptanceFailure(error);
-      } catch (defect) {
-        item(frozen);
-        throw defect;
       }
       if (failure.kind === "Superseded") {
         update((snapshot) => ({
@@ -777,7 +807,7 @@ export function useAddContentSession(): AddContentSessionController {
   async function reconcileAcceptance(itemId: string) {
     if (current.current.mutation.kind !== "Idle") return;
     const row = current.current.items.find((next) => next.id === itemId);
-    if (row?.kind !== "AcceptanceUnresolved") return;
+    if (row?.kind !== "AcceptanceUnresolved" && row?.kind !== "AcceptedUnobserved") return;
     const signal = abort.current.signal;
     running({ kind: "ReconcileAcceptance", itemId });
     await batch([row], signal, (next) => accept(next, signal));

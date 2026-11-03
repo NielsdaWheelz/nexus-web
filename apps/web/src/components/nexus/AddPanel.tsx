@@ -68,6 +68,7 @@ function itemStatus(item: AddItem): string | null {
   switch (item.kind) {
     case "Insertion":
     case "Draft":
+    case "AcceptedUnobserved":
       return null;
     case "Queued":
       return item.intent.source.kind === "File" ? "preparing…" : "saving…";
@@ -141,7 +142,7 @@ export default function AddPanel({
   const readyCount = [...validations.values()].filter((result) => result.kind === "Ready").length;
   const accepted = state.items.flatMap(item => item.kind === "Accepted" && item.result.available ? [item] : []);
   const attentionCount = [...validations.values()].filter((result) => result.kind === "Invalid").length
-    + state.items.filter((item) => item.kind === "Rejected" || item.kind === "AcceptanceUnresolved").length;
+    + state.items.filter((item) => item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" || item.kind === "AcceptedUnobserved").length;
   const done = accepted.length > 0 && accepted.length === populatedCount && !busy && !creation.creating;
   const destinationSets = populatedDrafts.map((item) => item.destinations);
   const coverage = new Map<string, { destination: LibraryDestination; count: number }>();
@@ -373,6 +374,11 @@ export default function AddPanel({
         : { kind: "InternalHref", href: item.result.href };
     const locatingSource = item.kind === "Accepted" && item.result.sourceAttemptId !== null && openingSources.has(item.result.sourceAttemptId);
     const status = itemStatus(item);
+    const observation = item.kind === "AcceptedUnobserved" ? resendFeedback({
+      line: item.feedback ?? { fact: "saved." },
+      resend: { label: "retry", commandKey: `read accepted add:${item.id}`, busy,
+        run: () => run(() => session.reconcileAcceptance(item.id)) },
+    }) : null;
     const removable = item.kind === "Draft" || item.kind === "Rejected" || item.kind === "AcceptanceUnresolved";
     const rowEditor = editor && "itemId" in editor && editor.itemId === item.id;
     const seedEditor = editor?.kind === "NewItems" && item.kind === "Insertion";
@@ -456,6 +462,10 @@ export default function AddPanel({
             </span>
           ) : null}
           {status && feedback === null ? <Fact line={{ fact: status }} /> : null}
+          {observation ? <>
+            {item.kind === "AcceptedUnobserved" && item.feedback ? <Fact line={{ fact: "saved." }} /> : null}
+            <Fact line={observation.line} verbs={observation.verbs ?? undefined} />
+          </> : null}
           {feedback && feedbackId ? editable
             ? <Field id={feedbackId} line={feedback} />
             : <div id={feedbackId}>{item.kind === "AcceptanceUnresolved" && item.reason === "StatusUnknown"
