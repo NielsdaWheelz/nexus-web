@@ -21,3 +21,12 @@ fence; shared UploadAttempt.confirmation_unsettled prevents review from rewritin
 possibly dispatched confirmation. prove unknown-confirm503, later409, wait past8s,
 then deliberate same-byte retry, with no automatic write on wake. root owns the
 bounded l2b/l4 follow-up; no new registry or upload protocol is needed.
+
+connection consumer repair (phase two l2b, independent review pending): the catch
+now reads the shared attempt's confirmation_unsettled before retiring its task.
+typed LibraryForbidden/BytesMissing and generic refused replays retain the same
+File, session, generation, guard and confirmation while that bit stays true.
+typed permanent publication fences may retire it. connection red was observed in
+chromium and firefox at839d2bd3 (lost confirm response, then LibraryForbidden).
+the note consumer remains separately owned; keep this record until both repairs
+are independently reviewed and qualified.

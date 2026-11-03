@@ -12,8 +12,6 @@ import {useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useSta
 import * as Icon from "@/lib/ui/icons";
 import MachineText from "@/components/ui/MachineText";
 import {Fact, Failed} from "@/components/feedback/Fact";
-import {Hold, useOutcome} from "@/components/feedback/Feedback";
-import type {Retract} from "@/components/feedback/stage";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
@@ -26,19 +24,18 @@ import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
 import {useChangeStamp} from "@/lib/api/changes";
 import {useIndexRowWindow} from "@/lib/collections/indexRowWindow";
-import {isApiError, outcomeUnknown} from "@/lib/api/client";
 import {assertNever} from "@/lib/assertNever";
 import {usePaneFreeServerValue} from "@/lib/api/serverState";
 import type {Schema} from "@/lib/api/wire";
-import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
 import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {useAuthoredQuery, useWritingRuntime} from "@/lib/notes/hooks";
-import {isAuthoredStorageFailure, type WritingRuntime} from "@/lib/notes/runtime";
+import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import {activateTargetLink} from "@/lib/panes/targetLinkActivation";
-import {mutateConnection, type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
+import {type ConnectionMutation, type ConnectionOut} from "@/lib/resourceGraph/links";
+import {FactRemovalsContext, type FactRemovalCommand} from "@/lib/resourceGraph/useFactRemovals";
 import {hasAuthoredContent, parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resolveResourceItem} from "@/lib/resources/items";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
@@ -119,13 +116,13 @@ interface Presentation {
 }
 
 /** A server fact's removal, when its owner offers one; local links unlink through their outline. */
-function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>, writing: WritingRuntime): {id: string; label: string; run(): Promise<unknown>} | null {
+function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>): {id: string; label: string; command: FactRemovalCommand} | null {
   const mutation = incoming.mutation;
   if (mutation === null) return null;
   switch (mutation.kind) {
-    case "detach_context": return {id: mutation.kind, label: "Remove from future context", run: () => mutateConnection(writing, mutation)};
+    case "detach_context": return {id: mutation.kind, label: "Remove from future context", command: {...mutation}};
     case "remove_fact": return {id: mutation.kind, label: "Remove suggested connection",
-      run: () => mutateConnection(writing, {kind: "remove_fact", edge_id: incoming.edge_id})};
+      command: {kind: "remove_fact", edge_id: incoming.edge_id}};
     default: return assertNever(mutation);
   }
 }
@@ -147,7 +144,7 @@ function LocalRow(props:Shared&{subject:string}){
   // A storage failure speaks only until the row has shown; a defect throws whenever it comes.
   if(read.error!==null&&!isAuthoredStorageFailure(read.error))throw read.error;
   const type=resourceTypeName(resourceType(parseResourceRef(props.subject)!.scheme,null));
-  const status=read.data === null ? <AuthoredReadFailure {...read} title={`couldn’t open this ${type} on this device.`}/> : null;
+  const status=read.data === null ? <AuthoredReadFailure {...read} noun={`this ${type}`}/> : null;
   if(props.authoredByViewer||resource?.authored_by_viewer||ownedRef===props.subject)return <AuthoredRow {...props} resource={resource} answered={read.data?.scope_available===true} status={status}/>;
   if(read.data)return <ReferenceRow {...props}/>;
   return <Occurrence {...props} presentation={{ref:props.subject,label:null,href:null,item:null,highlightId:null,primary:<span data-resource-primary className={styles.pending}/>,status}}/>;
@@ -287,14 +284,11 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     edgeIds: enteringEdgeId === null ? [] : [enteringEdgeId]}),
     [branch, ref, occurrenceKey, enteringEdgeId]);
   const [localOpen, setLocalOpen] = useState<boolean | null>(null);
-  const {say, fail} = useOutcome();
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
-  /** A removal whose answer was lost; `tries` keys its speech. */
-  const [unsure, setUnsure] = useState<{attempt: () => Promise<unknown>; tries: number} | null>(null);
-  const report = useRef<Retract | null>(null);
+  const removals = useContext(FactRemovalsContext);
+  const pendingRemoval = removals?.pending.get(occurrenceKey);
+  const busy = pendingRemoval?.running ?? false;
   const rowWindow = useIndexRowWindow();
-  const unsettled = busy || unsure !== null;
+  const unsettled = pendingRemoval !== undefined;
   useLayoutEffect(() => unsettled ? rowWindow?.pin() : undefined, [rowWindow, unsettled]);
   const element = useRef<HTMLLIElement | null>(null);
   const attachRow = useCallback((node: HTMLLIElement | null) => {
@@ -335,63 +329,34 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const childrenId = useId();
   // one way, so a row flown past reads none of its children.
   const rested = useRef(false); rested.current ||= outline?.settled(occurrenceKey) ?? true;
-  const removal = incoming?.kind === "edge" && writing !== null && !historical ? factRemoval(incoming, writing) : null;
+  const removal = incoming?.kind === "edge" && writing !== null && !historical ? factRemoval(incoming) : null;
   async function toggle() {
     if (disclosureDisabled) return;
     if (open && props.beforeCollapse && !await props.beforeCollapse()) return;
     if (open && element.current?.contains(document.activeElement)) arrow.current?.focus({preventScroll: true});
     if (outline) outline.toggle(occurrenceKey, !open); else setLocalOpen(!open);
   }
-  const retryRemoval = (attempt: () => Promise<unknown>) => ({label: "retry", commandKey: `Resource.Relation.retry:${occurrenceKey}`, run: () => void mutate(attempt)});
-  /** One server-fact removal. A refusal is a slip with its retry; a lost answer holds until a
-   * retry settles it or the row leaves; a stale context says why and rereads the list. */
-  async function mutate(attempt: () => Promise<unknown>) {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    report.current?.();
-    report.current = null;
+  function removeFact() {
+    if (!removal || !removals) return;
     const row = element.current;
     const fallback = row?.closest("[data-outline-scope]")?.querySelector<HTMLElement>('ul[tabindex="-1"]');
-    // A nested fact may retire its whole ancestor once its list refreshes.
     const neighbours = fallback && row?.parentElement !== fallback ? [fallback]
       : [row?.nextElementSibling, row?.previousElementSibling, row?.parentElement?.closest("li")].flatMap(node => node
         ? [outlineRowFocusTarget(node as HTMLElement)] : []);
     if (fallback && !neighbours.includes(fallback)) neighbours.push(fallback);
-    let ownsFocus = true;
-    const release = () => { ownsFocus = false; };
-    document.addEventListener("pointerdown", release, true);
-    document.addEventListener("keydown", release, true);
-    try {
-      await attempt();
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      if (outcomeUnknown(error)) { setUnsure(current => ({attempt, tries: (current?.tries ?? -1) + 1})); return; }
-      setUnsure(null);
-      if (isApiError(error) && error.code === "E_CONTEXT_CHANGED") {
-        report.current = say({fact: "couldn’t remove this from future context.", reason: "the context changed."});
-        onChanged?.();
-      } else report.current = fail(error, "couldn’t remove this connection.", retryRemoval(attempt));
-      return;
-    } finally {
-      document.removeEventListener("pointerdown", release, true);
-      document.removeEventListener("keydown", release, true);
-      busyRef.current = false;
-      setBusy(false);
-    }
-    const mayRestoreFocus = ownsFocus && (row?.contains(document.activeElement) || document.activeElement === document.body);
-    setUnsure(null);
-    onChanged?.();
-    outline?.refreshChildren();
-    if (mayRestoreFocus && (row?.contains(document.activeElement) || document.activeElement === document.body))
-      neighbours.find(node => node.isConnected)?.focus({preventScroll: true});
+    removals.remove(occurrenceKey, removal.command, untouched => {
+      const ownsFocus = untouched && (row?.contains(document.activeElement) || document.activeElement === document.body);
+      onChanged?.();
+      outline?.refreshChildren();
+      if (ownsFocus) neighbours.find(node => node.isConnected)?.focus({preventScroll: true});
+    });
   }
   const commands: ActionDescriptor[] = [];
   if (incoming?.kind === "link" && !historical) commands.push({kind: "command", id: "Resource.Relation.unlink",
     label: `Unlink from ${incoming.parentLabel}`, icon: <Icon.Remove size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => incoming.unlink()});
   if (removal) commands.push({kind: "command", id: `Resource.Relation.${removal.id}`, label: removal.label, icon: <Icon.Remove size={16} aria-hidden="true" />,
     disabled: busy, busy, disabledReason: busy ? "removing" : undefined,
-    restoreFocusOnClose: false, onSelect: () => void mutate(removal.run)});
+    restoreFocusOnClose: false, onSelect: removeFact});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
   if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: null,
     href: made.conversation_id && made.message_id
@@ -431,8 +396,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
           {connection?.snapshot?.rationale ? <div className={styles.details}><MachineText variant="inline" origin={{label: "librarian"}}>
             {connection.snapshot.rationale}</MachineText></div> : null}
           {details}
-          {unsure ? <Hold id={`Resource.Relation.removal:${occurrenceKey}`} attempt={unsure.tries}
-            line={{fact: "not sure that was removed.", reason: "it may have gone through."}} verbs={[{...retryRemoval(unsure.attempt), busy}]}/> : null}
+
         </div>
         <div className={styles.actions}><ContextualActionMenu omitResourceActions={props.omitResourceActions}
           title={label} subjectKey={occurrenceKey} resourceRef={assumeCanonicalResourceRef(item?.action_ref ?? ref)}
