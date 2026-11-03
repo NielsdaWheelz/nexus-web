@@ -85,10 +85,25 @@ the body is the absolute state and the prune is idempotent. the device is `X-Nex
 client cannot name one; without it the api answers 400.
 
 [`BrowserWorkspace.tsx`](../../apps/web/src/lib/authored/BrowserWorkspace.tsx)
-opens a confirmed local account binding without a credential read. first
-provisioning reads the verified account, reader profile and workspace session
-concurrently, then saves the binding before mounting the shell. a failed read
-mounts no store. [`DeviceWorkspace.tsx`](../../apps/web/src/lib/native/DeviceWorkspace.tsx)
+opens a confirmed local account binding without requiring a credential read.
+first provisioning reads the verified account, reader profile and workspace
+session concurrently, then saves the binding. failure in those required reads
+mounts no store.
+
+for both saved and fresh bindings, browser entry resolves the incoming url and
+workspace layout before reading their distinct remote presentation locators.
+`INITIAL_FACTS_TIMEOUT_MS` in `BrowserWorkspace` gives that complete operation
+one five-second `requestWithDeadline` allowance, including response bodies and
+sequential batches. each request asserts `X-Nexus-Account`. the desktop shell
+is published after that read settles: success seeds its presentation owner;
+modeled network/auth failure still admits local writing and seeds the existing
+title failure/retry state. defects retain startup failure containment.
+this trades up to five seconds of desktop admission latency for resolved remote
+facts on the workspace's first frame; remote metadata is not a credential or
+local-writing prerequisite. the result is mount-scoped, never a persisted
+metadata cache, and changes no native or wire contract.
+
+[`DeviceWorkspace.tsx`](../../apps/web/src/lib/native/DeviceWorkspace.tsx)
 opens the installed binding from the device; later account refresh cannot replace
 live navigation. `enterWorkspace` picks own-if-nontrivial, else
 elsewhere-if-nontrivial, else one lectern pane. it merges a deep link: `/` and
@@ -111,7 +126,8 @@ the ready body's render so module arrival does not incur suspense's fallback
 retry delay. import failure keeps its stage and requires document reload. this
 registry holds code, never account data.
 
-first-provisioning transport failure mounts no store and offers retry. only a
+failure in required first-provisioning reads mounts no store and offers retry.
+only a
 missing stored row is null; invalid state returns `500 E_INTERNAL` without
 modifying its row or timestamp. after mounting, the shell retains its local
 binding and live store across remote admission changes. account retirement
@@ -224,10 +240,26 @@ account-scoped projection for nexus, pane chrome and the document title.
 `useWorkspacePresentations().forVisit(visit)` returns its title, name, detail,
 status and, where the media's kind is known, that kind; `name` is the real name the
 title shows, or null while the title is a placeholder (kind noun, loading,
-unavailable, untitled). `retryTitles()` refreshes the shared read. readers never
+unavailable, untitled). `retryTitles()` revalidates the shared read in place. readers never
 publish canonical titles. a media kind, once a canonical read returns it for a
 locator, stays in memory until a page reload or account change, because
 `media.kind` never changes; a later read that blanks the facts never reverts it.
+
+`presentationRead.ts` owns remote-locator admission, account-asserted batched
+reads and the resulting facts map. authored locators remain local; captures
+retain their authored upload barrier. browser admission supplies its completed
+success or modeled failure through `initialPresentations`. success seeds the
+pane-free owner immediately; its token is fresh only when every current remote
+locator is covered, otherwise the owner retains those facts while revalidating.
+a completed failure starts at the existing title error/retry state. the
+[completed read seed](api-edge.md) is consumed only for initial admission,
+not cached for later mounts.
+
+the remote read key is stable for the account. locators, revisions and freshness
+signals change its stale token, so refresh and nexus open retain loaded facts
+until the new read settles. catalog projections supply their existing titles
+and media contributor bylines when remote facts are not present; they are not
+a second metadata writer.
 
 current authored locators retain singular resource and semantic daily subscriptions.
 each locator has a keyed subscription lifetime; sibling pane changes do not restart

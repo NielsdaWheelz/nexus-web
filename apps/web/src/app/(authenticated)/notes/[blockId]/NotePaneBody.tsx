@@ -11,7 +11,7 @@ import {FeedbackFailure, FeedbackBusy, useFeedbackOccurrence} from "@/components
 import type { NoteInspection } from "@/components/notes/NoteEditor";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneEntryDelivery, usePaneParam } from "@/lib/panes/paneRuntime";
+import { usePaneEntryDelivery, usePaneParam, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -22,10 +22,11 @@ export default function NotePaneBody() {
   const outline = useRef<LocalOutlineHandle | null>(null);
   const [inspection, setInspection] = useState<{ text: string; view: NoteInspection } | null>(null);
   const rootField = useMemo(() => ({label: "note body", inspection: inspection?.view ?? null}), [inspection]);
-  const read = useLocalOutlineRoot({rootRef: ref, apiRef: outline, rootField});
+  const entering = usePaneSearchParams().get("via") ?? undefined;
+  const read = useLocalOutlineRoot({rootRef: ref, apiRef: outline, rootField, entering});
   const resource = read.rootRead.resource;
   const [error, setError] = useState<unknown | null>(null);
-  usePaneReturnReady(read.rootRead.known || read.error !== null);
+  usePaneReturnReady(read.ready || read.error !== null || read.rootRead.known && !resource);
   const { delivery, claim } = usePaneEntryDelivery();
   useEffect(() => {
     const handle = outline.current;

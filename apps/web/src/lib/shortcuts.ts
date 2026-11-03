@@ -76,16 +76,22 @@ export const PANE_STRIP_SHORTCUTS = [
 export function outlineShortcuts(platform: PlatformKind): readonly {
   id: string; title: string; description: string; meta: string;
 }[] {
+  const meta = usesMeta(platform);
   return [
-    {id: "Outline.Select", title: "Select items", description: "Escape from note text selects its item. Shift-click another item's text selects the range. Space selects a focused item. On touch screens, hold its bullet and choose select item.", meta: "Esc / Space / Shift-click"},
-    {id: "Outline.Browse", title: "Browse items", description: "From selected items, up/down selects the next item in this outline, including expanded children. Shift extends or shrinks the range from its fixed anchor.", meta: "↑ / ↓"},
-    {id: "Outline.Edit", title: "Edit the item's text", description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.", meta: "F2"},
-    {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits note text at the caret. On an empty nested note it outdents; an empty root note stays put. Return does nothing while items are selected.", meta: "Enter"},
+    {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits the item at the caret; from its start it leaves the caret and puts an empty item above, and from the end of an open parent it starts the first child. An empty nested item outdents instead, an empty top-level item stays, and with items selected Return edits the first one.", meta: "Enter"},
     {id: "Outline.LineBreak", title: "Insert a line break", description: "Starts another line within the same note. Return inside code also stays in the note.", meta: "Shift+Enter"},
-    {id: "Outline.Indent", title: "Indent or outdent", description: "Nests selected items under the preceding item, or moves them out one level. An unavailable change keeps the selection in place.", meta: "Tab / Shift+Tab"},
-    {id: "Outline.Move", title: "Move an item up or down", description: "Moves one item past its sibling. Editing keeps the caret at the same text position. Select one item to move.", meta: usesMeta(platform) ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
-    {id: "Outline.History", title: "Undo or redo", description: "Undoes or redoes the last change in this outline, including writing and item changes.", meta: usesMeta(platform) ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
-    {id: "Outline.Delete", title: "Join or remove items", description: "At a note boundary, joins an adjacent note. An empty note or selected branches are removed from this outline; their resources and internal links remain. Undo restores the change.", meta: "Backspace / Delete"},
+    {id: "Outline.Indent", title: "Indent or outdent", description: "Tab nests the item, or every selected item, under the item above; Shift+Tab lifts it out after its parent and the siblings below follow. Lines keep their order; a first sibling or a top-level item stays where it is.", meta: "Tab / Shift+Tab"},
+    {id: "Outline.Move", title: "Move items up or down", description: "Moves the item, or every selected item, past its neighbouring sibling in one step; the caret keeps its place. At the first or last sibling nothing moves.", meta: meta ? "⌘⇧↑ / ⌘⇧↓" : "Alt+Shift+↑ / Alt+Shift+↓"},
+    {id: "Outline.Collapse", title: "Collapse or expand", description: "Hides or shows the children of the item, or of every selected item, for this session; the caret stays. An item without children is unchanged, and a branch still being written stays open.", meta: meta ? "⌘↑ / ⌘↓" : "Alt+↑ / Alt+↓"},
+    {id: "Outline.Delete", title: "Join or remove items", description: "Backspace at the start joins the item into the one above, Delete at the end pulls the next sibling in, and an empty item or a selected branch is removed from this outline; the resources remain. An item with children refuses until they are removed or joined, and a held key stops at the item's edge.", meta: "Backspace / Delete"},
+    {id: "Outline.Select", title: "Select items", description: "Escape from item text or Space on its bullet selects the item; on touch, hold the bullet and release to choose Select item. Shift-click extends the range from the anchor, or starts one.", meta: "Esc / Space / Shift-click"},
+    {id: "Outline.SelectFromText", title: "Select from the text", description: "Shift+Up from the first line or Shift+Down from the last selects the item and extends to its neighbour. Inside the text they extend the text selection as usual.", meta: meta ? "⇧↑ / ⇧↓" : "Shift+↑ / Shift+↓"},
+    {id: "Outline.SelectAll", title: "Select all", description: "Selects the item's text; again, the item itself; a third time, every item shown in this outline. Items not yet shown are not selected.", meta: meta ? "⌘A" : "Ctrl+A"},
+    {id: "Outline.History", title: "Undo or redo", description: "Undoes or redoes the last change in this outline, including writing and item changes.", meta: meta ? "⌘Z / ⌘⇧Z" : "Ctrl+Z / Ctrl+Shift+Z"},
+    {id: "Outline.Edit", title: "Edit the item's text", description: "On a focused item, puts the caret at the end of its text. Tab skips item text, so this is the keyboard's way in.", meta: "F2"},
+    {id: "Outline.Browse", title: "Browse items", description: "With items selected, Up and Down step to the neighbouring shown item and stop at the first and last. Shift extends or shrinks the range from its anchor.", meta: "↑ / ↓"},
+    {id: "Outline.Copy", title: "Copy or cut items", description: "Copies the selected items as links to the same notes, with indented text for other apps. Cut also removes them from this outline, with undo.", meta: meta ? "⌘C / ⌘X" : "Ctrl+C / Ctrl+X"},
+    {id: "Outline.Paste", title: "Paste items", description: "Links the copied items after the selection, or above an empty item; items already under that parent are skipped. Plain lines become new items, one per line.", meta: meta ? "⌘V" : "Ctrl+V"},
     {id: "Outline.Clear", title: "Clear item selection", description: "Clears the selection and returns focus to the bullet. Tab then moves on.", meta: "Esc"},
   ];
 }
@@ -118,6 +124,17 @@ export function outlineStructuralCommand(
   const chord = usesMeta(platform) ? event.metaKey && !event.altKey : event.altKey && !event.metaKey;
   if (!chord || !event.shiftKey || event.ctrlKey) return null;
   return event.key === "ArrowUp" ? "move_up" : "move_down";
+}
+
+/** The unshifted arrow chord folds; the shifted one is the move above. */
+export function outlineFoldCommand(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "metaKey" | "altKey" | "ctrlKey">,
+  platform: PlatformKind,
+): "collapse" | "expand" | null {
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return null;
+  const chord = usesMeta(platform) ? event.metaKey && !event.altKey : event.altKey && !event.metaKey;
+  if (!chord || event.shiftKey || event.ctrlKey) return null;
+  return event.key === "ArrowUp" ? "collapse" : "expand";
 }
 
 export function matchesShortcut(

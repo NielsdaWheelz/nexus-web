@@ -1,67 +1,151 @@
+/* one outline row. the editing host declares --outline-text-start and --outline-indent; the leading
+   column is one line tall and holds the disclose slot, then the bullet in the rest of the column. */
 .row {
-  --outline-control-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
+  --outline-pad: 2px;
+  --outline-disclose: 16px;
+  --outline-dot: var(--ink-faint);
   position: relative;
   min-width: 0;
-  padding-block: var(--space-1);
-  padding-inline-start: calc(var(--outline-depth, 0) * var(--space-4));
+  padding-block: var(--outline-pad);
+  padding-inline-start: calc(var(--outline-depth, 0) * var(--outline-indent));
   color: var(--ink);
+}
+
+.row[data-dragging="true"] {
+  opacity: 0.35;
+}
+
+/* the caret's row: its dot reads one step darker. */
+.row[data-outline-active] {
+  --outline-dot: var(--ink-muted);
+}
+
+/* a 1px line under each ancestor's bullet centre through the whole row. its 9px strip collapses that
+   ancestor; the row's own chevron stays above it. both layers stay inside the row's box. */
+.row > [data-outline-guides] {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.row > [data-outline-guides] > span {
+  position: absolute;
+  inset-block: 0;
+  left: calc(var(--outline-guide-depth, 0) * var(--outline-indent) + (var(--outline-text-start) + var(--outline-disclose)) / 2);
+  width: 9px;
+  translate: -50%;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.row > [data-outline-guides] > span::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 4px;
+  border-inline-start: 1px solid var(--edge-subtle);
+}
+
+.row > [data-outline-guides] > span:hover::before {
+  border-color: var(--ink-faint);
 }
 
 .head {
   display: flex;
   align-items: flex-start;
-  gap: calc(var(--space-1) / 2);
   min-width: 0;
-}
-
-.content {
-  flex: 1;
-  min-width: 0;
-  padding-top: 2px;
-  overflow-wrap: anywhere;
-}
-
-.row[data-outline-tail="true"] .content {
-  min-height: var(--outline-control-size);
-}
-
-.leading,
-.trailing {
-  display: flex;
-  flex: 0 0 var(--outline-control-size);
-  min-height: var(--outline-control-size);
-}
-
-.leading[hidden],
-.trailing[hidden] {
-  display: none;
+  border-radius: var(--radius-sm);
 }
 
 .row[data-selected="true"] > .head {
   background: var(--accent-muted);
 }
 
+.leading {
+  display: flex;
+  flex: 0 0 var(--outline-text-start);
+  height: 1lh;
+}
+
+/* tail and gap rows keep the column, so their text starts with their siblings'. */
+.leading[hidden] {
+  visibility: hidden;
+}
+
+.leading > [data-outline-disclose] {
+  display: flex;
+  flex: 0 0 var(--outline-disclose);
+}
+
+/* the portal's event boundary takes no box; the bullet sizes itself whatever its menu anchor's layout. */
+.leading > span {
+  display: contents;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.content[data-gap] {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-3);
+}
+
+.trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 1lh;
+}
+
+.trailing[hidden] {
+  display: none;
+}
+
+/* the mirror count shows on hover or selection. */
+.trailing > [data-mirrors] {
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  visibility: hidden;
+}
+
+.row[data-selected="true"] .trailing > [data-mirrors] {
+  visibility: visible;
+}
+
+@media (hover: hover) {
+  .row:hover .trailing > [data-mirrors] {visibility: visible;}
+}
+
+/* chevrons, bullets and gap rows' commands: quiet controls at the outline's size. */
 .control {
+  position: relative;
   display: inline-flex;
-  flex-shrink: 0;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: var(--outline-control-size);
-  height: var(--outline-control-size);
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
   background: none;
   color: var(--ink-muted);
-  text-decoration: none;
   font: inherit;
+  text-decoration: none;
   cursor: pointer;
 }
 
 .control:hover {
   color: var(--ink);
-  background: var(--surface-hover);
 }
 
 .leading:focus-visible,
@@ -70,12 +154,85 @@
   outline-offset: var(--focus-ring-offset);
 }
 
+/* the chevron shows itself when usable: row hover, its own focus, or selection. */
+.leading > [data-outline-disclose] > .control {
+  z-index: 2;
+  flex: 1;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-snap);
+}
+
+.row:hover .leading > [data-outline-disclose] > .control,
+.row[data-selected="true"] .leading > [data-outline-disclose] > .control,
+.leading > [data-outline-disclose]:focus-within > .control {
+  opacity: 1;
+}
+
+/* the bullet is the slot's own one-line box. the note marker is drawn as a 6px dot over its transparent text;
+   glyph markers draw themselves. the 16px halo behind either says the row hides children. */
 .bullet {
-  font-size: var(--text-lg);
-  line-height: 1;
+  display: flex;
+  width: calc(var(--outline-text-start) - var(--outline-disclose));
+  height: 1lh;
+  isolation: isolate;
+}
+
+.bullet:not(:has(svg)),
+.bullet:not(:has(svg)):hover {
+  color: transparent;
+}
+
+.bullet::before,
+.bullet:not(:has(svg))::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: auto;
+  border-radius: 50%;
+}
+
+.bullet::before {
+  z-index: -1;
+  width: 16px;
+  height: 16px;
+  background: var(--surface-3);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-snap);
+}
+
+.row:has(> .head [data-outline-disclose] > [aria-expanded="false"]) .bullet::before {
+  opacity: 1;
+}
+
+.bullet:not(:has(svg))::after {
+  width: 6px;
+  height: 6px;
+  background: var(--outline-dot);
+}
+
+.bullet:not(:has(svg)):hover::after {
+  background: var(--ink);
 }
 
 @media (any-pointer: coarse) {
-  .row {--outline-control-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
-  .content {padding-top: var(--space-2);}
+  .row {--outline-pad: 4px; --outline-disclose: 0px;}
+  .leading > [data-outline-disclose] {display: none;}
+  /* the bullet spans its row: the line and both pads, the pads given back so adjacent targets abut. */
+  .bullet {height: calc(1lh + 2 * var(--outline-pad)); margin-block: calc(-1 * var(--outline-pad));}
+  .row > [data-outline-guides] > span {pointer-events: none;}
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bullet::before,
+  .leading > [data-outline-disclose] > .control {transition: none;}
+}
+
+/* forced colours drop fills: the selection keeps a system outline, the halo its ring, the dot its ink. */
+@media (forced-colors: active) {
+  .row[data-selected="true"] > .head {outline: 1px solid Highlight; outline-offset: -1px;}
+  .bullet::before {border: 1px solid CanvasText;}
+  .bullet:not(:has(svg)) {forced-color-adjust: none;}
+  .bullet:not(:has(svg)):focus-visible {outline-color: Highlight;}
+  .bullet:not(:has(svg))::after {background: CanvasText;}
 }

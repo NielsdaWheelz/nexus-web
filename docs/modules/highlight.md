@@ -59,7 +59,10 @@ endpoints, literal text projection, bounded views and capture revision. native
 reader ranges enter through `text/excerpt.ts` before canonical normalization;
 server captures use `services/source_excerpt.py` and the same semantic helper.
 paragraphs, explicit breaks, preformatted whitespace, inline emphasis, lists,
-tables and direction remain source facts. current reader typography owns reflow.
+tables and direction remain source facts. current reader typography owns reflow,
+except that a `Column` or `Sheet` companion sets the leading and caps the size at
+`min(reader, max(14px, reader * --excerpt-scale), --excerpt-max-size)` through its
+content tokens, and a quote's headings take the quote's size and leading.
 the host supplies a required read-only profile: the workspace projects its live
 reader settings; the downloaded shelf supplies the same profile as its source.
 quotation rendering neither edits settings nor fetches a substitute profile.

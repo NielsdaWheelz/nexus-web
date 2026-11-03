@@ -53,7 +53,7 @@ import { authoredItem } from "@/lib/notes/presentation";
 import ReaderExcerpt from "./ReaderExcerpt";
 import {ResourceTypeIcon} from "./ResourceType";
 import ResourceMetadata from "./ResourceMetadata";
-import {ResourceBranch, ResourceOutlineContext} from "./ResourceOutlineList";
+import {outlineRowFocusTarget, ResourceBranch, ResourceOutlineContext} from "./ResourceOutlineList";
 import styles from "./ResourceOutline.module.css";
 import factualStyles from "./ResourceContent.module.css";
 
@@ -91,6 +91,8 @@ type Shared = {
   beforeCollapse?: () => Promise<boolean>;
   annotationFocusRequest?: number | null;
   onAnnotationClose?: () => void;
+  /** The body of a containing outline row, which owns the leading column: this row's controls trail its content. */
+  inRow?: boolean;
 };
 type Props = Shared & (
   | {item: Item; resourceRef?: never; historical?: boolean}
@@ -231,7 +233,7 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
     : resource.excerpt !== null ? <div className={props.inSource ? styles.quotation : styles.reference}>
       {props.inSource ? <SelectedQuote excerpt={resource.excerpt} color={resource.color} href={href} label={label}/> : <>
         {sourceLabel || href ? <PrimaryLink href={href} label={label}>{sourceLabel ? localResourceLabel(sourceLabel) : "highlight"}</PrimaryLink> : null}
-        <FullResourceBody item={authoredItem(resource, props.readingRef ?? null)} />
+        <FullResourceBody item={authoredItem(resource, props.readingRef ?? null, href)} />
       </>}
       <HighlightAnnotation highlightRef={props.subject} occurrenceKey={props.occurrenceKey} editable={editable} offerBlank={!props.inSource} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
     </div>
@@ -247,7 +249,7 @@ function AuthoredRow({read,...props}: Shared & {subject: string; read: ReturnTyp
 
 function Occurrence({presentation, occurrenceKey, incoming, connection, onChanged,
   sourceContent, resourceDetails, details, rootProps, rowRef,
-  historical = false, editable: _editable = true, annotationFocusRequest: _annotationFocusRequest = null, onAnnotationClose: _onAnnotationClose, rowActions, ...props}: Shared & {presentation: Presentation}) {
+  historical = false, editable: _editable = true, annotationFocusRequest: _annotationFocusRequest = null, onAnnotationClose: _onAnnotationClose, rowActions, inRow = false, ...props}: Shared & {presentation: Presentation}) {
   const {ref, label, href, item, highlightId} = presentation;
   const parsed = parseResourceRef(ref);
   // justify-defect: every occurrence names a canonical displayed resource.
@@ -308,7 +310,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const open = projection.kind === "resource" &&
     (outline?.view.folds.get(occurrenceKey) ?? localOpen ?? (highlightId !== null && !props.inSource));
   useLayoutEffect(()=>{
-    if(!hasControl&&lostArrowFocus.current){const row=element.current,bullet=row?.querySelector<HTMLElement>("[data-outline-bullet]");(bullet&&!bullet.matches(":disabled")?bullet:row)?.focus({preventScroll:true});}
+    if(!hasControl&&lostArrowFocus.current&&element.current)outlineRowFocusTarget(element.current).focus({preventScroll:true});
     lostArrowFocus.current=false;
   },[hasControl]);
   const childrenId = useId();
@@ -329,7 +331,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     // A nested fact may retire its whole ancestor once its list refreshes.
     const neighbours = fallback && row?.parentElement !== fallback ? [fallback]
       : [row?.nextElementSibling, row?.previousElementSibling, row?.parentElement?.closest("li")].flatMap(node => node
-        ? [node.querySelector<HTMLElement>("[data-row-focusable]:not(:disabled)") ?? (node as HTMLElement)] : []);
+        ? [outlineRowFocusTarget(node as HTMLElement)] : []);
     if (fallback && !neighbours.includes(fallback)) neighbours.push(fallback);
     let ownsFocus = true;
     const release = () => { ownsFocus = false; };
@@ -384,17 +386,17 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
       aria-label={`${open ? "collapse" : "expand"} linked resources for ${label}`} aria-expanded={open}
       aria-controls={open ? childrenId : undefined} disabled={item?.missing === true || disclosureDisabled}
       onClick={toggle} data-row-focusable="true"><Icon.Disclose open={open} size={14}/></button>
-    : <span className={styles.spacer} aria-hidden="true"/>;
+    : null;
+  const anchor = commands.length ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
+    sections={[{id: "Occurrence", actions: commands}]}
+    label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({});
   if (projection.kind === "omit") return null;
   return <ResourceBranch value={childrenBranch}>
-    <li {...rootProps} ref={attachRow} className={cx(styles.row, rootProps?.className)}
+    <li {...rootProps} ref={attachRow} className={cx(styles.row, inRow && styles.inRow, rootProps?.className)}
       tabIndex={rootProps?.tabIndex ?? 0} aria-label={rootProps?.["aria-label"] ?? `outline item: ${label}`}
       data-outline-occurrence={occurrenceKey} data-resource-ref={ref}>
       <div className={styles.head}>
-        {disclosure}
-        {commands.length ? <ContextualActionMenu navigation={null} title={label} subjectKey={`relationship:${occurrenceKey}`}
-          sections={[{id: "Occurrence", actions: commands}]}
-          label={`relationship actions for ${label}`} renderContextAnchor={bullet}/> : bullet({})}
+        {inRow ? null : anchor}
         <div className={styles.content}>
           {presentation.primary}
           {sourceContent}
@@ -413,21 +415,22 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
             fork: touch && runtime && item.activation.kind === "route" && item.activation.href !== null
               ? paneForkLink({ runtime, target: { href: item.activation.href, labelHint: label }, disabledReason: null }) : null,
           }} showSourceSubject={item !== null && item.action_ref !== item.ref}
-          sections={rowActions ? [{id: "Occurrence", actions: rowActions}] : []} label={`more actions for ${label}`}/></div>
+          sections={rowActions ? [{id: "Occurrence", actions: rowActions}] : []} label={`more actions for ${label}`}/>
+          {inRow ? anchor : null}{disclosure}</div>
       </div>
       {open ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
-        <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey} ancestors={[...childrenBranch.ancestors.keys()]}/></section></div> : null}
+        <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/></section></div> : null}
     </li>
   </ResourceBranch>;
 }
 
 /** An expanded occurrence: its local links, then its separately failable server facts. */
-function Children({ownerRef, localOwnerRef, occurrenceKey, ancestors}: {ownerRef: string; localOwnerRef:string|null; occurrenceKey: string; ancestors: readonly string[]}) {
+function Children({ownerRef, localOwnerRef, occurrenceKey}: {ownerRef: string; localOwnerRef:string|null; occurrenceKey: string}) {
   const branch=useContext(ResourceBranch);
   const remote = useRemoteConnections(ownerRef, occurrenceKey, useChangeStamp("Metadata"));
   return <>
-    <LocalOutline rootRef={ownerRef} ancestors={ancestors} occurrencePrefix={occurrenceKey}/>
-    {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} ancestors={[...ancestors,localOwnerRef]} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
+    <LocalOutline rootRef={ownerRef} occurrencePrefix={occurrenceKey}/>
+    {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
     <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
       onChanged={() => void remote.refetch().catch(() => undefined)}/>
   </>;

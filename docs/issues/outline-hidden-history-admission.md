@@ -1,5 +1,7 @@
 # unperformed hidden-history pressure probe
 
+priority: historical unperformed probe, not a current refusal. leave alone unless actual capacity use supplies a reproduction; no stress campaign is planned.
+
 the controller's history-free admission estimate excludes releasable hidden
 baselines while preserving independent frozen captures. real alias-byte and
 manual-retirement controls pass; strict 64-document/16 mib admission remains.

@@ -142,6 +142,9 @@ export function useModalActive(): boolean {
   return useSyncExternalStore(subscribe, hasActiveModal, () => false);
 }
 
+const openerElement = (layer: Layer) =>
+  layer.opener instanceof HTMLElement ? layer.opener : layer.opener?.element ?? null;
+
 /** Portaled controls keep the editing interaction of their real opener. */
 export function ownsOverlayFocus(root: Element, target: Element | null): boolean {
   if (!target) return false;
@@ -149,7 +152,7 @@ export function ownsOverlayFocus(root: Element, target: Element | null): boolean
   for (const layer of layers) {
     const options = layer.options.current;
     if (options.kind === "tooltip") continue;
-    const opener = layer.opener instanceof HTMLElement ? layer.opener : layer.opener?.element;
+    const opener = openerElement(layer);
     if (!opener || !owned.some(element => element.contains(opener))) continue;
     if (layer.element) owned.push(layer.element);
     for (const element of options.inside?.() ?? []) if (element) owned.push(element);
@@ -163,6 +166,14 @@ export function interactionOwnedElsewhere(element: Element | null): boolean {
   if (!current) return false;
   if (!element) return true;
   return !current.element?.contains(element) && !current.options.current.inside?.().some((box) => box?.contains(element));
+}
+
+/** Every open interactive layer's opener, focused or not; tooltips have none. */
+export function getOverlayOpeners(): readonly HTMLElement[] {
+  return layers.flatMap((layer) => {
+    const opener = openerElement(layer);
+    return opener ? [opener] : [];
+  });
 }
 
 export function hasActiveInteractionOwner(): boolean {

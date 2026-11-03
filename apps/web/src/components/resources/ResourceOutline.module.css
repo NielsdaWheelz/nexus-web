@@ -2,20 +2,27 @@
   --outline-control-inline-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
   --outline-control-block-size: max(var(--size-xs), calc(var(--text-md) + 2 * var(--space-1)));
   --outline-gap: calc(var(--space-1) / 2);
-  --outline-content-start: calc(2 * (var(--outline-control-inline-size) + var(--outline-gap)));
+  --outline-content-top: 2px;
   min-width: 0;
   overflow-x: auto;
 }
-.row {position: relative; min-width: 0; padding-block: var(--space-1); color: var(--ink);}
-.head {display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0;}
+.row {position: relative; min-width: 0; padding-block: var(--outline-gap); color: var(--ink);}
+.head {position: relative; display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0; min-block-size: var(--outline-control-block-size);}
+.row:not(.inRow) > .head:has(> .actions > .control) {min-block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap));}
 .row[hidden] {display: none;}
 .row[data-selected="true"] > .head {background: var(--accent-muted);}
-.row:focus-visible {outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset);}
+.row:focus-visible {outline: var(--focus-ring-width) solid var(--ring); outline-offset: calc(-1 * var(--focus-ring-width));}
+/* the body of an outline row: its text takes the row's type and sits on the row's first line. */
+.inRow {padding-block: 0;}
+.inRow > .head > .content {padding-top: 0; font-size: inherit; line-height: inherit;}
+.inRow > .head > .content::before {display: none;}
+.inRow > .head > .actions {position: static; flex-direction: row; align-items: flex-start;}
 .reference {display: inline; white-space: normal;}
-.quotation {display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1);}
+/* margins, not a grid's gap: a grid would refuse the hole's float. */
+.quotation > * + * {margin-block-start: var(--space-1);}
 .separator {color: var(--ink-muted);}
 @media (any-pointer: coarse) {
-  .outline {--outline-control-inline-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1))); --outline-control-block-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1)));}
+  .outline {--outline-control-inline-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1))); --outline-control-block-size: max(var(--size-xl), calc(var(--text-md) + 2 * var(--space-1))); --outline-content-top: var(--space-2);}
 }
 .list {
   position: relative;
@@ -41,19 +48,14 @@
   text-decoration: none;
   font: inherit;
 }
-.spacer {
-  display: inline-block;
-  flex-shrink: 0;
-  width: var(--outline-control-inline-size);
-  height: var(--outline-control-block-size);
-}
 .control:hover {
   color: var(--ink);
   background: var(--surface-hover);
 }
+/* inside the box: the bullet and the right column sit on the edges of `.outline`, which scrolls and so clips. */
 .control:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
-  outline-offset: var(--focus-ring-offset);
+  outline-offset: calc(-1 * var(--focus-ring-width));
 }
 .control[disabled] {
   cursor: default;
@@ -69,12 +71,25 @@
 .content {
   flex: 1;
   min-width: 0;
-  padding-top: 2px;
-  font-size: var(--text-base);
-  line-height: var(--leading-normal);
+  padding-top: var(--outline-content-top);
+  font-size: var(--content-font-size, var(--text-base));
+  line-height: var(--content-line-height, var(--leading-normal));
   overflow-wrap: anywhere;
   user-select: text;
 }
+/* the hole `⋯` sits in: the first line wraps it, later lines run full. a flex item contains its float. */
+.content::before {
+  content: "";
+  float: inline-end;
+  inline-size: calc(var(--outline-control-inline-size) + var(--outline-gap));
+  block-size: calc(var(--outline-control-block-size) - 2 * var(--space-1));
+}
+.head:has(> .actions > .control) > .content::before {
+  block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap) - var(--outline-content-top));
+}
+/* a textarea clears a float, so it takes the column as padding instead. */
+.content:has(textarea) {padding-inline-end: calc(var(--outline-control-inline-size) + var(--outline-gap));}
+.content:has(textarea)::before {display: none;}
 .primaryLink {
   color: inherit;
   text-decoration: none;
@@ -94,19 +109,20 @@
   gap: 0 var(--space-1);
   align-items: baseline;
   color: var(--ink-muted);
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
+  font-size: var(--content-meta-font-size, var(--text-sm));
+  line-height: var(--content-line-height, var(--leading-normal));
   margin-top: 2px;
 }
+/* `⋯`, then any disclosure under it, in the column the content's hole leaves. */
 .actions {
   --control-min-size: var(--outline-control-inline-size);
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  min-width: 0;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: flex-end;
   gap: var(--outline-gap);
-  min-height: var(--outline-control-block-size);
 }
 .children {
   margin-inline-start: var(--space-4);
@@ -115,15 +131,6 @@
 .details,
 .status {
   margin: var(--space-1) 0;
-  font-size: var(--text-sm);
+  font-size: var(--content-meta-font-size, var(--text-sm));
   color: var(--ink-muted);
-}
-.textButton {
-  --control-min-size: var(--size-lg);
-  text-align: left;
-}
-@media (any-pointer: coarse) {
-  .content {
-    padding-top: var(--space-2);
-  }
 }

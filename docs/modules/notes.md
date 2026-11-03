@@ -219,8 +219,10 @@ terminal references and an open query never borrow that command. escape selects
 an item; a second escape returns to its bullet. native traversal skips item
 text in either direction and can return to the admitted root or insertion field.
 root text, insertion fields and annotation bodies retain native tab behavior.
-idle editable item text reserves tab/shift-tab and the move chord for outline
-structure; unavailable single-item moves are silently refused. native links and
+idle editable item text reserves tab/shift-tab, the move chord and the fold chord
+for outline structure. every arrangement, by key or drop, is one plan over the
+topmost selected occurrences, lowered as one batch, one history group and one
+undo; a refusal is one sentence in the outline's status. native links and
 buttons keep their own keys.
 shift-click across item text or row background selects the inclusive visible
 range from a fixed occurrence anchor. only the descendant view's active text
@@ -230,10 +232,19 @@ bullet links keep their navigation. selection excludes root/insertion fields,
 keeps embedded scopes separate, refuses paging gaps, and retains exact membership
 across incoming updates. it never identifies occurrences by resource ref.
 block mode disables native text editing while retaining focus and structural
-commands. typing, composition, return, paste, formatting and cut are inert;
-copy retains visible-row semantics: editable bodies by value, reference
-appearances by reference. plain text click or f2 resumes editing;
-escape returns to the endpoint bullet. single-item movement remains separate.
+commands. typing, composition and formatting are inert; return edits the first
+selected item at its end. copy writes the topmost occurrences by reference, with
+indented plain text beside them; cut copies, then removes them in one gesture.
+paste, with items selected or into an empty item, links each copied ref after the
+last selected item or above the empty one, skipping pairs already linked under
+that parent; plain lines become new notes at their indented depths, the empty item
+taking the first. one paste is one batch; copied notes are linked, never
+duplicated. plain text click or f2 resumes editing; escape returns to the endpoint
+bullet. move up/down takes every selected run, all or nothing, and stops at the
+first or last sibling. a destination whose pair already has a visible link moves
+that link: a drop onto a parent that already links the item gives that link the
+drop's place and removes the source link. alt at release links the item under the
+destination as well.
 row controls keep the host read-only until pointer, f2 or certified native-tab
 entry admits text editing. selection observation never enables editing.
 selection and history announcements use the outline's existing polite status;
@@ -244,9 +255,11 @@ synchronously before selection observation; pointer and later keyboard intent
 revoke it, and explicit focus replaces it. the same selection notifications retry
 an entry held by input ownership; its row, ref, field kind and lease must still
 match. native tab still chooses its target.
-flat structural moves and return execute once per press; held backward/forward text
-deletion retains the native repeat path. local writes already sequence through
-the same runtime tail, without an additional keyboard queue.
+flat structural moves and return execute once per press; held backward/forward
+deletion repeats inside the current field and stops at its boundary. hardware
+keyup re-arms deletion. a keyboard without release identity requires a caret tap
+or another editing action to re-arm boundary deletion; elapsed time never does.
+local writes sequence through the same runtime tail, without a keyboard queue.
 
 the outer projection replaces complete changed rows at row boundaries. isolating
 row wrappers never enter the inline input fitter; binding owns inline diffs.
@@ -258,17 +271,25 @@ cannot acquire the moved occurrence's identity. newer user intent cancels delaye
 focus and targeted window changes; programmatic selection does not cancel its
 own operation. append uses the proven absolute tail.
 
-within the descendant outline, return splits prose at the selection; an empty
-nested item outdents. an empty top-level item stays empty. backward/forward
-deletion at a boundary joins adjacent notes; deleting an empty item unlinks its
-occurrence. in a body with no such intent, deleting in an empty code body returns it
-to prose, one format edit with history boundaries on both sides. it leaves no empty
-code body, so a held key stops there. code return remains an
-in-note break. its native DOM parser preserves literal newlines; clipboard slices
-retain their separate existing import policy. block commands normalize selected
-ancestors and descendants to topmost occurrences. indent/outdent plans complete
-sibling runs against one snapshot; removal unlinks only those roots' incoming
-relationships. resources, internal links and independent relationships survive.
+within the descendant outline, return splits prose at the selection. at the
+item's start it births an empty item above and the text keeps its identity; at
+the end of an open, loaded parent it births the first child. an empty nested item
+outdents first; an empty top-level item stays empty. backward deletion at the
+start joins the item into the previous visible row; forward deletion at the end
+pulls in the next sibling; deleting an empty item unlinks its occurrence. an item
+with proven children (a window proof, shown rows or pending writing beneath)
+refuses both, with `remove its children first` or `join its children first`.
+while an arrangement is unresolved, boundary deletion and first-child insertion
+refuse immediately; they never replay against later typing.
+in a body with no such intent, deleting in an empty code body returns it to
+prose, one format edit with history boundaries on both sides. it leaves no empty
+code body, so a held key stops there. code return remains an in-note break. its native DOM parser preserves literal
+newlines; clipboard slices retain their separate existing import policy. block
+commands normalize selected ancestors and descendants to topmost occurrences.
+indent/outdent plans complete sibling runs against one snapshot, and outdent
+adopts the following siblings, so no visible line changes place; removal unlinks
+only those roots' incoming relationships. resources, internal links and
+independent relationships survive.
 the relationship menu still names one exact edge. range removal enters the next
 survivor's text start, otherwise the previous survivor's end or empty insertion
 field. read-only survivors receive block selection. the removal press remains
@@ -293,13 +314,22 @@ metadata afterward. following typing, return and undo use those same documents
 and their real undo managers; no receipt-time body replay or inverse snapshot
 restore is involved. deferred graph preparation waits for a predecessor's
 eventual receipt, while its first failure remains visible through the original
-error owner. exact immutable retry stays with the runtime.
+error owner. a birth beside an arranging occurrence captures that predecessor's
+placement future, while admitting its canonical text and history synchronously.
+typing and focus enter the new field before later input; graph preparation uses
+the predecessor's resolved parent and anchors. relationship receipts publish only
+while they still own the field's link and match its actual endpoint pair. exact
+immutable retry stays with the runtime.
 
 range history separates input bookmarks from occurrence placement/proof data.
 each gesture pins its selection and predecessor proofs, reserves the existing
 runtime tail, and prepares one complete graph batch under its account lease.
 canonical metadata checks hidden destination collisions and position allocation
-at one revision. expected refusal publishes no placements, consumes no sequence,
+at one revision. queued gestures order their captured, shown siblings by current
+stored positions under that command lease; old neighbor bookmarks do not reorder
+later births. captured relationship witnesses still own membership changes. a
+pending reparent across an unloaded sibling gap refuses instead of guessing.
+expected refusal publishes no placements, consumes no sequence,
 and never enters the save-failure lane. exact byte/retention limits refuse the
 whole command; both stored replay directions must fit the atomic command limit.
 replay also reserves within the existing total editing budget before moving its
@@ -316,6 +346,12 @@ an independently surviving incoming relationship remains visible. semantic
 projection repairs a newer selection's missing endpoints without taking focus.
 newer meaningful input revokes delayed focus; inert block input does not.
 session undo is not persisted.
+
+full roam or obsidian parity is outside this editor's target. excluded behaviors
+are cross-pane drag, selection or expand-all beyond one loaded window, synced
+fold state, non-contiguous selection, branch paste by value, a separate zoom mode
+or zoom chords, an in-document title, and `⌘K` inside the editor. the bullet opens
+an ordinary pane; those omissions do not require further implementation.
 
 receipt adoption acknowledges only its admission. it never overwrites later
 writing, placement or the editing host. canonical settlement also clears the
@@ -394,9 +430,9 @@ undo and redo. the shared render-environment owner detects touch capability with
 `any-pointer: coarse`, independently of layout. hardware keyboards use the
 outline shortcuts listed in settings; platform modifiers share `usesMeta`. no insert or finish-editing control is
 needed: return inserts and moving focus ends text editing.
-window navigation uses the same native-control recipe and comfortable touch size
-as other commands. noneditable islands remain interactive without being treated
-as soft-keyboard entry through the surrounding editor.
+window navigation uses the rows' quiet text controls at the outline's type size.
+noneditable islands remain interactive without being treated as soft-keyboard
+entry through the surrounding editor.
 android reports actual keyboard visibility through its existing bridge; an inset
 of zero alone does not imply dismissal. hiding the keyboard hides the touch
 accessory without blurring the editor, changing its caret or revoking input.
@@ -406,11 +442,23 @@ blocks always retain their touch commands. native keyboard hiding also restores
 the mobile player without changing focus; browsers retain their focus-based
 player suppression.
 
-writing rows keep a leading opening link and a trailing disclosure only for
-projected parents. notes and uncommitted drafts use dots; other resources use the
-canonical scheme glyph. currently unmarked roots, tail and continuation rows stay
-unmarked. markers remain noneditable chrome outside `contentDOM`; glyphs never
-enter authored bodies, history or clipboard serialization. opening and relationship
+writing rows lead with a disclose slot, then the bullet. the chevron fills the
+slot only for projected parents and shows on hover, focus or selection; with any
+coarse pointer the slot is gone and collapse lives in the bullet's menu. fold
+state lives with the session, keyed by occurrence, and is never written;
+a return reopens what was open; a fresh visit starts closed.
+a bullet click opens the item through `?via=` its entering link, which the opened
+outline excludes; a press lifts it for a drag (with touch a 250ms hold, released
+in place opening the item menu). each row publishes its occurrence's link path as
+`data-note-block-id`, the pane's return anchor; top-level rows keep the bare link
+id. return restoration waits for the initially open windows to paint or fail.
+a count pill trails an item linked
+under more than one loaded parent. notes and uncommitted drafts use dots, other
+resources the canonical scheme glyph, terminal occurrences the earlier-occurrence
+arrow; a halo behind the marker says the row hides children. currently unmarked
+roots, tail and continuation rows stay unmarked. markers remain noneditable chrome
+outside `contentDOM`; glyphs never enter authored bodies, history or clipboard
+serialization. opening and relationship
 menus retain the same native control and focus target. retaining an open empty
 input does not establish child
 availability. they disclose authored local links, excluding relationships

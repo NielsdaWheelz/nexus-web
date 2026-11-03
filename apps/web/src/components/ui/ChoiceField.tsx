@@ -1,11 +1,15 @@
-import { useId, type ReactNode, type Ref } from "react";
+import { useId, type ReactElement, type ReactNode, type Ref } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ChoiceField.module.css";
 import selection from "./Selection.module.css";
+import Tooltip from "./Tooltip";
 
-/** Native selection, including radio-group arrow keys and checkbox space. */
+/**
+ * Native selection, including radio-group arrow keys and checkbox space. A `Facet`
+ * draws only the exception: unchecked dims and slashes its icon. `help` is a tooltip.
+ */
 export default function ChoiceField({
-  label, checked, onChange, disabled, type = "checkbox", name, value, description, presentation = "Inline",
+  label, checked, onChange, disabled, type = "checkbox", name, value, description, presentation = "Inline", icon, help,
   ref, "aria-describedby": describedBy,
 }: {
   readonly label: ReactNode;
@@ -16,19 +20,29 @@ export default function ChoiceField({
   readonly name?: string;
   readonly value?: string;
   readonly description?: string;
-  readonly presentation?: "Inline" | "Segment";
+  readonly presentation?: "Inline" | "Segment" | "Facet";
+  readonly icon?: ReactElement;
+  readonly help?: string;
   readonly ref?: Ref<HTMLInputElement>;
   readonly "aria-describedby"?: string;
 }) {
   const labelId = useId();
   const descriptionId = useId();
-  const segment = presentation === "Segment";
+  const classes = {
+    Inline: { label: styles.choice, input: undefined, icon: undefined },
+    Segment: { label: cx(styles.segment, selection.surface, selection.target, checked && selection.selected), input: styles.coveringInput, icon: undefined },
+    Facet: { label: cx(styles.facet, selection.surface, selection.target), input: styles.coveringInput, icon: styles.facetIcon },
+  }[presentation];
+  // a caller's description owns spoken help; the tooltip describes only without one.
+  const described = cx(describedBy, description && descriptionId) || undefined;
   return (
-    <label className={segment ? cx(styles.segment, selection.surface, selection.target, checked && selection.selected) : styles.choice}>
-      <input ref={ref} className={segment ? styles.segmentInput : undefined} type={type} name={name} value={value}
-        checked={checked} disabled={disabled} aria-labelledby={labelId}
-        aria-describedby={cx(describedBy, description && descriptionId) || undefined}
-        onChange={(event) => onChange(event.currentTarget.checked)} />
+    <label className={classes.label}>
+      <Tooltip text={help ?? ""} disabled={help === undefined} triggerRef={ref} renderTrigger={tooltip =>
+        <input {...tooltip} className={classes.input} type={type} name={name} value={value}
+          checked={checked} disabled={disabled} aria-labelledby={labelId}
+          aria-describedby={described ?? tooltip["aria-describedby"]}
+          onChange={(event) => onChange(event.currentTarget.checked)} />}/>
+      {icon ? <span className={classes.icon} aria-hidden="true">{icon}</span> : null}
       <span>
         <span id={labelId}>{label}</span>
         {description ? <span id={descriptionId} className={styles.description}>{description}</span> : null}

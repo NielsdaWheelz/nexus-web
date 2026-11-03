@@ -1,4 +1,4 @@
-// The Nexus vocabulary: what a row is, where it leads, and which page the launcher shows.
+// The Nexus vocabulary: what a row is, where it leads, how the list holds, and which page the launcher shows.
 import type * as Icon from "@/lib/ui/icons";
 import type { RecentEntry } from "@/lib/recent/model";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
@@ -60,7 +60,6 @@ export type NexusTarget =
     }
   | { readonly kind: "ResumeCurrentPlayback" }
   | { readonly kind: "OpenAdd"; readonly seed: AddSeed }
-  | { readonly kind: "CreatePage"; readonly titleDraft: string }
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
@@ -78,16 +77,24 @@ export type NexusAction =
   | { readonly kind: "Available"; readonly target: NexusTarget }
   | { readonly kind: "Unavailable"; readonly reason: string };
 
-export type NexusRankTier = "ExplicitIntent" | "Exact" | "PrefixOrToken" | "Substring" | "Lexical" | "FuzzyOrSynonym" | "Semantic";
+/** Law 4's tiers, strongest first. */
+export type RankTier = "ExplicitIntent" | "Latched" | "Exact" | "PrefixOrToken" | "Abbreviation" | "Substring" | "Lexical" | "Semantic";
+export type NexusStream = "Navigation" | "Local" | "Recent" | "Resources" | "Saved" | "Passages";
+/** `usages[query_normalized][canonical href]`; the untyped aggregate is `""`. */
+export type UsageMap = Schema<"NexusUsageMapOut">["usages"];
 
 export interface NexusRow {
-  /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", …: identity and last tie-break. */
+  /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", "Recent:<target>", "Continuation:<id>", …: identity and last tie-break. */
   readonly key: string;
   readonly localMatch: LocalMatch | null;
   readonly label: string;
   readonly icon: Icon.Glyph;
-  readonly type?: string;
-  readonly detail?: string;
+  /** The facts line's byline or reason: contributors, a source, a state word. */
+  readonly detail?: string | null;
+  /** Keep the supplement line's geometry while its text changes. */
+  readonly reserveDetail?: boolean;
+  /** Bylines a query may match as Substring. */
+  readonly keywords?: readonly string[];
   readonly state?: "Current" | "Minimized";
   readonly item?: Schema<"ResourceItemOut">;
   readonly match?: Schema<"SearchMatchOut"> | null;
@@ -100,19 +107,47 @@ export interface NexusRow {
   /** Whether an accepted selection of this row contributes to server selection ranking. */
   readonly learns_selection?: boolean;
   readonly recentEntry?: RecentEntry;
-  readonly rank: { readonly stream: "Navigation" | "Local" | "Resources" | "Saved" | "Passages"; readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
+  /** The raw destination; `rank.canonicalHref` derives the identity the latch and frecency key on. */
+  readonly href: string | null;
+  /** Matched by content only; released on keystroke. */
+  readonly evidence: boolean;
+  readonly frecency: number;
+  /** Newer is larger; the comparator's second tie-break. */
+  readonly recency: number;
+  readonly rank: { readonly tier: RankTier; readonly stream: NexusStream };
 }
 
 export interface NexusGroup {
-  readonly id: "Open" | "Continue" | "Recent" | "QuickActions" | "Places" | "Results" | "Continuations";
+  readonly id: "Here" | "Open" | "Recent" | "QuickActions" | "Results" | "Continuations";
   readonly label: string;
   readonly rows: readonly NexusRow[];
 }
+
+/** A query's list: held and arriving rows, with a fresh latch first, and what enter fires. */
+export interface NexusList {
+  readonly identity: string;
+  readonly rows: readonly NexusRow[];
+  /** Keys painted at the keystroke; other rows arrived, including a latch prepended ahead of them. */
+  readonly held: readonly string[];
+  readonly armed: string | null;
+  readonly armedAt: number;
+  readonly deliberate: boolean;
+  /** The row armed before the latest arming, only while it is still in rows. */
+  readonly previous: string | null;
+  readonly paintedAt: number;
+}
+
+export type FireTarget = { readonly kind: "Fire"; readonly key: string } | { readonly kind: "Wait"; readonly until: number } | { readonly kind: "None" };
+
+/** The verb rail over one row: which row, the focused descriptor id and the typed filter. */
+export type Rail = { readonly key: string; readonly focus: string | null; readonly filter: string } | null;
 
 export type NexusSource = "Direct" | "Lexical" | "Hybrid" | "Reference";
 
 export interface NexusPane {
   readonly id: string;
+  /** One-based position in workspace strip order, independent of matching subsets and mru. */
+  readonly position: number;
   readonly href: string;
   readonly resourceRef: string | null;
   readonly visibility: "visible" | "minimized";
@@ -120,7 +155,7 @@ export interface NexusPane {
   readonly current: boolean;
 }
 
-export type NexusRootMode = "Overview" | "Search" | "NewPane";
+export type NexusRootMode = "Blank" | "Typed";
 export interface NexusRootOrigin {
   readonly mode: NexusRootMode;
   readonly control: string;

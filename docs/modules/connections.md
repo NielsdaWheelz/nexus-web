@@ -85,10 +85,12 @@ body stays empty. apparatus producers trim canonical text, so the bounded head
 retains this empty/nonempty distinction. source details apply the same quote
 contract; location reasons do not grant or deny insertion.
 
-the reader exposes four quiet native checkbox facets below its margin/all radio
-choice. controls reflow by companion width. counts describe the current view: the
-margin counts placed roots across the document, never just the visible stretch;
-all counts every root. counts are exact only when every contributing source is
+the reader exposes four native checkbox facets, each a glyph and its count, after
+its margin/all radio choice in one row that wraps only when the companion cannot
+hold it. a facet's name is its type label, shown as help on hover and keyboard
+focus, with the count's description beside a dash. counts describe the current
+view: the margin counts placed roots across the document, never just the visible
+stretch; all counts every root. counts are exact only when every contributing source is
 complete and, in the margin, the document is mounted: highlights require local
 annotations and remote evidence; links require local links and remote evidence;
 citations and librarian links require remote evidence. a ready remote map is
@@ -113,9 +115,12 @@ retain folds and sessions; an unheld row remounts its body. pending creations
 remain reachable until a complete post-acknowledgement read accounts for their
 exact edges. composite
 maps preserve the chosen source's media, continuation and placement together.
-selection keeps a root in the aligned layout; only a connected control inside
-that root pins its screen position. replacing an insertion line with an editor
-without a live pin uses the normal placement floor.
+selection keeps a root in the aligned layout. a connected control inside a root
+pins its screen position. an open overlay's opener inside a root, focused or not,
+keeps that root at its place in the list until the overlay closes, unless an
+earlier root is held too; a source movement resets the list's scroll and so still
+moves it on screen. replacing an insertion line with an editor without a live pin
+uses the normal placement floor.
 
 the reader pane admits root occurrences before their resource reads and child
 probes mount. all-items uses measured variable heights and estimated gaps;

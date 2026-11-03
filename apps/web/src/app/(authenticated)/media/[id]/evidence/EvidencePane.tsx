@@ -11,7 +11,6 @@ import { useEvidenceWindow } from "./useEvidenceWindow";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
 import ChoiceField from "@/components/ui/ChoiceField";
-import choiceStyles from "@/components/ui/ChoiceField.module.css";
 import chrome from "@/components/ui/CompactChrome.module.css";
 import RadioGroup from "@/components/ui/RadioGroup";
 import { useCompanionPresentation } from "@/components/workspace/companionPresentation";
@@ -19,6 +18,7 @@ import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { deleteLink } from "@/lib/resourceGraph/links";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { getOverlayOpeners, useInteractionOwner } from "@/lib/ui/overlay";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
 import type { MarkAnchor } from "@/lib/documentReader/DocumentReader";
@@ -26,7 +26,7 @@ import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from
 import type { MediaAnnotationsState } from "../annotations";
 import EvidenceRow, { sourceTextKey, type EvidenceActions, type EvidenceEntry, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
-import { facets, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
+import { facets, FILTER_ICONS, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
 
 interface Placement { key: string; top: number; height: number; displaced: boolean; }
 interface ConnectionsView {
@@ -110,6 +110,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const viewport = useReaderState(reader, (s) => s.viewport);
   const document = useReaderState(reader, (s) => s.document);
   const placement = useReaderState(reader, (s) => s.placement);
+  // placement re-measures as overlays open and close, since a row holds while one it opened is up.
+  const interactionOwner = useInteractionOwner();
   const position = placement ? JSON.stringify([
     placement.identity, placement.point.kind,
     placement.point.kind === "text" ? [placement.point.unit, placement.point.offset] : [placement.point.page, placement.point.y],
@@ -302,10 +304,16 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
       const box = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"] > ul')?.getBoundingClientRect() ?? port.getBoundingClientRect();
       const originY = box.top + port.scrollTop + (pane.current?.scrollTop ?? 0) - alignedPosition.current.outerScrollTop;
       const span = Math.max(viewport.end - viewport.start, 0.001);
+      // a row holds while an overlay it opened is up, focused or not: retained and pinned, its trigger stays put.
+      const holding = new Set(getOverlayOpeners().flatMap(opener => {
+        const row = opener.closest<HTMLElement>("[data-group]:not([hidden])");
+        return row && port.contains(row) ? [row.dataset.group] : [];
+      }));
       const measured = order.flatMap((entry) => {
         const extent = extentOf(entry, doc);
         if (!extent) return [];
-        const retained = held.current.has(entry.key);
+        const holds = holding.has(entry.key);
+        const retained = holds || held.current.has(entry.key);
         if (!retained && extent.kind === "text") {
           const at = structure.fraction(extent.start);
           if (at < viewport.start - span || at > viewport.end + span) return [];
@@ -313,19 +321,25 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
         const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(entry.key)}"]:not([hidden])`);
         if (!geometry && !retained) return [];
-        const y = geometry?.lines[0]?.top ?? geometry?.rect.top ?? row?.getBoundingClientRect().top ?? box.top;
+        const line = geometry?.lines[0];
+        const y = line?.top ?? geometry?.rect.top ?? row?.getBoundingClientRect().top ?? box.top;
         if (!retained && geometry && (geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) return [];
         const primary = row?.querySelector<HTMLElement>("[data-resource-primary]");
-        const passage = primary?.querySelector("mark") ?? primary;
+        const mark = primary?.querySelector("mark");
+        const passage = mark ?? primary;
         const baseline = row && passage ? passage.getBoundingClientRect().top - row.getBoundingClientRect().top : 0;
-        const desired = y - originY - baseline;
+        // the quote's first line centres on the passage's, whose type can be larger. a wrapped
+        // mark's bounding box is the union of its lines, so its first line is its first client rect.
+        const quoteLine = mark?.getClientRects()[0];
+        const desired = y - originY - baseline + (line && quoteLine ? (line.height - quoteLine.height) / 2 : 0);
         const height = row?.getBoundingClientRect().height ?? 32;
         const pin = retained && row && pinned.current?.element.isConnected && row.contains(pinned.current.element) ? pinned.current : null;
         let top = desired;
-        if (pin && row) {
+        if (holds && row) top = row.getBoundingClientRect().top - box.top;
+        else if (pin && row) {
           top = pin.y - box.top - (pin.element.getBoundingClientRect().top - row.getBoundingClientRect().top);
         }
-        return [{ key: entry.key, desired, top, height, y, held: retained, pinned: pin !== null }];
+        return [{ key: entry.key, desired, top, height, y, held: retained, pinned: holds || pin !== null }];
       });
       if (measured.length) {
         let pivot = measured.findIndex((item) => item.held);
@@ -347,7 +361,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     const unsubscribe = reader.subscribe(schedule);
     schedule();
     return () => { unsubscribe(); observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [active, aligned, document, focused, heldKeys, keys, order, position, reader, viewport]);
+  }, [active, aligned, document, focused, heldKeys, interactionOwner, keys, order, position, reader, viewport]);
 
   useLayoutEffect(() => {
     if (!openKey?.isCurrent()) return;
@@ -479,24 +493,24 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
               { value: "all", label: <>all<span className="sr-only"> items</span></> }]}
             onChange={value => chooseView(value === "margin")} />
         </div> : null}
-        <fieldset className={choiceStyles.group}>
+        <fieldset className={styles.facets}>
           <legend className="sr-only">item types</legend>
-          <div className={styles.filters}>
-            {FILTERS.map((filter, index) => {
-              const localStatus = filter === "highlights" ? state.local.status : filter === "links" ? state.links.status : "ready";
-              const count: number | null = localStatus === "ready" && remoteComplete ? totals[filter] : null;
-              const description = count !== null ? count === 1 ? "1 item" : `${count} items`
-                : localStatus === "failed" || state.remote.status === "failed" ? "count unavailable"
-                : remote?.status === "partial" ? "count incomplete" : "count loading";
-              return <Fragment key={filter}>
-                <ChoiceField ref={index === 0 ? firstType : undefined} checked={!hidden.has(filter)}
-                  label={<span className={styles.facetLabel}>{FILTER_LABELS[filter]} <span className={styles.count} aria-hidden="true">{count ?? "—"}</span></span>}
-                  aria-describedby={`${ids}-${filter}`}
-                  onChange={checked => setHidden(current => { const next = new Set(current); if (checked) next.delete(filter); else next.add(filter); return next; })} />
-                <span id={`${ids}-${filter}`} hidden>{description}</span>
-              </Fragment>;
-            })}
-          </div>
+          {FILTERS.map((filter, index) => {
+            const localStatus = filter === "highlights" ? state.local.status : filter === "links" ? state.links.status : "ready";
+            const count: number | null = localStatus === "ready" && remoteComplete ? totals[filter] : null;
+            const description = count !== null ? count === 1 ? "1 item" : `${count} items`
+              : localStatus === "failed" || state.remote.status === "failed" ? "count unavailable"
+              : remote?.status === "partial" ? "count incomplete" : "count loading";
+            const Glyph = FILTER_ICONS[filter];
+            return <Fragment key={filter}>
+              <ChoiceField ref={index === 0 ? firstType : undefined} presentation={Glyph ? "Facet" : "Inline"} checked={!hidden.has(filter)} icon={Glyph ? <Glyph size={16} /> : undefined}
+                label={<><span className={Glyph ? "sr-only" : undefined}>{FILTER_LABELS[filter]}</span>{Glyph ? null : " "}<span className={styles.count} aria-hidden="true">{count ?? "—"}</span></>}
+                help={count === null ? `${FILTER_LABELS[filter]}, ${description}` : FILTER_LABELS[filter]}
+                aria-describedby={`${ids}-${filter}`}
+                onChange={checked => setHidden(current => { const next = new Set(current); if (checked) next.delete(filter); else next.add(filter); return next; })} />
+              <span id={`${ids}-${filter}`} hidden>{description}</span>
+            </Fragment>;
+          })}
         </fieldset>
       </div>
       <div ref={list} className={styles.list} onKeyDown={event => {

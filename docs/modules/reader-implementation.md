@@ -705,10 +705,13 @@ the existing permission fence.
 
 filter identity uses the document-map count keys: `highlights`, `citations`,
 `links`, `machine_links`, in that order. `evidence/model.ts` owns the typed labels
-`highlights`, `citations`, `links`, `librarian links`; controls read each count
-directly by its key. hidden filters, exact-fact reveals and marker classification
-share those keys; presentation labels never determine membership. each filter is
-a shared native `ChoiceField` checkbox named by its label alone. its count
+`highlights`, `citations`, `links`, `librarian links`. the first three draw
+`Icon.Highlight`, `Icon.SourceReference` and `Icon.Link`; librarian links has no
+sign and keeps its visible word. controls read each count directly by its key.
+hidden filters, exact-fact reveals and marker classification share those keys;
+presentation labels and glyphs never determine membership. signed filters are
+`ChoiceField` facets named by their visually hidden labels; librarian links is an
+inline checkbox named by its visible label. its count
 describes the current view; an exact count, zero included, shows as an aria-hidden
 numeral and is described separately (`1 item`, `{n} items`). zero never disables
 a filter.

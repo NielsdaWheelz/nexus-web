@@ -416,7 +416,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
             <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`} containingNoteRef={null}
               body={draft.body} revision={draft.revision} label={draft.bodyRole === "question" ? "question about passage" : "annotation"}
-              reference={composer.reference()} placeholder={draft.bodyRole === "question" || opening.mode === "Ask" ? "ask about this passage…" : "write an annotation…"} compact editable
+              reference={composer.reference()} placeholder={draft.bodyRole === "question" || opening.mode === "Ask" ? "ask about this passage…" : "write an annotation…"} editable
               focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
               onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}

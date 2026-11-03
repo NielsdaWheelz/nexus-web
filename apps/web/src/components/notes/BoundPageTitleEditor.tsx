@@ -11,6 +11,7 @@ import type { EditorHistory } from "@/lib/notes/structure";
 import {FeedbackBusy} from "@/components/feedback/Feedback";
 import AuthoredReadFailure, {DocumentReadFailure} from "./AuthoredReadFailure";
 import Textarea from "@/components/ui/Textarea";
+import styles from "./BoundPageTitleEditor.module.css";
 import type { TextEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -169,7 +170,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     <FeedbackBusy subject={pageRef} pending={pending}/>
     <AuthoredReadFailure error={error} occurrence={occurrence} pending={pending} retry={retry}/>
     {document ? <DocumentReadFailure document={document}/> : null}
-    <Textarea bare autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
+    <Textarea bare className={styles.title} autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} placeholder={placeholder} disabled={!editable || !document}
     onPointerDown={() => {inputIntent.current++;}}
     onInput={() => {const release = nativeRelease.current; queueMicrotask(release);}}
     onSelect={() => {inputIntent.current++; const at = selection(); beforeSelection.current = at; onSelectionChange?.(at);}}
@@ -180,7 +181,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
       inputIntent.current++;
       if (event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
       const command = outlineStructuralCommand(event, platform);
-      if (command && structuralKeys) {event.preventDefault(); const at = selection(); if (command === "indent") structuralKeys.indent?.(at); else if (command === "outdent") structuralKeys.outdent?.(at); else structuralKeys.move?.(command === "move_up" ? "up" : "down",at); return;}
+      if (command && structuralKeys) {event.preventDefault(); if (command === "indent") structuralKeys.indent?.(); else if (command === "outdent") structuralKeys.outdent?.(); else structuralKeys.move?.(command === "move_up" ? "up" : "down"); return;}
       if (event.key === "Escape" && structuralKeys?.selectBlock) {event.preventDefault(); structuralKeys.selectBlock(); return;}
       if (event.key === "Escape" && !structuralKeys) {event.preventDefault(); event.currentTarget.blur(); return;}
       if (value.length === 0 && structuralKeys?.emptyDelete && (event.key === "Backspace" || event.key === "Delete")) {event.preventDefault(); structuralKeys.emptyDelete(event.key === "Backspace" ? "backward" : "forward"); return;}

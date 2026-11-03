@@ -7,10 +7,13 @@ export type InputBookmark = {kind: "text"; row_id: string; ref: string; range: F
   resolveBefore?: (document: WritingDocument) => FocusSelection;
   resolve: ((document: WritingDocument) => FocusSelection) | null} | ({kind: "blocks"} & BlockRange) | null;
 export type Placement = {row_id: string; ref: string; parent_id: string; parent_ref: string; after_id: string | null; before_id: string | null};
-export type PlacementDelta = {before: Placement; after: Placement | null};
-export type RangeCommand = "indent" | "outdent" | "remove";
-export type RangePlan = {command: RangeCommand; changes: readonly PlacementDelta[]; selection_before: InputBookmark; selection_after: InputBookmark};
-export type RangeReason = "unavailable" | "gap" | "scope" | "no_preceding" | "top_level" | "invalid_parent" | "shared_edge" | "collision" | "changed" | "capacity" | "retired";
+/** A mirror keeps its source occurrence and adds a second link at `after`; history marks a
+ * delta `merged` when the destination pair already had a visible link, naming its former row. */
+export type PlacementDelta = {before: Placement; after: Placement | null; mirror?: true; merged?: {former: string | null}};
+export type RangeCommand = "indent" | "outdent" | "remove" | "move_up" | "move_down" | "place";
+export type Destination = {parent_id: string; after_id: string | null; before_id: string | null; mirror: boolean};
+export type RangePlan = {command: RangeCommand; changes: readonly PlacementDelta[]; selection_before: InputBookmark; selection_after: InputBookmark; destination?: Destination};
+export type RangeReason = "unavailable" | "gap" | "scope" | "no_preceding" | "top_level" | "invalid_parent" | "shared_edge" | "collision" | "changed" | "capacity" | "retired" | "edge_first" | "edge_last";
 export interface SelectionRow {
   row_id: string; ref: string | null; link_id: string | null; parent_id: string | null; parent_ref: string; scope_id: string;
   kind: "body" | "title" | "reference"; root: boolean; tail: boolean; selectable: boolean; eligible_parent: boolean; ready: boolean; gap: boolean;
@@ -28,7 +31,12 @@ export function rangeSelection(snapshot: RangeSnapshot, anchor_id: string, head_
   return {kind: "selection", selection: {anchor_id, head_id, row_ids: rows.filter(row => row.selectable).map(row => row.row_id)}};
 }
 
-export function planRange(command: RangeCommand, snapshot: RangeSnapshot, selection: InputBookmark): {kind: "plan"; plan: RangePlan} | Refusal {
+/** Topmost selected rows are the roots; descendants travel with their root's link.
+ * Indent, outdent and remove keep the flat order of visible lines: an outdented
+ * run adopts the siblings below it. A move passes one unselected sibling per run
+ * and names only that neighbour as its anchor. A place lands every root after
+ * the previous under `destination`. */
+export function planRange(command: RangeCommand, snapshot: RangeSnapshot, selection: InputBookmark, destination?: Destination): {kind: "plan"; plan: RangePlan} | Refusal {
   const ids = selection?.kind === "blocks" ? selection.row_ids : selection ? [selection.row_id] : [];
   const rows = new Map(snapshot.rows.map(row => [row.row_id, row])), selected = new Set(ids);
   const members = ids.flatMap(id => {const row = rows.get(id); return row ? [row] : [];});
@@ -54,7 +62,8 @@ export function planRange(command: RangeCommand, snapshot: RangeSnapshot, select
   else {
     const rootIds = new Set(roots.map(row => row.row_id));
     const runs: SelectionRow[][] = [], outdentedAfter = new Map<string, string>();
-    for (const row of roots) {
+    if (command === "place") runs.push(roots);
+    else for (const row of roots) {
       const siblings = snapshot.rows.filter(peer => peer.parent_id === row.parent_id && (peer.selectable || peer.gap));
       const previous = siblings[siblings.indexOf(row) - 1], run = runs[runs.length - 1];
       if (run && previous === run[run.length - 1]) run.push(row); else runs.push([row]);
@@ -63,36 +72,64 @@ export function planRange(command: RangeCommand, snapshot: RangeSnapshot, select
       const first = run[0]!, last = run[run.length - 1]!;
       const siblings = snapshot.rows.filter(row => row.parent_id === first.parent_id && (row.selectable || row.gap));
       const at = siblings.indexOf(first), preceding = siblings[at - 1], parent = rows.get(first.parent_id!);
-      let destination: SelectionRow, after_id: string | null, before_id: string | null;
+      let target: SelectionRow, after_id: string | null, before_id: string | null;
       if (command === "indent") {
         if (preceding?.gap) return {kind: "refusal", reason: "gap"};
         if (!preceding || rootIds.has(preceding.row_id)) return {kind: "refusal", reason: "no_preceding"};
         if (!preceding.eligible_parent || !preceding.ready || preceding.ref === null) return {kind: "refusal", reason: "invalid_parent"};
-        destination = preceding; after_id = null; before_id = null;
-      } else {
+        target = preceding; after_id = null; before_id = null;
+      } else if (command === "outdent") {
         if (!parent?.parent_id || parent.root) return {kind: "refusal", reason: "top_level"};
         const grandparent = rows.get(parent.parent_id);
         if (!grandparent?.ref) return {kind: "refusal", reason: "unavailable"};
         const peers = snapshot.rows.filter(row => row.parent_id === parent.parent_id && (row.selectable || row.gap));
         const next = peers[peers.indexOf(parent) + 1];
         if (next?.gap) return {kind: "refusal", reason: "gap"};
-        destination = grandparent; after_id = outdentedAfter.get(parent.row_id) ?? parent.row_id; before_id = next?.row_id ?? null;
+        target = grandparent; after_id = outdentedAfter.get(parent.row_id) ?? parent.row_id; before_id = next?.row_id ?? null;
+      } else if (command === "move_up" || command === "move_down") {
+        if (!parent?.ref) return {kind: "refusal", reason: "unavailable"};
+        const neighbour = command === "move_up" ? preceding : siblings[siblings.indexOf(last) + 1];
+        if (!neighbour) return {kind: "refusal", reason: command === "move_up" ? "edge_first" : "edge_last"};
+        if (neighbour.gap) return {kind: "refusal", reason: "gap"};
+        target = parent; after_id = command === "move_up" ? null : neighbour.row_id; before_id = command === "move_up" ? neighbour.row_id : null;
+      } else {
+        if (!destination) return {kind: "refusal", reason: "unavailable"};
+        const into = rows.get(destination.parent_id);
+        if (!into?.ref || !(into.root || into.selectable && into.eligible_parent && into.ready)) return {kind: "refusal", reason: "invalid_parent"};
+        for (const id of [destination.after_id, destination.before_id]) {
+          if (id === null) continue;
+          const anchor = rows.get(id);
+          if (anchor?.gap) return {kind: "refusal", reason: "gap"};
+          if (!anchor || rootIds.has(id) || beneath(anchor, rootIds)) return {kind: "refusal", reason: "invalid_parent"};
+        }
+        target = into; after_id = destination.after_id; before_id = destination.before_id;
       }
       if (siblings.slice(at, siblings.indexOf(last) + 1).some(row => row.gap)) return {kind: "refusal", reason: "gap"};
       for (const row of run) {
-        if (destination.ref === row.ref || destination.row_id === row.row_id || beneath(destination, new Set([row.row_id])))
+        if (target.ref === row.ref || target.row_id === row.row_id || beneath(target, new Set([row.row_id])))
           return {kind: "refusal", reason: "invalid_parent"};
-        changes.push({before: placement(row), after: {row_id: row.row_id, ref: row.ref!, parent_id: destination.row_id,
-          parent_ref: destination.ref!, after_id, before_id}});
+        changes.push({before: placement(row), after: {row_id: row.row_id, ref: row.ref!, parent_id: target.row_id, parent_ref: target.ref!, after_id, before_id},
+          ...(command === "place" && destination!.mirror ? {mirror: true as const} : {})});
         after_id = row.row_id;
       }
-      if (command === "outdent") outdentedAfter.set(first.parent_id!, last.row_id);
+      if (command === "outdent") {
+        // Flat order: the siblings below the run become the last root's children, after its own; a gap there hides siblings.
+        const following = siblings.slice(siblings.indexOf(last) + 1).filter(row => !rootIds.has(row.row_id));
+        if (following.some(row => row.gap)) return {kind: "refusal", reason: "gap"};
+        let adopted: string | null = null;
+        for (const row of following) {
+          if (last.ref === row.ref) return {kind: "refusal", reason: "invalid_parent"};
+          changes.push({before: placement(row), after: {row_id: row.row_id, ref: row.ref!, parent_id: last.row_id, parent_ref: last.ref!, after_id: adopted, before_id: null}});
+          adopted = row.row_id;
+        }
+        outdentedAfter.set(first.parent_id!, last.row_id);
+      }
     }
   }
   const edges = new Map<string, PlacementDelta>(), pairs = new Map<string, string>();
   for (const change of changes) {
     const edge = rows.get(change.before.row_id)!.link_id;
-    if (edge !== null) {
+    if (edge !== null && !change.mirror) {
       const other = edges.get(edge);
       if (other && (other.after !== null || change.after !== null) && (other.before.ref !== change.before.ref || other.before.parent_ref !== change.before.parent_ref || other.after?.parent_ref !== change.after?.parent_ref ||
         (other.after?.after_id ? rows.get(other.after.after_id)?.ref : null) !== (change.after?.after_id ? rows.get(change.after.after_id)?.ref : null) ||
@@ -118,22 +155,25 @@ export function planRange(command: RangeCommand, snapshot: RangeSnapshot, select
     const target = following ?? previous ?? fallback;
     selection_after = target ? target.kind === "reference" ? {kind: "blocks", anchor_id: target.row_id, head_id: target.row_id, row_ids: [target.row_id]}
       : {kind: "text", row_id: target.row_id, ref: target.ref ?? target.parent_ref, range: target === following || target === fallback ? {anchor: 1, head: 1} : "end", resolve: null} : null;
-  }
-  return {kind: "plan", plan: {command, changes, selection_before: selection, selection_after}};
+  } else if (command !== "indent" && command !== "outdent" && selection?.kind === "blocks")
+    selection_after = {kind: "blocks", anchor_id: roots[0]!.row_id, head_id: roots[roots.length - 1]!.row_id, row_ids: roots.map(row => row.row_id)};
+  return {kind: "plan", plan: {command, changes, selection_before: selection, selection_after, ...(destination && command === "place" ? {destination} : {})}};
 }
 
 export function rangeReasonMessage(reason: RangeReason): string {
   switch (reason) {
     case "unavailable": return "select an available item";
-    case "gap": return "show the missing items before selecting across this gap";
+    case "gap": return "show the missing items first";
     case "scope": return "select items in the same outline";
     case "no_preceding": return "no preceding item to nest under";
-    case "top_level": return "some selected items are already at the top level";
+    case "top_level": return "already at the top level";
     case "invalid_parent": return "this item cannot be nested under that parent";
-    case "shared_edge": return "selected appearances need different changes to the same relationship";
+    case "shared_edge": return "two selected items are the same link; arrange one of them";
     case "collision": return "an item is already linked under that parent";
-    case "changed": return "the outline changed. try again.";
+    case "changed": return "the outline changed; try again";
     case "capacity": return "close a branch or select fewer items";
     case "retired": return "this outline is no longer open";
+    case "edge_first": return "already first under its parent";
+    case "edge_last": return "already last under its parent";
   }
 }

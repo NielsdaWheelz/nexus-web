@@ -104,7 +104,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           onClick={(event) => navigate(event, home)}
           onKeyDown={(event) => navigate(event, home)}
         >
-          <AsterismMark size={20} className={styles.brandMark} />
+          <AsterismMark className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
         </a>
         <Button
@@ -117,7 +117,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
 
       <Tooltip
-        text={`Search (${hint})`}
+        text={`Nexus (${hint})`}
         placement="right"
         openDelayMs={0}
         disabled={!collapsed}
@@ -128,11 +128,11 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
             className={cx(buttonClassName({}), styles.command)}
             aria-haspopup="dialog"
             aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
-            aria-label="Search"
+            aria-label="Nexus"
             onClick={() => requestNexusOpen({ kind: "Root" })}
           >
-            <Icon.Search className={styles.icon} size={20} aria-hidden="true" />
-            <span className={styles.commandText}>Search</span>
+            <AsterismMark className={styles.brandMark} />
+            <span className={styles.commandText}>Nexus</span>
             <kbd className={styles.commandKbd}>{hint}</kbd>
           </button>
         )}

@@ -10,9 +10,10 @@ import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import type { NexusController } from "./useNexusController";
-import styles from "./Nexus.module.css";
+import styles from "@/components/switchboard/Switchboard.module.css";
 
-function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNode; onBack?: () => void }) {
+/** A page's header: back and title. The sheet's handle strip already holds the phone's recovery control. */
+function Header({ title, subtitle, onBack, mobile }: { title: string; subtitle?: ReactNode; onBack?: () => void; mobile: boolean }) {
   return (
     <header className={styles.header}>
       {onBack ? (
@@ -24,7 +25,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
         </h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
-      <FeedbackRecoveryControl />
+      {mobile ? null : <FeedbackRecoveryControl />}
     </header>
   );
 }
@@ -42,6 +43,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           <Header
             title={page.kind === "UseText" ? "use this text" : page.kind === "ChooseCreate" ? "create" : "browse"}
             onBack={controller.back}
+            mobile={mobile}
           />
           {(page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query) ? <p className={styles.textPreview}>{page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query}</p> : null}
           <div className={styles.choices}>
@@ -72,7 +74,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
     case "CaptureToday":
       return (
         <section className={styles.page}>
-          <Header title="add to today" onBack={controller.back} />
+          <Header title="add to today" onBack={controller.back} mobile={mobile} />
           <p>{page.text}</p>
           <FeedbackBusy pending={page.submit.kind === "Running"} />
           <Button reserveIcon aria-busy={page.submit.kind === "Running" || undefined}

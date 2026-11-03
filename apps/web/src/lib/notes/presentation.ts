@@ -4,7 +4,6 @@ import { parseBody } from "@nexus/authored/body";
 import { excerptTextParts } from "@nexus/authored/excerpt";
 import type { ResourceProjection } from "@nexus/authored/types";
 import type { ResourceItem } from "@/lib/resources/items";
-import { localResourceHref } from "@/lib/resources/localResource";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 function excerpt(value: string, limit = 600) {
@@ -55,8 +54,8 @@ export function authoredPreview(resource: ResourceProjection, readingRef: string
   return { label: value.text || "empty note", body: { kind: "prose", excerpt: value, role: null, format: parsed.body_pm_json.attrs?.presentation === "code" ? "code" : "plain", image_count: images.length } };
 }
 
-export function authoredItem(resource: ResourceProjection, readingRef: string | null = null): ResourceItem {
+/** The caller supplies its admitted destination; projecting a preview never invents a route. */
+export function authoredItem(resource: ResourceProjection, readingRef: string | null, href: string | null): ResourceItem {
   const { label, body } = authoredPreview(resource, readingRef);
-  const href = localResourceHref(resource, { activationRef: readingRef });
-  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label, preview: { body, source: null }, activation: { resource_ref: resource.ref, field: null, kind: href === null ? "none" : "route", href, unavailable_reason: null }, missing: !resource.visible };
+  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label, preview: { body, source: null }, activation: { resource_ref: resource.ref, field: null, kind: href === null ? "none" : "route", href, unavailable_reason: href === null ? "source_unavailable" : null }, missing: !resource.visible };
 }

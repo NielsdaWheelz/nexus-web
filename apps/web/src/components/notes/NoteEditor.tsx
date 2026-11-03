@@ -82,11 +82,12 @@ import {
 } from "@nexus/authored/body";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/editorTypes";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { outlineHistoryCommand, outlineStructuralCommand, usesMeta } from "@/lib/shortcuts";
+import { outlineFoldCommand, outlineHistoryCommand, outlineStructuralCommand, usesMeta } from "@/lib/shortcuts";
 import { inspectionDecorations } from "@/lib/notes/inspection";
 import { fieldAt, fieldById, inlinePaste, outlineEditedField, outlineTransactionSource } from "@/lib/notes/outlineEditorModel";
 import { clipboardPlainText } from "@/lib/notes/clipboard";
 import "prosemirror-view/style/prosemirror.css";
+import {cx} from "@/lib/ui/cx";
 import styles from "./NoteEditor.module.css";
 
 export interface NoteInspection {
@@ -100,18 +101,21 @@ export interface NoteInspection {
 }
 
 /** Editor-owned structural intents run after native reconciliation and before
- * the consumed event releases its packet. External refresh stays fenced.
- * A null arrangement selection denotes the selected block, not a text caret. */
+ * the consumed event releases its packet. External refresh stays fenced. */
 export interface StructuralKeys {
+  /** The shown neighbours may trail an unsettled arrangement. Boundary deletion must refuse rather than replay later. */
+  arranging?(): boolean;
   enter?(): void;
   split?(left: NoteBody, right: NoteBody, displayed: import("@/lib/notes/editorTypes").DisplayedSplit | null): void;
   emptyDelete?(direction: "backward" | "forward"): void;
   emptyEnter?(): void;
   join?(direction: "backward" | "forward"): void;
-  indent?(at: { anchor: number; head: number } | null): void;
-  outdent?(at: { anchor: number; head: number } | null): void;
-  move?(direction: "up" | "down", at: { anchor: number; head: number } | null): void;
+  indent?(): void;
+  outdent?(): void;
+  move?(direction: "up" | "down"): void;
   selectBlock?(): void;
+  collapse?(open: boolean): void;
+  extendBlock?(direction: "up" | "down"): void;
 }
 
 /** The outline can preserve an occurrence's caret without reaching into its view. */
@@ -187,7 +191,6 @@ export interface NoteEditorProps {
   editable: boolean;
   label: string;
   placeholder?: string;
-  compact?: boolean;
   inspection?: NoteInspection | null;
   embeddedItem?: ResourceItem | null;
   /** Terminal bodies keep rich content, but embeds cannot reopen the outline. */
@@ -368,6 +371,31 @@ function NoteEditorContent(props: NoteEditorProps) {
     const intent = referenceRef.current.getState();
     return intent?.row_id === editingField(state)?.row_id ? intent : null;
   };
+  const toolbarNode = useRef<HTMLDivElement | null>(null);
+  /** The formatting toolbar sits under the selection's end, as the link dialog does, or above the selection when
+   * under would leave the nearest scrollport; it shifts left to stay inside the shell. A header's toolbar stays in flow. */
+  const placeToolbar = useCallback(() => {
+    const node = toolbarNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
+    if (!node || !view || !box || latest.current.header || view.state.selection.empty) return;
+    let port = shell.current!.parentElement;
+    while (port && !/auto|scroll/.test(getComputedStyle(port).overflowY)) port = port.parentElement;
+    const bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
+    const start = view.coordsAtPos(view.state.selection.from), end = view.coordsAtPos(view.state.selection.to), height = node.offsetHeight;
+    const above = end.bottom + 6 + height > bounds.bottom && start.top - 6 - height >= bounds.top;
+    const left = Math.max(0, end.left - box.left);
+    node.style.left = `${left}px`;
+    node.style.top = `${above ? start.top - box.top - 6 - height : Math.max(0, end.bottom - box.top + 6)}px`;
+    node.style.translate = `clamp(${-left}px, ${box.width - left}px - 100%, 0px)`;
+  }, []);
+  /** A shown toolbar is placed when it mounts and again whenever the shell reflows. */
+  const toolbarRef = useCallback((node: HTMLDivElement | null) => {
+    toolbarNode.current = node;
+    if (!node || !shell.current) return;
+    placeToolbar();
+    const observer = new ResizeObserver(placeToolbar);
+    observer.observe(shell.current);
+    return () => {observer.disconnect(); toolbarNode.current = null;};
+  }, [placeToolbar]);
   const referenceFor = (field: EditingField) => field.row_id !== null
     ? latest.current.projection?.reference(field.row_id) ?? null : latest.current.reference ?? null;
   const suspended = useRef(false);
@@ -704,6 +732,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     bindingRef.current = binding;
     nativeInputOpen.current = false;
     let nativePacket = 0;
+    let deletionKey: string | null = null;
+    let keylessDeletion: {row_id: string; backward: boolean} | null = null;
     let reconciling = false;
     const reconcile = (current: EditorView) => {
       if (reconciling || current.isDestroyed || current.composing || compositionBase.current !== null) return;
@@ -787,6 +817,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       const returning = inputType === "insertParagraph" || inputType === "insertLineBreak" && field.kind === "title";
       const deletingBoundary = (inputType === "deleteContentBackward" && selection.empty && selection.from === field.from ||
         inputType === "deleteContentForward" && selection.empty && selection.to === field.to) && (keys?.join || keys?.emptyDelete);
+      if (deletingBoundary && keys?.arranging?.()) {
+        warn("finish moving the items before deleting across them", "your writing is kept.");
+        return true;
+      }
       if (referenceRef.current.getState() !== null && (deletingBoundary || returning &&
         (field.kind === "title" && keys?.enter || body.attrs.presentation !== "code" && keys?.split))) {
         warn("finish the open link query first", "your writing is kept.");
@@ -888,7 +922,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             ...Object.fromEntries(
               FORMATS.map(([name, , key]) => [key, run(() => format(name))]),
             ),
-            "Mod-k": run(openLink),
+            "Mod-Shift-k": run(openLink),
             "Mod-a": (state, dispatch) => {
               const field = editingField(state);
               const selection = field ? TextSelection.create(state.doc, field.from, field.to) : new AllSelection(state.doc);
@@ -906,9 +940,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const nativeEntry = state.selection instanceof TextSelection && field?.row_id !== null && field?.row_id !== undefined &&
           state.selection.from >= field.from && state.selection.to <= field.to && !latest.current.projection?.itemText(field.row_id);
         return {
-          class: latest.current.compact
-            ? `${styles.view} ${styles.compact}`
-            : styles.view,
+          class: cx(styles.view, latest.current.projection && styles.outline),
           role: activeReference(state) !== null ? "combobox" : "textbox",
           "aria-readonly": String(
             !latest.current.editable || busy.current || inputMode.current !== "text",
@@ -1010,6 +1042,11 @@ function NoteEditorContent(props: NoteEditorProps) {
         return true;
       },
       handleDOMEvents: {
+        pointerdown(current, event) {
+          const field = event.target instanceof Element ? event.target.closest("[data-outline-field]") : null;
+          if (field?.closest(".ProseMirror") === current.dom) {deletionKey = null; keylessDeletion = null;}
+          return false;
+        },
         keydown(current, event) {
           if (
             event.target instanceof HTMLElement &&
@@ -1018,6 +1055,8 @@ function NoteEditorContent(props: NoteEditorProps) {
           )
             return true;
           if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
+          if ((event.key === "Backspace" || event.key === "Delete") && !current.composing && !event.isComposing && event.keyCode !== 229) deletionKey = event.key;
+          else if (!event.isComposing && event.keyCode !== 229 && event.key !== "Unidentified") {deletionKey = null; keylessDeletion = null;}
           beginNativeInput(current, event);
           // Returning true leaves the browser event alone while stopping PM's
           // keymap/capture fallback from turning composition into a newline.
@@ -1053,7 +1092,10 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (!latest.current.editable || busy.current) return true;
           return false;
         },
-        keyup(current) { releaseNativeInput(current); return false; },
+        keyup(current, event) {
+          if (event.key === deletionKey) {deletionKey = null; keylessDeletion = null;}
+          releaseNativeInput(current); return false;
+        },
         input(current, event) {
           if (event.target === current.dom) releaseNativeInput(current);
           return false;
@@ -1063,6 +1105,20 @@ function NoteEditorContent(props: NoteEditorProps) {
           beginNativeInput(current, event);
           if (!current.composing && !event.isComposing)
             commandSelection(current, event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward");
+          const deleting = event.inputType.startsWith("delete") && /(?:Backward|Forward)$/u.test(event.inputType);
+          if (!deleting) keylessDeletion = null;
+          if (deleting && deletionKey === null && event.cancelable && !event.isComposing && !current.composing) {
+            const field = editingField(current.state), keys = structuralKeys(current.state), selection = current.state.selection;
+            if (field && field.row_id !== null && (keys?.join || keys?.emptyDelete)) {
+              const backward = event.inputType.endsWith("Backward");
+              // Keyless keyboards expose no release or repeat identity. Keep the stream in its first field until explicit input re-arms it.
+              if (keylessDeletion?.backward === backward && (keylessDeletion.row_id !== field.row_id ||
+                selection.empty && (backward ? selection.from === field.from : selection.to === field.to))) {
+                event.preventDefault(); return true;
+              }
+              keylessDeletion = {row_id: field.row_id, backward};
+            }
+          }
           const redo = event.inputType === "historyRedo";
           if (!redo && event.inputType !== "historyUndo") {
             if (!event.cancelable || event.isComposing) return false;
@@ -1082,9 +1138,11 @@ function NoteEditorContent(props: NoteEditorProps) {
           setReferenceVisible(true);
           refreshMarks(current.state);
           setToolbar(!current.state.selection.empty);
+          placeToolbar();
           return false;
         },
         blur(current) {
+          deletionKey = null;
           releaseNativeInput(current);
           if (current.isDestroyed) return false;
           if (!current.composing && compositionBase.current === null) syncNativeSelection(current);
@@ -1176,17 +1234,16 @@ function NoteEditorContent(props: NoteEditorProps) {
           action();
           return true;
         };
-        const arrangeAt = (action: (at: {anchor: number; head: number} | null) => void) => {
+        const arrangeAt = (action: () => void) => {
           if (referenceRef.current.getState() !== null)
             return act(() => warn("finish the open link query first", "your writing is kept."));
           const selection = current.state.selection;
-          if (selection instanceof NodeSelection && typeof selection.node.attrs.row_id === "string")
-            return act(() => action(null));
+          if (selection instanceof NodeSelection && typeof selection.node.attrs.row_id === "string") return act(action);
           const field = editingField(current.state);
           if (!field) return false;
           if (selection instanceof TextSelection && (selection.from < field.from || selection.to > field.to))
             return act(() => warn("Select text within one field", "Select items to change them together."));
-          return act(() => action(fieldSelection(current.state, field)));
+          return act(action);
         };
         if (event.key === "Enter" && !event.altKey) {
           const mac = usesMeta(latest.current.platform);
@@ -1207,11 +1264,23 @@ function NoteEditorContent(props: NoteEditorProps) {
         const structural = outlineStructuralCommand(event, latest.current.platform);
         if (structural && keys?.selectBlock) {
           if (event.repeat) return act(() => {});
-          return arrangeAt(at => {
-            if (structural === "indent") keys.indent?.(at);
-            else if (structural === "outdent") keys.outdent?.(at);
-            else keys.move?.(structural === "move_up" ? "up" : "down", at);
+          return arrangeAt(() => {
+            if (structural === "indent") keys.indent?.();
+            else if (structural === "outdent") keys.outdent?.();
+            else keys.move?.(structural === "move_up" ? "up" : "down");
           });
+        }
+        const fold = outlineFoldCommand(event, latest.current.platform);
+        if (fold && keys?.collapse) {
+          if (event.repeat) return act(() => {});
+          return arrangeAt(() => keys.collapse!(fold === "expand"));
+        }
+        const primary = usesMeta(latest.current.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+        if (primary && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "a" && keys?.selectBlock) {
+          // The keymap's Mod-a selects the field's text first; a wholly selected or empty field steps to the item.
+          const field = editingField(current.state), {from, to} = current.state.selection;
+          if (field && (field.node.content.size === 0 || from === field.from && to === field.to)) return act(keys.selectBlock);
+          return false;
         }
         if (event.altKey || event.ctrlKey || event.metaKey) return false;
         if (event.key === "Escape")
@@ -1221,6 +1290,10 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (!arrange) return false;
           return arrangeAt(arrange);
         }
+        if (event.shiftKey && (event.key === "ArrowUp" || event.key === "ArrowDown") && keys?.extendBlock) {
+          const direction = event.key === "ArrowUp" ? "up" : "down";
+          if (current.endOfTextblock(direction)) return arrangeAt(() => keys.extendBlock!(direction));
+        }
         if (event.key === "Enter" && event.repeat) {
           event.preventDefault();
           return true;
@@ -1229,7 +1302,13 @@ function NoteEditorContent(props: NoteEditorProps) {
         const inputType = event.key === "Enter" ? "insertParagraph"
           : event.key === "Backspace" ? "deleteContentBackward"
           : event.key === "Delete" ? "deleteContentForward" : null;
-        if (inputType === null || !structuralInput(current, inputType)) return false;
+        if (inputType === null) return false;
+        if (event.repeat && inputType !== "insertParagraph") {
+          // A held deletion repeats inside the field and never crosses its boundary.
+          const field = editingField(current.state), selection = current.state.selection;
+          if (field && selection.empty && (inputType === "deleteContentBackward" ? selection.from === field.from : selection.to === field.to)) return act(() => {});
+        }
+        if (!structuralInput(current, inputType)) return false;
         event.preventDefault();
         return true;
       },
@@ -1288,11 +1367,13 @@ function NoteEditorContent(props: NoteEditorProps) {
         if ((!compositionBase.current || editingField(after)?.row_id !== compositionBase.current.row_id) && (!before.selection.eq(after.selection) || editingField(before)?.row_id !== editingField(after)?.row_id))
           notifySelection(after);
         refreshMarks(after);
-        if (view.hasFocus()) setToolbar(!after.selection.empty);
+        if (view.hasFocus()) {setToolbar(!after.selection.empty); placeToolbar();}
         if (binding && !external) queueMicrotask(() => binding.refresh());
       },
     });
     viewRef.current = view;
+    const releaseDeletionKey = () => {deletionKey = null;};
+    window.addEventListener("blur", releaseDeletionKey);
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
       encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
@@ -1373,6 +1454,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     latest.current.projection?.onViewReady(view);
     latest.current.onEditorReady?.(handle);
     return () => {
+      window.removeEventListener("blur", releaseDeletionKey);
       latest.current.projection?.onViewReady(null);
       latest.current.onEditorReady?.(null);
       editorHandle.current = null;
@@ -1507,7 +1589,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const scope = owner !== null ? `${owner}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
         return createPortal(<OutlineEmbeddingOccurrence value={owner}><EmbeddedResource
-          resourceRef={embed.ref} field={embed.field} label={embed.label} supplied={props.embeddedItem ?? null}
+          resourceRef={embed.ref} field={embed.field} label={embed.label} supplied={props.embeddedItem ?? null} inRow={embed.row_id !== null}
           scope={scope}
           branch={context?.branch ?? branch} containingNoteRef={context?.containingNoteRef ?? props.containingNoteRef}
           beforeCollapse={beforeCollapse ? () => beforeCollapse(scope) : undefined}
@@ -1525,6 +1607,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       ) : null}
       {props.editable && inputMode.current === "text" && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
         <div
+          ref={toolbarRef}
           className={styles.toolbar}
           role="toolbar"
           aria-label="Text formatting"
@@ -1559,7 +1642,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             icon={<Icon.Link aria-hidden="true" />}
             disabled={presentation === "code"}
             aria-label="Link"
-            tooltip={{text: "Link (⌘/Ctrl+K)"}}
+            tooltip={{text: "Link (⌘/Ctrl+Shift+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
           />
@@ -1765,6 +1848,7 @@ function EmbeddedResource({
   branch,
   containingNoteRef: _containingNoteRef,
   atomic,
+  inRow,
   onRevealRoot,
   beforeCollapse,
 }: {
@@ -1776,11 +1860,12 @@ function EmbeddedResource({
   branch: OutlineBranch;
   containingNoteRef: string | null;
   atomic: boolean;
+  inRow: boolean;
   onRevealRoot(): void;
   beforeCollapse?(): Promise<boolean>;
 }) {
   if (field === "annotation") return <EmbeddedAnnotation resourceRef={resourceRef} label={label}/>;
-  return <EmbeddedWholeResource resourceRef={resourceRef} supplied={supplied} scope={scope} branch={branch} containingNoteRef={_containingNoteRef} atomic={atomic} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
+  return <EmbeddedWholeResource resourceRef={resourceRef} supplied={supplied} scope={scope} branch={branch} containingNoteRef={_containingNoteRef} atomic={atomic} inRow={inRow} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
 }
 function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: string | null}) {
   const read = useAuthoredQuery({kind: "resource", ref: resourceRef});
@@ -1793,8 +1878,8 @@ function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: s
       : read.data ? "annotation unavailable" : "annotation"}</a>
   </>;
 }
-function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, onRevealRoot, beforeCollapse}: {
-  resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
+function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, inRow, onRevealRoot, beforeCollapse}: {
+  resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; inRow: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
 }) {
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failed, setFailed] = useState(false);
@@ -1836,6 +1921,7 @@ function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containing
       <ResourceOutlineRow
         beforeCollapse={beforeCollapse}
         editable={false}
+        inRow={inRow}
         incoming={null}
         item={item}
         occurrenceKey={scope}
