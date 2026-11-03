@@ -1,6 +1,6 @@
 .speed { position: relative; min-width: 56px; padding: 0 var(--space-1); font-size: var(--text-sm); }
 .face { display: inline-flex; align-items: center; gap: var(--space-2); }
-.face svg { display: block; }
+.face svg { display: block; color: var(--ink-muted); }
 .absent { visibility: hidden; pointer-events: none; }
 .marker { position: absolute; top: 4px; right: 4px; width: 4px; height: 4px; border-radius: var(--radius-full); background: currentColor; }
 .failed { color: var(--danger-ink); }

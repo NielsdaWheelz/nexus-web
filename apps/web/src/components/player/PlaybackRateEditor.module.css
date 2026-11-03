@@ -2,6 +2,7 @@
 .summary { display: flex; align-items: center; gap: var(--space-3); }
 .eyebrow { color: var(--ink-muted); font-size: var(--text-xs); }
 .rateValue { font: var(--weight-medium) var(--text-2xl) / 1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.dial { color: var(--ink-muted); }
 .dial > * { stroke-width: 0.8; }
 .rateRange { width: 100%; min-width: 0; min-height: 44px; margin: 0; accent-color: var(--accent); }
 .stops { display: flex; justify-content: space-between; margin-inline: -7px; }
