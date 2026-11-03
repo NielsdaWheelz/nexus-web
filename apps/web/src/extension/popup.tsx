@@ -214,7 +214,8 @@ function Popup() {
   // a draft's purpose cannot change while it sends, so neither does its press
   const pressCaption = replacement !== null ? "replace article" : recovery !== null ? "finish import" : "import";
   const recaptureFailure = draft?.needsRecapture || captureFailure?.recovery === "Recapture";
-  const retrying = retained !== null;
+  const retrying = connected && (state.activity === "running" || retained !== null);
+  const connectionReason = connected ? undefined : NOT_ANSWERING.reason;
   const kindLabel =
     draft === null
       ? ""
@@ -310,17 +311,17 @@ function Popup() {
         <Fact line={captureLine} verbs={
           captureFailure.recovery === "Check"
             ? account !== null && !draft?.needsRecapture
-              ? [{ label: "retry", commandKey: `retry:${draft?.id}`, run: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
+              ? [{ label: "retry", commandKey: `retry:${draft?.id}`, run: () => sendWithOrigins({ kind: "retry" }), busy: retrying, disabledReason: connectionReason },
                   { label: "discard", commandKey: `stop checking:${draft?.id}`, run: () => send({ kind: "stop_checking" }), disabledReason: retrying ? "a retry is running" : undefined }]
               : [{ label: "discard", commandKey: `stop checking:${draft?.id}`, run: () => send({ kind: "stop_checking" }) }]
             : recaptureFailure && account !== null
             ? [{ label: "start over", commandKey: `recapture:${draft?.id}`, run: () => send({ kind: "capture_again" }) },
                 { label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }) }]
             : captureFailure.recovery === "Review" && account !== null
-            ? [{ label: "review", commandKey: `review:${draft?.id}`, run: () => sendWithOrigins({ kind: "review" }), busy: retrying },
+            ? [{ label: "review", commandKey: `review:${draft?.id}`, run: () => sendWithOrigins({ kind: "review" }), busy: retrying, disabledReason: connectionReason },
                 { label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }), disabledReason: retrying ? "a review is running" : undefined }]
             : captureFailure.recovery === "Retry" && account !== null
-            ? [{ label: "retry", commandKey: `retry:${draft?.id}`, run: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
+            ? [{ label: "retry", commandKey: `retry:${draft?.id}`, run: () => sendWithOrigins({ kind: "retry" }), busy: retrying, disabledReason: connectionReason },
                 { label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }), disabledReason: retrying ? "a retry is running" : undefined }]
             : [{ label: "discard", commandKey: `discard:${draft?.id}`, run: () => send({ kind: "discard" }) }]
         } />
