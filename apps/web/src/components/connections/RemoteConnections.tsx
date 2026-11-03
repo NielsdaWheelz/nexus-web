@@ -8,6 +8,7 @@
 // nothing; a later page that fails stands beneath the rows.
 import { useContext } from "react";
 import { Failed } from "@/components/feedback/Fact";
+import {FactRemovalsContext, useFactRemovals} from "@/lib/resourceGraph/useFactRemovals";
 import ResourceOutlineList, { ResourceBranch } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { usePaneFreeServerList, type ServerList } from "@/lib/api/useServerList";
@@ -42,11 +43,12 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
   onChanged: () => void;
 }) {
   const branch = useContext(ResourceBranch);
+  const removals = useFactRemovals(occurrencePrefix);
   // The fact this branch entered through comes back from a both-directions read; it is not another connection.
   const items = list.items.filter((connection) => !branch.traversedEdgeIds.has(connection.edge_id));
   const failure = list.failure;
   const retry = { run: list.retry, busy: list.running !== null };
-  return <>
+  return <FactRemovalsContext value={removals}>
     {failure !== null && list.status === "failed" ? <Failed error={failure.error} noun="other connections" retry={retry} /> : null}
     {items.length ? <section aria-label="other connections">
       <h3 className={styles.subtitle}>other connections</h3>
@@ -57,6 +59,7 @@ export default function RemoteConnections({ ownerRef, occurrencePrefix, list, on
           historical={connection.origin === "citation" && connection.ordinal !== null} onChanged={onChanged} />)}
       </ResourceOutlineList>
     </section> : null}
+    {removals.holds}
     {failure?.op === "More" ? <Failed error={failure.error} noun="the remaining connections" retry={retry} /> : null}
-  </>;
+  </FactRemovalsContext>;
 }

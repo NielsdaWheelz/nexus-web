@@ -5,16 +5,18 @@
 // Upload is server-owned; each uploaded file then links to the owner in one local
 // commit. A failed local commit retries its frozen command, never a fresh link.
 // What a stopped file still owes holds the task under the loss guard, with its one
-// verb, and so does an upload whose answer was lost; a file the server refused, or
-// whose guard read failed before anything was sent, ends the task and any doubt it held,
+// verb, and so does an upload whose answer was lost. A refused replay preserves
+// an unsettled confirmation; a permanent publication fence retires it. A first
+// refusal or guard-read failure ends the task,
 // and its slip carries the retry. A link step that fails other than in local storage is
 // a defect.
 import { useRef } from "react";
 import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
@@ -59,20 +61,24 @@ const notAdded = (names: readonly string[]) => names.length === 1 ? `${quoted(na
 
 function owedLine(owed: Owed, name: string): Line {
   switch (owed) {
-    case "LinkUnsure": return { fact: `not sure ${quoted(name)} linked.`, reason: "it may have gone through." };
+    case "LinkUnsure": return { fact: `not sure ${quoted(name)} linked.`, reason: UNKNOWN_OUTCOME_REASON };
     case "Unlinked": return { fact: `${quoted(name)} was saved but isn’t linked.` };
-    case "AddUnsure": return { fact: `not sure ${quoted(name)} was added.`, reason: "it may have gone through." };
+    case "AddUnsure": return { fact: `not sure ${quoted(name)} was added.`, reason: UNKNOWN_OUTCOME_REASON };
   }
 }
 
 export function useConnectionAttachments(selfRef: string) {
   const { say, fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const { ctx } = useActionRuntime();
   const writing = useWritingRuntime();
   const guard = useWorkGuard();
   const scope = usePaneVisitWorkScope();
   const workspace = useLatestWorkspace();
   const subscribeWorkspace = useSubscribeWorkspace();
+  const account = ctx.sessionSignal();
+  const owned = () => !account.aborted && workspace().state.panes.some(pane => [pane.current_visit, ...pane.history.back, ...pane.history.forward]
+    .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
   const owner = useResourceDraft<{ task: Task | null; defect: { error: unknown } | null }>(`ConnectionAttachments:${selfRef}`, () => ({ task: null, defect: null }), value => {
     const task = value.task;
     // Work remains until the last file is linked, including its link commit and any held retry.
@@ -93,7 +99,7 @@ export function useConnectionAttachments(selfRef: string) {
     task.owed = null;
     owner.set({ task: null, defect: null });
     const resume = { label: "retry", commandKey: `ConnectionAttachments.resume:${task.id}`, run: () => {
-      if (owner.read().task !== null || writing === null) return;
+      if (!owned() || owner.read().task !== null || writing === null) return;
       reviewUploadAttempt(upload);
       owner.set({ task, defect: null });
       void run(task);
@@ -107,14 +113,11 @@ export function useConnectionAttachments(selfRef: string) {
   }
 
   async function run(task: Task) {
-    if (task.running || owner.read().task !== task || writing === null) return;
+    if (!owned() || task.running || owner.read().task !== task || writing === null) return;
     const controller = new AbortController();
-    const account = ctx.sessionSignal();
     const abort = () => controller.abort();
     account.addEventListener("abort", abort, { once: true });
     if (account.aborted) controller.abort();
-    const owned = () => workspace().state.panes.some(pane => [pane.current_visit, ...pane.history.back, ...pane.history.forward]
-      .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
     const stop = subscribeWorkspace(() => { if (!owned()) controller.abort(); });
     task.running = true;
     publish();
@@ -179,12 +182,13 @@ export function useConnectionAttachments(selfRef: string) {
       }
       if (account.aborted || owner.read().task !== task || controller.signal.aborted) return;
       if (task.retryLink !== null) { owe(task, "LinkUnsure"); return; }
-      if (error instanceof UploadSessionError && error.outcome.kind !== "Unresolved") task.unconfirmed = false;
+      const confirmationUnsettled = task.files[task.index]!.upload.confirmation_unsettled;
+      task.unconfirmed = confirmationUnsettled || (error instanceof UploadSessionError
+        ? error.outcome.kind === "Unresolved" : outcomeUnknown(error));
       if (handleUnauthenticatedApiError(error)) return;
       if (task.mediaId !== null && isAuthoredStorageFailure(error)) owe(task, "Unlinked");
       else if (task.mediaId !== null) owner.set(value => ({ ...value, defect: { error } }));
-      else if (error instanceof UploadSessionError ? error.outcome.kind === "Unresolved"
-        : outcomeUnknown(error)) owe(task, "AddUnsure");
+      else if (task.unconfirmed) owe(task, "AddUnsure");
       else try { endWithRefusal(task, error); }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {
@@ -199,7 +203,7 @@ export function useConnectionAttachments(selfRef: string) {
   function attachFiles(files: File[]) {
     const prior = owner.read().task;
     // A held local retry blocks every later command; it must land before new files link.
-    if (prior?.running || prior?.retryLink || writing === null) return;
+    if (!owned() || prior?.running || prior?.retryLink || writing === null) return;
     const accepted: Task["files"][number][] = [];
     const refused: { name: string; reason: string }[] = [];
     for (const file of files) {
@@ -227,8 +231,12 @@ export function useConnectionAttachments(selfRef: string) {
     control: <>
       <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running || task?.retryLink != null || writing === null} aria-busy={task?.running} icon={<Icon.Upload size={14} aria-hidden="true" />} />
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
-      {task?.owed ? <Hold id={`ConnectionAttachments:${task.id}:${task.owed}`} attempt={task.attempt} line={owedLine(task.owed, task.files[task.index]!.file.name)}
-        verbs={[{ label: "retry", commandKey: `ConnectionAttachments.retry:${task.id}`, run: () => void run(task), busy: task.running }]} /> : null}
+      {task?.owed ? <Hold id={`ConnectionAttachments:${task.id}:${task.owed}`} attempt={task.attempt}
+        {...(task.owed === "AddUnsure" ? resendFeedback({
+          line: owedLine(task.owed, task.files[task.index]!.file.name),
+          resend: {label: "retry", commandKey: `ConnectionAttachments.retry:${task.id}`, run: () => void run(task), busy: task.running},
+        }) : {line: owedLine(task.owed, task.files[task.index]!.file.name),
+          verbs: [{label: "retry", commandKey: `ConnectionAttachments.retry:${task.id}`, run: () => void run(task), busy: task.running}] as const})} /> : null}
     </>,
   };
 }
