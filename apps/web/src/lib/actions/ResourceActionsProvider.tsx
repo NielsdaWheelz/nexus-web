@@ -222,6 +222,17 @@ function createBusyKeys(): BusyKeys {
   };
 }
 
+/** One invocation owns its frozen command and any unresolved raw write. */
+type Execution = {
+  command: ActionCommand;
+  outcome: Outcome;
+  retract: Retract | null;
+  phase: "Other" | "Running" | "Unknown" | "Acknowledged";
+  line: Line | null;
+  attempt: number;
+  release(): void;
+};
+
 /**
  * The shell's one action runtime: the facts every verb reads, the busy set,
  * confirmation and failure reporting, and the overlays verbs open.
@@ -266,11 +277,11 @@ export default function ResourceActionsProvider({
   const admissions = useMediaAdmissions();
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
-  // Only the newest attempt of one action on one resource reports its failure; a new
-  // attempt withdraws the previous attempt's report.
-  const [attempts] = useState(() => new Map<string, { retract: Retract | null }>());
-  // A write that may have gone through stands until its verb runs again.
-  const [unknown, setUnknown] = useState<ReadonlyMap<string, { readonly kind: "Local" | "Remote"; readonly line: Line; readonly attempt: number }>>(new Map());
+  const busyKeys = useSyncExternalStore(busy.subscribe, busy.keys, busy.keys);
+  const [attempts] = useState(() => new Map<string, Execution>());
+  // Native receipt uncertainty is durable device work, outside remote write admission/guards.
+  const [localUnknown, setLocalUnknown] = useState<ReadonlyMap<string, { readonly line: Line; readonly attempt: number }>>(new Map());
+  useLayoutEffect(() => () => { for (const attempt of attempts.values()) attempt.release(); }, [attempts]);
   const [confirmation, setConfirmation] = useState<{ readonly command: ActionCommand; readonly outcome: Outcome } | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
@@ -381,52 +392,81 @@ export default function ResourceActionsProvider({
       const signal = session.controller.signal;
       if (signal.aborted) return;
       const key = `${command.ref}|${command.id}`;
-      const fact = `couldn’t complete “${command.label.replace(/…$/, "")}”.`;
-      if (command.tracked && busy.keys().has(key)) return;
+      const workId = `resource-action:${key}`;
+      const previous = attempts.get(key);
+      if (previous?.phase === "Running" || command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
         setConfirmation({ command, outcome });
         return;
       }
-      if (command.tracked) busy.set(key, true);
-      attempts.get(key)?.retract?.();
-      const attempt: { retract: Retract | null } = { retract: null };
+      const same = previous?.command === command;
+      if (previous && previous.line !== null && !same &&
+        !workGuard.confirmLoss({ scopes: [], ownerIds: [workId] })) return;
+      previous?.retract?.();
+      const attempt: Execution = {
+        command, outcome, retract: null, phase: command.rawWrite ? "Running" : "Other",
+        line: same ? previous!.line : null, attempt: same ? previous!.attempt : -1, release: () => {},
+      };
       attempts.set(key, attempt);
+      if (command.rawWrite) {
+        attempt.release = workGuard.register({ id: workId, scope: { kind: "account" }, subscribe: busy.subscribe,
+          read: () => ({ changed: false, unconfirmed: attempt.phase === "Running" || attempt.line !== null, stopsBrowserWork: false }),
+        });
+      }
+      previous?.release();
+      if (command.tracked || command.rawWrite || previous?.line) busy.set(key, command.tracked || command.rawWrite === true);
+      const named = `“${command.label.replace(/…$/, "")}”`;
+      const fact = `couldn’t complete ${named}.`;
       const report = (raise: () => Retract) => {
         if (!signal.aborted && attempts.get(key) === attempt) attempt.retract = raise();
       };
       void (async () => {
         try {
-          await command.execute();
-          if (!signal.aborted && attempts.get(key) === attempt) setUnknown(current => {
+          await command.execute(() => {
+            if (!command.rawWrite || signal.aborted || attempts.get(key) !== attempt) return;
+            attempt.phase = "Acknowledged";
+            attempt.line = null;
+            busy.set(key, command.tracked);
+          });
+          if (!signal.aborted && attempts.get(key) === attempt && !command.rawWrite) setLocalUnknown(current => {
             if (!current.has(key)) return current;
             const next = new Map(current); next.delete(key); return next;
           });
         } catch (error) {
           if (signal.aborted || attempts.get(key) !== attempt) return;
+          const replay = attempt.line !== null;
+          if (replay) attempt.attempt += 1;
           if (error instanceof ResourceActionFailure) return report(() => outcome.say(error.line));
           if (error instanceof ResourceActionUnknown) {
-            setUnknown(current => new Map(current).set(key, { kind: "Local", line: error.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
+            setLocalUnknown(current => new Map(current).set(key, { line: error.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
             return;
           }
           if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact, reason: "your position isn’t saved yet." }));
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
-          const failure = actionOutcome(command.id, command.label, command.title, error);
+          const failure = actionOutcome(command.id, command.label, command.title, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
+          if (failure.kind === "Unknown") {
+            attempt.phase = "Unknown";
+            if (attempt.line === null) { attempt.line = failure.line; attempt.attempt = 0; }
+            return;
+          }
+          if (replay) return report(() => outcome.say({ fact: `couldn’t retry ${named}.` }));
           const retry = { label: "retry", commandKey: `retry ${key}`, run: () => run(command, outcome) };
           switch (failure.kind) {
             case "Domain": return report(() => outcome.say(failure.line, failure.retry ? [retry] : undefined));
             case "Transport": return report(() => outcome.fail(error, failure.fact, failure.retry ? retry : undefined));
-            case "Unknown":
-              setUnknown(current => new Map(current).set(key, { kind: "Remote", line: failure.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
-              return;
           }
         } finally {
-          if (command.tracked) busy.set(key, false);
-          if (attempts.get(key) === attempt && attempt.retract === null) attempts.delete(key);
+          if (attempt.phase === "Running") attempt.phase = attempt.line === null ? "Other" : "Unknown";
+          if (command.tracked || command.rawWrite || previous?.line) busy.set(key, false);
+          if (attempts.get(key) === attempt && attempt.line === null) {
+            attempt.release();
+            if (attempt.retract === null) attempts.delete(key);
+          }
         }
       })();
     },
-    [attempts, busy, session],
+    [attempts, busy, session, workGuard],
   );
   const consumptionReviewKey = overlay?.kind === "CollectionConsumption"
     ? consumption.commands.pendingCollection(overlay.selection.kind === "Podcast"
@@ -439,15 +479,17 @@ export default function ResourceActionsProvider({
   const runtime = useMemo(() => ({
     ctx, run, busy, defect,
     overlayPresentation: <ResourceOverlays overlay={overlay} close={close} />,
-    retainedFeedback: <>{[...unknown].map(([key, held]) => <Hold key={key} id={key} attempt={held.attempt}
-      {...(held.kind === "Local" ? { line: held.line } : resendFeedback({ line: held.line, resend: null }))} />)}
+    retainedFeedback: <>{[...localUnknown].map(([key, held]) => <Hold key={key} id={key} attempt={held.attempt} line={held.line} />)}
+      {[...attempts].filter(([, attempt]) => attempt.line !== null).map(([key, attempt]) => <Hold key={key} id={key} attempt={attempt.attempt}
+        {...resendFeedback({ line: attempt.line!, resend: { label: "retry", commandKey: `retry ${key}`, busy: busyKeys.has(key),
+          run: () => run(attempt.command, attempt.outcome) } })} />)}
       {chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
       {consumption.collectionFailures.filter(failure => failure.key !== consumptionReviewKey).map(failure =>
         <Hold key={failure.key} id={failure.key} attempt={failure.attempt} line={failure.line} verbs={failure.verbs} />)}
       {lectern.collectionFailure && !lecternReview ? <Hold id={lectern.collectionFailure.key} attempt={lectern.collectionFailure.attempt}
         line={lectern.collectionFailure.line} verbs={lectern.collectionFailure.verbs} /> : null}
       {podcastLibraryCreation.holds}</>,
-  }), [ctx, run, busy, defect, overlay, close, unknown, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, podcastLibraryCreation.holds, resendFeedback]);
+  }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, podcastLibraryCreation.holds, resendFeedback]);
 
   return (
     <RuntimeContext.Provider value={runtime}>

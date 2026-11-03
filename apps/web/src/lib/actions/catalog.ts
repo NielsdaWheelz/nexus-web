@@ -341,7 +341,7 @@ export type ActionOutcome =
   | { readonly kind: "Transport"; readonly fact: string; readonly retry: boolean }
   | { readonly kind: "Unknown"; readonly line: Line };
 
-export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError): ActionOutcome {
+export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError, rawWrite: boolean): ActionOutcome {
   const named = `“${label.replace(/…$/, "")}”`;
   const fact = `couldn’t complete ${named}.`;
   const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
@@ -352,7 +352,7 @@ export function actionOutcome(id: ActionId, label: string, title: string, error:
     return domain({ fact: "couldn’t change the lectern." });
   if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
     return domain({ fact });
-  if (outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
+  if (rawWrite && outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
   switch (error.code) {
     case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu was out of date. reopen it." });
     case "E_FORBIDDEN":
