@@ -9,6 +9,9 @@
 // place. A menu row never earns one; with no sign it keeps its blank slot. Size belongs
 // to the slot (`--control-icon-size`, `.menuItemIcon`); waiting belongs to `control.tsx`.
 import {
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
   Ellipsis,
   EyeOff,
   Headphones,
@@ -36,6 +39,8 @@ export const Stop: Glyph = Square;                    // halt what is running; w
 
 // Verbs.
 export const Hide: Glyph = EyeOff;                    // conceal it; it stays
+export const MoveUp: Glyph = ArrowUp;                 // move the thing up
+export const MoveDown: Glyph = ArrowDown;             // move the thing down
 export const More: Glyph = Ellipsis;                  // more commands
 
 // Transport.
@@ -43,6 +48,9 @@ export const Play: Glyph = PlayDrawing;               // sound on
 export const Pause: Glyph = PauseDrawing;             // sound held
 export const Previous: Glyph = SkipBack;              // previous entry
 export const Next: Glyph = SkipForward;               // next entry
+
+// Direction.
+export const Choose: Glyph = ChevronsUpDown;          // opens a choice
 
 // Places.
 export const UpNext: Glyph = LayoutList;              // what plays next
