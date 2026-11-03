@@ -4,4 +4,7 @@
 .absent { visibility: hidden; pointer-events: none; }
 .marker { position: absolute; top: 4px; right: 4px; width: 4px; height: 4px; border-radius: var(--radius-full); background: currentColor; }
 .failed { color: var(--danger-ink); }
-@media (forced-colors: active) { .marker { forced-color-adjust: none; background: CanvasText; } }
+@media (forced-colors: active) {
+  .face svg { color: inherit; }
+  .marker { forced-color-adjust: none; background: CanvasText; }
+}
