@@ -458,12 +458,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (alive(scope)) refuse(line.id, { kind: "LibraryGone", missing });
   }
 
-  /** An earlier line of the batch for the same address and libraries files them already. */
+  /** An earlier accepted line for the same address and libraries already filed them. */
   function unfiled(line: Entry): readonly LibraryDestination[] {
     if (line.source.kind !== "Link") return line.into;
     const batch = entries.filter(other => other.batch === line.batch);
     const target = address(line.source.url);
-    return batch.slice(0, batch.indexOf(line)).some(other => other.source.kind === "Link" && address(other.source.url) === target
+    return batch.slice(0, batch.indexOf(line)).some(other => other.stage.kind === "Accepted" && other.source.kind === "Link" && address(other.source.url) === target
       && sameLibraries(other.into, line.into)) ? [] : line.into;
   }
 
