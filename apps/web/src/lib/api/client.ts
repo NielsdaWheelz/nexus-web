@@ -114,12 +114,6 @@ export function isSameSystemApiDefect(
   );
 }
 
-declare const writeOutcome: unique symbol;
-/** A write's modeled failure where nothing ran. */
-export type Refusal = ApiError & { readonly [writeOutcome]: "Refused" };
-/** A write's modeled failure that may have run. */
-export type UnknownOutcome = ApiError & { readonly [writeOutcome]: "Unknown" };
-
 /**
  * A write's modeled failure is exactly one of `isRefusal` and `outcomeUnknown`; a same-system
  * defect is neither and throws. Refused, nothing ran: it never left this client (admission, a
@@ -130,12 +124,13 @@ export type UnknownOutcome = ApiError & { readonly [writeOutcome]: "Unknown" };
  * commit (python/nexus/api/edge.py, services/extension_sessions.py commits and then refreshes);
  * `E_AUTH_UNAVAILABLE` may end a provider write that got no answer (lib/account/settings.server.ts).
  */
-export function isRefusal(error: unknown): error is Refusal {
+export function isRefusal(error: unknown): error is ApiError {
   return isApiError(error) && !isSameSystemApiDefect(error) && (!error.sent || error.status >= 400 && error.status < 500);
 }
 
-/** The other half of `isRefusal`'s partition: its owner holds the write until a press settles it. */
-export function outcomeUnknown(error: unknown): error is UnknownOutcome {
+/** The other half of `isRefusal`'s partition: its owner holds the write until a press settles it.
+ * Narrows to a sent error, not to any `ApiError`, so an `ApiError` that is not unknown stays one. */
+export function outcomeUnknown(error: unknown): error is ApiError & { readonly sent: true } {
   return isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error);
 }
 
@@ -319,8 +314,10 @@ const CHECK_WAIT_MS = 30_000;
  * One api call. A string body is json; status 0 E_NETWORK is a transport
  * failure. `keepalive: true` lets a write outlive the page (64 KB in flight).
  * A caller naming another wire revision (a sealed write) is refused unsent.
- * On an installed client a command (any method but GET and HEAD) meeting a
- * session check waits for it, then runs or is refused by what it settled.
+ * On an installed client a command meeting a session check waits for it, then
+ * runs or is refused by what it settled. A command is an unsafe method (rfc 9110
+ * §9.2.1): the method is the request's own declaration, so a read sent as POST
+ * waits too, bounded by its own deadline.
  */
 export async function apiFetch<T>(
   path: ApiPath,

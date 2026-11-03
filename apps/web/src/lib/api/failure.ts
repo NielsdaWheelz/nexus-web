@@ -5,7 +5,7 @@
 // meets that in render and reaches the boundary; `fail` tests first and throws later.
 import { updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import type { RemoteAdmission } from "@/lib/native/contracts";
-import { isSameSystemApiDefect, type ApiError } from "./client";
+import { admissionError, isSameSystemApiDefect, type ApiError } from "./client";
 
 export type Transport = "Offline" | "SignIn" | "Update" | "Busy" | "Unavailable" | "Refused";
 
@@ -28,17 +28,10 @@ export function transportOf(error: ApiError): Transport {
   return error.status >= 400 && error.status < 500 ? "Refused" : "Unavailable";
 }
 
-/** Why admission holds remote work back now, as a transport. Null while nothing refuses it:
- * admitted, or still checking. Offline is the device's state now: admission is current. */
+/** Why admission holds remote work back now: the transport of the request it would refuse. Null
+ * while nothing refuses it: admitted, or still checking. */
 export function admissionTransport(admission: RemoteAdmission): Transport | null {
-  switch (admission) {
-    case "SignInRequired": return "SignIn";
-    case "UpdateRequired": return "Update";
-    case "Unavailable": return navigator.onLine === false ? "Offline" : "Unavailable";
-    case "Checking":
-    case "Ready":
-      return null;
-  }
+  return admission === "Checking" || admission === "Ready" ? null : transportOf(admissionError(admission));
 }
 
 /** `Update` reloads only where `updateRemedy` says reload can work; otherwise it has no verb. */

@@ -58,7 +58,7 @@ export function podcastErrorMessage(
 ): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   const catalog = catalogLine(error);
-  if (catalog !== null) return { tone: "Warning", title: catalog.fact, message: catalog.reason };
+  if (catalog !== null) return { tone: error.code === "E_CATALOG_COVERAGE" || error.code === "E_CATALOG_UNAVAILABLE" ? "Neutral" : "Warning", title: catalog.fact, message: catalog.reason };
   const transport = apiTransportFeedback(error, title);
   if (transport !== null) return transport;
   const content = (message: string): FeedbackContent => ({

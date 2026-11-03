@@ -94,7 +94,9 @@ if (port) port.onmessage = ({ data }) => {
       if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string" || typeof error.status !== "number" || !Number.isInteger(error.status)) throw invalidReply();
       waiting.delete(frame.id);
       observeRemoteFailure(error.status);
-      pending?.reject(new ApiError(error.status, error.code, error.message));
+      // native answers `E_REMOTE_UNAVAILABLE` only before any work starts; its other unsent
+      // refusals (401, 426, `E_UNAVAILABLE`) share the code of one that left the device.
+      pending?.reject(new ApiError(error.status, error.code, error.message, { sent: error.code !== "E_REMOTE_UNAVAILABLE" }));
       return;
     }
     waiting.delete(frame.id);
