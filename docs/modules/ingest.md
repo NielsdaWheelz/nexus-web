@@ -113,8 +113,17 @@ uploads and captures (`Data{data}`; the web under `/api`, the extension under `/
 
 the extension (Firefox ≥ 153, manifest v2) is one build of three bundles (`bun run build:extension` -> `apps/extension/dist`: the popup page, the persistent background page, the injected content script), pinned to `NEXUS_EXTENSION_NEXUS_ORIGIN` and `NEXUS_EXTENSION_STORAGE_ORIGIN` (bare http(s) origins, also its optional host permissions). sign-in is `identity.launchWebAuthFlow` against `/extension/connect/start?redirect_uri&state`, which answers `#token=…` or `#error=session_failed&request_id=…` at the one redirect origin `NEXUS_EXTENSION_REDIRECT_ORIGINS` names; a command that needs an origin waits for Firefox's grant (`permissions.onAdded`) before its first network call.
 
+canonical `E_INTERNAL`, `E_UNKNOWN` and `E_INVALID_RESPONSE`, and local
+`E_CAPTURE_DEFECT` and `E_CAPTURE_CONTENT`, stop the persistent capture host.
+its first defect remains visible across popup reopen and blocks new commands.
+admitted work still settles; its frozen submission, bytes and uncertainty remain
+owned behind the stopped presentation. original codes and request ids remain
+diagnostic data. restarting the background, extension or browser clears this
+state and loses its memory-only draft and bytes; the durable credential remains
+unless an authoritative response invalidates it. restarting never replays work.
+
 extension revocation retains the exact credential until its accepted response or
-401 settles it. an unanswered revoke stays unknown through a later refusal;
+a nondefect 401 settles it. an unanswered revoke stays unknown through a later refusal;
 retaining a local credential does not establish remote sign-in. each classified
 failed retry advances the existing held fact’s speech attempt once. status reads
 do not repeat it, and retired credentials cannot settle a replacement.
