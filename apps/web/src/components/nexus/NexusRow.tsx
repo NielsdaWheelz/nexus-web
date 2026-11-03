@@ -11,9 +11,9 @@ import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { ExcerptText } from "@/components/resources/ResourceBody";
 import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
-import { excerptTextParts } from "@nexus/authored/excerpt";
 import type { ContextualActionsInput } from "@/lib/actions/useContextualActions";
 import type { NexusRow } from "@/lib/nexus/model";
+import { rowPrimaryText } from "@/lib/nexus/rowText";
 import { NEXUS_COMMANDS } from "@/lib/nexus/query";
 import { resourceAction, rowFacts, rowName } from "@/lib/nexus/rows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -33,25 +33,6 @@ export type NexusVerb = Extract<ActionDescriptor, { kind: "command" | "link" }>;
 /** Passage-bodied items other than highlights are titled by their work and always show their window. */
 function isPassage(item: ResourceItem): boolean {
   return item.preview.body.kind === "passage" && parseResourceRef(item.ref)?.scheme !== "highlight";
-}
-
-/** The row's title: a highlight's literal in quotes, a passage's work, a note's first line, else its name. */
-export function nexusRowPrimaryText(row: NexusRow): string {
-  const literal = (excerpt: Schema<"ExcerptOut">) => `${excerpt.truncated_before ? "…" : ""}${excerpt.text}${excerpt.truncated_after ? "…" : ""}`;
-  const item = row.item;
-  if (!item) return row.label;
-  const body = item.preview.body;
-  switch (body.kind) {
-    case "named": return body.title || "untitled";
-    case "prose": return parseResourceRef(item.ref)?.scheme === "note_block" || !body.excerpt.text ? row.label : literal(body.excerpt);
-    case "passage":
-      if (isPassage(item)) return item.preview.source?.title?.trim() || "source";
-      return `“${body.excerpt.kind === "content" ? literal({ text: excerptTextParts(body.excerpt.body).exact || "selected region",
-        truncated_before: body.excerpt.selected_truncated_before, truncated_after: body.excerpt.selected_truncated_after }) : "table excerpt"}”`;
-    case "images": return [body.count === 1 ? "image" : `${body.count} images`, ...body.alts.flatMap(alt => alt ? [literal(alt)] : [])].join("\n");
-    case "reference": return body.label?.text ? `reference · ${literal(body.label)}` : "embedded resource";
-    case "media": return body.media_summary.title;
-  }
 }
 
 /** A match whose window lies inside the title underlines there and adds no line (the row never repeats its title). */
@@ -94,7 +75,7 @@ export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
 /** The gutter's glyph (or a reorder position) and the text cell: the title, then one supplement. */
 export function NexusRowBody({ row, here, position, query }: { row: NexusRow; here: boolean; position?: number; query: string }) {
   const Icon = row.icon;
-  const title = nexusRowPrimaryText(row);
+  const title = rowPrimaryText(row);
   let inline = titleMatch(row, title);
   // Synchronous pane/recent names have no remote match window; mark their literal name match here.
   const needle = query.trim().toLowerCase();
@@ -126,7 +107,7 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
 
 /** The row's spoken name: `here`, the title, facts, evidence and reason; a lookup command is its title and alias. */
 export function nexusRowName(row: NexusRow, here: boolean, alias: string | null): string {
-  const title = nexusRowPrimaryText(row);
+  const title = rowPrimaryText(row);
   if (alias !== null) return rowName([title, alias]);
   return rowName([here ? "here" : null, title, rowFacts(row), rowEvidence(row, title)?.excerpt.text,
     row.matchingPassage ? resourceMetadataText(row.matchingPassage.item, row.matchingPassage.match_method) : null,

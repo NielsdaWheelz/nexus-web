@@ -315,7 +315,7 @@ export function useNexusController() {
         // Open arms where you were (law 7); a rebuild the user caused keeps what they armed.
         const kept = previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null;
         const armed = kept ?? (useText ? "Continuation:UseText" : previousPaneId !== null && !reordering ? `Pane:${previousPaneId}` : null);
-        next = { identity: "", rows, held: rows.length, armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
+        next = { identity: "", rows, held: rows.map(row => row.key), armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
       } else {
         const latchedKey = latched === null ? null : previous.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
         next = keystroke(previous, parsed.text, syncRows(sync), latchedKey, now);
@@ -708,7 +708,6 @@ export function useNexusController() {
   /** Deliberate arming (law 3): arrows, tab, pointer travel, focus on a row's control. */
   function arm(key: string) {
     if (reorder.placement !== null && !paneRows.some((row) => row.key === key)) return;
-    retired.current = false;
     setList(current => current.armed === key && current.deliberate ? current : select(current, key, performance.now()));
   }
 
@@ -725,19 +724,22 @@ export function useNexusController() {
   /** Enter (law 2): what the user has seen for PERCEIVED_MS, or the row it replaced, or wait for the window once. */
   function submit(activation: NexusTargetActivation) {
     if (rail !== null) return;
+    clearTimeout(pendingFire.current ?? undefined);
+    pendingFire.current = null;
+    if (retired.current) { setAnnouncement(RETIRED); return; }
     if (rootMode === "Blank") { const row = armedRow(); if (row) activate(row.action, activation, row); return; }
     if (lookupGuidance !== null && !list.deliberate) { setAnnouncement(lookupGuidance); return; }
     const now = performance.now();
     const target = fireTarget(list, now);
-    clearTimeout(pendingFire.current ?? undefined);
     if (target.kind === "Fire") { fire(target.key, activation); return; }
-    if (target.kind === "None") { fire(retired.current ? null : fallbackKey, activation); return; }
+    if (target.kind === "None") { fire(fallbackKey, activation); return; }
     pendingFire.current = setTimeout(() => {
       pendingFire.current = null;
       if (!visible.current) return;
+      if (retired.current) { setAnnouncement(RETIRED); return; }
       // The window has closed: the armed row once, whatever its age; nothing armed lands on the fallback.
       const list = latestList.current;
-      latestFire.current(list.armed ?? (retired.current ? null : fallbackKey), activation);
+      latestFire.current(list.armed ?? fallbackKey, activation);
     }, Math.max(0, target.until - now));
   }
 
@@ -847,7 +849,7 @@ export function useNexusController() {
     page,
     rootMode,
     rootScroll,
-    /** The list's bands: rows[0..held) held, the rest arriving. */
+    /** Held keys retain their band even when a fresh latch arrives before them. */
     list,
     groups,
     continuations: continuationRows,

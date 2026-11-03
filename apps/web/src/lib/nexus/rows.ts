@@ -26,6 +26,7 @@ import { resourceMetadata } from "@/lib/resources/metadata";
 import { emptySearchQuery } from "@/lib/search/query";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { NexusAction, NexusCommandId, NexusGroup, NexusPage, NexusPane, NexusRow, NexusStream, NexusTarget, RankTier, UsageMap } from "./model";
+import { rowPrimaryText } from "./rowText";
 import { RESULT_CAP } from "./policy";
 import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusQuery } from "./query";
 import { canonicalHref, compareRank, frecency, nameTier } from "./rank";
@@ -306,16 +307,19 @@ export function arrivalRows(input: Reference & {
   if (query.intent.kind === "Resource") return [referenceRow(query.intent.ref, input, panes, usage)];
   if (query.intent.kind !== "Search") return [];
   const text = query.text;
-  const tierOf = (href: string | null, label: string, keywords: readonly string[], content: RankTier): RankTier =>
-    href !== null && latched !== null && canonicalHref(href) === latched ? "Latched" : nameTier(text, label, keywords) ?? content;
+  const ranked = (row: NexusRow): NexusRow => {
+    const named = nameTier(text, rowPrimaryText(row), row.keywords ?? []);
+    const tier = row.href !== null && latched !== null && canonicalHref(row.href) === latched ? "Latched" : named ?? row.rank.tier;
+    return { ...row, evidence: named === null, rank: { ...row.rank, tier } };
+  };
   const content = (method: "lexical" | "semantic" | null): RankTier => method === "semantic" ? "Semantic" : "Lexical";
   const local = input.local.filter(match => !input.missingLocal.has(match.resource.ref))
-    .map(match => localRow(match, panes, tierOf(match.href, match.label, [], "Lexical"), usage));
-  const remote = (results: readonly Schema<"SearchResourceOut">[], stream: NexusStream): NexusRow[] => results.map(result => {
-    const row = resourceRow(result.item, panes, stream, tierOf(result.item.activation.kind === "route" ? result.item.activation.href : null, result.item.label, itemKeywords(result.item), content(result.match_method)), usage);
-    return { ...row, match: result.match, matchMethod: result.match_method, matchingPassage: result.matching_passage };
-  });
-  const passages = (preview?.passages ?? []).map(passage => ({
+    .map(match => ranked(localRow(match, panes, "Lexical", usage)));
+  const remote = (results: readonly Schema<"SearchResourceOut">[], stream: NexusStream): NexusRow[] => results.map(result => ranked({
+    ...resourceRow(result.item, panes, stream, content(result.match_method), usage),
+    match: result.match, matchMethod: result.match_method, matchingPassage: result.matching_passage,
+  }));
+  const passages = (preview?.passages ?? []).map(passage => ranked({
     ...resourceRow(passage.item, panes, "Passages", content(passage.match_method), usage), match: passage.match, matchMethod: passage.match_method,
   }));
   // Local authored rows own their refs; otherwise the earlier stream does.
@@ -330,11 +334,13 @@ export function arrivalRows(input: Reference & {
     const ref = passage.item?.preview.source?.ref;
     const owner = ref ? owners.get(`Resource:${ref}`) : undefined;
     if (!owner || owner.localMatch || shown.has(owner.key) || owner.matchingPassage || !passage.item || !passage.matchMethod || owners.get(passage.key) !== passage) continue;
+    if (passage.rank.tier === "Latched" && owner.rank.tier !== "Latched") continue;
     owners.set(owner.key, { ...owner, matchingPassage: { item: passage.item, match: passage.match ?? null, match_method: passage.matchMethod, matched_field: passage.item.activation.field === "annotation" ? "annotation" : null } });
     owners.delete(passage.key);
   }
   const rows = [...owners.values()];
-  const fresh = rows.filter(row => !shown.has(row.key)).sort(compareRank).slice(0, Math.max(0, RESULT_CAP - shown.size));
+  const fresh = rows.filter(row => !shown.has(row.key)).sort(compareRank)
+    .filter((row, index) => row.rank.tier === "Latched" || index < RESULT_CAP - shown.size);
   return [...rows.flatMap(row => { const before = shown.get(row.key); return before ? [refreshed(before, row)] : []; }), ...fresh];
 }
 

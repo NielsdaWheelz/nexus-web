@@ -92,7 +92,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const rail = controller.rail;
   const lookup = controller.lookupGuidance !== null;
   const listed = new Set(controller.list.rows.map(row => row.key));
-  const held = new Set(controller.list.rows.slice(0, controller.list.held).map(row => row.key));
+  const held = new Set(controller.list.held);
   const activeHref = controller.panes.find((pane) => pane.current)?.href;
   const section = activeHref ? sectionDestinationIdForHref(activeHref) : null;
   const accountId = isAccountDestinationId(section) ? section : null;

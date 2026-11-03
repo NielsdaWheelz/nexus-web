@@ -473,9 +473,17 @@ owns held and arriving bands. each keystroke retains still-name-matching or
 latched rows, releases content-only evidence rows, and re-ranks held plus new
 synchronous candidates once. retained rows stay actionable because the new name
 match is checked synchronously; this is the palette's exception to dim/inert
-preceding-query rows. later arrivals append in ranked batches after shown rows,
-with 200ms opacity onset; updates preserve shown position and geometry.
-deliberate arming never freezes arrivals.
+preceding-query rows. name matching uses the same canonical noun as the painted
+row; a captured passage's quote is evidence, not its work's name. evidence
+classification is independent of latch rank.
+
+later arrivals append in ranked batches after shown rows, with 200ms opacity
+onset. a fresh latched row is the exception: it enters first and, at the eight-row
+cap, displaces the last non-armed row. surviving rows keep their relative order.
+held membership is a list of row keys, not a prefix length, so the prepended
+latch still receives arrival onset while every surviving row keeps its band.
+updates preserve shown position and geometry; deliberate arming never freezes
+arrivals.
 
 the keystroke arms the best row with latency and remembers the old armed row
 while it remains shown. a better-tier arrival in the first 200ms may re-arm;
@@ -495,7 +503,8 @@ never activate; shift retains the captured fresh-pane disposition.
 explicit pane operations retain their committed successor/focus rules. capped
 omission does not mean deletion: bounded local `search_admission` distinguishes
 revoked query/scope/evidence admission from preview omission. removal retires the
-armed action without selecting a replacement; its enter announces retirement.
+armed action without selecting a replacement; enter and a waiting enter announce
+retirement until the next query, before considering any remembered previous row.
 there is no interaction-frozen branch, legacy ranker or compatibility mode.
 
 command and lookup views are separate from retrieval. exact slash heads accept

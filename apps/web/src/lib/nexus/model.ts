@@ -124,12 +124,12 @@ export interface NexusGroup {
   readonly rows: readonly NexusRow[];
 }
 
-/** A query's list: the held band, then the arriving band, and what enter fires. */
+/** A query's list: held and arriving rows, with a fresh latch first, and what enter fires. */
 export interface NexusList {
   readonly identity: string;
   readonly rows: readonly NexusRow[];
-  /** rows[0..held) are the held band. */
-  readonly held: number;
+  /** Keys painted at the keystroke; other rows arrived, including a latch prepended ahead of them. */
+  readonly held: readonly string[];
   readonly armed: string | null;
   readonly armedAt: number;
   readonly deliberate: boolean;

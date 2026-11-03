@@ -2,11 +2,12 @@
 // controller supplies `now`. Ranking is rank.ts's and rows are rows.ts's.
 import type { FireTarget, NexusList, NexusRow } from "./model";
 import { ARM_WINDOW_MS, PERCEIVED_MS, RESULT_CAP } from "./policy";
+import { rowPrimaryText } from "./rowText";
 import { compareRank, nameTier } from "./rank";
 
 const TIERS = ["ExplicitIntent", "Latched", "Exact", "PrefixOrToken", "Abbreviation", "Substring", "Lexical", "Semantic"] as const;
 
-export const EMPTY: NexusList = { identity: "", rows: [], held: 0, armed: null, armedAt: 0, deliberate: false, previous: null, paintedAt: 0 };
+export const EMPTY: NexusList = { identity: "", rows: [], held: [], armed: null, armedAt: 0, deliberate: false, previous: null, paintedAt: 0 };
 
 /**
  * Law 1 at the keystroke: every previous row that still matches `identity` by name, or is the latched
@@ -20,7 +21,7 @@ export function keystroke(previous: NexusList, identity: string, sync: readonly 
   if (previous.identity === "") previous = EMPTY;
   const held = previous.rows.flatMap(row => {
     if (row.evidence) return [];
-    const tier = row.key === latchedKey ? "Latched" : nameTier(identity, row.label, row.keywords ?? []);
+    const tier = row.key === latchedKey ? "Latched" : nameTier(identity, rowPrimaryText(row), row.keywords ?? []);
     return tier === null ? [] : [{ ...row, rank: { ...row.rank, tier } }];
   });
   const byKey = new Map(held.map(row => [row.key, row] as const));
@@ -31,14 +32,15 @@ export function keystroke(previous: NexusList, identity: string, sync: readonly 
   const rows = [...byKey.values()].sort(compareRank).slice(0, RESULT_CAP);
   const armed = rows[0]?.key ?? null;
   return {
-    identity, rows, held: rows.length, armed, armedAt: now, deliberate: false,
+    identity, rows, held: rows.map(row => row.key), armed, armedAt: now, deliberate: false,
     previous: previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null,
     paintedAt: now,
   };
 }
 
 /**
- * Rows already shown update in place; new rows append below the held band, ranked among themselves.
+ * Rows already shown update in place; new rows append, except a fresh latch enters first.
+ * At the principal cap it displaces the last non-armed row; surviving rows keep their order and band.
  * Within ARM_WINDOW_MS of the paint an arrival whose tier beats the armed row's re-arms it with latency;
  * a deliberate selection is never displaced.
  */
@@ -47,12 +49,20 @@ export function arrive(list: NexusList, rows: readonly NexusRow[], now: number):
   const shown = list.rows.map(row => updates.get(row.key) ?? row);
   const present = new Set(list.rows.map(row => row.key));
   const fresh = rows.filter(row => !present.has(row.key)).sort(compareRank);
-  const next = [...shown, ...fresh];
-  if (list.deliberate || now - list.paintedAt >= ARM_WINDOW_MS || fresh.length === 0) return { ...list, rows: next };
+  const next = [...fresh.filter(row => row.rank.tier === "Latched"), ...shown, ...fresh.filter(row => row.rank.tier !== "Latched")];
+  if (list.identity !== "") while (next.length > RESULT_CAP) {
+    const at = next.findLastIndex(row => row.key !== list.armed);
+    next.splice(at, 1);
+  }
+  const surviving = new Set(next.map(row => row.key));
+  const current = { ...list, rows: next, held: list.held.filter(key => surviving.has(key)),
+    previous: list.previous !== null && surviving.has(list.previous) ? list.previous : null };
+  const admitted = fresh.filter(row => surviving.has(row.key));
+  if (list.deliberate || now - list.paintedAt >= ARM_WINDOW_MS || admitted.length === 0) return current;
   const armed = next.find(row => row.key === list.armed);
-  const best = fresh[0]!;
-  if (armed && TIERS.indexOf(best.rank.tier) >= TIERS.indexOf(armed.rank.tier)) return { ...list, rows: next };
-  return { ...list, rows: next, armed: best.key, armedAt: now, previous: armed ? armed.key : null };
+  const best = admitted[0]!;
+  if (armed && TIERS.indexOf(best.rank.tier) >= TIERS.indexOf(armed.rank.tier)) return current;
+  return { ...current, armed: best.key, armedAt: now, previous: armed ? armed.key : null };
 }
 
 /** Drops rows; a dropped armed row arms nothing, a dropped previous is forgotten. */
@@ -60,7 +70,7 @@ export function remove(list: NexusList, keys: ReadonlySet<string>): NexusList {
   if (list.rows.every(row => !keys.has(row.key))) return list;
   const rows = list.rows.filter(row => !keys.has(row.key));
   return {
-    ...list, rows, held: list.rows.slice(0, list.held).filter(row => !keys.has(row.key)).length,
+    ...list, rows, held: list.held.filter(key => !keys.has(key)),
     armed: list.armed !== null && keys.has(list.armed) ? null : list.armed,
     previous: list.previous !== null && keys.has(list.previous) ? null : list.previous,
   };

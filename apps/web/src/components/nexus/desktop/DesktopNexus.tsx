@@ -70,7 +70,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const active = rows[index];
   const rail = controller.rail;
   const listed = new Set(controller.list.rows.map(row => row.key));
-  const held = new Set(controller.list.rows.slice(0, controller.list.held).map(row => row.key));
+  const held = new Set(controller.list.held);
   const lookup = controller.lookupGuidance !== null;
   const verbsOf = (row: NexusRow) => nexusRowVerbs(row, row.state === "Current", controller, paneRowName(controller, row), setExcerpt);
 
