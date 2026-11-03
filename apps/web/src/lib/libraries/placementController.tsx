@@ -4,12 +4,12 @@
 // has one admission queue across all targets. Only an acknowledged predecessor
 // can advance a queued command's precondition. Unknown delivery retains the exact
 // command, and a read never rebases it. Creation and initial filing are atomic.
-// A lane's unknown outcome stands as a hold until its retry lands or a refusal settles
-// it; a first send admission refuses unsent is refused. A refusal can't say whether an
-// earlier unknown send landed, so the lane rereads first: an intent the reread shows in
-// force retires silently, unacknowledged, so any successor is refused as a conflict; any
-// other intent is refused. A refusal speaks once per lane, counting the successors it
-// refused; an item's own reason speaks only for one item. A creation's resend that is
+// A first send's refusal settles it. After an unknown send, a refused replay rereads:
+// desired state resolves the intent without an acknowledgement, so a successor cannot
+// borrow its revision. Opposite state settles only at a newer order/removal fence that
+// prevents the frozen command from applying; unchanged guards and failed reads keep it
+// held. A refusal speaks once per lane, counting its successors; an item's reason speaks
+// only for one item. A creation's resend that is
 // refused, unsent or answered, stays unknown until it lands or the user stops tracking it.
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
@@ -58,7 +58,7 @@ interface Change {
   readonly predecessor: Change | null;
   acknowledgedRevision: string | null;
   phase: "Queued" | "Sending" | "Unknown";
-  /** Attempts that left its outcome unconfirmed; past zero it holds until it lands or is refused. */
+  /** Attempts that left its outcome unconfirmed; past zero only settlement retires it. */
   unconfirmed: number;
 }
 interface Target {
@@ -168,7 +168,7 @@ function createOwner(signIn: (error: unknown) => boolean, changed: () => void, r
     lane.splice(lane.indexOf(change), 1);
   };
   /** Refuses `first` and every change queued behind it in its lane, and says so once. `error` is the
-   * refusal of `first`; null when its predecessor landed unacknowledged, so its precondition moved. */
+   * refusal of `first`; null when its predecessor's intent is observed without an acknowledgement. */
   const refuseLane = (first: Change, error: unknown) => {
     const refused = [...(lanes.get(first.libraryId) ?? [])];
     const items = new Set(refused.map(change => change.row)).size;
@@ -224,7 +224,7 @@ function createOwner(signIn: (error: unknown) => boolean, changed: () => void, r
             break;
           }
           if (change.unconfirmed > 0) {
-            // The refusal leaves the earlier send open; the item's placement says whether it landed.
+            // Desired state resolves the intent; otherwise only a newer frozen guard fences it.
             const fresh = await read(change.row);
             if (!active || lifetime !== run) return;
             const cell = change.row.data?.find(item => item.library_id === libraryId);
@@ -233,7 +233,12 @@ function createOwner(signIn: (error: unknown) => boolean, changed: () => void, r
               emit();
               continue;
             }
-            if (!fresh && !change.row.unavailable) {
+            const superseded = fresh && cell !== undefined && (
+              BigInt(cell.order_revision) > BigInt(change.expectedRevision)
+              || change.removalRevision !== null && change.row.removalRevision !== null
+                && BigInt(change.row.removalRevision) > BigInt(change.removalRevision)
+            );
+            if (!superseded) {
               change.unconfirmed += 1;
               change.phase = "Unknown";
               break;
