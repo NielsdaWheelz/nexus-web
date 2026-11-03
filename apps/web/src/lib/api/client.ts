@@ -3,6 +3,7 @@
 // browser http cache, and answers the parsed json or throws ApiError. A request
 // sealed under another revision is refused here, never rewritten. A 426 means
 // this tab was built for another wire: it reloads unless writing holds it.
+import { writeRefused } from "./writeOutcome";
 import { installedApp, remoteAttemptAllowed, remoteAdmission, observeRemoteFailure, observeRemoteSuccess, checkSession, whenChecked } from "@/lib/native/admission";
 import type { RemoteAdmission } from "@/lib/native/contracts";
 import { androidShellDocument } from "@/lib/androidShell";
@@ -129,7 +130,7 @@ export function isSameSystemApiDefect(
  */
 export function isRefusal(error: unknown): error is ApiError {
   return isApiError(error) && !isSameSystemApiDefect(error)
-    && (!error.sent || error.status >= 400 && error.status < 500 || error.code === "E_AUTH_UNAVAILABLE");
+    && writeRefused(error);
 }
 
 /** The other half of `isRefusal`'s partition: its owner holds the write until a press settles it.

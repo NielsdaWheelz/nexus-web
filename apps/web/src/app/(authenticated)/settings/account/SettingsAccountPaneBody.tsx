@@ -3,7 +3,7 @@ import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useId, useState, type ComponentProps, type FormEvent } from "react";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { Line } from "@/components/feedback/stage";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
@@ -31,14 +31,15 @@ import AssistantWrites from "./AssistantWrites";
 import styles from "./page.module.css";
 
 type Profile = ApiJson<"/me", "get">["data"];
-/** What a save leaves at its form: a refused input's line beneath the field, or an outcome it
- * cannot know, held until the next send, which is its retry. A slip took any other outcome. */
+/** A form retains its submitted intent independently of mutable writing. Only acceptance or
+ * deliberate guarded departure settles an unknown; a later refusal does not. */
 type Outcome =
   | { readonly kind: "Saved" }
   | { readonly kind: "Refused"; readonly line: Line }
   | { readonly kind: "Unknown" }
   | { readonly kind: "Told" };
 
+type ProfileCommand = { value: string; phase: "Sending" | "Unknown" | "Retrying"; attempt: number };
 const UNKNOWN: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 const VISIT = definePaneVisitDataKey<Visit<Profile>>("Settings.Account");
 // the server owns the bound (python schemas/user.py DISPLAY_NAME_MAX_LENGTH)
@@ -60,36 +61,47 @@ function ProfileForm(props: {
   readonly save: (value: string) => Promise<Outcome>;
 }) {
   const current = props.current;
-  const draft = useResourceDraft<{ text: string | null; pending: boolean }>(
+  const resendFeedback = useResendFeedback();
+  const draft = useResourceDraft<{ text: string | null; command: ProfileCommand | null; refusal: Line | null }>(
     `Settings.Account.${props.title}`,
-    () => ({ text: null, pending: false }),
+    () => ({ text: null, command: null, refusal: null }),
     value => ({
       changed: value.text !== null && (props.normalize ?? String)(value.text.trim()) !== current,
-      unconfirmed: value.pending,
+      unconfirmed: value.command !== null,
       stopsBrowserWork: false,
     }),
   );
-  const setDraft = (text: string | null) => draft.set(value => ({ ...value, text }));
-  const setPending = (pending: boolean) => draft.set(value => ({ ...value, pending }));
-  const { pending } = draft.value;
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [unknown, setUnknown] = useState(0);
+  const { command, refusal } = draft.value;
+  const pending = command !== null && command.phase !== "Unknown";
   const lineId = useId();
   const value = draft.value.text ?? current ?? "";
   const next = (props.normalize ?? String)(value.trim());
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setPending(true);
-    const saved = await props.save(next);
-    setPending(false);
-    setOutcome(saved);
-    if (saved.kind === "Unknown") setUnknown(count => count + 1);
-    if (saved.kind === "Saved") setDraft(null);
+  const send = async (submitted: string) => {
+    const previous = draft.read().command;
+    if (previous !== null && previous.phase !== "Unknown") return;
+    const running: ProfileCommand = { value: previous?.value ?? submitted, phase: previous === null ? "Sending" : "Retrying", attempt: previous?.attempt ?? 0 };
+    draft.set(value => ({ ...value, command: running, refusal: null }));
+    const result = await props.save(running.value);
+    if (draft.read().command !== running) return;
+    if (result.kind === "Saved") draft.set(value => ({
+      text: value.text !== null && (props.normalize ?? String)(value.text.trim()) !== running.value ? value.text : null,
+      command: null, refusal: null,
+    }));
+    else if (result.kind === "Unknown" || previous !== null) draft.set(value => ({ ...value, command: { ...running, phase: "Unknown", attempt: running.attempt + 1 } }));
+    else draft.set(value => ({ ...value, command: null, refusal: result.kind === "Refused" ? result.line : null }));
   };
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (draft.read().command === null) void send(next);
+  };
+  const held = command === null || command.phase === "Sending" ? null : resendFeedback({ line: UNKNOWN,
+    resend: { label: "retry", commandKey: `RetryProfile:${props.title}`, busy: pending, run: () => { void send(command.value); } },
+  });
+
   return (
     <PaneSection title={props.title}>
       <form className={styles.form} onSubmit={submit}>
-        {outcome?.kind === "Unknown" && !pending ? <Hold id={`settings-account:${props.title}`} attempt={unknown} line={UNKNOWN} /> : null}
+        {held === null || command === null ? null : <Hold id={`${draft.owner}:profile`} attempt={command.attempt} {...held} />}
         <p className={styles.current}>
           Current: {props.current || "(not set)"}
         </p>
@@ -98,20 +110,20 @@ function ProfileForm(props: {
           <Input
             {...props.input}
             value={value}
-            onChange={(event) => { setDraft(event.target.value); if (outcome?.kind === "Refused") setOutcome(null); }}
+            onChange={(event) => draft.set(value => ({ ...value, text: event.target.value, refusal: null }))}
             disabled={props.current === null || pending}
-            aria-describedby={outcome?.kind === "Refused" ? lineId : undefined}
+            aria-describedby={refusal !== null ? lineId : undefined}
           />
         </label>
         {/* a save never moves focus to its input, so its refusal speaks */}
-        {outcome?.kind === "Refused" ? <Field id={lineId} line={outcome.line} /> : null}
+        {refusal !== null ? <Field id={lineId} line={refusal} /> : null}
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
         <Button
           type="submit"
           emphasis="strong"
           aria-busy={pending || undefined}
           disabled={
-            pending ||
+            command !== null ||
             props.current === null ||
             next === props.current ||
             (props.input.required && !next)
@@ -159,7 +171,7 @@ export default function SettingsAccountPaneBody() {
         : account.data;
 
   const copied = useCopyFeedback(profile?.email_ingest_address);
-  // PATCH /me sets absolute values: a retry that already landed is a no-op success.
+  // Feedback retains the submitted value; PATCH /me still has no version fence.
   const patch = async (
     body: { display_name: string | null } | { calendar_time_zone: string },
     title: string,
@@ -193,7 +205,7 @@ export default function SettingsAccountPaneBody() {
           return { kind: "Saved" };
         case "InUse": return { kind: "Refused", line: { fact: "another account already uses this email." } };
         case "Invalid": return { kind: "Refused", line: { fact: "enter a valid email address." } };
-        case "Failed": say({ fact: title }); return { kind: "Told" };
+        case "Failed": return { kind: "Unknown" };
       }
     } catch (error) {
       return failed(error, title);
