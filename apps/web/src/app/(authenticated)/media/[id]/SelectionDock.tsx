@@ -14,6 +14,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { localResourceLabel } from "@/lib/resources/localResource";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
@@ -411,7 +412,9 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : null}
         {annotation && annotation.placement.kind !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[annotation.placement.kind] }} announcement="None" /> : null}
         {/* null means gone only once the store has read; until then the annotation waits */}
-        {draft.highlightId && draft.bodyRole === "question" && store.getState().local.status !== "loading" ? <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} resource={annotation?.projection ?? null} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} /> : null}
+        {draft.highlightId && draft.bodyRole === "question" && store.getState().local.status !== "loading" && (!annotation || annotation.display) ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
+          <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} resource={annotation?.display?.projection ?? null} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} />
+        </PreparedResourcesContext> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
           onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>

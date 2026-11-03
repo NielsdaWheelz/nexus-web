@@ -3,7 +3,8 @@
 import { excerptTextParts } from "@nexus/authored/excerpt";
 import type { ResourceProjection, ResourceRef } from "@nexus/authored/types";
 import { pageTitle } from "@nexus/authored/queries";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { parseBody, type BodyJson } from "@nexus/authored/body";
+import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 
 const ROUTES: Partial<Record<string, string>> = {
   highlight: "/highlights", page: "/pages", note_block: "/notes", media: "/media", conversation: "/conversations",
@@ -42,10 +43,31 @@ export function highlightSourceHref(resource: ResourceProjection, activationRef:
   return source && own ? `${source}#highlight-${own.id}` : null;
 }
 
-/** The literal label a local projection supplies for menus, links and parents. */
+/** An absent atom label names its type; literal labels remain literal. */
+export function embedDisplayLabel(ref: string, field: unknown, label: unknown): string {
+  if (typeof label === "string") return label;
+  if (field === "annotation") return "annotation";
+  const parsed = parseResourceRef(ref);
+  // justify-defect: typed authored bodies contain canonical resource references.
+  if (!parsed) throw new TypeError("invalid embedded resource ref");
+  return resourceTypeLabel(parsed.scheme);
+}
+
+/** Display text derives from typed atoms, never edits their canonical text. */
+export function bodyDisplayText(body: BodyJson): string {
+  return (body.content ?? []).map(node => {
+    switch (node.type) {
+      case "text": return node.text!;
+      case "hard_break": return "\n";
+      case "image": return String(node.attrs?.alt ?? "");
+      case "resource_embed": return embedDisplayLabel(String(node.attrs!.resource_ref), node.attrs!.field, node.attrs!.label);
+    }
+  }).join("");
+}
+
 export function localResourceLabel(resource: ResourceProjection): string {
   switch (resource.kind) {
-    case "note": return resource.body_text?.split("\n")[0]?.trim() || "empty note";
+    case "note": return bodyDisplayText(parseBody(resource.body_pm_json).body_pm_json).split("\n")[0]?.trim() || "empty note";
     case "page": return pageTitle(resource.title ?? "", resource.local_date);
     case "highlight": {
       if (resource.excerpt === null) throw new TypeError("Highlight has no excerpt projection");

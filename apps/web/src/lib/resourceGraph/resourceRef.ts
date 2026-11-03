@@ -49,6 +49,9 @@ export function parseResourceRef(raw: string): ResourceRef | null {
     : null;
 }
 
+/** These domains can have local authored content. This says nothing about viewer ownership. */
+export const hasAuthoredContent = (ref: string): boolean => /^(note_block|page|highlight|passage_anchor):/u.test(ref);
+
 export function formatResourceRef(ref: ResourceRef): string {
   return `${ref.scheme}:${ref.id}`;
 }

@@ -41,6 +41,10 @@ import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import NoteBodyPreview from "./NoteBodyPreview";
 import AuthoredReadFailure from "./AuthoredReadFailure";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
+import {authoredItem} from "@/lib/notes/presentation";
+import {hasAuthoredContent} from "@/lib/resourceGraph/resourceRef";
+import {embedDisplayLabel, localResourceHref} from "@/lib/resources/localResource";
 import ResourceLink from "@/components/resources/ResourceLink";
 import {
   enterOutlineOccurrence,
@@ -192,7 +196,6 @@ export interface NoteEditorProps {
   label: string;
   placeholder?: string;
   inspection?: NoteInspection | null;
-  embeddedItem?: ResourceItem | null;
   /** Terminal bodies keep rich content, but embeds cannot reopen the outline. */
   atomicEmbeds?: boolean;
   focus?: {
@@ -980,7 +983,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             const entry = {ref, field: embeddedField, label: typeof node.attrs.label === "string" ? node.attrs.label : null, row_id: field?.row_id ?? null, key: `embed:${++embedSerial.current}`};
             setEmbeds(value => new Map(value).set(dom, entry));
           }
-          else dom.textContent = node.attrs.label ?? ref;
+          else dom.textContent = embedDisplayLabel(ref, node.attrs.field, node.attrs.label);
           return {
             dom,
             stopEvent: () => true,
@@ -1589,9 +1592,9 @@ function NoteEditorContent(props: NoteEditorProps) {
         const scope = owner !== null ? `${owner}/embed:${embed.ref}` : `${occurrenceKey}/${embed.key}`;
         const beforeCollapse = context?.beforeCollapse;
         return createPortal(<OutlineEmbeddingOccurrence value={owner}><EmbeddedResource
-          resourceRef={embed.ref} field={embed.field} label={embed.label} supplied={props.embeddedItem ?? null} inRow={embed.row_id !== null}
+          resourceRef={embed.ref} field={embed.field} label={embed.label} inRow={embed.row_id !== null}
           scope={scope}
-          branch={context?.branch ?? branch} containingNoteRef={context?.containingNoteRef ?? props.containingNoteRef}
+          branch={context?.branch ?? branch}
           beforeCollapse={beforeCollapse ? () => beforeCollapse(scope) : undefined}
           atomic={props.atomicEmbeds === true} onRevealRoot={() => shell.current?.focus()}
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
@@ -1839,14 +1842,11 @@ function inspectionPlugin(focus: () => void): Plugin<InspectionState | null> {
   });
 }
 
-/** Existing bodies arrive batched; a newly pasted/uploaded target resolves once. */
 function EmbeddedResource({
   field, label,
   resourceRef,
-  supplied,
   scope,
   branch,
-  containingNoteRef: _containingNoteRef,
   atomic,
   inRow,
   onRevealRoot,
@@ -1855,81 +1855,72 @@ function EmbeddedResource({
   resourceRef: string;
   field: "annotation" | null;
   label: string | null;
-  supplied: ResourceItem | null;
   scope: string;
   branch: OutlineBranch;
-  containingNoteRef: string | null;
   atomic: boolean;
   inRow: boolean;
   onRevealRoot(): void;
   beforeCollapse?(): Promise<boolean>;
 }) {
   if (field === "annotation") return <EmbeddedAnnotation resourceRef={resourceRef} label={label}/>;
-  return <EmbeddedWholeResource resourceRef={resourceRef} supplied={supplied} scope={scope} branch={branch} containingNoteRef={_containingNoteRef} atomic={atomic} inRow={inRow} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
+  return <EmbeddedWholeResource resourceRef={resourceRef} scope={scope} branch={branch} atomic={atomic} inRow={inRow} onRevealRoot={onRevealRoot} beforeCollapse={beforeCollapse}/>;
 }
 function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: string | null}) {
-  const read = useAuthoredQuery({kind: "resource", ref: resourceRef});
-  const resource = read.data?.rows[0]?.resource;
+  const prepared = useContext(PreparedResourcesContext);
+  const held = prepared?.has(resourceRef) ?? false;
+  const read = useAuthoredQuery(held ? null : {kind: "resource", ref: resourceRef});
+  const resource = held ? prepared!.get(resourceRef)?.resource : read.data?.rows[0]?.resource;
   return <>
     <FeedbackBusy subject={resourceRef} pending={read.pending}/>
     <AuthoredReadFailure {...read} title="couldn’t refresh this annotation"/>
     <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
       ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
-      : read.data ? "annotation unavailable" : "annotation"}</a>
+      : held || read.data ? "annotation unavailable" : "annotation"}</a>
   </>;
 }
-function EmbeddedWholeResource({resourceRef, supplied, scope, branch, containingNoteRef: _containingNoteRef, atomic, inRow, onRevealRoot, beforeCollapse}: {
-  resourceRef: string; supplied: ResourceItem | null; scope: string; branch: OutlineBranch; containingNoteRef: string | null; atomic: boolean; inRow: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
+function EmbeddedWholeResource({resourceRef, scope, branch, atomic, inRow, onRevealRoot, beforeCollapse}: {
+  resourceRef: string; scope: string; branch: OutlineBranch; atomic: boolean; inRow: boolean; onRevealRoot(): void; beforeCollapse?(): Promise<boolean>;
 }) {
+  const prepared = useContext(PreparedResourcesContext);
+  const held = prepared?.has(resourceRef) ?? false;
+  const read = useAuthoredQuery(held ? null : {kind: "resource", ref: resourceRef});
+  const resource = held ? prepared!.get(resourceRef)?.resource : read.data?.rows[0]?.resource;
+  const serverOwned = resource ? !resource.authored_by_viewer : (held || read.data !== null) && !hasAuthoredContent(resourceRef);
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const failureOccurrence = useFeedbackOccurrence(failed, resourceRef);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const item =
-    supplied?.ref === resourceRef
-      ? supplied
-      : resolved?.ref === resourceRef
-        ? resolved
-        : null;
+  const item = resolved?.ref === resourceRef ? resolved : null;
   const handleUnauthenticated = useUnauthenticatedApiHandler();
   useEffect(() => {
-    if (item) return;
+    // A missing authored target stays local. Server-only domains need no captured stub.
+    if (!serverOwned || item) return;
     const controller = new AbortController();
     setLoading(true);
     void resolveResourceItem(resourceRef, controller.signal).then(
       value => {if (!controller.signal.aborted) {setResolved(value); setFailed(false); setLoading(false);}},
       (error: unknown) => {
         if (controller.signal.aborted || handleUnauthenticated(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error))
-          setDefect({ error });
+        if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
         else {setFailed(true); setLoading(false);}
       },
     );
     return () => controller.abort();
-  }, [resourceRef, item, attempt, handleUnauthenticated]);
+  }, [resourceRef, serverOwned, item, attempt, handleUnauthenticated]);
   if (defect) throw defect.error;
-  if (item && atomic) return <ResourceLink item={item} />;
-  return item ? (
-    <ResourceOutlineList
-      scope={scope}
-      ariaLabel="Embedded resource"
-      branch={branch}
-      onRevealRoot={onRevealRoot}
-    >
-      <ResourceOutlineRow
-        beforeCollapse={beforeCollapse}
-        editable={false}
-        inRow={inRow}
-        incoming={null}
-        item={item}
-        occurrenceKey={scope}
-      />
-    </ResourceOutlineList>
-  ) : (
-    failed ? <FeedbackFailure scope="Local" occurrence={failureOccurrence}
+  const owned = resource?.authored_by_viewer ? resource : null;
+  return <>
+    <AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>
+    {owned || item ? atomic ? <ResourceLink item={owned ? authoredItem(owned, null, localResourceHref(owned)) : item!}/> : (
+      <ResourceOutlineList scope={scope} ariaLabel="Embedded resource" branch={branch} onRevealRoot={onRevealRoot}>
+        <ResourceOutlineRow beforeCollapse={beforeCollapse} editable={false} inRow={inRow} incoming={null} defaultOpen={false}
+          {...owned ? {resource: owned} : {item: item!}} occurrenceKey={scope}/>
+      </ResourceOutlineList>
+    ) : failed ? <FeedbackFailure scope="Local" occurrence={failureOccurrence}
       content={{tone: "Warning", title: "couldn’t open embedded resource"}} announcement="Polite"
-      actions={[{label: "retry", busy: loading, onClick: () => setAttempt(value => value + 1)}]}/> : null
-  );
+      actions={[{label: "retry", busy: loading, onClick: () => setAttempt(value => value + 1)}]}/>
+      : !resource && !serverOwned && (held || read.data) ? <span>not available on this device</span> : null}
+  </>;
 }

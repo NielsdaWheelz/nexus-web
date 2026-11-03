@@ -4,10 +4,11 @@
 // is edited through its permanent local writing document. Placement never changes
 // writing: unresolved captures remain beside their literal quotation.
 import { createHighlightIntent, type Intent } from "@nexus/authored/commands";
-import { emptyBody, type NoteBody } from "@nexus/authored/body";
+import { emptyBody, type NoteBody, type BodyJson } from "@nexus/authored/body";
 import { captureExcerpt, createPlainExcerpt, excerptCanonicalProof, excerptClipped, type ExcerptBody, type ExcerptView } from "@nexus/authored/excerpt";
 import { normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
 import type { AuthoredStore, HighlightColor, Locator, PassageState, QueryResult, SelectionCapture, SelectionLocation, ResourceProjection } from "@nexus/authored/types";
+import type { PreparedResource, PreparedResources } from "@/lib/resources/preparedResources";
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
 import { ScopeQuoteScanner, normalizeScopeText } from "@nexus/authored/scope";
 import type { DraftAnchor, Inspection, Mark, MarkAnchor } from "./DocumentReader";
@@ -30,6 +31,8 @@ export interface ReaderAnnotation {
   readonly selection: SelectionLocation;
   /** The row's data; its excerpt is non-null, and full once a clipped quote is filled. */
   readonly projection: ResourceProjection;
+  /** null until this row has a complete display; existing displays survive refresh. */
+  readonly display: { readonly projection: ResourceProjection; readonly resources: PreparedResources } | null;
   readonly readingRef: string;
   readonly placement: Placement;
   readonly body: NoteBody | null;
@@ -262,17 +265,7 @@ export function locatePassage(doc: ReaderDocument, mediaId: string, passage: Pas
 
 type Loaded = Omit<ReaderAnnotation, "id" | "placement">;
 
-async function readAll(store: AuthoredStore, query: (cursor: string | null) => Parameters<AuthoredStore["query"]>[0]): Promise<QueryResult["rows"]> {
-  const rows: QueryResult["rows"] = [];
-  for (let cursor: string | null = null; ;) {
-    const page: QueryResult = await store.query(query(cursor));
-    rows.push(...page.rows);
-    if (page.next_cursor === null) return rows;
-    cursor = page.next_cursor;
-  }
-}
-
-/** One account's annotations for one reader occurrence; re-reads whenever local state commits. */
+/** One account’s annotations for one reader; preparation shares its read and retry owner. */
 export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
   let doc: ReaderDocument | null = null;
   let bound = false;
@@ -286,6 +279,7 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
   let generation = 0;
   // full quotes for clipped rows; a capture revision is content addressed, so a hit never goes stale.
   const quotes = new Map<string, ExcerptView>();
+  const emptyResources: PreparedResources = new Map();
   const known = (resource: ResourceProjection) => `${resource.ref}:${resource.capture_revision}`;
 
   function project() {
@@ -324,13 +318,30 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
 
   async function read(current: number) {
     const next: Loaded[] = [];
+    let revision: string | null = null;
+    const accept = (result: QueryResult) => {
+      revision ??= result.store_revision;
+      if (result.store_revision === revision) return true;
+      again = true;
+      return false;
+    };
     for (const source of sources) {
-      const highlights = await readAll(store, cursor => ({ kind: "annotations", source_ref: source, cursor, limit: PAGE }));
+      const highlights: QueryResult["rows"] = [];
+      for (let cursor: string | null = null; ;) {
+        const page = await store.query({ kind: "annotations", source_ref: source, cursor, limit: PAGE });
+        if (!accept(page)) return;
+        highlights.push(...page.rows);
+        if (page.next_cursor === null) break;
+        cursor = page.next_cursor;
+      }
       for (const { resource } of highlights) {
         if (resource.kind !== "highlight" || resource.selection === null || resource.color === null) continue;
         if (resource.excerpt === null) throw new Error("Highlight projection lacks excerpt");
         const excerpt = quotes.get(known(resource)) ?? resource.excerpt;
-        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, projection: { ...resource, excerpt }, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), body: resource.body_pm_json === null ? null : { body_pm_json: resource.body_pm_json, body_text: resource.body_text! } });
+        const projection = { ...resource, excerpt };
+        const display = resource.embedded_refs.length ? loaded.find(entry => entry.ref === resource.ref)?.display ?? null
+          : { projection, resources: emptyResources };
+        next.push({ ref: resource.ref, sourceRef: source, color: resource.color, selection: resource.selection, projection, display, readingRef: resource.selection.locator.type === "x_capture_offsets" ? source : mediaRef(mediaId), body: resource.body_pm_json === null ? null : { body_pm_json: resource.body_pm_json, body_text: resource.body_text! } });
       }
     }
     if (current !== generation) return;
@@ -338,10 +349,60 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
     state = { ...state, status: "ready", error: null };
     // marks never wait: publish, then fill the clipped quotes once per capture.
     project();
+    // Whole embeds expand one read-only resource. Its own annotation uses atomic
+    // embeds; annotation-field links use a plain body preview. Linked children stay lazy.
+    const wanted = new Map<string, "whole" | "label">();
+    const collect = (body: BodyJson | null, atomic: boolean) => {
+      for (const node of body?.content ?? []) {
+        if (node.type !== "resource_embed") continue;
+        const whole = body?.content?.length === 1 && node.attrs?.field !== "annotation";
+        if (!whole && node.attrs?.field !== "annotation") continue;
+        const ref = String(node.attrs!.resource_ref);
+        if (wanted.get(ref) !== "whole") wanted.set(ref, whole && !atomic ? "whole" : "label");
+      }
+    };
+    for (const entry of next) collect(entry.projection.body_pm_json, false);
+    const resources = new Map<string, PreparedResource | null>();
+    const resolve = async () => {
+      const refs = [...wanted.keys()].filter(ref => !resources.has(ref));
+      for (let index = 0; index < refs.length; index += PAGE) {
+        const batch = refs.slice(index, index + PAGE);
+        const result = await store.query({ kind: "resolve", refs: batch });
+        if (!accept(result)) return false;
+        for (const ref of batch) resources.set(ref, null);
+        for (const { resource } of result.rows) resources.set(resource.ref, { resource, full: null });
+      }
+      return true;
+    };
+    if (!await resolve()) return;
+    for (const [ref, mode] of wanted) {
+      const resource = resources.get(ref)?.resource;
+      if (mode !== "whole" || !resource?.authored_by_viewer) continue;
+      if (resource.kind === "highlight") {
+        if (resource.source_ref && !wanted.has(resource.source_ref)) wanted.set(resource.source_ref, "label");
+        collect(resource.body_pm_json, true);
+      }
+    }
+    if (!await resolve()) return;
+    for (const [ref, mode] of wanted) {
+      const prepared = resources.get(ref);
+      if (mode !== "whole" || !prepared?.resource.authored_by_viewer || prepared.resource.excerpt === null) continue;
+      const result = await store.query({ kind: "excerpt", ref, reading_ref: null });
+      if (!accept(result)) return;
+      const full = result.rows[0]?.resource;
+      if (full && full.capture_revision !== prepared.resource.capture_revision) { again = true; return; }
+      resources.set(ref, { resource: prepared.resource, full: { captureRevision: prepared.resource.capture_revision, excerpt: result.scope_available ? full?.excerpt ?? null : null } });
+    }
+    if (current !== generation) return;
+    if (again) return;
+    loaded = next.map(entry => ({ ...entry, display: { projection: entry.projection, resources } }));
+    project();
     let filled = false;
     for (const entry of next) {
       if (!excerptClipped(entry.projection.excerpt!)) continue;
-      const full = (await store.query({ kind: "excerpt", ref: entry.ref, reading_ref: entry.readingRef })).rows[0]?.resource.excerpt;
+      const resource = (await store.query({ kind: "excerpt", ref: entry.ref, reading_ref: entry.readingRef })).rows[0]?.resource;
+      if (resource && resource.capture_revision !== entry.projection.capture_revision) { again = true; return; }
+      const full = resource?.excerpt;
       // kept before the abort, so a finished quote serves whichever read builds next. a refused scope stays
       // compact, and retries on the next read.
       if (full) { quotes.set(known(entry.projection), full); filled = true; }
@@ -351,7 +412,9 @@ export function createReaderAnnotations(store: AuthoredStore, mediaId: string) {
     if (!filled) return;
     loaded = loaded.map(entry => {
       const full = quotes.get(known(entry.projection));
-      return full ? { ...entry, projection: { ...entry.projection, excerpt: full } } : entry;
+      if (!full) return entry;
+      const projection = { ...entry.projection, excerpt: full };
+      return { ...entry, projection, display: entry.display ? { ...entry.display, projection } : null };
     });
     project();
   }
@@ -436,10 +499,10 @@ export async function createHighlight(runtime: WritingRuntime, input: {
   const { sourceRef } = frozen.capture;
   const passage = await boundCapture(store, account_id, frozen.capture);
   const intents: Intent[] = [...passage.intents];
-  // a known label refreshes the stub; an unknown source keeps its stub, or gets its ref as a truthful label.
+  // a known label refreshes the stub; an unknown source keeps its captured label or its type.
   const known = frozen.source !== null || (await store.query({ kind: "resource", ref: sourceRef })).rows.length > 0;
   if (frozen.source || !known) intents.push({ kind: "capture_source", source_ref: sourceRef,
-    capture: { kind: frozen.source?.kind ?? "media", label: frozen.source?.label ?? sourceRef, publication: passage.selection.publication } });
+    capture: { kind: frozen.source?.kind ?? "media", label: frozen.source?.label ?? "source", publication: passage.selection.publication } });
   intents.push({ ...initializer, ref, selection: passage.selection });
   return runtime.run({ kind: "batch", intents });
 }

@@ -27,6 +27,7 @@ import NoteEditor, {type NoteEditorHandle} from "@/components/notes/NoteEditor";
 import { captureSelection, createHighlight, createReaderAnnotations, type Capture, type SourceLabel } from "../annotations";
 import { useReaderState, type Decorations, type Mark, type MarkEvent, type SelectionNotice } from "../DocumentReader";
 import type { Reader } from "../runtime";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { AnnotationList, AnnotationQuote, PLACEMENT_COPY } from "./ReaderAnnotation";
 import styles from "./chrome.module.css";
 
@@ -144,7 +145,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     <Dialog open={open?.kind === "choose"} title="choose highlight" onClose={close}>
       {open?.kind === "choose" ? <ul className={styles.highlightChoices}>
         {open.marks.flatMap(mark => { const id = mark.id; const entry = annotations.annotation(id); return entry ? [<li key={id}>
-          <Button onClick={() => { setFocused(id); setOpen({ kind: "annotation", id, mark }); }}>{localResourceLabel(entry.projection)}</Button>
+          <Button onClick={() => { setFocused(id); setOpen({ kind: "annotation", id, mark }); }}><span className={styles.highlightChoiceLabel}>{localResourceLabel(entry.projection)}</span></Button>
         </li>] : []; })}
       </ul> : null}
     </Dialog>
@@ -153,7 +154,9 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         <AnnotationQuote annotation={shownAnnotation} />
         {activeMark ? <Button onClick={() => { const anchor = activeMark.anchor; if (!close()) return; void reader.inspect({ target: anchor.kind === "text" ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end } : { kind: "quads", page: anchor.page, quads: anchor.quads }, signal: new AbortController().signal }); }}>view in source</Button> : null}
         {!annotation ? <p role="status">this highlight is no longer available. your writing is kept.</p> : null}
-        <HighlightAnnotation highlightRef={shownAnnotation.ref} resource={annotation?.projection ?? null} occurrenceKey={`compact:${shownAnnotation.ref}`} onWorkOwners={protectOwners} />
+        {!annotation || annotation.display ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
+          <HighlightAnnotation highlightRef={shownAnnotation.ref} resource={annotation?.display?.projection ?? null} occurrenceKey={`compact:${shownAnnotation.ref}`} onWorkOwners={protectOwners} />
+        </PreparedResourcesContext> : null}
         <div className={styles.compactActions}>
           {shownAnnotation.selection.locator.type === "x_capture_offsets" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: shownAnnotation.selection.locator.capture_id, highlightId: shownAnnotation.id }) })}>ask about this passage</a> : null}
 
@@ -167,7 +170,9 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const unplaced = state.annotations.filter(entry => entry.placement.kind !== "placed");
   const list = <>
     {showPlaced && state.annotations.length ? <ResourceOutlineList scope={`capture-highlights:${mediaId}`} ariaLabel="your highlights">
-      {state.annotations.map(entry => <ResourceOutlineRow key={entry.ref} resource={entry.projection} incoming={null} occurrenceKey={`capture-highlight:${entry.ref}`} occurrenceLabel="highlight" />)}
+      {state.annotations.map(entry => entry.display ? <PreparedResourcesContext key={entry.ref} value={entry.display.resources}>
+        <ResourceOutlineRow resource={entry.display.projection} incoming={null} occurrenceKey={`capture-highlight:${entry.ref}`} occurrenceLabel="highlight" />
+      </PreparedResourcesContext> : null)}
     </ResourceOutlineList> : null}
     {!showPlaced && unplaced.length ? <section aria-label="unplaced highlights">
     {missing ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY.unavailable }} announcement="None" /> : null}

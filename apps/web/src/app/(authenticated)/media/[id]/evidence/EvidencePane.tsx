@@ -133,7 +133,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const visible = useMemo(() => new Set(entries.filter(entry => [...entryFacets(entry)].some(facet => !hidden.has(facet))).map(entry => entry.key)), [entries, hidden]);
   const doc = document.status === "ready" ? document.doc : null;
   const publicationKey = doc ? JSON.stringify([doc.identity, doc.generation, doc.kind === "text" ? doc.part : null]) : null;
-  const terminal = state.local.status !== "loading" && state.links.status !== "loading" && (sourceAbsent || state.remote.status !== "loading");
+  const terminal = state.local.status !== "loading" && state.local.annotations.every(annotation => annotation.display !== null) && state.links.status !== "loading" && (sourceAbsent || state.remote.status !== "loading");
   const disclosureKeys = useMemo(() => new Set(entries.flatMap(entry => {
     const key = sourceTextKey(entry);
     return key === null ? [] : [key];
@@ -189,6 +189,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   }, [entries, placedKeys, undetermined, whole]);
   const order = useMemo(() => (aligned ? placed : [...placed, ...whole, ...unavailable])
     .filter(entry => visible.has(entry.key)), [aligned, placed, unavailable, visible, whole]);
+  const admitted = useMemo(() => order.filter(entry => entry.kind !== "highlight" || entry.annotation.display !== null), [order]);
   const logicalOrder = useRef(order); logicalOrder.current = order;
   const byKey = useMemo(() => new Map(entries.map(entry => [entry.key, entry])), [entries]);
   const ranks = useMemo(() => new Map(order.map((entry, index) => [entry.key, index + 1])), [order]);
@@ -196,9 +197,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const arrival = delivery ? entries.find(entry => entryMatches(entry, delivery.id))?.key ?? null : null;
   const placedHeight = Math.max(0, ...placements.map(item => item.kind === "placed" ? item.offset + item.height : 0));
   const slots = useMemo(() => [
-    ...order.map(entry => ({key: entry.key, estimate: aligned ? 0 : 96})),
+    ...admitted.map(entry => ({key: entry.key, estimate: aligned ? 0 : 96})),
     ...(aligned ? [{key: "placed-space", estimate: placedHeight}] : []),
-  ], [aligned, order, placedHeight]);
+  ], [admitted, aligned, placedHeight]);
   const onAnchor = useCallback((anchor: Anchor) => {
     // a held return anchor stays what it was until the reader acts.
     if (restore.current !== null) return;
@@ -298,7 +299,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         const ring: { key: string; height: number; holds: number | null }[] = [];
         const unseen: string[] = [];
         let pinnedKey: string | null = null;
-        for (const entry of order) {
+        for (const entry of admitted) {
           const extent = extentOf(entry, doc);
           if (!extent) continue;
           const overlay = holding.has(entry.key);
@@ -382,7 +383,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     window.addEventListener("scroll", schedule, { capture: true, passive: true });
     schedule();
     return () => { unsubscribe(); window.removeEventListener("scroll", schedule, { capture: true }); cancelAnimationFrame(frame); placeMargin.current = null; };
-  }, [aligned, document, heldKeys, interactionOwner, moved, order, reader]);
+  }, [admitted, aligned, document, heldKeys, interactionOwner, moved, reader]);
 
   useLayoutEffect(() => {
     const port = list.current;
@@ -421,6 +422,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
       if (state.remote.status !== "loading") openKey.onResolved(null);
       return;
     }
+    if (target.kind === "highlight" && target.annotation.display === null) return;
     if (preparedRequest === openKey) return;
     const extent = doc ? extentOf(target, doc) : null;
     const passage = doc && extent ? reader.measurePassage({identity: doc.identity, anchor: extent.anchor}) : null;
