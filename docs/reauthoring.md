@@ -838,6 +838,8 @@ out of campaign: leaving supabase ([issue](issues/leave-supabase-auth.md)).
 
 ## decision log
 
+- 2026-11-02 · owner: dialog slips stand on the backdrop outside the panel. when a full-screen or constrained modal has no room there, they may cover scrollable content but must clear fixed action controls. appearance reserves no space and does not resize the panel.
+- 2026-11-02 · owner: installed-app POST reads wait for the session check like other POSTs; the account's can't-sync condition remains visible during saves; a database-busy write has an unknown outcome because the server may already have committed.
 - 2026-10-18 · owner: the repair gate opens: R5 (credentials) leaves it, R4 counts as closed for the purge (its operator returns from git if ever needed), R7's rollback window closes (production is past 0292; a backup restore is the only rollback). the cloudflare r2 retention check before the archive drop stays.
 - 2026-10-18 · owner: the end-release rule is retired; slices ship in whatever release comes next; migrations are still rehearsed on the newest production backup before merge.
 - 2026-10-18 · owner: one global wire revision, bumped at most once between releases (AGENTS.md).

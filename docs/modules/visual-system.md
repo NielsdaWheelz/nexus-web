@@ -11,9 +11,9 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `lib/theme/room.ts` (room type, cookie name, browser-chrome colours,
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
-- `components/feedback/Feedback.tsx`: shared status, notice, surface and field
-  presentation; `scope.ts` composes mounted contributions and `FeedbackLayer.tsx`
-  owns passive placement.
+- `components/feedback/Feedback.tsx`: session provider, outcomes and mounted holds;
+  `stage.ts` owns addressing and visible-time clocks, `Slips.tsx` owns placement,
+  and `Fact.tsx` and `Ruling.tsx` own in-flow facts and empty-region waits.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
@@ -87,55 +87,75 @@ uses the same restrained anatomy in every room.
 
 ## signals
 
-ordinary selection, autosave, synchronization and successful refresh are silent.
-foreground waiting occupies an existing fixed control slot, with immediate
-`aria-busy` and a spinner after 200 ms. settlement removes the spinner immediately;
-subject changes cancel its timer. root reads use pane chrome, without skeletons or
-status paragraphs. otherwise invisible success uses a 1.2-second checkmark in the
-same slot; copy also announces `copied` once. `useCopyFeedback` owns that timing,
-never the caller's command or clipboard recovery.
+feedback reserves no idle slot. a fact has one home, determined by its kind:
 
-`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` retain real
-task facts, empty/unavailable content, fatal entry failure and field validation.
-recoverable operational failures use `FeedbackFailure`: content, at most two real
-actions and an owner-supplied incident identity. retry preserves the incident and
-its mounted controls. dismissal acknowledges presentation only; it never discards
-a command, draft, uncertainty or loss guard.
+| fact | home |
+| --- | --- |
+| a press is running | its control's icon or kept-width label slot |
+| no content yet | `Ruling` in the empty body |
+| absent, empty, failed or gated object | `Fact`, or transport-aware `Failed`, where the object belongs |
+| a durable fact over shown content | the object's existing status lane |
+| refused input | `Field` beneath its input; send is the retry |
+| refused command or ready result | plain slip; recovery also exists on the subject |
+| unknown write outcome | mounted `Hold`; its owner retains the command |
+| uncommitted words at risk | risk `Hold`, with the affected editor's danger caret |
+| account condition | account mark and row; attention conditions speak once per onset |
 
-`FeedbackScope` composes mounted local contributors, with token-checked cleanup
-and occurrence deduplication. the provider has one authored-account projection;
-domain commands remain in their existing owners. weak acknowledgement and
-last-published speech metadata survive host relocation without retaining command
-payloads or failure history. a deliberate retry outcome may announce once with a
-new speech token. rerenders, background retries and relocation remain silent.
+selection, autosave, synchronization, successful refresh and refresh failure over
+shown data are silent. failed reads heal through their read owner; a deliberate
+press alone retries a write. copy keeps `useCopyFeedback`'s 1.2-second check and
+one `copied` announcement. long jobs keep their domain surfaces.
 
-one passive `FeedbackLayer` belongs to each real pane, modal, picker or standalone
-surface. modal portals inherit the actual overlay context. only the existing
-topmost interaction owner is eligible; without one, the active pane or standalone
-surface is eligible. inactive scopes retain contributions without displaying or
-speaking. source-owned feedback disclosures retain their source's eligibility;
-a newer unrelated interaction wins.
+control busy is immediate in `aria-busy`, delayed 200ms in paint, then ramps for
+200ms. settlement unmounts the spinner; a new subject remounts its control.
+an iconless control hides its label at kept width. the control is one pointer
+target, including its icon, label and spinner.
 
-cards stack in that single layer, bounded by the host and visual viewport. the
-preferred placement protects whole focused editables, controls and modal control
-regions. inability to fit minimizes to a permanently reserved recovery slot;
-there is no corner search, forced scroll, chrome reveal or caret tracking. explicit
-recovery opens the existing anchored surface. feedback's own controls and
-disclosures do not obstruct themselves; an engaged card stays bounded and
-scrollable as space shrinks. appearance never takes focus. withdrawal may restore
-only removed owned focus, when no surviving control has acquired it and the host
-remains eligible.
+`Ruling` paints six static hairlines after 200ms, ramps for 600ms and shows
+`still opening` at eight seconds. its active region says `opening` once at two
+seconds. content replaces it immediately; headers show no waiting sign.
+sequential empty reads of the same region carry their wait across a handoff;
+a different source begins a new wait. old rows for a new query are inert at once
+and dim to .6 only after the waiting delay.
 
-`receipt(content, action?)` remains disposable, never the sole recovery path. it
-uses the same host layer. one current outcome and at most one waiting outcome
-retain the existing five/eight visible-second expiry, hold, suppression and
-retraction rules. a returning receipt does not announce again. action
-`commandKey` prevents a held control silently changing its command.
+`Line` is a fact and optional reason, visible together with at most two verbs.
+copy is lowercase except user titles/names, at most fourteen words before title
+interpolation, and states only what its owner can establish. `check` only reads;
+a resend says `retry`. transport and account wording come from closed records.
+request ids stay in the request log. there is no disclosure for a slip's reason
+or verbs. desktop menus contain verbs, options and their own row marks. a picker's
+empty list region may show its own fact, outside listbox markup; account conditions
+belong only to the account menu.
 
-`Signal` shares content, tone, diagnostics and actions across these presentations.
-controls never enter live regions. details and diagnostics open on demand;
-recovery stays outside document and list flow. all rooms, forced colours, reduced
-motion and coarse targets retain the same contracts.
+one stage sits above command owners. a row addresses its invoking pane or the
+workspace. fully visible panes have anchors; other pane addresses fall to the
+root. phones and maximized layouts use the active pane. composers anchor above
+their inputs; reader strips and shown mobile chrome contribute clearance.
+a row raised under a modal belongs to that modal; unrelated rows wait.
+risk always follows the topmost modal. modal geometry and its constrained-content
+exception belong to [overlays](overlays.md#feedback-placement).
+
+plain slips last five visible unheld seconds, eight with a verb. a new plain
+line replaces the standing plain line unless a pointer, focus or press holds it;
+then it stacks. newest lands above older rows without moving them. at rest the
+frame shows three rows before internal scrolling. a held frame may grow above
+that cap to preserve the controls under the hand.
+
+`Hold.id` identifies a fact across component holders; `attempt` identifies a
+failed retry for speech. the earliest mounted holder supplies its pane. a 100ms
+handoff preserves a row while its holder moves between commits. an unmounted
+last holder resolves it; changing an existing holder's id resolves the old id
+immediately. tucking changes presentation only. the tab retains no command,
+draft, history or loss guard and disappears when its owners resolve.
+
+typing ghosts a standing slip and stops its clock; new ordinary slips wait for
+the pause, at most eight seconds. risk does not wait. only the topmost modal,
+else the active pane or standalone host, speaks. short facts and reasons enter
+the live region, never controls; risk is assertive and other lines polite.
+appearance takes no focus. a withdrawing verb restores only focus it owns.
+`mod+.` reaches the first slip control; escape closes or tucks and returns focus.
+coarse-pointer downward swipe dismisses plain rows and tucks held rows.
+reduced motion removes movement; forced colours retain borders and ticks.
 
 ## ownership
 

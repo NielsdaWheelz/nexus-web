@@ -31,7 +31,8 @@ Binding owner decisions for every new or changed line.
   `WorkGuard` protects uncommitted writing, never already committed pending sync.
   `useServerValue`, `useServerList`, `usePagePrefix` and `apiFetch` remain for
   server-owned domains. no memory fifo, persistent corpus fallback, activity or
-  global recovery inventory.
+  global recovery inventory. a tucked feedback tab projects mounted unresolved
+  facts only; it owns no commands, drafts or history.
 - **Hard cutover.** No compatibility arms, legacy readers or fallbacks. A schema
   change is one alembic migration after head; it states its data effects and
   raises on data it cannot convert.

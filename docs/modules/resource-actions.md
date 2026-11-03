@@ -261,26 +261,31 @@ selection scope while execution keeps the same catalog command ids.
   owner's `retry()` checks it, and settlement or a different command removes the
   condition. retained failure copy and the same busy action survive checking.
 
-historical generic failures belong to the action runtime. an admitted deliberate
-same-subject/action retry withdraws its exact prior failure before execution;
-this does not claim success. current attempt identity fences delayed failures.
-modeled local device/admission refusals carry their content through
-`ResourceActionFailure` to this same runtime. domain conditions and inverses
-retain their separate settlement contracts.
+generic action outcomes belong to the action runtime. an admitted deliberate
+same-subject/action retry retracts its prior report without claiming success;
+attempt identity fences delayed failures. refused commands use the shared
+transport vocabulary after any domain-specific reason. unknown results retain
+their command owner and a mounted hold. resource-action holds stand at workspace
+scope so a phone pane change cannot resolve the obligation; immediate reports
+use the invoking pane's address. domain conditions and inverses retain their
+separate settlement contracts.
 
 ## invariants
 
 - prepared canonical menus fetch facts on every open; closing aborts and forgets
   that read. external menus project current account-owned commands directly.
 - a tracked verb is busy per `(ref, kind)` until it settles; a reopened menu shows it busy.
-- menu preparation shows no provisional command subset. a five-second activation-time
-  budget aborts late preparation; failure is a named dialog with shared feedback and retry.
-  retry keeps that surface and its interaction owner while pending, with a fresh signal
-  and budget. failures never mean an empty result. non-menu reads have no menu deadline.
-- a 401 from the current account hands off to sign-in; a modeled failure uses shared
-  feedback (`actionFailure`: a recovery 409 is the conflict notice). continuing obligations
-  are owner-projected workspace conditions; completed results and optional inverses are
-  offers; brief actionless acknowledgments are receipts. the action runtime ignores late
+- hidden preparation keeps the trigger busy and mounts no menu until ready.
+  its five-second activation-time budget aborts late preparation; failure says
+  `actions couldn’t load.` through the trigger host, and another trigger press
+  retries with a fresh signal and budget. the host retracts its report when it
+  leaves. delayed owned trailing preparation may open local rows first; a trailing
+  failure becomes the ordinary `more actions` row, which closes, prepares and
+  reopens. stale builds use their transport remedy. failures never mean an empty
+  result, and non-menu reads have no menu deadline.
+- a 401 from the current account hands off to the shell's sign-in. continuing
+  obligations are mounted owner projections; a ready result may offer a link in
+  a plain slip, while ordinary success is silent. the action runtime ignores late
   feedback and auth handling after its account owner leaves. `ctx.isActive()` guards
   projected navigation, deleted-pane settlement, original-file redirects and transcript
   invalidation; admission and consumption owners guard their own effects. older domain api
