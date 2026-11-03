@@ -38,6 +38,7 @@ import {
   type ViewCommand,
   type ViewMessage,
 } from "@/extension/capture";
+import { isCaptureDefect } from "@/extension/nexusClient";
 import styles from "./popup.module.css";
 
 type LibraryDestination = Schema<"LibraryDestinationOut">;
@@ -80,7 +81,11 @@ const patternHost = (pattern: string) =>
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
   const { say } = useOutcome();
-  const tell = useCallback((failure: CaptureFailure) => { say({ fact: failure.message }, SIGN_IN_CODES.has(failure.code) ? [SIGN_IN] : undefined); }, [say]);
+  const [stopped, setStopped] = useState<CaptureFailure | null>(null);
+  const tell = useCallback((failure: CaptureFailure) => {
+    if (isCaptureDefect(failure.code)) setStopped(failure);
+    else say({ fact: failure.message }, SIGN_IN_CODES.has(failure.code) ? [SIGN_IN] : undefined);
+  }, [say]);
   const [disconnected, setDisconnected] = useState(false);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
   const submittedSaveCaption = useRef<{ scope: string; label: string } | null>(null);
@@ -186,6 +191,7 @@ function Popup() {
   if (failedNow !== failures.failed) setFailures(failedNow ? { failed: true, attempt: failures.attempt + 1, occurrence: {} } : { ...failures, failed: false });
 
   const disconnection = disconnected ? <Hold id="capture-disconnected" line={{ fact: "capture disconnected.", reason: "reopen this popup to continue." }} /> : null;
+  if (stopped !== null) return <main className={styles.popup} tabIndex={-1}><div className={styles.body}><Fact line={{ fact: stopped.message }} speak /></div></main>;
   if (state === null) return <main className={styles.popup} tabIndex={-1}><StageAnchor kind="Root" />{disconnection}<div className={styles.body}><Ruling /></div></main>;
 
   const { account, draft } = state;
@@ -368,7 +374,10 @@ function RecoveryPicker({ draft, accountId, enabled, onSet }: {
       if (result.kind === "recovery_targets") {
         setItems(previous => next === null ? result.page.items : [...previous, ...result.page.items]);
         setCursor(result.page.next_cursor); setError(null);
-      } else if (result.kind === "failure") setError(result.failure);
+      } else if (result.kind === "failure") {
+        // justify-ignore-error: the background publishes host defects to Popup's stopped owner.
+        if (!isCaptureDefect(result.failure.code)) setError(result.failure);
+      }
     });
   };
   const choices = selected !== null && !items.some(item => item.binding.target.media_id === selected.binding.target.media_id) ? [selected, ...items] : items;
@@ -434,8 +443,8 @@ function Destinations({
         setFailure(null);
       }
       else if (result.kind === "failure") {
-        if (result.failure.code === "E_CAPTURE_DEFECT") setDefect({ error: new Error("Capture background stopped unexpectedly") });
-        else setFailure(result.failure);
+        // justify-ignore-error: the background publishes host defects to Popup's stopped owner.
+        if (!isCaptureDefect(result.failure.code)) setFailure(result.failure);
       }
       else setDefect({ error: new Error(`libraries answered ${result.kind}, not a catalog`) });
     });
