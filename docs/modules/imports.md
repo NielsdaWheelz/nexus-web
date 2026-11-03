@@ -83,7 +83,10 @@ web-recovery sessions are relevant while unpublished, viewer-owned, eligible, an
 
 ## feedback and uncertain admission
 
-shared `FeedbackStatus`, `FeedbackNotice` and `FeedbackState` present operation facts, retained-data failures and absent content. retry retains the error and control while busy. recorded history stays domain content.
+`Fact` presents durable operation facts and absent content; `Failed` owns a
+settled read failure where the object would stand. shown content survives a
+failed refresh quietly. retry retains its error and control while busy.
+recorded history stays domain content.
 
 `lib/media/admissions.tsx` owns live source-refresh and metadata-research
 submissions. its account-keyed shell provider outlives panes and registers
@@ -95,11 +98,11 @@ current qualifying job, rather than prove receipt of the original click.
 
 entries are sending or unconfirmed. acknowledgement or a definitive first-attempt
 refusal retires the exact entry; a later refusal after uncertainty leaves it
-unconfirmed and refreshes canonical reads. feedback offers `retry same request`
-and `dismiss`. dismissal confirms the loss of uncertainty before forgetting; it
-does not cancel accepted server work. only explicit dismissal permits a new
-action with a newly read expectation. a captured entry object fences late replies
-from clearing or modifying a replacement. account teardown removes its entries.
+unconfirmed and refreshes canonical reads. a mounted `Hold` offers `retry`,
+which sends the retained request. tucking it changes presentation only. no
+discard command is exposed: settlement or an approved account/document
+departure ends the retained uncertainty. a captured entry object fences late
+replies from clearing or modifying a replacement. account teardown removes its entries.
 the entry retains its actual last api error. a wire mismatch after uncertainty
 keeps the request and its loss risk, while the shared stale-build notice and
 local controls offer only reload. the retry capability also refuses that stale

@@ -235,7 +235,7 @@ selection scope while execution keeps the same catalog command ids.
   creates no pane. success names the returned assistant endpoint; ordinary
   placement retains bare-conversation reuse, while shift always forks.
 - source refresh and metadata research send the expectation the viewer saw. their account
-  admission owner retains an unconfirmed request and offers *retry same request*;
+  admission owner retains an unconfirmed request and offers *retry*;
   retry resends the same expectation. live recovery survives pane departure,
   not account teardown or browser restart
   ([imports](imports.md), [media metadata](media-metadata.md)). an access failure after an
