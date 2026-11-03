@@ -137,9 +137,11 @@ three contracts govern all-items:
   revision before display publication; root quote fills use capture identity across
   store revisions. this adds first-admission
   latency without delaying marks or eagerly opening writing documents or linked children.
-  placed source highlights reserve two-control head geometry and text exclusion
-  before disclosure arrives, including leaves. child availability can add its
-  control without changing the own content's minimum height or line wrapping.
+  placed source highlights reserve two-control geometry and text exclusion
+  throughout their own heads, including nested non-in-row resource heads and
+  leaves. child availability can add its control without changing that own
+  content's minimum height or line wrapping. sibling child sections, outside
+  occurrences and flat in-row embeds retain their density.
 - **c2, conservation:** `useEvidenceWindow` remembers measured heights. during motion,
   a remount reserves at least its remembered height, so replacing a gap conserves
   extent. memory only rises in motion; one second after the last offset change,

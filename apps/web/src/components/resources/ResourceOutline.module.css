@@ -9,6 +9,7 @@
 .row {position: relative; min-width: 0; padding-block: var(--outline-gap); color: var(--ink);}
 .head {position: relative; display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0; min-block-size: var(--outline-control-block-size);}
 .inSource:not(.inRow) > .head,
+.inSource:not(.inRow) > .head .row:not(.inRow) > .head,
 .row:not(.inRow) > .head:has(> .actions > .control) {min-block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap));}
 .row[hidden] {display: none;}
 .row[data-selected="true"] > .head {background: var(--accent-muted);}
@@ -86,6 +87,7 @@
   block-size: calc(var(--outline-control-block-size) - 2 * var(--space-1));
 }
 .inSource:not(.inRow) > .head > .content::before,
+.inSource:not(.inRow) > .head .row:not(.inRow) > .head > .content::before,
 .head:has(> .actions > .control) > .content::before {
   block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap) - var(--outline-content-top));
 }

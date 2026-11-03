@@ -4,9 +4,9 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-connections scroll against `97b32335`: +524 net authored runtime lines
-(1,018 added, 494 deleted): reader evidence +294, reader annotation data/chrome
-+113, shared resource presentation/graph +68, note hosts +18, shared windows +6,
+connections scroll against `97b32335`: +526 net authored runtime lines
+(1,020 added, 494 deleted): reader evidence +294, reader annotation data/chrome
++113, shared resource presentation/graph +70, note hosts +18, shared windows +6,
 authored excerpts +4 and server map/items +21. held reader rows and prepared local
 embeds replace per-mount reads; relative anchoring and retained height memory
 replace independent geometry correction. text-driven placement replaces margin
