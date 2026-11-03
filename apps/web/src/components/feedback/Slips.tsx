@@ -143,6 +143,7 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
         left: `${band.left - bounds.left}px`, top: `${band.top - bounds.top}px`,
         width: `${Math.max(0, band.right - band.left)}px`, height: `${Math.max(0, band.bottom - band.top)}px`,
       });
+      anchor.removeAttribute("data-constrained");
       const frame = anchor.querySelector<HTMLElement>("[aria-label='notices']");
       if (frame !== observedFrame) {
         if (observedFrame) observer.unobserve(observedFrame);
@@ -174,6 +175,7 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
       selected = index;
       anchor.toggleAttribute("data-constrained", index < 0);
       apply(band);
+      frame?.toggleAttribute("data-scrolls", frame.scrollHeight > frame.clientHeight);
     };
     const observer = new ResizeObserver(entries => place(entries.some(({ target }) => target === room || target === panel || target === content.current)));
     observer.observe(room);
