@@ -170,7 +170,7 @@ export function createBrowserOwnership(input: {
         }
         if (error === null) resolve(acquired); else reject(error);
       };
-      cancel = () => finish(null, false);
+      cancel = () => finish(new QueueCommandError("Superseded"), false);
       const timer = setTimeout(() => finish(new QueueCommandError("OwnerSilent"), false), BROWSER_COORDINATION_BOUND_MS);
       const options: LockOptions = transfer ? { mode: "exclusive", signal: abort.signal } : { mode: "exclusive", ifAvailable: true };
       void navigator.locks.request(lockName, options, async lock => {
