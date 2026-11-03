@@ -38,7 +38,7 @@ export interface ShareCommands {
   readonly pending: ShareCommand | null;
   create(session: ShareSession, audience: Audience, key: string, fact: string): Promise<ShareChange | null>;
   revoke(session: ShareSession, id: string, fact: string): Promise<ShareChange | null>;
-  retry(session: ShareSession): Promise<ShareChange | null>;
+  retry(session: ShareSession, request: ShareCommand["request"]): Promise<ShareChange | null>;
   observe(session: ShareSession, snapshot: Snapshot): void;
 }
 interface ShareController {
@@ -151,7 +151,11 @@ export function ShareControllerProvider({children}: {children: ReactNode}) {
       return {kind: "Create", id, body: JSON.stringify({id, audience})};
     }, fact),
     revoke: (session, id, fact) => start(session, id, () => ({kind: "Revoke", id}), fact),
-    retry: session => currentSession.current === session && currentCommand.current !== null ? send(currentCommand.current) : Promise.resolve(null),
+    retry: (session, request) => {
+      const command = currentCommand.current;
+      return currentSession.current === session && command !== null && command.request === request
+        ? send(command) : Promise.resolve(null);
+    },
     observe,
   };
   const value = useMemo(() => ({openShare, closeShare}), [closeShare, openShare]);

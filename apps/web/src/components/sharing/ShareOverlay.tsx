@@ -233,7 +233,7 @@ function SharePanel({ session, commands, onClose }: { session: ShareSession; com
       {pending !== null && pending.unknown > 0 ? <Hold id={`share-change:${session.key}:${pending.key}`} attempt={pending.unknown}
         {...resendFeedback({line: {fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON},
           resend: {label: "retry", commandKey: `share-retry:${session.key}:${pending.key}`, busy: pending.running,
-            run: () => void commands.retry(session).then(change => change && setSnapshot(current => current && applyChange(current, change)))},
+            run: () => void commands.retry(session, pending.request).then(change => change && setSnapshot(current => current && applyChange(current, change)))},
           secondary: {label: "check", commandKey: `share-check:${session.key}`, busy: loading,
             run: () => void load()}})} /> : null}
     </div>
