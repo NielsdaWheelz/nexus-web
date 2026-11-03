@@ -1,5 +1,7 @@
 # native text zoom can leave the active pane offscreen
 
+priority: deferred workspace inconvenience with manual pane reveal as a workaround. prioritize if native text zoom is used regularly.
+
 problem: native firefox 200% text zoom can move the active workspace pane entirely
 outside the visible horizontal pane rail. the selected reference remains correctly
 laid out inside that pane, but the user cannot see it until the rail scrolls back.

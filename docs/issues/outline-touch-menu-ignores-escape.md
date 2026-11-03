@@ -1,5 +1,7 @@
 # an item menu opened by a touch hold ignores escape
 
+priority: deferred prototype inconvenience; tapping outside dismisses the menu. check android back in the next apk journey and prioritize if it navigates unexpectedly.
+
 problem: a touch hold released in place opens the bullet's item menu through
 `ActionMenu`'s anchor `open()`, which begins the session without moving focus
 into the menu; focus stays on the bullet. the menu closes on escape only from its

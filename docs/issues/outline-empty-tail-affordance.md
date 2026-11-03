@@ -1,5 +1,7 @@
 # tail hint accessibility remains unobserved
 
+priority: deferred physical-input/accessibility qualification; the visual placeholder is fixed. observe when the relevant ime or assistive technology is used.
+
 the original blank tail lacked a discoverable entry. that visual defect is
 repaired: `apps/web/src/lib/notes/outlineController.ts` sets the tail field's
 `data-empty` and placeholder from its current node; the existing editor
