@@ -501,10 +501,10 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
             const description = count !== null ? count === 1 ? "1 item" : `${count} items`
               : localStatus === "failed" || state.remote.status === "failed" ? "count unavailable"
               : remote?.status === "partial" ? "count incomplete" : "count loading";
-            const Icon = FILTER_ICONS[filter];
+            const Glyph = FILTER_ICONS[filter];
             return <Fragment key={filter}>
-              <ChoiceField ref={index === 0 ? firstType : undefined} presentation="Facet" checked={!hidden.has(filter)} icon={<Icon size={16} />}
-                label={<><span className="sr-only">{FILTER_LABELS[filter]}</span><span className={styles.count} aria-hidden="true">{count ?? "—"}</span></>}
+              <ChoiceField ref={index === 0 ? firstType : undefined} presentation={Glyph ? "Facet" : "Inline"} checked={!hidden.has(filter)} icon={Glyph ? <Glyph size={16} /> : undefined}
+                label={<><span className={Glyph ? "sr-only" : undefined}>{FILTER_LABELS[filter]}</span>{Glyph ? null : " "}<span className={styles.count} aria-hidden="true">{count ?? "—"}</span></>}
                 help={count === null ? `${FILTER_LABELS[filter]}, ${description}` : FILTER_LABELS[filter]}
                 aria-describedby={`${ids}-${filter}`}
                 onChange={checked => setHidden(current => { const next = new Set(current); if (checked) next.delete(filter); else next.add(filter); return next; })} />

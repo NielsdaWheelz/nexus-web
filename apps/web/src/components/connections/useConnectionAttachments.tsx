@@ -5,7 +5,7 @@
 // Upload is server-owned; each uploaded file then links to the owner in one local
 // commit. A failed local commit retries its frozen command, never a fresh link.
 import { useRef } from "react";
-import { Paperclip } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
 import { FeedbackFailure, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -154,7 +154,7 @@ export function useConnectionAttachments(selfRef: string) {
       onDrop: (event: React.DragEvent<HTMLElement>) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); event.stopPropagation(); attachFiles(files); } },
     },
     control: <>
-      <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running || writing === null} aria-busy={task?.running} icon={<Paperclip size={14} aria-hidden="true" />} />
+      <Button type="button" iconOnly aria-label="Upload and link file" onClick={() => fileInputRef.current?.click()} disabled={task?.running || writing === null} aria-busy={task?.running} icon={<Icon.Upload aria-hidden="true" />} />
       <input ref={fileInputRef} type="file" multiple hidden tabIndex={-1} onChange={event => attachFiles(Array.from(event.currentTarget.files ?? []))} />
       {task?.failure && task.retryLink === null ? <FeedbackFailure scope="Local" occurrence={task.occurrence} content={task.failure} announcement="Polite" actions={[{
         label: task.retryLink ? "retry saving" : task.mediaId !== null ? "link again" : upload?.expired ? "choose the file again" : upload?.review_required ? "review and save" : "check save",

@@ -2,7 +2,7 @@
 import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
-import { Check, ChevronDown, Copy, MessageCircle, MessagesSquare, NotebookPen, Save, Share2 } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { Announcement, FeedbackBusy, FeedbackFailure, FeedbackNotice, FeedbackStatus, useFeedbackOccurrence } from "@/components/feedback/Feedback";
 import NoteEditor from "@/components/notes/NoteEditor";
@@ -207,16 +207,16 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
   };
   const content = (captured: MobileSelection): MenuContent => {
     const options: ActionDescriptor[] = [
-      { kind: "command", id: "CopyPassage", label: "Copy passage", icon: copying.copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />,
+      { kind: "command", id: "CopyPassage", label: "Copy passage", icon: copying.copied ? <Icon.Check aria-hidden="true" /> : <Icon.Copy aria-hidden="true" />,
         onSelect: () => { if (verbs.selectionCurrent(captured)) copy(captured.capture.quote); } },
       { kind: "custom", id: "HighlightColours", label: "Highlight colour", render: ({ closeMenu }) => (
         <Colours selected={null} persisted={false} size="comfortable"
           onSelect={(color) => { closeMenu(); menuCommand.current = captured; verbs.highlightSelection(captured, color); }} />
       ) },
       sharePiece === null
-        ? { kind: "command", id: "SharePassage", label: "Share passage", icon: <Share2 size={16} aria-hidden="true" />,
+        ? { kind: "command", id: "SharePassage", label: "Share passage", icon: <Icon.Share aria-hidden="true" />,
           onSelect: ({ triggerEl }) => { menuCommand.current = captured; verbs.shareSelection(captured, triggerEl); } }
-        : { kind: "command", id: "SharePiece", label: "Share piece", icon: <Share2 size={16} aria-hidden="true" />,
+        : { kind: "command", id: "SharePiece", label: "Share piece", icon: <Icon.Share aria-hidden="true" />,
           onSelect: ({ triggerEl }) => {
             if (!verbs.selectionCurrent(captured)) return;
             menuCommand.current = captured;
@@ -259,10 +259,10 @@ function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
             <HighlightButton selected="yellow" persisted={false} disabledReason={null} busy={false}
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.highlightSelection(captured, "yellow"))} />
-            <Button iconOnly icon={<NotebookPen size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="Open passage note"
+            <Button iconOnly icon={<Icon.Note aria-hidden="true" />} className={styles.selectionIcon} aria-label="Open passage note"
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Note"))} />
-            {canQuote ? <Button iconOnly icon={<MessageCircle size={16} aria-hidden="true" />} className={styles.selectionIcon} aria-label="Ask about passage"
+            {canQuote ? <Button iconOnly icon={<Icon.Chat aria-hidden="true" />} className={styles.selectionIcon} aria-label="Ask about passage"
               onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
               onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Ask"))} /> : null}
             <OverflowMenuButton {...trigger} className={styles.selectionIcon} onPointerDown={pointerDown} onKeyDown={keyDown}
@@ -342,22 +342,22 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });
     // a failed local commit is retried as the same frozen command, never saved again.
-    const saveAction = failed ? command("RetryPassageSave", "Retry saving", <Save size={16} aria-hidden="true" />, failed.retry, saving ? "saving on this device…" : null)
+    const saveAction = failed ? command("RetryPassageSave", "Retry saving", <Icon.Again aria-hidden="true" />, failed.retry, saving ? "saving on this device…" : null)
       : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save annotation",
-        <Save size={16} aria-hidden="true" />, composer.save, saving ? "saving on this device…" : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write an annotation." : null));
+        <Icon.Save aria-hidden="true" />, composer.save, saving ? "saving on this device…" : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write an annotation." : null));
     const newLabel = hasMessage ? "Send in new chat" : "Open in new chat";
     const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another chat change is still in progress." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading chat…" : continuationBlocked ? "this chat is not ready for this action." : null);
-    const newAction = command("NewChat", newLabel, <MessageCircle size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), chatReason);
-    const existingAction = command("ExistingChat", chatLabel, <MessagesSquare size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
-    const chooseAction = { ...command("ChooseChat", "Choose existing chat", <ChevronDown size={16} aria-hidden="true" />, composer.chooseChat,
+    const newAction = command("NewChat", newLabel, <Icon.NewChat aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), chatReason);
+    const existingAction = command("ExistingChat", chatLabel, <Icon.Chat aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
+    const chooseAction = { ...command("ChooseChat", "Choose existing chat", <Icon.Choose aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another chat change is still in progress." : null)), restoreFocusOnClose: false };
-    const copyAction = command("CopyPassage", "Copy passage", copying.copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); },
+    const copyAction = command("CopyPassage", "Copy passage", copying.copied ? <Icon.Check aria-hidden="true" /> : <Icon.Copy aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); },
       composer.copyUnavailable);
     // sharing a new passage first commits its highlight; an existing one shares as it is.
     const shareAction = { ...(sharePiece !== null
-      ? command("SharePiece", "Share piece", <Share2 size={16} aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
-      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "Share highlight" : "Share passage", <Share2 size={16} aria-hidden="true" />,
+      ? command("SharePiece", "Share piece", <Icon.Share aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
+      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "Share highlight" : "Share passage", <Icon.Share aria-hidden="true" />,
         ({ triggerEl }) => verbs.share(triggerEl), draft.highlightId ? null : blockedReason)), hasPopup: "dialog" as const };
     const options: ActionDescriptor[] = isMobile ? [copyAction] : [];
     if (isMobile) {
@@ -372,8 +372,12 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     }
     if (draft.highlightId) {
       const id = draft.highlightId;
-      if (annotation?.placement.kind === "placed") options.push(command("EditHighlightBounds", ACTION_CATALOG.EditHighlightBounds.label, <ACTION_CATALOG.EditHighlightBounds.icon size={16} aria-hidden="true" />, () => verbs.editBounds(id), blockedReason));
-      options.push({ ...command("DeleteHighlight", ACTION_CATALOG.DeleteHighlight.label, <ACTION_CATALOG.DeleteHighlight.icon size={16} aria-hidden="true" />, () => verbs.remove(id), draft.operation ? "finish the current request first." : null), tone: "danger" });
+      // menu-only words take no sign; `command` requires one because it also feeds the icon-only controls.
+      if (annotation?.placement.kind === "placed") options.push({ kind: "command", id: "EditHighlightBounds", label: ACTION_CATALOG.EditHighlightBounds.label, icon: null,
+        onSelect: () => verbs.editBounds(id), disabled: blockedReason !== null, disabledReason: blockedReason ?? undefined });
+      const deleteReason = draft.operation ? "finish the current request first." : null;
+      options.push({ kind: "command", id: "DeleteHighlight", label: ACTION_CATALOG.DeleteHighlight.label, icon: null, tone: "danger",
+        onSelect: () => verbs.remove(id), disabled: deleteReason !== null, disabledReason: deleteReason ?? undefined });
     }
     const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
       content: { sections: [{ id: "Passage", label: null, options }] } };
@@ -388,7 +392,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="Choose existing chat" aria-haspopup="dialog"
             aria-expanded={composer.pickerOpen} aria-controls={composer.pickerOpen ? pickerId : undefined}
             aria-disabled={chooseAction.disabled || undefined} tooltip={{ text: chooseAction.disabledReason ? `Choose existing chat. ${chooseAction.disabledReason}` : "Choose existing chat" }}
-            icon={<ChevronDown size={16} aria-hidden="true" />} onClick={composer.chooseChat} />
+            icon={<Icon.Choose aria-hidden="true" />} onClick={composer.chooseChat} />
         </div> : null}
       </> : null}
       {!isMobile ? <>

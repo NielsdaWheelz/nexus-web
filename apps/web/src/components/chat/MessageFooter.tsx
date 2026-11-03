@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Copy, Info } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { Announcement, FeedbackFailure, FeedbackStatus } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
@@ -62,7 +62,7 @@ export default function MessageFooter({ message, latest, engaged, details = null
       {pending ? null : (
         <div className={styles.right}>
           {message.content.trim() && run?.failure?.code !== "invalid_output" ? (
-            <Button iconOnly icon={copied.copied ? <Check /> : <Copy />} aria-label="Copy message" className={styles.secondary} onClick={() => void copy()} />
+            <Button iconOnly icon={copied.copied ? <Icon.Check /> : <Icon.Copy />} aria-label="Copy message" className={styles.secondary} onClick={() => void copy()} />
           ) : null}
           <MessageMenu message={message} onOpenChange={setMenuOpen} />
         </div>
@@ -81,7 +81,7 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
     kind: "command",
     id: "MessageInformation",
     label: "Message information…",
-    icon: <Info size={16} aria-hidden="true" />,
+    icon: null,
     onSelect: ({ triggerEl }) => openDialog({ kind: "Information", messageId: message.id, opener: triggerEl }),
   }];
   const state = resource.state;

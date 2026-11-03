@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, Lock, Minus, Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackFailure, FeedbackBusy, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
 import {ControlContents} from "@/components/ui/control";
 import Input from "@/components/ui/Input";
@@ -171,16 +171,16 @@ export default function LibraryChooser({
             </span>
             <span className={`${collection.adornment} ${styles.marks}`} aria-hidden="true">
               <span><ControlContents reserveIcon busyKey={row.id} busy={row.progress === "Pending" || row.progress === "Reconciling"}
-                icon={row.progress === "Uncertain" ? <CircleAlert size={16}/> : undefined}/></span>
-              <span>{blocked ? <Lock size={16} /> : null}</span>
-              <span>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Check size={16} />
-                : count.included > 0 ? <Minus size={16} /> : null}</span>
+                icon={row.progress === "Uncertain" ? <Icon.Warning/> : undefined}/></span>
+              <span>{blocked ? <Icon.Blocked size={16} /> : null}</span>
+              <span>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Icon.Check size={16} />
+                : count.included > 0 ? <Icon.Remove size={16} /> : null}</span>
             </span>
           </div>;
         })}
         {canCreate ? <div {...navigation.optionProps(createKey)}
           aria-label={`create “${name}”`} className={collection.row} data-tone="accent">
-          <Plus className={collection.adornment} size={16} aria-hidden="true" />
+          <Icon.Add className={collection.adornment} size={16} aria-hidden="true" />
           <span className={collection.content}>create “{name}”</span>
         </div> : null}
       </div>

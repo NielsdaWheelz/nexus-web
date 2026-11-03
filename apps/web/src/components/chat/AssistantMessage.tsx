@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
@@ -180,7 +180,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
         setDetailsOpen(!detailsOpen);
       }}
     >
-      <span className={styles.detailsLabel}>details{detailsOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</span>
+      <span className={styles.detailsLabel}>details<Icon.Disclose open={detailsOpen} size={14} aria-hidden="true" /></span>
     </Button>
   );
   return (
@@ -230,7 +230,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
           onDismiss={() => setPassage(null)}
         >
           <Button
-            icon={<GitBranch size={14} aria-hidden="true" />}
+            icon={<Icon.Forks aria-hidden="true" />}
             disabled={sending}
             onClick={() => forkPassage(passage)}
           >

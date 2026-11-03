@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  FileText,
-  GitBranch,
-  ListTree,
-  Network,
-  PanelRight,
-  TextSearch,
-  Users,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   useCallback,
   useContext,
@@ -63,13 +53,13 @@ import type { SecondaryPanePatch } from "@/lib/workspace/store";
 import styles from "./Companion.module.css";
 
 type TabId = WorkspaceSecondarySurfaceId | "find-results";
-const ICONS: Record<TabId, LucideIcon> = {
-  "resource-contents": ListTree,
-  "resource-members": Users,
-  "resource-connections": Network,
-  "resource-forks": GitBranch,
-  "import-detail": FileText,
-  "find-results": TextSearch,
+const ICONS: Record<TabId, Icon.Glyph> = {
+  "resource-contents": Icon.Contents,
+  "resource-members": Icon.Members,
+  "resource-connections": Icon.Link,
+  "resource-forks": Icon.Forks,
+  "import-detail": Icon.Upload,
+  "find-results": Icon.Search,
 };
 const title = (id: TabId) =>
   id === "find-results" ? "Search results" : SECONDARY_SURFACES[id].title;
@@ -257,7 +247,7 @@ export function companionAction(
     kind: "command",
     id: "resource-inspector-companion",
     label: "Inspector",
-    icon: <PanelRight size={20} aria-hidden="true" />,
+    icon: <Icon.Inspector aria-hidden="true" />,
     // the controller owns focus return.
     restoreFocusOnClose: false,
     state: expanded
@@ -489,13 +479,13 @@ export default function Companion(props: {
       className={styles.tabs}
       onSelect={select}
       items={tabs.map(({ id }) => {
-        const Icon = ICONS[id];
+        const Glyph = ICONS[id];
         return {
           value: id,
           id: `${baseId}-${id}-tab`,
           panelId: `${baseId}-${id}-panel`,
           label: title(id),
-          icon: <Icon size={16} aria-hidden="true" />,
+          icon: <Glyph size={16} aria-hidden="true" />,
           ref: (element: HTMLButtonElement | null) => {
             if (element) tabRefs.current.set(id, element);
             else tabRefs.current.delete(id);
@@ -520,7 +510,7 @@ export default function Companion(props: {
         aria-label={companion ? "close inspector" : "close search results"}
         data-companion-close="true"
         onClick={requestDismiss}
-        icon={<X size={15} aria-hidden="true" />} />
+        icon={<Icon.Dismiss aria-hidden="true" />} />
     );
     return presentation === "FullScreen" ? (
       <header ref={headerRef} className={`${styles.fullScreenHeader} ${compact.compact}`}>

@@ -31,8 +31,8 @@ control opens the same destination/mode manager, including all. library changes
 invalidate displayed names immediately within the tab.
 
 library podcast sections and the podcast index share the native `browse podcasts`
-plus link. browsing carries no destination context and remains available from
-read-only libraries. all has no shortcut; its menus carry global unsubscribe.
+link (`Browse`). browsing carries no destination context and remains available
+from read-only libraries. all has no shortcut; its menus carry global unsubscribe.
 named menus retain distinct local unsubscribe and global unsubscribe. confirmed
 rows remain during failed or refreshing reads; shortcuts block during a strict
 read or failure, never for a passive poll. ordinary rows have no expanded panel;

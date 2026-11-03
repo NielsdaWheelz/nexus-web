@@ -1,5 +1,5 @@
 // The Nexus vocabulary: what a row is, where it leads, how the list holds, and which page the launcher shows.
-import type { ComponentType } from "react";
+import type * as Icon from "@/lib/ui/icons";
 import type { RecentEntry } from "@/lib/recent/model";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { LocalMatch } from "@/lib/search/localSearch";
@@ -13,7 +13,6 @@ import type {
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 
-export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
 export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import" | "Browse"}`;
 
 
@@ -89,7 +88,7 @@ export interface NexusRow {
   readonly key: string;
   readonly localMatch: LocalMatch | null;
   readonly label: string;
-  readonly icon: NexusIcon;
+  readonly icon: Icon.Glyph;
   /** The facts line's byline or reason: contributors, a source, a state word. */
   readonly detail?: string | null;
   /** Keep the supplement line's geometry while its text changes. */

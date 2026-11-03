@@ -5,7 +5,7 @@ import styles from "./ResourceType.module.css";
 /** Passive type presentation; each surface owns identity, naming and activation. */
 export function ResourceTypeIcon({ type }: { type: ResourceType }) {
   const Icon = resourceTypeGlyph(type);
-  return <Icon className={styles.icon} strokeWidth={2} aria-hidden="true" focusable="false" />;
+  return <Icon className={styles.icon} aria-hidden="true" focusable="false" />;
 }
 
 export function ResourceIndexTitle({ type, hasArtwork, children }: {

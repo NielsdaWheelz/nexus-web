@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightLeft, UserMinus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 
 // The Members tab for an admin of a named library: invite an existing user, the
 // people (role, remove, transfer ownership) and the pending invitations (revoke).
@@ -296,7 +296,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                       {
                         kind: "command",
                         id: `LibraryMember.Remove.${member.user_id}`,
-                        label: "Remove member…", icon: <UserMinus size={16} aria-hidden="true" />,
+                        label: "Remove member…", icon: <Icon.Remove aria-hidden="true" />,
                         tone: "danger",
                         restoreFocusOnClose: false,
                         onSelect: ask({
@@ -316,7 +316,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                             {
                               kind: "command" as const,
                               id: `LibraryMember.Transfer.${member.user_id}`,
-                              label: "Transfer ownership…", icon: <ArrowRightLeft size={16} aria-hidden="true" />,
+                              label: "Transfer ownership…", icon: null,
                               tone: "danger" as const,
                               restoreFocusOnClose: false,
                               onSelect: ask({

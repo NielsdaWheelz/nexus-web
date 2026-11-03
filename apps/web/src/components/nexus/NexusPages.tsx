@@ -1,7 +1,7 @@
 "use client";
 
 // Every Nexus page but Root, one tree for both surfaces.
-import { ArrowLeft } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { ReactNode } from "react";
 import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
@@ -17,7 +17,7 @@ function Header({ title, subtitle, onBack, mobile }: { title: string; subtitle?:
   return (
     <header className={styles.header}>
       {onBack ? (
-        <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back" onClick={onBack} />
+        <Button iconOnly icon={<Icon.Left />} className={styles.iconButton} aria-label="back" onClick={onBack} />
       ) : null}
       <div className={styles.heading}>
         <h2 tabIndex={-1} data-switchboard-heading>
@@ -61,7 +61,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
                 onClick={activate}
                 onKeyDown={activate}
               >
-                <row.icon size={18} aria-hidden="true" />
+                <row.icon size={20} aria-hidden="true" />
                 <span>
                   {row.label}
                   {row.action.kind === "Unavailable" ? <small>{row.action.reason}</small> : null}

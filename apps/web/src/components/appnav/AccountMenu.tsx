@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { CircleArrowUp, CircleUser, Download, LogOut } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
@@ -192,7 +192,7 @@ export default function AccountMenu(props: {
       id: "signout",
       label: "Sign out",
       tone: "danger",
-      icon: <LogOut size={16} aria-hidden="true" />,
+      icon: null,
       separatorBefore: true,
       onSelect: signOut.request,
       disabled: signOut.busy,
@@ -204,7 +204,7 @@ export default function AccountMenu(props: {
       id: "downloads",
       label: "Downloads",
       href: "/downloads",
-      icon: <Download size={16} aria-hidden="true" />,
+      icon: <Icon.Download aria-hidden="true" />,
       onActivate: (event) => activateTargetLink({
         event, target: { href: "/downloads" }, runtime: {
           activateTarget: ({ target, disposition }) => workspace.activateWorkspaceTarget({
@@ -219,7 +219,7 @@ export default function AccountMenu(props: {
     id: "app-update",
     label: "app update",
     render: () => <div className={accountStyles.status}>
-      <CircleArrowUp size={16} className={accountStyles.statusIcon} aria-hidden="true" />
+      <span className={accountStyles.statusIcon} />
       <span className={accountStyles.statusText}>
         <span>app update ready</span>
         <span className={accountStyles.statusDetail}>finish writing, then close all nexus tabs and reopen.</span>
@@ -238,7 +238,7 @@ export default function AccountMenu(props: {
           ...trigger,
           "aria-describedby": cx(trigger["aria-describedby"], descriptionId),
         }, <span className={accountStyles.mark} aria-hidden="true">
-          <CircleUser size={20} />
+          <Icon.Account size={20} />
           <span className={accountStyles.attention} data-visible={description !== null} />
         </span>)}
         source={{ kind: "Immediate", subjectKey: "account", title: "account", content: { sections: [{ id: "Account", label: null, options }] } }}

@@ -160,7 +160,7 @@ export type MenuChoice = {
   readonly id: string;
   readonly label: string; // accessible group name; sheet legend
   readonly value: string;
-  readonly choices: readonly { readonly value: string; readonly label: string; readonly icon: ReactElement }[];
+  readonly choices: readonly { readonly value: string; readonly label: string }[];
   readonly onChange: (value: string) => void;
   readonly disabled?: boolean;
   readonly disabledReason?: string;

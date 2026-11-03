@@ -3,17 +3,7 @@
 import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
 import type { PanePresentation } from "@/lib/workspace/presentations";
 import { authoredItem } from "@/lib/notes/presentation";
-import {
-  FilePlus2,
-  FileText,
-  Globe,
-  Library,
-  Link as LinkIcon,
-  MessageSquarePlus,
-  Play,
-  Plus,
-  Search,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { Schema } from "@/lib/api/wire";
 import { creditName } from "@/lib/contributors/credits";
 import { DESTINATIONS, getDestination, type Destination, type DestinationId } from "@/lib/navigation/destinations";
@@ -227,7 +217,7 @@ export function syncRows(input: Reference & {
   switch (intent.kind) {
     case "Resource": return [referenceRow(intent.ref, input, panes, usage)];
     case "ImportUrl": return [{
-      key: `ImportUrl:${intent.url}`, localMatch: null, label: "import", icon: LinkIcon, detail: intent.url,
+      key: `ImportUrl:${intent.url}`, localMatch: null, label: "import", icon: Icon.Upload, detail: intent.url,
       action: NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url), ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
     case "Command": return [commandRow(intent.id, "ExplicitIntent", intent.argument, usage)];
@@ -235,13 +225,13 @@ export function syncRows(input: Reference & {
     case "CommandLookup": return COMMAND_IDS.map((id, index) => commandRow(id, "ExplicitIntent", "", NO_USAGE, COMMAND_IDS.length - index));
     case "Destination": return [placeRow(getDestination(intent.id), "ExplicitIntent", usage)];
     case "ChooseCreate": return [{
-      key: "Intent:ChooseCreate", localMatch: null, label: "new…", icon: FilePlus2,
+      key: "Intent:ChooseCreate", localMatch: null, label: "new…", icon: Icon.Add,
       action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
     case "Browse": return [{
       key: `Intent:Browse.${intent.browseKind}`, localMatch: null,
       label: intent.query ? `browse ${BROWSE_LABELS[intent.browseKind]} for “${intent.query}”…` : `browse ${BROWSE_LABELS[intent.browseKind]}…`,
-      icon: Globe, detail: "explicit kind", action: nexusBrowseAction(intent.query, intent.browseKind), ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
+      icon: Icon.Browse, detail: "explicit kind", action: nexusBrowseAction(intent.query, intent.browseKind), ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
     case "Search": break;
   }
@@ -363,7 +353,7 @@ function refreshed(shown: NexusRow, update: NexusRow): NexusRow {
 export function playbackRow(title: string, subtitle: string | undefined): NexusRow {
   return {
     key: "Resource:Playback:Current", localMatch: null,
-    label: title, icon: Play, detail: subtitle,
+    label: title, icon: Icon.Play, detail: subtitle,
     action: { kind: "Available", target: { kind: "ResumeCurrentPlayback" } },
     ...UNSCORED, rank: rank("Navigation", "PrefixOrToken"),
   };
@@ -379,14 +369,14 @@ export function continuations(query: NexusQuery, principalCount: number): NexusR
     // Arriving principals change copy without resizing this pinned row.
     detail: !literal && principalCount === 0 ? "nothing matched here" : null,
     reserveDetail: !literal,
-    icon: Search, action: nexusSearchAction(searchQuery), learns_selection: true, ...UNSCORED, rank: rank("Navigation", "Substring"),
+    icon: Icon.Search, action: nexusSearchAction(searchQuery), learns_selection: true, ...UNSCORED, rank: rank("Navigation", "Substring"),
   };
   if (literal) return [search];
   return [search, textRow(query.text)];
 }
 
 function textRow(text: string, detail?: string): NexusRow {
-  return { key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Plus, detail,
+  return { key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Icon.Add, detail,
     action: { kind: "Available", target: { kind: "UseText", text } }, ...UNSCORED, rank: rank("Navigation", "Substring") };
 }
 
@@ -452,18 +442,18 @@ export function choiceRows(page: NexusPage): NexusRow[] {
     key: `Choice:${label}`, localMatch: null, label, icon, action, ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
   });
   if (page.kind === "UseText") return [
-    choice("ask nexus", MessageSquarePlus, NEXUS_COMMANDS["Nexus.Quick.Chat"].action(page.text)),
-    choice("add to today", FileText, NEXUS_COMMANDS["Nexus.Quick.Note"].action(page.text)),
-    choice("browse…", Globe, NEXUS_COMMANDS["Nexus.Quick.Browse"].action(page.text)),
-    choice("create…", FilePlus2, { kind: "Available", target: { kind: "ChooseCreate", initialDraft: page.text } }),
+    choice("ask nexus", Icon.NewChat, NEXUS_COMMANDS["Nexus.Quick.Chat"].action(page.text)),
+    choice("add to today", Icon.Today, NEXUS_COMMANDS["Nexus.Quick.Note"].action(page.text)),
+    choice("browse…", Icon.Browse, NEXUS_COMMANDS["Nexus.Quick.Browse"].action(page.text)),
+    choice("create…", Icon.Add, { kind: "Available", target: { kind: "ChooseCreate", initialDraft: page.text } }),
   ];
   if (page.kind === "ChooseCreate") {
     const target = (id: NexusCommandId): NexusAction => NEXUS_COMMANDS[id].action(page.draft);
     return [
-      choice(page.draft ? "save note to today" : "quick note", FileText, target("Nexus.Quick.Note")),
-      choice("page", FilePlus2, target("Nexus.Quick.Page")),
-      choice("chat", MessageSquarePlus, target("Nexus.Quick.Chat")),
-      choice("library", Library, target("Nexus.Quick.Library")),
+      choice(page.draft ? "save note to today" : "quick note", Icon.Today, target("Nexus.Quick.Note")),
+      choice("page", Icon.Page, target("Nexus.Quick.Page")),
+      choice("chat", Icon.NewChat, target("Nexus.Quick.Chat")),
+      choice("library", Icon.Library, target("Nexus.Quick.Library")),
     ];
   }
   if (page.kind !== "ChooseBrowse") return [];
@@ -474,7 +464,7 @@ export function choiceRows(page: NexusPage): NexusRow[] {
       ["Videos", "Video"],
       ["Books", "Epub"],
     ] as const
-  ).map(([label, kind]) => choice(label.toLowerCase(), Globe, nexusBrowseAction(page.query, kind)));
+  ).map(([label, kind]) => choice(label.toLowerCase(), Icon.Browse, nexusBrowseAction(page.query, kind)));
 }
 
 /** A row's spoken name: its parts as sentences, adding no period after a part that already ends one. */

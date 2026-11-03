@@ -9,7 +9,7 @@
 
 import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import FeedbackSurface from "@/components/feedback/FeedbackSurface";
 import Button from "@/components/ui/Button";
@@ -136,7 +136,7 @@ export default function PickerSurface({
           <FeedbackRecoveryControl />
           <Button
             iconOnly
-            icon={<X />}
+            icon={<Icon.Dismiss />}
             className={styles.close}
             aria-label={`close ${title}`}
             onClick={onClose}

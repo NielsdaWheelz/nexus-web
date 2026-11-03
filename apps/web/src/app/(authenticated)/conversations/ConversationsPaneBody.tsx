@@ -1,7 +1,7 @@
 "use client";
 
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
@@ -62,7 +62,7 @@ const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
   label: "New chat",
-  icon: <Plus size={20} aria-hidden="true" />,
+  icon: <Icon.Add aria-hidden="true" />,
   href: "/conversations/new",
 };
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.

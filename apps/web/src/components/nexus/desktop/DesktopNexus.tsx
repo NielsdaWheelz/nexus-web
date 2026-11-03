@@ -4,7 +4,7 @@
 // continuations pinned below it so arrivals never move them. The query edits text and arms rows;
 // → or tab opens the armed row's rail; native controls own their actions.
 import { Fragment, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import AsterismMark from "@/components/AsterismMark";
 import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import { ExcerptDialog } from "@/components/resources/ExcerptDisclosure";
@@ -209,7 +209,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
                 controller.arm(item.key);
                 if (item.secondary?.kind === "ClosePane") controller.closePane(item.secondary.paneId);
               }}
-              icon={<X size={16} aria-hidden="true" />} />
+              icon={<Icon.Dismiss aria-hidden="true" />} />
             : item.secondary?.kind === "TargetMenu" ? <OverflowMenuButton
               tabIndex={-1}
               aria-label={`options for ${item.label}`}

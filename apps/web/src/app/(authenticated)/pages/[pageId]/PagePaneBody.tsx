@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 
 // Opening a daily page resolves its permanent identity but writes nothing. Its
 // first title edit or item commits the latent page and that edit/item together.
@@ -116,7 +116,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   const menuActions = useMemo<ActionDescriptor[]>(() => date === null ? [] : ([-1, 1] as const).map(days => ({
     kind: "link", id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
-    label: days < 0 ? "Open yesterday" : "Open tomorrow", icon: days < 0 ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />, href: `/daily/${shiftLocalDate(date, days)}`,
+    label: days < 0 ? "Open yesterday" : "Open tomorrow", icon: days < 0 ? <Icon.Left aria-hidden="true" /> : <Icon.Right aria-hidden="true" />, href: `/daily/${shiftLocalDate(date, days)}`,
   })), [date]);
   usePaneChrome({
     displayTitle, menuActions, editor: root.rootEditor ?? undefined,

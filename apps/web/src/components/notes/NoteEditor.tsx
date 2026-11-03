@@ -65,14 +65,7 @@ import {
   undo as ownUndo,
 } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import {
-  Bold,
-  Code2,
-  Italic,
-  Link2,
-  Strikethrough,
-  Underline,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { FeedbackBusy, FeedbackFailure, FieldFeedback, useFeedback, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -221,11 +214,11 @@ export interface NoteEditorProps {
 
 // [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
 const FORMATS = [
-  ["strong", "Bold", "Mod-b", Bold],
-  ["em", "Italic", "Mod-i", Italic],
-  ["underline", "Underline", "Mod-u", Underline],
-  ["strikethrough", "Strikethrough", "Shift-Mod-s", Strikethrough],
-  ["code", "Inline code", "Mod-e", Code2],
+  ["strong", "Bold", "Mod-b", Icon.Bold],
+  ["em", "Italic", "Mod-i", Icon.Italic],
+  ["underline", "Underline", "Mod-u", Icon.Underline],
+  ["strikethrough", "Strikethrough", "Shift-Mod-s", Icon.Strikethrough],
+  ["code", "Inline code", "Mod-e", Icon.Code],
 ] as const;
 type Format = (typeof FORMATS)[number][0];
 const shortcut = (key: string) =>
@@ -1619,11 +1612,11 @@ function NoteEditorContent(props: NoteEditorProps) {
           role="toolbar"
           aria-label="Text formatting"
         >
-          {FORMATS.map(([name, label, key, Icon]) => (
+          {FORMATS.map(([name, label, key, Glyph]) => (
             <Button
               key={name}
               iconOnly
-              icon={<Icon size={16} aria-hidden="true" />}
+              icon={<Glyph aria-hidden="true" />}
               aria-label={label}
               aria-pressed={active.has(name)}
               disabled={presentation === "code"}
@@ -1632,7 +1625,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               onClick={() => format(name)}
             />
           ))}
-          <Button iconOnly icon={<Code2 size={16} aria-hidden="true" />} aria-label="Code presentation"
+          <Button iconOnly icon={<Icon.Code aria-hidden="true" />} aria-label="Code presentation"
             aria-pressed={presentation === "code"}
             tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
               const view=viewRef.current;if(!view||!latest.current.editable||inputMode.current!=="text"||view.composing||compositionBase.current!==null)return;
@@ -1646,7 +1639,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             }} />
           <Button
             iconOnly
-            icon={<Link2 size={16} aria-hidden="true" />}
+            icon={<Icon.Link aria-hidden="true" />}
             disabled={presentation === "code"}
             aria-label="Link"
             tooltip={{text: "Link (⌘/Ctrl+Shift+K)"}}

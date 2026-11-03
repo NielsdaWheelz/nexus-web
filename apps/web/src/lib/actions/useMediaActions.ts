@@ -15,7 +15,8 @@ import { useLibraryPlacementController } from "@/lib/libraries/placementControll
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { mediaSubjectKind, type MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
-import { continuationRecoveryLabel } from "./mediaContinuation";
+import * as Icon from "@/lib/ui/icons";
+import { continuationRecovery } from "./mediaContinuation";
 
 export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDescriptor | null): readonly ActionButtonSpec[] {
   const { ctx, run } = useActionRuntime();
@@ -47,10 +48,11 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
   const heldReason = creationFailed ? "this item's library wasn’t created; retry it from manage libraries"
     : creatingLibrary ? "finish creating this item's library first"
     : operation?.failure ? operation.failure.content.title : "finish this item's import first";
-  // A failed continuation keeps its recovery on the control for its destination.
+  // A failed continuation keeps its recovery on the control for its destination. A retry
+  // draws Again; review and check keep the destination's sign.
   const recovery = operation !== null && operation.failure !== null ? {
     destination: operation.destination.kind,
-    label: continuationRecoveryLabel(operation, operation.failure),
+    ...continuationRecovery(operation, operation.failure),
     invoke: () => { if (!installedApp || remoteReady()) ctx.mediaContinuations.recover(operation.intentId); },
   } : null;
   const actions: ActionButtonSpec[] = [];
@@ -121,7 +123,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     });
   } else {
     if (recovery?.destination === "Lectern") actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership",
-      menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(ACTION_CATALOG.LecternMembership.icon), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
+      menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(recovery.retry ? Icon.Again : ACTION_CATALOG.LecternMembership.icon), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
       invoke: recovery.invoke });
     else actions.push({ controlKey: "LecternMembership", hasPopup: null, id: "LecternMembership", menuLabel: ACTION_CATALOG.LecternMembership.label, accessibleLabel: `${ACTION_CATALOG.LecternMembership.label}: ${title}`, icon: createElement(ACTION_CATALOG.LecternMembership.icon),
       disabled: holding || disconnected, disabledReason: disconnected ? "requires a connection" : holding ? heldReason : null, busy: holding && recovery === null,
@@ -132,7 +134,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     const heldRecovery = recovery?.destination === "All" ? recovery : null;
     const label = heldRecovery?.label ?? ACTION_CATALOG.AddEpisodeToAll.label;
     actions.push({ controlKey: "AddEpisodeToAll", hasPopup: null, id: "AddEpisodeToAll", menuLabel: label,
-      accessibleLabel: `${label}: ${title}`, icon: createElement(ACTION_CATALOG.AddEpisodeToAll.icon),
+      accessibleLabel: `${label}: ${title}`, icon: createElement(heldRecovery?.retry ? Icon.Again : ACTION_CATALOG.AddEpisodeToAll.icon),
       disabled: disconnected || holding && heldRecovery === null,
       disabledReason: disconnected ? "requires a connection" : holding && heldRecovery === null ? heldReason : null,
       busy: holding && heldRecovery === null,
@@ -144,7 +146,7 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     });
   }
   if (recovery?.destination === "Library") actions.push({ controlKey: "LibraryPlacement", hasPopup: operation?.failure?.review ? "dialog" : null, id: "LibraryPlacement",
-    menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(ACTION_CATALOG.LibraryPlacement.icon), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
+    menuLabel: recovery.label, accessibleLabel: `${recovery.label}: ${title}`, icon: createElement(recovery.retry ? Icon.Again : ACTION_CATALOG.LibraryPlacement.icon), disabled: disconnected, disabledReason: disconnected ? "requires a connection" : null, busy: false,
     invoke: recovery.invoke });
   // A failed library creation keeps "manage libraries" open: its editor holds the retry.
   else actions.push({ controlKey: "LibraryPlacement", hasPopup: "dialog", id: "LibraryPlacement", menuLabel: ACTION_CATALOG.LibraryPlacement.label, accessibleLabel: `${ACTION_CATALOG.LibraryPlacement.label}: ${title}`, icon: createElement(ACTION_CATALOG.LibraryPlacement.icon),

@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { Ellipsis } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { cx } from "@/lib/ui/cx";
 import Button from "./Button";
 import styles from "./OverflowMenuButton.module.css";
@@ -10,6 +10,6 @@ export default function OverflowMenuButton({
   ...props
 }: Omit<ComponentProps<"button">, "type" | "children" | "aria-label"> & { "aria-label": string }) {
   return (
-    <Button {...props} iconOnly icon={<Ellipsis strokeWidth={1.5} />} className={cx(styles.button, className)} />
+    <Button {...props} iconOnly icon={<Icon.More />} className={cx(styles.button, className)} />
   );
 }

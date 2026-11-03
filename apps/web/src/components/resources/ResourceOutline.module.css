@@ -68,12 +68,6 @@
 .bullet:disabled {
   color: var(--ink-muted);
 }
-.arrow {
-  transition: transform var(--duration-fast) var(--ease-snap);
-}
-.arrow[data-open="true"] {
-  transform: rotate(90deg);
-}
 .content {
   flex: 1;
   min-width: 0;
@@ -139,10 +133,4 @@
   margin: var(--space-1) 0;
   font-size: var(--content-meta-font-size, var(--text-sm));
   color: var(--ink-muted);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arrow {
-    transition: none;
-  }
 }

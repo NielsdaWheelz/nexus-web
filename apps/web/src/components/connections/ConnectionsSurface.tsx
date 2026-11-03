@@ -4,7 +4,7 @@
 // device store online and offline. Server facts render in their own section,
 // which may fail without hiding local writing.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { FeedbackFailure, FeedbackStatus, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import LocalOutline from "@/components/notes/LocalOutline";
@@ -65,7 +65,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         <div className={styles.headerActions}>
           <ContextualActionMenu navigation={null} resourceRef={assumeCanonicalResourceRef(selfRef)} title="connections" subjectKey={`connections:${selfRef}`} label="more actions for connections" sections={[]} />
           {attachments.control}
-          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={() => void scan.start()} disabled={scanning} aria-busy={scanning} icon={<Sparkles size={14} aria-hidden="true" />} /> : null}
+          {scannable ? <Button type="button" iconOnly aria-label="Find connections" onClick={() => void scan.start()} disabled={scanning} aria-busy={scanning} icon={<Icon.Search aria-hidden="true" />} /> : null}
         </div>
       </div>
 

@@ -8,7 +8,7 @@ import {
   useFeedbackOccurrence,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { Check, Copy } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -311,7 +311,7 @@ export default function SettingsAccountPaneBody() {
               <code>{profile.email_ingest_address}</code>
             </p>
             <Button
-              icon={copied.copied ? <Check /> : <Copy />}
+              icon={copied.copied ? <Icon.Check /> : <Icon.Copy />}
               onClick={() => void copy(profile.email_ingest_address ?? "")}
             >
               Copy address

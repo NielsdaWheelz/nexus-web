@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import ResourceLink from "@/components/resources/ResourceLink";
 import type { MessageAction } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
@@ -89,7 +89,7 @@ function Action({ action, undone, onInspect }: {
           onInspect(event.currentTarget);
           if (open && content.current?.contains(document.activeElement)) event.currentTarget.focus({ preventScroll: true });
           setOpen(!open);
-        }}>{open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</button> : null}
+        }}><Icon.Disclose open={open} size={14} aria-hidden="true" /></button> : null}
     </div>
     <div ref={content} id={id} hidden={!open || !expandable}>
       <div className={styles.actionContent}>

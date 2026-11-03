@@ -3,7 +3,6 @@
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
-import { Captions } from "lucide-react";
 import { FeedbackFailure, FeedbackNotice, FeedbackStatus, useFeedbackOccurrence, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
@@ -84,7 +83,7 @@ export function TranscriptState({ media, announcement, returnFocus, holdFocus }:
   return <div ref={owner}>
     {requestable ? <>
       {state === "failed_provider" ? <FeedbackStatus content={{ tone: "Danger", title: "transcription failed" }} announcement={announcement} /> : null}
-      <Button icon={<Captions />} aria-busy={busy} aria-disabled={busy} onClick={(event) => void request(event.currentTarget)}>
+      <Button reserveIcon aria-busy={busy} aria-disabled={busy} onClick={(event) => void request(event.currentTarget)}>
         {state === "failed_provider" || failure ? "retry transcription" : "transcribe"}
       </Button>
     </> : <FeedbackStatus content={sourceUnavailable && failure ? requestFailure(failure) : { tone: "Neutral", title: state === "queued" ? "transcript queued"
