@@ -261,7 +261,7 @@ export function syncRows(input: Reference & {
     if (tier === null) continue;
     const recency = panes.length - input.mru.indexOf(pane.id);
     const row = paneRow(pane, tier, usage, recency);
-    if (pane.resourceRef === null || resolvePaneRouteModel(pane.href).header.kind !== "Resource") {
+    if (pane.resourceRef === null) {
       // A place that is already open keeps its row and gains the pane's closure.
       const routeId = resolveWorkspaceActivationRouteId(pane.href);
       const at = places.findIndex(place => place.action.kind === "Available" && place.action.target.kind === "InternalHref" && resolveWorkspaceActivationRouteId(place.action.target.href) === routeId);
