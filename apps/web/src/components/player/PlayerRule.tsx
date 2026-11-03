@@ -121,6 +121,13 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     if (captured !== null && rail.current?.hasPointerCapture(captured.pointerId)) rail.current.releasePointerCapture(captured.pointerId);
     onDraft(null);
   };
+  const leave = () => {
+    if (dwell.current !== null) clearTimeout(dwell.current);
+    dwell.current = null;
+    if (bubble) bubbleLeft.current = performance.now();
+    setBubble(false);
+    setPoint(null);
+  };
   // a scrub belongs to one load; esc during it belongs to the rail.
   useEffect(() => {
     if (!scrubbing) return;
@@ -134,11 +141,20 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     return () => document.removeEventListener("keydown", onKeyDown, true);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- cancel reads refs and stable setters
   }, [scrubbing]);
+  // a pointer resting on the rail may never move or leave, so a change of what the rail shows drops
+  // its pose: a new subject retires the old load's scrub, hold and hover, and an inert rail keeps none.
   useEffect(() => {
     if (scrub.current !== null && scrub.current.subject !== playbackSubject) cancel();
     settle();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- a new subject retires the old load's scrub
+    leave();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- once per subject
   }, [playbackSubject]);
+  useEffect(() => {
+    if (seekable) return;
+    if (scrub.current !== null) cancel();
+    leave();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- once per loss of seekability
+  }, [seekable]);
 
   useLayoutEffect(() => {
     const element = bubbleRef.current;
@@ -151,13 +167,6 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     const box = event.currentTarget.getBoundingClientRect();
     const at = positionAt(event.clientX - box.left, box.width, durationMs, cuts, event.pointerType === "mouse" ? 3 : 6);
     return { ...at, x: (at.positionMs / durationMs) * box.width };
-  };
-  const leave = () => {
-    if (dwell.current !== null) clearTimeout(dwell.current);
-    dwell.current = null;
-    if (bubble) bubbleLeft.current = performance.now();
-    setBubble(false);
-    setPoint(null);
   };
   const onMark = (event: PointerEvent<HTMLDivElement>) => event.target instanceof Element && event.target.closest("button") !== null;
 
@@ -188,6 +197,8 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
       event.currentTarget.setPointerCapture(event.pointerId);
       scrub.current = { pointerId: event.pointerId, subject: playbackSubject };
       const next = pointAt(event);
+      // a press retires the last release's hold, whose settling would clear this draft mid-drag.
+      setHold(null);
       setScrubbing(true);
       setPoint(next);
       setBubble(true);
@@ -222,6 +233,8 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
     {seekable ? <input type="range" className={styles.input} min={0} max={durationMs} step={1000} value={shown}
       aria-label="seek playback position" aria-valuetext={current === null ? valuetext : `${valuetext}, ${current.title}`}
       onKeyDown={event => {
+        // the rail takes only bare keys; a modified key goes on, unprevented, to the page and PlayerKeys.
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         const target = keyTarget(event.key, shown, durationMs, chapters);
         if (target === undefined) return;
         event.preventDefault();
