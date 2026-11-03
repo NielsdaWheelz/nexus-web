@@ -159,9 +159,7 @@ async function call<T>(
   if (typeof error?.code === "string") {
     const requestId =
       typeof error.request_id === "string" ? error.request_id : null;
-    // This fence is the one E_RESOURCE_CONFLICT cause that requires destination review.
-    const code = error.code === "E_RESOURCE_CONFLICT" && error.message === "Save needs review" ? "E_CAPTURE_SAVE_NEEDS_REVIEW" : error.code;
-    throw failure(code, refusal(code, response.status), requestId, response.status);
+    throw failure(error.code, refusal(error.code, response.status), requestId, response.status);
   }
   throw failure("E_UNKNOWN", refusal("E_UNKNOWN", response.status), null, response.status);
 }

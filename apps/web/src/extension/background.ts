@@ -472,7 +472,7 @@ function outsideContract(detail: string): CaptureFailureError {
 
 function requireSession(): NonNullable<typeof session> {
   if (session === null)
-    throw failure("E_UNAUTHENTICATED", "sign in to nexus first.", null, 401);
+    throw failure("E_UNAUTHENTICATED", "sign in to nexus first.");
   return session;
 }
 
@@ -1056,7 +1056,7 @@ async function save(signal: AbortSignal): Promise<void> {
     let recovery: Extract<CapturePhase, { kind: "failed" }>["recovery"];
     if (current.submission?.confirmationUncertain || current.submission?.createOutcomeUnknown) {
       recovery = "Check";
-    } else if (shown.code === "E_CAPTURE_SAVE_NEEDS_REVIEW" && confirming) {
+    } else if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
       if (current.submission === null) throw new Error("Refused confirmation has no owner.");
       current.submission.confirmation = null;
       recovery = "Review";
@@ -1074,7 +1074,7 @@ async function save(signal: AbortSignal): Promise<void> {
     }
     setPhase({
       kind: "failed",
-      failure: shown.code === "E_CAPTURE_TARGET_CHANGED" ? { ...shown, message: "this import changed. capture the page again." } : recovery === "Review" ? { ...shown, message: "your save needs review." }
+      failure: shown.code === "E_CAPTURE_TARGET_CHANGED" ? { ...shown, message: "this import changed. capture the page again." } : recovery === "Review" ? { ...shown, message: "save needs review. review your choices and save again." }
         : shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" ? { ...shown, message: "upload expired. capture the page again." } : shown,
       recovery,
     });
