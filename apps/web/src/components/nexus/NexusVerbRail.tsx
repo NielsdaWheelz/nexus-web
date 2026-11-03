@@ -76,15 +76,18 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
   const order = visibleFor(rail.filter);
   const initial = chips[pair.length]?.id ?? (verbs.menu ? MORE : chips[0]?.id ?? null);
   const focus = [rail.focus, initial].find(verbId => verbId !== null && order.includes(verbId)) ?? order[0] ?? null;
+  const focusedVerb = chips.find(verb => verb.id === focus);
+  const focusForm = focusedVerb?.kind === "link" && !focusedVerb.disabled ? "Link"
+    : !mobile && focusedVerb?.disabled && focusedVerb.disabledReason ? "ExplainedButton" : "Button";
   const { focusRail, filterRail } = controller;
   // Initial focus is the first verb after the pair, pinned by id so a settling read never moves it.
   useLayoutEffect(() => { if (rail.focus === null && initial !== null) focusRail(initial); }, [rail.focus, initial, focusRail]);
-  // Only moving the rail's focus takes the document's focus: a settling read must not pull it back
-  // from `more`'s open menu.
+  // Availability may replace a tooltip trigger, button or link. Follow that same
+  // descriptor; unrelated arrivals cannot reclaim focus from `more`'s open menu.
   useLayoutEffect(() => {
     const element = focus === null ? null : toolbar.current?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(focus)}"]`);
     if (element && element !== document.activeElement) element.focus({ preventScroll: true });
-  }, [focus]);
+  }, [focus, focusForm]);
   const shown = order.join("\n");
   useLayoutEffect(() => {
     const bar = toolbar.current;
