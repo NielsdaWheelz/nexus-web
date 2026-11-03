@@ -233,8 +233,8 @@ function createOwner(signIn: (error: unknown) => boolean, changed: () => void, r
               emit();
               continue;
             }
-            const superseded = fresh && cell !== undefined && (
-              BigInt(cell.order_revision) > BigInt(change.expectedRevision)
+            const superseded = fresh && (
+              cell !== undefined && BigInt(cell.order_revision) > BigInt(change.expectedRevision)
               || change.removalRevision !== null && change.row.removalRevision !== null
                 && BigInt(change.row.removalRevision) > BigInt(change.removalRevision)
             );
