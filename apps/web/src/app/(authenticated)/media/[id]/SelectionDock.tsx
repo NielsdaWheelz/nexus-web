@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import { Field } from "@/components/feedback/Fact";
-import { useTransportVerbs } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { Retract, Verb, Verbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import NoteEditor from "@/components/notes/NoteEditor";

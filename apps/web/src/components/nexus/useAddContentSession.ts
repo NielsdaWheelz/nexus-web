@@ -20,10 +20,10 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { UploadSessionError } from "@/lib/imports/api";
 import {
-  UNCONFIRMED,
-  acceptanceFailure,
-  captureErrorFeedback,
-  savedSourceReadFailure,
+  UNCONFIRMED_LINE,
+  acceptanceFailureLine,
+  captureErrorLine,
+  savedSourceReadLine,
 } from "@/lib/imports/copy";
 import {
   addMediaFromUrl,
@@ -609,8 +609,8 @@ export function useAddContentSession(): AddContentSessionController {
         ? { ...draft, destinations: draft.destinations.map(destination => currentDestinations.get(destination.id) ?? destination) } : item) }));
     } catch (error) {
       if (!active(signal) || handleUnauthenticatedApiError(error)) return;
-      const feedback = captureErrorFeedback(error, "SaveSource");
-      update(next => ({ ...next, intakeFeedback: { fact: feedback.title, reason: feedback.message } }));
+      const feedback = captureErrorLine(error, "SaveSource");
+      update(next => ({ ...next, intakeFeedback: { fact: feedback.fact, reason: feedback.reason } }));
     } finally {
       if (active(signal)) update(next => ({ ...next, mutation: { kind: "Idle" } }));
     }
@@ -718,8 +718,8 @@ export function useAddContentSession(): AddContentSessionController {
       if (accepted !== null) {
         item(accepted);
         if (isAbortError(error)) return;
-        const feedback = savedSourceReadFailure(error);
-        item({ ...accepted, feedback: { fact: feedback.title, reason: feedback.message } });
+        const feedback = savedSourceReadLine(error);
+        item({ ...accepted, feedback: { fact: feedback.fact, reason: feedback.reason } });
         handleUnauthenticatedApiError(error);
         return;
       }
@@ -733,11 +733,11 @@ export function useAddContentSession(): AddContentSessionController {
               importRef,
               reason: "StatusUnknown",
               attempt: 0,
-              feedback: { fact: UNCONFIRMED.title, reason: UNCONFIRMED.message },
+              feedback: { fact: UNCONFIRMED_LINE.fact, reason: UNCONFIRMED_LINE.reason },
             };
       item(frozen);
       if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
-      const failure = acceptanceFailure(error);
+      const failure = acceptanceFailureLine(error);
       const publicationFenced = error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
         || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected");
       if (row.kind === "AcceptanceUnresolved" && row.reason === "StatusUnknown" && !publicationFenced) {
@@ -751,8 +751,8 @@ export function useAddContentSession(): AddContentSessionController {
           items: snapshot.items.filter((next) => next.id !== id),
         }));
       } else {
-        item({ id, intent, importRef, ...(failure.kind === "AcceptanceUnresolved" ? { ...failure, attempt: row.kind === "AcceptanceUnresolved" ? row.attempt + 1 : 0 } : failure), feedback: failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
-          ? { fact: "save needs review. review your choices and save again.", reason: "your upload is still available." } : { fact: failure.feedback.title, reason: failure.feedback.message } });
+        item({ id, intent, importRef, ...(failure.kind === "AcceptanceUnresolved" ? { kind: failure.kind, reason: failure.reason, attempt: row.kind === "AcceptanceUnresolved" ? row.attempt + 1 : 0 } : { kind: failure.kind }), feedback: failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
+          ? { fact: "save needs review. review your choices and save again.", reason: "your upload is still available." } : { fact: failure.line.fact, reason: failure.line.reason } });
       }
     }
   }
@@ -766,8 +766,8 @@ export function useAddContentSession(): AddContentSessionController {
     catch (error) {
       if (!active(signal)) return;
       if (handleUnauthenticatedApiError(error)) { update(next => ({ ...next, mutation: { kind: "Idle" } })); return; }
-      const feedback = captureErrorFeedback(error, "SaveSource");
-      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: { fact: feedback.title, reason: feedback.message } }));
+      const feedback = captureErrorLine(error, "SaveSource");
+      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: { fact: feedback.fact, reason: feedback.reason } }));
       return;
     }
     if (!active(signal)) return;

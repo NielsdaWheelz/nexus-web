@@ -6,7 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/serverState";
-import { useTransportVerbs } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { Line, CommandVerb, Verbs } from "@/components/feedback/stage";
 import { useHeldSaveFailure } from "@/lib/media/admissions";

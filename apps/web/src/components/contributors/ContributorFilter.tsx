@@ -82,11 +82,7 @@ export default function ContributorFilter({
     ? search.items.filter((item) => !selectedHandles.includes(item.handle))
     : [];
   const failure = live && !search.current ? search.failure : null;
-  const readFeedback = useCollectionReadFeedback({
-    list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null,
-    outcome: null,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useCollectionReadFeedback({ list: search, unit: { singular: "author", plural: "authors" }, waiting: live && !search.current && failure === null, outcome: null });
   return (
     <div className={styles.filter}>
       <label className={styles.label}>

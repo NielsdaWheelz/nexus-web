@@ -4,7 +4,8 @@ import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
-import { Hold, useActiveRegion, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
 import { Fact } from "@/components/feedback/Fact";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";

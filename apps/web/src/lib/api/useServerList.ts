@@ -35,7 +35,6 @@ import {
   requestWithRetry,
   type ReadPolicy,
   useFailedReadRepair,
-  useServerSeed,
   useReadOwner,
   useThrowLater,
   useVisitSnapshot,
@@ -167,13 +166,8 @@ function useList<T, M>(
   const signIn = useUnauthenticatedApiHandler();
   const latest = useRef(input);
   latest.current = input;
-  const seed = useServerSeed<ListPage<T, M>>(key);
-  const [held, setShown] = useState<ListSnapshot<T, M> | null>(() => {
-    const retained = restored?.source.kind === "catalog" && restored.source.snapshot_id !== input.catalog?.snapshot_id ? null : restored;
-    if (retained !== null || seed === null) return retained;
-    const { items, next_cursor, order_revision, metadata } = seed.data;
-    return { key: seed.key, stale, source: LIVE_SOURCE, items: unique(items, input.id), cursor: next_cursor, cursors: [null], orderRevision: order_revision ?? null, metadata: metadata ?? null };
-  });
+  const [held, setShown] = useState<ListSnapshot<T, M> | null>(() =>
+    restored?.source.kind === "catalog" && restored.source.snapshot_id !== input.catalog?.snapshot_id ? null : restored);
   const shown = shownAccount === accountId ? held : null;
   shownRef.current = shown;
   const [running, setRunning] = useState<Op | null>(null);

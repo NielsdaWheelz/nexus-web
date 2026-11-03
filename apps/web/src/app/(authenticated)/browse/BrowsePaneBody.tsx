@@ -212,10 +212,7 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   });
   const label = BROWSE_SOURCE_LABELS[section.source];
   const noun = `${KIND_NOUNS[section.kind]} from ${label.toLowerCase()}`;
-  const feedback = useCollectionReadFeedback({
-    list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null,
-    returnFocus: () => sectionRef.current,
-  });
+  const feedback = useCollectionReadFeedback({ list, unit: { singular: "result", plural: "results" }, waiting: false, outcome: null });
   return <section ref={sectionRef} tabIndex={-1} className={styles.sourceSection} aria-labelledby={headingId}>
     <h3 id={headingId} className={styles.sourceHeading}>{label}</h3>
     {list.status === "loading" || (!list.current && running) ? <Ruling />

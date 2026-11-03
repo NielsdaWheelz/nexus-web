@@ -97,11 +97,7 @@ function Picker({ mediaId, hasSourceChats, onSelect, scrollRef }: {
   });
   const failed = settled === query && page.status === "failed" ? page : null;
   const emptyTitle = search ? "no chats match this search." : view === "Source" ? "no chats for this source." : "no chats yet.";
-  const readFeedback = useIndexReadFeedback({
-    value: page, requestedKey: readKey, active: paneActive, unit: { singular: "chat", plural: "chats" }, waiting: settled === query && !(page.status === "ready") && failed === null,
-    outcome: items.length > 0 ? null : emptyTitle,
-    returnFocus: () => input.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: page, requestedKey: readKey, active: paneActive, waiting: settled === query && !(page.status === "ready") && failed === null, outcome: items.length > 0 ? null : emptyTitle });
   const changeView = (next: "Source" | "All") => { setInitializing(false); setView(next); setActive(null); };
   return <div className={styles.destination}>
     <div className={styles.destinationViews}>

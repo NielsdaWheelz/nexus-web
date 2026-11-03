@@ -167,7 +167,7 @@ function ContextIndexItem({ entry, conversationId, pending, recovery, onRemove, 
   const hasSupport = Boolean(absent || annotation);
   return <>
     {waits ? <span id={waitsId} className="sr-only">{waitReason}</span> : null}
-    {authored ? <AuthoredReadFailure {...authored} title="couldn’t load this item." /> : null}
+    {authored ? <AuthoredReadFailure {...authored} noun="this item" /> : null}
     <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     primaryControl={entry.mutation ? <Button ref={removeButton} iconOnly icon={<Icon.Remove />}
       aria-label={`${pending && pending.attempt > 0 ? "retry removing" : "remove from future context"}: ${label}`}

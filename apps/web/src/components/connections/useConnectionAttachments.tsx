@@ -19,7 +19,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { captureErrorFeedback } from "@/lib/imports/copy";
+import { captureErrorLine } from "@/lib/imports/copy";
 import { readAcquisitionGuard } from "@/lib/libraries/api";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
@@ -105,7 +105,7 @@ export function useConnectionAttachments(selfRef: string) {
       void run(task);
     } };
     if (!(error instanceof UploadSessionError)) { fail(error, notAdded(names), resume); return; }
-    const reason = captureErrorFeedback(error, "AddAttachment").message;
+    const reason = captureErrorLine(error, "AddAttachment").reason;
     const kind = error.outcome.kind;
     const verbs: Verbs | undefined = upload.expired ? [{ label: "choose file", commandKey: `ConnectionAttachments.choose:${task.id}`, run: () => fileInputRef.current?.click() }]
       : kind === "BytesMissing" || kind === "LibraryForbidden" ? [resume] : undefined;

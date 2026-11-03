@@ -84,8 +84,6 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
           readerProfile={binding.reader_profile}
           renderEnvironment={renderEnvironment}
           initialState={initial.current}
-          seeds={{}}
-          entryFailure={null}
           locationLinkFailure={null}
         /></CatalogProvider>
       </AuthenticatedWorkspaceErrorBoundary></WorkProvider>

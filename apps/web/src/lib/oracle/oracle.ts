@@ -1,7 +1,6 @@
 // The oracle transport: ask, and follow one reading until it leaves pending.
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+
+import { apiFetch } from "@/lib/api/client";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
@@ -61,13 +60,4 @@ export function watchReading(
     onError: onLost,
     onSuspended: () => {},
   });
-}
-
-/** Until L6's atlas migrates (L7): a failed oracle read as content, its domain code ahead of the
- * transport's line. A defect throws. */
-export function failureCopy(error: unknown, title: string): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  if (error.code === "E_NOT_FOUND") return { tone: "Warning", title: "this reading doesn’t exist." };
-  const { fact, reason } = TRANSPORT_LINES[transportOf(error)].command(title);
-  return { tone: "Warning", title: fact, message: reason };
 }

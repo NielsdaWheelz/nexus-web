@@ -5,6 +5,7 @@
   pointer-events: none;
   /* A composer's anchor is a zero-height line, so only the viewport bounds its frame. */
   --stage-ceiling: 100dvb;
+  --stage-tab-width: 44px;
   /* Pane clearance is written on a root anchor alone: see Slips. */
   --stage-floor: calc(var(--stage-bottom-clearance, 0px) + var(--stage-pane-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
 }
@@ -18,11 +19,10 @@
   padding: var(--viewport-safe-top, 0px) var(--viewport-safe-right, 0px) var(--viewport-safe-bottom, 0px) var(--viewport-safe-left, 0px);
   --stage-ceiling: 100%;
   --stage-floor: 0px;
-  --stage-tab-width: 44px;
 }
 
-/* Modal controls share one centred overlay group. Its frame slot never changes with a tuck. */
-.modalGroup {
+/* A room shares one centred overlay group. Its frame slot never changes with a tuck. */
+.group {
   position: absolute;
   inset-block: 0;
   inset-inline: 12px;
@@ -31,12 +31,12 @@
   pointer-events: none;
 }
 
-.modalGroup > .frame {
+.group > .frame {
   inset-inline: 0 calc(var(--stage-tab-width) + 12px);
   max-inline-size: calc(100% - var(--stage-tab-width) - 12px);
 }
 
-.modalGroup > .tab {
+.group > .tab {
   inset-inline: auto 0;
   margin-inline: 0;
 }
@@ -44,7 +44,7 @@
 /* A constrained body spends no height on decoration; its edge is paint, not layout. */
 .modalAnchor[data-constrained] { --stage-gap: 0px; }
 
-.modalAnchor[data-constrained] > .modalGroup {
+.modalAnchor[data-constrained] > .group {
   inset-inline: 0;
   inline-size: min(100%, 22rem + var(--stage-tab-width));
 }
@@ -65,7 +65,6 @@
 
 .modalAnchor[data-constrained] .line { align-self: center; }
 
-/* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {
   position: absolute;
   z-index: 1;
@@ -244,7 +243,7 @@
 }
 
 @media (any-pointer: coarse) {
-  .modalAnchor { --stage-tab-width: 48px; }
+  .anchor { --stage-tab-width: 48px; }
 
   .frame { touch-action: none; }
 

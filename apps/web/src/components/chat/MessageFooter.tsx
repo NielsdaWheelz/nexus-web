@@ -2,7 +2,8 @@
 import * as Icon from "@/lib/ui/icons";
 
 import { useState, type ReactNode } from "react";
-import { Announcement, useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import ActionMenu from "@/components/ui/ActionMenu";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Button from "@/components/ui/Button";

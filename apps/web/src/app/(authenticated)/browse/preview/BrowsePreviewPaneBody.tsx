@@ -11,7 +11,7 @@ import { ContributorRoleGroups } from "@/components/contributors/ContributorCred
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import { useTransportVerbs } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { Verbs } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";

@@ -3,7 +3,8 @@ import * as Icon from "@/lib/ui/icons";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { Fact, Field } from "@/components/feedback/Fact";
-import { Hold, useResendFeedback, useTransportVerbs, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";

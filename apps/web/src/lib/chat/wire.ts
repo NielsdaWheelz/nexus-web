@@ -1,4 +1,4 @@
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+
 import type { Line } from "@/components/feedback/stage";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown, type ApiError } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
@@ -95,17 +95,3 @@ export const rejected = (fact: string, code: keyof typeof REASONS): Refusal =>
 /** A thrown refusal: a domain code's reason runs ahead of the transport's. */
 export const refusal = (fact: string, error: ApiError): Refusal => isReasoned(error.code)
   ? rejected(fact, error.code) : { line: TRANSPORT_LINES[transportOf(error)].command(fact), error };
-
-/** Until L7: a line as the old content, for the readers outside this lane. A stale build keeps its reload. */
-export const feedbackContent = ({ line, error }: Refusal): FeedbackContent => ({
-  tone: "Warning", title: line.fact, message: line.reason,
-  ...(error !== null && transportOf(error) === "Update" ? { reload: true as const } : {}),
-});
-
-/** L2's reader composer reads only `Defect` from this; it leaves when that caller migrates (L7). */
-export function chatFailure(error: unknown, title: string):
-  | { kind: "Handled" } | { kind: "Defect"; error: unknown } | { kind: "Feedback"; feedback: FeedbackContent; ambiguous: boolean } {
-  const failure = failureOf(error);
-  return failure.kind === "Handled" || failure.kind === "Defect" ? failure
-    : { kind: "Feedback", feedback: feedbackContent(refusal(title, failure.error)), ambiguous: failure.kind === "Unknown" };
-}

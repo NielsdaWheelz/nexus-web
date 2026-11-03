@@ -164,11 +164,7 @@ export default function PodcastsPaneBody() {
   const filtered = filter !== "all" || libraryId !== null;
   const emptyTitle = text
     ? "no podcasts match this filter." : filtered ? "no podcasts match these filters." : "no subscribed podcasts.";
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active, unit: UNIT, waiting: list.status === "loading",
-    outcome: visible.length > 0 ? "results updated." : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: list.status === "loading", outcome: visible.length > 0 ? "results updated." : emptyTitle });
   const libraryChoices = [
     { value: "", label: "All libraries" },
     ...(libraries.status === "ready" ? libraryItems.map((library) => ({ value: library.id, label: library.name })) : []),

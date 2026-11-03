@@ -13,7 +13,8 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { topModal } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import { Announcement, useActiveRegion, useTransportVerbs } from "./Feedback";
+import { Announcement } from "./Announcement";
+import { useActiveRegion, useTransportVerbs } from "./stage";
 import { sentence, type CommandVerb, type Line, type Verb, type Verbs } from "./stage";
 import styles from "./Fact.module.css";
 

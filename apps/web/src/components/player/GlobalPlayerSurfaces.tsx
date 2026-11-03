@@ -13,7 +13,8 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
@@ -728,14 +729,4 @@ function PlayerOutcomes() {
         : resendFeedback({ line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
           resend: { label: "retry", commandKey: "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" } })} /> : null}
   </>;
-}
-
-/** Coexistence: L1's ResourceActionsProvider still mounts these. The player's lines are
- * `PlayerOutcomes`' now, so they render nothing, and go when L1 drops the import. */
-export function usePlayerFailurePresentation(): null {
-  return null;
-}
-
-export function PlayerFailures(): null {
-  return null;
 }

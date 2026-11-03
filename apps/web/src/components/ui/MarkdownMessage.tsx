@@ -25,7 +25,8 @@ import "./hljs-theme.css";
 import * as Icon from "@/lib/ui/icons";
 import Button from "./Button";
 import { useCopyFeedback } from "./useCopyFeedback";
-import { Announcement, useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import styles from "./MarkdownMessage.module.css";
 
 type Components = ComponentProps<typeof ReactMarkdown>["components"];

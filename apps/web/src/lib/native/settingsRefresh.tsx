@@ -21,8 +21,6 @@ export function DeviceSettingsProvider({ children }: { children: ReactNode }) {
   }, [say]);
   return <Context value={{ refresh }}>{children}</Context>;
 }
-/** The slip is the whole report; L1's ResourceActionsProvider mounts this until L7. */
-export function DeviceSettingsStatus() { return null; }
 export function useSettingsRefresh(): () => Promise<void> {
   const state = useContext(Context);
   if (!state) throw new Error("useSettingsRefresh requires DeviceSettingsProvider");

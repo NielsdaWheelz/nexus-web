@@ -194,7 +194,7 @@ export default function ShelfReader({
           { label: "remove copy", commandKey: "RemoveDownloadedCopy", run: onRemove },
         ]} />
       ) : <>
-        {text ? <SourceIssuesNotice issues={text.sourceIssues} readable /> : null}
+        {text ? <SourceIssuesNotice issues={text.sourceIssues} /> : null}
         {text?.format === "web" ? (
           <Fact line={{ fact: "text-only copy.", reason: "images aren’t included." }} />
         ) : null}

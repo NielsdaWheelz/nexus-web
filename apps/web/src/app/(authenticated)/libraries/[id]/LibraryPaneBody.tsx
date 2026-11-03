@@ -281,12 +281,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     : undefined;
   const emptyState = emptyEntries({ params, isAll, change: recover });
   const emptyLine = text ? { fact: "no entries match this filter." } : emptyState.line;
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active, unit: UNIT,
-    waiting: !invalidView && list.status === "loading",
-    outcome: ordered.length > 0 ? null : emptyLine.fact,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: !invalidView && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
   const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),

@@ -11,7 +11,8 @@ import "@/app/packagedFonts.css";
 
 import { StrictMode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Announcement, FeedbackProvider, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { FeedbackProvider, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";

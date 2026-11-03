@@ -21,7 +21,7 @@ import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { modeledApiError } from "@/lib/api/serverState";
-import { savedSourceReadFailure } from "@/lib/imports/copy";
+import { savedSourceReadLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import { createLibrary } from "@/lib/libraries/api";
@@ -551,7 +551,7 @@ export function useNexusController() {
       const fact = `couldn’t open “${target.label}”.`;
       // The saved source's own codes come first; the rest are transport.
       if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST") {
-        say({ fact, reason: savedSourceReadFailure(failure).message });
+        say({ fact, reason: savedSourceReadLine(failure).fact });
         return;
       }
       fail(failure, fact, { label: "retry", commandKey: `retry open ${target.sourceAttemptId}`, run: intent => {

@@ -24,7 +24,7 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actions/ResourceActionsProvider";
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
-import { ServerSeedsProvider } from "@/lib/api/serverState";
+import { ServerArrivalsProvider } from "@/lib/api/serverState";
 import { RecentProvider } from "@/lib/recent/store";
 import { AuthoredProvider, useAuthoredSignIn } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -69,9 +69,6 @@ export default function AuthenticatedShell(props: {
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   initialPresentations?: InitialPresentations;
-  seeds: Record<string, Record<string, unknown>>;
-  /** Until L7: both producers pass null. */
-  entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
   // The workspace signs in through the account's one sign-in owner, which ignores a press while
@@ -95,12 +92,12 @@ export default function AuthenticatedShell(props: {
                 <DeviceSettingsProvider>
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                     <ActivityCapture />
-                    <ServerSeedsProvider seeds={props.seeds}>
+                    <ServerArrivalsProvider>
                       <ReaderProvider initialProfile={props.readerProfile}>
                         <Workspace accountId={props.account.accountId} initialState={props.initialState}
                           initialPresentations={props.initialPresentations} locationLinkFailure={props.locationLinkFailure} bindSignIn={bindSignIn} />
                       </ReaderProvider>
-                    </ServerSeedsProvider>
+                    </ServerArrivalsProvider>
                   </MediaAdmissionsProvider>
                 </DeviceSettingsProvider>
                 </UnauthenticatedApiBoundary>
