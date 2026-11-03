@@ -19,7 +19,6 @@ const REASONS: Readonly<Record<string, string>> = {
   E_LIBRARY_FORBIDDEN: "nexus manages this library.",
   E_DEFAULT_LIBRARY_FORBIDDEN: "All can’t be changed this way.",
   E_OWNER_EXIT_FORBIDDEN: "the owner can’t leave or change role.",
-  E_RESOURCE_CONFLICT: "it changed meanwhile.",
   E_MEDIA_DELETING: "it’s being deleted.",
   E_INVITE_NOT_PENDING: "that invitation is no longer pending.",
   E_INVITE_NOT_FOUND: "that invitation is no longer pending.",
@@ -37,8 +36,8 @@ export function libraryReason(error: unknown): string | null {
 }
 
 /** A refused library command: `fact` with the rule that refused it, else the transport's reason and
- * verb. `conflict` names what moved, where the site knows better than `it changed meanwhile.` */
-export function refuseLibrary(outcome: Outcome, error: unknown, fact: string, conflict?: string): Retract {
-  const reason = isApiError(error) && error.code === "E_RESOURCE_CONFLICT" && conflict !== undefined ? conflict : libraryReason(error);
+ * verb. A generic conflict does not identify what refused it. */
+export function refuseLibrary(outcome: Outcome, error: unknown, fact: string): Retract {
+  const reason = libraryReason(error);
   return reason === null ? outcome.fail(error, fact) : outcome.say({ fact, reason });
 }

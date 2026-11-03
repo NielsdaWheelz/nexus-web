@@ -65,10 +65,9 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
     try {
       const result = await ctx.lectern.addCollection({ title: prepared.label, onAcknowledged: () => flushSync(onClose), request: { target, media_ids: prepared.media_ids, expected_order_revision: prepared.expected_order_revision } });
       if (result === "Busy") { outcome.say({ fact, reason: "another lectern change isn’t settled yet." }); reread(); }
-      else if (result === "Moved") { outcome.say({ fact, reason: "the lectern changed meanwhile." }); reread(); }
+      else if (result === "Moved") { outcome.say({ fact }); reread(); }
     } catch (error) {
-      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the lectern changed meanwhile." });
-      else outcome.fail(error, fact);
+      outcome.fail(error, fact);
       reread();
     } finally { setSending(false); }
   };

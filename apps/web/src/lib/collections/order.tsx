@@ -322,7 +322,7 @@ export function LibraryOrderProvider({ children }: { readonly children: ReactNod
   const latestOutcome = useRef(outcome);
   latestOutcome.current = outcome;
   const [orders] = useState(() => createLibraryOrders(fail, (pending, error) =>
-    refuseLibrary(latestOutcome.current, error, `couldn’t move “${pending.title}”.`, "the list changed meanwhile.")));
+    refuseLibrary(latestOutcome.current, error, `couldn’t move “${pending.title}”.`)));
   useSyncExternalStore(orders.subscribe, orders.version, orders.version);
   useEffect(() => orders.start(), [orders]);
   return <Context.Provider value={orders}>

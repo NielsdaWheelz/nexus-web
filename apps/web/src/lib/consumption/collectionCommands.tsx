@@ -174,7 +174,6 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
         const verbs: Verbs | undefined = retained ? [{ label: "retry", commandKey: entry.key, run: () => commands.undo(entry.key) }] : undefined;
         const fact = commandFact(entry);
         if (error instanceof ProgressPreparationError) outcome.say({ fact, reason: "a reading or listening position isn’t saved yet." }, verbs);
-        else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the items changed meanwhile." });
         else if (isApiError(error) && error.status === 404) outcome.say({ fact, reason: "it’s no longer available." });
         else outcome.fail(error, fact, verbs?.[0]);
       }

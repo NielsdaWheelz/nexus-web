@@ -9,9 +9,8 @@
 // blocks the lane, and holds at the account, until its retry (past its revision it
 // settled, else it is resent) or a read past its revision settles it. A refused
 // write's caller hears the refusal. The server refuses a membership write as a
-// conflict only when the revision moved, so the lane then waits for a read past it;
-// a move's conflict can come at an unchanged revision (its row went hidden), so it
-// leaves the floor.
+// conflict without identifying its cause. A refused membership write waits for an accepted
+// reread before another write uses its floor.
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
@@ -126,11 +125,11 @@ interface CollectionRequest {
 interface Lane extends MoveEntry {
   readonly requests: Map<string, Request>;
   collection: CollectionRequest | null;
-  /** The newest read's revision, as the last commit saw it. */
-  read: OrderRevision | null;
+  /** The newest accepted read, as the last commit saw it. */
+  read: { readonly revision: OrderRevision; readonly generation: number } | null;
   lastAck: OrderRevision | null;
-  /** A membership write's refused revision: writes wait for a read past it. */
-  conflict: OrderRevision | null;
+  /** The accepted-read generation at refusal; a later accepted read releases its floor. */
+  conflict: number | null;
   readonly receipts: Map<string, LecternReceipt>;
 }
 interface Context {
@@ -145,10 +144,9 @@ const newer = (a: OrderRevision | null, b: OrderRevision | null) =>
   a === null || (b !== null && compareRevision(b, a) > 0) ? b : a;
 const past = (read: OrderRevision | null, revision: OrderRevision) =>
   read !== null && compareRevision(read, revision) > 0;
-/** The revision writes go at: null until a read, and after a membership write's
- * conflict until a read passes it. */
+/** The revision writes go at; a refusal fences it until a later read is accepted. */
 const floorOf = (lane: Lane, read: OrderRevision | null) =>
-  lane.conflict !== null && !past(read, lane.conflict)
+  lane.conflict !== null
     ? null
     : newer(newer(read, lane.lastAck), lane.acked?.revision ?? null);
 
@@ -184,6 +182,11 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   const [collectionListeners] = useState(() => new Set<() => void>());
   const emit = () => { setVersion(value => value + 1); for (const listener of collectionListeners) listener(); };
   const current = async (signal: AbortSignal) => (await readLectern(signal)).data.order_revision;
+
+  function rereadAfterRefusal() {
+    lane.conflict = lane.read?.generation ?? 0;
+    read.refetch();
+  }
 
   function finish(request: Request, settled: LecternOutcome) {
     lane.requests.delete(request.mediaId);
@@ -236,10 +239,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         request.settle("Unconfirmed");
         break;
       case "Refused":
-        if (result.error.code === "E_RESOURCE_CONFLICT") {
-          lane.conflict = expected;
-          read.refetch();
-        }
+        if (result.error.code === "E_RESOURCE_CONFLICT") rereadAfterRefusal();
         lane.requests.delete(request.mediaId);
         request.reject(result.error);
         break;
@@ -279,7 +279,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
         return "Unconfirmed";
       case "Refused":
         lane.collection = null; request.unregister();
-        if (result.error.code === "E_RESOURCE_CONFLICT") { lane.conflict = request.expected; read.refetch(); }
+        if (result.error.code === "E_RESOURCE_CONFLICT") rereadAfterRefusal();
         emit(); pump(); throw result.error;
       case "Defect":
         // Delivery may have crossed the boundary before the defect; keep the lane blocked.
@@ -314,7 +314,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   /** Send the head when nothing else is in flight and the floor is known. */
   function pump() {
     if (!remoteReady()) return;
-    const floor = floorOf(lane, lane.read);
+    const floor = floorOf(lane, lane.read?.revision ?? null);
     const head = lane.requests.values().next().value;
     if (lane.collection === null && lane.pending === null && floor !== null && head?.phase === "Queued")
       void send(head, floor, false);
@@ -361,7 +361,7 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
       signal: alive.signal,
       fail,
       emit,
-      refused: error => refuseLibrary(outcome, error, `couldn’t move “${pending.title}”.`, "the list changed meanwhile."),
+      refused: error => refuseLibrary(outcome, error, `couldn’t move “${pending.title}”.`),
     });
     pump();
     if (moved === "Acknowledged" || moved === "Rejected") publishChange("Lectern");
@@ -371,8 +371,12 @@ export function LecternProvider({ children }: { readonly children: ReactNode }) 
   // Every commit: record the read, settle what it passed, drop the receipts it
   // covers, and send the next queued intent.
   useEffect(() => {
-    lane.read = readRevision;
+    lane.read = read.status === "ready" ? { revision: read.data.order_revision, generation: read.generation } : null;
     let changed = false;
+    if (lane.conflict !== null && lane.read !== null && lane.read.generation > lane.conflict) {
+      lane.conflict = null;
+      changed = true;
+    }
     if (readRevision !== null) {
       if (lane.collection?.phase === "Unconfirmed" && past(readRevision, lane.collection.expected)) {
         const request = lane.collection; lane.collection = null; request.unregister();

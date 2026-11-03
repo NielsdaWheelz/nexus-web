@@ -432,7 +432,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const [, changedOwner] = useReducer((value: number) => value + 1, 0);
   const [owner] = useState(() => createOwner(signIn, changedOwner, refusal => {
     if ("line" in refusal) latestOutcome.current.say(refusal.line);
-    else refuseLibrary(latestOutcome.current, refusal.error, refusal.fact, CONFLICT);
+    else refuseLibrary(latestOutcome.current, refusal.error, refusal.fact);
   }, workGuard));
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   const [external, setExternal] = useState<ExternalPlacementSession | null>(null);

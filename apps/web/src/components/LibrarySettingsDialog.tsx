@@ -137,7 +137,7 @@ export default function LibrarySettingsDialog({
       if (!outcomeUnknown(error) && value.request === null) {
         const invalid = isApiError(error) && error.code === "E_NAME_INVALID";
         state.set(latest => ({ ...latest, busy: null, request: null, refusedName: invalid ? request.name : latest.refusedName }));
-        if (!invalid) refuseLibrary(outcome, error, fact, "it was renamed meanwhile.");
+        if (!invalid) refuseLibrary(outcome, error, fact);
       } else {
         const next = unconfirmed(error, "Rename");
         state.set(latest => ({ ...latest, busy: null, request: { ...request, unconfirmed: true }, unknown: next === null ? latest.unknown : next(latest.unknown) }));

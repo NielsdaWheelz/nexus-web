@@ -23,10 +23,10 @@ import {
 } from "@/lib/api/client";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { createCollectionCommands, type HeldWrite, type StateChange } from "./collectionCommands";
+import { createCollectionCommands, type HeldWrite } from "./collectionCommands";
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { publishChange } from "@/lib/api/changes";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { ApiJson } from "@/lib/api/wire";
 import { remoteReady } from "@/lib/native/admission";
 import type { CollectionTarget } from "./api";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -37,7 +37,6 @@ export interface ProgressHolder {
 }
 
 const holders = new Set<ProgressHolder>();
-const stateSettled = new Set<(change: StateChange) => void>();
 
 /** Register a mounted reader or player; returns its unregister. */
 export function holdProgress(holder: ProgressHolder): () => void {
@@ -60,27 +59,6 @@ export async function withProgressFence<T>(mediaIds: readonly string[], write: (
   } finally {
     await Promise.allSettled(prepared.map(({ holder, mediaId }) => holder.reconcile(mediaId)));
   }
-}
-
-/** 200 settled (with the canonical observation), 409 superseded (a later unread, reset or
- * finish), 404 gone; others throw. */
-export async function settleNaturalEnd(
-  mediaId: string,
-  body: Schema<"NaturalEndIn">,
-): Promise<"Settled" | "Superseded" | "Gone"> {
-  const observers = [...stateSettled];
-  let revision: number | null;
-  try {
-    revision = (await apiFetch<ApiJson<"/media/{media_id}/natural-end", "post">>(`/api/media/${mediaId}/natural-end`, { method: "POST", body: JSON.stringify(body) }))
-      .data.state.consumption_override_revision;
-  } catch (error) {
-    if (isApiError(error) && error.status === 409) return "Superseded";
-    if (isApiError(error) && error.status === 404) return "Gone";
-    throw error;
-  }
-  if (revision !== null) for (const listener of observers) if (stateSettled.has(listener)) listener({ mediaId, revision });
-  publishChange("Consumption", "Podcasts", "Lectern");
-  return "Settled";
 }
 
 export interface ConsumptionUndo {
@@ -178,7 +156,7 @@ function createConsumptionCommands(
         entry.unconfirmed += 1;
         entry.status = "Unconfirmed";
         publish();
-      } else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT" || entry.observed !== null && entry.observed > entry.receipt.revision) {
+      } else if (entry.observed !== null && entry.observed > entry.receipt.revision) {
         retire(entry);
         outcome.say({ fact: gone, reason: "its state changed since." });
       } else if (isApiError(error) && error.status === 404) {
@@ -249,11 +227,9 @@ function createConsumptionCommands(
     attach() {
       const scope = new AbortController(); lifetime = scope;
       const stopCollections = collections.start();
-      const settled = (change: StateChange) => collections.supersede([change]);
-      stateSettled.add(settled);
       return () => {
         scope.abort(); if (lifetime !== scope) return; lifetime = null;
-        stopCollections(); stateSettled.delete(settled);
+        stopCollections();
         for (const entry of entries.values()) entry.unregister();
         entries.clear(); finishes.clear(); publish();
       };
