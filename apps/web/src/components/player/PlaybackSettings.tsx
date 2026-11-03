@@ -151,7 +151,7 @@ function Reckoning({ loaded, ready }: { readonly loaded: Loaded; readonly ready:
     const hour = finish.getHours();
     arrival = `, done about ${hour % 12 || 12}:${String(finish.getMinutes()).padStart(2, "0")} ${hour < 12 ? "am" : "pm"}`;
   }
-  return <p className={styles.eyebrow}>{loaded.shortenPauses ? "≈ " : ""}{formatClock(remaining / 1000)} left{arrival}</p>;
+  return <p className={styles.reckoning}>{loaded.shortenPauses ? "≈ " : ""}{formatClock(remaining / 1000)} left{arrival}</p>;
 }
 
 /** Only this line reads the clock, so the panel stays still while the estimate grows. */

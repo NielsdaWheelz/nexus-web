@@ -22,3 +22,4 @@
 .stops button[aria-pressed="true"] { color: var(--accent); }
 .stops button:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset); }
 @media (any-pointer: coarse) { .stops button { pointer-events: none; } }
+@media (forced-colors: active) { .dial { color: inherit; } }
