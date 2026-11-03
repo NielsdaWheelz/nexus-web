@@ -532,6 +532,7 @@ export function createProgressSync(
       const run = async () => {
         try {
           const result = await port.resolve(choice, { canonical: current.canonical, device });
+          if (needsSourceBinding()) return;
           failure = null;
           if (result.kind === "Unobserved") {
             observation = { result, locator: choice === "Device" ? device : submitted, resolution: choice };
@@ -544,6 +545,7 @@ export function createProgressSync(
           if (choice === "Canonical" ? unsaved === submitted : unsaved === device) unsaved = null;
           if (choice === "Canonical" && unsaved === null) hooks.remote(current.canonical, true);
         } catch (error) {
+          if (needsSourceBinding()) return;
           console.error("reader_cursor_resolve_failed", error);
           failure = said(error);
         } finally {
