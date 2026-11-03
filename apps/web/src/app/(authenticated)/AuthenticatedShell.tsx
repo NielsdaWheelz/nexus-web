@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -76,16 +77,18 @@ export default function AuthenticatedShell(props: {
   // The workspace signs in through the account's one sign-in owner, which ignores a press while
   // a sign-in runs and tells its result. That owner sits beneath the feedback provider, so the
   // workspace binds it here once the account opens. One value, so `fail` stays stable.
+  const [signInBusy, setSignInBusy] = useState(false);
   const [{ shell, bindSignIn }] = useState(() => {
     let owner: (() => void) | null = null;
     const shell: Shell = { signIn: { label: "sign in", commandKey: "SignIn", run: () => owner?.() } };
-    return { shell, bindSignIn: (signIn: (() => void) | null) => { owner = signIn; } };
+    return { shell, bindSignIn: (signIn: (() => void) | null, busy: boolean) => { owner = signIn; setSignInBusy(busy); } };
   });
+  const boundShell = useMemo(() => ({ ...shell, signInBusy }), [shell, signInBusy]);
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <MobileViewportProvider>
-          <FeedbackProvider shell={shell}>
+          <FeedbackProvider shell={boundShell}>
             <AuthoredProvider accountId={props.account.accountId}>
               <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
                 <UnauthenticatedApiBoundary>
@@ -115,14 +118,12 @@ function Workspace(props: {
   initialState: WorkspaceState;
   initialPresentations?: InitialPresentations;
   locationLinkFailure: "TooLong" | null;
-  bindSignIn: (signIn: (() => void) | null) => void;
+  bindSignIn: (signIn: (() => void) | null, busy: boolean) => void;
 }) {
   const { accountId, bindSignIn } = props;
-  const { signIn } = useAuthoredSignIn();
-  useLayoutEffect(() => {
-    bindSignIn(signIn);
-    return () => bindSignIn(null);
-  }, [bindSignIn, signIn]);
+  const { signIn, busy } = useAuthoredSignIn();
+  useLayoutEffect(() => { bindSignIn(signIn, busy); }, [bindSignIn, signIn, busy]);
+  useLayoutEffect(() => () => bindSignIn(null, false), [bindSignIn]);
   const { profile } = useReaderContext();
   // The reader column is every pane's preferred and default width: the server
   // estimates it from the profile, and this hidden probe measures it.
