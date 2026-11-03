@@ -173,7 +173,9 @@ and dim to .6 only after the waiting delay.
 
 `Line` is a fact and optional reason, visible together with at most two verbs.
 copy is lowercase except user titles/names, at most fourteen words before title
-interpolation, and states only what its owner can establish. `check` only reads;
+interpolation, and states only what its owner can establish. interpolated product
+labels remain fixed copy; shared transport reasons count toward the same limit.
+`check` only reads;
 a resend says `retry`. transport and account wording come from closed records.
 request ids stay in the request log. there is no disclosure for a slip's reason
 or verbs. desktop menus contain verbs, options and their own row marks. a picker's

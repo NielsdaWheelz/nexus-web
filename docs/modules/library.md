@@ -112,6 +112,14 @@ owns account-scoped per-library queues, frozen commands and unknown recovery.
 only acknowledged local predecessors may supply dependent revisions. external
 changes require a new choice. closing presentation preserves accepted work.
 
+library settings retains one unanswered rename or delete in its existing overlay
+draft. an unavailable read may mean lost membership and cannot settle that command;
+its exact retry and loss guard remain reachable. opposite writes wait, while words
+remain editable and copyable between attempts. rename retries retain the original
+name and expected name; delete retains its absolute id. an actual delete reply
+acknowledges the idempotent operation, including invisible absence, and does not
+prove physical deletion. accepted guarded close abandons that entry's local draft.
+
 member commands and invitation answers retain one immutable command in their
 pane visit's resource draft. original controls cannot replace it while running or
 unanswered; the held retry uses the same ids, body and expected role. inspector
