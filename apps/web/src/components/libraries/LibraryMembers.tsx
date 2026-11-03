@@ -316,7 +316,6 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                     label={`more actions for ${name}`}
                     triggerRef={trigger(key)}
                     triggerDisabled={busy}
-                    triggerDisabledReason="another change is in progress."
                     source={{ kind: "Immediate", subjectKey: `library:${library.id}:${key}`, title: name, content: { sections: [{ id: "Member", label: null, options: [
                       {
                         kind: "command",
