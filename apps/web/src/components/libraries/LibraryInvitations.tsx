@@ -128,7 +128,7 @@ export default function LibraryInvitations({ state }: { state: ReturnType<typeof
                     Decline
                   </Button>
                   <Button
-                    disabled={blocked}
+                    disabled={busy !== null}
                     onClick={() => setDeclining(null)}
                   >
                     Keep

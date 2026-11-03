@@ -153,15 +153,15 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
     {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
       resend: { label: "retry", commandKey: `${owner.owner}:${pending.key}:retry`, busy: pending.running,
         run: () => { void send(pending.command, pending); } } })} />;
-  const busy = pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline";
-  return { held, shown: library?.can_manage ? { library, members, invitations, busy,
+  const blocked = pending !== null || admission === "Checking" || !remoteAttemptAllowed() || connectivity === "Offline";
+  return { held, shown: library?.can_manage ? { library, members, invitations, blocked, running: pending?.running === true,
     run: (command: Command) => send(command, null) } : null };
 }
 
 export type LibraryMembersState = NonNullable<ReturnType<typeof useLibraryMembers>["shown"]>;
 
 export default function LibraryMembers({ state }: { readonly state: LibraryMembersState }) {
-  const { library, members, invitations, busy, run } = state;
+  const { library, members, invitations, blocked, running, run } = state;
   const [person, setPerson] = useState<Person | null>(null);
   const [role, setRole] = useState<LibraryRole>("member");
   const [question, setQuestion] = useState<Question | null>(null);
@@ -204,7 +204,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       role="alertdialog"
       aria-label={q.title}
       onKeyDown={(event: KeyboardEvent) => {
-        if (event.key !== "Escape" || busy) return;
+        if (event.key !== "Escape" || running) return;
         event.preventDefault();
         event.stopPropagation();
         close(q.key);
@@ -215,7 +215,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
       <span className={styles.actions}>
         <Button
           autoFocus
-          disabled={busy}
+          disabled={running}
           aria-label={q.cancelLabel}
           onClick={() => close(q.key)}
         >
@@ -227,8 +227,8 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           onClick={async () => {
             if (await q.run()) close(q.key);
           }}
-          disabled={busy}
-          aria-busy={busy}
+          disabled={blocked}
+          aria-busy={running}
         >
           {q.yes}
         </Button>
@@ -254,7 +254,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           label="Find an existing Nexus user by name or account email"
           placeholder="Name or email…"
           description="Search display names, or enter an account’s exact email."
-          disabled={busy}
+          disabled={blocked}
           selected={person}
           onSelect={setPerson}
         />
@@ -263,7 +263,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
             size="sm"
             aria-label="Invitation role"
             value={role}
-            disabled={busy}
+            disabled={blocked}
             onChange={(event) => setRole(event.target.value as LibraryRole)}
           >
             <option value="member">Member</option>
@@ -271,7 +271,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
           </Select>
           <Button
             emphasis="strong"
-            disabled={busy || person === null}
+            disabled={blocked || person === null}
             onClick={() => void sendInvite()}
           >
             Invite
@@ -302,7 +302,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                     size="sm"
                     aria-label={`Role for ${name}`}
                     value={member.role}
-                    disabled={busy}
+                    disabled={blocked}
                     onChange={(event) => {
                       const next = event.target.value as LibraryRole;
                       void run({ kind: "Role", libraryId: library.id, userId: member.user_id,
@@ -315,7 +315,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
                   <ActionMenu
                     label={`more actions for ${name}`}
                     triggerRef={trigger(key)}
-                    triggerDisabled={busy}
+                    triggerDisabled={blocked}
                     source={{ kind: "Immediate", subjectKey: `library:${library.id}:${key}`, title: name, content: { sections: [{ id: "Member", label: null, options: [
                       {
                         kind: "command",
@@ -384,7 +384,7 @@ export default function LibraryMembers({ state }: { readonly state: LibraryMembe
               ) : (
                 <Button
                   ref={trigger(key)}
-                  disabled={busy}
+                  disabled={blocked}
                   aria-label={`Revoke invitation for ${name}`}
                   onClick={() =>
                     setQuestion({
