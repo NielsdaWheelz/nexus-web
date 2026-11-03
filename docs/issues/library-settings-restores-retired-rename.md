@@ -25,6 +25,4 @@ inventory or generic retry framework change.
 resolved when delayed refused/unknown results after real membership404 preserve
 reachable exact recovery, an actual acknowledgement settles it, and guarded
 abandon/reopen isolates the old cell. prove both engines and independent review.
-source audit confirmed; first baseline reached unavailable but an exact-text
-locator stopped before its target assertion, so no automated product-red verdict
-is claimed yet.
+source audit confirmed; runtime qualification remains pending.

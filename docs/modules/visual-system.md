@@ -186,6 +186,11 @@ alone where it works; otherwise it offers no verb. sign-in keeps the shell's
 link or command and its busy state. the hook presents admission; the domain
 owner retains the intent and decides when it is resolved.
 
+account-condition onset and local writing failure have separate owners. if a
+local commit fails while a refused-sync notice remains visible, its old safety
+claim withdraws without creating another condition onset; the writing-risk hold
+and current account row retain their own facts.
+
 one stage sits above command owners. a row addresses its invoking pane or the
 workspace. fully visible panes have anchors; other pane addresses fall to the
 root. phones and maximized layouts use the active pane. composers anchor above
