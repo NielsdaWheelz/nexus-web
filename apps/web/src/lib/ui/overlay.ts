@@ -28,6 +28,9 @@ import {
   useSyncExternalStore,
 } from "react";
 
+/** A modal family dispatches this on its panel immediately after moving it imperatively. */
+export const MODAL_GEOMETRY_CHANGE = "nexus-modal-geometry-change";
+
 export type DismissDecision = "accepted" | "blocked";
 export type DismissReason = "escape" | "back" | "outside" | "tab" | "navigation";
 export type ReturnFocusTarget = () =>
@@ -84,7 +87,7 @@ export interface Layer {
   /** The modal this layer renders inside (React context), or null on the page. */
   parent: Layer | null;
   readonly options: { readonly current: OverlayOptions };
-  /** A modal's role="dialog" panel: the Tab trap root and its transients' container. */
+  /** A modal's semantic role="dialog" room: the Tab trap root and its transients' container. */
   element: HTMLElement | null;
   /** The interactive layer's trigger, captured at open; tooltips keep null. */
   opener: ReturnType<ReturnFocusTarget>;
@@ -441,18 +444,18 @@ function onKeyDown(event: KeyboardEvent): void {
 export function handleModalTab(
   event: Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
 ): void {
-  const panel = topModal()?.element;
-  if (event.key !== "Tab" || !panel) return;
-  // The Tab trap: focus wraps inside the top modal's panel.
-  const items = focusableElements(panel);
+  const room = topModal()?.element;
+  if (event.key !== "Tab" || !room) return;
+  // The Tab trap: focus wraps inside the top modal's room.
+  const items = focusableElements(room);
   const first = items[0];
   const last = items.at(-1);
   const active = document.activeElement as HTMLElement;
   if (!first || !last) {
     event.preventDefault();
-    panel.focus();
+    room.focus();
   } else if (
-    !panel.contains(active) ||
+    !room.contains(active) ||
     active === (event.shiftKey ? first : last) ||
     // A programmatic trigger may have tabindex=-1. Let native Tab continue
     // from its position unless no tabbable remains in that direction.
@@ -491,7 +494,7 @@ function onPointerDown(event: PointerEvent): void {
       if (kind === "transient") closed = true;
     }
   }
-  if (!closed && modal && target === modal.element?.parentElement) {
+  if (!closed && modal && target === modal.element) {
     scrimPress = modal;
   }
 }
@@ -504,7 +507,7 @@ function onClick(event: MouseEvent): void {
   if (
     modal &&
     modal === topModal() &&
-    event.target === modal.element?.parentElement
+    event.target === modal.element
   ) {
     dispatch(modal, "outside");
   }

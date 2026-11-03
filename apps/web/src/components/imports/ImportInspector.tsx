@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import MetadataResearchActions, {
   MetadataReviewButton,
@@ -10,10 +9,11 @@ import MetadataResearchActions, {
 import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Button from "@/components/ui/Button";
-import { removeUploadSession } from "@/lib/imports/ingest";
+import { useImportCommands } from "@/lib/imports/commands";
+import { useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
-import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError, type ApiError } from "@/lib/api/client";
+import { type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -206,7 +206,7 @@ export default function ImportInspector({
       {showOriginal && original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
       {captures.length > 0 ? <section className={styles.inspectorSection}>
         <h3>pending captures</h3>
-        {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} refresh={detail.refetch} />)}
+        {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} />)}
       </section> : null}
       {related.map((relatedImport) => {
         const { relation, item: sibling } = relatedImport;
@@ -344,47 +344,17 @@ export default function ImportInspector({
 }
 
 
-function PendingCapture({ capture, refresh }: {
+function PendingCapture({ capture }: {
   capture: import("@/lib/api/wire").Schema<"PendingCapture">;
-  refresh: () => void;
 }) {
-  const outcome = useOutcome();
-  const [busy, setBusy] = useState(false);
-  // The guard is a ref: a slip's `retry` keeps the render it was raised in.
-  const running = useRef(false);
-  /** The discard whose answer was lost, by attempt; it resolves when the capture leaves the read. */
-  const [unsure, setUnsure] = useState<number | null>(null);
+  const commands = useImportCommands();
+  const busy = useBusyActionIds(`upload:${capture.session_id}`).has("RemoveUpload");
   const label = capture.state === "AwaitingBytes" ? "waiting for the upload."
     : capture.state === "CapabilityExpired" ? "upload expired."
     : capture.failure_code === null ? UPLOAD_REJECTED_LABEL : importFailureCopy(capture.failure_code).reason;
-  const retry = { label: "retry", commandKey: `discard ${capture.session_id}`, run: () => void discard(), busy };
-  const discard = async () => {
-    if (running.current) return;
-    running.current = true;
-    setBusy(true);
-    try {
-      await removeUploadSession(capture.session_id);
-      setUnsure(null);
-      refresh();
-    } catch (error) {
-      // Refused, or signed out before the handler ran, nothing changed. Anything else sent may
-      // have landed: a pool timeout answers 503 after a commit too.
-      if (isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error))
-        setUnsure((attempt) => attempt === null ? 0 : attempt + 1);
-      else {
-        setUnsure(null);
-        outcome.fail(error, "couldn’t discard this capture.", retry);
-      }
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
-  };
   return <div>
     <p>{label} · <Moment value={capture.accepted_at} /></p>
-    <Button aria-busy={busy || undefined} onClick={() => void discard()}>discard capture</Button>
-    {unsure === null ? null : <Hold id={`discard ${capture.session_id}`} attempt={unsure}
-      line={{ fact: "not sure the capture was discarded.", reason: "it may have gone through." }} verbs={[retry]} />}
+    <Button aria-busy={busy || undefined} onClick={() => commands.discardCapture(capture.session_id)}>discard capture</Button>
   </div>;
 }
 

@@ -409,6 +409,7 @@ function useContextValue() {
 }
 
 export function LibraryPlacementControllerProvider({ children }: { children: ReactNode }) {
+  const slipContent = useRef<HTMLDivElement>(null);
   const signIn = useUnauthenticatedApiHandler();
   const outcome = useOutcome();
   const latestOutcome = useRef(outcome);
@@ -476,12 +477,12 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       line={{ fact: held.fact, reason: "it may have gone through." }}
       verbs={resendVerbs({ label: "retry", commandKey: held.id, run: held.retry, busy: held.busy })} />)}
     {creation.holds}
-    <PickerSurface active={external !== null || session !== null} title="libraries"
+    <PickerSurface slipContent={slipContent} active={external !== null || session !== null} title="libraries"
       focusKey={session !== null ? `stored:${session.key}` : external?.key}
       anchor={session?.options.anchor ?? external?.options.anchor ?? (() => null)}
       returnFocusFallback={session?.options.returnFocusFallback ?? external?.options.returnFocusFallback ?? undefined}
       onClose={() => { externalRef.current = null; setExternal(null); setSession(null); }}>
-      {session !== null ? <PlacementEditor targets={session.targets} /> : external !== null ? <DestinationChooser context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
+      {session !== null ? <PlacementEditor scrollRef={slipContent} targets={session.targets} /> : external !== null ? <DestinationChooser scrollRef={slipContent} context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
         disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
         onSet={({ destination, included }) => included && chooseExternal(destination, external)}
         create={{ available: !external.pending && !controller.hasPendingExternalCreation(external.target), pendingNames: creation.pendingNames,

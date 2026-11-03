@@ -7,7 +7,7 @@
 // would move the control the press meant to reach). Content owns its semantics
 // and initial focus; the surface owns placement and the existing overlay layer.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -38,10 +38,13 @@ export default function PickerSurface({
   initialFocus,
   desktopRole = "dialog",
   heightLimit,
+  slipContent,
   className,
   children,
 }: {
   readonly active: boolean;
+  /** The scrolling body, excluding a picker's fixed fields and footer. */
+  readonly slipContent?: RefObject<HTMLElement | null>;
   /** A region in the caller's layout, not the anchored panel or the sheet. */
   readonly inline?: boolean;
   readonly onClose: () => void;
@@ -164,6 +167,7 @@ export default function PickerSurface({
         returnFocusFallback={returnFocusFallback}
         skipReturnFocus={skipReturnFocus}
         heightLimit={heightLimit}
+        slipContent={slipContent}
       >
         {children}
       </MobileSheet>

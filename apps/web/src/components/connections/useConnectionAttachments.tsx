@@ -18,6 +18,7 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { captureErrorFeedback } from "@/lib/imports/copy";
+import { readAcquisitionGuard } from "@/lib/libraries/api";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
 import { UploadSessionError } from "@/lib/imports/api";
 import { useWritingRuntime } from "@/lib/notes/hooks";
@@ -121,9 +122,19 @@ export function useConnectionAttachments(selfRef: string) {
       while (task.index < task.files.length && !controller.signal.aborted) {
         const item = task.files[task.index]!;
         if (task.mediaId === null) {
+          let prepared = item.upload.guard;
+          if (prepared === null) {
+            try { prepared = await readAcquisitionGuard([], controller.signal); }
+            catch (error) {
+              if (account.aborted || owner.read().task !== task || controller.signal.aborted) return;
+              try { endWithRefusal(task, error); }
+              catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
+              return;
+            }
+          }
           task.unconfirmed = true;
           publish();
-          const uploaded = await uploadIngestFile({ file: item.file, attempt: item.upload, signal: controller.signal });
+          const uploaded = await uploadIngestFile({ file: item.file, attempt: item.upload, guard: prepared, signal: controller.signal });
           if (controller.signal.aborted || owner.read().task !== task) return;
           task.unconfirmed = false;
           if (!uploaded.available) {
@@ -172,9 +183,8 @@ export function useConnectionAttachments(selfRef: string) {
       if (handleUnauthenticatedApiError(error)) return;
       if (task.mediaId !== null && isAuthoredStorageFailure(error)) owe(task, "Unlinked");
       else if (task.mediaId !== null) owner.set(value => ({ ...value, defect: { error } }));
-      // The guard read precedes every send, so a lost answer without a guard sent nothing.
       else if (error instanceof UploadSessionError ? error.outcome.kind === "Unresolved"
-        : outcomeUnknown(error) && task.files[task.index]!.upload.guard !== null) owe(task, "AddUnsure");
+        : outcomeUnknown(error)) owe(task, "AddUnsure");
       else try { endWithRefusal(task, error); }
       catch (defect) { owner.set(value => ({ ...value, defect: { error: defect } })); }
     } finally {

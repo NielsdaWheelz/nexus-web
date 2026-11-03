@@ -43,3 +43,11 @@
   --ruling-pitch: 32px;
   flex: 0 0 auto;
 }
+
+/* Search stays outside one bound for every list state; Collection still owns scrolling. */
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
