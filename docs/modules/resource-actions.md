@@ -273,6 +273,12 @@ scope so a phone pane change cannot resolve the obligation; immediate reports
 use the invoking pane's address. domain conditions and inverses retain their
 separate settlement contracts.
 
+`ActionCommand.label` names the ordinary control and confirmation.
+`feedbackLabel` names the action in generic feedback: each builder supplies
+lowercase product prose and preserves interpolated user text. the composed
+fact and its shared reason fit the feedback line budget; a control label is
+not implicitly feedback copy.
+
 ## invariants
 
 - prepared canonical menus fetch facts on every open; closing aborts and forgets
