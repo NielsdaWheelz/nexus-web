@@ -3,9 +3,8 @@ import * as Icon from "@/lib/ui/icons";
 import { useId, type FormEvent } from "react";
 import Button from "@/components/ui/Button";
 import { Field } from "@/components/feedback/Fact";
-import { Announcement, Hold } from "@/components/feedback/Feedback";
-import { transportVerbs } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { Hold, useTransportVerbs } from "@/components/feedback/Feedback";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import styles from "./Switchboard.module.css";
@@ -25,6 +24,7 @@ export default function CreateLibraryPanel({
   onSubmit: (intent: OpenIntent) => void;
   mobile: boolean;
 }) {
+  const transportVerbs = useTransportVerbs();
   const running = submit.kind === "Running";
   const failed = submit.kind === "Running" || submit.kind === "Retryable" ? submit : null;
   const failure = failed?.failure ?? null;
@@ -67,11 +67,8 @@ export default function CreateLibraryPanel({
             onChange={(event) => onName(event.currentTarget.value)}
           />
         </label>
-        {refusal && failure ? <>
-          <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport, { signIn: null }) ?? undefined : undefined} />
-          <Announcement text={refusal.reason ? `${refusal.fact} ${refusal.reason}` : refusal.fact} level="Polite" occurrence={failure} />
-        </> : null}
-        {failure?.kind === "Unknown" ? <Hold id="create-library" attempt={failed?.failures} line={{ fact: "not sure the library was created.", reason: "it may have gone through." }} /> : null}
+        {refusal ? <Field id={fieldId} line={refusal} verbs={transport ? transportVerbs(transport) ?? undefined : undefined} /> : null}
+        {failure?.kind === "Unknown" ? <Hold id="create-library" attempt={failed?.failures} line={{ fact: "not sure the library was created.", reason: UNKNOWN_OUTCOME_REASON }} /> : null}
         <Button emphasis="strong" type="submit" aria-busy={running || undefined}
           disabled={!name.trim() || running} onClick={submitGesture}>{mobile ? "create" : "Create"}</Button>
       </form>

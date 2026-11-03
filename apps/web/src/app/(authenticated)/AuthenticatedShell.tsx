@@ -244,7 +244,7 @@ function WorkspaceEntryNotice({ locationLinkFailure }: { locationLinkFailure: "T
   useEffect(() => {
     if (locationLinkFailure === null || reported.current) return;
     reported.current = true;
-    say({ fact: "couldn’t open this link.", reason: "it’s too long." });
+    say({ fact: "this link is too long to open." });
   }, [say, locationLinkFailure]);
   return null;
 }

@@ -178,15 +178,15 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
         {(page?.preparation?.classification === "NeedsAttention" || failed && request === null) && needsPreparation ? <Fact line={{ fact: "couldn’t prepare the text." }}
           verbs={[{ label: "retry", commandKey: "RetryPreparePart", busy: blocking, run: () => { if (navigation && !blocking) void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } }); } }]} /> : null}
         {freshChoice ? <Field id={fieldId} line={{ fact: "the sections changed. choose again." }} /> : null}
-        {navigation && (definition !== null || freshChoice) ? <SelectField layout="Stacked" label="first section" value={freshChoice ? "" : first ?? ""} disabled={blocking} onChange={event => chooseFirst(event.target.value)}>
+        {navigation && (definition !== null || freshChoice) ? <SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} layout="Stacked" label="first section" value={freshChoice ? "" : first ?? ""} disabled={blocking} onChange={event => chooseFirst(event.target.value)}>
           {freshChoice ? <option value="" disabled>choose a section</option> : null}
           {navigation.sections.map(section => <option key={section.section_id} value={section.section_id} disabled={!eligible(section.section_id)}>{section.label}</option>)}
         </SelectField> : start ? <p>{start.label}</p> : null}
         {definition === null ? <details open={adjacent} onToggle={event => setAdjacent(event.currentTarget.open)}><summary>include adjacent sections</summary>
-          <SelectField layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
+          <SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
             {ends.map(section => <option key={section.section_id} value={section.section_id}>{section.label}</option>)}
           </SelectField>
-        </details> : <><SelectField layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
+        </details> : <><SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
           {ends.map(section => <option key={section.section_id} value={section.section_id}>{section.label}</option>)}
         </SelectField><p>changing these sections also changes this work’s shared links.</p></>}
         {selector ? <PartPreview preview={preview} /> : null}

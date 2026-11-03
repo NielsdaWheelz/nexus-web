@@ -1,11 +1,11 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useLayoutEffect, useSyncExternalStore, type ReactNode } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { ChooserError } from "@/components/libraries/LibraryChooser";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
@@ -50,7 +50,6 @@ export function createDestinationCreation(): DestinationCreation {
 }
 
 const unsure = (attempt: Attempt) => `not sure creating “${attempt.name}” saved.`;
-const MAY_HAVE = "it may have gone through.";
 
 /** The form owns creation; picker visibility never retires its requests. A refusal speaks once
  * where the form is; an unknown outcome holds, with its resend of the same id, while the form
@@ -61,7 +60,7 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   const outcome = useOutcome();
   const fail = useThrowLater();
   const signIn = useUnauthenticatedApiHandler();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   useLayoutEffect(() => {
     state.form = form;
     state.attempts.clear();
@@ -106,8 +105,8 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
     const pending = snapshot.pending.filter(attempt => attempt.form === form && (scope === null || attempt.scope === scope));
     const unknown = pending.find(attempt => attempt.unconfirmed > 0);
     const error: ChooserError | null = unknown === undefined ? null : {
-      occurrence: unknown, content: { tone: "Warning", title: unsure(unknown), message: MAY_HAVE },
-      retry: () => void send(unknown), busy: unknown.sending, commandKey: `library-creation:${unknown.id}`,
+      occurrence: unknown, content: { tone: "Warning", title: unsure(unknown), message: UNKNOWN_OUTCOME_REASON },
+      attempt: unknown.unconfirmed - 1, retry: () => void send(unknown), busy: unknown.sending, commandKey: `library-creation:${unknown.id}`,
     };
     return {
       pendingNames: snapshot.pending.filter(attempt => attempt.form === form).map(attempt => attempt.name),
@@ -117,8 +116,8 @@ export function useDestinationCreation(form: string, state: ReturnType<typeof cr
   }
   const holds: ReactNode = snapshot.pending.filter(attempt => attempt.form === form && attempt.unconfirmed > 0).map(attempt => {
     const id = `library-creation:${attempt.id}`;
-    return <Hold key={id} id={id} attempt={attempt.unconfirmed - 1} line={{ fact: unsure(attempt), reason: MAY_HAVE }}
-      verbs={resendVerbs({ label: "retry", commandKey: id, run: () => void send(attempt), busy: attempt.sending })} />;
+    return <Hold key={id} id={id} attempt={attempt.unconfirmed - 1} {...resendFeedback({ line: { fact: unsure(attempt), reason: UNKNOWN_OUTCOME_REASON },
+      resend: { label: "retry", commandKey: id, run: () => void send(attempt), busy: attempt.sending } })} />;
   });
   return {
     ...project(null),

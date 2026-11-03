@@ -4,7 +4,6 @@
 import Link from "next/link";
 import { useId, useState } from "react";
 import { Fact, Field } from "@/components/feedback/Fact";
-import { Announcement } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
@@ -90,10 +89,7 @@ export default function EmailActionLanding({
             aria-describedby={failure ? failureId : undefined}>
             {copy.action}
           </Button>
-          {failure ? <>
-            <Field id={failureId} line={failure} />
-            <Announcement text={failure.reason ? `${failure.fact} ${failure.reason}` : failure.fact} level="Polite" occurrence={failure} />
-          </> : null}
+          {failure ? <Field id={failureId} line={failure} /> : null}
         </form>
         {back}
       </div>

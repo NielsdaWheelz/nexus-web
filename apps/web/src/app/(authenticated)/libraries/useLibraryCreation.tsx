@@ -1,20 +1,20 @@
 "use client";
 
 import * as Icon from "@/lib/ui/icons";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { Field } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Field } from "@/components/feedback/Fact";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useResendVerbs } from "@/lib/collections/admissionReason";
 import type { Library } from "@/lib/libraries/api";
 import { sendCreation } from "@/lib/libraries/create";
 import { libraryNameError } from "@/lib/libraries/views";
-import { NAME_REFUSED, refuseLibrary, refusedUnsent } from "@/lib/libraries/errors";
+import { NAME_REFUSED, refuseLibrary } from "@/lib/libraries/errors";
 import type { PanePrimaryAction } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { openAsyncResult } from "@/lib/panes/openResult";
@@ -46,7 +46,7 @@ export function useLibraryCreation() {
   const { ctx } = useActionRuntime();
   const fail = useThrowLater();
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const guard = useWorkGuard();
   const owner = useResourceDraft<{ creation: Creation; flight: Delivery | null }>("Libraries.Creation", () => ({
     creation: { kind: "Draft", text: "", field: null }, flight: null,
@@ -107,7 +107,7 @@ export function useLibraryCreation() {
     if (result.kind !== "Cancelled") release();
   };
   const deliver = async (attempt: Attempt, unconfirmed: number) => {
-    if (!mounted.current || owner.read().flight || unconfirmed === 0 && refusedUnsent(outcome, `couldn’t create “${attempt.name}”.`)) return;
+    if (!mounted.current || owner.read().flight) return;
     const delivery: Delivery = { mayOpen: true };
     owner.set(value => ({ ...value, flight: delivery }));
     transition({ kind: "Sending", attempt, unconfirmed });
@@ -176,26 +176,28 @@ export function useLibraryCreation() {
   const text = draft ? creation.text : creation.kind === "Created" ? creation.library.name : creation.attempt.name;
   const held = creation.kind === "Unconfirmed" || sending && creation.unconfirmed > 0 ? creation : null;
   const hold = held === null ? null : { id: `library-creation:${held.attempt.id}`, attempt: held.unconfirmed - 1,
-    line: { fact: `not sure creating “${held.attempt.name}” saved.`, reason: "it may have gone through." } };
+    line: { fact: `not sure creating “${held.attempt.name}” saved.`, reason: UNKNOWN_OUTCOME_REASON } };
+  const presentation = hold === null ? null : resendFeedback({ line: hold.line,
+    resend: { label: "retry", commandKey: hold.id, busy: sending, run: intent => submitCreation(intent) },
+  });
   return {
     primaryAction,
     content: <>
-      {hold !== null && !visible ? <Hold {...hold}
-        verbs={resendVerbs({ label: "retry", commandKey: hold.id, busy: sending, run: intent => submitCreation(intent) })} /> : null}
+      {hold !== null && presentation !== null && !visible ? <Hold {...hold} {...presentation} /> : null}
       <Dialog
         open={visible}
         title="new library"
         className={styles.creationDialog}
         onClose={close}
         onDismissRequest={requestDismiss}
-        initialFocus={(panel) => owner.read().creation.kind === "Draft" ? input.current : owner.read().creation.kind === "Unconfirmed" ? submit.current : panel}
+        initialFocus={(panel) => owner.read().creation.kind === "Draft" ? input.current : panel}
         returnFocusTo={() => trigger.current}
         returnFocusFallback={() => findPaneLandmarkFocusTarget(runtime.paneId)}
         skipReturnFocus={() => navigating.current || !mounted.current}
       >
         <form
           className={styles.creationForm}
-          onSubmit={(event: FormEvent) => { event.preventDefault(); submitCreation("default"); }}
+          onSubmit={(event: FormEvent) => { event.preventDefault(); if (hold === null) submitCreation("default"); }}
           onCompositionStart={() => { composing.current = true; }}
           onCompositionEnd={() => { composing.current = false; }}
           onKeyDown={(event) => {
@@ -221,13 +223,16 @@ export function useLibraryCreation() {
               transition({ kind: "Draft", text, field: value.field === null ? null : libraryNameError(text) });
             }}
           />
-          {validation ? <div role="alert"><Field id={errorId} line={{ fact: validation }} /></div> : null}
-          {hold !== null ? <Hold {...hold} /> : null}
+          {validation ? <Field id={errorId} line={{ fact: validation }} /> : null}
+          {hold !== null && presentation !== null ? <>
+            <Hold {...hold} {...presentation} />
+            <Fact line={presentation.line} verbs={presentation.verbs ?? undefined} />
+          </> : null}
           <div className={styles.creationActions}>
             <Button onClick={() => { if (requestDismiss() === "accepted") close(); }}>{draft ? "cancel" : "close"}</Button>
-            <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
-              {held !== null ? "retry" : creation.kind === "Created" ? "open library" : "create library"}
-            </Button>
+            {hold === null ? <Button ref={submit} emphasis="strong" type="submit" aria-disabled={sending || undefined} aria-busy={sending || undefined} onClick={submitGesture}>
+              {creation.kind === "Created" ? "open library" : "create library"}
+            </Button> : null}
           </div>
         </form>
       </Dialog>

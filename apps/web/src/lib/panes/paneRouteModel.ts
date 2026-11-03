@@ -99,11 +99,8 @@ const SECTION: Traits<DestinationId> = {
   page: "notes",
   dailyDate: "notes",
 };
-// Resource support lines show this until the body publishes its metadata.
-const PENDING_LABEL: Traits<string> = {
-  browsePreview: "Loading preview…",
-  media: "Loading media…",
-};
+// These routes publish resource credits once their bodies have read them.
+const RESOURCE_HEADER: ReadonlySet<PaneRouteId> = new Set(["browsePreview", "media"]);
 export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
 const RETURN_KIND: Traits<PaneReturnKind> = {
   media: "Reader",
@@ -130,7 +127,7 @@ export type PaneRouteHeaderContract =
       readonly context: "Destination";
       readonly destinationId: DestinationId;
     }
-  | { readonly kind: "Resource"; readonly pendingLabel: string };
+  | { readonly kind: "Resource" };
 export interface PaneWidthContract {
   maxWidthPx: number;
   allowsIntrinsicPrimaryWidth: boolean;
@@ -175,7 +172,6 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
   const section = id === "downloads" || id === "xCapture" || id === "highlight" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
-  const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
     defaultLabel,
@@ -185,8 +181,8 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
         : "static",
     icon,
     section,
-    header: pendingLabel
-      ? { kind: "Resource", pendingLabel }
+    header: RESOURCE_HEADER.has(id)
+      ? { kind: "Resource" }
       : pattern.length === 1 || id === "xCapture" || id === "highlight"
         ? { kind: "Section", context: "None" }
         : { kind: "Section", context: "Destination", destinationId: section! },

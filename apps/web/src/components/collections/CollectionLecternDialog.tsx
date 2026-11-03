@@ -5,16 +5,16 @@ import { flushSync } from "react-dom";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
-import { admissionReason, resendVerbs } from "@/lib/collections/admissionReason";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { CollectionTarget } from "@/lib/consumption/api";
 import { prepareCollectionLectern } from "@/lib/lectern/api";
 import { LecternReadFailure } from "@/lib/lectern/lectern";
-import { remoteAdmission, remoteAttemptAllowed, subscribeAdmission } from "@/lib/native/admission";
+import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
@@ -32,6 +32,7 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
   readonly onClose: () => void;
 }) {
   const { ctx } = useActionRuntime();
+  const resendFeedback = useResendFeedback();
   const fail = useThrowLater();
   const outcome = useOutcome();
   const pending = ctx.lectern.collectionPending;
@@ -64,10 +65,9 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
     try {
       const result = await ctx.lectern.addCollection({ title: prepared.label, onAcknowledged: () => flushSync(onClose), request: { target, media_ids: prepared.media_ids, expected_order_revision: prepared.expected_order_revision } });
       if (result === "Busy") { outcome.say({ fact, reason: "another lectern change isn’t settled yet." }); reread(); }
-      else if (result === "Moved") { outcome.say({ fact, reason: "the lectern changed meanwhile." }); reread(); }
+      else if (result === "Moved") { outcome.say({ fact }); reread(); }
     } catch (error) {
-      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") outcome.say({ fact, reason: "the lectern changed meanwhile." });
-      else outcome.fail(error, fact);
+      outcome.fail(error, fact);
       reread();
     } finally { setSending(false); }
   };
@@ -88,9 +88,8 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
         </>}
       {lectern.status === "failed" ? <LecternReadFailure error={lectern.error} retry={{ run: lectern.refetch, busy: lectern.retrying }} /> : null}
       {pending !== null && pending.phase !== "Sending" ? <Hold id="lectern-collection" attempt={pending.attempt}
-        line={{ fact: ownPending ? "not sure that saved." : `not sure adding “${pending.title}” to the lectern saved.`, reason: "it may have gone through." }}
-        verbs={resendVerbs({ label: "retry", commandKey: "lectern-collection", busy: pending.phase === "Checking",
-          run: () => void pending.check().then(settled => { if (settled === "Superseded") source.refetch(); }, (error: unknown) => fail({ error })) }, remoteAttemptAllowed)} /> : null}
+        {...resendFeedback({ line: { fact: ownPending ? "not sure that saved." : `not sure adding “${pending.title}” to the lectern saved.`, reason: UNKNOWN_OUTCOME_REASON }, resend: { label: "retry", commandKey: "lectern-collection", busy: pending.phase === "Checking",
+          run: () => void pending.check().then(settled => { if (settled === "Superseded") source.refetch(); }, (error: unknown) => fail({ error })) } })} /> : null}
       <div className={styles.actions}>
         <Button emphasis="strong" aria-busy={sending || reviewing || checking || undefined} aria-describedby={gate === null ? undefined : gateId}
           disabled={!armed} onClick={() => void submit()}>add to lectern</Button>
