@@ -326,15 +326,42 @@ export function localCall(
   });
 }
 
-/** Resolves once the readable index covers the mutation's durable receipt. */
-export async function localMutation(op: string, args: Record<string, unknown>): Promise<void> {
-  const receipt = (await localCall(op, args)).revision;
+/** A durable receipt survives failed observation. Retirement without a receipt leaves acceptance
+ * unknown; a failed index read always carries the receipt proving acceptance. */
+export class LocalMutationObservationError extends Error {
+  constructor(readonly observation:
+    | { readonly kind: "ReadFailed"; readonly receipt: string }
+    | { readonly kind: "Retired"; readonly receipt: string | null }) {
+    super("Local mutation observation failed");
+    this.name = "LocalMutationObservationError";
+  }
+}
+
+/** Actively reads until the index covers an accepted mutation; never sends the mutation again. */
+export async function readLocalContent(receipt: string): Promise<void> {
+  if (binding === null) throw new Error("Retired");
   const revision = BigInt(receipt);
   if (state.index !== null && BigInt(state.index.revision) >= revision) return;
   await new Promise<void>((resolve, reject) => {
     waits.add({ revision, resolve, reject });
     announce(receipt);
   });
+}
+
+/** Resolves once the readable index covers the mutation's durable receipt. */
+export async function localMutation(op: string, args: Record<string, unknown>): Promise<void> {
+  const mine = lifetime;
+  let receipt: string;
+  try { receipt = (await localCall(op, args)).revision; }
+  catch (error) {
+    if (mine !== lifetime) throw new LocalMutationObservationError({ kind: "Retired", receipt: null });
+    throw error;
+  }
+  if (mine !== lifetime) throw new LocalMutationObservationError({ kind: "Retired", receipt });
+  try { await readLocalContent(receipt); }
+  catch {
+    throw new LocalMutationObservationError({ kind: mine === lifetime ? "ReadFailed" : "Retired", receipt });
+  }
 }
 
 export function currentLocalContent(): LocalContentState {
