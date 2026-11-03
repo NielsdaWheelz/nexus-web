@@ -1,11 +1,12 @@
 "use client";
 
-// The reader's connections. The margin aligns rows anchored to the mounted text beside
-// their measured passages; it needs a column companion over a source. All items is one
-// flat normal-flow list in tier order: placed, whole, unavailable. The server's derived
-// evidence may load late or fail without hiding local rows, and native sidebar scroll
-// never changes the view or text.
+// The reader's connections. The margin stacks rows anchored to the mounted text beside
+// their measured passages, and only the text moves the stack; it needs a column companion
+// over a source. All items is one flat normal-flow list in tier order: placed, whole,
+// unavailable. The server's derived evidence may load late or fail without hiding local
+// rows, and native sidebar scroll never changes the view or text.
 import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { firstVisibleRow, useEvidenceWindow, type Anchor, type Memory } from "./useEvidenceWindow";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -27,9 +28,12 @@ import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from
 import type { MediaAnnotationsState } from "../annotations";
 import EvidenceRow, { sourceTextKey, type EvidenceActions, type EvidenceEntry, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
+import { MARGIN_GAP, stackMargin, type MarginFrame, type MarginRow } from "./marginStack";
 import { facets, FILTER_ICONS, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
 
-interface Placement { key: string; top: number; height: number; displaced: boolean; }
+/** A margin row. A measuring row is laid out for one read of its height and passage, inside the frame that places it;
+ * a placed row's offset is its top within the stack, whose own top is the transform on the outline scope. */
+type Placement = { key: string; kind: "measuring" } | { key: string; kind: "placed"; offset: number; height: number };
 interface ConnectionsView {
   hidden: ReadonlySet<Filter>;
   following: boolean;
@@ -91,6 +95,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const readerProfile = useReaderProfile();
   const [focused, setFocused] = useState<string | null>(null);
   const [placements, setPlacements] = useState<readonly Placement[]>([]);
+  const committedPlacements = useRef(placements); committedPlacements.current = placements;
+  const marginFrame = useRef<MarginFrame | null>(null);
+  const placeMargin = useRef<(() => void) | null>(null);
   const pane = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const windowRoot = useRef<HTMLDivElement>(null);
@@ -111,16 +118,9 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const writing = useWritingRuntime();
   // the pane outlives the unlinked row: it holds the frozen commit's retry and moves focus on.
   const [unlinkFailure, setUnlinkFailure] = useState<{ readonly retry: (() => void) | null } | null>(null);
-  const viewport = useReaderState(reader, (s) => s.viewport);
   const document = useReaderState(reader, (s) => s.document);
-  const placement = useReaderState(reader, (s) => s.placement);
-  // placement re-measures as overlays open and close, since a row holds while one it opened is up.
+  // re-measure when an overlay opens or closes: its row holds the trigger in place.
   const interactionOwner = useInteractionOwner();
-  const position = placement ? JSON.stringify([
-    placement.identity, placement.point.kind,
-    placement.point.kind === "text" ? [placement.point.unit, placement.point.offset] : [placement.point.page, placement.point.y],
-    placement.offsetPx, placement.zoom,
-  ]) : null;
   const canFollow = useCompanionPresentation() === "Column" && !sourceAbsent;
   const aligned = following && canFollow;
   const remote = state.remote.status === "ready" ? state.remote.data : null;
@@ -178,7 +178,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
       return { entry, at: extent.kind === "text" && document.status === "ready" ? document.structure.fraction(extent.start) : marker?.position ?? Number.POSITIVE_INFINITY };
     })
     .sort((a, b) => a.at - b.at || (a.entry.key < b.entry.key ? -1 : 1)).map(({ entry }) => entry) : [], [doc, document, entries, state.markers]);
-  const keys = placements.map((place) => place.key).join();
   const placedKeys = useMemo(() => new Set(placed.map(entry => entry.key)), [placed]);
   // A source that isn't absent will place this entry once its doc is mounted and bound.
   const undetermined = useCallback((entry: EvidenceEntry) => !sourceAbsent &&
@@ -195,7 +194,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const ranks = useMemo(() => new Map(order.map((entry, index) => [entry.key, index + 1])), [order]);
   const delivery = openKey?.isCurrent() && preparedRequest === openKey ? openKey : null;
   const arrival = delivery ? entries.find(entry => entryMatches(entry, delivery.id))?.key ?? null : null;
-  const placedHeight = Math.max(0, ...placements.map(item => item.top + item.height));
+  const placedHeight = Math.max(0, ...placements.map(item => item.kind === "placed" ? item.offset + item.height : 0));
   const slots = useMemo(() => [
     ...order.map(entry => ({key: entry.key, estimate: aligned ? 0 : 96})),
     ...(aligned ? [{key: "placed-space", estimate: placedHeight}] : []),
@@ -208,11 +207,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const rowWindow = useEvidenceWindow({scope: publicationKey, slots, aligned, placements: placements.map(place => place.key),
     demand: arrival ?? focusRequest?.key ?? (aligned ? null : restore.current?.key) ?? null, focused, root: windowRoot, port: list, outer: pane,
     memory, profile: JSON.stringify([readerProfile.font_family, readerProfile.font_size_px, readerProfile.line_height]),
-    onGeometry: () => restoreAnchor.current?.(), onAnchor});
+    onGeometry: () => { restoreAnchor.current?.(); placeMargin.current?.(); }, onAnchor});
   const heldKeys = [...rowWindow.held].sort().join();
   const mountedKeys = rowWindow.rendered.map(slot => slot.key).join();
   const held = useRef(rowWindow.held); held.current = rowWindow.held;
-  const {interact, release} = rowWindow;
+  const {interact, release, moved} = rowWindow;
   /** The held return anchor ends: the reader acted, an arrival took over, or its row can't land. */
   const endRestore = useCallback(() => {
     if (restore.current === null) return;
@@ -247,6 +246,144 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     });
   }, [writing, requestFocus]);
 
+  // the margin (contract M): the stack is pure, and only the text moves its base. rows render at their
+  // offsets; the base is one transform on the outline scope, so a frame that only moves the stack commits nothing.
+  // it precedes the restoration below, so a switch to all drops the transform before that measures a row.
+  useLayoutEffect(() => {
+    const port = list.current, root = windowRoot.current;
+    if (!aligned) {
+      alignedPosition.current = null;
+      marginFrame.current = null;
+      root?.querySelector<HTMLElement>("[data-outline-scope]")?.style.removeProperty("transform");
+      return;
+    }
+    if (!port || !root || document.status !== "ready") return;
+    const { doc, structure } = document;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const { viewport, placement } = reader.getState();
+      const bounds = reader.measureBounds();
+      // not the `ul`: `.outline` computes `overflow-y: auto`, so a shifted `ul` would clip the stack's foot.
+      const scope = root.querySelector<HTMLElement>("[data-outline-scope]");
+      if (!viewport || !placement || !bounds || !scope) return;
+      const position = JSON.stringify([
+        placement.identity, placement.point.kind,
+        placement.point.kind === "text" ? [placement.point.unit, placement.point.offset] : [placement.point.page, placement.point.y],
+        placement.offsetPx, placement.zoom,
+      ]);
+      // source movement adopts the current outer layout and resets the inner offset, which folds into the base:
+      // a reveal keeps its place on screen, and text motion walks it back.
+      if (alignedPosition.current?.position !== position) {
+        const previous = marginFrame.current, folded = port.scrollTop;
+        if (previous && folded) marginFrame.current = { y: previous.y, tops: new Map([...previous.tops].map(([key, top]) => [key, top - folded])) };
+        port.scrollTop = 0;
+        if (pinned.current) pinned.current.scrollTop = port.scrollTop;
+        alignedPosition.current = { position, outerScrollTop: pane.current?.scrollTop ?? 0 };
+      }
+      const { outerScrollTop } = alignedPosition.current;
+      const span = Math.max(viewport.end - viewport.start, 0.001);
+      const pin = pinned.current?.element.isConnected ? pinned.current : null;
+      const holding = new Set(getOverlayOpeners().flatMap(opener => {
+        const row = opener.closest<HTMLElement>("[data-group]:not([hidden])");
+        return row && port.contains(row) ? [row.dataset.group] : [];
+      }));
+      /** The ring in order. Rows with a passage go to the stack; `holds` is a top that overrides the stack's. A ring row
+       * with a passage that has never rendered is `unseen`: it has no height or baseline yet. */
+      const read = () => {
+        // the window root holds the scope, so the transform never moves the origin.
+        const box = root.getBoundingClientRect();
+        const originY = box.top + port.scrollTop + (pane.current?.scrollTop ?? 0) - outerScrollTop;
+        const stacked: MarginRow[] = [];
+        const ring: { key: string; height: number; holds: number | null }[] = [];
+        const unseen: string[] = [];
+        let pinnedKey: string | null = null;
+        for (const entry of order) {
+          const extent = extentOf(entry, doc);
+          if (!extent) continue;
+          const overlay = holding.has(entry.key);
+          const retained = overlay || held.current.has(entry.key);
+          if (!retained && extent.kind === "text") {
+            const at = structure.fraction(extent.start);
+            if (at < viewport.start - span || at > viewport.end + span) continue;
+          }
+          const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
+          if (!retained && (!geometry || geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) continue;
+          const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(entry.key)}"]:not([hidden])`);
+          if (!row) {
+            if (geometry) unseen.push(entry.key);
+            continue;
+          }
+          const rect = row.getBoundingClientRect();
+          let holds: number | null = null;
+          if (overlay) {
+            holds = rect.top - box.top;
+            pinnedKey = entry.key;
+          } else if (retained && pin && row.contains(pin.element)) {
+            holds = pin.y - box.top - (pin.element.getBoundingClientRect().top - rect.top);
+            pinnedKey = entry.key;
+          } else if (!geometry) {
+            // a held row with no passage to follow leaves the stack and stays where it stands.
+            holds = rect.top - box.top;
+          }
+          ring.push({ key: entry.key, height: rect.height, holds });
+          if (!geometry) continue;
+          const primary = row.querySelector<HTMLElement>("[data-resource-primary]");
+          const mark = primary?.querySelector("mark");
+          const passage = mark ?? primary;
+          const baseline = passage ? passage.getBoundingClientRect().top - rect.top : 0;
+          const line = geometry.lines[0];
+          const y = line?.top ?? geometry.rect.top;
+          // centre the quote's first line on the passage's; a wrapped mark's box spans all its lines.
+          const quoteLine = mark?.getClientRects()[0];
+          const desired = y - originY - baseline + (line && quoteLine ? (line.height - quoteLine.height) / 2 : 0);
+          stacked.push({ key: entry.key, desired, height: rect.height, y });
+        }
+        return { stacked, ring, unseen, pinnedKey };
+      };
+      let reading = read();
+      // a row entering the ring has no height or baseline until it renders, and measured late it would move against
+      // its neighbours. it renders first, measuring, where no request reaches it; the rest keep their places, and the
+      // ring is read again. the commit below replaces every measuring row before this frame paints.
+      if (reading.unseen.length) {
+        const measuring = reading.unseen.map(key => ({ key, kind: "measuring" as const }));
+        flushSync(() => setPlacements([...committedPlacements.current, ...measuring]));
+        reading = read();
+      }
+      const stack = stackMargin(reading.stacked, marginFrame.current, Math.max(port.getBoundingClientRect().top, bounds.top + bounds.height / 3));
+      marginFrame.current = stack.frame;
+      if (stack.moved) moved();
+      const next = reading.ring.map(({ key, height, holds }) => ({ key, kind: "placed" as const, height: Math.ceil(height),
+        offset: holds === null ? stack.offsets.get(key)! : Math.round(holds - stack.base) }));
+      // a pin pushes collisions outward, one sweep each way. the base stays on the slew, so release is continuous.
+      const pinnedAt = next.findIndex(place => place.key === reading.pinnedKey);
+      if (pinnedAt >= 0) {
+        for (let i = pinnedAt + 1; i < next.length; i++) next[i].offset = Math.max(next[i].offset, next[i - 1].offset + next[i - 1].height + MARGIN_GAP);
+        for (let i = pinnedAt - 1; i >= 0; i--) next[i].offset = Math.min(next[i].offset, next[i + 1].offset - next[i].height - MARGIN_GAP);
+      }
+      // the scope clips above its top: a held or pushed row above the stack's first lifts it.
+      const lift = Math.min(0, ...next.map(place => place.offset));
+      for (const place of next) place.offset -= lift;
+      const current = committedPlacements.current;
+      let same = current.length === next.length;
+      for (let i = 0; same && i < next.length; i++) {
+        const was = current[i];
+        same = was.kind === "placed" && was.key === next[i].key && was.offset === next[i].offset && was.height === next[i].height;
+      }
+      if (!same) flushSync(() => setPlacements(next));
+      scope.style.transform = `translateY(${stack.base + lift}px)`;
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    placeMargin.current = schedule;
+    const unsubscribe = reader.subscribe(schedule);
+    // the reader publishes a scroll in its own frame callback, so a stack scheduled from it lands a frame behind
+    // the text. scroll events precede frame callbacks: hearing the text's scroll keeps the stack in its frame.
+    // the reader owns the fix (docs/issues/reader-publishes-scroll-a-frame-late.md).
+    window.addEventListener("scroll", schedule, { capture: true, passive: true });
+    schedule();
+    return () => { unsubscribe(); window.removeEventListener("scroll", schedule, { capture: true }); cancelAnimationFrame(frame); placeMargin.current = null; };
+  }, [aligned, document, heldKeys, interactionOwner, moved, order, reader]);
+
   useLayoutEffect(() => {
     const port = list.current;
     if (!port || aligned || publicationKey === null) return;
@@ -273,84 +410,6 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     follow();
     return () => { restoreAnchor.current = null; };
   }, [aligned, endRestore, publicationKey, terminal, updateBrowse, visible, mountedKeys]);
-
-  useLayoutEffect(() => {
-    if (!aligned) { alignedPosition.current = null; return; }
-    const port = list.current;
-    if (!port || document.status !== "ready" || !viewport) return;
-    const { doc, structure } = document;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const bounds = reader.measureBounds();
-      if (!bounds || position === null) return;
-      // source movement adopts the current outer layout; only the inner offset resets.
-      if (alignedPosition.current?.position !== position) {
-        port.scrollTop = 0;
-        if (pinned.current) pinned.current.scrollTop = port.scrollTop;
-        alignedPosition.current = { position, outerScrollTop: pane.current?.scrollTop ?? 0 };
-      }
-      const box = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"] > ul')?.getBoundingClientRect() ?? port.getBoundingClientRect();
-      const originY = box.top + port.scrollTop + (pane.current?.scrollTop ?? 0) - alignedPosition.current.outerScrollTop;
-      const span = Math.max(viewport.end - viewport.start, 0.001);
-      // a row holds while an overlay it opened is up, focused or not: retained and pinned, its trigger stays put.
-      const holding = new Set(getOverlayOpeners().flatMap(opener => {
-        const row = opener.closest<HTMLElement>("[data-group]:not([hidden])");
-        return row && port.contains(row) ? [row.dataset.group] : [];
-      }));
-      const measured = order.flatMap((entry) => {
-        const extent = extentOf(entry, doc);
-        if (!extent) return [];
-        const holds = holding.has(entry.key);
-        const retained = holds || held.current.has(entry.key);
-        if (!retained && extent.kind === "text") {
-          const at = structure.fraction(extent.start);
-          if (at < viewport.start - span || at > viewport.end + span) return [];
-        }
-        const geometry = reader.measurePassage({ identity: doc.identity, anchor: extent.anchor });
-        const row = port.querySelector<HTMLElement>(`[data-group="${CSS.escape(entry.key)}"]:not([hidden])`);
-        if (!geometry && !retained) return [];
-        const line = geometry?.lines[0];
-        const y = line?.top ?? geometry?.rect.top ?? row?.getBoundingClientRect().top ?? box.top;
-        if (!retained && geometry && (geometry.rect.bottom < bounds.top - bounds.height || geometry.rect.top > bounds.bottom + bounds.height)) return [];
-        const primary = row?.querySelector<HTMLElement>("[data-resource-primary]");
-        const mark = primary?.querySelector("mark");
-        const passage = mark ?? primary;
-        const baseline = row && passage ? passage.getBoundingClientRect().top - row.getBoundingClientRect().top : 0;
-        // the quote's first line centres on the passage's, whose type can be larger. a wrapped
-        // mark's bounding box is the union of its lines, so its first line is its first client rect.
-        const quoteLine = mark?.getClientRects()[0];
-        const desired = y - originY - baseline + (line && quoteLine ? (line.height - quoteLine.height) / 2 : 0);
-        const height = row?.getBoundingClientRect().height ?? 32;
-        const pin = retained && row && pinned.current?.element.isConnected && row.contains(pinned.current.element) ? pinned.current : null;
-        let top = desired;
-        if (holds && row) top = row.getBoundingClientRect().top - box.top;
-        else if (pin && row) {
-          top = pin.y - box.top - (pin.element.getBoundingClientRect().top - row.getBoundingClientRect().top);
-        }
-        return [{ key: entry.key, desired, top, height, y, held: retained, pinned: holds || pin !== null }];
-      });
-      if (measured.length) {
-        let pivot = measured.findIndex((item) => item.held);
-        if (pivot < 0) pivot = measured.findIndex((item) => item.key === active);
-        if (pivot < 0) pivot = measured.reduce((best, item, index) => Math.abs(item.y - bounds.top) < Math.abs(measured[best].y - bounds.top) ? index : best, 0);
-        if (!measured[pivot].pinned) measured[pivot].top = Math.max(0, measured[pivot].top);
-        for (let i = pivot + 1; i < measured.length; i++) measured[i].top = Math.max(measured[i].desired, measured[i - 1].top + measured[i - 1].height + 4);
-        for (let i = pivot - 1; i >= 0; i--) measured[i].top = Math.min(measured[i].desired, measured[i + 1].top - measured[i].height - 4);
-      }
-      const next = measured.map(({ key, top, desired, height }) => ({ key, top: Math.round(top), height: Math.ceil(height), displaced: Math.abs(top - desired) > 4 }));
-      setPlacements((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    const observer = new ResizeObserver(schedule);
-    observer.observe(port);
-    const outline = port.querySelector<HTMLElement>('[data-outline-scope="reader-connections"]');
-    if (outline) observer.observe(outline);
-    for (const row of port.querySelectorAll("[data-group]")) observer.observe(row);
-    const unsubscribe = reader.subscribe(schedule);
-    schedule();
-    return () => { unsubscribe(); observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [active, aligned, document, focused, heldKeys, interactionOwner, keys, order, position, reader, viewport]);
 
   useLayoutEffect(() => {
     if (!openKey?.isCurrent()) return;
@@ -443,11 +502,11 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     setHidden(new Set());
   };
   const row = (entry: EvidenceEntry) => {
-    const place = aligned ? placements.find((item) => item.key === entry.key) : null;
-    const shown = visible.has(entry.key) && (!aligned || !!place);
-    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow rowWindow={rowWindow} position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} visible={shown} placed={placedKeys.has(entry.key)}
+    const place = aligned ? placements.find((item) => item.key === entry.key) : undefined;
+    const presence = !visible.has(entry.key) || aligned && !place ? "hidden" : place?.kind === "measuring" ? "measuring" : "shown";
+    return <IndexRowWindow key={entry.key} window={rowWindow} id={entry.key}><EvidenceRow rowWindow={rowWindow} position={ranks.get(entry.key) ?? null} count={order.length} entry={entry} actions={actions} active={active === entry.key} presence={presence} placed={placedKeys.has(entry.key)}
       sourceText={sourceText} onSourceTextChange={onSourceTextChange}
-      className={styles.group} displaced={place?.displaced ?? false} style={place ? { position: "absolute", top: place.top, width: "100%" } : undefined}
+      className={styles.group} style={place ? { position: "absolute", top: place.kind === "placed" ? place.offset : 0, width: "100%" } : undefined}
       unresolvedText={doc?.kind === "text"}
       openRequest={delivery && entryMatches(entry, delivery.id) ? delivery : null} reader={reader} revealInSidebar={revealInSidebar} onUnlink={unlink} /></IndexRowWindow>;
   };
