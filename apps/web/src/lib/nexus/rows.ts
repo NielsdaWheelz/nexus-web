@@ -186,7 +186,7 @@ function referenceRow(ref: string, input: Reference, panes: readonly NexusPane[]
   const row = input.localReference ? localRow(input.localReference, panes, "ExplicitIntent", usage)
     : input.reference ? resourceRow(input.reference, panes, "Resources", "ExplicitIntent", usage) : {
       key: "", localMatch: null, label: ref, icon: resourceIconForScheme(parseResourceRef(ref)!.scheme),
-      action: { kind: "Unavailable" as const, reason: input.localReferenceMissing ? "not on this device" : input.referenceFailed ? "resource lookup failed" : "looking up resource…" },
+      action: { kind: "Unavailable" as const, reason: input.localReferenceMissing ? "not on this device" : input.referenceFailed ? "couldn’t look up this item" : "looking up resource…" },
       ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     };
   return { ...row, key: `Resource:${ref}`, evidence: false };

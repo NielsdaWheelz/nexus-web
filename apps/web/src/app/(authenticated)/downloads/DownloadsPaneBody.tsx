@@ -27,9 +27,9 @@ import styles from "./downloads.module.css";
 const FAILURE: Record<FailureReason, string> = {
   AuthorizationRequired: "sign in to download",
   SourceUnavailable: "original no longer available",
-  Changed: "the original changed",
+  Changed: "couldn’t download",
   Storage: "couldn’t save to device storage", Network: "network interrupted", Server: "nexus isn’t answering",
-  Invalid: "the downloaded file was damaged", Stopped: "stopped by android", Scheduler: "android couldn’t schedule it", NeedsDownload: "needs a fresh download",
+  Invalid: "couldn’t use the downloaded file", Stopped: "stopped by android", Scheduler: "android couldn’t schedule it", NeedsDownload: "needs a fresh download",
 };
 function status(item: LocalItem): string {
   switch (item.state) {
@@ -46,7 +46,7 @@ function extras(item: LocalItem): string | null {
   if (transcript === undefined) return null;
   if (transcript.kind === "Absent") return "no published transcript";
   if (transcript.kind === "Pending") return "transcript download pending";
-  if (transcript.kind === "Failed") return transcript.reason === "Changed" ? "transcript publication changed · downloaded audio kept"
+  if (transcript.kind === "Failed") return transcript.reason === "Changed" ? "couldn’t download the transcript · audio kept"
     : transcript.reason === "TooLarge" ? "transcript exceeds download limit · downloaded audio kept"
     : transcript.reason === "E_MEDIA_NOT_READY" ? "no published transcript was available at download · remove and download again for newer content" : "couldn’t download the transcript · audio kept";
   return null;

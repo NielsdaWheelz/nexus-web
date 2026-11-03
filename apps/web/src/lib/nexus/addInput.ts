@@ -63,7 +63,7 @@ export function validateDraftSource(source: DraftSource): DraftValidation {
         ? { kind: "Ready", source: { kind: "Url", url } }
         : {
             kind: "Invalid",
-            feedback: { fact: "Use an http:// or https:// link." },
+            feedback: { fact: "use an http:// or https:// link." },
           };
     }
     case "File": {
@@ -72,7 +72,7 @@ export function validateDraftSource(source: DraftSource): DraftValidation {
       return error !== null || fileKind === null
         ? {
             kind: "Invalid",
-            feedback: { fact: error ?? "Only PDF and EPUB files are supported." },
+            feedback: { fact: error ?? "only pdf and epub files are supported." },
           }
         : { kind: "Ready", source: { ...source, fileKind } };
     }

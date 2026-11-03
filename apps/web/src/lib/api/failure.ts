@@ -49,7 +49,7 @@ const because = (reason: string) => (fact: string): TransportLine => ({ fact, re
 const STALE_BUILD: Readonly<Record<UpdateRemedy, string>> = {
   Reload: "nexus updated.",
   CloseTabs: "update ready. close all nexus tabs and reopen.",
-  Reinstall: "install the current nexus apk, then reopen the app.",
+  Reinstall: "install the current nexus apk, then reopen.",
 };
 /** The one sentence for a stale build, whoever says it: a read, a command or the account. */
 export const staleBuild = () => STALE_BUILD[updateRemedy()];

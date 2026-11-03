@@ -22,6 +22,7 @@ import { admissionTransport, staleBuild, TRANSPORT_LINES, transportOf, type Tran
 import { useThrowLater } from "@/lib/api/serverState";
 import { isAbortError } from "@/lib/errors";
 import { remoteAdmission, remoteAttemptAllowed, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
+import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
@@ -239,17 +240,20 @@ export function useTransportVerbs(): (transport: Transport, options?: { retry?: 
 export function useResendFeedback(): (input: { line: Line; resend: CommandVerb | null; sends?: () => boolean; secondary?: Verb }) => { line: Line; verbs: Verbs | null } {
   const verbsFor = useTransportVerbs();
   const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const connectivity = useConnectivity();
   return useCallback(({ line, resend, sends = remoteAttemptAllowed, secondary }) => {
     const transport = admissionTransport(admission);
     if (transport === "Update") return { line: { ...line, reason: staleBuild() }, verbs: verbsFor(transport) };
     const signIn = transport === "SignIn" ? verbsFor(transport)?.[0] ?? null : null;
+    const offline = connectivity === "Offline";
     const unsent = transport !== null && (transport === "Offline" || !sends());
     const primary = signIn ?? (resend === null ? null : { ...resend, busy: resend.busy || admission === "Checking",
-      disabledReason: unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason });
+      disabledReason: offline ? TRANSPORT_LINES.Offline.command("").reason
+        : unsent ? TRANSPORT_LINES[transport].command("").reason : resend.disabledReason });
     const verbs: Verbs | null = primary === null ? secondary ? [secondary] : null
       : secondary ? [primary, secondary] : [primary];
     return { line, verbs };
-  }, [verbsFor, admission]);
+  }, [verbsFor, admission, connectivity]);
 }
 
 /** A fact that stands while its owner holds it: mounted is present, unmounted is resolved. `id`
