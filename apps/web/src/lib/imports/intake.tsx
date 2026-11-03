@@ -151,6 +151,7 @@ type State = {
   /** Running, plus accepted and not yet settled: the rail's and root row's count. */
   readonly unsettled: number;
   readonly defect: { readonly error: unknown } | null;
+  readonly showing: boolean;
   /** First observed whole-batch settlement; retrying drops it until settled again. */
   readonly settledAt: ReadonlyMap<string, number>;
   /** Batches whose held slip stands: settled with an unknown, while no surface showed them. */
@@ -163,7 +164,7 @@ type Host = {
 };
 
 const ANSWER_MS = 30_000;
-const EMPTY: State = { lines: [], field: "", fieldLine: null, hasAdmitted: false, into: [], running: 0, unsettled: 0, defect: null, settledAt: new Map(), held: [] };
+const EMPTY: State = { lines: [], field: "", fieldLine: null, hasAdmitted: false, into: [], running: 0, unsettled: 0, defect: null, showing: false, settledAt: new Map(), held: [] };
 
 /** The address the server keys a link by: no fragment, normalized host. */
 const address = (url: string) => { const parsed = new URL(url); parsed.hash = ""; return parsed.href; };
@@ -195,7 +196,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
    * intake gave it, which its attempt carries: a retry or a retyped name in a later visit
    * sends for that visit. */
   const sentIn = new WeakMap<(destination: LibraryDestination) => void, object>();
-  let viewers = 0;
+  let showing = false;
   let lifetime: AbortController | null = null;
   let host: Host | null = null;
   let outcome: Outcome | null = null;
@@ -231,7 +232,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       }
       if (phases.some(phase => phase !== "Settled")) continue;
       settledNow.set(batch, settledBatches.get(batch) ?? Date.now());
-      if (settledBatches.has(batch) || viewers > 0) continue;
+      if (settledBatches.has(batch) || showing) continue;
       unseen.add(batch);
       host?.settled(lines);
     }
@@ -239,9 +240,9 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     unseen = new Set([...unseen].filter(batch => settledNow.has(batch)));
     const running = entries.filter(line => linePhase(line.stage) === "Running").length;
     state = {
-      lines: entries, field, fieldLine, hasAdmitted, into, defect, running, settledAt: settledNow,
+      lines: entries, field, fieldLine, hasAdmitted, into, defect, running, showing, settledAt: settledNow,
       unsettled: entries.filter(line => linePhase(line.stage) !== "Settled").length,
-      held: viewers > 0 ? [] : [...unseen].filter(batch => batches.get(batch)!.some(line => line.stage.kind === "Unknown")),
+      held: showing ? [] : [...unseen].filter(batch => batches.get(batch)!.some(line => line.stage.kind === "Unknown")),
     };
     for (const listener of listeners) listener();
   }
@@ -586,9 +587,6 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (input.open !== undefined && first?.stage.kind === "Waiting") added[0] = { ...first, openOnAccept: input.open };
     entries = [...added, ...entries];
     queue = [...queue, ...added.filter(entry => entry.stage.kind === "Waiting").map(entry => entry.id)];
-    // a batch settled at admission (files refused at the door) is its door's to show, since
-    // every door shows what it admits, the page before it has mounted: no slip
-    if (added.every(entry => linePhase(entry.stage) === "Settled")) settledBatches = new Map(settledBatches).set(batch, Date.now());
     publish();
     pump();
   }
@@ -706,7 +704,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         if (lifetime !== scope) return;
         lifetime = null;
         entries = []; queue = []; deferred = []; field = ""; fieldLine = null; hasAdmitted = false; into = [];
-        freezing = false; linkSending = false; filesSending = 0;
+        freezing = false; linkSending = false; filesSending = 0; showing = false;
         settledBatches = new Map(); unseen = new Set(); accepting = new Set();
         publish();
       };
@@ -719,11 +717,11 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     observe() {
       if (host !== null && lifetime !== null && entries.some(line => linePhase(line.stage) === "Accepted")) void truth(lifetime);
     },
-    view() {
-      viewers += 1;
-      unseen = new Set();
+    setShown(next: boolean) {
+      if (showing === next) return;
+      showing = next;
+      if (showing) unseen = new Set();
       publish();
-      return () => { viewers -= 1; publish(); };
     },
     setField(text: string) { field = text; fieldLine = null; publish(); },
     setFieldLine(line: Line | null) { fieldLine = line; publish(); },
@@ -845,12 +843,27 @@ export function useImportIntake() {
   };
 }
 
-/** A surface showing lines registers while mounted. A batch that settles while any does
- * never raises a slip, then or later: that surface speaks its settle. A batch settled at
- * admission raises none either, so a door need not register before it admits. */
-export function useImportLinesShown(): void {
+/** The controller owns presentation before mount and through close. Its setters publish
+ * that choice synchronously; speech observes every intake publication, not coalesced renders. */
+export function useImportPresentation(readShown: () => boolean, onSettled: (lines: readonly IntakeLine[], at: number) => void) {
   const intake = useIntake();
-  useLayoutEffect(() => intake.view(), [intake]);
+  const latest = useRef({ readShown, onSettled });
+  useLayoutEffect(() => { latest.current = { readShown, onSettled }; });
+  useLayoutEffect(() => {
+    intake.setShown(latest.current.readShown());
+    let previous = intake.snapshot();
+    const unsubscribe = intake.subscribe(() => {
+      const next = intake.snapshot();
+      const before = previous;
+      previous = next;
+      if (!next.showing) return;
+      for (const [batch, at] of next.settledAt) {
+        if (!before.settledAt.has(batch)) latest.current.onSettled(next.lines.filter(line => line.batch === batch), at);
+      }
+    });
+    return () => { unsubscribe(); intake.setShown(false); };
+  }, [intake]);
+  return intake.setShown;
 }
 
 /** The `into` chooser's one library creation; the host's. */

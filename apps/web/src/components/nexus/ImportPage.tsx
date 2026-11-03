@@ -24,7 +24,7 @@ import { extractLinks } from "@/lib/extractLinks";
 import { fetchImportPage, type ImportItem } from "@/lib/imports/api";
 import { attentionPhrase, FAILURE_COPY, reasonLine } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
-import { ADMIT_LIMIT, useImportCreation, useImportIntake, useImportLinesShown, type IntakeLine } from "@/lib/imports/intake";
+import { ADMIT_LIMIT, useImportCreation, useImportIntake, type IntakeLine } from "@/lib/imports/intake";
 import { colophon, linkPointer, lineView, pointer, type LineVerb } from "@/lib/imports/lineView";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import { mediaKindLabel } from "@/lib/media/kind";
@@ -73,7 +73,6 @@ export default function ImportPage({ controller, page, mobile }: {
   readonly mobile: boolean;
 }) {
   const intake = useImportIntake();
-  useImportLinesShown();
   const creation = useImportCreation();
   const { profile } = useReaderContext();
   const { displayTimeZone } = useRenderEnvironment();

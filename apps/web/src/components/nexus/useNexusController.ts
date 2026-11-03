@@ -18,8 +18,8 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { apiTransportFeedback, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useImportIntake, type Admission, type IntakeLine } from "@/lib/imports/intake";
-import { batchSlip, colophon, linePhase, spokenCount } from "@/lib/imports/lineView";
+import { useImportIntake, useImportPresentation, type Admission } from "@/lib/imports/intake";
+import { batchSlip, colophon, spokenCount } from "@/lib/imports/lineView";
 import { createLibrary } from "@/lib/libraries/api";
 import { useNexusOpenRequests } from "@/lib/nexus/events";
 import {
@@ -95,7 +95,8 @@ export function useNexusController() {
   const recent = useRecent();
   const readRecent = recent.read;
 
-  const [open, setOpen] = useState(false);
+  const [open, writeOpen] = useState(false);
+  const visible = useRef(open);
   const [query, setQueryState] = useState("");
   const [composing, setComposing] = useState(false);
   const [page, writePage] = useState<NexusPage>({ kind: "Root" });
@@ -103,11 +104,13 @@ export function useNexusController() {
   const [pageListeners] = useState(() => new Set<() => void>());
   function setPage(change: NexusPage | ((current: NexusPage) => NexusPage)) {
     const next = typeof change === "function" ? change(currentPage.current) : change;
-    if (currentPage.current.kind === "Import" && next.kind !== "Import") {
+    const before = currentPage.current;
+    currentPage.current = next;
+    setShown(visible.current && next.kind === "Import");
+    if (before.kind === "Import" && next.kind !== "Import") {
       intake.disarmExcept(null);
       setAnnouncement("");
     }
-    currentPage.current = next;
     writePage(next);
     for (const listener of pageListeners) listener();
   }
@@ -124,8 +127,6 @@ export function useNexusController() {
     subscribe(listener) { pageListeners.add(listener); return () => { pageListeners.delete(listener); }; },
   }), [pageListeners]);
   useLayoutEffect(() => guard.register(pageOwner), [guard, pageOwner]);
-  const visible = useRef(open);
-  visible.current = open;
   const [rootMode, setRootMode] = useState<NexusRootMode>("Overview");
   const [focusRevision, setFocusRevision] = useState(0);
   const [searchRefreshRevision, setSearchRefreshRevision] = useState(0);
@@ -147,6 +148,16 @@ export function useNexusController() {
     if (pendingImportSpeech.current === occurrence) pendingImportSpeech.current = null;
   }, []);
   const announcement = announcementOccurrence.text;
+  const setShown = useImportPresentation(() => visible.current && currentPage.current.kind === "Import", (batch, at) => {
+    const slip = batch.length === 1 ? batchSlip(batch) : null;
+    const said = batch.length > 1 ? colophon(batch, at, displayTimeZone) : slip === null ? null : sentence(slip.line);
+    if (said !== null) announceImport(said);
+  });
+  const setOpen = useCallback((next: boolean) => {
+    visible.current = next;
+    setShown(next && currentPage.current.kind === "Import");
+    writeOpen(next);
+  }, [setShown]);
   const [panesExpanded, setPanesExpanded] = useState(false);
   const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(false);
   const [paneFocus, setPaneFocus] = useState<{ key: string | null; revision: number }>({ key: null, revision: 0 });
@@ -169,27 +180,6 @@ export function useNexusController() {
     if (!open && wasOpen.current) { presentations.holdRecent([]); endVisit.current(); setAnnouncement(""); }
     wasOpen.current = open;
   }, [open, presentations, readRecent, setAnnouncement]);
-
-  // Observe outside the page so a refusal before its mount is fresh, but a remount is not.
-  const settled = useRef<ReadonlySet<string> | null>(null);
-  useEffect(() => {
-    const batches: IntakeLine[][] = [];
-    for (const line of intake.lines) {
-      const last = batches.at(-1);
-      if (last !== undefined && last[0]!.batch === line.batch) last.push(line);
-      else batches.push([line]);
-    }
-    const now = new Set(batches.filter(batch => batch.every(line => linePhase(line.stage) === "Settled")).map(batch => batch[0]!.batch));
-    const before = settled.current;
-    settled.current = now;
-    if (before === null || !open || page.kind !== "Import") return;
-    for (const batch of batches) {
-      if (!now.has(batch[0]!.batch) || before.has(batch[0]!.batch)) continue;
-      const slip = batch.length === 1 ? batchSlip(batch) : null;
-      const said = batch.length > 1 ? colophon(batch, intake.settledAt(batch[0]!.batch), displayTimeZone) : slip === null ? null : sentence(slip.line);
-      if (said !== null) announceImport(said);
-    }
-  });
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const queryAction = nexusQueryAction(parsed);
@@ -242,7 +232,7 @@ export function useNexusController() {
       setRootMode("Overview");
     }
     navigationBaseline.current = navigationToken;
-  }, [navigationToken, open]);
+  }, [navigationToken, open, setOpen]);
 
   // Canonical activation can open the current target without changing its visit.
   // Observe its exact focus request before the destination claims it.
@@ -262,7 +252,7 @@ export function useNexusController() {
       setOpen(false);
       setRootMode("Overview");
     });
-  }, [latestWorkspace, open, subscribeWorkspace]);
+  }, [latestWorkspace, open, setOpen, subscribeWorkspace]);
 
   function keepWorkspaceSelection(selection: WorkspaceSelection): WorkspaceSelection {
     navigationBaseline.current = `${selection.paneId}\0${selection.visitId}`;
@@ -440,12 +430,11 @@ export function useNexusController() {
   }
 
   function finishNavigation(focusPaneId: string | null): void {
-    visible.current = false;
+    setOpen(false);
     handoffPaneId.current = focusPaneId;
     suppressReturnFocus.current = true;
     setPage({ kind: "Root" });
     setRootMode("Overview");
-    setOpen(false);
   }
 
   function rootOrigin(row: NexusRow | undefined): NexusImportOrigin {
@@ -480,9 +469,9 @@ export function useNexusController() {
         setOpen(true);
         return null;
       case "ImportLinks":
-        admitImport({ links: target.links, files: [], ...(activation.disposition.kind === "Fork" ? { open: "Fork" } as const : {}) });
         setPage({ kind: "Import", origin: origin ?? rootOrigin(row), select: target.links[0]! });
         setOpen(true);
+        admitImport({ links: target.links, files: [], ...(activation.disposition.kind === "Fork" ? { open: "Fork" } as const : {}) });
         return null;
       case "CreatePage":
         return run({ kind: "InternalHref", href: "/pages/new", ...(target.titleDraft ? { entry: { kind: "ComposePage", title: target.titleDraft } as const } : {}) }, activation, row, origin);
@@ -513,7 +502,6 @@ export function useNexusController() {
       const localDate = dailyDateFor(target.date, calendarTimeZone);
       // Keep the root origin and query for a guarded return.
       capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, origin: origin ?? rootOrigin(row), activation, submit: { kind: "Running", unconfirmed: false } });
-      setOpen(true);
       return null;
     }
     const materialized: Dispatchable =
@@ -568,7 +556,7 @@ export function useNexusController() {
     create: () => Promise<OpenResult>,
   ) {
     let livePage: NexusPage = running;
-    visible.current = true;
+    setOpen(true);
     setPage(running);
     const originPaneId = latestWorkspace().state.active_primary_pane_id;
     return openAsyncResult({
@@ -635,7 +623,7 @@ export function useNexusController() {
     setAnnouncement("");
     if (exit.kind === "Replace") { openIntent(exit.intent, exit.opener); return null; }
     setPage({ kind: "Root" });
-    if (exit.kind === "Close") { visible.current = false; setRootMode("Overview"); setOpen(false); }
+    if (exit.kind === "Close") { setRootMode("Overview"); setOpen(false); }
     return null;
   }
 

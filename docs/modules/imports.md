@@ -160,12 +160,12 @@ for every surface and for the intake's slips. nothing survives a reload.
   holding no other back; a failed summaries read fails the pass. either waits for the next
   advance. new arrivals wait for the next pass; summaries use the included lines' current
   identities after their source reads. the host retains the observer while any accepted line is unsettled.
-- **slips.** a batch wholly settled while no surface shows lines (`useImportLinesShown`)
+- **slips.** a batch wholly settled while the controller does not show lines
   raises one slip through `useOutcome().say`; with an unknown line it holds one, whose
   `retry` replays that batch's unknown lines. a batch that settles while a surface shows
-  lines never slips, then or later: that surface speaks its settle. nor does a batch admit
-  settles at once (files refused at the door): every door shows what it admits, so a door
-  need not register before it admits.
+  lines never slips, then or later: that surface speaks its settle. opening owns the
+  presentation before admission, including immediate refusals before the page mounts;
+  deferred admissions use the same current decision when they settle.
 - **settlement date.** the intake records when it first observes a wholly settled batch,
   not the server's completion time. the page's displayed and spoken colophon use that
   instant in the reader's zone. edits, back and partial dismissal retain it; retrying an
@@ -183,12 +183,13 @@ for every surface and for the intake's slips. nothing survives a reload.
   this retires navigation, never an admission or its frozen filing destinations.
 - **endVisit**, on the palette's close edge, resets the visit and disarms opening; readable,
   superseded and removed lines leave. everything else stays until `×`.
-- **surfaces.** the [import page](app-navigation.md#the-import-page) shows lines while it is
-  mounted and open, so a batch settling there speaks instead of slipping; nexus's root reads
+- **surfaces.** the controller publishes whether the [import page](app-navigation.md#the-import-page)
+  is open before any admission or close publishes into the intake; nexus's root reads
   only `unsettled`. nexus's back table reads the intake's visit admission fact; it owns no
   second send flag. arrow back keeps the visit, including its field feedback.
-- **speech.** the persistent nexus controller observes new settlements even before the
-  import page mounts. while that page is open, its one polite owner publishes starts and
+- **speech.** `useImportPresentation` observes consecutive synchronous intake publications,
+  not rendered row order. binding starts from existing history; cleanup unsubscribes before
+  releasing presentation ownership. while the import page is open, its one polite owner publishes starts and
   outcomes. unpublished sentences combine in order with repeats preserved; acknowledgement
   follows the exact occurrence's committed live text. leaving the page retires pending
   speech. returning or replacing the responsive presentation never replays old settlements.

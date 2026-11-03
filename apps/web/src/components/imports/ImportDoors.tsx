@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { extractLinks } from "@/lib/extractLinks";
 import { ADMIT_LIMIT, useImportIntake, type Admission } from "@/lib/imports/intake";
+import { libraryNames } from "@/lib/libraries/views";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { getInteractionOwner } from "@/lib/ui/overlay";
 import ImportVeil from "./ImportVeil";
@@ -27,7 +28,7 @@ export default function ImportDoors({ admit }: { readonly admit: (input: Admissi
       if (target === null) return setLabel(null);
       event.preventDefault();
       const { into } = latest.current;
-      setLabel(target === "Page" && into.length > 0 ? `drop into ${into.map(library => library.name).join(", ")}` : "drop to import");
+      setLabel(target === "Page" && into.length > 0 ? `drop into ${libraryNames(into)}` : "drop to import");
     }
     function leave(event: DragEvent) {
       if (event.relatedTarget === null && (event.target === document.body || event.target === document.documentElement
