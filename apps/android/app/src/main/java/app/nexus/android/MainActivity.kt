@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var authAttempt: DeviceSession.Attempt? = null
     private var browserWasPaused = false
     private var pendingAppLink: Uri? = null
+    private var pendingAppLinkSequence = 0L
     private var pendingShelfExit: Uri? = null
     private var appDocumentGeneration = 0L
     private val googleSignInController by lazy { GoogleSignInController(this) }
@@ -178,7 +179,13 @@ class MainActivity : AppCompatActivity() {
                     handleAuthUri(uri)
                     return true
                 }
-                if (appRouter.isAppRoute(uri) && request.method == "GET") return false
+                if (appRouter.isAppRoute(uri) && request.method == "GET") {
+                    if (isShareRoute(uri) || webView.url?.let { isShareRoute(Uri.parse(it)) } == true) {
+                        routeUrl(uri)
+                        return true
+                    }
+                    return false
+                }
                 if (isOwnedUrl(uri) && request.method != "GET") return false
                 openBrowser(uri)
                 return true
@@ -345,6 +352,32 @@ class MainActivity : AppCompatActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
+                    val generation = appDocumentGeneration
+                    val sequence = pendingAppLinkSequence
+                    val pending = pendingAppLink
+                    val url = webView.url
+                    val history = webView.copyBackForwardList()
+                    val index = history.currentIndex
+                    val previous = if (index > 0) history.getItemAtIndex(index - 1)?.url else null
+                    val canGoBack = webView.canGoBack()
+                    fun stillCurrent(): Boolean {
+                        if (isFinishing || isDestroyed || generation != appDocumentGeneration ||
+                            sequence != pendingAppLinkSequence || pending != pendingAppLink || webView.url != url) return false
+                        val current = webView.copyBackForwardList()
+                        return current.currentIndex == index && current.currentItem?.url == history.currentItem?.url &&
+                            (if (index > 0) current.getItemAtIndex(index - 1)?.url else null) == previous &&
+                            webView.canGoBack() == canGoBack
+                    }
+                    fun leave() {
+                        if (!stillCurrent()) return
+                        // the accepted transition supersedes only the request captured at back entry.
+                        pendingAppLink = null
+                        if (canGoBack) webView.goBack()
+                        else {
+                            isEnabled = false
+                            onBackPressedDispatcher.onBackPressed()
+                        }
+                    }
                     try {
                         webView.evaluateJavascript(
                             "(function(){try{var event=new KeyboardEvent('keydown'," +
@@ -352,32 +385,16 @@ class MainActivity : AppCompatActivity() {
                                 "document.dispatchEvent(event);return event.defaultPrevented;" +
                                 "}catch(error){return null;}})()",
                         ) { handled ->
-                            if (isFinishing || isDestroyed || handled == "true") return@evaluateJavascript
+                            if (!stillCurrent() || handled == "true") return@evaluateJavascript
                             if (handled != "false") { showExitFailure(); return@evaluateJavascript }
-                            if (webView.canGoBack()) { webView.goBack(); return@evaluateJavascript }
-                            val owned = webView.url?.let { isOwnedUrl(Uri.parse(it)) } == true
-                            if (!owned) {
-                                isEnabled = false
-                                onBackPressedDispatcher.onBackPressed()
-                                return@evaluateJavascript
-                            }
-                            try {
-                                webView.evaluateJavascript(
-                                    "(function(){try{var event=new Event('nexus:request-exit',{cancelable:true});" +
-                                        "document.dispatchEvent(event);return event.defaultPrevented;}catch(error){return null;}})()",
-                                ) exitReply@ { blocked ->
-                                    if (isFinishing || isDestroyed || blocked == "true") return@exitReply
-                                    if (blocked == "false") {
-                                        isEnabled = false
-                                        onBackPressedDispatcher.onBackPressed()
-                                    } else showExitFailure()
-                                }
-                            } catch (error: RuntimeException) {
-                                Log.e("Nexus", "Could not check unsaved work before exit", error)
-                                showExitFailure()
-                            }
+                            val guarded = if (canGoBack) url?.let { isShareRoute(Uri.parse(it)) } == true ||
+                                previous?.let { isShareRoute(Uri.parse(it)) } == true
+                            else url?.let { isOwnedUrl(Uri.parse(it)) } == true
+                            if (guarded) requestDocumentExit(::stillCurrent) { allowed -> if (allowed) leave() }
+                            else leave()
                         }
                     } catch (error: RuntimeException) {
+                        if (!stillCurrent()) return
                         Log.e("Nexus", "Could not check renderer before back", error)
                         showExitFailure()
                     }
@@ -408,6 +425,29 @@ class MainActivity : AppCompatActivity() {
             .setMessage("the app couldn’t check unsaved work. return to your work and try again.")
             .setPositiveButton(android.R.string.ok, null)
             .show()
+    }
+
+    /** a reply belongs to the captured transition; a failed check never permits leaving. */
+    private fun requestDocumentExit(stillCurrent: () -> Boolean, onDecision: (Boolean) -> Unit) {
+        if (!stillCurrent()) return
+        try {
+            webView.evaluateJavascript(
+                "(function(){try{var event=new Event('nexus:request-exit',{cancelable:true});" +
+                    "document.dispatchEvent(event);return event.defaultPrevented;}catch(error){return null;}})()",
+            ) { blocked ->
+                if (!stillCurrent()) return@evaluateJavascript
+                when (blocked) {
+                    "false" -> onDecision(true)
+                    "true" -> onDecision(false)
+                    else -> { onDecision(false); showExitFailure() }
+                }
+            }
+        } catch (error: RuntimeException) {
+            if (!stillCurrent()) return
+            Log.e("Nexus", "Could not check unsaved work before exit", error)
+            onDecision(false)
+            showExitFailure()
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -634,6 +674,7 @@ class MainActivity : AppCompatActivity() {
     internal fun routeUrl(uri: Uri) {
         if (isNativeAuthUri(uri)) { handleAuthUri(uri); return }
         if (!appRouter.isAppRoute(uri)) { openBrowser(uri); return }
+        pendingAppLinkSequence += 1
         val current = webView.url?.let(Uri::parse)
         if (current != null && appRouter.isAppRoute(current)) {
             pendingAppLink = uri
@@ -647,15 +688,26 @@ class MainActivity : AppCompatActivity() {
     /** The command owner acknowledges delivery; a boot or unbound document retains the latest link. */
     private fun flushAppLink() {
         val uri = pendingAppLink ?: return
-        if (isFinishing || isDestroyed || webView.url?.let { appRouter.isAppRoute(Uri.parse(it)) } != true) return
+        val current = webView.url?.let(Uri::parse) ?: return
+        if (isFinishing || isDestroyed || !appRouter.isAppRoute(current)) return
         val generation = appDocumentGeneration
+        val sequence = pendingAppLinkSequence
+        fun stillCurrent() = !isFinishing && !isDestroyed && generation == appDocumentGeneration &&
+            sequence == pendingAppLinkSequence && pendingAppLink == uri
+        if (isShareRoute(current) || isShareRoute(uri)) {
+            requestDocumentExit(::stillCurrent) { allowed ->
+                pendingAppLink = null
+                if (allowed) webView.loadUrl(uri.toString())
+            }
+            return
+        }
         val href = (uri.encodedPath ?: "/") + (uri.encodedQuery?.let { "?$it" } ?: "") +
             (uri.encodedFragment?.let { "#$it" } ?: "")
         webView.evaluateJavascript(
             "(function(){var event=new CustomEvent('nexus:navigate',{cancelable:true,detail:{href:" +
                 JSONObject.quote(href) + "}});window.dispatchEvent(event);return event.defaultPrevented;})()",
         ) { handled ->
-            if (handled == "true" && generation == appDocumentGeneration && pendingAppLink == uri) pendingAppLink = null
+            if (handled == "true" && stillCurrent()) pendingAppLink = null
         }
     }
 
@@ -726,6 +778,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isOwnedUrl(uri: Uri): Boolean = appRouter.isOwned(uri)
+
+    private fun isShareRoute(uri: Uri): Boolean = isOwnedUrl(uri) && uri.path == "/share"
 
     private fun openExternalUrl(uri: Uri) {
         if (uri.scheme == "http" || uri.scheme == "https") {

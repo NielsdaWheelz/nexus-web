@@ -53,3 +53,32 @@ javascript confirmations. asynchronous exit replies belong to the same live view
 and resume generation. sign-in opens main through its existing auth owner and
 retains the card; account replacement retires the old document. main/browser
 manual cards use ordinary workspace destinations, not activity callbacks.
+
+## main document routing
+
+main opens owned `/share` targets as standalone documents, preserving their query
+and fragment. crossing either way from a current app document asks its existing
+`nexus:request-exit` work guard before loading. intents, main-frame get links and
+popups use the same route owner. cold entry loads directly; workspace-to-workspace
+app links keep the existing `nexus:navigate` acknowledgement and hello redelivery.
+main still answers 404 for shared payload routes and never admits a capture by
+virtue of its shell identity. custom-tab authentication retains the active
+document; its existing challenge and callback owners do not navigate it.
+
+one activity-local sequence identifies each admitted app-route request, including
+successive requests for the same uri. delivery and guard replies must still own
+that sequence, pending uri and document generation. a standalone request is
+consumed on approval, denial or failed checking; an unhandled workspace delivery
+remains pending for its mounted command owner. page start advances document
+identity without discarding retained app links.
+
+native back first offers escape to the current document. an unconsumed press
+asks the document guard when current or previous native history is `/share`, or
+when an owned document has no history. the reply must still match the captured
+document, pending request and current/history destination. only the final
+accepted traversal or delegated exit clears that captured pending request,
+immediately before issuing the action. escape consumption, denial and failure
+retain it; a newer request or changed history makes the old reply inert. an
+acknowledgement during a back check can therefore require another press. history
+traversal keeps its native owner; a later veto does not restore an old pending
+request or trigger an automatic retry.
