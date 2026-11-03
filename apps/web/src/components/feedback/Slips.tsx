@@ -117,7 +117,18 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
     let observedFrame: HTMLElement | null = null;
     let observedContent: HTMLElement | null = null;
     const place = (geometry = false) => {
-      if (!geometry && anchor.hasAttribute("data-stage-held") && selected !== null) return;
+      const frame = anchor.querySelector<HTMLElement>("[aria-label='notices']");
+      if (frame !== observedFrame) {
+        if (observedFrame) observer.unobserve(observedFrame);
+        if (frame) observer.observe(frame);
+        observedFrame = frame;
+      }
+      if (!geometry && anchor.hasAttribute("data-stage-held") && selected !== null) {
+        frame?.toggleAttribute("data-scrolls", frame.scrollHeight > frame.clientHeight);
+        return;
+      }
+      const body = content.current;
+      if (!body) return;
       if (content.current !== observedContent) {
         if (observedContent) observer.unobserve(observedContent);
         if (content.current) observer.observe(content.current);
@@ -144,12 +155,6 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
         width: `${Math.max(0, band.right - band.left)}px`, height: `${Math.max(0, band.bottom - band.top)}px`,
       });
       anchor.removeAttribute("data-constrained");
-      const frame = anchor.querySelector<HTMLElement>("[aria-label='notices']");
-      if (frame !== observedFrame) {
-        if (observedFrame) observer.unobserve(observedFrame);
-        if (frame) observer.observe(frame);
-        observedFrame = frame;
-      }
       const coarse = matchMedia("(any-pointer: coarse)").matches;
       const fits = (index: number) => {
         const band = bands[index];
@@ -165,8 +170,6 @@ function ModalAnchor({ panel, content }: { panel: HTMLElement | null; content: R
       let band = bands[index];
       if (index < 0) {
         // This rectangle is an explicit family contract, never inferred from modal descendants.
-        const body = content.current;
-        if (!body) return;
         const c = body.getBoundingClientRect();
         const moving = panel.getBoundingClientRect();
         band = { left: Math.max(left, c.left - moving.left + p.left), right: Math.min(right, c.right - moving.left + p.left),
@@ -286,6 +289,10 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
       origin.current = from;
     },
   };
+  const controls = <>
+    {room.slips.length > 0 ? <Frame room={room} typing={typing} focus={focus} /> : null}
+    {room.tucked.length > 0 ? <Tab room={room} focus={focus} /> : null}
+  </>;
   const polite = room.speaks ? speech.Polite : null;
   const assertive = room.speaks ? speech.Assertive : null;
   return <>
@@ -293,8 +300,7 @@ function Room({ room, typing, speech }: { room: RoomView; typing: boolean; speec
       <Announcement text={polite?.text ?? ""} level="Polite" occurrence={polite?.occurrence} onPublish={() => stage.delivered("Polite")} />
       <Announcement text={assertive?.text ?? ""} level="Assertive" occurrence={assertive?.occurrence} onPublish={() => stage.delivered("Assertive")} />
     </>}
-    {room.slips.length > 0 ? <Frame room={room} typing={typing} focus={focus} /> : null}
-    {room.tucked.length > 0 ? <Tab room={room} focus={focus} /> : null}
+    {room.anchor.kind === "Modal" ? <div className={styles.modalGroup}>{controls}</div> : controls}
   </>;
 }
 
@@ -419,6 +425,12 @@ function Slip({ slip, stacked, frameLeaving, focus }: { slip: SlipView; stacked:
 function Tab({ room, focus }: { room: RoomView; focus: FocusHome }) {
   const stage = useStage();
   const element = useRef<HTMLButtonElement>(null);
+  const press = useRef<{ pointer: number; x: number; y: number } | null>(null);
+  const cancelClick = useRef(false);
+  const moved = (event: PointerEvent) => {
+    const start = press.current;
+    if (start?.pointer === event.pointerId) cancelClick.current ||= Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8;
+  };
   const count = room.tucked.length;
   useFocusReturn(element, focus.stay, focus.pass);
   return <button
@@ -429,7 +441,33 @@ function Tab({ room, focus }: { room: RoomView; focus: FocusHome }) {
     aria-label={count > 1 ? `show ${count} notices` : "show notice"}
     onFocus={focus.entered}
     onBlur={focus.left}
-    onClick={() => stage.restore(room.id)}
+    onPointerDown={event => {
+      if (!event.isPrimary || event.button !== 0) return;
+      press.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY };
+      cancelClick.current = false;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }}
+    onPointerMove={moved}
+    onPointerUp={event => {
+      if (press.current?.pointer !== event.pointerId) return;
+      moved(event);
+      press.current = null;
+    }}
+    onPointerCancel={event => {
+      if (press.current?.pointer !== event.pointerId) return;
+      cancelClick.current = true;
+      press.current = null;
+    }}
+    onLostPointerCapture={event => {
+      if (press.current?.pointer !== event.pointerId) return;
+      cancelClick.current = true;
+      press.current = null;
+    }}
+    onClick={event => {
+      if (event.detail > 0 && cancelClick.current) return;
+      stage.restore(room.id);
+      requestAnimationFrame(() => focus.frame.current?.scrollTo({ top: 0 }));
+    }}
     onKeyDown={event => {
       if (event.key !== "Escape") return;
       event.preventDefault();

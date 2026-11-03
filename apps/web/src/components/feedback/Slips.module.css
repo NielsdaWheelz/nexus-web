@@ -21,21 +21,49 @@
   --stage-tab-width: 44px;
 }
 
-/* A constrained body spends no height on backdrop separation. Its frame and restore control
-   have disjoint hit regions even when a new row lands while an unresolved one stays tucked. */
-.modalAnchor[data-constrained] { --stage-gap: 0px; }
-
-.modalAnchor[data-constrained] .frame {
-  inset-inline: 0 var(--stage-tab-width);
-  max-inline-size: min(22rem, 100% - var(--stage-tab-width));
+/* Modal controls share one centred overlay group. Its frame slot never changes with a tuck. */
+.modalGroup {
+  position: absolute;
+  inset-block: 0;
+  inset-inline: 12px;
+  inline-size: min(100% - 24px, 22rem + var(--stage-tab-width) + 12px);
+  margin-inline: auto;
+  pointer-events: none;
 }
 
-.modalAnchor[data-constrained] .row { align-items: flex-start; }
+.modalGroup > .frame {
+  inset-inline: 0 calc(var(--stage-tab-width) + 12px);
+  max-inline-size: calc(100% - var(--stage-tab-width) - 12px);
+}
 
-.modalAnchor[data-constrained] .tab {
+.modalGroup > .tab {
   inset-inline: auto 0;
   margin-inline: 0;
 }
+
+/* A constrained body spends no height on decoration; its edge is paint, not layout. */
+.modalAnchor[data-constrained] { --stage-gap: 0px; }
+
+.modalAnchor[data-constrained] > .modalGroup {
+  inset-inline: 0;
+  inline-size: min(100%, 22rem + var(--stage-tab-width));
+}
+
+.modalAnchor[data-constrained] .frame {
+  inset-inline: 0 var(--stage-tab-width);
+  max-inline-size: calc(100% - var(--stage-tab-width));
+  border: 0;
+  outline: 1px solid var(--edge);
+  outline-offset: -1px;
+}
+
+.modalAnchor[data-constrained] .row {
+  align-items: flex-start;
+  min-block-size: 0;
+  padding-block: 0;
+}
+
+.modalAnchor[data-constrained] .line { align-self: center; }
 
 /* Above the tab: a press on a standing slip belongs to the slip. */
 .frame {
@@ -242,6 +270,8 @@
 }
 
 @media (forced-colors: active) {
+  .modalAnchor[data-constrained] .frame { outline-color: CanvasText; }
+
   .frame {
     border-color: CanvasText;
     background: Canvas;
