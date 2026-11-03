@@ -1,5 +1,7 @@
 # outline command accessory above the ios keyboard is unobserved
 
+priority: deferred until this device/layout is used. no speculative change or ios qualification campaign is required now.
+
 status: open verification concern. the fix landed in the outline touch accessory
 change; no ios device or simulator was available to observe it.
 

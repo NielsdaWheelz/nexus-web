@@ -1,5 +1,7 @@
 # a move chord after a settled drop once refused "the outline changed"
 
+priority: deferred prototype inconvenience: retry the chord. investigate on recurrence or when changing arrangement admission.
+
 problem: once, on firefox, a `⌘⇧↑` pressed after an unhurried drop (the drop
 painted, selected and announced) refused with `the outline changed; try again`
 and the receipt "outline unchanged". the likeliest cause, unproven: the drop's own

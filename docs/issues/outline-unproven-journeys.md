@@ -1,5 +1,7 @@
 # outline journeys no case has run
 
+priority: deferred coverage inventory, not a release checklist. add focused proof when fixing a concrete defect or changing its owner; no exhaustive browser/device campaign is planned.
+
 status: verification gap, not a demonstrated defect. the outline redesign's lab
 cases (temporary, deleted at merge) proved the main journeys on chromium and
 firefox; the reviews named the following as reachable but never exercised, and no
@@ -45,7 +47,7 @@ presentation and clipboard:
 
 the android touch journey and the soft-keyboard repeat have their own records
 ([android journey](outline-android-touch-journey-unproven.md),
-[soft-keyboard repeat](outline-soft-keyboard-repeat-unfenced.md)).
+[soft-keyboard device proof](outline-soft-keyboard-boundary-device-proof.md)).
 
-resolved when each line above has a passing lab case or its own record for a
-defect found while writing one; delete lines as they are proven.
+delete lines when focused work proves them or the behavior leaves scope. this
+inventory does not require an exhaustive coverage project.

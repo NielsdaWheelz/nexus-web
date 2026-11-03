@@ -1,5 +1,7 @@
 # reference rows draw their scheme glyph larger than the row anatomy
 
+priority: deferred visual polish; current shared glyph sizing is acceptable for prototype use. revisit with the glyph owner if it is visually troublesome.
+
 problem: the outline row anatomy asks reference rows for a 14px scheme glyph at a
 1.5px stroke. `ResourceTypeIcon` draws every glyph at `--text-md` (16px) with
 stroke 2 (`apps/web/src/components/resources/ResourceType.tsx`,

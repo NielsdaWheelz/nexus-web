@@ -1,5 +1,7 @@
 # does android back reach the outline's escape handlers?
 
+priority: deferred to the focused android journey at the next apk; no speculative event guard is authorized by this concern alone.
+
 status: unproven verification concern, not a demonstrated defect.
 
 the android shell delivers back as a synthetic `Escape` keydown dispatched on
