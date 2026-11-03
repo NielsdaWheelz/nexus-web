@@ -7,9 +7,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
+import { useTransportVerbs } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import { transportVerbs, type CommandVerb, type Line, type Verbs } from "@/components/feedback/stage";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import { apiFetch, isApiError, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
@@ -28,6 +29,7 @@ const OPEN_FAILED = "couldn’t open your workspace.";
 const INITIAL_FACTS_TIMEOUT_MS = 5_000;
 
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
+  const transportVerbs = useTransportVerbs();
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string; presentations: InitialPresentations }) | null>(null);
   const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
@@ -122,7 +124,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
   if (failure) {
     if (!isApiError(failure)) return fact({ fact: OPEN_FAILED }, [retryVerb, signInVerb]);
     const transport = transportOf(failure);
-    return fact(TRANSPORT_LINES[transport].command(OPEN_FAILED), transportVerbs(transport, { retry: retryVerb, signIn: signInVerb }) ?? undefined);
+    return fact(TRANSPORT_LINES[transport].command(OPEN_FAILED), transport === "SignIn" ? [signInVerb] : transportVerbs(transport, { retry: retryVerb }) ?? undefined);
   }
   if (!binding) return <Ruling />;
   return <WorkProvider key={binding.account.account_id}><AuthenticatedWorkspaceErrorBoundary accountId={binding.account.account_id}><AuthenticatedShell

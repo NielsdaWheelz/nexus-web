@@ -1,7 +1,8 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useEffect, useRef, useState } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendVerbs } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
@@ -37,6 +38,7 @@ export default function AssistantWrites({
   const [revision, setRevision] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const { fail } = useOutcome();
+  const resendVerbs = useResendVerbs();
   // The server's undo is idempotent, so an unknown outcome's retry resends it.
   const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
   const focused = useRef<HTMLLIElement | null>(null);
@@ -79,7 +81,7 @@ export default function AssistantWrites({
       setUnknown(null);
       setRevision((current) => current + 1);
     } catch (caught) {
-      if (outcomeUnknown(caught) && caught.code !== "E_UNAUTHENTICATED") {
+      if (outcomeUnknown(caught)) {
         setUnknown(current => ({ id, attempt: current?.id === id ? current.attempt + 1 : 0 }));
         return;
       }
@@ -111,8 +113,8 @@ export default function AssistantWrites({
         </Button>
       }
     >
-      {unknown === null ? null : <Hold id={`assistant-write-undo:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved. it may have gone through." }}
-        verbs={[{ label: "retry", commandKey: "RetryUndoWrite", busy: busyId === unknown.id, run: () => void undo(unknown.id) }]} />}
+      {unknown === null ? null : <Hold id={`assistant-write-undo:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
+        verbs={resendVerbs({ label: "retry", commandKey: "RetryUndoWrite", busy: busyId === unknown.id, run: () => void undo(unknown.id) })} />}
       {list.status === "loading" ? <Ruling />
         : list.status === "failed" && list.failure !== null ? <Failed error={list.failure.error} noun="assistant writes" retry={{ run: list.retry, busy: list.running !== null }} />
         : list.complete && writes.length === 0 ? <Fact line={{ fact: generationId ? "no writes from this generation." : "no assistant writes yet." }} />

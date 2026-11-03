@@ -91,7 +91,7 @@ async function serve(request: ContentRequest): Promise<void> {
       failure:
         error instanceof CaptureFailureError
           ? error.failure
-          : { code: "E_CAPTURE_CONTENT", message: "nexus couldn’t read this page.", requestId: null },
+          : { code: "E_CAPTURE_CONTENT", message: "nexus couldn’t read this page.", requestId: null, status: null, offline: false },
     };
   }
   // a document's blob is copied by the background on receipt
@@ -315,7 +315,7 @@ async function download(
     if (aborter.signal.aborted) throw error;
     return {
       kind: "failed",
-      failure: { code: "E_CAPTURE_FETCH", message: "couldn’t download this link.", requestId: null },
+      failure: { code: "E_CAPTURE_FETCH", message: "couldn’t download this link.", requestId: null, status: null, offline: false },
     };
   }
   return readDocument(response, limits);

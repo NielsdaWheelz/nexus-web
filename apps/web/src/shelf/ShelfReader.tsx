@@ -33,6 +33,8 @@ import type {
 import {
   currentLocalContent,
   localMutation,
+  LocalMutationObservationError,
+  readLocalContent,
   type LocalItem,
 } from "@/lib/offline/localContent";
 import styles from "./shelf.module.css";
@@ -74,6 +76,7 @@ function shelfSource(mediaId: string, generation: number): ReaderSource {
  * The device position; mutations await a readable index covering the receipt. A save never touches canonical: in a conflict it moves the device side.
  */
 function shelfProgress(mediaId: string): ReaderProgressPort {
+  let observation: LocalMutationObservationError | null = null;
   const view = (): ProgressView => {
     const item = currentLocalContent().index?.items.find(
       (entry) => entry.media_id === mediaId,
@@ -83,12 +86,24 @@ function shelfProgress(mediaId: string): ReaderProgressPort {
     return item.progress.kind === "Canonical" ? item.progress : { ...item.progress, adoptUnresolved: item.progress.adopt_unresolved };
   };
   return {
-    load: async () => view(),
+    load: async () => {
+      if (observation !== null) {
+        // A retired adapter cannot borrow a later connection's cached index.
+        if (observation.observation.kind === "Retired") throw observation;
+        await readLocalContent(observation.observation.receipt);
+        observation = null;
+      }
+      return view();
+    },
     async save(locator, base) {
       try {
         await localMutation("save", { media_id: mediaId, locator, base_revision: base.revision,
           expected_reader_generation: base.expectedReaderGeneration, adopt_unresolved: base.adoptUnresolved });
       } catch (error) {
+        if (error instanceof LocalMutationObservationError) {
+          observation = error;
+          return { kind: "Unobserved", acceptance: error.observation.receipt === null ? "Unknown" : "Accepted", error };
+        }
         if (error instanceof Error && error.message === "ContentChanged") return { kind: "ContentChanged" };
         if (error instanceof Error && error.message === "Conflict") {
           const current = view();
@@ -100,7 +115,12 @@ function shelfProgress(mediaId: string): ReaderProgressPort {
       return { kind: "Device", view: view() };
     },
     async resolve(choice) {
-      await localMutation("resolve", { media_id: mediaId, choice });
+      try { await localMutation("resolve", { media_id: mediaId, choice }); }
+      catch (error) {
+        if (!(error instanceof LocalMutationObservationError)) throw error;
+        observation = error;
+        return { kind: "Unobserved", acceptance: error.observation.receipt === null ? "Unknown" : "Accepted", error };
+      }
       return view();
     },
   };

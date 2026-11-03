@@ -1,5 +1,6 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { Unlink } from "lucide-react";
 
 import { useState } from "react";
@@ -68,7 +69,7 @@ export default function SettingsIdentitiesPaneBody() {
       if (outcome === "Unlinked") identities.refetch();
       else say({ fact: UNLINK_FAILED });
     } catch (error) {
-      if (outcomeUnknown(error) && error.code !== "E_UNAUTHENTICATED") setUnknown(current => ({ id: identity.id, attempt: current?.id === identity.id ? current.attempt + 1 : 0 }));
+      if (outcomeUnknown(error)) setUnknown(current => ({ id: identity.id, attempt: current?.id === identity.id ? current.attempt + 1 : 0 }));
       else { setUnknown(null); fail(error, UNLINK_FAILED); }
     } finally {
       setUnlinking(null);
@@ -87,7 +88,7 @@ export default function SettingsIdentitiesPaneBody() {
           {identities.status === "loading" ? <Ruling />
             : identities.status === "failed" ? <Failed error={identities.error} noun="linked identities" retry={{ run: identities.refetch, busy: identities.retrying }} />
             : null}
-          {unknown === null ? null : <Hold id={`unlink-identity:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved. it may have gone through." }} />}
+          {unknown === null ? null : <Hold id={`unlink-identity:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }} />}
           {ready === null ? null : (
             <>
               {ready.data.length === 0 ? (

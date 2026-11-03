@@ -1,12 +1,13 @@
 "use client";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { createContext, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { CircleUser, Download, LogOut } from "lucide-react";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
 import collection from "@/components/ui/Collection.module.css";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type CommandVerb, type Line } from "@/components/feedback/stage";
+import { Hold, useOutcome, useTransportVerbs } from "@/components/feedback/Feedback";
+import type { CommandVerb, Line, Verb } from "@/components/feedback/stage";
 import { isApiError } from "@/lib/api/client";
 import { conditionLine, MARK, useCondition, type Condition, type Mark } from "@/lib/account/condition";
 import { installedApp, publishAdmission, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
@@ -38,7 +39,7 @@ const SignOutContext = createContext<{ request: () => void; busy: boolean } | nu
 /** The person declined discarding device-only writing; nothing was retired. */
 class SignOutDeclined extends Error {}
 const NOT_SIGNED_OUT = { fact: "couldn’t sign out.", reason: "you’re still signed in." };
-const UNKNOWN = { fact: "not sure that saved. it may have gone through." };
+const UNKNOWN = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 
 /** One guarded exit. Authored writing drains or is deliberately discarded and its
  * account retired before the session ends; declining leaves everything intact. A sign-out
@@ -128,6 +129,7 @@ export default function AccountMenu(props: {
   ) => ReactNode;
   onNavigate: (event: TargetActivationEvent, item: NavItem) => AppNavActivationResult;
 }) {
+  const updateVerb = useTransportVerbs()("Update")?.[0] ?? null;
   const workspace = useWorkspaceStore();
   const { signIn, busy: signingIn } = useAuthoredSignIn();
   const signOut = useContext(SignOutContext);
@@ -142,8 +144,7 @@ export default function AccountMenu(props: {
   useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const descriptionId = useId();
   const count = summary.status === "ready" ? summary.data.needs_attention_count : null;
-  const refresh_failed = summary.status === "ready" && summary.error !== null;
-  const attention = count !== null && count > 0 ? importAttentionDescription(count, refresh_failed) : null;
+  const attention = count !== null && count > 0 ? importAttentionDescription(count) : null;
   const mark = mobile ? null : condition !== null && MARK[condition] === "Solid" || attention !== null ? "Solid" : condition !== null ? "Hollow" : null;
   // The dot keeps its last shape through its fade out, so a healing mark never reads as another.
   const [shape, setShape] = useState<Mark>("Solid");
@@ -153,6 +154,7 @@ export default function AccountMenu(props: {
   const preparation = status === "syncing" ? detail : null;
   const live = accountRows(condition, commitFailed, preparation, {
     signIn: { busy: signingIn || (signOut?.busy ?? false), run: signIn },
+    update: updateVerb,
     restart: () => { if (guard.confirmDocumentExit()) window.location.reload(); },
   });
   const [latched, setLatched] = useState<readonly ActionDescriptor[] | null>(null);
@@ -183,7 +185,7 @@ export default function AccountMenu(props: {
         }}
       >
         <item.icon size={16} className={collection.adornment} aria-hidden="true" />
-        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} count={count} refresh_failed={refresh_failed} /> : <span className={collection.content}>{item.label}</span>}
+        {item === NAV_IMPORTS ? <ImportsBadge label={item.label} count={count} /> : <span className={collection.content}>{item.label}</span>}
       </a>
     ),
   });
@@ -244,7 +246,7 @@ export default function AccountMenu(props: {
   );
 }
 
-type RowVerbs = { signIn: { busy: boolean; run: () => void }; restart: () => void };
+type RowVerbs = { update: Verb | null; signIn: { busy: boolean; run: () => void }; restart: () => void };
 
 /** The condition's row and its verb, then a running preparation's row: each holds a row of its own. */
 function accountRows(condition: Condition | null, commitFailed: boolean, preparation: string | null, verbs: RowVerbs): ActionDescriptor[] {
@@ -265,7 +267,7 @@ function conditionVerb(condition: Condition, verbs: RowVerbs): ActionDescriptor 
     case "Stopped":
     case "SyncLocal": return verb("restart", "restart nexus", verbs.restart);
     case "Update": {
-      const reload = transportVerbs("Update", { signIn: null })?.[0];
+      const reload = verbs.update;
       return reload && "run" in reload ? verb("reload", reload.label, detail => reload.run(detail.openIntent)) : null;
     }
     case "SignIn": return verb("sign-in", "sign in", verbs.signIn.run, verbs.signIn.busy);
