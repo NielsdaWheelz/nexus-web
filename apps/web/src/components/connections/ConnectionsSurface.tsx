@@ -8,7 +8,7 @@ import * as Icon from "@/lib/ui/icons";
 // which may fail without hiding local writing. Until anything has shown, the body
 // is a ruling; a local storage failure says so until its rows have shown, and a
 // defect in any local read throws to the boundary.
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -132,7 +132,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   const owner = useResourceDraft<ScanState>(`Connections.Scan:${selfRef}`, () => ({ phase: "idle", operation: null, held: null, deadline: 0, defect: null }),
     value => ({ changed: false, unconfirmed: value.operation?.command === "StartScan" || value.held?.kind === "Unsure", stopsBrowserWork: false }));
   const mounted = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { phase, held } = owner.value;
   const hold = (kind: "Unsure" | "Waiting") => owner.set(current => ({ ...current, phase: "idle", operation: null,
     held: { kind, attempt: current.held?.kind === kind ? current.held.attempt + 1 : 0 } }));
@@ -188,7 +188,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   // An auxiliary read resumes only an active job; old outcomes are no news and cannot answer a
   // pending start. Its snapshot fence also prevents a late read from replacing deliberate work.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || owner.read().phase !== "idle") return;
     let cancelled = false;
     const snapshot = owner.read();
     void fetchDiscoveryScanStatus(selfRef).then(state => {

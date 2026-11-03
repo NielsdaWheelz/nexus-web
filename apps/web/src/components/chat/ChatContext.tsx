@@ -154,16 +154,17 @@ function ContextIndexItem({ entry, conversationId, pending, recovery, onRemove, 
     if (pending?.busy || waits) return;
     if (await onRemove(label) && document.activeElement === removeButton.current) afterRemoval()?.focus({ preventScroll: true });
   };
-  const status = authored?.data ? `${type} unavailable` : type;
+  const absent = authored?.data?.scope_available === true && item === null;
+  const status = absent ? `${type} unavailable` : type;
   const supporting = <>
-    {authored?.data && item === null ? <span>not on this device.</span> : null}
+    {absent ? <span>not on this device.</span> : null}
     {annotation ? <a className={styles.note} href={`/highlights/${parsed.id}#annotation`} data-workspace-rich-target="true"
       onClick={event => activateTargetLink({event, runtime: pane, target: {href: `/highlights/${parsed.id}#annotation`, labelHint: item?.label}})}
       onKeyDown={event => activateTargetLink({event, runtime: pane, target: {href: `/highlights/${parsed.id}#annotation`, labelHint: item?.label}})}>
       <span className={styles.notePrefix}>annotation: </span>{annotation.body_text || "rich annotation"}
     </a> : null}
   </>;
-  const hasSupport = Boolean(authored?.data && item === null || annotation);
+  const hasSupport = Boolean(absent || annotation);
   return <>
     {waits ? <span id={waitsId} className="sr-only">{waitReason}</span> : null}
     {authored ? <AuthoredReadFailure {...authored} title="couldn’t load this item." /> : null}

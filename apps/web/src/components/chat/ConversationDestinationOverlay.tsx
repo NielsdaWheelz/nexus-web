@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { Ruling } from "@/components/feedback/Ruling";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -114,7 +115,7 @@ function Picker({ mediaId, hasSourceChats, onSelect, scrollRef }: {
       onKeyDown={event => { if (bindings.handleKey(event.nativeEvent, composing.current)) { event.preventDefault(); event.stopPropagation(); } }} />
     <div ref={scrollRef} className={styles.destinationBody}>
     {failed ? <Failed error={failed.error} noun="chats" retry={{ run: () => void failed.refetch(), busy: failed.retrying }} />
-      : selectable && items.length === 0 ? <Fact line={{ fact: emptyTitle }} /> : null}
+      : page.status === "loading" ? <Ruling /> : selectable && items.length === 0 ? <Fact line={{ fact: emptyTitle }} /> : null}
     <div {...bindings.listProps} ref={bindings.listRef} className={collection.compactViewport}>
       {items.map(item => {
         const presentation = presentConversationListItem(item, env, nowMs);
