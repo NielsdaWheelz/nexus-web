@@ -121,6 +121,12 @@ function recoveryPage(raw: unknown): Schema<"RecoveryCandidatePage"> {
   }, "recovery candidates"), next_cursor: value.next_cursor === null ? null : expectString(value.next_cursor, "next cursor") };
 }
 
+/** Same-system envelopes stop this installed capture host; they are not refusals.
+ * justify-defect: these codes denote broken server/client invariants, not domain outcomes. */
+export function isCaptureDefect(code: string): boolean {
+  return code === "E_INTERNAL" || code === "E_UNKNOWN" || code === "E_INVALID_RESPONSE" || code === "E_CAPTURE_DEFECT" || code === "E_CAPTURE_CONTENT";
+}
+
 async function call<T>(
   token: string,
   method: "GET" | "POST" | "DELETE",
@@ -159,9 +165,14 @@ async function call<T>(
   if (typeof error?.code === "string") {
     const requestId =
       typeof error.request_id === "string" ? error.request_id : null;
+    if (isCaptureDefect(error.code)) {
+      console.error("capture server defect:", { status: response.status, error });
+      throw failure(error.code, "nexus capture stopped unexpectedly.", requestId, response.status);
+    }
     throw failure(error.code, refusal(error.code, response.status), requestId, response.status);
   }
-  throw failure("E_UNKNOWN", refusal("E_UNKNOWN", response.status), null, response.status);
+  console.error("capture server defect:", { status: response.status, response: json });
+  throw failure("E_UNKNOWN", "nexus capture stopped unexpectedly.", null, response.status);
 }
 
 /** What the popup says of a refusal: its transport's reason, never the server's own text. */
@@ -181,7 +192,7 @@ export function nexus(token: string) {
       try {
         await call<void>(token, "DELETE", "/session", undefined, signal);
       } catch (error) {
-        if (!(error instanceof CaptureFailureError && error.status === 401))
+        if (!(error instanceof CaptureFailureError && error.status === 401 && !isCaptureDefect(error.failure.code)))
           throw error;
       }
     },
