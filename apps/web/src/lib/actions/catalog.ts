@@ -37,7 +37,6 @@ import {
 import type { Line } from "@/components/feedback/stage";
 import { outcomeUnknown, type ApiError } from "@/lib/api/client";
 import { admissionReason as currentAdmissionReason } from "@/lib/api/failure";
-import { CONFLICT_REASON } from "@/lib/imports/copy";
 
 type Group =
   | "Navigate"
@@ -350,9 +349,9 @@ export function actionOutcome(id: ActionId, label: string, title: string, error:
     case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
   }
   if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact: "couldn’t change the lectern.", reason: "it changed since this menu opened." });
+    return domain({ fact: "couldn’t change the lectern." });
   if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact, reason: CONFLICT_REASON });
+    return domain({ fact });
   if (outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
   switch (error.code) {
     case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu was out of date. reopen it." });

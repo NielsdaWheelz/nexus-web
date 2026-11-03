@@ -19,7 +19,6 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchBrowsePreview, type BrowsePreview } from "@/lib/browse/api";
 import { isAbortError } from "@/lib/errors";
-import { CONFLICT_REASON } from "@/lib/imports/copy";
 import { publishImportsInvalidation } from "@/lib/imports/api";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { acquirePreviewMedia, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance } from "@/lib/imports/ingest";
@@ -94,7 +93,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       ? { line: { fact: `not sure “${operation.subject.title}” was saved.`, reason: UNKNOWN_OUTCOME_REASON }, unknown: true, review: false,
         busy: false, error: outcomeUnknown(error) ? null : error }
       : unavailable ? UNAVAILABLE(operation)
-      : code === "E_RESOURCE_CONFLICT" ? { line: addLine(operation, CONFLICT_REASON), unknown: false, review: true, error: null }
+      : code === "E_RESOURCE_CONFLICT" ? { line: addLine(operation), unknown: false, review: true, error: null }
       : code === "E_FORBIDDEN" || code === "E_LIBRARY_FORBIDDEN" ? { line: addLine(operation, `you can’t add to ${destinationLabel(operation.destination)}.`), unknown: false, review: true, error: null }
       : { line: operation.accepted === null ? { fact: `couldn’t import “${operation.subject.title}”.` } : addLine(operation), unknown: false, review: false, error };
     update(id, value => ({ ...value, phase: unavailable && !failure.unknown ? "unavailable" : value.phase, failure }));
