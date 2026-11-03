@@ -3,13 +3,14 @@
 /** Nothing to show yet, in the empty region. Six hairlines that css alone brings in, so a fast
  * read paints nothing; it unmounts the frame content lands. The active region says `opening` once.
  *
- * A region (its modal, else its pane, else the host) carries a wait across a handoff: a ruling
- * that mounts within a frame of the region's last one leaving continues that one's clock, so a
- * cold open that passes through several reads fades in once and shows `still opening` 8s after it
+ * A region is its modal, else the source its pane shows, else the host, so a navigation begins a
+ * new wait whatever stood before it. A region carries a wait across a handoff: a ruling that
+ * mounts within a frame of the region's last one leaving continues that one's clock, so a cold
+ * open that passes through several reads fades in once and shows `still opening` 8s after it
  * began. A ruling that mounts beside one still standing keeps its own clock, so a fast read there
  * paints nothing. While any of a region's rulings stand, it says `opening` once. */
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { paneSourceKey, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { OverlayContext } from "@/lib/ui/overlay";
 import { Announcement, useActiveRegion } from "./Feedback";
 import styles from "./Ruling.module.css";
@@ -23,8 +24,8 @@ const HOST = {};
 
 export function Ruling() {
   const overlay = useContext(OverlayContext);
-  const paneId = usePaneRuntime()?.paneId ?? null;
-  const region = overlay ?? paneId ?? HOST;
+  const runtime = usePaneRuntime();
+  const region = overlay ?? (runtime ? paneSourceKey(runtime) : HOST);
   const active = useActiveRegion();
   const element = useRef<HTMLDivElement>(null);
   const joined = useRef<{ wait: Wait; start: number } | null>(null);
