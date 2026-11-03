@@ -9,6 +9,7 @@
 // dropped, and a causal caller waits until the index it can read covers its receipt.
 import { useSyncExternalStore } from "react";
 import { WIRE_HEADER } from "@/lib/api/client";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import { publishChange } from "@/lib/api/changes";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { CursorSnapshot, Locator } from "@/lib/documentReader/model";
@@ -240,6 +241,7 @@ async function fetchIndex(path: string): Promise<LocalIndex | { readonly code: s
 async function readIndex(): Promise<void> {
   if (reading || binding === null) return;
   reading = true;
+  for (const listener of listeners) listener();
   const mine = lifetime;
   const { accountId, indexPath } = binding;
   try {
@@ -263,7 +265,10 @@ async function readIndex(): Promise<void> {
       }
     }
   } finally {
-    if (mine === lifetime) reading = false;
+    if (mine === lifetime) {
+      reading = false;
+      for (const listener of listeners) listener();
+    }
   }
 }
 
@@ -374,7 +379,10 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function useLocalContent(): LocalContentState {
-  return useSyncExternalStore(subscribe, currentLocalContent, () => EMPTY);
+  const state = useSyncExternalStore(subscribe, currentLocalContent, () => EMPTY);
+  const running = useSyncExternalStore(subscribe, () => reading, () => false);
+  useFailedReadRepair(state.error !== null, running, () => { void readIndex(); });
+  return state;
 }
 
 /** The Ready episode's downloaded acquisition, independent of catalog and remote reads. */

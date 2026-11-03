@@ -8,12 +8,12 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Announcement, FeedbackProvider } from "@/components/feedback/Feedback";
+import { Announcement, FeedbackProvider, Hold, useTransportVerbs, useResendVerbs } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
-import { sentence, transportVerbs, type CommandVerb, type Line, type Shell } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
+import { sentence, type CommandVerb, type Line, type Shell } from "@/components/feedback/stage";
+import { UNKNOWN_OUTCOME_REASON, TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
@@ -40,21 +40,22 @@ import styles from "./share.module.css";
 type Result =
   | { label: string; ok: true; status: string; path: string; available: boolean }
   /** `transport` is an api refusal's, whose verbs it decides; null is a local note's, whose verb is `retry`. */
-  | { label: string; ok: false; transport: Transport | null; review: boolean; local_commit: boolean; line: Line };
+  | { label: string; ok: false; transport: Transport | null; recovery: "Retry" | "Review" | "Unknown"; attempt: number; local_commit: boolean; line: Line };
 
 const SAVE_FAILED = "couldn’t save this.";
 /** A refusal as a result row: sign-in is the workspace's; an unknown outcome resends the same id; a
  * domain refusal takes L6's domain line; anything else its transport's. Its verbs are the
  * transport's, so a stale build offers reload alone. */
-function failed(label: string, error: unknown): Extract<Result, { ok: false }> {
+function failed(label: string, error: unknown, attempt = 0, unknown = outcomeUnknown(error)): Extract<Result, { ok: false }> {
   if (!isApiError(error)) throw error;
   const transport = transportOf(error);
+  const review = ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code);
   const domain = transport === "Refused" ? captureErrorFeedback(error, "SaveSource").message : undefined;
-  const line = transport === "SignIn" ? { fact: "sign in to save this." }
-    : outcomeUnknown(error) ? { fact: "not sure that saved. it may have gone through." }
+  const line = unknown ? { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }
+    : transport === "SignIn" ? { fact: "sign in to save this." }
     : transport !== "Refused" ? TRANSPORT_LINES[transport].command(SAVE_FAILED)
     : domain === undefined ? { fact: SAVE_FAILED } : { fact: SAVE_FAILED, reason: domain };
-  return { label, ok: false, transport, local_commit: false, review: ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), line };
+  return { label, ok: false, transport, local_commit: false, recovery: unknown ? "Unknown" : review ? "Review" : "Retry", attempt, line };
 }
 
 /** No local binding yet, or a share made for another account than the one open here. */
@@ -72,6 +73,7 @@ export default function ShareCapture(props: { text: string; isShell: boolean }) 
 }
 const NOT_OPENED = "couldn’t open your notes on this device.";
 function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
+  const transportVerbs = useTransportVerbs();
   const plain = props.text.trim() !== "" && extractUrls(props.text).length === 0;
   const [account, setAccount] = useState<ShareAccount | null>(null);
   const [failure, setFailure] = useState<unknown | null>(null);
@@ -107,7 +109,7 @@ function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
       : <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />;
     if (!isApiError(failure)) return <Fact line={{ fact: NOT_OPENED }} verbs={[retryAdmission]} speak />;
     const transport = transportOf(failure);
-    return <Fact line={TRANSPORT_LINES[transport].command(NOT_OPENED)} verbs={transportVerbs(transport, { retry: retryAdmission, signIn: SHELL.signIn }) ?? undefined} speak />;
+    return <Fact line={TRANSPORT_LINES[transport].command(NOT_OPENED)} verbs={transportVerbs(transport, { retry: retryAdmission }) ?? undefined} speak />;
   }
   if (plain && !account) return <Ruling />;
   return <WorkProvider>{plain && account ? <AuthoredProvider accountId={account.user_id} host="share"><ShareCaptureContent {...props} account={account} /></AuthoredProvider> : <ShareCaptureContent {...props} account={null} />}</WorkProvider>;
@@ -134,7 +136,7 @@ function ShareCaptureContent({
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard;unconfirmed:boolean }>());
+  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard;unconfirmed:boolean;attempt:number }>());
   const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
   const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: Promise<boolean>; failure: LocalCommitError | null; committed: boolean; check: () => Promise<boolean>; run: () => Promise<boolean> } | null>(null);
   const sentAttempt = useRef<number | null>(null);
@@ -207,7 +209,7 @@ function ShareCaptureContent({
         }, () => {});
       } else if (!isAuthoredStorageFailure(error)) { if(active)setDefect({error}); return; }
       // `save` is the retry: it checks a committed note, or saves again.
-      if(active)setResults([{label:trimmed,ok:false,transport:null,review:false,local_commit:error instanceof LocalCommitError,
+      if(active)setResults([{label:trimmed,ok:false,transport:null,recovery:"Retry",attempt,local_commit:error instanceof LocalCommitError,
         line:{fact:current.committed?"couldn’t confirm this note on this device.":"couldn’t save this note on this device."}}]);
     };
     void current.capture.then(accepted, failed).finally(()=>{if(active)setSaving(false);});
@@ -219,6 +221,7 @@ function ShareCaptureContent({
   async function saveUrl(url: string): Promise<Result> {
     const command = commands.current.get(url);
     if (command === undefined) throw new Error("share submission has no frozen acquisition command");
+    const previouslyUnknown = command.unconfirmed;
     try {
       command.unconfirmed=true;
       const accepted = await addMediaFromUrl({ url,id:command.id,guard:command.guard });
@@ -231,9 +234,10 @@ function ShareCaptureContent({
         path: accepted.href,
       };
     } catch (error) {
-      command.unconfirmed=outcomeUnknown(error);
-      if (isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
-      return failed(url, error);
+      command.unconfirmed = previouslyUnknown || outcomeUnknown(error);
+      command.attempt += 1;
+      if (!command.unconfirmed && isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
+      return failed(url, error, command.attempt, command.unconfirmed);
     }
   }
 
@@ -244,7 +248,7 @@ function ShareCaptureContent({
     try {
       if (targets.some(url => !commands.current.has(url))) {
         const snapshot = await libraryDestinations();
-        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false });
+        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false,attempt:0 });
       }
     } catch (error) {
       if (isApiError(error)) setResults(targets.map(url => failed(url, error)));
@@ -275,7 +279,7 @@ function ShareCaptureContent({
 
   const retry = (result: Result) => {
     if (saving) return;
-  if (urls.length > 0 && !result.ok && result.review) {
+  if (urls.length > 0 && !result.ok && result.recovery === "Review") {
       setSaving(true);
       void libraryDestinations().then(snapshot => {
         const current = new Map(snapshot.destinations.map(destination => [destination.id, destination]));
@@ -360,8 +364,8 @@ function ShareCaptureContent({
           onCreate: name => creation.admit({ name, scope: trimmed,
             onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
           }) }}
-        error={creation.error}
       />
+      {creation.holds}
       {results?.filter((result): result is Extract<Result, { ok: false }> => !result.ok).map(result => <CaptureFailure key={result.label} result={result} saving={saving} retry={() => retry(result)} />)}
       <div className={styles.actions}>
         <Button
@@ -388,9 +392,12 @@ function ShareCaptureContent({
 /** A failed result on its row. `review libraries` opens review; `retry` sends. Every settle makes a
  * new result, so a failed retry speaks again while the row and the verb under the hand stand. */
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
-  const verb: CommandVerb = { label: result.review ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving };
+  const transportVerbs = useTransportVerbs();
+  const resendVerbs = useResendVerbs();
+  const verb: CommandVerb = { label: result.recovery === "Review" ? "review libraries" : "retry", commandKey: "RetryCaptureResult", run: retry, busy: saving };
+  if (result.recovery === "Unknown") return <Hold id={`share-capture:${result.label}`} attempt={result.attempt} line={result.line} verbs={resendVerbs(verb)} />;
   return <>
-    <Fact line={result.line} verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb, signIn: SHELL.signIn })) ?? undefined} />
+    <Fact line={result.line} verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb })) ?? undefined} />
     <Announcement text={sentence(result.line)} level="Polite" occurrence={result} />
   </>;
 }
