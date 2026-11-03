@@ -134,7 +134,7 @@ interface Draft {
 let token: string | null = null;
 let accountEpoch = 0;
 let session: (ExtensionSession & { client: Nexus }) | null = null;
-let revocationFailure: CaptureFailure | null = null;
+let revocationFailure: ViewState["revocationFailure"] = null;
 let draft: Draft | null = null;
 let unsupported: string | null = null;
 let checkingFailed = false;
@@ -590,17 +590,23 @@ async function reopenPopup(windowId: number): Promise<void> {
 async function disconnect(signal: AbortSignal): Promise<void> {
   if (token === null)
     throw failure("E_CAPTURE_SIGNED_OUT", "not signed in to nexus.");
+  const credential = token;
   await awaitOrigins(signal);
   try {
-    await nexus(token).revoke(signal);
+    await nexus(credential).revoke(signal);
   } catch (error) {
     if (isAbortError(error)) throw error;
-    revocationFailure = await describe(error);
+    if (token !== credential) return;
+    const unknown = revocationFailure?.kind === "Unknown" || error instanceof CaptureFailureError &&
+      !writeRefused({ sent: true, status: error.status, code: error.failure.code });
+    const shown = await describe(error, credential);
+    if (token !== credential) return;
+    revocationFailure = { kind: unknown ? "Unknown" : "Refused", failure: shown, attempt: (revocationFailure?.attempt ?? 0) + 1 };
     session = null;
     pushState();
     return;
   }
-  await forgetCredential();
+  if (token === credential) await forgetCredential();
 }
 
 // --- pinning -------------------------------------------------------------------
@@ -618,10 +624,10 @@ async function activate(): Promise<void> {
       lastFocusedWindow: true,
     });
     if (tab?.id === undefined || tab.windowId === undefined || !tab.url) {
-      return setDraft(draft, "Nexus cannot read this tab.");
+      return setDraft(draft, "nexus can’t read this tab.");
     }
     if (!/^https?:$/.test(new URL(tab.url).protocol)) {
-      return setDraft(draft, "Only http(s) pages can be saved.");
+      return setDraft(draft, "only http and https pages can be saved.");
     }
     // the receipt stays until the user leaves its page
     if (draft !== null && pageOf(draft) === tab.url) return;
@@ -860,7 +866,7 @@ async function inject(
           reject(
             failure(
               "E_CAPTURE_PAGE_GONE",
-              "the page changed before nexus finished reading it.",
+              "couldn’t finish reading this page.",
             ),
           ),
         );
@@ -1123,7 +1129,7 @@ async function acquireDocument(
     }
     throw failure(
       "E_CAPTURE_PAGE_GONE",
-      "the page with this link is gone. right-click the link again.",
+      "couldn’t read this link’s page. right-click the link again.",
     );
   }
   const reply = await injection.request({

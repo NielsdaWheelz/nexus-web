@@ -69,7 +69,7 @@ const SIGN_IN_CODES = new Set(["E_UNAUTHENTICATED", "E_CAPTURE_SIGNED_OUT", "E_C
 const RECAPTURE: Partial<Record<string, string>> = {
   E_CAPTURE_TARGET_CHANGED: "this import changed since capture.",
   E_UPLOAD_CAPABILITY_EXPIRED: "this upload expired.",
-  E_STORAGE_MISSING: "nexus didn’t receive this upload.",
+  E_STORAGE_MISSING: "the uploaded file isn’t available.",
 };
 
 /** "https://nexus.example/*" -> "nexus.example" */
@@ -228,16 +228,16 @@ function Popup() {
       ) : (
         state.checkingFailed ? <Fact line={{ fact: "couldn’t check this page." }} verbs={[{ label: "retry", commandKey: "RetryChecking", run: () => sendWithOrigins({ kind: "retry_checking" }) }]} />
           : state.unsupported !== null ? <Fact line={{ fact: "this page can’t be saved.", reason: state.unsupported }} />
-          : <Fact line={{ fact: "open a web page, PDF or EPUB to save it." }} />
+          : <Fact line={{ fact: "open a web page, pdf or epub to save it." }} />
       )}
 
       {state.revocationFailure !== null ? (
         // Revocation keeps the credential until nexus confirms it.
-        <Hold id="capture-revocation" line={{ fact: "couldn’t disconnect from nexus.", reason: "this browser stays signed in." }}
+        <Hold id="capture-revocation" attempt={state.revocationFailure.attempt} line={state.revocationFailure.kind === "Unknown" ? { fact: "not sure disconnection finished.", reason: UNKNOWN_OUTCOME_REASON } : { fact: "couldn’t disconnect from nexus." }}
           verbs={[{ label: "retry", commandKey: "RetryDisconnect", run: () => sendWithOrigins({ kind: "disconnect" }) }]} />
       ) : null}
       {account === null ? (
-        <Fact line={{ fact: "not signed in." }} verbs={[SIGN_IN]} />
+        state.revocationFailure === null ? <Fact line={{ fact: "not signed in." }} verbs={[SIGN_IN]} /> : null
       ) : (
         <div className={styles.account}>
           <span className={styles.accountName}>

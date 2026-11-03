@@ -243,7 +243,7 @@ export default function ImportInspector({
         if (slot === null) return null;
         const detailLine = [
           slot.recovery?.kind !== "BrowserCapture" && slot.classification === "NeedsAttention" && slot.failure_code !== null
-            ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,
+            ? [`${importFailureCopy(slot.failure_code).reason}.`, importFailureCopy(slot.failure_code).explanation].filter(part => part !== null).join(" ") : null,
           recoveryLine(slot),
           slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
             ? `choose the original file: ${item.original_filename}` : null,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Ruling } from "@/components/feedback/Ruling";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
@@ -408,6 +409,7 @@ export default function OracleReadingPaneBody() {
             </section>
           )}
 
+          {reading === null && detail.status === "loading" ? <Ruling /> : null}
           {detail.status === "failed" ? detail.error.code === "E_NOT_FOUND" ? <Fact line={{ fact: "this reading doesn’t exist." }} />
             : <Failed error={detail.error} noun="readings" retry={{ run: reload, busy: detail.retrying }} />
             : watchLost ? <Failed error={lost.error} noun="live updates" retry={{ run: reload, busy: lost.load !== loads }} /> : null}
