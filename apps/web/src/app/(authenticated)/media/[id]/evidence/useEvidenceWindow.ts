@@ -20,16 +20,20 @@ type Clock = {kind: "still"} | {kind: "moving"; timer: number} | {kind: "due"};
 /** Window rest: this long since an offset last changed. It must outlast child reads. */
 const REST_MS = 1000;
 
-/** #884's policy: the first fully visible row, else the clipped one. */
-export function firstVisibleRow(list: HTMLElement, top: number, bottom: number): HTMLElement | null {
-  let clipped: HTMLElement | null = null;
-  for (const row of list.querySelectorAll<HTMLElement>("[data-group]:not([hidden])")) {
-    const rect = row.getBoundingClientRect();
-    if (rect.height === 0 || rect.bottom <= top || rect.top >= bottom) continue;
-    if (rect.top >= top) return row;
-    clipped ??= row;
+/** #884's policy, shared by current boxes and the last committed layout. */
+function firstVisible<T>(items: Iterable<T>, top: number, bottom: number, bounds: (item: T) => {top: number; bottom: number} | null): T | null {
+  let clipped: T | null = null;
+  for (const item of items) {
+    const rect = bounds(item);
+    if (rect === null || rect.bottom <= rect.top || rect.bottom <= top || rect.top >= bottom) continue;
+    if (rect.top >= top) return item;
+    clipped ??= item;
   }
   return clipped;
+}
+
+export function firstVisibleRow(list: HTMLElement, top: number, bottom: number): HTMLElement | null {
+  return firstVisible(list.querySelectorAll<HTMLElement>("[data-group]:not([hidden])"), top, bottom, row => row.getBoundingClientRect());
 }
 
 function offsetsOf(slots: readonly EvidenceSlot[], heights: ReadonlyMap<string, number>): number[] {
@@ -69,8 +73,8 @@ export function useEvidenceWindow(input: {
   const [, setRevision] = useState(0);
   const latest = useRef(input);
   const frame = useRef<Frame>({top: 0, bottom: 900});
-  // What the last commit rendered from; `dirty` marks offsets that memory has changed since.
-  const committed = useRef({scope, slots, offsets: [0], range: [] as string[], dirty: true});
+  // The committed layout, including actual mounted heights; memory predicts only the next window.
+  const committed = useRef({scope, slots, offsets: [0], range: [] as string[]});
   const anchor = useRef<ListAnchor | null>(null);
   // A row whose external hold ended, for the next commit to anchor.
   const released = useRef<string | null>(null);
@@ -108,13 +112,53 @@ export function useEvidenceWindow(input: {
     clock.current = {kind: "moving", timer: window.setTimeout(() => {clock.current = {kind: "due"}; frames.current?.request();}, REST_MS)};
   }, []);
   const moving = useCallback(() => clock.current.kind !== "still", []);
+  const measure = useCallback(() => {
+    const before = committed.current, measured = [0];
+    for (let index = 0; index < before.slots.length; index++) {
+      const slot = before.slots[index], row = rows.current.get(slot.key);
+      const height = slot.estimate === 0 ? 0 : row && !row.hidden ? row.getBoundingClientRect().height : before.offsets[index + 1] - before.offsets[index];
+      measured.push(measured.at(-1)! + height);
+    }
+    committed.current.offsets = measured;
+  }, []);
+  // Outside resize delivery: changing an observed ancestor there loses notifications.
+  const publishExtent = useCallback(() => {
+    const list = root.current, scroll = port.current;
+    if (list && scroll) {
+      // Keep the last extent until compensation runs: shrinking children must not clamp the
+      // browser's offset first. Releasing this floor acknowledges only its own clamp, not input.
+      const from = scroll.scrollTop;
+      list.style.minHeight = latest.current.aligned ? "" : `${committed.current.offsets.at(-1)!}px`;
+      seen.current.port += scroll.scrollTop - from;
+    }
+  }, [port, root]);
   /** C3: the anchor moves only with the scroll. Any other move is absorbed relatively, because the compositor may be ahead. */
   const hold = useCallback(() => {
     const {aligned, demand} = latest.current;
-    const list = root.current, scroll = port.current, kept = anchor.current;
-    const row = kept === null ? undefined : rows.current.get(kept.key);
-    if (aligned || demand !== null || !list || !scroll || !kept || !row || row.hidden) return;
-    const y = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    const list = root.current, scroll = port.current, outside = outer.current;
+    let kept = anchor.current;
+    if (aligned || demand !== null || !list || !scroll || !outside || !kept) return;
+    const origin = list.getBoundingClientRect().top, before = committed.current;
+    if (before.scope === latest.current.scope && before.slots.length === latest.current.slots.length &&
+      before.slots.every((slot, index) => slot.key === latest.current.slots[index].key) &&
+      (scroll.scrollTop !== seen.current.port || outside.scrollTop !== seen.current.outer)) {
+      // Input may have passed the old anchor before a resize lands. Choose in the prior layout,
+      // otherwise growth inside that row (or the next) is accepted before it can be compensated.
+      const key = kept.key, index = before.slots.findIndex(slot => slot.key === key);
+      if (index !== -1) {
+        const box = scroll.getBoundingClientRect(), bounds = outside.getBoundingClientRect(), y = kept.y;
+        const next = firstVisible(before.slots.entries(), Math.max(box.top, bounds.top), Math.min(box.bottom, bounds.bottom), ([at, slot]) => {
+          const row = rows.current.get(slot.key);
+          if (!row || row.hidden) return null;
+          const top = origin + y + before.offsets[at] - before.offsets[index];
+          return {top, bottom: top + before.offsets[at + 1] - before.offsets[at]};
+        });
+        if (next) kept = {key: next[1].key, y: y + before.offsets[next[0]] - before.offsets[index]};
+      }
+    }
+    const row = rows.current.get(kept.key);
+    if (!row || row.hidden) return;
+    const y = row.getBoundingClientRect().top - origin;
     // A port at its origin stays there: rows landing above it are the list's start.
     if (y !== kept.y && scroll.scrollTop > 0) {
       const from = scroll.scrollTop;
@@ -122,7 +166,7 @@ export function useEvidenceWindow(input: {
       seen.current.port += scroll.scrollTop - from;
     }
     anchor.current = {key: kept.key, y};
-  }, [port, root]);
+  }, [outer, port, root]);
   /** Ends an external hold. The commit this causes ends the demand, and anchors the row where it stands if it is mounted. */
   const release = useCallback((key: string) => {
     released.current = key;
@@ -147,8 +191,6 @@ export function useEvidenceWindow(input: {
     latest.current = input;
     if (committed.current.scope !== scope || aligned) anchor.current = null;
     else if (committed.current.slots !== slots) anchor.current = survivor(anchor.current, committed.current.slots, slots);
-    // A resize between this render and its commit leaves the offsets dirty.
-    committed.current = {scope, slots, offsets, range, dirty: committed.current.dirty};
     // A release lands here, under this commit's `aligned`: a row's layout effect runs before this one.
     if (released.current !== null) {
       const list = root.current, scroll = port.current, outside = outer.current, row = rows.current.get(released.current);
@@ -160,6 +202,9 @@ export function useEvidenceWindow(input: {
       released.current = null;
     }
     hold();
+    committed.current = {scope, slots, offsets, range};
+    measure();
+    publishExtent();
     frames.current?.request();
   });
 
@@ -176,9 +221,9 @@ export function useEvidenceWindow(input: {
         // In motion memory only rises; truth is learned at rest.
         if (key === undefined || height <= 0 || height === known || clock.current.kind !== "still" && known !== undefined && height < known) continue;
         memory.current.heights.set(key, height);
-        committed.current.dirty = true;
       }
       hold();
+      measure();
       // Never flushSync here: a commit inside a resize broadcast loops.
       frames.current?.request();
       onGeometry();
@@ -203,7 +248,7 @@ export function useEvidenceWindow(input: {
         // In place: the pane's return snapshot holds this same memory.
         memory.current.metrics = metrics;
         memory.current.heights.clear();
-        committed.current.dirty = publish = true;
+        publish = true;
         // An observer reports only a changed box, so mounted rows would stay unknown. A fresh observation
         // reports again; both engines ignore observe() on a target they already observe.
         for (const node of rows.current.values()) {resize.unobserve(node); resize.observe(node);}
@@ -219,20 +264,21 @@ export function useEvidenceWindow(input: {
         clock.current = {kind: "still"};
         publish = true;
       }
+      measure();
+      publishExtent();
       const at = band();
       // Without a scroll the anchor stands: a released row stays the anchor until the reader acts.
       if (scrolled || anchor.current === null) capture(at);
       const kept = anchor.current, row = kept && rows.current.get(kept.key);
       if (kept && row) onAnchor({key: kept.key, offset: row.getBoundingClientRect().top - at.port});
       frame.current = {top: at.top - at.origin, bottom: at.bottom - at.origin};
-      if (committed.current.dirty) {committed.current.offsets = offsetsOf(slots, memory.current.heights); committed.current.dirty = false;}
-      const next = rangeOf(slots, committed.current.offsets, frame.current), current = committed.current.range;
+      const next = rangeOf(slots, offsetsOf(slots, memory.current.heights), frame.current), current = committed.current.range;
       let same = !publish && next.length === current.length;
       for (let index = 0; same && index < next.length; index++) same = next[index] === current[index];
       if (!same) setRevision(revision => revision + 1);
     };
     // The reader's pointer or key ends a released anchor before its own effect lands: the policy chooses again.
-    const act = () => {hold(); capture(band());};
+    const act = () => {hold(); measure(); publishExtent(); capture(band());};
     outside.addEventListener("pointerdown", act, true);
     outside.addEventListener("keydown", act, true);
     for (const node of [scroll, outside, list, ...rows.current.values()]) resize.observe(node);
@@ -250,7 +296,7 @@ export function useEvidenceWindow(input: {
       if (clock.current.kind === "moving") clearTimeout(clock.current.timer);
       clock.current = {kind: "still"};
     };
-  }, [hold, outer, port, restart, root]);
+  }, [hold, measure, outer, port, publishExtent, restart, root]);
 
   useLayoutEffect(() => {
     const changed = () => {
