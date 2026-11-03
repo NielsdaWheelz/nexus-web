@@ -40,33 +40,33 @@ import { pluralize } from "@/lib/text/pluralize";
 
 /** What one recorded failure code means to a reader; offers come from the server. */
 export interface FailureCopy {
-  /** One short line for a row or an attempt. No terminal period. */
+  /** The ordinary row/history label, without a terminal period. */
   readonly reason: string;
-  /** The headline for a surface that explains the failure. */
+  /** The complete feedback fact. */
   readonly title: string;
-  /** What the reader can understand or do about the cause. */
+  /** An optional factual reason; fact and reason compose to at most 14 lowercase words. */
   readonly explanation: string | null;
 }
 
 export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   E_PART_SOURCE_PINNED: {
     reason: "saved text is pinned",
-    title: "pieces refer to this saved text, so it can’t be replaced",
-    explanation: "view pieces in the saved source.",
+    title: "couldn’t replace this source.",
+    explanation: "pieces refer to its saved text.",
   },
   E_ARCHIVE_UNSAFE: {
     reason: "Unsafe EPUB archive",
-    title: "This EPUB cannot be opened safely.",
-    explanation: "Use a valid EPUB from a trusted source.",
+    title: "this epub can’t be opened safely.",
+    explanation: null,
   },
   E_CAPTURE_TOO_LARGE: {
     reason: "Capture too large",
-    title: "This capture is too large to import.",
-    explanation: "Capture a smaller part of the page.",
+    title: "this capture exceeds the size limit.",
+    explanation: null,
   },
   E_EMBEDDING_NOT_CONFIGURED: {
     reason: "related matches are unavailable",
-    title: "text search is ready; related matches are unavailable",
+    title: "text search is ready; related matches are unavailable.",
     explanation: "the embedding provider is not configured.",
   },
   E_EMBEDDING_PROVIDER_UNAVAILABLE: {
@@ -76,18 +76,18 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_FILE_TOO_LARGE: {
     reason: "File too large",
-    title: "This file exceeds the import limit.",
-    explanation: "Remove this import and start a new one with a smaller file.",
+    title: "this file exceeds the import limit.",
+    explanation: null,
   },
   E_FORBIDDEN: {
     reason: "Access refused",
-    title: "Nexus was not allowed to read this source.",
-    explanation: "Use a source you have access to.",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_INGEST_FAILED: {
     reason: "Import failed",
-    title: "This source could not be imported.",
-    explanation: "The import stopped before the reader was ready.",
+    title: "couldn’t import this source.",
+    explanation: null,
   },
   E_INGEST_TIMEOUT: {
     reason: "this import took too long",
@@ -101,49 +101,48 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_INVALID_CONTENT_TYPE: {
     reason: "Unexpected content type",
-    title: "This source did not return the expected content type.",
-    explanation: "Use a direct link to a PDF, an EPUB or an article.",
+    title: "nexus can’t use this source’s content type.",
+    explanation: null,
   },
   E_INVALID_FILE_TYPE: {
-    reason: "Not a PDF or EPUB",
-    title: "This file is not a valid PDF or EPUB.",
-    explanation: "Use a valid PDF or EPUB, or a direct download link to one.",
+    reason: "file could not be read",
+    title: "nexus couldn’t read that file.",
+    explanation: null,
   },
   E_INVALID_KIND: {
     reason: "Unsupported kind",
-    title: "This source is not a kind Nexus imports.",
-    explanation:
-      "Import an article, a PDF, an EPUB, a podcast episode or a video.",
+    title: "nexus can’t import this kind of source.",
+    explanation: null,
   },
   E_INVALID_REQUEST: {
     reason: "Import request refused",
-    title: "This import request was refused.",
-    explanation: "Start a new import from the source you want.",
+    title: "couldn’t import this source.",
+    explanation: null,
   },
   E_MEDIA_NOT_FOUND: {
     reason: "Import no longer exists",
-    title: "This import is no longer available.",
-    explanation: "It was removed while the work was still running.",
+    title: "this source isn’t available.",
+    explanation: null,
   },
   E_MEDIA_NOT_READY: {
     reason: "Not ready for this step",
-    title: "This import was not ready for that step.",
-    explanation: "Review its current status before commanding it again.",
+    title: "this source wasn’t ready for that step.",
+    explanation: null,
   },
   E_OWNER_REQUIRED: {
     reason: "Only the owner can do this",
-    title: "Only the person who created this import can recover it.",
-    explanation: "Ask them to retry it, or start your own import.",
+    title: "only this source’s creator can do that.",
+    explanation: null,
   },
   E_PDF_PASSWORD_REQUIRED: {
     reason: "PDF is password-protected",
-    title: "This PDF is password-protected.",
-    explanation: "Upload an unlocked PDF to read it in Nexus.",
+    title: "this pdf is password-protected.",
+    explanation: null,
   },
   E_PDF_TEXT_UNAVAILABLE: {
     reason: "Imported without selectable text",
-    title: "This PDF has no selectable text.",
-    explanation: "It can be read as pages; search and quoting need OCR first.",
+    title: "this pdf has no selectable text.",
+    explanation: "search and quoting need text recognition.",
   },
   E_PODCAST_PROVIDER_UNAVAILABLE: {
     reason: "the podcast source isn’t available",
@@ -151,9 +150,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: null,
   },
   E_REPAIR_NOT_ALLOWED: {
-    reason: "Repair no longer offered",
-    title: "This import can no longer be repaired.",
-    explanation: "Its work moved on. Review its current status.",
+    reason: "repair unavailable",
+    title: "couldn’t repair this source.",
+    explanation: null,
   },
   E_RESOURCE_CONFLICT: {
     reason: "couldn’t update this import",
@@ -162,39 +161,38 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_RESOURCE_LIMIT: {
     reason: "Too large to process",
-    title: "This source needs more resources than an import may use.",
-    explanation: "Import a smaller or simpler source.",
+    title: "processing reached a resource limit.",
+    explanation: null,
   },
   E_RETRY_INVALID_STATE: {
     reason: "Retry no longer applies",
-    title: "This import was not in a state that can be retried.",
-    explanation: "Review its current status.",
+    title: "couldn’t retry this source.",
+    explanation: "its state didn’t allow it.",
   },
   E_RETRY_NOT_ALLOWED: {
     reason: "Retry not offered",
-    title: "This import cannot be retried.",
-    explanation: "Start a new import from a different source.",
+    title: "couldn’t retry this source.",
+    explanation: null,
   },
   E_SANITIZATION_FAILED: {
     reason: "Content could not be made safe",
-    title: "Nexus could not make this content safe to read.",
-    explanation: "Use a different source for this document.",
+    title: "nexus couldn’t prepare this content for reading.",
+    explanation: null,
   },
   E_SELECTION_CHANGED: {
     reason: "Another copy won",
-    title: "Another copy of this document became the one Nexus keeps.",
-    explanation: "Open that copy; this one is no longer maintained.",
+    title: "couldn’t update this source.",
+    explanation: null,
   },
   E_SIGN_UPLOAD_FAILED: {
     reason: "Upload could not be prepared",
-    title: "Nexus could not prepare this upload.",
-    explanation: "Storage did not issue an upload link.",
+    title: "couldn’t prepare this upload.",
+    explanation: null,
   },
   E_SOURCE_ACCESS_DENIED: {
     reason: "Page blocked the import",
-    title: "This page blocked the import.",
-    explanation:
-      "Open the original page in your browser and use Nexus Capture there.",
+    title: "the source refused access.",
+    explanation: null,
   },
   E_SOURCE_FETCH_FAILED: {
     reason: "couldn’t fetch this source",
@@ -202,37 +200,34 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: null,
   },
   E_SOURCE_GONE: {
-    reason: "Source no longer exists",
-    title: "This source no longer exists.",
-    explanation:
-      "Its address answered that nothing is there. Use another copy.",
+    reason: "source unavailable",
+    title: "this source isn’t available.",
+    explanation: null,
   },
   E_SOURCE_INTEGRITY: {
     reason: "Stored bytes did not verify",
-    title: "Nexus could not verify the uploaded bytes.",
-    explanation: "Remove this import and start a new one.",
+    title: "the stored file didn’t match this import.",
+    explanation: null,
   },
   E_SOURCE_NOT_READABLE: {
     reason: "No readable content found",
-    title: "No readable content was found.",
-    explanation: "Try another copy of this source with readable content.",
+    title: "no readable content was found.",
+    explanation: null,
   },
   E_SOURCE_POSITION_UNMAPPABLE: {
     reason: "a saved reading spot has no clear match",
-    title:
-      "refresh not applied: a saved reading spot has no clear match. saved copy kept.",
-    explanation:
-      "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
+    title: "couldn’t refresh this source.",
+    explanation: null,
   },
   E_SOURCE_TOO_LARGE: {
     reason: "Source too large",
-    title: "This document is too large to import.",
-    explanation: "Use a smaller PDF or EPUB, or upload a smaller file.",
+    title: "this source exceeds the processing limit.",
+    explanation: null,
   },
   E_SSRF_BLOCKED: {
     reason: "Address not allowed",
-    title: "This address is not one Nexus may fetch.",
-    explanation: "Use a public link to the document.",
+    title: "nexus can’t fetch this address.",
+    explanation: null,
   },
   E_STORAGE_ERROR: {
     reason: "couldn’t process this source",
@@ -241,8 +236,8 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_STORAGE_MISSING: {
     reason: "Stored file is missing",
-    title: "The stored file for this import is missing.",
-    explanation: "Send the file again, or start a new import.",
+    title: "the source file isn’t available.",
+    explanation: null,
   },
   E_TRANSCRIPTION_FAILED: {
     reason: "couldn’t transcribe this recording",
@@ -261,8 +256,8 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_UPLOAD_CAPABILITY_EXPIRED: {
     reason: "Upload link expired",
-    title: "The upload link expired.",
-    explanation: "Choose the original file to upload it again.",
+    title: "this upload link expired.",
+    explanation: null,
   },
   E_WORKER_HANDLER_FAILED: {
     reason: "couldn’t process this source",
@@ -271,28 +266,28 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_WORKER_INTERRUPTED: {
     reason: "Processing was interrupted",
-    title: "Processing was interrupted.",
-    explanation: "The run stopped before it could finish or fail.",
+    title: "processing was interrupted.",
+    explanation: null,
   },
   E_X_POST_UNAVAILABLE: {
     reason: "Post unavailable",
-    title: "This post is not available.",
-    explanation: "It was removed, or it is not public.",
+    title: "this post isn’t available.",
+    explanation: null,
   },
   E_X_ARTICLE_BODY_UNAVAILABLE: {
     reason: "article unavailable through x’s api",
-    title: "article unavailable through x’s api",
-    explanation: "x did not provide a complete structured article. open the original on x.",
+    title: "couldn’t read this article from x.",
+    explanation: null,
   },
   E_X_ARTICLE_IDENTITY_CHANGED: {
-    reason: "the post now points to a different article",
-    title: "this post’s article changed",
-    explanation: "refresh the related thread to inspect the article now linked by this post.",
+    reason: "article identity could not be confirmed",
+    title: "couldn’t import this article.",
+    explanation: null,
   },
   E_X_IDENTITY_CONFLICT: {
-    reason: "saved threads overlap",
-    title: "these saved threads overlap. both were kept; repair is required.",
-    explanation: "the new evidence joins more than one saved thread.",
+    reason: "saved x identities conflict",
+    title: "couldn’t import this x source.",
+    explanation: null,
   },
   E_X_SOURCE_CONFLICT: {
     reason: "couldn’t refresh from x",
@@ -306,19 +301,18 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   },
   E_X_PROVIDER_CREDITS_DEPLETED: {
     reason: "X allowance used up",
-    title: "Import allowance reached.",
-    explanation:
-      "This source can’t be imported right now because an import allowance was used up.",
+    title: "the x import allowance is used up.",
+    explanation: null,
   },
   E_X_PROVIDER_RATE_LIMITED: {
     reason: "X is limiting imports",
-    title: "X is limiting imports right now.",
-    explanation: "The post could not be read at this rate.",
+    title: "x is limiting imports.",
+    explanation: null,
   },
   E_X_PROVIDER_TIMEOUT: {
     reason: "X did not respond in time",
-    title: "X took too long to respond.",
-    explanation: "The post could not be read before the time ran out.",
+    title: "x didn’t answer in time.",
+    explanation: null,
   },
   E_X_PROVIDER_UNAVAILABLE: {
     reason: "x imports aren’t available",
@@ -501,8 +495,6 @@ export function sourceFailureLine(item: ImportItem): string | null {
     source.classification !== "NeedsAttention"
   )
     return null;
-  if (source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
-    return FAILURE_COPY[source.failure_code].title;
   return "couldn’t refresh source · saved copy kept";
 }
 
