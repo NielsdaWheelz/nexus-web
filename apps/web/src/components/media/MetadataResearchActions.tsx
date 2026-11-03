@@ -13,6 +13,7 @@ import { isApiError } from "@/lib/api/client";
 import { admissionTransport, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
+  METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
 import { useMediaAdmissions } from "@/lib/media/admissions";
@@ -50,12 +51,13 @@ export function MetadataReviewButton({ mediaId, jobId }: { readonly mediaId: str
       throw error;
     }),
   }), [ref, mediaId, jobId]);
-  const presentation = resendFeedback({ line: { fact }, resend: { label: "mark reviewed", commandKey: `review metadata:${mediaId}:${jobId}`,
+  const presentation = resendFeedback({ line: { fact: METADATA_REVIEW_HELP }, resend: { label: "mark reviewed", commandKey: `review metadata:${mediaId}:${jobId}`,
     run: () => run(command), busy } });
-  return <span data-metadata-action="">
+  return <>
     <span id={contextId} className="sr-only">{sentence(presentation.line)}</span>
-    {presentation.verbs === null ? <Fact line={presentation.line} /> : <VerbControl contextId={contextId} verb={presentation.verbs[0]} />}
-  </span>;
+    {presentation.verbs === null ? <div data-metadata-action=""><Fact line={presentation.line} /></div>
+      : <span data-metadata-action=""><VerbControl contextId={contextId} verb={presentation.verbs[0]} /></span>}
+  </>;
 }
 
 /**
