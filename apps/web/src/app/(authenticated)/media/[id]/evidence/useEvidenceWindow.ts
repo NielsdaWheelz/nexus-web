@@ -91,7 +91,13 @@ export function useEvidenceWindow(input: {
   const held = new Set([...pins.values(), ...selection,
     ...[focused, demand, sticky, aligned ? null : preserved?.key ?? null].filter(key => key !== null)]);
   const offsets = offsetsOf(slots, memory.current.heights);
-  const range = rangeOf(slots, offsets, frame.current);
+  let range = rangeOf(slots, offsets, frame.current);
+  if (!aligned && before.scope === scope && before.slots !== slots) {
+    // Keep the previous window through compensation. Save the carried range so
+    // the existing frame comparison retires its extra rows on the next commit.
+    const kept = new Set([...range, ...before.range]);
+    range = slots.filter(slot => kept.has(slot.key)).map(slot => slot.key);
+  }
   const admitted = new Set([...range, ...(aligned ? placements : []), ...held]);
   let gap = 0;
   const rendered: {key: string; gap: number}[] = [];
