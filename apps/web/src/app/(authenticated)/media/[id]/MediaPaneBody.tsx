@@ -9,6 +9,7 @@ import { useImports } from "@/lib/imports/ImportsProvider";
 // the reader's; this file only composes.
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,7 +18,10 @@ import {
   useSyncExternalStore,
   type FocusEvent,
 } from "react";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, FeedbackNotice, FeedbackState, FeedbackStatus, useActiveRegion } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import { ShellContext, transportVerbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import HostedContents from "./HostedContents";
 import { useShareController } from "@/lib/sharing/controller";
@@ -26,12 +30,13 @@ import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { useChangeStamp } from "@/lib/api/changes";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { apiFetch, apiTransportFeedback, isStaleBuild, STALE_BUILD_FEEDBACK, type ApiError } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, isStaleBuild, STALE_BUILD_FEEDBACK, type ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { catalogErrorFeedback } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/credits";
-import { remoteReady, remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { remoteReady, remoteAdmission, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
 import { localContentAvailable } from "@/lib/offline/localContent";
 import DownloadedEpisode, { useSavedEpisode } from "./DownloadedEpisode";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -65,7 +70,6 @@ import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
-import { savedSourceReadFailure } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import {
   paneSourceKey,
@@ -150,6 +154,10 @@ function FailedSource({ mediaId, code, content, announcement }: {
 function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
   const visible = usePaneIsVisible();
+  const speak = useActiveRegion();
+  const { signIn } = useContext(ShellContext);
+  usePaneChrome({ titleRole: "Pointer" });
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const source = usePaneFreeServerValue({
     key: `source-attempt:${attemptId}`,
     stale: "",
@@ -158,33 +166,41 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   const result = source.status === "ready" ? source.data : null;
   const settled = result?.settled === true;
   const error = source.status === "loading" ? null : source.error;
-  const viewImports = { label: "view imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
+  const allImports = { label: "all imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
     activateTargetLink({ event, runtime, target: { href: "/imports" } }) };
   // justify-polling: an accepted source has no identity event stream. Only visible,
-  // unsettled handoffs poll; failed reads stop until the reader explicitly retries.
+  // unsettled handoffs poll. Failed reads stop; the existing read owner repairs them
+  // on admission, online or focus changes, or through an explicit retry.
   useIntervalPoll({
     enabled: visible && result !== null && !settled && error === null,
     pollIntervalMs: 2_000,
     onPoll: () => {
-      if (document.visibilityState === "visible") source.refetch();
+      // The read's busy state survives hiding and revealing its pane.
+      if (document.visibilityState === "visible" && source.status === "ready" && !source.refreshing)
+        return source.refetch().catch(() => { /* The read owner renders failures and rethrows defects. */ });
     },
   });
   useEffect(() => {
-    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`);
+    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`, { activate: false });
   }, [result, runtime.router, settled]);
-  if (error !== null)
-    return <FeedbackState content={savedSourceReadFailure(error)} announcement="Polite"
-      actions={[{ label: "try again", onClick: source.refetch,
-        busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing },
-      viewImports]} />;
+  if (error !== null) {
+    if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+    if (error.code === "E_IMPORT_NOT_FOUND" || error.code === "E_INVALID_REQUEST")
+      return <Fact key="refused" line={{ fact: "couldn’t find this import." }} verbs={[allImports]} speak={speak} />;
+    const transport = transportOf(error);
+    const remedy = transportVerbs(transport, { signIn, retry: {
+      label: "retry", commandKey: "retry import source", run: source.refetch,
+      busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing,
+    } });
+    return <Fact key="failed" line={TRANSPORT_LINES[transport].command("couldn’t open this import.")}
+      verbs={remedy === null ? [allImports] : [remedy[0], allImports]} speak={speak} />;
+  }
   if (settled)
     return <PaneLoadingState />;
   if (source.status === "loading")
-    return <FeedbackState content={{ tone: "Neutral", title: "opening your saved source" }}
-      announcement="Polite" actions={[viewImports]} />;
-  return <FeedbackState content={{ tone: "Neutral", title: "source saved",
-    message: "waiting for source processing. imports shows its progress and recovery options." }}
-    announcement="Polite" actions={[viewImports]} />;
+    return <Ruling />;
+  return <Fact key="pending" line={{ fact: "importing…", reason: "this opens by itself when it’s ready." }}
+    verbs={[allImports]} speak={speak} />;
 }
 
 function MediaRoute({ id }: { readonly id: string }) {

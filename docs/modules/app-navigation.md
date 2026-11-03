@@ -289,6 +289,11 @@ count. with no lines and an empty field, `choose a file…` is selected. a line 
 both `escape()` and `guardClose()` (phones, android back) branch on one table. nothing on
 it prompts: sent work belongs to the intake, which leaving never loses.
 
+the intake owns the visit's admission fact and field feedback. arrow back preserves both;
+explicit text replacement or consumed dismissal clears the feedback, and closing ends the visit. deferred
+admission keeps its filing work but cannot revive an open intent after input, selection
+or exit disarms it.
+
 | | arrow | esc, scrim, android back |
 | --- | --- | --- |
 | from the palette, nothing sent this visit | root, origin restored | same |
@@ -299,7 +304,8 @@ the origin is the palette's mode, control and query. restored means the query, t
 the `import` row selected and focus in the combobox; a phone has no row selection, so from
 search focus lands in the search input and from the overview on the `import` row. a query
 is never restored after a send, or ⏎ would send it again. a field's parse or cap message
-and an open picker each take esc before the page's back table.
+and an open picker each take esc before the page's back table. the picker takes precedence;
+field feedback is consumed by the page owner regardless of which descendant has focus.
 root's `import` row reads `import · {n} importing` (`import · {n}` on a phone) while the
 intake has unsettled lines.
 

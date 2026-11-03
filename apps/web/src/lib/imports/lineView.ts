@@ -131,7 +131,7 @@ function acceptedView(line: IntakeLine, stage: Extract<LineStage, { kind: "Accep
         + (contributors.length > 3 ? `, +${contributors.length - 3}` : "");
       const facts = credits === "" ? mediaKindLabel(media_kind) : `${credits} · ${mediaKindLabel(media_kind)}`;
       return { one: { kind: "Title", text: title }, two: stage.created ? facts : "already here", tone: "Neutral",
-        verb: { kind: "Open", target: { href: stage.href, labelHint: title } } };
+        verb: open };
     }
     case "Failed":
       if (truth.code === "E_SOURCE_ACCESS_DENIED" && line.source.kind === "Link")

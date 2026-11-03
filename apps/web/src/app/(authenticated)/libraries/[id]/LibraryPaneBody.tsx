@@ -7,7 +7,7 @@
 // the text filter stays local.
 
 import { useCallback, useEffect, useId, useMemo, useRef } from "react";
-import { Plus } from "lucide-react";
+import { Import } from "lucide-react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -279,12 +279,12 @@ function LibraryPane({ id }: { readonly id: string }) {
     },
     [id, refetchEntries, refreshSuggestionFeed],
   );
-  const addContent: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
+  const importHere: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
     ? {
       kind: "command",
-      id: "ViewAction.Library.AddContent",
-      label: "Add content",
-      icon: <Plus size={20} aria-hidden="true" />,
+      id: "ViewAction.Library.Import",
+      label: "Import here",
+      icon: <Import size={20} aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: ({ triggerEl }) =>
         requestNexusOpen({ kind: "Import", into: library.is_default ? [] : [{ id, name: library.name }] }, triggerEl),
@@ -299,10 +299,10 @@ function LibraryPane({ id }: { readonly id: string }) {
     outcome: ordered.length > 0 ? "results updated." : emptyTitle,
     returnFocus: () => inputRef.current,
   });
-  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
+  const menuActions: ActionDescriptor[] = importHere ? [importHere] : [];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
-    primaryAction: addContent,
+    primaryAction: importHere,
     query: invalidView || library === null ? undefined : {
       kind: "Controls",
       focusInput,

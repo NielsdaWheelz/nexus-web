@@ -64,6 +64,10 @@ overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
 the section-title font role. text on an 18% tint of its own tone (`Pill`) reads
 the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
+the pane header's pointer role uses mono and machine ink in every room. the pending
+source body publishes the role; the shell applies it only to a retained visit hint.
+it changes neither the one heading nor the stored resource's canonical title.
+
 ## the solar's ornament
 
 every ornament is a pseudo-element whose opacity is multiplied by `--ornament`

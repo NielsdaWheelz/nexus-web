@@ -440,8 +440,9 @@ function Action({ action, reload, reasonId, contextId, occurrence, onNavigate }:
 }
 
 /** Only the short fact is live; controls and disclosure never enter the live region. */
-export function Announcement({ text, level: requestedLevel, deferred = false, occurrence, onPublish }: {
-  text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object; onPublish?: () => void;
+export function Announcement({ text, level: requestedLevel, deferred = false, occurrence, onPublish, label }: {
+  text: string; level: FeedbackAnnouncement; deferred?: boolean; occurrence?: object;
+  onPublish?: (occurrence: object) => void; label?: string;
 }) {
   const session = useContext(Session);
   const scope = useContext(Scope);
@@ -470,17 +471,25 @@ export function Announcement({ text, level: requestedLevel, deferred = false, oc
     }
     let publication: number | null = null;
     const empty = requestAnimationFrame(() => {
-      publication = requestAnimationFrame(() => { if (scope !== null && !scope.eligible()) return; delivered.current = occurrence ?? null; if (occurrence !== undefined) session?.spoken.set(occurrence, occurrence); setSpoken(next); publish.current?.(); });
+      publication = requestAnimationFrame(() => { if (scope !== null && !scope.eligible()) return; setSpoken(next); });
     });
     return () => {
       cancelAnimationFrame(empty);
       if (publication !== null) cancelAnimationFrame(publication);
     };
   }, [text, level, deferred, occurrence, session, scope]);
+  useLayoutEffect(() => {
+    if (deferred || level === "None" || (scope !== null && !scope.eligible()) || occurrence === undefined ||
+      spoken.occurrence !== occurrence || spoken.text !== text || delivered.current === occurrence || session?.spoken.get(occurrence) === occurrence) return;
+    delivered.current = occurrence;
+    session?.spoken.set(occurrence, occurrence);
+    publish.current?.(occurrence);
+  }, [spoken, text, level, deferred, occurrence, session, scope]);
   if (level === "None") return null;
   return <span
     className="sr-only"
     role={level === "Assertive" ? "alert" : "status"}
+    aria-label={label}
     aria-live={deferred ? "off" : level === "Assertive" ? "assertive" : "polite"}
     aria-atomic="true"
   >{occurrence !== undefined && spoken.occurrence !== occurrence ? "" : spoken.text}</span>;

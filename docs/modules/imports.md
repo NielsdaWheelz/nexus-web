@@ -173,12 +173,57 @@ for every surface and for the intake's slips. nothing survives a reload.
   account teardown discard it. published snapshots keep their timestamps immutable.
 - **`×`** removes a waiting or settled line. forgetting an unknown line, or a waiting replay
   of one, asks `window.confirm` first, since either may have landed.
-- **endVisit**, on the palette's close edge, resets the field and `into`; readable, held and
-  removed lines leave. everything else stays until `×`.
+- **visit.** the intake owns the field, its attempt feedback, destinations and whether a
+  nonempty admission was made. admission marks the visit even while library creation holds
+  it; draining that admission later changes no later visit's facts. explicit field
+  replacement and new file admission clear attempt feedback; the link sieve owns its
+  remaining-prose feedback.
+- **disarmExcept** retains only an explicitly selected line's open intent and clears every
+  deferred open intent. input, a drop and leaving the import page pass no selected line.
+  this retires navigation, never an admission or its frozen filing destinations.
+- **endVisit**, on the palette's close edge, resets the visit and disarms opening; readable,
+  superseded and removed lines leave. everything else stays until `×`.
 - **surfaces.** the [import page](app-navigation.md#the-import-page) shows lines while it is
   mounted and open, so a batch settling there speaks instead of slipping; nexus's root reads
-  only `unsettled`. every admission nexus makes goes through its controller, which tells the
-  back table that the visit sent something.
+  only `unsettled`. nexus's back table reads the intake's visit admission fact; it owns no
+  second send flag. arrow back keeps the visit, including its field feedback.
+- **speech.** the persistent nexus controller observes new settlements even before the
+  import page mounts. while that page is open, its one polite owner publishes starts and
+  outcomes. unpublished sentences combine in order with repeats preserved; acknowledgement
+  follows the exact occurrence's committed live text. leaving the page retires pending
+  speech. returning or replacing the responsive presentation never replays old settlements.
+
+### document doors
+
+`components/imports/ImportDoors`, mounted beside Nexus's desktop/mobile branch, connects
+window bubble events to its existing admission and batch-start announcement. the topmost interaction owner alone decides
+whether a drop can enter the import page; its semantic marker must be inside that exact
+owner. an exposed import page keeps its origin, draft and destinations. an outside drop
+opens it through the ordinary intent, retaining the actual opener.
+
+claimed events, editables and other overlays keep their input. internal drags never import.
+every remaining unowned file drop prevents browser navigation, including a refused drop;
+native file inputs keep their default. the pointer-only veil hides on ownership loss,
+root leave, cancellation or blur. a whole explicit-url paste outside input and overlay
+owners opens a root draft, never sends. the existing parser owns what counts as a link.
+
+doors reject more than 100 files into the visit's field feedback without admitting any.
+
+### accepted-source pane
+
+the first attempt read shows a `Ruling`; an accepted unsettled source shows its waiting
+fact and `all imports`. only a settled identity replaces the route with its reader;
+that passive replacement preserves the active pane and its open controls. the
+poll returns its read promise, so a slow source read completes before another starts.
+the read's busy state gates polling across pane visibility changes as well.
+missing or invalid attempts show their refusal and `all imports`; other read failures
+compose the import fact with the shared transport reason and actionable remedy.
+the body publishes a pointer title role. the shell uses the current visit's retained
+hint, with its existing 512-character bound; an unhinted visit keeps its ordinary title.
+readable intake lines retain their source pointer on this handoff too. the body withdraws
+its role when the ordinary reader takes ownership.
+the rail reads unsettled work from the intake; a library door supplies that library's
+destination through the same navigation intent.
 
 - **I11** one acquisition step (a link's accept or an upload's confirm) is in flight per intake.
 - **I12** a line once unknown keeps its frozen id, guard and confirmation until a retry of

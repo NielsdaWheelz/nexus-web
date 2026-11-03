@@ -20,6 +20,8 @@ import { useRecent } from "@/lib/recent/store";
 import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
 import { recentValueForHref } from "@/lib/panes/paneRouteModel";
 import { normalizeVisitTitleHint, type PaneVisit } from "@/lib/workspace/model";
+import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
@@ -235,6 +237,9 @@ export function WorkspacePresentationsProvider({ accountId, children }: { accoun
     for (const pane of state.panes) {
       const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);
       if (!route.titleKey) continue;
+      // A source handoff retains its admitted pointer until the ordinary reader replaces it.
+      if (route.id === "media" && parseWorkspaceHref(visit.href)?.searchParams.has("source_attempt_id")
+        && sourceTargetFromHref(visit.href)?.kind !== "invalid_destination") continue;
       const presentation = forVisit(visit);
       if (presentation.status === "Ready") setVisitTitleHint({ paneId: pane.id, visitId: visit.id, titleKey: route.titleKey, title: presentation.title });
     }

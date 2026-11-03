@@ -11,7 +11,7 @@
 
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type Verb, type Verbs } from "@/components/feedback/stage";
+import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import { publishChange } from "@/lib/api/changes";
 import { admissionRefusal, apiFetch, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
@@ -142,6 +142,9 @@ type Deferral = { readonly input: Admission & { readonly into: readonly LibraryD
 type State = {
   readonly lines: readonly IntakeLine[];
   readonly field: string;
+  readonly fieldLine: Line | null;
+  /** A public admission this visit, including one waiting on library creation. */
+  readonly hasAdmitted: boolean;
   readonly into: readonly LibraryDestination[];
   /** Waiting, sending, uploading or verifying: the guard's browser work. */
   readonly running: number;
@@ -160,7 +163,7 @@ type Host = {
 };
 
 const ANSWER_MS = 30_000;
-const EMPTY: State = { lines: [], field: "", into: [], running: 0, unsettled: 0, defect: null, settledAt: new Map(), held: [] };
+const EMPTY: State = { lines: [], field: "", fieldLine: null, hasAdmitted: false, into: [], running: 0, unsettled: 0, defect: null, settledAt: new Map(), held: [] };
 
 /** The address the server keys a link by: no fragment, normalized host. */
 const address = (url: string) => { const parsed = new URL(url); parsed.hash = ""; return parsed.href; };
@@ -180,6 +183,8 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   /** Ids waiting to be sent, oldest first. */
   let queue: readonly string[] = [];
   let field = "";
+  let fieldLine: Line | null = null;
+  let hasAdmitted = false;
   let into: readonly LibraryDestination[] = [];
   let defect: State["defect"] = null;
   let deferred: readonly Deferral[] = [];
@@ -234,7 +239,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     unseen = new Set([...unseen].filter(batch => settledNow.has(batch)));
     const running = entries.filter(line => linePhase(line.stage) === "Running").length;
     state = {
-      lines: entries, field, into, defect, running, settledAt: settledNow,
+      lines: entries, field, fieldLine, hasAdmitted, into, defect, running, settledAt: settledNow,
       unsettled: entries.filter(line => linePhase(line.stage) !== "Settled").length,
       held: viewers > 0 ? [] : [...unseen].filter(batch => batches.get(batch)!.some(line => line.stage.kind === "Unknown")),
     };
@@ -544,12 +549,13 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     }
   }
 
-  function admit(input: Admission) {
+  function admitBatch(input: Admission) {
     const scope = lifetime;
     if (scope === null || !alive(scope)) return;
     // an admission into the visit's libraries waits while one is being created, to join it
     if (input.into === undefined && creation.getSnapshot().pending.some(attempt => attempt.sending)) {
       deferred = [...deferred, { input: { ...input, into }, visit }];
+      publish();
       return;
     }
     const batch = crypto.randomUUID();
@@ -591,7 +597,17 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (creation.getSnapshot().pending.some(attempt => attempt.sending)) return;
     const waiting = deferred;
     deferred = [];
-    for (const { input } of waiting) admit(input);
+    for (const { input } of waiting) admitBatch(input);
+  }
+
+  /** Deferred admissions have no line id yet; every selection or exit disarms them. */
+  function disarmExcept(id: string | null) {
+    entries = entries.map(line => line.id !== id && line.openOnAccept !== null ? { ...line, openOnAccept: null } : line);
+    deferred = deferred.map(waiting => {
+      const { open: _open, ...input } = waiting.input;
+      return { ...waiting, input };
+    });
+    publish();
   }
 
   function enqueue(lines: readonly Entry[]) {
@@ -689,7 +705,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         unsubscribe();
         if (lifetime !== scope) return;
         lifetime = null;
-        entries = []; queue = []; deferred = []; field = ""; into = [];
+        entries = []; queue = []; deferred = []; field = ""; fieldLine = null; hasAdmitted = false; into = [];
         freezing = false; linkSending = false; filesSending = 0;
         settledBatches = new Map(); unseen = new Set(); accepting = new Set();
         publish();
@@ -709,9 +725,15 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       publish();
       return () => { viewers -= 1; publish(); };
     },
-    setField(text: string) { field = text; publish(); },
+    setField(text: string) { field = text; fieldLine = null; publish(); },
+    setFieldLine(line: Line | null) { fieldLine = line; publish(); },
     setInto(next: readonly LibraryDestination[]) { into = next; publish(); },
-    admit,
+    admit(input: Admission) {
+      if (lifetime === null || !alive(lifetime) || input.links.length + input.files.length + (input.unreadable?.length ?? 0) === 0) return;
+      hasAdmitted = true;
+      if (input.files.length > 0 || (input.unreadable?.length ?? 0) > 0) fieldLine = null;
+      admitBatch(input);
+    },
     retry(id: string) {
       const line = get(id);
       if (line === null) return;
@@ -769,19 +791,18 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const line = get(id);
       if (line !== null && linePhase(line.stage) === "Running") update(id, current => ({ ...current, openOnAccept: disposition }));
     },
-    disarm(id: string) {
-      const line = get(id);
-      if (line !== null && line.openOnAccept !== null) update(id, current => ({ ...current, openOnAccept: null }));
-    },
+    disarmExcept,
     /** The visit's end: the field and `into` reset, and what is done leaves. */
     endVisit() {
       field = "";
+      fieldLine = null;
+      hasAdmitted = false;
       into = [];
       visit = {};
       entries = entries.filter(line => !(line.stage.kind === "Accepted" && (line.stage.truth.kind === "Readable" || line.stage.truth.kind === "Removed")
         || refusalOf(line) === "Superseded"));
       queue = queue.filter(id => get(id) !== null);
-      publish();
+      disarmExcept(null);
     },
   };
 }
@@ -816,10 +837,11 @@ export function useImportIntake() {
   const intake = useIntake();
   const state = useSyncExternalStore(intake.subscribe, intake.snapshot, intake.snapshot);
   return {
-    lines: state.lines, field: state.field, into: state.into, running: state.running, unsettled: state.unsettled, defect: state.defect,
+    lines: state.lines, field: state.field, fieldLine: state.fieldLine, hasAdmitted: state.hasAdmitted,
+    into: state.into, running: state.running, unsettled: state.unsettled, defect: state.defect,
     settledAt: (batch: string): number | null => state.settledAt.get(batch) ?? null,
-    setField: intake.setField, setInto: intake.setInto, admit: intake.admit, retry: intake.retry, retryWithout: intake.retryWithout,
-    reselect: intake.reselect, stop: intake.stop, remove: intake.remove, arm: intake.arm, disarm: intake.disarm, endVisit: intake.endVisit,
+    setField: intake.setField, setFieldLine: intake.setFieldLine, setInto: intake.setInto, admit: intake.admit, retry: intake.retry, retryWithout: intake.retryWithout,
+    reselect: intake.reselect, stop: intake.stop, remove: intake.remove, arm: intake.arm, disarmExcept: intake.disarmExcept, endVisit: intake.endVisit,
   };
 }
 

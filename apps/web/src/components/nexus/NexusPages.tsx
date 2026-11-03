@@ -3,7 +3,7 @@
 // Every Nexus page but Root, one tree for both surfaces.
 import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
-import { FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import { Announcement, FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
@@ -99,9 +99,8 @@ export default function NexusPages({ controller, mobile }: { controller: NexusCo
   return (
     <>
       <Page controller={controller} mobile={mobile} />
-      <div className="sr-only" role="status" aria-label="Nexus status" aria-live="polite">
-        {controller.announcement}
-      </div>
+      <Announcement text={controller.announcement} level={controller.open ? "Polite" : "None"}
+        label="Nexus status" occurrence={controller.announcementOccurrence} onPublish={controller.publishedAnnouncement} />
     </>
   );
 }

@@ -983,17 +983,6 @@ function modeled(error: unknown) {
   return error;
 }
 
-/** A failed accepted-source read; undeclared codes and defects are rethrown. */
-export function savedSourceReadFailure(error: unknown): FeedbackContent {
-  const failure = modeled(error);
-  const title = "couldn’t check this saved source";
-  const transport = apiTransportFeedback(failure, title);
-  if (transport !== null) return transport;
-  if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST")
-    return { tone: "Warning", title, message: "this save link is invalid or no longer available." };
-  throw error;
-}
-
 /** A failed Imports read; undeclared codes and defects are rethrown. */
 export function loadFailure(error: unknown): FeedbackContent {
   const { code, requestId } = modeled(error);

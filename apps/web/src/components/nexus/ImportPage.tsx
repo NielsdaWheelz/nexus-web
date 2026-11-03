@@ -10,7 +10,7 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { ArrowLeft, Import } from "lucide-react";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { sentence, ShellContext, type Line } from "@/components/feedback/stage";
+import { ShellContext } from "@/components/feedback/stage";
 import DestinationChooser, { DestinationTrigger, setDestination } from "@/components/libraries/DestinationChooser";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
@@ -25,7 +25,7 @@ import { fetchImportPage, type ImportItem } from "@/lib/imports/api";
 import { attentionPhrase, FAILURE_COPY, reasonLine } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { ADMIT_LIMIT, useImportCreation, useImportIntake, useImportLinesShown, type IntakeLine } from "@/lib/imports/intake";
-import { batchSlip, colophon, linePhase, linkPointer, lineView, pointer, type LineVerb } from "@/lib/imports/lineView";
+import { colophon, linkPointer, lineView, pointer, type LineVerb } from "@/lib/imports/lineView";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import { mediaKindLabel } from "@/lib/media/kind";
 import { metadataOperationName } from "@/lib/media/mediaMetadataCopy";
@@ -90,7 +90,7 @@ export default function ImportPage({ controller, page, mobile }: {
   const again = useRef<string | null>(null);
   const composing = useRef(false);
   const [choosing, setChoosing] = useState(false);
-  const [fieldLine, setFieldLine] = useState<Line | null>(null);
+  const { fieldLine, setFieldLine } = intake;
   const [focused, setFocused] = useState(false);
   // `moved`: an arrow handed enter to the row since the field's last edit, even if it clamped
   const [selection, setSelection] = useState(() => {
@@ -141,35 +141,16 @@ export default function ImportPage({ controller, page, mobile }: {
     if (scrollRef.current && cell) revealCollectionItem(scrollRef.current, cell);
   }, [active]);
 
-  // a batch that settles here says so once: its colophon, or a lone line's outcome
-  const settled = useRef<ReadonlySet<string> | null>(null);
   const { announce } = controller;
-  useEffect(() => {
-    const now = new Set(batches.filter(batch => batch.every(line => linePhase(line.stage) === "Settled")).map(batch => batch[0]!.batch));
-    const before = settled.current;
-    settled.current = now;
-    if (before === null) return;
-    for (const batch of batches) {
-      if (!now.has(batch[0]!.batch) || before.has(batch[0]!.batch)) continue;
-      const slip = batch.length === 1 ? batchSlip(batch) : null;
-      const said = batch.length > 1 ? colophon(batch, intake.settledAt(batch[0]!.batch), displayTimeZone) : slip === null ? null : sentence(slip.line);
-      if (said !== null) announce(said);
-    }
-  });
 
-  /** Failure, a moved selection, input and exit disarm: an armed line opens only from here. */
-  function disarm(except: string | null) {
-    for (const line of intake.lines) if (line.openOnAccept !== null && lineKey(line) !== except) intake.disarm(line.id);
-  }
   function select(key: string) {
-    disarm(key);
+    intake.disarmExcept(intake.lines.find(line => lineKey(line) === key)?.id ?? null);
     setSelection({ key, moved: true });
   }
   function edit(text: string) {
     intake.setField(text);
-    setFieldLine(null);
     setSelection(current => ({ ...current, moved: false }));
-    disarm(null);
+    intake.disarmExcept(null);
   }
 
   /** Sends links. One already listed adds no line, and the selection goes to it. */
@@ -255,7 +236,7 @@ export default function ImportPage({ controller, page, mobile }: {
     aria-label="back" tooltip={{ text: "back to palette" }} onClick={controller.back} />;
 
   return (
-    <section className={styles.page} data-mobile={mobile || undefined} style={readerSurfaceStyle(profile)}>
+    <section className={styles.page} data-import-page="" data-mobile={mobile || undefined} style={readerSurfaceStyle(profile)}>
       {mobile
         ? <header className={nexus.header}>{back}<h2 tabIndex={-1} data-switchboard-heading>import</h2></header>
         : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>import</h2>}
@@ -295,10 +276,7 @@ export default function ImportPage({ controller, page, mobile }: {
                 return;
               }
               const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-              if (event.key === "Escape" && fieldLine !== null) {
-                event.preventDefault();
-                setFieldLine(null);
-              } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
+              if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
                 const next = nextRovingIndexForKey({ key: event.key, currentIndex: active === null ? -1 : keys.indexOf(active),
                   itemCount: keys.length, orientation: "vertical", homeEnd: false });
                 if (next === null) return;

@@ -1,11 +1,12 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Headphones, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Headphones, Import, Search } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Tooltip from "@/components/ui/Tooltip";
+import { useImportIntake } from "@/lib/imports/intake";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import {
@@ -45,6 +46,7 @@ export default function AppNav() {
 }
 
 function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { unsettled } = useImportIntake();
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
   const latestWorkspace = useLatestWorkspace();
   const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
@@ -181,7 +183,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       <div className={styles.footer}>
         <PlayerDisclosure collapsed={collapsed} />
         <Tooltip
-          text="Add content"
+          text={unsettled === 0 ? "Import" : `Import · ${unsettled} importing`}
           placement="right"
           openDelayMs={0}
           disabled={!collapsed}
@@ -191,11 +193,11 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
               type="button"
               className={cx(buttonClassName({}), styles.item)}
               aria-haspopup="dialog"
-              aria-label="Add content"
-              onClick={() => requestNexusOpen({ kind: "Import", into: [] })}
+              aria-label={unsettled === 0 ? "Import" : `Import, ${unsettled} importing`}
+              onClick={event => requestNexusOpen({ kind: "Import", into: [] }, event.currentTarget)}
             >
-              <Plus className={styles.icon} size={20} aria-hidden="true" />
-              <span className={styles.label}>Add</span>
+              <Import className={styles.icon} size={20} aria-hidden="true" />
+              <span className={styles.label}>{unsettled === 0 ? "Import" : `Import · ${unsettled}`}</span>
             </button>
           )}
         />
