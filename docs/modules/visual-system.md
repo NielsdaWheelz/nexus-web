@@ -127,6 +127,13 @@ or verbs. desktop menus contain verbs, options and their own row marks. a picker
 empty list region may show its own fact, outside listbox markup; account conditions
 belong only to the account menu.
 
+`useResendFeedback` gives a retained remote write its current line and verbs.
+the owner supplies the fact, exact resend and any secondary command. a stale
+build keeps that fact, supplies the shared update reason, and offers reload
+alone where it works; otherwise it offers no verb. sign-in keeps the shell's
+link or command and its busy state. the hook presents admission; the domain
+owner retains the intent and decides when it is resolved.
+
 one stage sits above command owners. a row addresses its invoking pane or the
 workspace. fully visible panes have anchors; other pane addresses fall to the
 root. phones and maximized layouts use the active pane. composers anchor above
@@ -154,7 +161,9 @@ else the active pane or standalone host, speaks. short facts and reasons enter
 the live region, never controls; risk is assertive and other lines polite.
 appearance takes no focus. a withdrawing verb restores only focus it owns.
 `mod+.` reaches the first slip control; escape closes or tucks and returns focus.
-coarse-pointer downward swipe dismisses plain rows and tucks held rows.
+coarse-pointer downward swipe dismisses plain rows and tucks held rows when
+the frame fits. an overflowing frame uses native scrolling; its visible close
+and tuck controls remain available.
 reduced motion removes movement; forced colours retain borders and ticks.
 
 ## ownership

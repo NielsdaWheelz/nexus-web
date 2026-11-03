@@ -481,12 +481,16 @@ place them over their explicitly owned scrollable content, clear of fixed
 actions. no empty feedback strip is reserved. the modal family supplies that
 content boundary; the stage does not guess it from descendants.
 
-the outside anchor is clear of the panel's clipping and entrance transforms.
-the available rectangle bounds the frame's scrolling and the tab's whole hit
-area. pointer, focus and press holds preserve the standing controls; adding a
-row does not reposition them. keyboard/viewport changes remain owned geometry
-changes. plain rows raised elsewhere wait behind the modal, while words at risk
-remain visible, assertive and actionable in the topmost room.
+the sibling anchor is outside the panel's clipping. placement follows actual
+visual bounds during the modal family's finite entrance and drag motion. the
+available rectangle bounds the frame's scrolling and the tab's whole hit area.
+frame and tab occupy separate parts of the same overlay group, so restoring
+cannot cover the tab or change the frame's width. constrained groups can be
+narrower and require scrolling. pointer, focus and press holds preserve the
+standing controls when feedback changes; keyboard, viewport and panel motion
+remain owned geometry changes. plain rows raised elsewhere wait behind the
+modal, while words at risk remain visible, assertive and actionable in the
+topmost room.
 
 ## non-modal disclosure
 
