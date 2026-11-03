@@ -1,5 +1,7 @@
 "use client";
 
+import {UNKNOWN_OUTCOME_REASON} from "@/lib/api/failure";
+
 // The editor host (pane visit or reader document) owns unsent rich input; nothing unsaved is
 // stored, and the host's loss guard covers it until it is saved or cleared. Explicit save commits
 // the new note and its first link to the destination in one local transaction,
@@ -181,6 +183,7 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
     {destinationRef.startsWith("conversation:") ? <p className={styles.status}>linked items supply context to future turns in this conversation</p> : null}
     {value.state === "saved" ? <BoundNoteEditor noteRef={value.noteRef} label="edit saved note" /> : <>
       <NoteEditor editorKey={`resource-composer:${occurrenceKey}`} body={value.body} revision={value.revision} label={label}
+        wordsAtRisk={value.unsaved !== null && (value.unsaved.retry !== null || bodyHasContent(value.body))}
         containingNoteRef={null} editable={writing !== null && !frozen} focus={value.focus}
         history={{ undo: () => step(false), redo: () => step(true), boundary: () => draft.set(current => ({ ...current, history: { ...current.history, group: current.history.group + 1 } })) }}
         onEdit={edit} onSave={save}
@@ -197,7 +200,7 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
       { label: "copy text", commandKey: `ResourceComposer.copy:${value.noteRef}`, run: copyText, copied: copied.occurrence ?? undefined },
     ]} /> : null}
     {value.linking ? <Hold id={`ResourceComposer.link:${value.noteRef}`} attempt={value.linking.attempt}
-      line={{ fact: `not sure “${value.linking.label}” linked.`, reason: "it may have gone through." }}
+      line={{ fact: `not sure “${value.linking.label}” linked.`, reason: UNKNOWN_OUTCOME_REASON }}
       verbs={[{ label: "retry", commandKey: `ResourceComposer.link:${value.noteRef}`, run: retryLink, busy: saving }]} /> : null}
     <Dialog open={manualCopy !== null} title="copy this note" onClose={() => setManualCopy(null)}>
       <p>select the text and copy it.</p><textarea readOnly aria-label="note text" value={manualCopy ?? ""}/>

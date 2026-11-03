@@ -32,7 +32,7 @@ type Draft = {
 /** A part command that didn't land says so once, by `fact`. One the server may have taken says
  * nothing here: its owner keeps the request and holds `unsure(...)` until a resend settles it. */
 export function partFailure(outcome: Outcome, error: unknown, fact: string): "Said" | "Unknown" {
-  if (isApiError(error) && error.status === 409) outcome.say({ fact, reason: "this work or its source changed." });
+  if (isApiError(error) && error.status === 409) outcome.say({ fact });
   else if (isApiError(error) && (error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED" || error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) outcome.say({ fact, reason: "this work isn’t available to change." });
   else if (outcomeUnknown(error)) return "Unknown";
   else outcome.fail(error, fact);

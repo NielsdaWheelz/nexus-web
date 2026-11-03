@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useFailedReadRepair, useServerValue, type Visit } from "@/lib/api/serverState";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
@@ -14,7 +15,7 @@ import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { changedLine, commandKey, heldUnknown, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
+import { changedLine, commandKey, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
 import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
@@ -428,8 +429,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const pending = state.command.kind === "Idle" ? null : state.command;
   const composed = pending?.command.kind === "Send" && pending.command.viewId === runtime.paneId;
   const holds = state.holder === runtime.paneId;
+  const resendFeedback = useResendFeedback();
   const again = useCallback((openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(slips, outcome)), [paneStore, slips]);
-  useFailedReadRepair(holds && pending?.standing?.kind === "Unread", pending?.kind === "Busy", () => again("default"));
+  useFailedReadRepair(holds && pending?.standing?.kind === "Unread", pending?.kind === "Busy", () => void store.refreshCommand());
   useFailedReadRepair(history === "Unavailable" && !state.gone, state.readingTree, () => void store.load());
 
   usePaneReturnReady(savedOnly);
@@ -449,16 +451,17 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const unknownStanding = pending?.standing?.kind === "Unknown" && !composed ? pending.standing : null;
   const pendingKey = pending === null ? "" : commandKey(pending.command);
   const unknownRetry: CommandVerb = { label: "retry", commandKey: `retry ${pendingKey}`, busy: pending?.kind === "Busy", run: again };
-  const unknown = pending !== null && unknownStanding !== null ? heldUnknown(unsureFact(pending.command), unknownStanding.refused, pending.command.kind === "Send"
-    ? [unknownRetry, { label: "discard send", commandKey: `discard ${pendingKey}`, run: () => store.discardCommand() }]
-    : [unknownRetry]) : null;
+  const unknown = pending !== null && unknownStanding !== null ? resendFeedback({
+    line: { fact: unsureFact(pending.command), reason: UNKNOWN_OUTCOME_REASON }, resend: unknownRetry,
+    ...(pending.command.kind === "Send" ? { secondary: { label: "discard send", commandKey: `discard ${pendingKey}`, run: () => store.discardCommand() } } : {}),
+  }) : null;
   const lane = pending?.standing?.kind === "Changed"
     ? <Fact speak={isPaneActive} line={changedLine(pending.command)}
       verbs={[{ label: "check", commandKey: `check ${pendingKey}`, busy: pending.kind === "Busy", run: again }]} />
     : pending?.standing?.kind === "Unread"
       ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
       // the slip speaks the unknown outcome; the lane says why the pane waits, and carries its verbs
-      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknown.verbs} />
+      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknown.verbs ?? undefined} />
       : null;
   return (
     <div className={styles.pane}>
@@ -468,7 +471,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         {intent.kind === "invalid" ? <Fact speak={isPaneActive} line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
         {lane}
       </div> : null}
-      {pending !== null && unknown !== null && holds ? <Hold id={pendingKey} attempt={pending.attempt} line={unknown.line} verbs={unknown.verbs} /> : null}
+      {pending !== null && unknown !== null && holds ? <Hold id={pendingKey} attempt={pending.attempt} line={unknown.line} verbs={unknown.verbs ?? undefined} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}

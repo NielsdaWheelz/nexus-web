@@ -36,12 +36,19 @@ export type ChatFailure =
   | { kind: "Refused"; error: ApiError } // answered: nothing changed
   | { kind: "Unknown"; error: ApiError }; // unanswered: a write may have landed
 
-export function failureOf(error: unknown): ChatFailure {
+/** Reads have no write outcome. A handled sign-in or defect follows the same boundary contract. */
+export function readFailureOf(error: unknown): { kind: "Handled" } | { kind: "Defect"; error: unknown } | { kind: "Failed"; error: ApiError } {
   if (handleUnauthenticatedApiError(error)) return { kind: "Handled" };
   if (!isApiError(error) || isSameSystemApiDefect(error)) return { kind: "Defect", error };
-  // the runtime is checked before admission, so nothing was admitted
-  return error.code !== "E_GENERATION_RUNTIME_UNAVAILABLE" && (outcomeUnknown(error) || error.status >= 500)
-    ? { kind: "Unknown", error } : { kind: "Refused", error };
+  return { kind: "Failed", error };
+}
+
+export function failureOf(error: unknown): ChatFailure {
+  const failure = readFailureOf(error);
+  if (failure.kind !== "Failed") return failure;
+  // runtime readiness is checked before chat admission.
+  return failure.error.code !== "E_GENERATION_RUNTIME_UNAVAILABLE" && outcomeUnknown(failure.error)
+    ? { kind: "Unknown", error: failure.error } : { kind: "Refused", error: failure.error };
 }
 
 const MISSING = "it doesn’t exist.";

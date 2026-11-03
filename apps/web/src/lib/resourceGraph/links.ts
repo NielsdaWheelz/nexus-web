@@ -1,9 +1,8 @@
 /** User links belong to the local authored graph. Server-owned citation, machine
  * and context facts retain their existing query/removal owners. Unlink observes
  * only the selected edge's add vector and never deletes either endpoint. */
-import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import { insertionPositions, type Intent } from "@nexus/authored/commands";
 import { isVisible } from "@nexus/authored/merge";
@@ -159,15 +158,10 @@ export async function queryConnections(input: Schema<"ConnectionQueryRequest">, 
   const { data } = await apiFetch<ApiJson<"/resource-graph/connections/query", "post">>("/api/resource-graph/connections/query", { method: "POST", signal, body: JSON.stringify({ ...input, limit: Math.min(input.limit ?? 100, 100) }) });
   return data;
 }
-export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand): Promise<void> {
+export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand, signal?: AbortSignal): Promise<void> {
   if (command.kind === "unlink") return deleteLink(runtime, { linkId: command.link_id });
-  if (command.kind === "remove_fact") { await apiFetch(`/api/resource-graph/facts/${command.edge_id}`, { method: "DELETE" }); return; }
-  await apiFetch(`/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`, { method: "DELETE" });
-}
-export function connectionMutationErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) return { tone: "Warning", title: "couldn’t save this change on this device", message: "keep this page open and retry saving." };
-  if (outcomeUnknown(error)) return { tone: "Warning", title: "couldn’t confirm removal", requestId: error.requestId };
-  return apiTransportFeedback(error, "couldn’t remove connection") ?? { tone: "Warning", title: "this connection can’t be removed here", requestId: error.requestId };
+  if (command.kind === "remove_fact") { await apiFetch(`/api/resource-graph/facts/${command.edge_id}`, { method: "DELETE", signal }); return; }
+  await apiFetch(`/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`, { method: "DELETE", signal });
 }
 
 const PASSAGE_REFUSAL: Line = { fact: "couldn’t link this passage.", reason: "its quote or location is missing." };

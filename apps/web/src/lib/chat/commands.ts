@@ -1,11 +1,11 @@
 "use client";
 
 import type { FeedbackContent, Outcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
+import type { Line, Verb } from "@/components/feedback/stage";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { publishChange } from "@/lib/api/changes";
 import { apiFetch, isApiError, type ApiError, type ApiPath } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ApiJson } from "@/lib/api/wire";
 import { getWritingRuntime } from "@/lib/notes/runtime";
 import { createRandomId } from "@/lib/createRandomId";
@@ -15,6 +15,7 @@ import { readCatalog } from "./catalog";
 import { isSelectable, type Route } from "./selection";
 import {
   failureOf,
+  readFailureOf,
   feedbackContent,
   rejected,
   refusal,
@@ -114,7 +115,6 @@ type Viewer = { readonly paneId: string; settled(tree: ConversationTree | null):
 export const IDLE_COMMAND: CommandState = { kind: "Idle" };
 export const PENDING_CHANGE = "another change to this chat isn’t finished.";
 export const CHANGED = "this chat changed meanwhile.";
-export const MAY_HAVE = "it may have gone through.";
 const UNREAD = "couldn’t load messages.";
 
 /** A refused outcome. */
@@ -149,7 +149,7 @@ export function refusedFact(command: CommandKind): string {
   }
 }
 
-/** What an unknown outcome says, before `MAY_HAVE`. */
+/** What an unknown outcome says before its shared reason. */
 export function unsureFact(command: ChatCommand): string {
   switch (command.kind) {
     case "Send": return "not sure your message sent.";
@@ -173,23 +173,10 @@ export function commandKey(command: ChatCommand): string {
 export const changedLine = (command: ChatCommand): Line => command.kind === "DeleteChat"
   ? { fact: `couldn’t delete “${command.title}”.`, reason: "it changed meanwhile." } : { fact: CHANGED };
 
-/** What an unknown outcome says: its fact, then why its last retry was refused, else `MAY_HAVE`. */
-const unknownLine = (fact: string, refused: Refusal | null): Line => ({ fact, reason: refused?.line.reason ?? MAY_HAVE });
-
-/** A stale build refused the last retry: nothing sends until a reload. */
-export const reloadsAlone = (refused: Refusal | null): boolean =>
-  refused !== null && refused.error !== null && transportOf(refused.error) === "Update";
-
-/** A held unknown outcome: its line, and its owner's verbs, but a stale build offers reload alone. */
-export const heldUnknown = (fact: string, refused: Refusal | null, verbs: Verbs): { line: Line; verbs: Verbs | undefined } => ({
-  line: unknownLine(fact, refused),
-  verbs: reloadsAlone(refused) ? transportVerbs("Update", { signIn: null }) ?? undefined : verbs,
-});
-
 /** Until L7, the reader dock (L2) reads the standing as content. */
 function told(command: ChatCommand, standing: Standing): FeedbackContent {
   switch (standing.kind) {
-    case "Unknown": return feedbackContent({ line: unknownLine(unsureFact(command), standing.refused), error: standing.refused?.error ?? null });
+    case "Unknown": return feedbackContent({ line: { fact: unsureFact(command), reason: UNKNOWN_OUTCOME_REASON }, error: standing.refused?.error ?? null });
     case "Changed": return feedbackContent({ line: changedLine(command), error: null });
     case "Unread": return feedbackContent(refusal(UNREAD, standing.error));
   }
@@ -327,7 +314,7 @@ export async function confirmChatDeletion(
   try {
     tree = target.kind === "Message" ? target.tree : await readConversationTree(conversationId);
   } catch (error) {
-    const failure = failureOf(error);
+    const failure = readFailureOf(error);
     if (failure.kind === "Defect") throw failure.error;
     // nothing was sent: the read precedes the confirmation
     return failure.kind === "Handled" || !owner.isActive()
@@ -390,7 +377,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   };
   const stand = (standing: Standing): CommandOutcome => {
     if (!pending) throw new Error("Chat command state without a pending command");
-    if (standing.kind === "Unknown") pending.attempt += 1;
+    pending.attempt += 1;
     const { command, occurrence, attempt } = pending;
     const feedback = told(command, standing);
     set(standing.kind === "Unknown"
@@ -441,7 +428,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       return accepted && read.kind === "Settled" ? { kind: "Accepted", receipt: accepted } : read;
     } catch (error) {
       if (!isActive() || (attempt !== null && pending !== attempt)) return { kind: "Handled" };
-      const failure = failureOf(error);
+      const failure = readFailureOf(error);
       if (failure.kind === "Defect") throw failure.error;
       if (failure.kind === "Handled") return { kind: "Handled" };
       return attempt ? stand({ kind: "Unread", error: failure.error }) : failed(refusal(UNREAD, failure.error));
@@ -472,7 +459,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         }
       } catch (error) {
         if (!isActive() || pending !== attempt) return { kind: "Handled" };
-        const failure = failureOf(error);
+        const failure = readFailureOf(error);
         if (failure.kind === "Defect") throw failure.error;
         if (!attempt.unconfirmed) return stand(failure.kind === "Handled" ? { kind: "Changed" } : { kind: "Unread", error: failure.error });
       }
@@ -485,9 +472,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     if (!attempt) return { kind: "Settled" };
     const command = attempt.command;
     busy(attempt);
-    let submitted = false;
     try {
-      let deleted = false;
       if (command.kind === "Send" || command.kind === "Repeat") {
         if(accountId!==null && attempt.authored_prefix!==null) {
           await waitForAuthoredContext(accountId,attempt.authored_prefix,attempt.fence);
@@ -499,7 +484,18 @@ function createCommands(conversationId: string | null, accountActive: () => bool
           if (!isSelectable(catalog, command.selection))
             return refuse({ line: { fact: refusedFact(command), reason: "its model isn’t available now." }, error: null }, null, false);
         }
-        submitted = true;
+      }
+    } catch (error) {
+      if (!isActive() || pending !== attempt) return { kind: "Handled" };
+      if (error instanceof AuthoredContextError) return refuse({ line: { fact: refusedFact(command), reason: error.message }, error: null }, null, false);
+      const failure = readFailureOf(error);
+      if (failure.kind === "Defect") throw failure.error;
+      if (failure.kind === "Handled") return { kind: "Handled" };
+      return refuse(refusal(refusedFact(command), failure.error), null, false);
+    }
+    try {
+      let deleted = false;
+      if (command.kind === "Send" || command.kind === "Repeat") {
         const path = command.kind === "Send" ? "/api/chat-runs" : `/api/messages/${command.messageId}/${command.operation}` as const;
         const receipt = await admit(path, command.runId, attempt.body ?? "");
         if (!isActive() || pending !== attempt) return { kind: "Handled" };
@@ -522,7 +518,6 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         // a repeat lands once a read shows its answer; a send routes its pane regardless
         return command.kind === "Send" && read.kind === "Pending" ? { kind: "Accepted", receipt: accepted } : read;
       }
-      submitted = true;
       if (command.kind === "DeleteMessage") {
         const path = `/api/messages/${command.messageId}?conversation_id=${conversationId}&expected_revision=${command.expectedRevision}` as const;
         deleted = (await apiFetch<ApiJson<"/messages/{message_id}", "delete">>(path, { method: "DELETE" })).data.conversation_deleted;
@@ -537,18 +532,14 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       return reconcile();
     } catch (error) {
       if (!isActive() || pending !== attempt) return { kind: "Handled" };
-      if (error instanceof AuthoredContextError) return refuse({ line: { fact: refusedFact(command), reason: error.message }, error: null }, null, false);
       if (isApiError(error) && error.code === "E_CONVERSATION_CHANGED") return conflict();
       const failure = failureOf(error);
       if (failure.kind === "Defect") {
         // A malformed response can follow a committed write: keep admission closed.
         if (attempt.accepted) stand({ kind: "Changed" });
-        else if (submitted) {
+        else {
           attempt.unconfirmed = true;
           stand({ kind: "Unknown", refused: null });
-        } else {
-          pending = null;
-          set(IDLE_COMMAND);
         }
         throw failure.error;
       }
@@ -560,7 +551,7 @@ function createCommands(conversationId: string | null, accountActive: () => bool
         }
         return { kind: "Handled" };
       }
-      if (submitted && failure.kind === "Unknown") {
+      if (failure.kind === "Unknown") {
         attempt.unconfirmed = true;
         return stand({ kind: "Unknown", refused: null });
       }

@@ -1,18 +1,19 @@
 "use client";
 
-import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
-import { useEffect, useRef, useState } from "react";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useEffect, useId, useRef, useState } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
-import { apiFetch, outcomeUnknown, type ApiPath } from "@/lib/api/client";
+import { apiFetch, isRefusal, outcomeUnknown, type ApiPath } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import type { ApiJson } from "@/lib/api/wire";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { undoAssistantWrite } from "@/lib/assistantWrites";
 import styles from "./AssistantWrites.module.css";
 
@@ -36,11 +37,17 @@ export default function AssistantWrites({
   toolCallId: string | null;
 }) {
   const [revision, setRevision] = useState(0);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const draft = useResourceDraft<{ id: string; attempt: number; busy: boolean } | null>("Settings.AssistantUndo", () => null,
+    value => ({ changed: false, unconfirmed: value !== null, stopsBrowserWork: false }));
+  const { set: setPending } = draft;
+  const pending = draft.value;
+  const busyId = pending?.busy ? pending.id : null;
+  const unknown = pending !== null && pending.attempt > 0 ? pending : null;
+  const waitsId = useId();
+  const otherId = useId();
   const { fail } = useOutcome();
   const resendFeedback = useResendFeedback();
   // The server's undo is idempotent, so an unknown outcome's retry resends it.
-  const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
   const focused = useRef<HTMLLIElement | null>(null);
   const didFocus = useRef(false);
   const landmark = useRef<HTMLElement>(null);
@@ -63,6 +70,9 @@ export default function AssistantWrites({
     },
   });
   const writes = list.items;
+  useEffect(() => {
+    if (pending && writes.some(write => write.id === pending.id && write.reverted_at !== null)) setPending(null);
+  }, [pending, writes, setPending]);
   const readFeedback = useCollectionReadFeedback({
     list, unit: UNIT, waiting: false, outcome: null, returnFocus: () => landmark.current,
   });
@@ -75,23 +85,34 @@ export default function AssistantWrites({
   }, [found, list.active]);
 
   const undo = async (id: string) => {
-    setBusyId(id);
+    const previous = draft.read();
+    if (previous !== null && (previous.busy || previous.id !== id)) return;
+    draft.set({ id, attempt: previous?.attempt ?? 0, busy: true });
     try {
       await undoAssistantWrite(id);
-      setUnknown(null);
+      if (draft.read()?.id !== id) return;
+      draft.set(null);
       setRevision((current) => current + 1);
     } catch (caught) {
-      if (outcomeUnknown(caught)) {
-        setUnknown(current => ({ id, attempt: current?.id === id ? current.attempt + 1 : 0 }));
-        return;
+      if (draft.read()?.id !== id) return;
+      if (outcomeUnknown(caught) || (isRefusal(caught) && (previous?.attempt ?? 0) > 0))
+        draft.set({ id, attempt: (previous?.attempt ?? 0) + 1, busy: false });
+      else {
+        if (isRefusal(caught)) draft.set(null);
+        fail(caught, "couldn’t undo that write.");
       }
-      setUnknown(null);
-      // The row's `undo write` is the retry.
-      fail(caught, "couldn’t undo that write.");
     } finally {
-      setBusyId(null);
+      const current = draft.read();
+      if (current?.id === id && current.busy) draft.set({ ...current, busy: false });
     }
   };
+  const retryKey = unknown ? `undo write ${unknown.id}` : "";
+  const recovery = unknown ? resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: retryKey, busy: busyId === unknown.id, run: () => { const current = draft.read(); if (current?.id === unknown.id && current.attempt > 0) void undo(unknown.id); } } }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === retryKey ? primary : null;
+  const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
 
   return (
     <PaneSection
@@ -113,8 +134,9 @@ export default function AssistantWrites({
         </Button>
       }
     >
-      {unknown === null ? null : <Hold id={`assistant-write-undo:${unknown.id}`} attempt={unknown.attempt} {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
-          resend: { label: "retry", commandKey: "RetryUndoWrite", busy: busyId === unknown.id, run: () => void undo(unknown.id) } })} />}
+      {unknown && recovery ? <Hold id={`assistant-write-undo:${unknown.id}`} attempt={unknown.attempt} {...recovery} /> : null}
+      {waits ? <span id={waitsId} className="sr-only">{waitReason}</span> : null}
+      {pending ? <span id={otherId} className="sr-only">another undo isn’t finished.</span> : null}
       {list.status === "loading" ? <Ruling />
         : list.status === "failed" && list.failure !== null ? <Failed error={list.failure.error} noun="assistant writes" retry={{ run: list.retry, busy: list.running !== null }} />
         : list.complete && writes.length === 0 ? <Fact line={{ fact: generationId ? "no writes from this generation." : "no assistant writes yet." }} />
@@ -155,8 +177,9 @@ export default function AssistantWrites({
                 ? <p className={styles.effectStatus}>undo unavailable for this older filing</p> : null}
               {write.undo_allowed ? (
                 <Button
-                  aria-busy={busyId === write.id || undefined}
-                  disabled={busyId !== null}
+                  aria-busy={busyId === write.id || (unknown?.id === write.id && replay?.busy) || undefined}
+                  disabled={busyId !== null || (pending !== null && pending.id !== write.id) || (unknown?.id === write.id && waits)}
+                  aria-describedby={pending !== null && pending.id !== write.id ? otherId : unknown?.id === write.id && waits ? waitsId : undefined}
                   onClick={() => void undo(write.id)}
                 >
                   Undo write

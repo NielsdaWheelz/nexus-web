@@ -433,7 +433,7 @@ export function createNativeEngine(
     unanswered = 0;
     return state.queue;
   };
-  /** A timeout cannot establish whether a change ran. Only an explicit check reconciles it. */
+  /** A timeout cannot establish whether a change ran. Explicit recovery reconciles and may pause. */
   const unansweredChange = (): never => {
     unanswered += 1;
     throw new QueueCommandError("Unsettled");

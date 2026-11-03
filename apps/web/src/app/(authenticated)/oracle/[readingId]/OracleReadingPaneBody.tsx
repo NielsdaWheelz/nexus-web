@@ -2,19 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
 import { useFailedReadRepair, usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { MAY_HAVE } from "@/lib/chat/commands";
+
 import {
   createReading,
   platePath,
@@ -113,17 +115,21 @@ export default function OracleReadingPaneBody() {
   const pane = requirePaneRuntime(usePaneRuntime(), "OracleReadingPaneBody");
   const { ctx } = useActionRuntime();
   const live = useRef(false);
-  const attempt = useRef<{ id: string; question: string; openIntent: OpenIntent } | null>(null);
+  const retryDraft = useResourceDraft<{
+    attempt: { id: string; question: string; openIntent: OpenIntent } | null;
+    retrying: boolean;
+    unknown: { id: string; attempt: number } | null;
+  }>(`Oracle.Retry:${readingId}`, () => ({ attempt: null, retrying: false, unknown: null }),
+    value => ({ changed: false, unconfirmed: value.attempt !== null, stopsBrowserWork: false }));
+  const { retrying, unknown } = retryDraft.value;
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [loads, setLoads] = useState(0);
   // Stream frames replace the loaded reading; each frame is the whole reading.
   const [streamed, setStreamed] = useState<OracleReading | null>(null);
   /** The watch that went down, by the load that opened it: a later load is its reread, in flight. */
   const [lost, setLost] = useState<{ error: Error; load: number } | null>(null);
-  const [retrying, setRetrying] = useState(false);
-  /** The frozen retry, and its attempts whose answer never came. */
-  const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
   const { fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const detail = usePaneFreeServerValue<OracleReading>({
     key: `/oracle/readings/${readingId}`,
     stale: "",
@@ -190,32 +196,36 @@ export default function OracleReadingPaneBody() {
   const watchLost = lost !== null && unfinishedId !== null;
   useFailedReadRepair(watchLost, lost !== null && lost.load !== loads, reload);
   const retryReading = async (intent: OpenIntent) => {
-    if (reading === null || retrying) return;
-    const frozen = attempt.current === null
+    const current = retryDraft.read();
+    if (reading === null || current.retrying) return;
+    const frozen = current.attempt === null
       ? { id: crypto.randomUUID(), question: reading.question_text, openIntent: intent }
-      : { ...attempt.current, openIntent: intent === "new_pane" ? intent : attempt.current.openIntent };
-    attempt.current = frozen;
-    setRetrying(true);
+      : { ...current.attempt, openIntent: intent === "new_pane" ? intent : current.attempt.openIntent };
+    retryDraft.set(value => ({ ...value, attempt: frozen, retrying: true }));
     try {
       await openAsyncResult({
         ctx, originPaneId: pane.paneId, intent: frozen.openIntent, subject: frozen.question,
         create: async () => {
           const next = await createReading({ id: frozen.id, question: frozen.question });
-          if (live.current) {attempt.current = null; setUnknown(null);}
+          if (!ctx.sessionSignal().aborted) retryDraft.set(value => ({ ...value, attempt: null, unknown: null }));
           return { target: { href: `/oracle/${next}` }, title: "reading started", openLabel: "open reading" };
         },
       });
     } catch (error) {
-      if (!live.current || ctx.sessionSignal().aborted) return;
+      if (ctx.sessionSignal().aborted) return;
       if (handleUnauthenticatedApiError(error)) return;
       // the frozen attempt keeps its id until one lands, and the first creation wins, so any retry
       // resends it. a refusal changed nothing and leaves an earlier unknown send held; anything else
       // a send meets leaves its own outcome unknown. fail rethrows a defect.
-      if (!isApiError(error) || isSameSystemApiDefect(error) || isRefusal(error))
-        fail(error, "couldn’t start a new reading.", { label: "retry", commandKey: `read again ${readingId}`, run: intent => void retryReading(intent) });
-      else setUnknown((current) => ({ id: frozen.id, attempt: (current?.id === frozen.id ? current.attempt : 0) + 1 }));
-    } finally { if (live.current) setRetrying(false); }
+      if (!isApiError(error) || isSameSystemApiDefect(error)) fail(error, "couldn’t start a new reading.");
+      else if (isRefusal(error) && retryDraft.read().unknown === null) {
+        retryDraft.set(value => ({ ...value, attempt: null }));
+        if (live.current) fail(error, "couldn’t start a new reading.", { label: "retry", commandKey: `read again ${readingId}`, run: intent => void retryReading(intent) });
+      } else retryDraft.set(value => ({ ...value, unknown: { id: frozen.id, attempt: (value.unknown?.id === frozen.id ? value.unknown.attempt : 0) + 1 } }));
+    } finally { if (!ctx.sessionSignal().aborted) retryDraft.set(value => ({ ...value, retrying: false })); }
   };
+  const retryVerb = { label: "retry", commandKey: `read again ${readingId}`, busy: retrying, run: (intent: OpenIntent) => void retryReading(intent) };
+  const recovery = unknown ? resendFeedback({ line: { fact: "not sure the reading started.", reason: UNKNOWN_OUTCOME_REASON }, resend: retryVerb }) : null;
   const paragraphs = reading?.interpretation_text?.split(/\n\n+/) ?? [];
   const peers = concordance.status === "ready" ? concordance.data.data : [];
   return (
@@ -393,10 +403,8 @@ export default function OracleReadingPaneBody() {
             <section className={styles.errorPanel}>
               {/* a failure the stream brought is news; one loaded cold is not */}
               <Fact speak={reading === streamed} line={failureLine(reading.error_code)}
-                verbs={[{ label: "retry", commandKey: `read again ${readingId}`, busy: retrying, run: intent => void retryReading(intent) }]} />
-              {unknown ? <Hold id={unknown.id} attempt={unknown.attempt}
-                line={{ fact: "not sure the reading started.", reason: MAY_HAVE }}
-                verbs={[{ label: "retry", commandKey: `read again ${readingId}`, busy: retrying, run: intent => void retryReading(intent) }]} /> : null}
+                verbs={recovery ? recovery.verbs ?? undefined : [retryVerb]} />
+              {unknown && recovery ? <Hold id={unknown.id} attempt={unknown.attempt} {...recovery} /> : null}
             </section>
           )}
 

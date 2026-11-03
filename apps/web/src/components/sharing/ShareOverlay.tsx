@@ -17,7 +17,6 @@ import {
   apiFetch,
   isApiError,
   isSameSystemApiDefect,
-  outcomeUnknown,
   type ApiPath,
 } from "@/lib/api/client";
 import { useFailedReadRepair } from "@/lib/api/serverState";
@@ -25,7 +24,7 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
-import type { ShareSession } from "@/lib/sharing/controller";
+import type { ShareSession, ShareCommands, ShareChange } from "@/lib/sharing/controller";
 import type { CanonicalResourceRef, ShareMode } from "@/lib/sharing/types";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -60,8 +59,8 @@ function sharesPath(ref: CanonicalResourceRef): ApiPath {
   return `/api/resource-items/${encodeURIComponent(ref)}/shares`;
 }
 
-export default function ShareOverlay(props: { session: ShareSession | null; onClose: () => void }) {
-  const { session, onClose } = props;
+export default function ShareOverlay(props: { session: ShareSession | null; commands: ShareCommands; onClose: () => void }) {
+  const { session, commands, onClose } = props;
   const isMobile = useIsMobileViewport();
   const navigated = useRef(false);
   useEffect(() => { navigated.current = false; }, [session]);
@@ -71,7 +70,7 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
     returnFocusTo: session?.options.returnFocusTo,
     returnFocusFallback: fallback ?? undefined,
   };
-  const panel = session && <SharePanel key={session.key} session={session} onClose={() => { navigated.current = true; onClose(); }} />;
+  const panel = session && <SharePanel key={session.key} session={session} commands={commands} onClose={() => { navigated.current = true; onClose(); }} />;
   return (
     <>
       <Dialog open={session !== null && !isMobile} onClose={onClose} title="Share" {...focus}>
@@ -90,20 +89,12 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
   );
 }
 
-/** What the grant editor borrows from the panel: a change's admission and outcome, and share. */
+/** The editor borrows native sharing; server changes belong to its controller. */
 interface PanelActions {
-  /** True when admission refuses the change unsent, once that is said. */
-  /** A change landed: an unknown outcome under the same key is settled. */
-  landed: (key: string) => void;
-  /** A change failed: refused, it speaks once; unknown, it holds until a read settles it. */
-  fail: (error: unknown, key: string, fact: string) => void;
   nativeShare: (url: string, title: string) => Promise<boolean>;
 }
 
-/** A sharing change refused for a reason the server names. */
-const SHARE_REASONS: Readonly<Record<string, string>> = { E_USER_NOT_FOUND: "this account no longer exists." };
-
-function SharePanel({ session, onClose }: { session: ShareSession; onClose: () => void }) {
+function SharePanel({ session, commands, onClose }: { session: ShareSession; commands: ShareCommands; onClose: () => void }) {
   const { target } = session;
   const outcome = useOutcome();
   const resendFeedback = useResendFeedback();
@@ -112,8 +103,8 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   // it again. Either reruns on a repair; a defect throws.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
-  /** A change whose outcome is unknown: the snapshot's next read settles it. */
-  const [unknown, setUnknown] = useState<{ key: string; attempt: number } | null>(null);
+  const pending = commands.pending;
+  const observe = commands.observe;
   const [loading, setLoading] = useState(false);
   const reading = useRef<AbortSignal | null>(null);
   const lifetime = useRef<AbortController | null>(null);
@@ -133,7 +124,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         if (currentSignal.aborted) return false;
         setSnapshot(next);
         setLoadError(null);
-        setUnknown(null);
+        observe(session, next);
         return true;
       } catch (error) {
         if (currentSignal.aborted || handleUnauthenticatedApiError(error)) return false;
@@ -145,7 +136,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
         if (!currentSignal.aborted) setLoading(false);
       }
     },
-    [target],
+    [target, session, observe],
   );
 
   useEffect(() => {
@@ -159,14 +150,6 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   if (defect !== null) throw defect.error;
 
   const actions: PanelActions = {
-    landed: key => setUnknown(current => current?.key === key ? null : current),
-    fail: (error, key, fact) => {
-      if (lifetime.current?.signal.aborted || handleUnauthenticatedApiError(error)) return;
-      if (outcomeUnknown(error)) { setUnknown(current => ({ key, attempt: current?.key === key ? current.attempt + 1 : 0 })); return; }
-      const reason = isApiError(error) ? SHARE_REASONS[error.code] : undefined;
-      if (reason === undefined) outcome.fail(error, fact);
-      else outcome.say({ fact, reason });
-    },
     nativeShare: async (url, title) => {
       try {
         await navigator.share({ title, url });
@@ -228,7 +211,8 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       target.kind === "Resource" &&
       (mode === "ResourceGrants" || mode === "HighlightGrants") ? (
         <GrantEditor
-          subject={target.ref}
+          session={session}
+          commands={commands}
           snapshot={snapshot}
           onChange={setSnapshot}
           actions={actions}
@@ -246,12 +230,22 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           aside={members.can_manage ? <ButtonLink href={snapshot!.authenticated_href} data-workspace-rich-target="true" onClick={manageMembers} onKeyDown={manageMembers}>Manage members</ButtonLink> : null}
         />
       ) : null}
-      {unknown !== null ? <Hold id={`share-change:${unknown.key}`} attempt={unknown.attempt}
-        {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend: { label: "check", commandKey: "share-check", busy: loading, run: () => void load().then(landed => {
-          if (!landed) setUnknown(current => current === null ? null : { ...current, attempt: current.attempt + 1 });
-        }) } })} /> : null}
+      {pending !== null && pending.unknown > 0 ? <Hold id={`share-change:${session.key}:${pending.key}`} attempt={pending.unknown}
+        {...resendFeedback({line: {fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON},
+          resend: {label: "retry", commandKey: `share-retry:${session.key}:${pending.key}`, busy: pending.running,
+            run: () => void commands.retry(session, pending.request).then(change => change && setSnapshot(current => current && applyChange(current, change)))},
+          secondary: {label: "check", commandKey: `share-check:${session.key}`, busy: loading,
+            run: () => void load()}})} /> : null}
     </div>
   );
+}
+
+/** Accepted server facts update only the grant they concern. */
+function applyChange(snapshot: Snapshot, change: ShareChange): Snapshot {
+  if (change.kind === "Revoked") return {...snapshot, shares: snapshot.shares.filter(share => share.id !== change.id),
+    received_access: snapshot.received_access.filter(share => share.id !== change.id)};
+  return {...snapshot, shares: snapshot.shares.some(share => share.id === change.share.id)
+    ? snapshot.shares : [...snapshot.shares, change.share]};
 }
 
 function Section(props: {
@@ -276,24 +270,17 @@ function Section(props: {
 }
 
 function GrantEditor(props: {
-  subject: CanonicalResourceRef;
+  session: ShareSession;
+  commands: ShareCommands;
   snapshot: Snapshot;
   onChange: (snapshot: Snapshot) => void;
   actions: PanelActions;
 }) {
-  const { snapshot, onChange, actions } = props;
+  const { snapshot, onChange, actions, session, commands } = props;
   // One change at a time: `busy` names the change in flight and disables every other one.
   const [busy, setBusy] = useState<string | null>(null);
   // One question at a time: a grant's id, or "Native" / "X" for a bearer-link warning.
   const [confirm, setConfirm] = useState<string | null>(null);
-  // Keep an uncertain create's id until its receipt or an authoritative snapshot
-  // confirms that exact grant. Later creates must never reuse a revoked grant id.
-  const attempts = useRef(new Map<string, string>());
-  useEffect(() => {
-    for (const [key, id] of attempts.current) {
-      if (snapshot.shares.some(share => share.id === id)) attempts.current.delete(key);
-    }
-  }, [snapshot.shares]);
   const link = snapshot.shares.find((s): s is Schema<"LinkShareOut"> => s.kind === "Link");
   const people = snapshot.shares.filter((s): s is Schema<"UserShareOut"> => s.kind === "User");
   const { user: userAvailability, link: linkAvailability } = snapshot.creation_availability;
@@ -304,44 +291,16 @@ function GrantEditor(props: {
     key: string,
     fact: string,
   ) => {
-    setBusy(key);
-    const id = attempts.current.get(key) ?? crypto.randomUUID();
-    attempts.current.set(key, id);
-    try {
-      const { data } = await apiFetch<SharesJson<"post">>(sharesPath(props.subject), {
-        method: "POST",
-        body: JSON.stringify({ id, audience }),
-      });
-      attempts.current.delete(key);
-      const known = snapshot.shares.some((share) => share.id === data.share.id);
-      onChange({ ...snapshot, shares: known ? snapshot.shares : [...snapshot.shares, data.share] });
-      actions.landed(key);
-      return true;
-    } catch (error) {
-      actions.fail(error, key, fact);
-      return false;
-    } finally {
-      setBusy(null);
-    }
+    const change = await commands.create(session, audience, key, fact);
+    if (change) onChange(applyChange(snapshot, change));
+    return change !== null;
   };
 
   const revoke = async (id: string, fact: string) => {
-    setBusy(id);
-    try {
-      await apiFetch(`/api/resource-shares/${id}`, { method: "DELETE" });
-      onChange({
-        ...snapshot,
-        shares: snapshot.shares.filter((share) => share.id !== id),
-        received_access: snapshot.received_access.filter((share) => share.id !== id),
-      });
-      setConfirm(null);
-      actions.landed(id);
-    } catch (error) {
-      actions.fail(error, id, fact);
-    } finally {
-      setBusy(null);
-    }
+    const change = await commands.revoke(session, id, fact);
+    if (change) {onChange(applyChange(snapshot, change)); setConfirm(null);}
   };
+  const blocked = busy !== null || commands.pending !== null;
 
   /** A control that asks first: `trigger` until pressed, then its question in its place. */
   const guarded = (
@@ -360,13 +319,13 @@ function GrantEditor(props: {
         <Button
           emphasis="strong"
           tone={consequence === "Destructive" ? "danger" : undefined}
-          aria-busy={busy === key || undefined}
-          disabled={busy !== null}
+          aria-busy={busy === key || commands.pending?.key === key && commands.pending.running || undefined}
+          disabled={busy !== null || commands.pending !== null && (commands.pending.key !== key || commands.pending.running)}
           onClick={onYes}
         >
           {yes}
         </Button>
-        <Button disabled={busy !== null} onClick={() => setConfirm(null)}>
+        <Button disabled={busy !== null || commands.pending?.running === true} onClick={() => setConfirm(null)}>
           {no}
         </Button>
       </span>
@@ -379,7 +338,7 @@ function GrantEditor(props: {
   ) =>
     guarded(
       id,
-      <Button tone="danger" disabled={busy !== null} onClick={() => setConfirm(id)}>
+      <Button tone="danger" disabled={busy !== null || commands.pending !== null && (commands.pending.key !== id || commands.pending.running)} onClick={() => setConfirm(id)}>
         {copy.label}
       </Button>,
       copy.prompt,
@@ -403,11 +362,11 @@ function GrantEditor(props: {
                 : ""}
             </p>
             <PeopleSearch
-              context={JSON.stringify(props.subject)}
+              context={JSON.stringify(session.target)}
               label="Search people to share with"
               placeholder="Search people…"
               description="Search display names, or enter an account’s exact email."
-              disabled={busy !== null}
+              disabled={blocked}
               onSelect={(person) => {
                 if (person === null) return;
                 const name = personLabel(person);
@@ -477,7 +436,7 @@ function GrantEditor(props: {
                     "Native",
                     <Button
                       icon={<Icon.Share />}
-                      disabled={busy !== null}
+                      disabled={blocked}
                       onClick={() => setConfirm("Native")}
                     >
                       Share public link
@@ -497,7 +456,7 @@ function GrantEditor(props: {
                 "X",
                 <Button
                   icon={<Icon.Send />}
-                  disabled={busy !== null}
+                  disabled={blocked}
                   onClick={() => setConfirm("X")}
                 >
                   Post to X
@@ -524,8 +483,8 @@ function GrantEditor(props: {
           </>
         ) : linkAvailability.kind === "Available" ? (
           <Button
-            aria-busy={busy === "new-link" || undefined}
-            disabled={busy !== null}
+            aria-busy={commands.pending?.key === "new-link" && commands.pending.running || undefined}
+            disabled={busy !== null || commands.pending !== null && (commands.pending.key !== "new-link" || commands.pending.running)}
             onClick={() =>
               void create(
                 { kind: "Link" },

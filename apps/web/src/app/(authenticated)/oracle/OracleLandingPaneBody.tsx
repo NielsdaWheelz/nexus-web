@@ -2,19 +2,19 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { Hold } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verbs } from "@/components/feedback/stage";
+import { Hold, useResendFeedback, useTransportVerbs } from "@/components/feedback/Feedback";
+import type { Line, Verbs } from "@/components/feedback/stage";
 import { ControlContents } from "@/components/ui/control";
 import MediaImage from "@/components/ui/MediaImage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { admissionReason, TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { MAY_HAVE } from "@/lib/chat/commands";
+
 import {
   QUESTION_MAX,
   createReading,
@@ -40,6 +40,8 @@ export default function OracleLandingPaneBody() {
     "OracleLandingPaneBody",
   );
   const { ctx } = useActionRuntime();
+  const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
   const live = useRef(false);
   const draft = useResourceDraft<{
     question: string; attempt: Attempt | null;
@@ -96,7 +98,7 @@ export default function OracleLandingPaneBody() {
         return;
       }
       draft.set(value => value.attempt?.id !== frozen.id ? value
-        : isRefusal(error) ? { ...value, refused: error, attempt: value.unknown === 0 ? null : value.attempt }
+        : isRefusal(error) ? value.unknown === 0 ? { ...value, refused: error, attempt: null } : { ...value, unknown: value.unknown + 1 }
         : { ...value, unknown: value.unknown + 1 });
     } finally { if (!ctx.sessionSignal().aborted) setSubmitting(false); }
   };
@@ -126,9 +128,18 @@ export default function OracleLandingPaneBody() {
   if (defect) throw defect.error;
   const transport = refused && transportOf(refused);
   const field: { line: Line; verbs?: Verbs } | null = length > QUESTION_MAX ? { line: { fact: `${length - QUESTION_MAX} characters too long.` } }
-    : transport ? { line: TRANSPORT_LINES[transport].command(UNSTARTED), verbs: transportVerbs(transport, { signIn: null }) ?? undefined }
+    : transport ? { line: TRANSPORT_LINES[transport].command(UNSTARTED), verbs: transportVerbs(transport) ?? undefined }
     : null;
   const held = draft.value.attempt;
+  const retryKey = held ? `ask ${held.id}` : "";
+  const recovery = held && unknown > 0 ? resendFeedback({
+    line: { fact: "not sure the reading started.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: retryKey, busy: submitting, run: resend },
+  }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === retryKey ? primary : null;
+  const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = recovery !== null ? replay?.disabledReason ?? admissionReason() ?? recovery.line.reason : undefined;
 
   return (
     <OracleTheme>
@@ -162,19 +173,20 @@ export default function OracleLandingPaneBody() {
                 onKeyDown={submitGesture}
                 disabled={
                   submitting ||
+                  waits ||
                   !mounted ||
                   length === 0 ||
                   length > QUESTION_MAX
                 }
-                aria-busy={submitting || undefined}
+                aria-describedby={waits ? fieldId : undefined}
+                aria-busy={submitting || replay?.busy || undefined}
               >
                 <ControlContents busy={submitting}>Consult the oracle</ControlContents>
               </button>
             </div>
-            {field ? <Field id={fieldId} line={field.line} verbs={field.verbs} /> : null}
+            {field ? <Field id={fieldId} line={field.line} verbs={field.verbs} /> : waits ? <span id={fieldId} className="sr-only">{waitReason}</span> : null}
           </form>
-          {held && unknown > 0 ? <Hold id={held.id} attempt={unknown} line={{ fact: "not sure the reading started.", reason: MAY_HAVE }}
-            verbs={[{ label: "retry", commandKey: `ask ${held.id}`, busy: submitting, run: resend }]} /> : null}
+          {held && recovery ? <Hold id={held.id} attempt={unknown} {...recovery} /> : null}
 
           {readings.status === "failed" ? (
             <Failed error={readings.error} noun="readings" retry={{ run: () => void readings.refetch(), busy: readings.retrying }} />

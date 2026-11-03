@@ -4,11 +4,15 @@ import type { ReactNode } from "react";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
-import { Failed } from "@/components/feedback/Fact";
+import { Fact as FeedbackFact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import InformationFrame from "./InformationFrame";
 import { informationFact } from "./InformationFacts";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
+import { isApiError } from "@/lib/api/client";
+import { catalogLine } from "@/lib/catalog/copy";
+import { podcastRefusalReason } from "@/lib/podcasts/paneState";
+import { libraryReason } from "@/lib/libraries/errors";
 import { assertNever } from "@/lib/assertNever";
 import type { Schema } from "@/lib/api/wire";
 import type { MetadataSubject } from "@/lib/actions/subjects";
@@ -32,7 +36,14 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
   const key = open ? `metadata:podcast:${podcastId}` : null;
   const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
   if (source.status === "loading") return <Ruling />;
-  if (source.status === "failed") return <Failed error={source.error} noun="podcast details" retry={{ run: source.refetch, busy: source.retrying }} />;
+  if (source.status === "failed") {
+    const catalog = isApiError(source.error) ? catalogLine(source.error) : null;
+    if (catalog !== null) return <FeedbackFact line={catalog}/>;
+    const reason = isApiError(source.error) && ["E_NOT_FOUND", "E_PODCAST_NOT_FOUND", "E_MEDIA_NOT_FOUND"].includes(source.error.code)
+      ? podcastRefusalReason(source.error) : undefined;
+    return reason === undefined ? <Failed error={source.error} noun="podcast details" retry={{run: source.refetch, busy: source.retrying}}/>
+      : <FeedbackFact line={{fact: "couldn’t load podcast details.", reason}}/>;
+  }
   const { podcast, episode_counts: counts } = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
@@ -57,7 +68,13 @@ function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; read
   const key = open ? `metadata:library:${libraryId}` : null;
   const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Libraries", "Entries", "Podcasts", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
   if (source.status === "loading") return <Ruling />;
-  if (source.status === "failed") return <Failed error={source.error} noun="library details" retry={{ run: source.refetch, busy: source.retrying }} />;
+  if (source.status === "failed") {
+    const catalog = isApiError(source.error) ? catalogLine(source.error) : null;
+    if (catalog !== null) return <FeedbackFact line={catalog}/>;
+    const reason = isApiError(source.error) && source.error.code === "E_LIBRARY_NOT_FOUND" ? libraryReason(source.error) : null;
+    return reason === null ? <Failed error={source.error} noun="library details" retry={{run: source.refetch, busy: source.retrying}}/>
+      : <FeedbackFact line={{fact: "couldn’t load library details.", reason}}/>;
+  }
   const metadata = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>

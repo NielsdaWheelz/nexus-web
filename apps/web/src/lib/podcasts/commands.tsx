@@ -87,12 +87,6 @@ function unsettledThing({ command, title, library }: Entry): string {
   }
 }
 
-function refusalReason(entry: Entry, error: ApiError): string | undefined {
-  if (error.code === "E_PODCAST_SUBSCRIPTION_ACTIVE") return "a podcast subscription includes it.";
-  if (error.status === 409) return entry.command.kind === "Import" ? "it changed meanwhile." : "its libraries changed meanwhile.";
-  return podcastRefusalReason(error);
-}
-
 function createOwner(accountId: string, guard: WorkGuard, defect: (input: { error: unknown }) => void, outcome: Outcome) {
   let lifetime: AbortController | null = null;
   const entries = new Map<string, Entry>();
@@ -107,7 +101,7 @@ function createOwner(accountId: string, guard: WorkGuard, defect: (input: { erro
    * its verb, since a reread cannot answer them. */
   const refuse = (entry: Entry, error: ApiError) => {
     const fact = refusedFact(entry);
-    const reason = refusalReason(entry, error);
+    const reason = podcastRefusalReason(error);
     const reviewable = reason !== undefined || transportOf(error) === "Refused";
     if (reviewable && entry.shown?.()) {
       entry.phase = "Refused";

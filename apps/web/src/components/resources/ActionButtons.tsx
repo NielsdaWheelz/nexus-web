@@ -25,7 +25,7 @@ export default function ActionButtons({ actions, density, returnFocus, afterRemo
           aria-label={label} aria-disabled={action.disabled || undefined} aria-busy={action.busy || undefined}
           aria-describedby={action.disabledReason ? reasonId : undefined}
           aria-haspopup={action.hasPopup ?? undefined}
-          tooltip={{ text: action.disabledReason ? `${label}: ${action.disabledReason}` : label }}
+          tooltip={{ text: action.disabledReason && !action.waiting ? `${label}: ${action.disabledReason}` : label }}
           data-action-id={action.id}
           onPointerDown={event => event.stopPropagation()}
           onKeyDown={event => event.stopPropagation()}

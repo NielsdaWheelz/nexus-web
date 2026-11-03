@@ -21,7 +21,7 @@ export type ChatEvent = { seq: number } & {
 export type Link =
   | { kind: "Live" }
   | { kind: "Lost" }
-  | { kind: "Reconnecting" }
+  | { kind: "Reconnecting"; error: ApiError | null }
   /** The reconnect read failed. */
   | { kind: "Failed"; error: ApiError };
 export type MessageAction = Omit<Schema<"TrustToolCallOut">, "id"> & {
