@@ -974,15 +974,15 @@ const verificationReason = (outcome: Extract<UploadSessionOutcome, { kind: "Veri
   `${FAILURE_COPY[outcome.code].reason}.`;
 
 /** One reason per upload-session outcome, on every surface (lib/imports/ingest.ts OUTCOMES). */
-const OUTCOME_REASON: Readonly<Record<Exclude<UploadSessionOutcome["kind"], "VerificationRejected" | "IntentMalformed" | "Superseded">, string>> = {
-  BytesMissing: "nexus never received it.",
+const OUTCOME_REASON = {
+  BytesMissing: undefined,
   Expired: "the upload expired.",
   Unresolved: "file storage isn’t answering.",
   UnsupportedFileType: "only pdf and epub files can be added.",
   FileTooLarge: "it’s over the size limit.",
   LibraryForbidden: "you no longer have access to one of its libraries.",
   FileMismatch: "that file doesn’t match this upload.",
-};
+} satisfies Readonly<Record<Exclude<UploadSessionOutcome["kind"], "VerificationRejected" | "IntentMalformed" | "Superseded">, string | undefined>>;
 
 export type UploadCommand = "RetryUpload" | "RemoveUpload";
 export const UPLOAD_COMMAND_FACT: Readonly<Record<UploadCommand, string>> = {
@@ -1021,7 +1021,7 @@ const CAPTURE_FACT: Readonly<Record<CaptureOperation, string>> = {
 
 /** A one-file upload's refusal, as the reason under its operation's fact: capture, attachment and
  * Add hold no session row. A malformed intent is a defect. */
-function outcomeReason(error: UploadSessionError): string {
+function outcomeReason(error: UploadSessionError): string | undefined {
   const outcome = error.outcome;
   switch (outcome.kind) {
     case "IntentMalformed": throw error;
