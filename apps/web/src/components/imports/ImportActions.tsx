@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState, type RefObject } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import type { CommandVerb } from "@/components/feedback/stage";
+import { useCallback, useRef, type RefObject } from "react";
+import { useOutcome } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -10,10 +9,8 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
-import { isApiError, isRefusal, isSameSystemApiDefect, isUnauthenticatedApiError } from "@/lib/api/client";
-import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
-import { UPLOAD_COMMAND_FACT, retryUploadRefusal, type UploadCommand } from "@/lib/imports/copy";
-import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
+import { recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
+import { useImportCommands } from "@/lib/imports/commands";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
@@ -95,80 +92,24 @@ function RecoveryControl({ action }: { readonly action: Command }) {
   >{action.label}</Button>;
 }
 
-/**
- * Upload retries retain the session's id and selected file; removal is idempotent.
- * File selection is synchronous with activation. Cancellation submits nothing. A command whose
- * answer was lost is held until a resend lands; a removal's also leaves with its row.
- */
+/** The visit owns commands; rows supply the subject and the explicit chooser/confirmation. */
 function useUploadActions(item: ImportItem) {
-  const { run } = useActionRuntime();
-  const outcome = useOutcome();
-  const [unsure, setUnsure] = useState<{ readonly command: UploadCommand; readonly attempt: number } | null>(null);
+  const commands = useImportCommands();
   const busy = useBusyActionIds(item.ref);
-  const inputRef = useRef<HTMLInputElement>(null);
-  if (item.media_id !== null) return { input: null, retry: null, remove: null, held: null };
-  const sessionId = item.ref.slice("upload:".length);
+  if (item.media_id !== null) return { retry: null, remove: null };
   const retrying = busy.has("RetryUpload");
   const removing = busy.has("RemoveUpload");
-  const chooseFile = () => { if (!retrying) inputRef.current?.click(); };
-  const again: Readonly<Record<UploadCommand, CommandVerb>> = {
-    RetryUpload: { label: "retry", commandKey: `${item.ref} RetryUpload`, run: chooseFile, busy: retrying },
-    RemoveUpload: { label: "retry", commandKey: `${item.ref} RemoveUpload`, run: () => sendRemove(), busy: removing },
-  };
-  const send = (id: UploadCommand, command: () => Promise<unknown>) => run({
-    ref: item.ref, id, label: ACTION_CATALOG[id].label, title: item.title,
-    confirmation: null, tracked: true,
-    execute: async () => {
-      try {
-        await command();
-        setUnsure(null);
-      } catch (error) {
-        if (error instanceof UploadSessionError) {
-          setUnsure(null);
-          // Removal settles its one declared outcome itself (ingest.ts); any other is a defect.
-          if (id === "RemoveUpload") throw error;
-          const refusal = retryUploadRefusal(error);
-          if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [again.RetryUpload] : undefined);
-          return;
-        }
-        // Refused, or signed out before the handler ran, nothing changed. Anything else sent may
-        // have landed: a pool timeout answers 503 after a commit too.
-        if (isApiError(error) && !isSameSystemApiDefect(error) && !isRefusal(error) && !isUnauthenticatedApiError(error)) {
-          setUnsure((current) => ({ command: id, attempt: current?.command === id ? current.attempt + 1 : 0 }));
-          return;
-        }
-        setUnsure(null);
-        outcome.fail(error, UPLOAD_COMMAND_FACT[id], again[id]);
-      }
-    },
-  });
-  const sendRemove = () => send("RemoveUpload", () => removeUploadSession(sessionId));
   const retry: Command | null = item.obligations.source?.recovery?.kind === "RetryUpload" ? {
     kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon aria-hidden="true" />,
     disabled: retrying, disabledReason: retrying ? BLOCKED_COPY.Busy : undefined,
-    onSelect: chooseFile,
+    onSelect: () => commands.retryUpload(item),
   } : null;
   const remove: Command = {
     kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: null,
     tone: "danger", disabled: removing, disabledReason: removing ? "removing." : undefined,
-    onSelect: () => {
-      if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`)) sendRemove();
-    },
+    onSelect: () => { if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`)) commands.removeUpload(item); },
   };
-  const input = retry === null ? null : <input ref={inputRef} className="sr-only" type="file" tabIndex={-1}
-    aria-label={item.original_filename !== null ? `Choose ${item.original_filename} to retry the upload` : "choose the file again to continue"}
-    accept=".pdf,.epub,application/pdf,application/epub+zip"
-    onChange={event => {
-      const file = event.currentTarget.files?.[0];
-      event.currentTarget.value = "";
-      if (file !== undefined && !retrying)
-        send("RetryUpload", () => uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }));
-    }}
-  />;
-  const held = unsure === null ? null : <Hold id={`${item.ref} ${unsure.command}`} attempt={unsure.attempt}
-    line={{ fact: unsure.command === "RetryUpload" ? "not sure the upload finished." : "not sure this import was removed.", reason: "it may have gone through." }}
-    verbs={[again[unsure.command]]} />;
-  return { input, retry, remove, held };
+  return { retry, remove };
 }
 
 /** Commands and feedback survive CSS promotion; the row owns its overflow ref. */
@@ -193,7 +134,6 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   const metadata = item.obligations.metadata;
   const commands = [open, source, search].filter((action): action is Command => action !== null);
   const shortcuts = <div ref={shortcutsRef} className={styles.rowActions} data-import-shortcuts="">
-    {upload.input}
     {item.primary === "metadata" && item.media_id !== null && metadata !== null
       ? <MetadataResearchActions mediaId={item.media_id} view={metadata} primaryOnly />
       : browserOffer && item.primary === "source" ? <span data-import-shortcut=""><ButtonLink href={browserOffer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink></span>
@@ -220,7 +160,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     }}
     resourceRef={assumeCanonicalResourceRef(`media:${item.media_id}`)} label={`more actions for ${item.title}`}
   />;
-  return { shortcuts, menu, held: upload.held };
+  return { shortcuts, menu };
 }
 
 /** Each inspector section invokes only its owner's offered recovery. */
@@ -236,11 +176,11 @@ export function ImportObligationActions({ item, obligation }: {
 }
 
 function UploadActions({ item }: { readonly item: ImportItem }) {
-  const { input, retry, remove, held } = useUploadActions(item);
-  return <>{input}{retry ? <RecoveryControl action={retry} /> : null}
+  const { retry, remove } = useUploadActions(item);
+  return <>{retry ? <RecoveryControl action={retry} /> : null}
     <ActionMenu label={`more actions for ${item.title}`}
       source={{ kind: "Immediate", subjectKey: `import:${item.ref}`, title: item.title,
         content: { sections: [{ id: "Import", label: null, options: remove ? [remove] : [] }] },
       }}
-    />{held}</>;
+    /></>;
 }

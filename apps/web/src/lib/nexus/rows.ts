@@ -360,15 +360,13 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
 }
 
 /** `search all results` and `use this text…`; lookup keeps only its literal search. */
-export function continuations(query: NexusQuery, principalCount: number): NexusRow[] {
+export function continuations(query: NexusQuery): NexusRow[] {
   if (!query.text || query.intent.kind !== "Search" && query.intent.kind !== "CommandLookup") return [];
   const literal = query.intent.kind === "CommandLookup";
   const searchQuery = literal ? { ...emptySearchQuery(), text: query.text } : query.searchQuery;
   const search: NexusRow = {
     key: "Continuation:SeeAll", localMatch: null, label: literal ? `search for “${query.text}”` : "search all results",
-    // Arriving principals change copy without resizing this pinned row.
-    detail: !literal && principalCount === 0 ? "nothing matched here" : null,
-    reserveDetail: !literal,
+    detail: null,
     icon: Icon.Search, action: nexusSearchAction(searchQuery), learns_selection: true, ...UNSCORED, rank: rank("Navigation", "Substring"),
   };
   if (literal) return [search];

@@ -88,7 +88,10 @@ export interface ActionCommand {
   readonly afterRemoval?: ReturnFocusTarget;
   /** Opening an overlay, navigating or handing a pane an entry is untracked. */
   readonly tracked: boolean;
-  readonly execute: () => unknown;
+  /** A raw, repeatable remote write whose outcome this execution owner retains. */
+  readonly rawWrite?: true;
+  /** Only an accepted raw write calls this, before later reads or navigation. Void proves nothing. */
+  readonly execute: (acknowledged: () => void) => unknown;
 }
 
 /** A modeled local refusal, in its owner's words; the runtime says it where the verb was invoked. */
@@ -112,9 +115,10 @@ interface Options {
   readonly confirmation?: Confirmation | null;
   readonly tracked?: boolean;
   readonly afterRemoval?: ReturnFocusTarget;
+  readonly rawWrite?: true;
 }
 type Verb = readonly [
-  execute: (detail: ActionSelectDetail) => unknown,
+  execute: (detail: ActionSelectDetail, acknowledged: () => void) => unknown,
   options?: Options,
 ];
 
@@ -462,7 +466,7 @@ export function projectResourceActions(
   const make = (
     actionId: ActionId,
     blocked: Action["blocked"],
-    execute: (detail: ActionSelectDetail) => unknown,
+    execute: (detail: ActionSelectDetail, acknowledged: () => void) => unknown,
     options: Options = {},
   ): Extract<ActionDescriptor, { kind: "command" }> => {
     const entry: {
@@ -496,8 +500,9 @@ export function projectResourceActions(
             ? entry.confirmation ?? null
             : options.confirmation,
           tracked: options.tracked ?? true,
+          rawWrite: options.rawWrite,
           afterRemoval: options.afterRemoval,
-          execute: () => execute(detail),
+          execute: acknowledged => execute(detail, acknowledged),
         }),
     };
   };
@@ -536,11 +541,12 @@ export function projectResourceActions(
     { tracked: false, ...options },
   ];
   const deleted = (
-    remove: () => Promise<unknown>,
+    remove: (acknowledged: () => void) => Promise<unknown>,
     fallbackHref: string,
+    rawWrite?: true,
   ): Verb => [
-    async () => {
-      await remove();
+    async (_, acknowledged) => {
+      await remove(acknowledged);
       if (!ctx.isActive()) return;
       settleDeletedResourcePanes({
         workspace: ctx.workspace(),
@@ -548,7 +554,7 @@ export function projectResourceActions(
         fallbackHref,
       });
     },
-    { afterRemoval: podcastFocus?.afterRemoval },
+    { afterRemoval: podcastFocus?.afterRemoval, rawWrite },
   ];
   const deleteChat = async () => {
     const owner = getConversationCommands(ctx.accountId, id);
@@ -678,7 +684,7 @@ export function projectResourceActions(
         window.location.assign(response.data.url);
       },
     ],
-    LeaveLibrary: deleted(() => leaveLibrary(id), "/libraries"),
+    LeaveLibrary: deleted(async acknowledged => { await leaveLibrary(id); acknowledged(); }, "/libraries", true),
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
     AddEpisodeToAll: [async () => {
@@ -693,14 +699,16 @@ export function projectResourceActions(
     }],
     RemoveEpisodeFromAll: overlay({ kind: "RemoveEpisodeFromAll", mediaId: id, title: facts.label }),
     RemovePodcastEpisodes: overlay({ kind: "RemovePodcastEpisodes", podcastId: id, title: facts.label }),
-    RefreshPodcast: [
-      () => requestPodcastRefresh({ kind: "Podcast", podcast_id: id }),
-    ],
-    RemoveMedia: deleted(async () => {
+    RefreshPodcast: [async (_, acknowledged) => {
+      await requestPodcastRefresh({ kind: "Podcast", podcast_id: id });
+      acknowledged();
+    }, { rawWrite: true }],
+    RemoveMedia: deleted(async acknowledged => {
       await deleteMedia(id);
+      acknowledged();
       if (ctx.isActive()) ctx.mediaContinuations.forgetDeletedMedia(id);
-    }, "/libraries"),
-    DeleteLibrary: deleted(() => deleteLibrary(id), "/libraries"),
+    }, "/libraries", true),
+    DeleteLibrary: deleted(async acknowledged => { await deleteLibrary(id); acknowledged(); }, "/libraries", true),
     DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(getWritingRuntime(ctx.accountId), id), "/notes"),
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
@@ -790,10 +798,11 @@ export function projectResourceActions(
           blocked,
           opens
             ? follow("Follow")
-            : async () => {
+            : async (_, acknowledged) => {
                 await apiFetch(`/api/media/${id}/transcript/request`, {
                   method: "POST",
                 });
+                acknowledged();
                 if (!ctx.isActive()) return;
                 // Imports shows the transcript's work; open panes follow it again.
                 publishImportsInvalidation();
@@ -801,6 +810,7 @@ export function projectResourceActions(
           {
             state: ACTION_CATALOG.Transcript.states[state],
             tracked: !opens,
+            rawWrite: opens ? undefined : true,
             blocked:
               state === "queued" || state === "running"
                 ? "Processing"
@@ -892,14 +902,16 @@ export function projectResourceActions(
         );
       }
       case "ReviewMetadataResult":
-        return make("ReviewMetadataResult", blocked, () =>
-          submitMetadataResultReview(id, action.job_id),
-        );
+        return make("ReviewMetadataResult", blocked, (_, acknowledged) =>
+          submitMetadataResultReview(id, action.job_id, acknowledged), { rawWrite: true });
       case "Recovery":
         if (action.offer.kind === "BrowserCapture") return { kind: "link", id: "BrowserCapture", label: ACTION_CATALOG.BrowserCapture.label,
           icon: null, href: action.offer.source_url, target: "_blank" };
         const offer = action.offer;
-        return make(offer.kind, blocked, () => recoverMedia(id, offer));
+        return make(offer.kind, blocked, async (_, acknowledged) => {
+          await recoverMedia(id, offer);
+          acknowledged();
+        }, { rawWrite: true });
       default: {
         const [execute, options] = verbs[action.kind];
         const descriptor = make(action.kind, blocked, execute, options);

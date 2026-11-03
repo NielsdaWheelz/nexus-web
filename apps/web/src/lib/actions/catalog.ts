@@ -2,9 +2,7 @@ import * as Icon from "@/lib/ui/icons";
 
 import type { Line } from "@/components/feedback/stage";
 import { outcomeUnknown, type ApiError } from "@/lib/api/client";
-import { staleBuild } from "@/lib/api/failure";
-import { CONFLICT_REASON } from "@/lib/imports/copy";
-import { remoteAdmission } from "@/lib/native/admission";
+import { admissionReason as currentAdmissionReason } from "@/lib/api/failure";
 
 type Group =
   | "Navigate"
@@ -300,15 +298,7 @@ export type BlockedReason = keyof typeof BLOCKED_COPY;
 /** Why a remote verb is unavailable, from admission. A browser offline while admitted lacks a
  * connection too. A durable reason, shown. */
 export function admissionReason(): string {
-  const admission = remoteAdmission();
-  switch (admission) {
-    case "SignInRequired": return "sign in to use this.";
-    case "UpdateRequired": return staleBuild();
-    case "Checking":
-    case "Unavailable":
-    case "Ready":
-      return BLOCKED_COPY.RequiresOnline;
-  }
+  return currentAdmissionReason() ?? BLOCKED_COPY.RequiresOnline;
 }
 
 /** What a failed verb tells. `Domain` is the verb's own line, translated from a domain code ahead
@@ -319,7 +309,7 @@ export type ActionOutcome =
   | { readonly kind: "Transport"; readonly fact: string; readonly retry: boolean }
   | { readonly kind: "Unknown"; readonly line: Line };
 
-export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError): ActionOutcome {
+export function actionOutcome(id: ActionId, label: string, title: string, error: ApiError, rawWrite: boolean): ActionOutcome {
   const named = `“${label.replace(/…$/, "")}”`;
   const fact = `couldn’t complete ${named}.`;
   const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
@@ -327,10 +317,10 @@ export function actionOutcome(id: ActionId, label: string, title: string, error:
     case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
   }
   if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact: "couldn’t change the lectern.", reason: "it changed since this menu opened." });
+    return domain({ fact: "couldn’t change the lectern." });
   if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
-    return domain({ fact, reason: CONFLICT_REASON });
-  if (outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
+    return domain({ fact });
+  if (rawWrite && outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} went through.` } };
   switch (error.code) {
     case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu was out of date. reopen it." });
     case "E_FORBIDDEN":

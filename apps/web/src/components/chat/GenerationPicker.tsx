@@ -53,8 +53,8 @@ export default function GenerationPicker({
       : <Failed error={catalogRead.error} noun="models" retry={{ run: () => void catalogRead.refetch(), busy: catalogRead.retrying }} />;
     const reread = () => { if (catalogRead.status === "failed" && !catalogRead.retrying) void catalogRead.refetch(); };
     return <div className={styles.picker}>
-      <ChoicePicker label="provider" value={null} options={[]} disabled={disabled} busy={catalogRead.status === "loading"} footer={unready} onOpen={reread} onChange={() => {}} />
-      <ChoicePicker label="model" value={null} options={[]} disabled={disabled} busy={catalogRead.status === "loading"} footer={unready} onOpen={reread} onChange={() => {}} />
+      <ChoicePicker label="provider" value={null} options={[]} disabled={disabled} busy={catalogRead.status === "loading" || catalogRead.retrying} footer={unready} onOpen={reread} onChange={() => {}} />
+      <ChoicePicker label="model" value={null} options={[]} disabled={disabled} busy={catalogRead.status === "loading" || catalogRead.retrying} footer={unready} onOpen={reread} onChange={() => {}} />
       <EffortPicker variant={null} value={value} disabled={disabled} waiting={catalogRead.status === "loading"} unready={unready} onOpen={reread} onChange={() => {}} />
     </div>;
   }

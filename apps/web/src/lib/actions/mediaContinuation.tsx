@@ -9,11 +9,12 @@
  * subject's own lectern or library control then carries its recovery.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import type { Line, Verb } from "@/components/feedback/stage";
+import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
+import type { CommandVerb, Line } from "@/components/feedback/stage";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown, requestWithDeadline, type ApiError } from "@/lib/api/client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { fetchBrowsePreview, type BrowsePreview } from "@/lib/browse/api";
@@ -34,6 +35,7 @@ export interface MediaContinuation {
   readonly subject: Extract<MediaSubject, { kind: "External" }>;
   readonly destination: MediaDestination;
   readonly pickerKey: number | null;
+  /** Complete means canonical handoff; a domain command owns any remaining placement. */
   readonly phase: "acquiring" | "resolving" | "applying" | "complete" | "unavailable";
   readonly accepted: MediaAcceptance | null;
   readonly preview: BrowsePreview | null;
@@ -45,7 +47,10 @@ export interface MediaContinuation {
 }
 /** `unknown`: the save may have gone through. `review`: the next press chooses again rather
  * than resends. `error`: a transport failure, whose reason is the transport's. */
-type ContinuationFailure = { readonly line: Line; readonly unknown: boolean; readonly review: boolean; readonly error: ApiError | null };
+type ContinuationFailure = { readonly line: Line; readonly error: ApiError | null } & (
+  | { readonly unknown: false; readonly review: boolean }
+  | { readonly unknown: true; readonly review: false; readonly busy: boolean }
+);
 type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "podcasts">;
 const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "lectern" : destination.kind === "All" ? "All" : destination.library.name;
 const addLine = (operation: MediaContinuation, reason?: string): Line =>
@@ -74,10 +79,10 @@ export function useMediaContinuationOwner(ctx: Context) {
     for (const listener of listeners.current) listener();
   };
   const get = (id: string) => current.current.find(operation => operation.intentId === id) ?? null;
-  const fail = (id: string, error: unknown) => {
+  const fail = (id: string, error: unknown, write = false) => {
     const { ctx } = latest.current;
-    if (!ctx.isActive() || handleUnauthenticatedApiError(error)) return;
-    if ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error)) {
+    if (!ctx.isActive() || isAbortError(error)) return;
+    if (!isApiError(error) || isSameSystemApiDefect(error)) {
       ctx.reportDefect({ error });
       return;
     }
@@ -85,19 +90,28 @@ export function useMediaContinuationOwner(ctx: Context) {
     if (!operation) return;
     const code = isApiError(error) ? error.code : null;
     const unavailable = code === "E_NOT_FOUND" || code === "E_IMPORT_NOT_FOUND";
-    const failure: ContinuationFailure = !isApiError(error) || outcomeUnknown(error)
-      ? { line: { fact: `not sure “${operation.subject.title}” was saved.`, reason: "it may have gone through." }, unknown: true, review: false, error: null }
+    const failure: ContinuationFailure = write && (operation.failure?.unknown || outcomeUnknown(error))
+      ? { line: { fact: `not sure “${operation.subject.title}” was saved.`, reason: UNKNOWN_OUTCOME_REASON }, unknown: true, review: false,
+        busy: false, error: outcomeUnknown(error) ? null : error }
       : unavailable ? UNAVAILABLE(operation)
-      : code === "E_RESOURCE_CONFLICT" ? { line: addLine(operation, `${destinationLabel(operation.destination)} changed since you chose it.`), unknown: false, review: true, error: null }
+      : code === "E_RESOURCE_CONFLICT" ? { line: addLine(operation), unknown: false, review: true, error: null }
       : code === "E_FORBIDDEN" || code === "E_LIBRARY_FORBIDDEN" ? { line: addLine(operation, `you can’t add to ${destinationLabel(operation.destination)}.`), unknown: false, review: true, error: null }
       : { line: operation.accepted === null ? { fact: `couldn’t import “${operation.subject.title}”.` } : addLine(operation), unknown: false, review: false, error };
-    update(id, value => ({ ...value, phase: unavailable ? "unavailable" : value.phase, failure }));
+    update(id, value => ({ ...value, phase: unavailable && !failure.unknown ? "unavailable" : value.phase, failure }));
+    handleUnauthenticatedApiError(error);
+  };
+  const complete = (id: string, mediaId: string) => {
+    const operation = get(id);
+    if (operation === null || !latest.current.ctx.isActive()) return;
+    update(id, value => ({ ...value, finalMediaId: mediaId, phase: "complete", failure: null }));
+    if (operation.pickerKey !== null)
+      latest.current.placement.retargetLibraryPlacement(operation.pickerKey, { kind: "Media", id: mediaId });
   };
   const apply = async (id: string, mediaId: string) => {
     const operation = get(id);
     if (!operation || operation.phase === "complete" || operation.phase === "applying" || !latest.current.ctx.isActive()) return;
     update(id, value => ({ ...value, finalMediaId: mediaId, phase: "applying", failure: null }));
-    const { ctx, placement } = latest.current;
+    const { ctx } = latest.current;
     const signal = ctx.sessionSignal();
     try {
       let confirmed: boolean;
@@ -107,14 +121,8 @@ export function useMediaContinuationOwner(ctx: Context) {
       }
       if (operation.accepted?.kind === "Episode" && operation.destination.kind !== "Lectern") {
         const subject = `episode-save:${mediaId}`;
-        const held = ctx.podcasts.pending(subject);
-        if (held !== null) {
-          if (held.phase === "Unknown") await ctx.podcasts.check(held.key);
-          if (get(id)?.phase !== "complete") {
-            const unknown = ctx.podcasts.pending(subject)?.phase === "Unknown";
-            update(id, value => ({ ...value, phase: "resolving", failure: unknown ? { line: { fact: `not sure “${value.subject.title}” was added to ${destinationLabel(value.destination)}.`,
-              reason: "it may have gone through." }, unknown, review: false, error: null } : { line: addLine(value), unknown, review: true, error: null } }));
-          }
+        if (ctx.podcasts.pending(subject) !== null) {
+          complete(id, mediaId);
           return;
         }
         let request = operation.placement;
@@ -129,17 +137,18 @@ export function useMediaContinuationOwner(ctx: Context) {
             expected_removal_revision: operation.guard.expected_removal_revision } };
           update(id, value => ({ ...value, placement: request }));
         }
-        confirmed = await ctx.podcasts.submit({ subject, title: `${operation.subject.title} · ${destinationLabel(operation.destination)}`,
+        confirmed = await ctx.podcasts.submit({ subject, title: operation.subject.title,
+          library: operation.destination.kind === "Library" ? operation.destination.library.name : null,
+          shown: () => false,
           command: { kind: "EpisodeSave", mediaId, libraryId: request.libraryId, body: request.body },
           onAccepted: () => {
-            update(id, value => ({ ...value, phase: "complete", failure: null }));
-            if (operation.pickerKey !== null) placement.retargetLibraryPlacement(operation.pickerKey, { kind: "Media", id: mediaId });
+            if (signal.aborted || !ctx.isActive()) return;
+            complete(id, mediaId);
           },
         });
+        if (signal.aborted || !ctx.isActive()) return;
         if (!confirmed) {
-          const phase = ctx.podcasts.pending(subject)?.phase;
-          update(id, value => ({ ...value, phase: "resolving", failure: phase === "Unknown" ? { line: { fact: `not sure “${value.subject.title}” was added to ${destinationLabel(value.destination)}.`,
-            reason: "it may have gone through." }, unknown: true, review: false, error: null } : { line: addLine(value), unknown: false, review: phase === "Refused", error: null } }));
+          complete(id, mediaId);
           return;
         }
       } else if (operation.destination.kind === "Library") {
@@ -152,7 +161,9 @@ export function useMediaContinuationOwner(ctx: Context) {
       } else {
         if (operation.destination.kind !== "Lectern") throw new Error("only episodes can be added directly to all");
         const outcome = await ctx.lectern.ensure({ mediaId, title: operation.subject.title });
-        confirmed = outcome === "Acknowledged";
+        if (signal.aborted || !ctx.isActive()) return;
+        if (outcome !== "Acknowledged") { complete(id, mediaId); return; }
+        confirmed = true;
       }
       if (signal.aborted) return;
       if (!confirmed) {
@@ -161,16 +172,15 @@ export function useMediaContinuationOwner(ctx: Context) {
           unknown: false, review: library, error: null } }));
         return;
       }
-      update(id, value => ({ ...value, phase: "complete", failure: null }));
-      if (operation.pickerKey !== null)
-        placement.retargetLibraryPlacement(operation.pickerKey, { kind: "Media", id: mediaId });
+      complete(id, mediaId);
     } catch (error) { fail(id, error); }
   };
   const acquire = async (id: string) => {
     const operation = get(id);
     if (!operation || operation.accepted !== null) throw new Error("media acquisition is no longer pending");
     const signal = latest.current.ctx.sessionSignal();
-    update(id, value => ({ ...value, phase: "acquiring", failure: null }));
+    update(id, value => ({ ...value, phase: "acquiring", failure: value.failure?.unknown ? { ...value.failure, busy: true } : null,
+      retryRevision: value.retryRevision + 1 }));
     try {
       const accepted = await requestWithDeadline({ signal, timeoutMs: 30_000, request: async requestSignal => {
         const guard = operation.guard ?? await readAcquisitionGuard(
@@ -183,7 +193,7 @@ export function useMediaContinuationOwner(ctx: Context) {
         return acquirePreviewMedia({ preview,
           guard,
           id: operation.intentId, signal: requestSignal,
-          onAccepted: accepted => { if (latest.current.ctx.isActive()) update(id, value => ({ ...value, accepted })); },
+          onAccepted: accepted => { if (latest.current.ctx.isActive()) update(id, value => ({ ...value, accepted, failure: null })); },
         });
       } });
       if (!latest.current.ctx.isActive()) return;
@@ -194,7 +204,10 @@ export function useMediaContinuationOwner(ctx: Context) {
         return;
       }
       if (accepted.kind === "Episode") void apply(id, accepted.mediaId);
-    } catch (error) { fail(id, error); }
+    } catch (error) {
+      const current = get(id);
+      fail(id, error, current !== null && current.accepted === null && current.guard !== null && current.preview !== null);
+    }
   };
   const start = (subject: Extract<MediaSubject, { kind: "External" }>, destination: MediaDestination, pickerKey: number | null) => {
     const held = current.current.find(operation => operation.subject.target === subject.target && operation.phase !== "complete");
@@ -251,7 +264,7 @@ export function useMediaContinuationOwner(ctx: Context) {
     },
     retry(id: string) {
       const operation = get(id);
-      if (!operation || operation.failure === null || operation.failure.review) return;
+      if (!operation || operation.failure === null || operation.failure.review || operation.failure.unknown && operation.failure.busy) return;
       if (operation.accepted === null) void acquire(id);
       else {
         update(id, value => ({ ...value, phase: "resolving", failure: null, retryRevision: value.retryRevision + 1 }));
@@ -307,14 +320,16 @@ function ContinuationObservation({ operation }: { readonly operation: MediaConti
     if (source.status === "ready" && !source.data.settled && error !== null) owner.fail(operation.intentId, error);
   }, [source, resolving, imports.summary, owner, operation.intentId]);
   const { say, fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const failure = operation.failure;
-  const recover: Verb | null = failure === null || operation.phase === "unavailable" ? null
-    : { label: continuationRecovery(operation, failure).label, commandKey: `recover ${operation.intentId}`, run: () => owner.recover(operation.intentId) };
+  const recover: CommandVerb | null = failure === null || operation.phase === "unavailable" ? null
+    : { label: continuationRecovery(operation, failure).label, commandKey: `recover ${operation.intentId}`, busy: failure.unknown && failure.busy, run: () => owner.recover(operation.intentId) };
   useEffect(() => {
-    if (failure === null || failure.unknown) return;
-    return failure.error !== null ? fail(failure.error, failure.line.fact, recover ?? undefined) : say(failure.line, recover ? [recover] : undefined);
+    if (failure === null || failure.unknown && (failure.busy || failure.error === null)) return;
+    return failure.error !== null ? fail(failure.error, failure.unknown ? `couldn’t retry saving “${operation.subject.title}”.` : failure.line.fact, recover ?? undefined) : say(failure.line, recover ? [recover] : undefined);
     // One report per refusal the owner records, retracted once it resolves or retries.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the failure identity alone
   }, [failure]);
-  return failure?.unknown ? <Hold id={operation.intentId} line={failure.line} verbs={recover ? [recover] : undefined} /> : null;
+  return failure?.unknown ? <Hold id={operation.intentId} attempt={operation.retryRevision - (failure.busy ? 1 : 0)}
+    {...resendFeedback({ line: failure.line, resend: recover })} /> : null;
 }

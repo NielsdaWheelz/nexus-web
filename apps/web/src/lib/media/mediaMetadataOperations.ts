@@ -147,6 +147,7 @@ export function useMediaMetadataOperations(
 export async function submitMetadataResultReview(
   mediaId: string,
   jobId: string,
+  onAccepted?: () => void,
 ): Promise<void> {
   const scope = account;
   if (scope === null) return;
@@ -159,6 +160,7 @@ export async function submitMetadataResultReview(
     if (account !== scope) return;
     throw error;
   }
+  onAccepted?.();
   if (account !== scope) return;
   publishImportsInvalidation();
   follow(scope, mediaId, true);

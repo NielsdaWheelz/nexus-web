@@ -5,7 +5,7 @@
 // row, verb, keybinding, open request and workflow goes through.
 import { useRecent } from "@/lib/recent/store";
 import { recentTargetKey } from "@/lib/recent/model";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import type { DismissRequestReason } from "@/components/ui/ModalFrame";
@@ -76,7 +76,7 @@ const CREATE_REFUSALS: Readonly<Record<string, Line>> = {
   E_RESOURCE_CONFLICT: { fact: CREATED },
 };
 const NO_USAGE: UsageMap = {};
-const RETIRED = "selection no longer available";
+const RETIRED = "that result is gone.";
 
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
 /** What leaving the current page means; leaving Add may first need the user's confirmation. */
@@ -146,7 +146,7 @@ export function useNexusController() {
   /** The armed row was removed; enter announces until a new query. */
   const retired = useRef(false);
   const pendingFire = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [announcement, setAnnouncement] = useState("");
+  const announce = useCallback((fact: string) => { say({ fact }); }, [say]);
   const [reorderSpeech, setReorderSpeech] = useState("");
   const [panesExpanded, setPanesExpanded] = useState(false);
   const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(false);
@@ -174,7 +174,8 @@ export function useNexusController() {
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const rootMode: NexusRootMode = parsed.text ? "Typed" : "Blank";
   const lookupGuidance = parsed.intent.kind === "CommandLookup"
-    ? `${parsed.intent.head === "/" ? "" : `unknown command: ${truncateText(parsed.intent.head, 32)}. `}choose a command to start empty, or search this text`
+    ? parsed.intent.head === "/" ? "choose a command, or search for this text."
+      : `no command named “${truncateText(parsed.intent.head, 32)}”. choose one, or search for this text.`
     : null;
   const retainedLocalTargets = list.rows.flatMap(row => row.localMatch
     ? [{ref: row.localMatch.resource.ref, field: row.localMatch.matchedField === "annotation" ? "annotation" as const : null}] : []);
@@ -300,7 +301,7 @@ export function useNexusController() {
   const latched = parsed.text && find.usage ? latchedHref(normalizeQuery(parsed.text), find.usage) : null;
   const shape = JSON.stringify([parsed.text, reordering, panesExpanded, viewport.isMobile, useText]);
   const lastShape = useRef<string | null>(null);
-  const continuationRows = useMemo(() => continuations(parsed, list.rows.length), [parsed, list.rows.length]);
+  const continuationRows = useMemo(() => continuations(parsed), [parsed]);
   useLayoutEffect(() => {
     if (!open || page.kind !== "Root") { lastShape.current = null; return; }
     const fresh = lastShape.current !== shape;
@@ -346,9 +347,9 @@ export function useNexusController() {
   useLayoutEffect(() => {
     if (rail !== null && !list.rows.some(row => row.key === rail.key)) {
       setRail(null);
-      setAnnouncement(RETIRED);
+      announce(RETIRED);
     }
-  }, [rail, list.rows]);
+  }, [rail, list.rows, announce]);
   // Zero principals, or nothing armed for a typed query, lands on `search all results`.
   const fallbackKey = rootMode === "Typed" && !retired.current && parsed.intent.kind !== "CommandLookup" ? continuationRows[0]?.key ?? null : null;
   const armed = list.armed ?? fallbackKey;
@@ -654,7 +655,6 @@ export function useNexusController() {
   function performExit(exit: Exit): WorkspaceTargetActivationResult | null {
     if (exit.kind === "Navigate") return run(exit.target, exit.activation);
     reorder.cancel({ silent: true });
-    setAnnouncement("");
     setRail(null);
     if (exit.kind === "Replace") { openIntent(exit.intent, exit.opener); return null; }
     addSession.discard();
@@ -703,7 +703,6 @@ export function useNexusController() {
 
   function setQuery(next: string) {
     reorder.cancel({ restoreFocus: false });
-    if (!reordering) setAnnouncement("");
     setRail(null);
     setUseText(null);
     if (!reordering) setReorderSpeech("");
@@ -726,7 +725,7 @@ export function useNexusController() {
 
   function fire(key: string | null, activation: NexusTargetActivation) {
     const row = key === null ? null : allRows.find(candidate => candidate.key === key);
-    if (!row) { if (key !== null || retired.current) setAnnouncement(RETIRED); return; }
+    if (!row) { if (key !== null || retired.current) announce(RETIRED); return; }
     activate(row.action, activation, row);
   }
 
@@ -735,9 +734,9 @@ export function useNexusController() {
     if (rail !== null) return;
     clearTimeout(pendingFire.current ?? undefined);
     pendingFire.current = null;
-    if (retired.current) { setAnnouncement(RETIRED); return; }
+    if (retired.current) { announce(RETIRED); return; }
     if (rootMode === "Blank") { const row = armedRow(); if (row) activate(row.action, activation, row); return; }
-    if (lookupGuidance !== null && !list.deliberate) { setAnnouncement(lookupGuidance); return; }
+    if (lookupGuidance !== null && !list.deliberate) { announce(lookupGuidance); return; }
     const now = performance.now();
     const target = fireTarget(list, now);
     if (target.kind === "Fire") { fire(target.key, activation); return; }
@@ -745,7 +744,7 @@ export function useNexusController() {
     pendingFire.current = setTimeout(() => {
       pendingFire.current = null;
       if (!visible.current) return;
-      if (retired.current) { setAnnouncement(RETIRED); return; }
+      if (retired.current) { announce(RETIRED); return; }
       // The window has closed: the armed row once, whatever its age; nothing armed lands on the fallback.
       const list = latestList.current;
       latestFire.current(list.armed ?? fallbackKey, activation);
@@ -846,8 +845,6 @@ export function useNexusController() {
   useEffect(() => () => clearTimeout(pendingFire.current ?? undefined), []);
 
   if (defect) throw defect.error;
-  const noticeText = [find.progress.kind === "Notice" ? find.progress.text : null,
-    !parsed.text && recent.readFailure ? recent.snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." : !parsed.text && recent.snapshot === null ? "loading recent…" : !parsed.text && recent.snapshot?.entries.length === 0 ? "resources you open will appear here." : null, !parsed.text && recent.writeFailure ? recent.writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." : null, lookupGuidance].filter(Boolean).join(" ") || null;
   return {
     interactionLayer,
     open,
@@ -880,7 +877,6 @@ export function useNexusController() {
     searchProgress: find.progress,
     searchFailures: find.readFailures,
     localSearchFailures: find.localFailures,
-    noticeText,
     setComposing(value: boolean) {
       if (value) reorder.cancel({ restoreFocus: false });
       setComposing(value);
@@ -891,8 +887,7 @@ export function useNexusController() {
     busy: find.busy,
     pending: find.pending,
     reorderSpeech,
-    announcement,
-    announce: setAnnouncement,
+    announce,
     dialogLabel: page.kind === "Add" ? "Add content" : viewport.isMobile && page.kind !== "Root" ? "workspace task" : "Nexus",
     focusKey: page.kind === "Add" ? addSession.state.sessionId : `${page.kind}:${focusRevision}`,
     addSession,

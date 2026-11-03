@@ -97,10 +97,10 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     state: state?.kind === "Ready" ? {
       ...state, options: projectResourceActions(state.facts, ctx, busy, command => run({
         ...command,
-        execute: () => {
+        execute: acknowledged => {
           if (installedApp && resourceActionRequiresRemote(command.id, command.tracked) && state.generation !== remoteGeneration())
             throw new ApiError(409, "E_ACTION_FACTS_STALE", "the menu was out of date");
-          return command.execute();
+          return command.execute(acknowledged);
         },
       }), pane?.paneId ?? null, state.source, focus).map<ActionDescriptor>(action => {
         const transcript = state.facts.actions.find(item => item.kind === "Transcript");

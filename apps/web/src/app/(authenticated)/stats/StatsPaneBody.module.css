@@ -6,7 +6,11 @@
 }
 /* The last view's figures while another view's read runs. */
 .stale {
-  opacity: 0.6;
+  animation: stale-in var(--duration-fast) var(--ease-glide) 200ms forwards;
+}
+
+@keyframes stale-in {
+  to { opacity: 0.6; }
 }
 .header {
   display: flex;
