@@ -67,8 +67,8 @@ export type CapturePhase =
   | { kind: "failed"; failure: CaptureFailure; recovery: "Retry" | "Check" | "Review" | "Recapture" | "Discard" };
 
 export interface ViewState {
-  /** the background owns one running command, including a wait for origins */
-  working: boolean;
+  /** a permission wait permits a new gesture to ask again; running work does not */
+  activity: "idle" | "awaiting_origins" | "running";
   account: {
     userId: string;
     email: string | null;

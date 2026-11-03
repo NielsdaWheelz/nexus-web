@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FeedbackFailure, useFeedbackOccurrence, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
@@ -35,6 +36,7 @@ import {
   matchLine,
   momentText,
   obligationStatusLine,
+  offerLine,
   recoveryLine,
   relatedSourceOutcomeLine,
   sourceFailureLine,
@@ -270,7 +272,6 @@ export default function ImportInspector({
       {(["source", "search"] as const).map((key) => {
         const slot = item.obligations[key];
         if (slot === null) return null;
-        const recovery = recoveryLine(slot);
         let title = (key === "source" ? sourceFailureLine(item) : null)
           ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null);
         if (slot.recovery?.kind === "BrowserCapture") {
@@ -280,17 +281,17 @@ export default function ImportInspector({
         return (
           <section key={key} className={styles.inspectorSection}>
             <h3>{key === "source" ? "Source" : "Search"}</h3>
-            <FeedbackStatus content={{
+            {slot.recovery?.kind === "BrowserCapture" ? <Fact line={{ fact: title, reason: offerLine(slot.recovery) }} /> : <FeedbackStatus content={{
               tone: slot.classification === "NeedsAttention" ? "Warning" : "Neutral",
               title,
               message: [
-                slot.recovery?.kind !== "BrowserCapture" && slot.classification === "NeedsAttention" && slot.failure_code !== null
+                slot.classification === "NeedsAttention" && slot.failure_code !== null
                   ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,
-                recovery,
+                recoveryLine(slot),
                 slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
                   ? `choose the original file: ${item.original_filename}` : null,
               ].filter(Boolean).join(" ") || undefined,
-            }} announcement="None" />
+            }} announcement="None" />}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
             </div>

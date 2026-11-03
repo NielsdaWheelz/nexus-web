@@ -342,8 +342,8 @@ async function viewState(): Promise<ViewState> {
     draft.submission !== null && (draft.submission.accountId !== session?.user_id || draft.submission.accountEpoch !== accountEpoch) ||
     draft.target.kind === "article" && (draft.captureTarget === null || draft.captureTarget.accountId !== session?.user_id || draft.captureTarget.accountEpoch !== accountEpoch)
   );
-  const state = {
-    working: active !== null,
+  const state: Omit<ViewState, "requiredOrigins"> = {
+    activity: active === null ? "idle" : awaitingGrant ? "awaiting_origins" : "running",
     account:
       session === null
         ? null
@@ -445,9 +445,11 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
     try {
       if ((await requiredOrigins()).length === 0) return;
       awaitingGrant = true;
+      pushState();
       await granted;
     } finally {
       awaitingGrant = false;
+      pushState();
       browser.permissions.onAdded.removeListener(wake);
       signal.removeEventListener("abort", wake);
     }

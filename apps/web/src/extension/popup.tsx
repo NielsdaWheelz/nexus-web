@@ -124,7 +124,7 @@ function Popup() {
       setPending(current.pending);
       setState(message.state);
       const awaitingRetry = current.pending.some(edit => edit.kind === "retry" || edit.kind === "review");
-      if (!awaitingRetry && !message.state.working) setRetryFailure(null);
+      if (!awaitingRetry && message.state.activity === "idle") setRetryFailure(null);
       if (message.failure !== null) setNotice(failureLine(message.failure));
     });
     port.onDisconnect.addListener(() => {
@@ -356,9 +356,9 @@ function Popup() {
           </p>
           <Button
             emphasis="strong" className={styles.primary}
-            disabled={account === null || !connected || state.working || saving || selectingRecovery || (draft.target.kind === "article" && draft.target.webMatch === "Ambiguous" && recovery === null) || (phase.kind !== "draft" && phase.kind !== "review")}
+            disabled={account === null || !connected || state.activity === "running" || saving || selectingRecovery || (draft.target.kind === "article" && draft.target.webMatch === "Ambiguous" && recovery === null) || (phase.kind !== "draft" && phase.kind !== "review")}
             onClick={() => sendWithOrigins({ kind: "save" })}
-            aria-busy={phase.kind !== "draft" && phase.kind !== "review"}
+            aria-busy={state.activity === "running" || saving}
           >
             {pressCaption}
           </Button>
