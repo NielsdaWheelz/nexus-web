@@ -84,6 +84,15 @@ server components: callFastAPI ────────────────�
   result thereafter. retirement cancels unused work; no completed-read cache
   remains. bootstrap consumption observations reach the existing native owner
   once its account facts and transport are ready.
+  `initialRead: ServerReadSeed<T>` supplies one completed read for a hook's
+  initial key: success carries data and its accepted-stale token; modeled failure
+  carries its `ApiError`. matching success paints immediately without repeating
+  the bootstrap fetch, including effect replay. a mismatched success remains
+  shown but stale while the normal owner revalidates. failure starts in the
+  existing failed/retry state without an automatic duplicate bootstrap attempt.
+  key changes, invalidation and explicit retry retain the normal read lifecycle;
+  a later mount has no completed-read cache. the admission caller owns the seed's
+  account/key association; the mounted hook owns subsequent reads.
   concurrent identical reads share only a flight,
   keyed by account, representation/query, policy and prefix demand. subscribers
   cancel independently; the last departure aborts. completed responses never

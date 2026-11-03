@@ -11,18 +11,22 @@ import {
   focusableElements,
   useOverlay,
   type DismissDecision,
+  type DismissReason,
   type ReturnFocusTarget,
   type Layer,
 } from "@/lib/ui/overlay";
 import styles from "./ModalFrame.module.css";
+
+/** Why a dismissal is asked: the kernel's reason, or `control` for the frame's own close controls and gestures. */
+export type DismissRequestReason = DismissReason | "control";
 
 export interface ModalProps {
   readonly open: boolean;
   readonly scope?: string;
   /** Runs only after a dismissal is accepted. */
   readonly onDismiss: () => void;
-  /** Asked by Escape, Back, the scrim and the frame's own close controls. */
-  readonly onDismissRequest?: () => DismissDecision;
+  /** Asked by Escape, Back, the scrim (`outside`) and the frame's own close controls (`control`). */
+  readonly onDismissRequest?: (reason: DismissRequestReason) => DismissDecision;
   /** What to focus on open unless content already took focus; else the first focusable, else the panel. */
   readonly initialFocus?: (panel: HTMLElement) => HTMLElement | null;
   /** Initial focus runs again when this changes while open. */
@@ -70,9 +74,10 @@ export default function ModalFrame({
 }) {
   const [panel, setPanel] = useState<HTMLElement | null>(null);
   const feedback = useContext(Session);
-  const requestDismiss = () => {
-    if (onDismissRequest?.() !== "blocked") onDismiss();
+  const requestDismiss = (reason: DismissRequestReason) => {
+    if (onDismissRequest?.(reason) !== "blocked") onDismiss();
   };
+  const dismissByControl = () => requestDismiss("control");
   const { layer, topmost, depth } = useOverlay(open, {
     kind: "modal",
     onDismiss: requestDismiss,
@@ -142,9 +147,9 @@ export default function ModalFrame({
           {feedback ? <FeedbackSurface bounds={panel} interaction={layer} modal={layer} active={open}
             protectedTargets={() => panel ? [...panel.querySelectorAll<HTMLElement>("header, [data-feedback-controls]")] : []}
             returnFocus={() => panel}>
-            {typeof children === "function" ? children(requestDismiss) : children}
+            {typeof children === "function" ? children(dismissByControl) : children}
             <StageAnchor kind="Modal" />
-          </FeedbackSurface> : typeof children === "function" ? children(requestDismiss) : children}
+          </FeedbackSurface> : typeof children === "function" ? children(dismissByControl) : children}
         </section>
       </div>
     </OverlayContext>,

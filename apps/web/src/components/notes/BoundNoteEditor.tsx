@@ -15,7 +15,6 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, h
   noteRef: string;
   label?: string;
   editable?: boolean;
-  compact?: boolean;
   onSplit?: (displayed: import("@/lib/notes/editorTypes").DisplayedSplit) => void;
   onJoin?: (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => void;
   session?: OutlineHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;

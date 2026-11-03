@@ -1,12 +1,13 @@
-/** Block clipboard carries canonical bodies and explicit parent indices. Notes are
- * copied by value; other resources are copied by reference. No durable format or
- * old clipboard grammar is read here. */
+/** Block clipboard carries references and explicit parent indices; notes and other
+ * resources are both copied by reference. Plain text is indented lines for other apps.
+ * No durable format or old clipboard grammar is read here. */
 import { DOMParser as PMParser, Fragment, type Node as PMNode } from "prosemirror-model";
 import { bodyText, noteBodySchema, parseBody, type NoteBody } from "@nexus/authored/body";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { RESOURCE_CLIPBOARD_TYPE } from "@/lib/ui/copyText";
 export const OUTLINE_CLIPBOARD = "application/x-nexus-authored-outline+json";
-export type ClipItem = {kind:"note";body:NoteBody;parent:number|null}|{kind:"resource";ref:string;label:string;parent:number|null};
+/** A note item's `ref` is null only when it arrives from a foreign format: it is then a line to be born. */
+export type ClipItem = {kind:"note";ref:string|null;body:NoteBody;parent:number|null}|{kind:"resource";ref:string;label:string;parent:number|null};
 /** Copy writing literally; the canonical search-text projection trims spaces. */
 export function clipboardPlainText(content: Fragment): string {
   return content.textBetween(0, content.size, "\n", node => node.type.name === "hard_break" ? "\n"
@@ -30,7 +31,7 @@ export function readOutlineClipboard(clipboard:DataTransfer):ClipItem[] {
       if(!item||typeof item!=="object"||!("parent" in item)||!("kind" in item))throw new TypeError("Invalid copied item");
       const parent=item.parent;
       if(parent!==null&&!(typeof parent==="number"&&Number.isInteger(parent)&&parent>=0&&parent<index))throw new TypeError("Copied parents must precede children");
-      if(item.kind==="note"&&"body" in item&&item.body&&typeof item.body==="object"&&"body_pm_json" in item.body)return {kind:"note",parent,body:parseBody(item.body.body_pm_json)};
+      if(item.kind==="note"&&"ref" in item&&typeof item.ref==="string"&&parseResourceRef(item.ref)&&"body" in item&&item.body&&typeof item.body==="object"&&"body_pm_json" in item.body)return {kind:"note",parent,ref:item.ref,body:parseBody(item.body.body_pm_json)};
       if(item.kind==="resource"&&"ref" in item&&typeof item.ref==="string"&&parseResourceRef(item.ref)&&"label" in item&&typeof item.label==="string")return {kind:"resource",parent,ref:item.ref,label:item.label};
       throw new TypeError("Invalid copied resource");
     });
@@ -40,7 +41,7 @@ export function readOutlineClipboard(clipboard:DataTransfer):ClipItem[] {
     const value:unknown=JSON.parse(reference);
     if(!value||typeof value!=="object"||!("ref" in value)||typeof value.ref!=="string"||!parseResourceRef(value.ref))throw new TypeError("Invalid copied reference");
     if (!("field" in value) || value.field !== null && value.field !== "annotation" || value.field === "annotation" && parseResourceRef(value.ref)?.scheme !== "highlight") throw new TypeError("Invalid copied reference field");
-    if (value.field === "annotation") return [{kind: "note", parent: null, body: parseBody({type: "body", attrs: {presentation: "prose"}, content: [{type: "resource_embed", attrs: {resource_ref: value.ref, field: "annotation", label: null}}]})}];
+    if (value.field === "annotation") return [{kind: "note", parent: null, ref: null, body: parseBody({type: "body", attrs: {presentation: "prose"}, content: [{type: "resource_embed", attrs: {resource_ref: value.ref, field: "annotation", label: null}}]})}];
     return [{kind:"resource",ref:value.ref,label:value.ref,parent:null}];
   }
   const html=clipboard.getData("text/html");
@@ -63,7 +64,7 @@ export function readOutlineClipboard(clipboard:DataTransfer):ClipItem[] {
           });
           const only=slice.content.firstChild;
           const node=slice.content.childCount===1&&only?.type===noteBodySchema.nodes.body?only:noteBodySchema.nodes.body!.create(null,Fragment.fromArray(nodes));
-          items.push({kind:"note",parent,body:parseBody(node.toJSON())});
+          items.push({kind:"note",parent,ref:null,body:parseBody(node.toJSON())});
           const index=items.length-1;
           for(const nested of li.querySelectorAll(":scope > ul,:scope > ol"))visit(nested,index);
         }
@@ -77,6 +78,6 @@ export function readOutlineClipboard(clipboard:DataTransfer):ClipItem[] {
     const indent=space.replaceAll("\t","  ").length;
     while(parents.length&&parents.at(-1)!.indent>=indent)parents.pop();
     const parent=parents.at(-1)?.index??null;parents.push({indent,index});
-    return {kind:"note",parent,body:bodyText(text)};
+    return {kind:"note",parent,ref:null,body:bodyText(text)};
   });
 }

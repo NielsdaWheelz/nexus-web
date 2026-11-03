@@ -79,7 +79,9 @@ export interface ActionMenuHostProps {
   readonly label?: string;
   readonly className?: string;
   readonly renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
-  readonly renderContextAnchor?: (props: ActionMenuContextAnchorProps) => ReactNode;
+  readonly renderContextAnchor?: (props: ActionMenuContextAnchorProps, menu: {open(): void}) => ReactNode;
+  /** external: the caller owns the touch hold and calls open; right-click and keyboard stay here. */
+  readonly hold?: "internal" | "external";
   readonly triggerAttributes?: TriggerAttributes;
   readonly triggerRef?: (node: HTMLButtonElement | null) => void;
   readonly triggerDisabled?: boolean;
@@ -128,7 +130,7 @@ export function viewportGeometry(): string {
 }
 
 export function ActionMenuHost({ title, subjectKey, label = `more actions for ${title}`, className,
-  renderTrigger, renderContextAnchor, triggerAttributes, triggerRef, triggerDisabled = false,
+  renderTrigger, renderContextAnchor, hold = "internal", triggerAttributes, triggerRef, triggerDisabled = false,
   triggerDisabledReason, children,
 }: ActionMenuHostProps) {
   const [state, setState] = useState<{ session: ActionMenuSession | null; presentation: Presentation }>({
@@ -261,7 +263,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
       onPointerDown: event => {
         cancelHold(); local.heldClick = false;
         local.touchGesture = event.pointerType === "touch";
-        if (triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
+        if (hold === "external" || triggerDisabled || event.pointerType !== "touch" || !event.isPrimary) return;
         const { pointerId: pointer, clientX: x, clientY: y } = event;
         local.hold = { pointer, x, y, owner: getInteractionOwner(), generation: getInteractionGeneration(), subject: subjectKey,
           timer: setTimeout(() => {
@@ -280,7 +282,7 @@ export function ActionMenuHost({ title, subjectKey, label = `more actions for ${
       },
       onPointerUp: cancelHold, onPointerCancel: cancelHold,
       onClickCapture: event => { if (local.heldClick) { local.heldClick = false; event.preventDefault(); event.stopPropagation(); } },
-    }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
+    }, { open: () => { if (!triggerDisabled && !local.session) begin(null); } }) : renderTrigger ? renderTrigger(triggerProps) : <OverflowMenuButton {...triggerProps} />}
     {triggerDisabled && triggerDisabledReason ? <span id={reasonId} className="sr-only">{triggerDisabledReason}</span> : null}
     {state.session !== null ? <Fragment key={state.session.key}>{children(state.session)}</Fragment> : null}
   </div>;

@@ -51,6 +51,12 @@
   min-block-size: 0;
   max-height: none;
   max-block-size: 100%;
+  padding-bottom: max(var(--space-2), calc(var(--viewport-safe-bottom) - var(--keyboard-inset)));
+}
+
+/* A bottom field owns its padding; only the remaining safe area belongs to the sheet. */
+.panel.flushBottom {
+  padding-bottom: max(0px, calc(var(--viewport-safe-bottom) - var(--keyboard-inset)));
 }
 
 .header {

@@ -1,22 +1,20 @@
 # command palette release
 
-implementation complete; browser and installed-emulator storage qualification
-complete. the owner deferred physical touch and spoken accessibility on
-2026-10-28; neither is verified. contracts:
-[search](../modules/search.md#launcher), [navigation](../modules/app-navigation.md#nexus-content-grammar).
+the earlier compact-palette cut established the compound authored
+`search_preview` / `search_admission` queries and their packaged android
+`SEARCH_READ_SQL` allowlist. retain api/web/android query pairing; there is no
+old-shell query fallback or native ranking copy.
 
-- pair consuming web code with android's packaged `SEARCH_READ_SQL` allowlist
-  for the compound `search_preview` and `search_admission` queries. both sqlite hosts have been exercised;
-  no old-shell query fallback or kotlin ranking copy.
-- regenerate web wire types after `/search/preview` declared maxima change
-  from `4/2/2` to `8/8/8`. wire 17 already follows deployed wire 16 (see `docs/reauthoring.md`);
-  retain that unreleased bump. use the existing paired-client reload/refusal steps.
-- the palette adds no authored format change, database migration, corpus rebuild
-  or new index. current main's [highlight-excerpt cutover](release-highlight-excerpts.md)
-  separately owns format 3, migration 0326 and paired device draining; preserve
-  those prerequisites when releasing this combined source.
+the palette redesign's current release owner is
+[release-palette](release-palette.md). deployed wire 17 advances to wire 18;
+acquisition already introduced that unreleased revision on main, so this cut
+rides it rather than incrementing again. release the matching api/web clients
+through the existing paired-client reload/refusal contract. the redesign adds
+no authored-format change, migration, corpus rebuild or index.
 
-resolved when paired artifacts, observed qualification, deferred observations
-and the wire decision are recorded in the implementation pr/release. this record authorizes
-no deployment. remaining observations: [physical touch](command-palette-physical-touch.md)
-and [spoken accessibility](search-screen-reader-acceptance.md).
+historical installed-emulator and browser observations predate the sheet and
+do not qualify its new geometry or keyboard inset behavior.
+[physical touch](command-palette-physical-touch.md) and
+[spoken accessibility](search-screen-reader-acceptance.md) remain owner-deferred.
+resolved when the paired release and retained observations/deferments are recorded
+in the release pr. this record authorizes no deployment.

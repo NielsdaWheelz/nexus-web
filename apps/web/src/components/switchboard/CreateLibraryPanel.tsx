@@ -9,7 +9,7 @@ import { transportVerbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
-import styles from "@/components/nexus/Nexus.module.css";
+import styles from "./Switchboard.module.css";
 
 export default function CreateLibraryPanel({
   name,

@@ -606,12 +606,12 @@ export default function AddPanel({
     >
       <header className={styles.header}>
         <div className={styles.headingRow}>
-          <Button iconOnly icon={<ArrowLeft />} className={nexus.iconButton} aria-label="back" tooltip={{ text: "back to palette" }} onClick={onBack} />
+          <Button iconOnly icon={<span className={nexus.glyph}><ArrowLeft /></span>} aria-label="back" tooltip={{ text: "back to palette" }} onClick={onBack} />
           <div className={styles.heading}>
             <h2 ref={headingRef} tabIndex={-1} data-add-heading="true">add content</h2>
             <p id={`${id}-paste-help`}>use line breaks or a comma and space. every item goes to All.</p>
           </div>
-          <Button iconOnly className={nexus.iconButton} onClick={onClose} aria-label="close add content" icon={<X size={16} aria-hidden="true" />} />
+          <Button iconOnly onClick={onClose} aria-label="close add content" icon={<span className={nexus.glyph}><X aria-hidden="true" /></span>} />
         </div>
         <div className={styles.intakeTools}>
           <input ref={reselectInputRef} type="file" className={styles.fileInput}

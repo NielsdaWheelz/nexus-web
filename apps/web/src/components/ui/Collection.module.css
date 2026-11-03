@@ -91,9 +91,15 @@
   cursor: pointer;
 }
 
-.row:not([role="option"]):not([role="row"]):not([aria-disabled="true"]):hover,
+.row:not([role="option"]):not([role="row"]):not([aria-disabled="true"]):hover {
+  background: var(--surface-2);
+}
+
+/* The armed row: the wash alone is invisible (1.04-1.17:1), so a 2px leading accent bar carries it.
+   An inset shadow follows the row's radius, costs no layout and paints in the arming frame. */
 .row[data-active="true"] {
   background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .row:focus-visible,

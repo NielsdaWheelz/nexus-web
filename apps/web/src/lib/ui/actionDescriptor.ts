@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
+import { flushSync } from "react-dom";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "./targetActivation";
@@ -19,6 +20,28 @@ export function prepareActionSelect(
   if (activation.kind === "Unowned") return null;
   event.preventDefault();
   return activation.kind === "Consume" ? null : { triggerEl, openIntent: activation.intent };
+}
+
+/** What activating a descriptor did; the presenter decides what to close on it. */
+export type DescriptorOutcome = TargetLinkActivationResult | "selected";
+
+/**
+ * The one activation path for a command or link descriptor, from a menu item or a rail chip. A link runs
+ * its `onActivate` (the caller closes on a handled result); a command is prepared from the native event,
+ * the presenter retires through `retire` before the command captures attention, then `onSelect` runs.
+ */
+export function activateDescriptor(
+  descriptor: Extract<ActionDescriptor, { kind: "command" | "link" }>,
+  event: TargetActivationEvent,
+  triggerEl: HTMLElement | null,
+  retire: (restoreFocus: boolean) => void,
+): DescriptorOutcome {
+  if (descriptor.kind === "link") return descriptor.onActivate?.(event) ?? "unhandled";
+  const detail = prepareActionSelect(event, triggerEl);
+  if (!detail) return "consumed";
+  flushSync(() => retire(descriptor.restoreFocusOnClose !== false));
+  descriptor.onSelect(detail);
+  return "selected";
 }
 
 type DisclosureLabels = {

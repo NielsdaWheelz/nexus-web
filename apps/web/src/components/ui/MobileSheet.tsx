@@ -25,6 +25,7 @@ export default function MobileSheet({
   scrim = "default",
   panelId,
   heightLimit,
+  flushBottom = false,
   children,
   handleLabel,
   renderHeader,
@@ -40,6 +41,8 @@ export default function MobileSheet({
   readonly panelId?: string;
   /** Fit natural content within the unobscured viewport, without a preferred cap. */
   readonly heightLimit?: "available";
+  /** A bottom field supplies its own touch padding and sits against the safe-area edge. */
+  readonly flushBottom?: boolean;
   readonly children: ReactNode;
 }) {
   const content = useRef<HTMLDivElement>(null);
@@ -74,7 +77,7 @@ export default function MobileSheet({
       scope={panelId}
       backdropClassName={[scrim === "soft" ? styles.softBackdrop : styles.backdrop, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
       backdropStyle={heightLimit === "available" ? { top: visualViewportTopPx, bottom: keyboardBottomInsetPx } : undefined}
-      className={[styles.panel, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
+      className={[styles.panel, heightLimit === "available" && styles.available, flushBottom && styles.flushBottom].filter(Boolean).join(" ")}
     >
       {(requestDismiss) => (
         <>

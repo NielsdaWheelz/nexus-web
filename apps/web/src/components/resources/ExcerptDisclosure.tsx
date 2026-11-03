@@ -63,7 +63,7 @@ function useFullExcerpt(observed: ResourceItem) {
   }, [subject, local, body, readingRef, request, fail]);
   const resource = query.data?.rows[0]?.resource;
   const conflict = local ? resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision : remote.conflict;
-  const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef)) : null : remote.item;
+  const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)) : null : remote.item;
   const retry = () => {
     if (local) query.retry();
     else {
@@ -73,7 +73,7 @@ function useFullExcerpt(observed: ResourceItem) {
   };
   const reload = () => {
     if (local) {
-      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef)));
+      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)));
       query.retry();
     } else {
       setRemote(previous => ({ ...previous, pending: true }));
@@ -107,6 +107,14 @@ export function FullResourceBody({ item, historical = false }: { item: ResourceI
     : <ResourceBody body={body} full />;
 }
 
+/** The one excerpt reader: the disclosure's dialog, also opened by the palette's `show excerpt` verb. */
+export function ExcerptDialog({ item, onClose, returnFocusTo }: { item: ResourceItem; onClose: () => void; returnFocusTo: () => HTMLElement | null }) {
+  return <Dialog open title="excerpt" onClose={onClose} returnFocusTo={returnFocusTo}>
+    <LoadedExcerpt item={item} quotation />
+    <Button type="button" onClick={onClose}>hide excerpt</Button>
+  </Dialog>;
+}
+
 /** A sibling action, never a listbox option or part of resource activation. */
 export default function ExcerptDisclosure({ item, returnFocus, triggerAttributes }: { item: ResourceItem | null; returnFocus?: () => HTMLElement | null; triggerAttributes?: Pick<ComponentProps<typeof Button>, "tabIndex" | "onFocus" | "onBlur" | "aria-label"> }) {
   const [opened, setOpened] = useState<ResourceItem | null>(null);
@@ -117,9 +125,6 @@ export default function ExcerptDisclosure({ item, returnFocus, triggerAttributes
     <Button {...triggerAttributes} ref={trigger} type="button" aria-expanded={opened !== null} onKeyDown={event => { if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault(); }} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setOpened(value => value ? null : candidate); }}>
       {opened ? "hide excerpt" : "show excerpt"}
     </Button>
-    {opened ? <Dialog open title="excerpt" onClose={() => setOpened(null)} returnFocusTo={returnFocus ?? (() => trigger.current)}>
-      <LoadedExcerpt item={opened} quotation />
-      <Button type="button" onClick={() => setOpened(null)}>hide excerpt</Button>
-    </Dialog> : null}
+    {opened ? <ExcerptDialog item={opened} onClose={() => setOpened(null)} returnFocusTo={returnFocus ?? (() => trigger.current)} /> : null}
   </span>;
 }

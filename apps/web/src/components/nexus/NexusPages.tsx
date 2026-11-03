@@ -14,9 +14,10 @@ import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import type { NexusController } from "./useNexusController";
-import styles from "./Nexus.module.css";
+import styles from "@/components/switchboard/Switchboard.module.css";
 
-function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNode; onBack?: () => void }) {
+/** A page's header: back and title. */
+function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNode; onBack?: () => void; mobile: boolean }) {
   return (
     <header className={styles.header}>
       {onBack ? (
@@ -45,6 +46,7 @@ export default function NexusPages({ controller, mobile }: { controller: NexusCo
           <Header
             title={page.kind === "UseText" ? "use this text" : page.kind === "ChooseCreate" ? "create" : "browse"}
             onBack={controller.back}
+            mobile={mobile}
           />
           {(page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query) ? <p className={styles.textPreview}>{page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query}</p> : null}
           <div className={styles.choices}>
@@ -73,7 +75,7 @@ export default function NexusPages({ controller, mobile }: { controller: NexusCo
         </section>
       );
     case "CaptureToday":
-      return <CaptureToday page={page} controller={controller} />;
+      return <CaptureToday page={page} controller={controller} mobile={mobile} />;
     case "CreateLibrary":
       return (
         <CreateLibraryPanel
@@ -111,7 +113,7 @@ export default function NexusPages({ controller, mobile }: { controller: NexusCo
 }
 
 /** A note whose words are not saved on this device yet: the one interrupt, until it commits. */
-function CaptureToday({ page, controller }: { page: Extract<NexusPage, { kind: "CaptureToday" }>; controller: NexusController }) {
+function CaptureToday({ page, controller, mobile }: { mobile: boolean; page: Extract<NexusPage, { kind: "CaptureToday" }>; controller: NexusController }) {
   const copy = useCopyFeedback(page.text);
   const { say } = useOutcome();
   const throwLater = useThrowLater();
@@ -125,7 +127,7 @@ function CaptureToday({ page, controller }: { page: Extract<NexusPage, { kind: "
   });
   return (
     <section className={styles.page}>
-      <Header title="add to today" onBack={controller.back} />
+      <Header title="add to today" onBack={controller.back} mobile={mobile} />
       <p>{page.text}</p>
       <Button aria-busy={running || undefined} aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={retry}>retry</Button>
       {atRisk ? <Hold id={page.noteId} attempt={failed?.failures} risk line={{ fact: "this note isn’t saved yet." }} verbs={[

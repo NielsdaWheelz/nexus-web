@@ -394,8 +394,8 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
       data-workspace-rich-target="true" data-row-focusable onClick={activate} onKeyDown={activate}>{title}</a>
       : <span className={styles.localTitle} dir="auto">{title}</span>}
     {parsed.scheme === "note_block" ? <span className={styles.localKind}> · {typeLabel}</span> : null}
-    {resource.excerpt !== null ? <ResourceBody body={authoredItem(resource, match.readingRef).preview.body} /> : null}
-    <ExcerptDisclosure item={authoredItem(resource, match.readingRef)} />
+    {resource.excerpt !== null ? <ResourceBody body={authoredItem(resource, match.readingRef, href).preview.body} /> : null}
+    <ExcerptDisclosure item={authoredItem(resource, match.readingRef, href)} />
     {excerpt ? <p className={styles.evidence}>
       {match.matchedField === "annotation" ? <span>annotation: </span> : null}
       {excerpt.before ? "…" : null}

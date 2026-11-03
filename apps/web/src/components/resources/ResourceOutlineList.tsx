@@ -24,6 +24,12 @@ export const ResourceBranch = createContext<OutlineBranch>({
   traversedEdgeIds: new Set(),
 });
 
+/** focus the occurrence's named control, or the named row when that control is disabled. */
+export function outlineRowFocusTarget(row: HTMLElement): HTMLElement {
+  const bullet = row.querySelector<HTMLElement>("[data-outline-bullet]");
+  return bullet && !bullet.matches(":disabled") ? bullet : row;
+}
+
 type Props = {
   children: ReactNode;
   ariaLabel: string;
@@ -64,10 +70,9 @@ function RootList({
       else list.current?.focus();
       return;
     }
-    const row = root.current?.querySelector<HTMLElement>(
-      `[data-outline-occurrence="${CSS.escape(target.key)}"] [data-row-focusable]`,
-    );
-    if (row) row.focus(); else onRevealOccurrence?.(target.key);
+    const row = root.current?.querySelector<HTMLElement>(`[data-outline-occurrence="${CSS.escape(target.key)}"]`);
+    if (row) outlineRowFocusTarget(row).focus();
+    else onRevealOccurrence?.(target.key);
   }, [onRevealRoot, onRevealOccurrence]);
   const [descriptors,setDescriptors]=useState<ReadonlyMap<string,OutlineChildrenDescriptor>>(()=>new Map());
   const registerChildren=useCallback((key:string,descriptor:OutlineChildrenDescriptor)=>{

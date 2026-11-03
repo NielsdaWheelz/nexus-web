@@ -6,6 +6,7 @@
 // query, so a refresh over shown or empty matches paints nothing.
 import { useOptionalNoteEditorHost } from "@/lib/notes/editorHost";
 import { useAuthoredPages } from "@/lib/notes/hooks";
+import { localResourceHref } from "@/lib/resources/localResource";
 import { authoredItem } from "@/lib/notes/presentation";
 import { useChangeStamp } from "@/lib/api/changes";
 import { apiFetch } from "@/lib/api/client";
@@ -62,7 +63,7 @@ export function useLinkTargets(
     },
   });
   const local = useAuthoredPages(admitted && settledQuery.length >= 2 ? { kind: "search", text: settledQuery, cursor: null, limit: 100, scopes: [{ kind: "all", id: null }], families: null } : null);
-  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref), existing_link_id: null }));
+  const localTargets: LinkTargetResult[] = (local.data?.rows ?? []).filter(row => row.resource.ref !== excludeRef && row.resource.kind !== "highlight").map(row => ({ kind: "resource", item: authoredItem(row.resource, row.activation_ref, localResourceHref(row.resource, { activationRef: row.activation_ref })), existing_link_id: null }));
   const current = admitted && raw === settled && local.data !== null;
   const remoteTargets = list.current ? list.items.filter(target => !/^(note_block|page|highlight):/u.test(target.item.ref)) : [];
   const seen = new Set<string>();

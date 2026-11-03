@@ -75,7 +75,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
       {unread ? <AuthoredReadFailure {...unread} title="couldn’t open connections on this device."
         retry={() => {self.retry(); linked.retry(); mentions.retry();}}/> : null}
       {opening ? <Ruling /> : empty ? <Fact line={{ fact: "no connections yet." }} /> : null}
-      <LocalOutline rootRef={selfRef} ancestors={[selfRef]} occurrencePrefix={`connections:${selfRef}`} />
+      <LocalOutline rootRef={selfRef} occurrencePrefix={`connections:${selfRef}`} />
       {mentions.data?.rows.length ? <section aria-label="mentioned in">
         <h3 className={styles.subtitle}>mentioned in</h3>
         <ResourceOutlineList scope={`mentions:${selfRef}`} ariaLabel="mentioned in" ancestorRef={selfRef}>

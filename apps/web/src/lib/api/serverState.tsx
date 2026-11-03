@@ -51,6 +51,11 @@ export interface Visit<T> {
   readonly source: ReadSource;
   readonly acceptedStale: string | null;
 }
+/** One completed bootstrap read for the initial key. Failure remains retryable in place. */
+export type ServerReadSeed<T> =
+  | { readonly status: "success"; readonly data: T; readonly acceptedStale: string | null }
+  | { readonly status: "failure"; readonly error: ApiError };
+
 export interface ReadPolicy {
   readonly retry?: "manual" | "capacity";
   readonly timeoutMs?: number;
@@ -601,6 +606,7 @@ function useServerState<D>(
   policy: ReadPolicy,
   catalog?: CatalogRead<D>,
   onDefect?: (defect: Defect) => void,
+  initialRead?: ServerReadSeed<D>,
 ) {
   const admissionGeneration = useRemoteGeneration();
   const account = useOptionalAuthenticatedAccount();
@@ -622,9 +628,14 @@ function useServerState<D>(
     ? { ...bootstrap, key: stateKey, acceptedStale: stale } : null;
   const initial = preparedOutcome?.status === "success" && stateKey !== null
     ? { key: stateKey, data: preparedOutcome.data, source: LIVE_SOURCE, acceptedStale: stale }
-    : seedHere ?? restoredHere;
+    : seedHere ?? (initialRead?.status === "success" && stateKey !== null
+      ? { key: stateKey, data: initialRead.data, source: LIVE_SOURCE, acceptedStale: initialRead.acceptedStale } : restoredHere);
   const heldRef = useRef<Held<D> | null>(null);
-  const [state, setState] = useState(() => ({ ...arrive(stateKey, initial), running: initial === null || initial === restoredHere }));
+  const [state, setState] = useState(() => ({ ...arrive(stateKey, initial),
+    error: initialRead?.status === "failure" ? initialRead.error : null,
+    running: initialRead === undefined ? initial === null || initial === restoredHere
+      : initialRead.status === "success" && initialRead.acceptedStale !== stale,
+  }));
   const held = state.key === stateKey ? state : arrive(stateKey, restoredHere);
   heldRef.current = held;
   const loadRef = useRef(load);
@@ -731,17 +742,22 @@ function useServerState<D>(
   start.current = () => { void run(); };
 
   const seeded = useRef(seedHere !== null ? key : null);
+  const completedBootstrap = useRef(initialRead !== undefined && (initialRead.status === "failure" || initialRead.acceptedStale === stale) ? stateKey : null);
   const claimedArrival = useRef(false);
   useEffect(() => {
     mounted.current = true;
     lane.active = true;
     const next = heldRef.current;
+    if (completedBootstrap.current !== stateKey) completedBootstrap.current = null;
     if (next?.key !== stateKey) update(() => arrive(stateKey, restoredHere));
     if (key !== null) {
       const prepared = claimArrival();
       if (prepared !== null) {
         claimedArrival.current = true;
         void run(prepared);
+      } else if (completedBootstrap.current === stateKey && owner.generation === 0 && next?.generation === 0) {
+        // A settled bootstrap result survives strict effect replay; invalidations still run normally.
+        update(h => ({ ...h, running: false }));
       } else if (seeded.current === key && !claimedArrival.current) {
         seeded.current = null;
         update(h => ({ ...h, running: false }));
@@ -838,10 +854,11 @@ export function usePaneFreeServerValue<T>(input: ReadPolicy & {
   readonly load: Load<T>;
   readonly readPolicy?: string;
   readonly catalog?: CatalogRead<T>;
+  readonly initialRead?: ServerReadSeed<T>;
   /** An account owner relays defects below its retained command state. */
   readonly onDefect?: (defect: Defect) => void;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, input.onDefect);
+  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, input.onDefect, input.initialRead);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

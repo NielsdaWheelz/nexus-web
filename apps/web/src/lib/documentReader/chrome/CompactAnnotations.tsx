@@ -128,7 +128,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const shownAnnotation = annotation ?? (open?.kind === "annotation" && lastAnnotation.current?.id === open.id ? lastAnnotation.current : null);
   const activeMark = open?.kind === "annotation" ? open.mark : null;
   const editor = (placeholder: string, onSave: () => void) => <NoteEditor editorKey={`reader-annotation:${mediaId}`} containingNoteRef={null}
-    body={note.body} revision={note.revision} label="annotation" placeholder={placeholder} compact editable={!busy && !blocked && issue?.kind !== "Unsaved"}
+    body={note.body} revision={note.revision} label="annotation" placeholder={placeholder} editable={!busy && !blocked && issue?.kind !== "Unsaved"}
     history={null} onEditorReady={selectionReady} onEdit={edit => setNote(edit.after)} onSave={onSave}
     onAttachmentActiveChange={attachment => draft.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => draft.set(value => ({...value, hyperlink}))} />;
   if (defect) throw defect.error;
