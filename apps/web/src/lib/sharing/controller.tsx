@@ -140,8 +140,7 @@ export function ShareControllerProvider({children}: {children: ReactNode}) {
   }
   function start(session: ShareSession, key: string, request: () => Request, fact: string) {
     if (!active.current || currentSession.current !== session || session.target.kind !== "Resource") return Promise.resolve(null);
-    const existing = currentCommand.current;
-    if (existing !== null) return existing.key === key ? send(existing) : Promise.resolve(null);
+    if (currentCommand.current !== null) return Promise.resolve(null);
     return send({sessionKey: session.key, subject: session.target.ref, key, request: request(), fact, running: false, unknown: 0});
   }
   const commands: ShareCommands = {
