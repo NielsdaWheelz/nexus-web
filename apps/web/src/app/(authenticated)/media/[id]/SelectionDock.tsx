@@ -1,5 +1,4 @@
 "use client";
-import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
@@ -15,7 +14,9 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import { localResourceLabel } from "@/lib/resources/localResource";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
@@ -410,7 +411,10 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : unavailable || sourceChanged ? <FeedbackNotice content={{ tone: "Warning", title: "the passage changed", message: "select it again before saving or sending." }} announcement="Polite"
           actions={[{ label: "select passage again", onClick: composer.reselect }, { label: "copy text", onClick: () => copy(draft.body.body_text) }]} /> : null}
         {annotation && annotation.placement.kind !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[annotation.placement.kind] }} announcement="None" /> : null}
-        {draft.highlightId && draft.bodyRole === "question" ? <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} /> : null}
+        {/* null means gone only once the store has read; until then the annotation waits */}
+        {draft.highlightId && draft.bodyRole === "question" && store.getState().local.status !== "loading" && (!annotation || annotation.display) ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
+          <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} resource={annotation?.display?.projection ?? null} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} />
+        </PreparedResourcesContext> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
           onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
@@ -486,7 +490,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         {menu.marks.map((mark) => {
           const own = store.annotation(mark.id);
           return <button key={mark.id} type="button" onClick={() => verbs.chooseMark(mark.id)}>
-            {own ? own.excerpt.kind === "content" ? excerptTextParts(own.excerpt.body).exact : "table excerpt" : "highlight"}
+            {own ? localResourceLabel(own.projection) : "highlight"}
             <span>{mark.color} · {own ? `your highlight${own.body ? " · annotation" : ""}` : "shared highlight"}</span>
           </button>;
         })}

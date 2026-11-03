@@ -99,7 +99,7 @@ export default function HighlightPaneBody() {
     {source ? <a href={source}>view in source</a> : null}
     {unresolved ? <blockquote aria-label="captured annotation passage">{unresolved}</blockquote> : null}
     {arrival.failure ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{tone: "Warning", title: arrival.failure.title}} announcement="Polite"/> : null}
-    <HighlightAnnotation highlightRef={ref} occurrenceKey={`detail:${ref}`} focusRequest={focus} inspection={inspection} onFocused={() => {pending.current = null;}} mayFocus={() => pending.current?.mayFocus() ?? true}/>
+    {read.data ? <HighlightAnnotation highlightRef={ref} resource={resource ?? null} occurrenceKey={`detail:${ref}`} focusRequest={focus} inspection={inspection} onFocused={() => {pending.current = null;}} mayFocus={() => pending.current?.mayFocus() ?? true}/> : null}
     {connections}
   </article>;
 }

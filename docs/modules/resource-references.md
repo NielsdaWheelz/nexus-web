@@ -316,8 +316,9 @@ annotation links and insertions belong to the highlight.
 reader roots and source-owned membership never invent an incoming graph mutation.
 
 arranged adjacency keeps endpoint-owned rank/version/capabilities. indexes retain
-their own order. embeds share canonical body and batched `embedded_item`, while the
-containing note retains its own identity. only the exact directed nonordinal
+their own order. embeds retain canonical body and target identity; authored targets
+resolve through the local replica, server-owned targets through their item reader.
+the containing note retains its own identity. only the exact directed nonordinal
 `note_body`/`context` embed edge is suppressed. empty states require settled,
 exhausted reads without visible children or failure. index snippets, inline
 citations, picker options and document matches retain their existing semantics.

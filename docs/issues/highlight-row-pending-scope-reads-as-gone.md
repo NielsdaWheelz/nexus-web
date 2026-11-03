@@ -1,29 +1,25 @@
-# a highlight row reads as gone until reading scope hydrates
+# non-held highlights confuse pending scope with absence
 
-status: open; observed on a fresh firefox profile in the lab. the path predates the
-reader highlight row change.
+status: open outside reader connections; source review.
 
-for about 2s after opening a source on a fresh profile, a placed row is wrong:
+placed reader connections now render their held projection through one `AuthoredRow`
+and keep the mark while scope catches up. pending row chrome names a resource's
+type instead of printing its ref. `HighlightAnnotation` no longer owns a query.
 
-- literal `highlight:<uuid>`, with a button bullet: `ResourceOutlineRow.tsx`, the
-  `LocalRow` fallback, while the read is null.
-- the quote with no `mark`, and a bullet to `/highlights/<id>`: `ReferenceRow`'s stub
-  href carries no `activationRef`.
-- blank, then `no longer available on this device`: `AuthoredRow` with a null resource.
+remaining cause: `node/authored/src/queries.ts:excerptQuery` returns empty rows and
+`scope_available: false` when reading scope is missing. in
+`components/resources/ResourceOutlineRow.tsx:LocalRow`, a known owned resource with
+that answer still reaches `AuthoredRow` with `answered=true` and `resource=null`,
+which says `no longer available on this device`. other reference paths can navigate
+to the generic highlight before a reading-scoped activation is available.
 
-the row corrects itself once catch-up publishes `up to date`.
+impact: a pending local read can falsely describe the user's writing as deleted
+on non-held surfaces. the original fresh-profile observation predates this branch;
+the remaining surfaces have not all been replayed. a1 in the reader is insufficient
+to close this record.
 
-cause: `excerptQuery` returns empty rows with `scope_available: false` while the
-reading is missing from hydrated scope (`node/authored/src/queries.ts:467`). `LocalRow`
-can't tell pending from absent.
+fix at the row/query boundary: distinguish unavailable scope from proven absence
+without changing the reading identity or remounting the annotation owner.
 
-impact: `no longer available` is a false claim about the owner's writing, and a click
-in this window can leave the reader. first opens only, as far as observed. whether a
-newly saved reading on a hydrated device hits this window is unobserved.
-
-proposed fix: the query distinguishes pending from absent, so the row can hold. a
-row-level `reading_ref: null` is wrong: it re-keys the read on a placement flip and
-unmounts `HighlightAnnotation`.
-
-resolved when a fresh profile shows neither that copy nor a `/highlights/<id>` bullet
-on a placed row.
+resolved when fresh-profile highlight rows on every reading-scoped surface keep
+correct pending/absent semantics and their intended destination until scope arrives.

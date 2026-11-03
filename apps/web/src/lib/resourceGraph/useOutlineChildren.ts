@@ -2,8 +2,9 @@
 
 /** One outer outline batches mounted occurrence probes. Local committed links are
  * authoritative; remote facts fail separately and never decide local emptiness.
- * Descriptor identity fences results from a previous occurrence's exclusions. */
-import {useCallback, useEffect, useState} from "react";
+ * Proofs outlive their mount for the list's life, so a remounted row knows its children;
+ * descriptor identity fences results from a previous occurrence's exclusions. */
+import {useCallback, useEffect, useRef, useState} from "react";
 import {useAuthoredStore, useAuthoredAccountId} from "@/lib/authored/provider";
 import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import {apiFetch} from "@/lib/api/client";
@@ -42,15 +43,10 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
   });
   const readyRemote=remote.status==="ready"?remote.data:null;
   const [retainedRemote,setRetainedRemote]=useState<ReadonlyMap<string,{identity:string;proof:RemoteProof}>>(()=>new Map());
+  // failed refreshes keep what was proved.
   useEffect(()=>{
-    setRetainedRemote(current=>{
-      const next=new Map<string,{identity:string;proof:RemoteProof}>();
-      for(const [id,descriptor]of entries){const incoming=readyRemote?.get(id),proof=incoming?.identity===descriptor.identity?incoming:current.get(id);if(proof?.identity===descriptor.identity)next.set(id,proof);}
-      return next.size===current.size&&[...next].every(([id,proof])=>current.get(id)===proof)?current:next;
-    });
-    // The serialized mounted descriptors own retention; failed refreshes do not.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[key,readyRemote]);
+    if(readyRemote)setRetainedRemote(current=>[...readyRemote].every(([id,proof])=>current.get(id)===proof)?current:new Map([...current,...readyRemote]));
+  },[readyRemote]);
   const proofFor=(id:string,identity:string)=>{const incoming=readyRemote?.get(id);return incoming?.identity===identity?incoming:retainedRemote.get(id);};
   const occurrences:(OutlineChildrenOccurrence&{key:string})[]=entries.map(([id,descriptor])=>{
     const retained=proofFor(id,descriptor.identity);
@@ -63,8 +59,7 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
   const [local,setLocal]=useState<{proofs:ReadonlyMap<string,{query:OutlineChildrenOccurrence&{key:string};value:boolean}>;errors:ReadonlyMap<string,{error:unknown;occurrence:object}>;pending:ReadonlySet<string>;accountId:string|null}>(()=>({proofs:new Map(),errors:new Map(),pending:chunkKeys,accountId}));
   useEffect(()=>{
     let active=true;const stops:(()=>void)[]=[];
-    const mounted=new Set(occurrences.map(item=>item.key));
-    setLocal(current=>({accountId,proofs:new Map(current.accountId===accountId?[...current.proofs].filter(([id])=>mounted.has(id)):[]),errors:new Map(current.accountId===accountId?[...current.errors].filter(([key])=>chunkKeys.has(key)):[]),pending:chunkKeys}));
+    setLocal(current=>({accountId,proofs:current.accountId===accountId?current.proofs:new Map(),errors:new Map(current.accountId===accountId?[...current.errors].filter(([key])=>chunkKeys.has(key)):[]),pending:chunkKeys}));
     for(let offset=0;offset<occurrences.length;offset+=100){
       const chunk=occurrences.slice(offset,offset+100),query={kind:"outline_children" as const,occurrences:chunk.map(({refs,excluded_link_ids})=>({refs,excluded_link_ids}))},chunkKey=JSON.stringify(chunk);
       let revision:bigint|null=null;
@@ -91,19 +86,20 @@ export function useOutlineChildren(scope:string,descriptors:ReadonlyMap<string,O
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[store,localKey,attempt]);
   const localQueries=new Map(occurrences.map(item=>[item.key,item]));
-  const items=new Map<string,Proof>();
+  const seen=useRef(new Map<string,Proof>());
+  // over current entries only: a retired id has no local query.
   for(const [id,descriptor]of entries){
     const retained=proofFor(id,descriptor.identity);
     const fact=retained?.identity===descriptor.identity?retained.proof:null;
     const localProof=local.accountId===accountId?local.proofs.get(id):null,query=localQueries.get(id)!;
     const localPositive=localProof?.value===true&&JSON.stringify(localProof.query.excluded_link_ids)===JSON.stringify(query.excluded_link_ids)&&localProof.query.refs.every(ref=>query.refs.includes(ref));
-    items.set(id,{identity:descriptor.identity,value:localPositive||fact?.has_children===true,local_ref:fact?.local_ref??null});
+    seen.current.set(id,{identity:descriptor.identity,value:localPositive||fact?.has_children===true,local_ref:fact?.local_ref??null});
   }
   const retry=useCallback(()=>setAttempt(n=>n+1),[]);
   const failure=local.accountId===accountId?[...local.errors].find(([key])=>chunkKeys.has(key))?.[1]??null:null;
   const remoteError=remote.status==="loading"?null:remote.error;
   const remoteOccurrence=useFeedbackOccurrence(remoteError!==null,remoteKey);
-  return {items,error:failure?.error??null,occurrence:failure?.occurrence??null,
+  return {items:seen.current,error:failure?.error??null,occurrence:failure?.occurrence??null,
     pending:local.accountId!==accountId||[...local.pending].some(key=>chunkKeys.has(key)),
     remoteError,remoteOccurrence,remotePending:remote.status==="loading"||remote.status==="failed"&&remote.retrying||remote.status==="ready"&&remote.refreshing,retry};
 }

@@ -8,6 +8,7 @@ import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import {remoteConnectionsError} from "@/components/connections/RemoteConnections";
 import {useOutlineChildren,type OutlineChildrenDescriptor} from "@/lib/resourceGraph/useOutlineChildren";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
+import {useSettled} from "@/lib/api/serverState";
 import type {OutlineBranch, OutlineTarget} from "@/lib/resources/outlineProjection";
 import {useEditorDraft} from "@/lib/notes/editorHost";
 import styles from "./ResourceOutline.module.css";
@@ -19,6 +20,8 @@ export const ResourceOutlineContext = createContext<{
   refreshChildren():void;
   childAvailability: ReturnType<typeof useOutlineChildren>["items"];
   registerChildren(key:string,descriptor:OutlineChildrenDescriptor):()=>void;
+  /** The mounted set has held still, and holds this row. */
+  settled(key: string): boolean;
   toggle(key: string, open: boolean): void;
   reveal(target: OutlineTarget): void;
 } | null>(null);
@@ -85,9 +88,12 @@ function RootList({
     setDescriptors(current=>new Map(current).set(key,descriptor));
     return()=>setDescriptors(current=>{if(current.get(key)!==descriptor)return current;const next=new Map(current);next.delete(key);return next;});
   },[]);
-  const availability=useOutlineChildren(scope,descriptors);
+  const settledDescriptors=useSettled(descriptors,150);
+  const availability=useOutlineChildren(scope,settledDescriptors);
   const context = {
     childAvailability:availability.items,registerChildren,refreshChildren:availability.retry,
+    // a row's first render precedes its registration, so it must be in the set.
+    settled:(key:string)=>descriptors===settledDescriptors&&settledDescriptors.has(key),
     scope, view: {folds: folds.value}, viewLocked,
     toggle(key: string, open: boolean) {
       if (!viewLocked) folds.set(current => new Map(current).set(key, open));
