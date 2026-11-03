@@ -109,36 +109,131 @@ remain citations. expansion leaves counts and filters unchanged. each root
 starts without an entering edge;
 shared lazy disclosure exposes every exact relationship and its own capability.
 one grouped resource never supplies an aggregate unlink action.
-all roots share the outline editing session with their descendants; grouped
-roots have no incoming relationship. view filters, margin/all and regrouping
-retain folds and sessions; an unheld row remounts its body. pending creations
-remain reachable until a complete post-acknowledgement read accounts for their
-exact edges. composite
-maps preserve the chosen source's media, continuation and placement together.
-selection keeps a root in the aligned layout. a connected control inside a root
-pins its screen position. an open overlay's opener inside a root, focused or not,
-keeps that root at its place in the list until the overlay closes, unless an
-earlier root is held too; a source movement resets the list's scroll and so still
-moves it on screen. replacing an insertion line with an editor without a live pin
-uses the normal placement floor.
+all roots share the outline editing session with their descendants; grouped roots
+have no incoming relationship. filters and margin/all retain folds and sessions.
+pending creations remain reachable until a complete read accounts for their exact
+edges. composite maps preserve source media, continuation and placement together.
 
-the reader pane admits root occurrences before their resource reads and child
-probes mount. all-items uses measured variable heights and estimated gaps;
-the margin mounts its source placements. geometry belongs to the current
-publication and width. complete membership, facets and source order remain with
-the pane, including keyboard successors, explicit arrivals and unlink recovery.
-saved restoration and the switch to all hold their occurrence until the reader
-acts; a removed occurrence ends the hold where the list stands. late layout
-preserves the visible occurrence's offset, and a list at its start stays at its
-start.
+## reader geometry and reads
 
-focus, inspector selection, menus, actual draft risk, pending local document
-edits and unsettled row commands retain the existing occurrence and editor.
-committed pending synchronization and past undo availability do not retain rows.
-native browser find and cross-row selection cover mounted inspector content
-only; source-reader find keeps its complete existing scope. disclosed descendants
-keep their existing owners and admission contracts. this is a representative
-large-book repair, not a universal bound on rich bodies or arbitrary branches.
+`EvidencePane` owns complete membership (`order`), facets, arrivals, keyboard
+successors and unlink recovery. `EvidenceRow` passes local projections by value to
+`ResourceOutlineRow`; an owned projection enters `AuthoredRow` without a row read.
+source stubs retain `ReferenceRow`. a held row keeps one `li`; held occurrences
+outside the visible membership remain keyed and hidden, retaining their editors.
+
+three contracts govern all-items:
+
+- **c1, height:** an unclipped placed highlight's own quote and annotation commit at resting
+  height. `createReaderAnnotations` publishes marks immediately, then fills clipped
+  excerpts once per content-addressed capture revision. refused scopes stay compact
+  and retry on the next read. failures use the annotations store's existing retry.
+  before a new embed row is admitted, that same owner prepares its display dependencies
+  through existing resolve batches of at most 100 and full-excerpt reads. the snapshot
+  carries whole/annotation-field targets, required source labels and full excerpts to
+  their consumers. existing complete displays survive refresh; new displays wait.
+  full-query results remain distinct from label-only projections and apply only to
+  the same capture. dependency-preparation replies must share the parent read's store
+  revision before display publication; root quote fills use capture identity across
+  store revisions. this adds first-admission
+  latency without delaying marks or eagerly opening writing documents or linked children.
+- **c2, conservation:** `useEvidenceWindow` remembers measured heights. during motion,
+  a remount reserves at least its remembered height, so replacing a gap conserves
+  extent. memory only rises in motion; one second after the last offset change,
+  reservations drop and the observer learns true heights. first-sight children can
+  still expand at rest; unknown rows use the existing estimate.
+- **c3, compensation:** geometry above the anchor is absorbed before paint with
+  relative, instant `scrollBy`, preserving the compositor's scroll. the anchor is
+  list-relative, so scrolling changes its screen position without changing its
+  stored layout coordinate. the first fully visible row wins, otherwise the clipped
+  row; filtering transfers its place to the next surviving row in the old order.
+  if input has passed the old anchor before growth or admission lands, the prior
+  actual offset array selects among surviving rows in the old layout. a removed
+  filter anchor retains its successor's assigned position. remembered heights
+  predict the next range; they do not substitute for prior actual geometry.
+  a membership commit retains surviving rows from the previously published range
+  through compensation. the carried range enters the existing frame comparison,
+  which retires its extras on the next commit. both ranges can briefly be mounted.
+
+one node-bound `ResizeObserver` follows replaced rows and schedules both restoration
+and margin measurement. compensation runs after commits, during resize delivery,
+and before a scroll frame chooses a new anchor. the observer never flushes react.
+`scrollFrame`, shared with index and queue windows, coalesces port events into one
+rAF and commits range changes synchronously before paint. reservation release also
+publishes once. reveal, focus and restoration completion explicitly release their
+hold and anchor that row at its revealed offset; reader input resumes normal policy.
+the window alone owns the root's minimum height: its last measured total extent
+prevents a shrinking list from clamping the port before relative compensation.
+commit, frame and input handling publish the new extent after holding; the observer
+measures and requests the existing frame. margin clears the floor. only a clamp
+observed around this owned style write changes the remembered offset; pending
+user movement is never inferred to be a clamp.
+
+`Memory` lives in the pane's return memento beside the row and its offset. a new
+publication replaces it; a changed positive width, list font or reader profile
+invalidates measurements and re-observes mounted rows. a transient loading scope
+never erases restored memory. returning to a remote anchor still depends on its map
+arriving; see [remote return](../issues/connections-return-waits-for-remote-anchor.md).
+
+row rest belongs to `ResourceOutlineList`: the mounted descriptor set must stay
+unchanged for 150ms and contain the row. proofs survive unmounts for that list's
+life, fenced by descriptor identity and refreshed at rest. `Occurrence` mounts
+children only after its first rest. a remounted open row reserves its prior extent
+while its children wait. hover commits are suppressed until window rest.
+
+`HighlightAnnotation` receives its resource from its host. null means read and
+absent; hosts wait for their read before mounting it. blank rows open no writing
+document until annotate; bodied rows use the same read-only editor until rest or
+a completed click opens their document. opening is permanent for the occurrence,
+so emptying preserves focus and undo. existing bodies autosave; the creation
+composer saves explicitly. actual drafts and uncommitted work pin a row; committed
+pending synchronization and past undo availability do not.
+
+c1 exceptions are explicit: unplaced highlights retain full-excerpt/source reads;
+held links retain inner reads and note-document opening; remote authored roots
+retain their local read; source stubs and server-owned embeds resolve remotely.
+authored embed targets belong to the local replica. a present projection decides
+ownership; an absent exclusively server-owned ref can resolve remotely. absence of
+an authored ref stays local and does not claim deletion. every such asynchronous row
+reserves its remembered extent on remount. native find and cross-row selection
+cover mounted inspector content only; reader find keeps its full scope.
+embedded whole-resource occurrences start their linked children closed through the
+shared row's default disclosure input. chosen folds win; explicit disclosure uses
+the ordinary lazy child owner. an embedded highlight's own content does not
+automatically acquire a child editor or empty insertion tail after mounting.
+
+## reader margin
+
+**m:** `stackMargin` is pure; only text motion advances rows toward their passage
+positions. the rigid target keeps passage spacing, or the preceding row's height
+plus 4px when larger. the key is the passage nearest the reading line.
+the common passage nearest that line
+measures text motion; the key moves toward its desired top in that direction, by
+at most three times that motion. without a common row the stack snaps. there is
+no time term, animation or settling after text stops.
+
+rows render at offsets; one transform on the outline scope applies the base.
+the base is published before a changed placement commits, so child layout effects
+measure matching offsets and transform; menu guards never see the intermediate pair.
+new ring rows are measured and placed in two commits within one frame. geometry
+changes can expand spacing around the key while the text is still. a focused
+field or open overlay holds its row; neighbours move only enough to avoid a
+collision. the existing frame retains finalized fractional tops after those
+corrections. on release, each continuing row approaches the rigid target only in
+the text's direction and within the three-times cap. excess or compressed gaps
+can persist until text moves; immediate rigid spacing would require a jump.
+changing those offsets can commit each convergence frame; unchanged rigid spacing
+uses only the transform write.
+height changes and new admission still require physical nonoverlap correction.
+rows clip at the top like text. clicking activates a row without
+realigning its neighbours.
+
+a reveal scrolls the port to its target. the next text movement folds that offset
+into the base without a jump, then the normal three-times cap returns the stack
+toward its passages. dense stacks and revealed rows can remain off their passages
+until text moves. popups portal outside the transformed scope. a capture-phase
+scroll listener schedules measurement in the text's frame until the
+[reader publication delay](../issues/reader-publishes-scroll-a-frame-late.md) is fixed.
 
 ## relationships
 

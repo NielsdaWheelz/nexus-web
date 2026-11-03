@@ -117,8 +117,9 @@ capture and never loads a live authored resource to replace it.
 reader, compact/downloaded reader, outline and detail surfaces share one annotation
 editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`.
 blank has one look. an emptied field stays mounted, with its undo, only while focus
-or open input is inside it. `HighlightAnnotation` unmounts its bound editor once query
-and document both read absent, focus has left, native input has settled, no reference,
+or open input is inside it. `HighlightAnnotation` receives its resource from the
+host and unmounts its bound editor once that projection and the document both read
+absent, focus has left, native input has settled, no reference,
 link or attachment input is open, no press is still activating, wherever it began
 (`usePointerGesture`), and no overlay that does not contain the field owns interaction,
 because `ActionMenu` kills a menu whose anchor moved. keyboard departure unmounts at
