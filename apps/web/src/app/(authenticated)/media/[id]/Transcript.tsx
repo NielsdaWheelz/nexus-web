@@ -5,7 +5,7 @@ import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { Captions } from "lucide-react";
-import { Hold, useActiveRegion, useOutcome, useResendVerbs } from "@/components/feedback/Feedback";
+import { Hold, useActiveRegion, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
@@ -35,7 +35,7 @@ export function TranscriptState({ media, holdFocus }: {
   const [noCaptions, setNoCaptions] = useState(false);
   const { fail } = useOutcome();
   const speak = useActiveRegion();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const owner = useRef<HTMLDivElement>(null);
   const active = useRef(speak);
   active.current = speak;
@@ -76,7 +76,7 @@ export function TranscriptState({ media, holdFocus }: {
       : <Fact speak={speak} line={{ fact: noCaptions ? "this video has no captions." : state === "queued" ? "transcript queued."
         : state === "running" ? "transcribing." : state === "unavailable" ? "no transcript is available for this episode." : "preparing the transcript." }} />}
     {unknown !== null && requestable ? <Hold id={`transcription:${media.id}`} attempt={unknown}
-      line={{ fact: "not sure transcription started.", reason: UNKNOWN_OUTCOME_REASON }} verbs={resendVerbs(retry)} /> : null}
+      {...resendFeedback({ line: { fact: "not sure transcription started.", reason: UNKNOWN_OUTCOME_REASON }, resend: retry })} /> : null}
   </div>;
 }
 

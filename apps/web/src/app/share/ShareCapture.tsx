@@ -8,7 +8,7 @@
 // `nexus-share://open`) and Done.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Announcement, FeedbackProvider, Hold, useTransportVerbs, useResendVerbs } from "@/components/feedback/Feedback";
+import { Announcement, FeedbackProvider, Hold, useTransportVerbs, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
@@ -393,9 +393,9 @@ function ShareCaptureContent({
  * new result, so a failed retry speaks again while the row and the verb under the hand stand. */
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
   const transportVerbs = useTransportVerbs();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const verb: CommandVerb = { label: result.recovery === "Review" ? "review libraries" : "retry", commandKey: result.recovery === "Review" ? "ReviewCaptureResult" : "RetryCaptureResult", run: retry, busy: saving };
-  if (result.recovery === "Unknown") return <Hold id={`share-capture:${result.label}`} attempt={result.attempt} line={result.line} verbs={resendVerbs(verb)} />;
+  if (result.recovery === "Unknown") return <Hold id={`share-capture:${result.label}`} attempt={result.attempt} {...resendFeedback({ line: result.line, resend: verb })} />;
   return <>
     <Fact line={result.line} verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb })) ?? undefined} />
     <Announcement text={sentence(result.line)} level="Polite" occurrence={result} />

@@ -8,7 +8,7 @@ import type { Schema } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { candidateDetail, decidePart } from "@/lib/media/parts";
 import { isApiError } from "@/lib/api/client";
-import { Hold, useResendVerbs, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
 import { Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -35,7 +35,7 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
   }, [loaded, draft]);
   const { detail, request, busy, conflict } = draft.value;
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const preview = usePartPreview(source, detail?.selection ?? null);
   const guard = useWorkGuard();
   const run = async (body: Schema<"PartCandidateDecision">, retry = false) => {
@@ -87,8 +87,8 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
           <Button disabled={blocking} onClick={() => { draft.set(value => ({ ...value, retired: true, detail: null, conflict: false })); onChoose(detail); }}>choose sections…</Button>
         </div>
       </>}
-      {request !== null && draft.value.attempt > 0 ? <Hold id={`part-candidate:${source}:${candidate}`} attempt={draft.value.attempt} line={UNSURE}
-        verbs={resendVerbs({ label: "retry", commandKey: "RetryCandidateDecision", busy, run: () => void run(request, true) })} /> : null}
+      {request !== null && draft.value.attempt > 0 ? <Hold id={`part-candidate:${source}:${candidate}`} attempt={draft.value.attempt} {...resendFeedback({ line: UNSURE,
+          resend: { label: "retry", commandKey: "RetryCandidateDecision", busy, run: () => void run(request, true) } })} /> : null}
       {conflict || stalePreview ? <Button disabled={blocking || loaded.status === "ready" && loaded.refreshing} onClick={() => void reviewCurrent()}>review current proposal</Button> : null}
     </div>
   </Dialog>;

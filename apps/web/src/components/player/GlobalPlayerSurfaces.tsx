@@ -13,7 +13,7 @@ import {
   type Ref,
 } from "react";
 import * as Icon from "lucide-react";
-import { Announcement, Hold, useOutcome, useResendVerbs } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { type Line, type Verbs } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
@@ -699,7 +699,7 @@ function PlayerOutcomes() {
   const { say } = useOutcome();
   const androidShell = useAndroidShell();
   useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const admitted = remoteAttemptAllowed();
   const loaded = state.kind === "Loaded" ? state : null;
   const title = loaded?.source.descriptor.title ?? null;
@@ -723,9 +723,10 @@ function PlayerOutcomes() {
     {place?.kind === "Unsaved" && admitted && episode !== null && title !== null ? <Hold id={`place:${episode}`} attempt={place.attempt}
       line={{ fact: `couldn’t save your place in “${title}”.` }} verbs={[{ label: "retry", commandKey: "retry place", run: commands.retry }]} /> : null}
     {queue.unanswered > 0 ? <Hold id={`queue:${queue.header?.queue_id ?? "new"}`} attempt={queue.unanswered}
-      line={{ fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON }}
-      verbs={androidShell ? [{ label: "check", commandKey: "check queue", run: commands.checkQueue, busy: queue.phase === "Saving" }]
-        : resendVerbs({ label: "retry", commandKey: "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" })} /> : null}
+      {...androidShell ? { line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
+        verbs: [{ label: "check", commandKey: "check queue", run: commands.checkQueue, busy: queue.phase === "Saving" }] as const }
+        : resendFeedback({ line: { fact: "not sure the queue saved.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: "retry queue", run: commands.checkQueue, busy: queue.phase === "Saving" } })} /> : null}
   </>;
 }
 

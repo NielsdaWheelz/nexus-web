@@ -8,7 +8,7 @@
  * a read settles it. Mount `feedback` once.
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { Hold, useOutcome, useResendVerbs, type Outcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback, type Outcome } from "@/components/feedback/Feedback";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { type ApiError, outcomeUnknown, requestWithDeadline } from "@/lib/api/client";
@@ -145,7 +145,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
 export function usePodcastSettingsOwner(accountId: string, fail: (input: { error: unknown }) => void) {
   const guard = useWorkGuard();
   const outcome = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const owner = useMemo(() => createOwner(accountId, guard, fail, outcome), [accountId, guard, fail, outcome]);
   useLayoutEffect(() => owner.start(), [owner]);
   // Its dialog and the player read `state`; a fresh command object re-renders them.
@@ -153,8 +153,8 @@ export function usePodcastSettingsOwner(accountId: string, fail: (input: { error
   const commands = { ...owner.commands };
   return { commands, feedback: entries.filter(entry => unconfirmed(entry.state)).map(entry =>
     <Hold key={entry.ownerId} id={entry.ownerId} attempt={entry.attempt}
-      line={{ fact: `not sure the defaults for “${entry.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON }}
-      verbs={resendVerbs({ label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId), busy: entry.state.kind === "Reading" })} />) };
+      {...resendFeedback({ line: { fact: `not sure the defaults for “${entry.title}” saved.`, reason: UNKNOWN_OUTCOME_REASON },
+        resend: { label: "check", commandKey: `check ${entry.ownerId}`, run: () => void commands.check(entry.podcastId), busy: entry.state.kind === "Reading" } })} />) };
 }
 
 /** `shown` is true while the calling surface stands to show the save's Facts. */

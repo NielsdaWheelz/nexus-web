@@ -2,8 +2,9 @@
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Hold, useOutcome, useTransportVerbs, useResendVerbs } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useTransportVerbs, useResendFeedback } from "@/components/feedback/Feedback";
 import { Fact, Failed, VerbControl } from "@/components/feedback/Fact";
+import { sentence } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
@@ -49,7 +50,7 @@ export function MetadataReviewButton({
   const [unknown, setUnknown] = useState<number | null>(null);
   const { say, fail } = useOutcome();
   const fact = "couldn’t mark this reviewed.";
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const review = async (trigger: HTMLElement | null) => {
     if (pending) return;
     setPending(true);
@@ -78,8 +79,8 @@ export function MetadataReviewButton({
       mark reviewed
     </Button>
     {unknown === null ? null : <Hold id={`metadata-review:${jobId}`} attempt={unknown}
-      line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
-      verbs={resendVerbs({ label: "retry", commandKey: `retry metadata-review:${jobId}`, run: () => void review(null), busy: pending })} />}
+      {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+        resend: { label: "retry", commandKey: `retry metadata-review:${jobId}`, run: () => void review(null), busy: pending } })} />}
     </>
   );
 }
@@ -105,7 +106,7 @@ export default function MetadataResearchActions({
   const admissions = useMediaAdmissions();
   const pending = admissions.pending("MetadataResearch", mediaId);
   const { say, fail } = useOutcome();
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const heldBack = admissionTransport(useRemoteAdmission());
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
@@ -159,18 +160,18 @@ export default function MetadataResearchActions({
       }),
     });
   };
+  const pendingFeedback = pending === null ? null : resendFeedback({ line: { fact: "metadata search" },
+    resend: { label: "retry", commandKey: `RetryMetadata:${pending.key}`, busy: pending.kind === "sending",
+      run: () => run({ ref, id: "RetryMetadata", label: "retry", title: "", confirmation: null, tracked: false,
+        execute: () => admissions.retry(pending.key) }) } });
   return (
     <>
-      <span id={reasonId} className="sr-only">{ctx.online ? "metadata search" : BLOCKED_COPY.RequiresOnline}</span>
+      <span id={reasonId} className="sr-only">{pendingFeedback !== null ? sentence(pendingFeedback.line) : ctx.online ? "metadata search" : BLOCKED_COPY.RequiresOnline}</span>
       {reviewJob !== null ? (
         <MetadataReviewButton key={reviewJob} mediaId={mediaId} jobId={reviewJob} />
       ) : null}
-      {pending !== null ? (
-        <span data-metadata-action=""><VerbControl contextId={reasonId} verb={resendVerbs({
-          label: "retry", commandKey: `RetryMetadata:${pending.key}`, busy: pending.kind === "sending",
-          run: () => run({ ref, id: "RetryMetadata", label: "retry", title: "", confirmation: null, tracked: false,
-            execute: () => admissions.retry(pending.key) }),
-        })[0]} /></span>
+      {pendingFeedback !== null ? (
+        pendingFeedback.verbs === null ? null : <span data-metadata-action=""><VerbControl contextId={reasonId} verb={pendingFeedback.verbs[0]} /></span>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
         <Button
           data-metadata-action=""

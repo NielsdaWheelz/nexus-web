@@ -74,7 +74,7 @@ import {
   Underline,
 } from "lucide-react";
 import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
-import { Hold, useOutcome, useResendVerbs } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -277,7 +277,7 @@ export default function NoteEditor(props: NoteEditorProps) {
 }
 function NoteEditorContent(props: NoteEditorProps) {
   const describedBy = props["aria-describedby"];
-  const resendVerbs = useResendVerbs();
+  const resendFeedback = useResendFeedback();
   const editorHost = useNoteEditorHost();
   const schema = props.projection?.schema ?? canonicalSchema;
   const bindingRef = useRef<EditorBinding | null>(null);
@@ -1587,11 +1587,11 @@ function NoteEditorContent(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
-      {attachmentValue?.unconfirmed && !attachmentValue.body ? <Hold id={`attachment:${props.editorKey}`} attempt={attachmentValue.attempt} line={attachmentValue.unconfirmed}
-        verbs={[...resendVerbs({ label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
+      {attachmentValue?.unconfirmed && !attachmentValue.body ? <Hold id={`attachment:${props.editorKey}`} attempt={attachmentValue.attempt} {...resendFeedback({ line: attachmentValue.unconfirmed,
+          resend: { label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
           const task = readAttachment(), view = viewRef.current;
           if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
-        } }), discardVerb]} /> : null}
+        } }, secondary: discardVerb })} /> : null}
       {attachmentValue?.body && attachmentValue.body === declined ? <Hold id={`attachment:${props.editorKey}:ready`} line={{ fact: "attachment uploaded.", reason: "select or empty the note body to insert it." }} verbs={[{
         label: "insert", commandKey: "InsertAttachment", run: () => {
           const task = readAttachment(), view = viewRef.current;

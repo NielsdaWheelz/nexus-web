@@ -7,16 +7,14 @@ import {
   useLayoutEffect,
   useMemo,
   useId,
-  useSyncExternalStore,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
-import { Hold, useOutcome, useResendVerbs, useTransportVerbs } from "@/components/feedback/Feedback";
-import { UNKNOWN_OUTCOME_REASON, staleBuild } from "@/lib/api/failure";
-import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { Retract } from "@/components/feedback/stage";
 import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
@@ -88,9 +86,7 @@ export function usePaneRefresh(input: {
   const heldId = useId();
   const [held, setHeld] = useState<{ fact: string; attempt: number; fence: string; retry: () => void } | null>(null);
   const refusal = useRef<Retract | null>(null);
-  const resendVerbs = useResendVerbs();
-  const transportVerbs = useTransportVerbs();
-  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const resendFeedback = useResendFeedback();
 
   const start = useCallback(() => {
     if (!owner.active) return;
@@ -264,8 +260,8 @@ export function usePaneRefresh(input: {
         </span>
       </div>
       {held && <Hold id={`${heldId}:${held.fence}`} attempt={held.attempt}
-        line={admission === "UpdateRequired" ? { fact: staleBuild() } : { fact: held.fact, reason: UNKNOWN_OUTCOME_REASON }}
-        verbs={(admission === "UpdateRequired" ? transportVerbs("Update") : resendVerbs({ label: "retry", commandKey: "Pane.Refresh", run: held.retry, busy: refreshing !== null })) ?? undefined} />}
+        {...resendFeedback({ line: { fact: held.fact, reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: "Pane.Refresh", run: held.retry, busy: refreshing !== null } })} />}
       </>
     ),
   };
