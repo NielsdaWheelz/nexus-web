@@ -3,6 +3,8 @@
 // the first unsaved move, one request in flight, latest locator only. A save that
 // fails is sent once more before its failure is published, so one lost response
 // says nothing; the failure then stands until a save lands or a read settles it.
+// An unread accepted write is never replayed. Read repair preserves later movement
+// without sending it; new input or an explicit retry resumes that movement.
 // Command preparation holds acknowledged progress only; refusal releases its hold
 // while preserving the local locator and the owner’s save/conflict recovery.
 import { ProgressPreparationError } from "@/lib/consumption/progressFence";
@@ -40,6 +42,8 @@ export type ProgressState =
       readonly saveFailure: SaveFailure | null;
       /** The write is never replayed while its authoritative view is unread. */
       readonly observation: ProgressUnobserved | null;
+      /** New movement kept behind an unread view resumes on input or an explicit retry. */
+      readonly movementPaused: boolean;
       readonly handoff: Handoff | null;
     };
 
@@ -118,6 +122,7 @@ export function createProgressSync(
   let failure: { readonly kind: "Resending" } | ({ readonly kind: "Said" } & SaveFailure) | null = null;
   const said = (error: unknown) => ({ kind: "Said" as const, error, offline: navigator.onLine === false });
   let observation: { readonly result: ProgressUnobserved; readonly locator: Locator | null; readonly resolution: "Canonical" | "Device" | null } | null = null;
+  let movementPaused = false;
   /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
   let leaving = false;
   let inFlight: Promise<void> | null = null;
@@ -156,6 +161,7 @@ export function createProgressSync(
             retrying: revalidating,
             saveFailure: failure?.kind === "Said" ? failure : null,
             observation: observation?.result ?? null,
+            movementPaused,
             handoff,
           };
     hooks.changed();
@@ -183,6 +189,7 @@ export function createProgressSync(
     if (
       unsaved === null ||
       observation !== null ||
+      movementPaused ||
       inFlight !== null ||
       handoff?.kind === "Newer" ||
       view === null ||
@@ -199,7 +206,7 @@ export function createProgressSync(
   function save(keepalive: boolean): Promise<void> {
     window.clearTimeout(timer);
     const locator = unsaved;
-    if (inFlight !== null || locator === null || view === null || observation !== null)
+    if (inFlight !== null || locator === null || view === null || observation !== null || movementPaused)
       return inFlight ?? Promise.resolve();
     // A save the leaving page cut off (or a keepalive one, which outlives it)
     // has an unobservable outcome: the locator stays unsaved, no retry here.
@@ -222,6 +229,7 @@ export function createProgressSync(
             adopting = false;
             if (unsaved === locator) unsaved = null;
           }
+          movementPaused = unsaved !== null && (result.acceptance === "Accepted" || unsaved !== locator);
           return;
         }
         if (result.kind === "ContentChanged") {
@@ -298,13 +306,13 @@ export function createProgressSync(
         handoff = next.kind === "Conflict" ? handoff : null;
         failure = null;
         const located = savedLocator(next);
-        if (pending.result.acceptance === "Accepted") {
+        const resolved = pending.resolution !== null && next.kind !== "Conflict";
+        if (pending.result.acceptance === "Accepted" || resolved ||
+            pending.resolution === null && located !== null && pending.locator !== null && sameLocator(located, pending.locator)) {
+          if (unsaved === pending.locator) unsaved = null;
           observation = null;
           if (pending.resolution === "Canonical" && unsaved === null && next.kind === "Canonical")
             hooks.remote(next.snapshot, true);
-        } else if (located !== null && pending.locator !== null && sameLocator(located, pending.locator)) {
-          if (unsaved === pending.locator) unsaved = null;
-          observation = null;
         }
         return;
       }
@@ -353,7 +361,6 @@ export function createProgressSync(
     } finally {
       revalidating = false;
       publish();
-      if (pending !== null && observation === null) schedule();
     }
   }
 
@@ -398,6 +405,7 @@ export function createProgressSync(
       adopting = false;
       failure = null;
       observation = null;
+      movementPaused = false;
       handoff = null;
       state = state.kind === "LoadFailed"
         ? { ...state, recovery: "ReloadDocument", retrying: true }
@@ -435,12 +443,14 @@ export function createProgressSync(
     report(locator, adoption) {
       if (fenced || (view && unresolvedPosition(view) && !adoption)) return;
       adopting ||= adoption?.adoptUnresolved === true;
-      const current = unsaved ?? (view === null ? null : savedLocator(view));
-      if (current !== null && sameLocator(current, locator) && (unsaved !== null || activitySaved)) return;
+      if (movementPaused && observation === null) { movementPaused = false; publish(); }
+      const current = unsaved ?? (observation?.result.acceptance === "Accepted" ? observation.locator : null) ?? (view === null ? null : savedLocator(view));
+      if (current !== null && sameLocator(current, locator) && (unsaved !== null || activitySaved)) { schedule(); return; }
       if (unsaved === null) dirtySince = Date.now();
       movedAt = Date.now();
       unsaved = locator;
       leaving = false;
+      if (observation !== null) { movementPaused = true; publish(); }
       schedule();
     },
     async flush(keepalive) {
@@ -453,13 +463,14 @@ export function createProgressSync(
     revalidate,
     async prepareFence() {
       if (observation !== null) throw new ProgressPreparationError();
+      movementPaused = false;
       if (needsSourceBinding()) requireSourceReload();
       fenced = true;
       generation += 1;
       window.clearTimeout(timer);
       await inFlight;
       if (handoff?.kind !== "Newer") await save(false);
-      if (needsSourceBinding() || unsaved !== null || view?.kind !== "Canonical" || handoff !== null) {
+      if (needsSourceBinding() || observation !== null || unsaved !== null || view?.kind !== "Canonical" || handoff !== null) {
         // Unloaded progress and source reloads retain their recovery fence; a save the fence
         // held back, or the one it sent and lost, goes out again.
         if (!needsSourceBinding() && view !== null) {
@@ -488,6 +499,7 @@ export function createProgressSync(
       failure = null;
       activitySaved = false;
       observation = null;
+      movementPaused = false;
       publish();
     },
     async resolve(choice) {
@@ -514,7 +526,7 @@ export function createProgressSync(
       window.clearTimeout(timer);
       while (inFlight) await inFlight;
       const current = handoff;
-      if (current?.kind !== "Conflict") return;
+      if (current?.kind !== "Conflict" || observation !== null || fenced) return;
       const device = unsaved ?? current.device;
       const submitted = unsaved;
       const run = async () => {
@@ -522,9 +534,10 @@ export function createProgressSync(
           const result = await port.resolve(choice, { canonical: current.canonical, device });
           failure = null;
           if (result.kind === "Unobserved") {
-            observation = { result, locator: choice === "Device" ? device : null, resolution: choice };
+            observation = { result, locator: choice === "Device" ? device : submitted, resolution: choice };
             generation += 1;
             if (result.acceptance === "Accepted" && (choice === "Canonical" ? unsaved === submitted : unsaved === device)) unsaved = null;
+            movementPaused = unsaved !== null;
             return;
           }
           adopt(result);
@@ -544,7 +557,14 @@ export function createProgressSync(
       await inFlight;
     },
     retry() {
-      if (observation !== null) { void revalidate(); return; }
+      if (observation !== null || movementPaused) {
+        void revalidate().then(() => {
+          if (observation !== null || handoff?.kind === "Newer") return;
+          movementPaused = false;
+          void save(false);
+        });
+        return;
+      }
       if (fenced) {
         if (failure?.kind === "Said") void reconcileFence().catch((error: unknown) => console.error("reader_cursor_reconcile_failed", error));
         return;
