@@ -1,16 +1,16 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import { Hold, useResendFeedback, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import type { CommandVerb } from "@/components/feedback/stage";
 import { apiFetch, type ApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import { confirmChatDeletion, heldUnknown } from "./commands";
+import { confirmChatDeletion } from "./commands";
 import { createRandomId } from "@/lib/createRandomId";
 import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
@@ -134,6 +134,7 @@ function creationOwner(accountId: string, refused: (error: ApiError, retry: Comm
 
 export function useConversationCreationOwner(accountId: string) {
   const { fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const told = useRef<Outcome["fail"]>(fail);
   useLayoutEffect(() => { told.current = fail; });
   const owner = useMemo(() => creationOwner(accountId, (error, retry) => told.current(error, REFUSED, retry)), [accountId]);
@@ -141,8 +142,8 @@ export function useConversationCreationOwner(accountId: string) {
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => NO_CREATIONS);
   return {create: owner.create, feedback: entries.map(entry => {
     if (entry.held === null) return null;
-    const {line, verbs} = heldUnknown("not sure the chat was created.", entry.held.refused,
-      [{label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}}]);
+    const {line, verbs} = resendFeedback({ line: { fact: "not sure the chat was created.", reason: UNKNOWN_OUTCOME_REASON },
+      resend: {label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}} });
     return <Hold key={entry.key} id={entry.key} attempt={entry.held.attempt} line={line} verbs={verbs} />;
   })};
 }

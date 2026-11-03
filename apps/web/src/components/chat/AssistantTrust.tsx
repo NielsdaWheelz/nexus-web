@@ -3,11 +3,11 @@
 import Button from "@/components/ui/Button";
 
 import { useState } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { isApiError, outcomeUnknown } from "@/lib/api/client";
-import { undoAssistantWrite, undoReason, UNDO_REFUSED } from "@/lib/assistantWrites";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { isRefusal, outcomeUnknown } from "@/lib/api/client";
+import { undoAssistantWrite, UNDO_REFUSED } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { MAY_HAVE } from "@/lib/chat/commands";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { MessageAction } from "@/lib/chat/runTail";
 import styles from "./ChatSurface.module.css";
 
@@ -28,7 +28,8 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [unknown, setUnknown] = useState<{ id: string; attempt: number } | null>(null);
-  const { say, fail } = useOutcome();
+  const { fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const writes = actions.filter(
     (tool) => tool.effect === "Write" && tool.result_kind === "mutation" &&
       (tool.status === "complete" || (tool.canonical_tool_id === "memory.save_note" && tool.status !== "running" &&
@@ -45,20 +46,19 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) {
         // the document is leaving for sign-in
-      } else if (outcomeUnknown(error)) {
+      } else if (outcomeUnknown(error) || (isRefusal(error) && unknown?.id === id)) {
         setUnknown((current) => ({ id, attempt: (current?.id === id ? current.attempt : 0) + 1 }));
       } else {
         setUnknown(null);
-        const reason = isApiError(error) ? undoReason(error) : null;
-        if (reason === null) fail(error, UNDO_REFUSED, retry(id));
-        else say({ fact: UNDO_REFUSED, reason });
+        fail(error, UNDO_REFUSED, retry(id));
       }
     }
     setBusy(false);
   };
   return <div role="list" aria-label="Assistant actions">
-    {unknown ? <Hold id={`undo:${unknown.id}`} attempt={unknown.attempt} line={{ fact: "not sure that was undone.", reason: MAY_HAVE }}
-      verbs={[retry(unknown.id)]} /> : null}
+    {unknown ? <Hold id={`undo:${unknown.id}`} attempt={unknown.attempt} {...resendFeedback({
+      line: { fact: "not sure that was undone.", reason: UNKNOWN_OUTCOME_REASON }, resend: retry(unknown.id),
+    })} /> : null}
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
       const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
@@ -73,7 +73,7 @@ export default function AssistantTrust({ actions, undone, onUndone }: {
         </span> : null}
         {reverted ? <span className={styles.kicker}>undone</span>
           : tool.undo_allowed && tool.id !== null ? <Button
-            disabled={busy} aria-busy={busy}
+            disabled={busy || (unknown !== null && tool.id !== unknown.id)} aria-busy={busy}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
             aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</Button> : historicalFiling ? <span className={styles.kicker}>older filings can’t be undone.</span> : null}
       </div>;

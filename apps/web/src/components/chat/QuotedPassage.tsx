@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import type { MouseEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import ResourceQuotation from "@/components/resources/ResourceQuotation";
 import type { ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -40,8 +41,8 @@ export function useQuotePreview(key: ReaderSelectionKey | null) {
   return { quote, retry: preview.refetch };
 }
 
-/** A pending or captured quote and its attachment controls. A pending one paints nothing until it
- * lands; one the reader refuses says so, ahead of transport, and remove stands beside it. */
+/** A pending or captured quote and its attachment controls. A slow read rules its region; a
+ * refusal says why, ahead of transport, and remove stands beside it. */
 export default function QuotedPassage({ quote, onRemove, onRetry }: {
   quote: QuoteState | { kind: "Sent"; selection: Snapshot };
   onRemove?: MouseEventHandler<HTMLButtonElement>;
@@ -51,7 +52,7 @@ export default function QuotedPassage({ quote, onRemove, onRetry }: {
   return <div className={styles.quote} role="group" aria-label="Quoted passage">
     {onRemove ? <Button icon={<X />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
     {quote.kind === "Ready" || quote.kind === "Sent" ? <ResourceQuotation item={quote.selection.item} />
-      : quote.kind === "Loading" ? null
+      : quote.kind === "Loading" ? <Ruling />
       : refused !== null ? <Fact line={{ fact: refused }} />
       : <Failed error={quote.error} noun="quotes" retry={onRetry ? { run: onRetry, busy: quote.retrying } : undefined} />}
   </div>;

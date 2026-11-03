@@ -21,6 +21,7 @@ import {
 import { emptyLive, foldLive, openRunTail, type Link, type Live } from "@/lib/chat/runTail";
 import {
   failureOf,
+  readFailureOf,
   type ChatFailure,
   type Conversation,
   type Message,
@@ -190,9 +191,9 @@ export function createChatStore(accountId: string, conversationId: string | null
     } catch (error) {
       reading.delete(id);
       if (!active) return;
-      const failure = failureOf(error);
+      const failure = readFailureOf(error);
       if (failure.kind === "Defect") set({ defect: { error: failure.error } });
-      setLink(id, retail && (failure.kind === "Refused" || failure.kind === "Unknown")
+      setLink(id, retail && failure.kind === "Failed"
         ? { kind: "Failed", error: failure.error }
         : { kind: "Lost" });
     }
@@ -242,7 +243,7 @@ export function createChatStore(accountId: string, conversationId: string | null
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
         if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") return applyTree(null);
-        const failure = failureOf(error);
+        const failure = readFailureOf(error);
         if (failure.kind === "Defect") set({ defect: { error: failure.error } });
         else if (failure.kind !== "Handled" && state.history !== "Ready") set({ history: "Unavailable", unread: failure.error });
       } finally {
@@ -276,6 +277,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     },
 
     retryCommand: (openIntent: OpenIntent = "default") => command(() => commands.retry(openIntent)),
+    refreshCommand: () => command(() => commands.refresh()),
     discardCommand: () => commands.discard(),
 
     /** Stop intent is idempotent, so a press after any failure is safe; null once the read lands. */
@@ -293,7 +295,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     reconnect(assistantId: string) {
       const live = state.live[assistantId];
       if (!live || reading.has(assistantId) || tails.has(assistantId)) return;
-      setLink(assistantId, { kind: "Reconnecting" });
+      setLink(assistantId, { kind: "Reconnecting", error: live.link.kind === "Failed" ? live.link.error : null });
       void readRun(assistantId, live.runId, true);
     },
 

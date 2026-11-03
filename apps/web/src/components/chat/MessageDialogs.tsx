@@ -2,10 +2,11 @@
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
-import { useOutcome } from "@/components/feedback/Feedback";
+import { useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { changedLine, recoveryOf, reloadsAlone, sayRefusal } from "@/lib/chat/commands";
+import { changedLine, recoveryOf, sayRefusal } from "@/lib/chat/commands";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { routeOf, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
@@ -137,18 +138,14 @@ function Repeat({ message, operation, openIntent, onClose }: {
     });
   }, [catalog, own]);
   const slips = useOutcome();
+  const resendFeedback = useResendFeedback();
   const reasonId = useId();
   const [busyCaption, setBusyCaption] = useState<string>(operation);
   const caption = own?.kind === "Busy" ? busyCaption
     : own?.kind === "Unconfirmed" ? "retry"
     : own?.kind === "RefreshRequired" ? "check" : operation;
   const reason = catalog.status === "ready" && draft.kind !== "Uninitialized" ? unavailability(catalog.data, draft) : null;
-  const submit = async (event: TargetActivationEvent) => {
-    const activation = workspaceTargetActivationIntent(event);
-    if (activation.kind === "Unowned") return;
-    event.preventDefault();
-    if (activation.kind !== "Open") return;
-    const intent = openIntent === "new_pane" ? openIntent : activation.intent;
+  const perform = async (intent: OpenIntent) => {
     setBusyCaption(caption);
     // a refresh after a refusal settles and leaves the dialog open: the chat changed, decide again
     const outcome = own !== null ? await store.retryCommand(intent)
@@ -156,23 +153,38 @@ function Repeat({ message, operation, openIntent, onClose }: {
     if (outcome?.kind === "Gone" || outcome?.kind === "Accepted") onClose();
     else if (outcome) sayRefusal(slips, outcome);
   };
+  const submit = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open") void perform(openIntent === "new_pane" ? openIntent : activation.intent);
+  };
+  const retryKey = `repeat ${message.id}`;
+  const recovery = own?.standing?.kind === "Unknown" ? resendFeedback({
+    line: { fact: "not sure the new answer started.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: retryKey, busy: own.kind === "Busy", run: intent => void perform(intent) },
+  }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === retryKey ? primary : null;
+  const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
   const refresh = own !== null && own.standing !== null && own.standing.kind !== "Unknown" ? { command: own.command, standing: own.standing } : null;
   return (
     <div className={styles.dialogBody}>
       <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={own !== null && own.kind !== "RefreshRequired"} />
-      {reason ? <Field id={reasonId} line={{ fact: reason }} /> : null}
+      {reason ? <Field id={reasonId} line={{ fact: reason }} /> : waits ? <span id={reasonId} className="sr-only">{waitReason}</span> : null}
       {refresh?.standing.kind === "Changed" ? <Fact speak line={changedLine(refresh.command)} />
         : refresh?.standing.kind === "Unread" ? <Failed error={refresh.standing.error} noun="messages" /> : null}
       <div className={styles.dialogActions}>
         <Button onClick={onClose}>cancel</Button>
         <Button
           emphasis="strong"
-          disabled={own ? own.kind === "Busy" || (own.standing?.kind === "Unknown" && reloadsAlone(own.standing.refused))
+          disabled={own ? own.kind === "Busy" || waits
             : command.kind !== "Idle" || catalog.status !== "ready" || reason !== null || draft.kind !== "Selected"}
           onClick={(event) => void submit(event)}
           onKeyDown={(event) => void submit(event)}
-          aria-describedby={reason ? reasonId : undefined}
-          aria-busy={own?.kind === "Busy"}
+          aria-describedby={reason || waits ? reasonId : undefined}
+          aria-busy={own?.kind === "Busy" || replay?.busy}
         >
           {caption}
         </Button>

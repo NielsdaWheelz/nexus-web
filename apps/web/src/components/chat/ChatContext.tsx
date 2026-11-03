@@ -13,15 +13,15 @@ import ResourceComposer from "@/components/resources/ResourceComposer";
 import ResourceIndexRow from "@/components/resources/ResourceIndexRow";
 import Button from "@/components/ui/Button";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import { useChangeStamp } from "@/lib/api/changes";
-import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { mutateConnection } from "@/lib/resourceGraph/links";
-import { MAY_HAVE } from "@/lib/chat/commands";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -77,6 +77,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   const { item, authored, annotation } = useContextItem(entry.item);
   const pane = usePaneRuntime();
   const { say, fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
   const [busy, setBusy] = useState(false);
   /** Attempts whose answer never came; 0 once one answers. */
   const [unknown, setUnknown] = useState(0);
@@ -84,8 +85,6 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   const removeButton = useRef<HTMLButtonElement>(null);
   const runtime = useWritingRuntime();
   useActionFocusRecovery(removeButton, afterRemoval);
-  // justify-defect: AuthoredProvider mounts its descendants only with a ready account runtime.
-  if (runtime === null) throw new Error("chat context requires its writing runtime");
   const parsed = parseResourceRef(entry.item.ref);
   // justify-defect: admitted context refs must satisfy the canonical resource grammar.
   if (parsed === null) throw new Error(`Invalid context ref: ${entry.item.ref}`);
@@ -106,7 +105,7 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
       void onChanged();
     } catch (error) {
       if (handleUnauthenticatedApiError(error) || error instanceof LocalCommitError) return;
-      if (outcomeUnknown(error)) return setUnknown((attempt) => attempt + 1);
+      if (outcomeUnknown(error) || (isRefusal(error) && unknown > 0)) return setUnknown((attempt) => attempt + 1);
       submitted.current = null;
       setUnknown(0);
       void onChanged();
@@ -127,7 +126,9 @@ function ContextIndexItem({ entry, conversationId, onChanged, afterRemoval }: {
   </>;
   const hasSupport = Boolean(authored?.data && item === null || annotation);
   return <>
-    {unknown > 0 ? <Hold id={`remove:${entry.item.ref}`} attempt={unknown} line={{ fact: `not sure “${label}” was removed.`, reason: MAY_HAVE }} verbs={[retry]} /> : null}
+    {unknown > 0 ? <Hold id={`remove:${entry.item.ref}`} attempt={unknown} {...resendFeedback({
+      line: { fact: `not sure “${label}” was removed.`, reason: UNKNOWN_OUTCOME_REASON }, resend: retry,
+    })} /> : null}
     {authored ? <AuthoredReadFailure {...authored} title="couldn’t load this item." /> : null}
     <ResourceIndexRow presentation={{ kind: "Context", primary: item ? { kind: "Item" } : { kind: "Status", label: status }, supportingContent: hasSupport ? supporting : null }} item={item ?? entry.item} afterRemoval={afterRemoval} occurrenceKey={`${conversationId}/${entry.item.ref}`}
     primaryControl={entry.mutation ? <Button ref={removeButton} iconOnly icon={<Minus />}

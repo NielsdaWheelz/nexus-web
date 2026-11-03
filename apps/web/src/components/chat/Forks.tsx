@@ -4,11 +4,12 @@ import { memo, useMemo, useRef, useState, type CSSProperties } from "react";
 import { GitBranch, Search } from "lucide-react";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { Announcement, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement, Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { MarkdownPreview, TextPreview } from "@/components/ui/MarkdownMessage";
-import { MAY_HAVE, sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
 import { anchorQuote, outline, type Alternative, type Children } from "@/lib/chat/tree";
 import { conversationViewHref } from "@/lib/chat/view";
 import type { ChatFailure, Message } from "@/lib/chat/wire";
@@ -153,6 +154,7 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   } | null>(`Chat.ForkTitle:${conversationId}`, () => null,
     value => ({ changed: value !== null && value.title !== (value.baseline ?? ""), unconfirmed: value !== null && value.request !== null, stopsBrowserWork: false }));
   const editing = edit.value;
+  const resendFeedback = useResendFeedback();
   const guard = useWorkGuard();
   const dismiss = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [edit.owner] })) edit.set(null); };
   const rename = async () => {
@@ -161,12 +163,13 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
     const request = current.request ?? { title: current.title.trim() || null, expectedTitle: current.baseline };
     edit.set({ ...current, request, pending: true });
     const failure = await onRename(current.id, request.title, request.expectedTitle);
+    if (failure?.kind === "Defect") return void fail(failure.error, UNRENAMED);
     edit.set(value => {
       if (!value || value.id !== current.id || value.request !== request) return value;
       if (failure === null) return value.title === current.title ? null : { ...value, baseline: request.title, request: null, pending: false, unknown: 0 };
-      return failure.kind === "Unknown" ? { ...value, pending: false, unknown: value.unknown + 1 } : { ...value, request: null, pending: false, unknown: 0 };
+      return failure.kind === "Unknown" || ((failure.kind === "Refused" || failure.kind === "Handled") && value.unknown > 0) ? { ...value, pending: false, unknown: value.unknown + 1 } : { ...value, request: null, pending: false, unknown: 0 };
     });
-    if (failure === null || failure.kind === "Unknown" || failure.kind === "Handled") return;
+    if (failure === null || failure.kind === "Unknown" || failure.kind === "Handled" || current.unknown > 0) return;
     if (failure.kind === "Missing") return void say({ fact: UNRENAMED, reason: "it doesn’t exist." });
     if (failure.kind === "Refused" && failure.error.code === "E_RESOURCE_CONFLICT") return void say({ fact: UNRENAMED, reason: "it was renamed meanwhile." });
     if (failure.kind === "Refused" && failure.error.code === "E_MESSAGE_NOT_FOUND") return void say({ fact: UNRENAMED, reason: "it doesn’t exist." });
@@ -187,8 +190,8 @@ export function ForksPanel({ tree, pathIds, onRename, onDelete }: {
   return (
     <div className={styles.panel}>
       {editing?.request && editing.unknown > 0 ? <Hold id={`rename:${editing.id}`} attempt={editing.unknown}
-        line={{ fact: "not sure the fork was renamed.", reason: MAY_HAVE }}
-        verbs={[{ label: "retry", commandKey: `rename ${editing.id}`, busy: editing.pending, run: () => void rename() }]} /> : null}
+        {...resendFeedback({ line: { fact: "not sure the fork was renamed.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: `rename ${editing.id}`, busy: editing.pending, run: () => void rename() } })} /> : null}
       <label className={styles.search}>
         <Search size={14} aria-hidden="true" />
         <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search forks" placeholder="Search forks" />

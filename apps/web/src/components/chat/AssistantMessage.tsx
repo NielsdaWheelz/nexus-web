@@ -151,13 +151,14 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   const check: Verbs = [{ label: "check", commandKey: `check ${id}`, busy: link.kind === "Reconnecting", run: reconnect }];
   // the transcript is a log, which speaks what lands in it. a stop is the viewer's own act, so it
   // stays silent; a failed link is `Failed`, which speaks for itself from the active region alone
-  const linkFailed = pending && phase !== "Suspended" && link.kind === "Failed";
+  const linkError = link.kind === "Failed" || link.kind === "Reconnecting" ? link.error : null;
+  const linkFailed = pending && phase !== "Suspended" && linkError !== null;
   // reads wake: a failed read of the run reads again on focus and reconnection
   useFailedReadRepair(linkFailed, link.kind === "Reconnecting", reconnect);
   const turn = failed ? <Fact line={failureLine(run.failure?.code ?? null, message.status === "error" ? run.support_id ?? null : null)} verbs={rerun} />
     : !pending ? null
     : phase === "Suspended" ? <Fact line={{ fact: "this answer stalled." }} verbs={link.kind === "Live" ? undefined : check} />
-    : link.kind === "Failed" ? <Failed error={link.error} noun="live updates" retry={{ run: reconnect }} />
+    : linkError !== null ? <Failed error={linkError} noun="live updates" retry={{ run: reconnect, busy: link.kind === "Reconnecting" }} />
     : link.kind === "Live" ? null
     : <Fact line={{ fact: "live updates stopped." }} verbs={check} />;
   const details = (

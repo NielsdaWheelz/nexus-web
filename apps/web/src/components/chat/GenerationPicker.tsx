@@ -55,7 +55,7 @@ export default function GenerationPicker({
     return <div className={styles.picker}>
       <ChoicePicker label="provider" value={null} options={[]} disabled={disabled} footer={unready} onOpen={reread} onChange={() => {}} />
       <ChoicePicker label="model" value={null} options={[]} disabled={disabled} footer={unready} onOpen={reread} onChange={() => {}} />
-      <EffortPicker variant={null} value={value} disabled={disabled} waiting={catalogRead.status === "loading"} unready={unready} onOpen={reread} onChange={() => {}} />
+      <EffortPicker variant={null} value={value} disabled={disabled} waiting={catalogRead.status === "loading" || catalogRead.retrying} unready={unready} onOpen={reread} onChange={() => {}} />
     </div>;
   }
   const catalog = catalogRead.data;
