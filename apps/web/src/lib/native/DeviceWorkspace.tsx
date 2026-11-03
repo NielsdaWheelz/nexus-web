@@ -8,8 +8,8 @@ import AuthenticatedShell from "@/app/(authenticated)/AuthenticatedShell";
 import styles from "@/app/(authenticated)/layout.module.css";
 import { AuthenticatedWorkspaceErrorBoundary } from "@/app/(authenticated)/AuthenticatedWorkspaceErrorBoundary";
 import { WorkProvider } from "@/lib/unsavedWork";
-import { isApiError } from "@/lib/api/client";
-import { staleBuild } from "@/lib/api/failure";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { staleBuild, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
@@ -73,6 +73,8 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
     };
   }, [read]);
   useEffect(() => { if (admission === "Ready") void read(); }, [admission, read]);
+  // justify-defect: undeclared sign-out exceptions belong to the render boundary.
+  if (cleanupFailure !== null && (!isApiError(cleanupFailure.error) || isSameSystemApiDefect(cleanupFailure.error))) throw cleanupFailure.error;
   if (startup?.binding && initial.current !== null) {
     const binding = startup.binding;
     return <DeviceWorkspaceContext value={{ initial: initial.current, revision }}>
@@ -125,11 +127,13 @@ export default function DeviceWorkspace({ renderEnvironment }: { renderEnvironme
   const signInVerb: CommandVerb = { label: "sign in", commandKey: "DeviceSignIn", busy: signingIn, run: signIn };
   const signOutVerb: CommandVerb = { label: "sign out on this device", commandKey: "DeviceSignOut", busy: signingIn, run: clearDevice };
   const retryRead: CommandVerb = { label: "retry", commandKey: "RetryDeviceStartup", run: () => void read() };
-  const unfinished: Line = { fact: "sign out didn’t finish.", reason: "this device still holds account data." };
+  const unfinished: Line = { fact: "sign out didn’t finish." };
+  const signOutLine: Line = isApiError(cleanupFailure?.error) && cleanupFailure.error.code === "E_NATIVE_TIMEOUT"
+    ? { fact: "not sure sign-out finished.", reason: UNKNOWN_OUTCOME_REASON } : unfinished;
   const fact = (line: Line, verbs?: Verbs) => <Fact key={stage} line={line} verbs={verbs} speak />;
   return <div style={{ height: "100%", overflowY: "auto" }}><main className={styles.error}>{
     stage === "startup-cleanup" ? fact(unfinished, [retryRead])
-    : stage === "signout-cleanup" ? fact(unfinished, [{ label: "retry", commandKey: "RetryDeviceSignOut", busy: signingIn, run: clearDevice }])
+    : stage === "signout-cleanup" ? fact(signOutLine, [{ label: "retry", commandKey: "RetryDeviceSignOut", busy: signingIn, run: clearDevice }])
     : stage === "catalog-recovery" ? fact({ fact: "couldn’t open saved lists on this device." }, [signOutVerb])
     : stage === "snapshot-failed" ? fact({ fact: "couldn’t open your saved workspace." }, [retryRead])
     : stage === "update-required" ? fact({ fact: staleBuild() })

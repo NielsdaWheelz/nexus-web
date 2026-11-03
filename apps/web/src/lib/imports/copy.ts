@@ -45,7 +45,7 @@ export interface FailureCopy {
   /** The headline for a surface that explains the failure. */
   readonly title: string;
   /** What the reader can understand or do about the cause. */
-  readonly explanation: string;
+  readonly explanation: string | null;
 }
 
 export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
@@ -70,9 +70,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "the embedding provider is not configured.",
   },
   E_EMBEDDING_PROVIDER_UNAVAILABLE: {
-    reason: "Search provider unavailable",
-    title: "The search indexing provider did not respond.",
-    explanation: "Nothing about the source caused this.",
+    reason: "related matches aren’t available",
+    title: "related matches aren’t available.",
+    explanation: null,
   },
   E_FILE_TOO_LARGE: {
     reason: "File too large",
@@ -90,14 +90,14 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "The import stopped before the reader was ready.",
   },
   E_INGEST_TIMEOUT: {
-    reason: "Import timed out",
-    title: "Processing took too long.",
-    explanation: "The source was still being processed when the time ran out.",
+    reason: "this import took too long",
+    title: "this import took too long.",
+    explanation: null,
   },
   E_INTERNAL: {
-    reason: "Nexus error",
-    title: "Nexus failed while importing this source.",
-    explanation: "Nothing about the source caused this.",
+    reason: "couldn’t process this source",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_INVALID_CONTENT_TYPE: {
     reason: "Unexpected content type",
@@ -146,9 +146,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "It can be read as pages; search and quoting need OCR first.",
   },
   E_PODCAST_PROVIDER_UNAVAILABLE: {
-    reason: "Podcast provider unavailable",
-    title: "The podcast provider did not respond.",
-    explanation: "The episode is unavailable until the provider answers again.",
+    reason: "the podcast source isn’t available",
+    title: "the podcast source isn’t available.",
+    explanation: null,
   },
   E_REPAIR_NOT_ALLOWED: {
     reason: "Repair no longer offered",
@@ -156,9 +156,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Its work moved on. Review its current status.",
   },
   E_RESOURCE_CONFLICT: {
-    reason: "Import changed",
-    title: "This import changed.",
-    explanation: "Review its current status.",
+    reason: "couldn’t update this import",
+    title: "couldn’t update this import.",
+    explanation: null,
   },
   E_RESOURCE_LIMIT: {
     reason: "Too large to process",
@@ -197,9 +197,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
       "Open the original page in your browser and use Nexus Capture there.",
   },
   E_SOURCE_FETCH_FAILED: {
-    reason: "Source could not be fetched",
-    title: "Nexus could not fetch this source.",
-    explanation: "The source did not respond.",
+    reason: "couldn’t fetch this source",
+    title: "couldn’t fetch this source.",
+    explanation: null,
   },
   E_SOURCE_GONE: {
     reason: "Source no longer exists",
@@ -235,9 +235,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Use a public link to the document.",
   },
   E_STORAGE_ERROR: {
-    reason: "Storage failed",
-    title: "Storage failed during this import.",
-    explanation: "Nothing about the source caused this.",
+    reason: "couldn’t process this source",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_STORAGE_MISSING: {
     reason: "Stored file is missing",
@@ -245,19 +245,19 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Send the file again, or start a new import.",
   },
   E_TRANSCRIPTION_FAILED: {
-    reason: "transcription failed",
-    title: "This recording could not be transcribed.",
-    explanation: "The audio was reached but no transcript came back.",
+    reason: "couldn’t transcribe this recording",
+    title: "couldn’t transcribe this recording.",
+    explanation: null,
   },
   E_TRANSCRIPTION_TIMEOUT: {
-    reason: "transcription timed out",
-    title: "Transcribing this recording took too long.",
-    explanation: "The recording was still being transcribed when time ran out.",
+    reason: "transcribing this recording took too long",
+    title: "transcribing this recording took too long.",
+    explanation: null,
   },
   E_TRANSCRIPT_UNAVAILABLE: {
-    reason: "no transcript available",
-    title: "This recording has no transcript.",
-    explanation: "It can be played; search and quoting need a transcript.",
+    reason: "no transcript is available",
+    title: "no transcript is available.",
+    explanation: "search and quoting need a transcript.",
   },
   E_UPLOAD_CAPABILITY_EXPIRED: {
     reason: "Upload link expired",
@@ -265,9 +265,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "Choose the original file to upload it again.",
   },
   E_WORKER_HANDLER_FAILED: {
-    reason: "Processing failed",
-    title: "Processing this import failed.",
-    explanation: "Nothing about the source caused this.",
+    reason: "couldn’t process this source",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_WORKER_INTERRUPTED: {
     reason: "Processing was interrupted",
@@ -295,14 +295,14 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "the new evidence joins more than one saved thread.",
   },
   E_X_SOURCE_CONFLICT: {
-    reason: "source changed during capture",
-    title: "couldn’t refresh from x. saved copy kept.",
-    explanation: "another capture changed this source. retry the refresh.",
+    reason: "couldn’t refresh from x",
+    title: "couldn’t refresh from x.",
+    explanation: null,
   },
   E_X_PROVIDER_AUTH_REJECTED: {
-    reason: "X rejected the request",
-    title: "X rejected this import.",
-    explanation: "X imports are unavailable until that is resolved.",
+    reason: "x imports aren’t available",
+    title: "x imports aren’t available.",
+    explanation: null,
   },
   E_X_PROVIDER_CREDITS_DEPLETED: {
     reason: "X allowance used up",
@@ -321,9 +321,9 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "The post could not be read before the time ran out.",
   },
   E_X_PROVIDER_UNAVAILABLE: {
-    reason: "X is unavailable",
-    title: "X did not respond.",
-    explanation: "couldn’t refresh from x. saved copy kept.",
+    reason: "x imports aren’t available",
+    title: "x imports aren’t available.",
+    explanation: null,
   },
 };
 
@@ -635,7 +635,7 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
   SameSourceTerminal:
     "No retry is currently available for this import. If you have another copy, start a new import.",
   SourceNotReacquirable:
-    "The original file is no longer stored, so it cannot be processed again.",
+    "this source can’t be processed again.",
   UploadRejected: "This upload was rejected. Remove it and start a new import.",
 };
 
@@ -970,8 +970,12 @@ export function savedSourceReadFailure(error: unknown): FeedbackContent {
 }
 
 /** What verification said about the stored bytes, as a reason. */
-const verificationReason = (outcome: Extract<UploadSessionOutcome, { kind: "VerificationRejected" }>) =>
-  `${FAILURE_COPY[outcome.code].reason}.`;
+const verificationReason = (outcome: Extract<UploadSessionOutcome, { kind: "VerificationRejected" }>) => ({
+  E_SOURCE_INTEGRITY: "the stored file didn’t match this upload.",
+  E_INVALID_FILE_TYPE: "nexus couldn’t read that file.",
+  E_FILE_TOO_LARGE: "it’s over the size limit.",
+  E_CAPTURE_TOO_LARGE: "it’s over the capture size limit.",
+})[outcome.code];
 
 /** One reason per upload-session outcome, on every surface (lib/imports/ingest.ts OUTCOMES). */
 const OUTCOME_REASON = {
@@ -980,7 +984,7 @@ const OUTCOME_REASON = {
   Unresolved: "file storage isn’t answering.",
   UnsupportedFileType: "only pdf and epub files can be added.",
   FileTooLarge: "it’s over the size limit.",
-  LibraryForbidden: "you no longer have access to one of its libraries.",
+  LibraryForbidden: "you can’t add to one of these libraries.",
   FileMismatch: "that file doesn’t match this upload.",
 } satisfies Readonly<Record<Exclude<UploadSessionOutcome["kind"], "VerificationRejected" | "IntentMalformed" | "Superseded">, string | undefined>>;
 
@@ -1025,7 +1029,7 @@ function outcomeReason(error: UploadSessionError): string | undefined {
   const outcome = error.outcome;
   switch (outcome.kind) {
     case "IntentMalformed": throw error;
-    case "Superseded": return "this upload changed elsewhere.";
+    case "Superseded": return "this upload can’t continue.";
     case "VerificationRejected": return verificationReason(outcome);
     default: return OUTCOME_REASON[outcome.kind];
   }
