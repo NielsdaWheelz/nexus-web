@@ -5,8 +5,8 @@
 // filed only there move to the owner's All. Membership lives in the Members tab.
 // A refused first send speaks once, an unsent one included. An unknown outcome holds in this
 // dialog with its resend; a resend that fails, refused or unsent, holds again, since the first
-// send may have landed. It settles when a send lands, or when the dialog's read finds the
-// library gone: a 404 answers for it over shown settings too, unless this dialog deleted it.
+// send may have landed. An acknowledgement settles it; an unavailable read leaves its
+// recovery and loss guard intact. An unanswered command excludes the other kind.
 // The draft name survives all of it.
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
@@ -43,6 +43,7 @@ interface SettingsDraft {
   request: { name: string; rawDraft: string | null; expectedName: string; unconfirmed: boolean } | null;
   busy: "Rename" | "Delete" | null;
   confirming: boolean;
+  /** The delete endpoint acknowledged the operation, including invisible absence. */
   deleted: boolean;
   unknown: Unconfirmed | null;
   /** The name the server refused as invalid, while the draft still says it. */
@@ -95,35 +96,21 @@ export default function LibrarySettingsDialog({
   const { read: readSettings, set: writeSettings } = state;
   useLayoutEffect(() => {
     const value = readSettings();
-    if (gone) {
-      if (value.request !== null || value.unknown !== null) writeSettings({ ...value, request: null, unknown: null });
-    } else if (current !== null && value.request === null && (value.draft === null || value.draft === value.baseline))
+    if (current !== null && value.request === null && (value.draft === null || value.draft === value.baseline))
       writeSettings({ ...value, draft: current.name, baseline: current.name });
-  }, [gone, current, readSettings, writeSettings]);
+  }, [current, readSettings, writeSettings]);
   const requestDismiss = () => guard.confirmLoss({ scopes: [], ownerIds: [state.owner] }) ? "accepted" as const : "blocked" as const;
 
-  if (current === null) {
-    return (
-      <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
-        {draft !== null && draft !== baseline ? <><Input aria-label="unsaved library name" value={draft} readOnly />
-          <Fact line={{ fact: "your unsaved name is still here to copy." }} /></> : null}
-        {gone ? <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
-          : library.status === "failed" ? <Failed error={library.error} noun="library settings" retry={{ run: library.refetch, busy: library.retrying }} />
-            : <Ruling />}
-      </Dialog>
-    );
-  }
-
-  const name = (draft ?? current.name).trim();
-  const invalid = libraryNameError(name) ?? (state.value.refusedName === name ? NAME_REFUSED : null);
-  const renameRequest = state.value.request;
-  const renameLabel = renameRequest?.unconfirmed ? "retry"
-    : (renameRequest ? renameRequest.expectedName !== baseline : baseline !== current.name) ? "save my name" : "Save";
   const rename = async () => {
     const value = state.read();
-    const fact = `couldn’t rename “${current.name}”.`;
+    if (value.busy !== null || value.unknown?.command === "Delete") return;
+    const request = value.request ?? (current === null ? null : {
+      name: (value.draft ?? current.name).trim(), rawDraft: value.draft,
+      expectedName: current.name !== value.baseline ? current.name : value.baseline, unconfirmed: false,
+    });
+    if (request === null) return;
+    const fact = current === null ? "couldn’t rename this library." : `couldn’t rename “${current.name}”.`;
     const signal = ctx.sessionSignal();
-    const request = value.request ?? { name, rawDraft: value.draft, expectedName: current.name !== baseline ? current.name : baseline, unconfirmed: false };
     state.set({ ...value, request, busy: "Rename" });
     try {
       const saved = await renameLibrary(libraryId, request.name, request.expectedName);
@@ -146,7 +133,9 @@ export default function LibrarySettingsDialog({
     }
   };
   const remove = async () => {
-    const fact = `couldn’t delete “${current.name}”.`;
+    const value = state.read();
+    if (value.busy !== null || value.request !== null) return;
+    const fact = current === null ? "couldn’t delete this library." : `couldn’t delete “${current.name}”.`;
     const signal = ctx.sessionSignal();
     setBusy("Delete");
     try {
@@ -176,12 +165,33 @@ export default function LibrarySettingsDialog({
     ? { label: "retry", commandKey: `library-delete:${libraryId}`, busy: busy === "Delete", run: () => void remove() }
     : { label: "retry", commandKey: `library-rename:${libraryId}`, busy: busy === "Rename", run: () => void rename() };
 
+  const recovery = unknown !== null ? <Hold id={`library-settings:${libraryId}:${unknown.command}`} attempt={unknown.attempt}
+    {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend })} /> : null;
+
+  if (current === null) {
+    return (
+      <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
+        {recovery}
+        {draft !== null && draft !== baseline ? <><Input aria-label="unsaved library name" value={draft} readOnly />
+          <Fact line={{ fact: "your unsaved name is still here to copy." }} /></> : null}
+        {gone ? <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
+          : library.status === "failed" ? <Failed error={library.error} noun="library settings" retry={{ run: library.refetch, busy: library.retrying }} />
+            : <Ruling />}
+      </Dialog>
+    );
+  }
+
+  const name = (draft ?? current.name).trim();
+  const invalid = libraryNameError(name) ?? (state.value.refusedName === name ? NAME_REFUSED : null);
+  const renameRequest = state.value.request;
+  const renameLabel = renameRequest?.unconfirmed ? "retry"
+    : (renameRequest ? renameRequest.expectedName !== baseline : baseline !== current.name) ? "save my name" : "Save";
+
   return (
     <Dialog open onClose={onClose} onDismissRequest={requestDismiss} title="Library settings">
       <div className={styles.sections}>
-        {unknown !== null ? <Hold id={`library-settings:${libraryId}:${unknown.command}`} attempt={unknown.attempt}
-          {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }, resend })} /> : null}
-        {deleted ? <Fact line={{ fact: `“${current.name}” is deleted.`, reason: "your unsaved name is still here to copy." }} speak /> : null}
+        {recovery}
+        {deleted ? <Fact line={{ fact: "this library isn’t available.", reason: "your unsaved name is still here to copy." }} speak /> : null}
         <section className={styles.section}>
           <label htmlFor={`library-name-${libraryId}`}>Library name</label>
           <div className={styles.row}>
@@ -198,7 +208,7 @@ export default function LibrarySettingsDialog({
               <Button
                 emphasis="strong"
                 aria-busy={busy === "Rename" || undefined}
-                disabled={invalid !== null || renameRequest === null && name === baseline || busy !== null}
+                disabled={invalid !== null || renameRequest === null && name === baseline || busy !== null || unknown?.command === "Delete"}
                 onClick={() => void rename()}
               >
                 {renameLabel}
@@ -221,7 +231,7 @@ export default function LibrarySettingsDialog({
                   emphasis="strong"
                   tone="danger"
                   aria-busy={busy === "Delete" || undefined}
-                  disabled={busy !== null}
+                  disabled={busy !== null || renameRequest !== null}
                   onClick={() => void remove()}
                 >
                   Delete library
@@ -234,7 +244,7 @@ export default function LibrarySettingsDialog({
                 </Button>
               </div>
             ) : (
-              <Button tone="danger" onClick={() => setConfirming(true)}>
+              <Button tone="danger" disabled={busy !== null || renameRequest !== null} onClick={() => setConfirming(true)}>
                 Delete library…
               </Button>
             )}

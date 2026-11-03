@@ -48,7 +48,7 @@ const couldntLoad = (noun: string) => `couldn’t load ${noun}.`;
 const because = (reason: string) => (fact: string): TransportLine => ({ fact, reason });
 const STALE_BUILD: Readonly<Record<UpdateRemedy, string>> = {
   Reload: "nexus updated.",
-  CloseTabs: "update ready. close all nexus tabs and reopen.",
+  CloseTabs: "update ready. close nexus tabs and reopen.",
   Reinstall: "install the current nexus apk, then reopen.",
 };
 /** The one sentence for a stale build, whoever says it: a read, a command or the account. */
