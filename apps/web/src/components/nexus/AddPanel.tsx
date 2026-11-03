@@ -2,8 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ArrowLeft, ChevronDown, FileText, Link, Upload, X } from "lucide-react";
-import { Fact, Failed, Field } from "@/components/feedback/Fact";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Fact, Failed, Field, VerbControl } from "@/components/feedback/Fact";
+import { Hold, useTransportVerbs } from "@/components/feedback/Feedback";
 import type { Line } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
 import PickerSurface from "@/components/ui/PickerSurface";
@@ -12,6 +12,7 @@ import PlacementOverlay from "@/components/libraries/PlacementOverlay";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { modeledApiError } from "@/lib/api/serverState";
 import { captureStatusLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource, getFileUploadKind, type AcceptedIngest } from "@/lib/imports/ingest";
@@ -118,7 +119,9 @@ export default function AddPanel({
 }): React.ReactElement {
   const { state } = session;
   const id = useId();
-  const { say } = useOutcome();
+  const admission = useRemoteAdmission();
+  const transportVerbs = useTransportVerbs();
+  const updateVerbs = admission === "UpdateRequired" ? transportVerbs("Update") : null;
   const operation = state.mutation.kind === "Running" ? state.mutation.operation : null;
   const busy = operation !== null;
   const openTarget = (event: TargetActivationEvent, target: NexusTarget, blocked = false) => {
@@ -288,20 +291,6 @@ export default function AddPanel({
     }
   }
   const placementEditor = editor && "placement" in editor ? editor : null;
-  // Where the chooser does not state a creation's failure, a refusal is said once and an unknown
-  // outcome holds with its resend.
-  const creationShown = !editor || placementEditor !== null;
-  const refusal = creationShown && creation.error?.retry === null ? creation.error : null;
-  const saidRefusal = useRef<{ occurrence: object; title: string; message: string | undefined } | null>(null);
-  useEffect(() => {
-    if (refusal === null) return;
-    const { occurrence, content: { title, message } } = refusal;
-    const said = saidRefusal.current;
-    if (said?.occurrence === occurrence && said.title === title && said.message === message) return;
-    saidRefusal.current = { occurrence, title, message };
-    say({ fact: title, reason: message });
-  }, [refusal, say]);
-
   function editorContent() {
     if (!editor) return null;
     let title: string;
@@ -352,7 +341,6 @@ export default function AddPanel({
             name, scope: JSON.stringify({ ...scope, itemIds: scope.itemIds.toSorted() }),
             onCreated: destination => { session.setLibrary({ scope, destination, included: true }); },
           }) }}
-          error={creation.error}
           disabled={busy}
         />
       </PickerSurface>
@@ -468,7 +456,11 @@ export default function AddPanel({
           {status && feedback === null ? <Fact line={{ fact: status }} /> : null}
           {feedback && feedbackId ? editable
             ? <Field id={feedbackId} line={feedback} />
-            : <div id={feedbackId}><Fact line={feedback} /></div>
+            : <div id={feedbackId}>{item.kind === "AcceptanceUnresolved" && item.reason === "StatusUnknown"
+              ? <Hold id={`add:${state.sessionId}:${item.id}`} attempt={item.attempt} line={feedback}
+                verbs={admission === "UpdateRequired" ? updateVerbs ?? undefined : [{ label: "retry", commandKey: `retry add:${item.id}`, busy,
+                  run: () => run(() => session.reconcileAcceptance(item.id)) }]} />
+              : <Fact line={feedback} verbs={updateVerbs ?? undefined} />}</div>
             : null}
           {split ? (
             <Button
@@ -488,16 +480,16 @@ export default function AddPanel({
           ) : null}
           {item.kind === "Rejected" || item.kind === "AcceptanceUnresolved" || mediaId || importRef !== null ? (
             <div className={styles.outcomeActions}>
-              {item.kind === "AcceptanceUnresolved" ? (
+              {item.kind === "AcceptanceUnresolved" && admission !== "UpdateRequired" ? (
                 <Button disabled={busy} onClick={() => {
                   if (placementEditor) closeEditorForSource();
                   headingRef.current?.focus({ preventScroll: true });
                   run(() => session.reconcileAcceptance(item.id));
                 }}>
-                  {item.reason === "UploadIncomplete" ? "retry upload" : "check save"}
+                  {item.reason === "UploadIncomplete" ? "retry upload" : "retry"}
                 </Button>
               ) : null}
-              {item.kind === "Rejected" ? (
+              {item.kind === "Rejected" && admission !== "UpdateRequired" ? (
                 <Button disabled={busy} onClick={() => {
                   if (item.intent.upload?.expired) { reselectItemId.current = item.id; reselectInputRef.current?.click(); return; }
                   run(() => session.restageItem(item.id));
@@ -672,9 +664,7 @@ export default function AddPanel({
         </div>
         <span className={styles.visuallyHidden} id={`${id}-bulk-help`}>applies to the current unsubmitted items; use for new items to change defaults</span>
       </header>
-      {creationShown && creation.error?.retry && creation.error.commandKey !== undefined
-        ? <Hold id={creation.error.commandKey} line={{ fact: creation.error.content.title, reason: creation.error.content.message }}
-          verbs={[{ label: "retry", run: creation.error.retry, busy: creation.error.busy, commandKey: creation.error.commandKey }]} /> : null}
+      {creation.holds}
       <div ref={listRef} className={`${styles.body}${dragActive ? ` ${styles.dragActive}` : ""}`}>
         {editor?.kind === "DraftBulk" || editor?.kind === "Saved" ? <div className={styles.headerEditor}>{editorContent()}</div> : null}
         {savedFailure ? <Failed error={savedFailure.error} noun="saved sources" retry={{ run: savedFailure.retry, busy: savedFailure.busy }} /> : null}
@@ -685,7 +675,7 @@ export default function AddPanel({
       <div className={styles.visuallyHidden} role="status" aria-live="polite">{liveStatus}</div>
       <footer className={styles.footer}>
         <p>{populatedCount > 0 ? counts : `up to ${MAX_ADD_ITEMS} items`}</p>
-        <Button
+        {admission === "UpdateRequired" ? updateVerbs?.map((verb, index) => <VerbControl key={index} verb={verb} contextId={`${id}-update`} />) : <Button
           emphasis="strong"
           disabled={creation.creating || busy || (readyCount === 0 && !done)}
           onClick={() => {
@@ -698,7 +688,7 @@ export default function AddPanel({
             run(session.submit);
           }}
           aria-busy={busy}
-        >{progress ?? (done ? "done" : readyCount > 0 ? `add ${pluralize(readyCount, "item")}` : "add items")}</Button>
+        >{progress ?? (done ? "done" : readyCount > 0 ? `add ${pluralize(readyCount, "item")}` : "add items")}</Button>}
       </footer>
     </div>
   );

@@ -36,9 +36,8 @@ import {
 } from "lucide-react";
 import type { Line } from "@/components/feedback/stage";
 import { outcomeUnknown, type ApiError } from "@/lib/api/client";
-import { staleBuild } from "@/lib/api/failure";
+import { admissionReason as currentAdmissionReason } from "@/lib/api/failure";
 import { CONFLICT_REASON } from "@/lib/imports/copy";
-import { remoteAdmission } from "@/lib/native/admission";
 
 type Group =
   | "Navigate"
@@ -332,15 +331,7 @@ export type BlockedReason = keyof typeof BLOCKED_COPY;
 /** Why a remote verb is unavailable, from admission. A browser offline while admitted lacks a
  * connection too. A durable reason, shown. */
 export function admissionReason(): string {
-  const admission = remoteAdmission();
-  switch (admission) {
-    case "SignInRequired": return "sign in to use this.";
-    case "UpdateRequired": return staleBuild();
-    case "Checking":
-    case "Unavailable":
-    case "Ready":
-      return BLOCKED_COPY.RequiresOnline;
-  }
+  return currentAdmissionReason() ?? BLOCKED_COPY.RequiresOnline;
 }
 
 /** What a failed verb tells. `Domain` is the verb's own line, translated from a domain code ahead

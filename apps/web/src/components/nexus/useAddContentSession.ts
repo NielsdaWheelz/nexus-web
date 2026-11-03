@@ -110,6 +110,7 @@ export type AddItem =
       id: string;
       intent: AcceptanceIntent;
       reason: "StatusUnknown" | "UploadIncomplete";
+      attempt: number;
       feedback: Line;
       importRef: string | null;
     }
@@ -352,7 +353,7 @@ export function useAddContentSession(): AddContentSessionController {
         if (row.kind !== "Submitting") return row;
         return {
           kind: "AcceptanceUnresolved", id: row.id, intent: row.intent, importRef: row.importRef,
-          reason: "StatusUnknown", feedback: { fact: "change not confirmed", reason: "check save to retry the original request." },
+          reason: "StatusUnknown", attempt: 0, feedback: { fact: "change not confirmed", reason: "check save to retry the original request." },
         };
       }),
     }));
@@ -698,6 +699,7 @@ export function useAddContentSession(): AddContentSessionController {
               intent,
               importRef,
               reason: "StatusUnknown",
+              attempt: 0,
               feedback: { fact: UNCONFIRMED.title, reason: UNCONFIRMED.message },
             };
       if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
@@ -717,7 +719,7 @@ export function useAddContentSession(): AddContentSessionController {
           items: snapshot.items.filter((next) => next.id !== id),
         }));
       } else {
-        item({ id, intent, importRef, ...failure, feedback: failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
+        item({ id, intent, importRef, ...(failure.kind === "AcceptanceUnresolved" ? { ...failure, attempt: row.kind === "AcceptanceUnresolved" ? row.attempt + 1 : 0 } : failure), feedback: failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
           ? { fact: "save needs review. review your choices and save again.", reason: "your upload is still available." } : { fact: failure.feedback.title, reason: failure.feedback.message } });
       }
     }
