@@ -104,10 +104,11 @@ export function useLibraryMembers(library: Library | null, open: boolean, reread
   if (pending !== null && !pending.running && pending.unknown > 0) {
     const command = pending.command;
     switch (command.kind) {
-      case "Invite": observed = invitations.fresh && invitations.items.some(invitation => invitation.id === command.body.id &&
-        invitation.invitee_user_id === command.body.invitee_user_id && invitation.role === command.body.role); break;
-      case "Role": observed = members.fresh && members.items.some(member => member.user_id === command.userId && member.role === command.role); break;
-      case "Transfer": observed = members.fresh && members.items.some(member => member.user_id === command.userId && member.is_owner); break;
+      case "Invite": observed = invitations.fresh && invitations.complete && invitations.items.some(invitation => invitation.id === command.body.id &&
+        invitation.invitee_user_id === command.body.invitee_user_id && invitation.role === command.body.role &&
+        invitation.invitee_email === command.body.invitee_email); break;
+      case "Role": observed = members.fresh && members.complete && members.items.some(member => member.user_id === command.userId && member.role === command.role); break;
+      case "Transfer": observed = members.fresh && members.complete && members.items.some(member => member.user_id === command.userId && member.is_owner); break;
       // Pending-only invitation absence does not identify its terminal status.
       // Removed membership could be recreated. Exact accepted replay owns these.
       case "Remove": case "Revoke": break;
