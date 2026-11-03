@@ -1,10 +1,11 @@
 "use client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 // The draft owns its baseline/version and exact unconfirmed command. Preparation
 // changes available geometry, never the user's title or a reviewed generation.
 // A confirmed save stays busy until refresh and close settle together.
 import { useEffect, useId, useMemo, useState } from "react";
-import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import { Hold, useResendVerbs, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import { Fact, Failed, Field } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Dialog from "@/components/ui/Dialog";
@@ -17,7 +18,7 @@ import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { prepareParts, savePart } from "@/lib/media/parts";
-import { mayHaveLanded } from "@/lib/media/admissions";
+import { outcomeUnknown } from "@/lib/api/client";
 import PartPreview, { usePartPreview } from "./PartPreview";
 import styles from "./parts.module.css";
 
@@ -26,19 +27,19 @@ type Request = { kind: "prepare"; body: Schema<"PartPrepare"> }
 type Draft = {
   title: string; first: string | null; last: string | null; generation: number | null;
   baseline: string; version: number | null; baselineSelection: Schema<"SectionSelection"> | null; request: Request | null;
-  busy: boolean; failed: boolean; conflict: boolean; retired: boolean;
+  busy: boolean; failed: boolean; attempt: number; conflict: boolean; retired: boolean;
 };
 /** A part command that didn't land says so once, by `fact`. One the server may have taken says
  * nothing here: its owner keeps the request and holds `unsure(...)` until a resend settles it. */
 export function partFailure(outcome: Outcome, error: unknown, fact: string): "Said" | "Unknown" {
   if (isApiError(error) && error.status === 409) outcome.say({ fact, reason: "this work or its source changed." });
-  else if (isApiError(error) && (error.status === 403 || error.status === 404)) outcome.say({ fact, reason: "this work isn’t available to change." });
-  else if (mayHaveLanded(error)) return "Unknown";
+  else if (isApiError(error) && (error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED" || error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) outcome.say({ fact, reason: "this work isn’t available to change." });
+  else if (outcomeUnknown(error)) return "Unknown";
   else outcome.fail(error, fact);
   return "Said";
 }
 /** An unknown outcome, by what the command does: `saved`, `started`. */
-export const unsure = (fact: string) => ({ fact, reason: "it may have gone through." });
+export const unsure = (fact: string) => ({ fact, reason: UNKNOWN_OUTCOME_REASON });
 export const UNSURE = unsure("not sure that saved.");
 export function partBlockMessage(reason: Schema<"PartAction">["reason"]): string {
   switch (reason) {
@@ -67,6 +68,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   readonly readError: ApiError | null; readonly readPending: boolean; readonly returnFocusTo: ReturnFocusTarget;
 }) {
   const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   const fieldId = useId();
   const blockedId = useId();
   const navigation = page?.navigation ?? null;
@@ -75,13 +77,13 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
     last: definition?.selection?.section_ids.at(-1) ?? initialSelection?.section_ids.at(-1) ?? initialSection }), [definition, initialTitle, initialSection, initialSelection]);
   const state = useResourceDraft<Draft>(definition === null ? `extract:${source}:${initialSection}` : `work:${definition.media_id}`, () => ({
     ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
-    baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, conflict: false, retired: false,
+    baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, attempt: 0, conflict: false, retired: false,
   }), value => ({ changed: JSON.stringify({ title: value.title, first: value.first, last: value.last }) !== value.baseline,
     unconfirmed: value.request !== null, stopsBrowserWork: false }));
   useEffect(() => {
     if (!state.read().retired) return;
     state.set({ ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
-      baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, conflict: false, retired: false });
+      baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, attempt: 0, conflict: false, retired: false });
   }, [state, initial, definition, initialSelection, navigation]);
   const { title, first, last, busy, request, failed, conflict } = state.value;
   const [adjacent, setAdjacent] = useState(first !== last);
@@ -120,7 +122,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   const run = async (sent: Request, retry = false) => {
     if (state.read().busy || state.read().request !== null && !retry) return;
     const account = captureApiAccount();
-    state.set(value => ({ ...value, request: sent, busy: true, failed: false }));
+    state.set(value => ({ ...value, request: sent, busy: true, failed: retry && value.failed }));
     let receipt: Schema<"PartReceipt"> | null = null;
     try {
       if (sent.kind === "prepare") await prepareParts(source, sent.body);
@@ -128,7 +130,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
     } catch (failure) {
       if (!isCurrentApiAccount(account)) return;
       const said = partFailure(outcome, failure, sent.kind === "prepare" ? "couldn’t prepare the text." : "couldn’t save this work.") === "Said";
-      state.set(value => ({ ...value, busy: false, request: said ? null : sent, failed: true,
+      state.set(value => ({ ...value, busy: false, request: said && !retry ? null : sent, failed: true, attempt: value.attempt + 1,
         conflict: value.conflict || sent.kind === "save" && sent.id !== null && isApiError(failure) && failure.status === 409 }));
       if (said) { void onRefresh(); preview.revalidate(); }
       return;
@@ -194,8 +196,8 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
         <p>{savedLabels !== null && savedLabels.length > 0 && savedLabels.every(label => label !== null) ? savedLabels.join(" through ") : "saved range"}</p>
         <Button disabled={blocking || readError !== null || readPending || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} onClick={() => state.set(value => ({ ...value, version: definition.version, baselineSelection: definition.selection, conflict: false, failed: false }))}>keep my changes</Button>
       </section> : null}
-      {request !== null && !busy && failed ? <Hold id={`part-editor:${source}`} line={request.kind === "prepare" ? unsure("not sure preparation started.") : UNSURE}
-        verbs={[{ label: "retry", commandKey: "RetryPartCommand", run: () => void run(request, true) }]} /> : null}
+      {request !== null && failed ? <Hold id={`part-editor:${source}`} attempt={state.value.attempt} line={request.kind === "prepare" ? unsure("not sure preparation started.") : UNSURE}
+        verbs={resendVerbs({ label: "retry", commandKey: "RetryPartCommand", busy, run: () => void run(request, true) })} /> : null}
       <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy}
         aria-describedby={[freshChoice ? fieldId : null, canBounds && blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} onClick={save}>{definition === null ? "extract" : "save"}</Button>
     </div>

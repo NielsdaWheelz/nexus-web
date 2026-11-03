@@ -8,7 +8,7 @@ import type { Schema } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { candidateDetail, decidePart } from "@/lib/media/parts";
 import { isApiError } from "@/lib/api/client";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useResendVerbs, useOutcome } from "@/components/feedback/Feedback";
 import { Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -19,7 +19,7 @@ import { partBlockMessage, partFailure, UNSURE } from "./PartEditor";
 import styles from "./parts.module.css";
 
 type Draft = { detail: Schema<"CandidateDetail"> | null; partId: string;
-  request: Schema<"PartCandidateDecision"> | null; busy: boolean; conflict: boolean; retired: boolean };
+  request: Schema<"PartCandidateDecision"> | null; busy: boolean; attempt: number; conflict: boolean; retired: boolean };
 export default function CandidateReview({ source, candidate, onClose, onSaved, onChoose, returnFocusTo }: {
   readonly source: string; readonly candidate: string; readonly onClose: () => void;
   readonly onSaved: (id: string | null) => Promise<void>;
@@ -28,23 +28,24 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
 }) {
   const loaded = usePaneFreeServerValue({ key: `/media/${source}/part-candidates/${candidate}`, stale: "",
     load: signal => candidateDetail(source, candidate, signal) });
-  const draft = useResourceDraft<Draft>(`proposal:${source}:${candidate}`, () => ({ detail: null, partId: crypto.randomUUID(), request: null, busy: false, conflict: false, retired: false }),
+  const draft = useResourceDraft<Draft>(`proposal:${source}:${candidate}`, () => ({ detail: null, partId: crypto.randomUUID(), request: null, busy: false, attempt: 0, conflict: false, retired: false }),
     value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   useEffect(() => {
     if (loaded.status === "ready" && (draft.read().detail === null || draft.read().retired)) draft.set(value => ({ ...value, detail: loaded.data, retired: false }));
   }, [loaded, draft]);
   const { detail, request, busy, conflict } = draft.value;
   const outcome = useOutcome();
+  const resendVerbs = useResendVerbs();
   const preview = usePartPreview(source, detail?.selection ?? null);
   const guard = useWorkGuard();
   const run = async (body: Schema<"PartCandidateDecision">, retry = false) => {
     if (draft.read().busy || draft.read().request !== null && !retry) return;
-    draft.set(value => ({ ...value, request: body, busy: true }));
+    draft.set(value => ({ ...value, request: body, busy: true, attempt: retry ? value.attempt : 0 }));
     try {
       await decidePart(source, candidate, body);
     } catch (failure) {
       const said = partFailure(outcome, failure, body.decision === "accepted" ? "couldn’t save this work." : "couldn’t change this suggestion.") === "Said";
-      draft.set(value => ({ ...value, request: said ? null : body, busy: false, conflict: isApiError(failure) && failure.status === 409 }));
+      draft.set(value => ({ ...value, request: said && !retry ? null : body, busy: false, attempt: value.attempt + 1, conflict: isApiError(failure) && failure.status === 409 }));
       return;
     }
     draft.set(value => ({ ...value, request: null, busy: false }));
@@ -86,8 +87,8 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
           <Button disabled={blocking} onClick={() => { draft.set(value => ({ ...value, retired: true, detail: null, conflict: false })); onChoose(detail); }}>choose sections…</Button>
         </div>
       </>}
-      {request !== null && !busy ? <Hold id={`part-candidate:${source}:${candidate}`} line={UNSURE}
-        verbs={[{ label: "retry", commandKey: "RetryCandidateDecision", run: () => void run(request, true) }]} /> : null}
+      {request !== null && draft.value.attempt > 0 ? <Hold id={`part-candidate:${source}:${candidate}`} attempt={draft.value.attempt} line={UNSURE}
+        verbs={resendVerbs({ label: "retry", commandKey: "RetryCandidateDecision", busy, run: () => void run(request, true) })} /> : null}
       {conflict || stalePreview ? <Button disabled={blocking || loaded.status === "ready" && loaded.refreshing} onClick={() => void reviewCurrent()}>review current proposal</Button> : null}
     </div>
   </Dialog>;

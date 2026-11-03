@@ -1,44 +1,38 @@
 "use client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
-import { remoteAttemptAllowed, subscribeAdmission, updateRemedy } from "@/lib/native/admission";
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { Hold, useOutcome } from "@/components/feedback/Feedback";
-import { Fact, Failed } from "@/components/feedback/Fact";
-import { transportVerbs } from "@/components/feedback/stage";
+import { useEffect, useId, useRef, useState } from "react";
+import { Hold, useOutcome, useTransportVerbs, useResendVerbs } from "@/components/feedback/Feedback";
+import { Fact, Failed, VerbControl } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
 import {
   useActionRuntime,
 } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
-import { isApiError, isStaleBuild } from "@/lib/api/client";
-import { staleBuild, TRANSPORT_LINES } from "@/lib/api/failure";
+import { isApiError } from "@/lib/api/client";
+import { admissionTransport, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
-import { admissionTransport, mayHaveLanded, unadmitted, useMediaAdmissions } from "@/lib/media/admissions";
+import { useMediaAdmissions } from "@/lib/media/admissions";
+import { outcomeUnknown } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 
-/** Where focus goes once a control leaves: its pane's landmark, else its dialog. */
-function homeOf(control: HTMLElement): () => HTMLElement | null {
-  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-  const dialog = control.closest<HTMLElement>("[role=dialog]");
-  return () => findPaneLandmarkFocusTarget(paneId) ?? dialog;
-}
-
 /** Repair focus only when the control owning it actually left the document. */
 async function landing(control: HTMLElement, work: () => Promise<void>) {
   const held = document.activeElement === control;
-  const home = homeOf(control);
+  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+  const dialog = control.closest<HTMLElement>("[role=dialog]");
   await work();
   const active = document.activeElement;
-  const target = home();
+  const target = findPaneLandmarkFocusTarget(paneId) ?? dialog;
   if (held && !control.isConnected && active === document.body && target?.isConnected)
     target.focus({ preventScroll: true });
 }
@@ -55,14 +49,9 @@ export function MetadataReviewButton({
   const [unknown, setUnknown] = useState<number | null>(null);
   const { say, fail } = useOutcome();
   const fact = "couldn’t mark this reviewed.";
+  const resendVerbs = useResendVerbs();
   const review = async (trigger: HTMLElement | null) => {
     if (pending) return;
-    // what admission holds back is never sent, so it is no unknown outcome.
-    if (!remoteAttemptAllowed()) {
-      const { line, verbs } = unadmitted(fact);
-      say(line, verbs ?? undefined);
-      return;
-    }
     setPending(true);
     try {
       await (trigger ? landing(trigger, () => submitMetadataResultReview(mediaId, jobId)) : submitMetadataResultReview(mediaId, jobId));
@@ -71,7 +60,7 @@ export function MetadataReviewButton({
       handleUnauthenticatedApiError(error);
       if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) say({ fact, reason: "this result isn’t available." });
       else if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") say({ fact, reason: "this result changed." });
-      else if (mayHaveLanded(error)) setUnknown(attempt => (attempt ?? -1) + 1);
+      else if (outcomeUnknown(error)) setUnknown(attempt => (attempt ?? -1) + 1);
       else fail(error, fact);
     } finally {
       setPending(false);
@@ -89,8 +78,8 @@ export function MetadataReviewButton({
       mark reviewed
     </Button>
     {unknown === null ? null : <Hold id={`metadata-review:${jobId}`} attempt={unknown}
-      line={{ fact: "not sure that saved.", reason: "it may have gone through." }}
-      verbs={[{ label: "retry", commandKey: `retry metadata-review:${jobId}`, run: () => void review(null), busy: pending }]} />}
+      line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
+      verbs={resendVerbs({ label: "retry", commandKey: `retry metadata-review:${jobId}`, run: () => void review(null), busy: pending })} />}
     </>
   );
 }
@@ -112,10 +101,11 @@ export default function MetadataResearchActions({
 }) {
   const { ctx, run } = useActionRuntime();
   const reasonId = useId();
+  const transportVerbs = useTransportVerbs();
   const admissions = useMediaAdmissions();
   const pending = admissions.pending("MetadataResearch", mediaId);
   const { say, fail } = useOutcome();
-  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  const resendVerbs = useResendVerbs();
   const heldBack = admissionTransport(useRemoteAdmission());
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
@@ -171,29 +161,16 @@ export default function MetadataResearchActions({
   };
   return (
     <>
-      {!ctx.online ? <span id={reasonId} className="sr-only">{BLOCKED_COPY.RequiresOnline}</span> : null}
+      <span id={reasonId} className="sr-only">{ctx.online ? "metadata search" : BLOCKED_COPY.RequiresOnline}</span>
       {reviewJob !== null ? (
-        <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
+        <MetadataReviewButton key={reviewJob} mediaId={mediaId} jobId={reviewJob} />
       ) : null}
       {pending !== null ? (
-        // a stale build offers reload only where reload can work; elsewhere its line, visible.
-        isStaleBuild(pending.error) ? remedy === "Reload"
-          ? <Button data-metadata-action="" onClick={() => window.location.reload()}>reload</Button>
-          : <span data-metadata-feedback="">{staleBuild()}</span> :
-        <Button
-          data-metadata-action=""
-          aria-busy={pending.kind === "sending" || undefined}
-          aria-disabled={pending.kind === "sending" || !ctx.online || undefined}
-          aria-describedby={!ctx.online ? reasonId : undefined}
-          tooltip={ctx.online ? undefined : { text: BLOCKED_COPY.RequiresOnline }}
-          onClick={(event) => {
-            if (pending.kind === "sending" || !ctx.online) return;
-            const trigger = event.currentTarget;
-            run({ ref, id: "RetryMetadata", label: "retry", title: "", confirmation: null, tracked: false,
-              execute: () => landing(trigger, () => admissions.retry(pending.key)),
-            });
-          }}
-        >retry</Button>
+        <span data-metadata-action=""><VerbControl contextId={reasonId} verb={resendVerbs({
+          label: "retry", commandKey: `RetryMetadata:${pending.key}`, busy: pending.kind === "sending",
+          run: () => run({ ref, id: "RetryMetadata", label: "retry", title: "", confirmation: null, tracked: false,
+            execute: () => admissions.retry(pending.key) }),
+        })[0]} /></span>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
         <Button
           data-metadata-action=""
@@ -212,7 +189,7 @@ export default function MetadataResearchActions({
         } }} />
         // no request went out: admission says why, once a reason is true.
         : <Fact line={heldBack === null ? { fact: "couldn’t load source actions." } : TRANSPORT_LINES[heldBack].read("source actions")}
-          verbs={heldBack === null ? undefined : transportVerbs(heldBack, { signIn: null }) ?? undefined} /> : null}
+          verbs={heldBack === null ? undefined : transportVerbs(heldBack) ?? undefined} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
         <Button
           data-metadata-action=""

@@ -1,16 +1,17 @@
 "use client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { Captions } from "lucide-react";
-import { Hold, useActiveRegion, useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useActiveRegion, useOutcome, useResendVerbs } from "@/components/feedback/Feedback";
 import { Fact } from "@/components/feedback/Fact";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import { apiFetch, isApiError, isRefusal } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, outcomeUnknown } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { registerActivityObserver } from "@/lib/consumption/capture";
@@ -19,7 +20,6 @@ import { transcriptUnitAtTime } from "@/lib/documentReader/model";
 import { activateReaderDestination } from "@/lib/documentReader/navigation";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
-import { mayHaveLanded } from "@/lib/media/admissions";
 import { usePlayerSession, usePlayerTimeline } from "@/lib/player/playerRuntime";
 import styles from "./media.module.css";
 
@@ -35,6 +35,7 @@ export function TranscriptState({ media, holdFocus }: {
   const [noCaptions, setNoCaptions] = useState(false);
   const { fail } = useOutcome();
   const speak = useActiveRegion();
+  const resendVerbs = useResendVerbs();
   const owner = useRef<HTMLDivElement>(null);
   const active = useRef(speak);
   active.current = speak;
@@ -58,8 +59,8 @@ export function TranscriptState({ media, holdFocus }: {
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       if (isApiError(error) && error.code === "E_TRANSCRIPT_UNAVAILABLE") setNoCaptions(true);
-      else if (isRefusal(error)) { setUnknown(null); fail(error, "couldn’t start transcription.", retry); }
-      else if (mayHaveLanded(error)) setUnknown(attempt => (attempt ?? -1) + 1);
+      else if (isRefusal(error)) { fail(error, "couldn’t start transcription.", retry); }
+      else if (outcomeUnknown(error)) setUnknown(attempt => (attempt ?? -1) + 1);
       else fail(error, "couldn’t start transcription.", retry);
     } finally {
       setBusy(false);
@@ -75,7 +76,7 @@ export function TranscriptState({ media, holdFocus }: {
       : <Fact speak={speak} line={{ fact: noCaptions ? "this video has no captions." : state === "queued" ? "transcript queued."
         : state === "running" ? "transcribing." : state === "unavailable" ? "no transcript is available for this episode." : "preparing the transcript." }} />}
     {unknown !== null && requestable ? <Hold id={`transcription:${media.id}`} attempt={unknown}
-      line={{ fact: "not sure transcription started.", reason: "it may have gone through." }} verbs={[retry]} /> : null}
+      line={{ fact: "not sure transcription started.", reason: UNKNOWN_OUTCOME_REASON }} verbs={resendVerbs(retry)} /> : null}
   </div>;
 }
 

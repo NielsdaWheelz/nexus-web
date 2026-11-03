@@ -91,6 +91,7 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useReaderActivity } from "./activity";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import { createMediaAnnotations } from "./annotations";
 import { createReaderAnnotations, locatePassage, type ReaderAnnotation } from "@/lib/documentReader/annotations";
 import { AnnotationList, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
@@ -104,7 +105,7 @@ import { matches as matchesEvidence } from "./evidence/model";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import {
   hostedProgress,
-  positionSaveFailure,
+  usePositionFeedback,
   hostedSource,
   inspectionOfLocator,
   targetOfLocator,
@@ -503,6 +504,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const sourceAbsent = documentFailed || !readable;
   useEffect(() => { if (doc) store.bind(doc); else if (sourceAbsent) store.bind(null); }, [doc, sourceAbsent, store]);
   const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
+  useFailedReadRepair(annotations.remoteRead.failed, annotations.remoteRead.running, store.refresh);
+  const positionFeedback = usePositionFeedback();
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);
   const pendingEvidenceArrival = useRef<AbortSignal | null>(null);
@@ -930,7 +933,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         isMobile={isMobile}
         showCaptureTitle={false}
         failure={(error, retry) => isApiError(error) ? <Failed error={error} noun="this document’s contents" retry={retry} /> : null}
-        saveFailure={positionSaveFailure}
+        saveFailure={positionFeedback.saveFailure}
+        loadFailure={positionFeedback.loadFailure}
         decorations={decorations}
         inspection={inspection}
         activePassage={verbs.composer.activePassage}
@@ -961,7 +965,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }
         lane={
           <>
-            {boundsPrompt ? <Fact key={`${boundsPrompt.fact}${boundsPrompt.reason ?? ""}`} line={boundsPrompt} speak={speak}
+            {boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
               verbs={bounds?.phase === "Selecting" ? [{ label: "cancel", commandKey: "CancelHighlightBounds", run: verbs.cancelBounds }] : undefined} /> : null}
             {isMobile && verbs.composer.reselection ? <Fact line={{ fact: "select the passage again." }} speak={speak}
               verbs={[{ label: "cancel", commandKey: "CancelReselection", run: verbs.dismissSelection }]} /> : null}

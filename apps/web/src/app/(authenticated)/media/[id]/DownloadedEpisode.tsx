@@ -4,8 +4,9 @@
 // transcript uses the ordinary reader with no cursor writes or playback highlighting;
 // its annotations are the account's local authored highlights of this media.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useOutcome } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { WIRE_HEADER } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -19,7 +20,7 @@ import { locatePassage } from "@/lib/documentReader/annotations";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
 import { useHostPolicy } from "@/lib/host/policy";
-import { localCall, localContentAvailable, localMutation, readyEpisode, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
+import { LocalMutationObservationError, localCall, localContentAvailable, localMutation, readyEpisode, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
@@ -230,11 +231,21 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     }
     play(ms);
   };
+  const [extrasUnknown, setExtrasUnknown] = useState<number | null>(null);
   const extrasFailed = item.extras !== null && Object.values(item.extras).some(extra => extra.kind === "Failed" && extra.reason !== "Changed" && extra.reason !== "TooLarge" && extra.reason !== "E_MEDIA_NOT_READY");
+  useEffect(() => { if (!extrasFailed) setExtrasUnknown(null); }, [extrasFailed]);
   async function retryExtras() {
+    if (retrying) return;
     setRetrying(true);
-    try { await localMutation("retry_extras", { media_id: id, package_id: packageId }); }
-    catch { say({ fact: "couldn’t fetch the missing content." }, [{ label: "retry", commandKey: "RetryMissingContent", run: () => void retryExtras() }]); }
+    try { await localMutation("retry_extras", { media_id: id, package_id: packageId }); setExtrasUnknown(null); }
+    catch (error) {
+      if (error instanceof LocalMutationObservationError) {
+        if (error.observation.receipt !== null) setExtrasUnknown(null);
+        else setExtrasUnknown(attempt => (attempt ?? 0) + 1);
+        return;
+      }
+      say({ fact: "couldn’t fetch the missing content." }, [{ label: "retry", commandKey: "RetryMissingContent", run: () => void retryExtras() }]);
+    }
     finally { setRetrying(false); }
   }
   const transcript = item.extras?.transcript;
@@ -255,6 +266,9 @@ export default function DownloadedEpisode({ saved, onIntent }: {
       {sourceUnavailable ? <Button onClick={retryListening}>retry listening sync</Button> : null}
       {doc?.kind === "text" && doc.toc.length > 0 ? <Button aria-expanded={contents} onClick={() => { onIntent(); setContents(value => !value); }}>contents</Button> : null}
     </div>
+    {extrasUnknown !== null ? <Hold id={`episode-extras:${id}:${packageId}`} attempt={extrasUnknown}
+      line={{ fact: "not sure the missing content started.", reason: UNKNOWN_OUTCOME_REASON }}
+      verbs={[{ label: "retry", commandKey: "RetryMissingContent", run: () => void retryExtras(), busy: retrying }]} /> : null}
     {fraction === null ? null : <p>{Math.round(fraction * 100)}% listened</p>}
     {sourceUnavailable ? <p>the original isn’t available. listening stays saved on this device.</p> : null}
     {capture.show_notes.kind === "Available" ? <PublisherNotes title={capture.rendition.title} html={capture.show_notes.html} hrefForTime={() => null} onOpenTime={openTime} />
