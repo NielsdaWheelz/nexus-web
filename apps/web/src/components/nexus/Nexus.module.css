@@ -120,7 +120,6 @@
 @media (forced-colors: none) {
   .rail .verb:not([aria-disabled="true"]) { color: var(--ink); }
 }
-.railBusy { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; align-self: stretch; }
 
 .notices { display: grid; flex: 0 0 auto; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 40px; overflow-wrap: anywhere; }
 .notices:empty { display: none; }
