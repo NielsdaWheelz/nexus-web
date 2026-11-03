@@ -35,7 +35,7 @@ import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { ProgressPreparationError } from "@/lib/consumption/progressFence";
+import { ProgressPreparationError, PROGRESS_PREPARATION_FACT } from "@/lib/consumption/progressFence";
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
@@ -441,7 +441,7 @@ export default function ResourceActionsProvider({
             setLocalUnknown(current => new Map(current).set(key, { line: error.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
             return;
           }
-          if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact, reason: "your position isn’t saved yet." }));
+          if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact: PROGRESS_PREPARATION_FACT }));
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
           const failure = actionOutcome(command.id, command.label, command.title, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
