@@ -48,6 +48,11 @@ actual shares retain their native capture id and account-local date. browser/mai
 require `add to today`; retries retain the original command and date. profile
 failure admits nothing. this flow has no media destination picker.
 
+the authored retirement event withdraws the admitted plain-share child and any
+pending admission read. the retired card offers open workspace; that existing
+owner finishes sign-out and admits a later account. the share neither reopens its
+retired store nor submits its retained text during recovery.
+
 `nexus-share://open`, `done` and `dismiss` belong only to the actual share activity.
 finishing asks the existing work guard; the native chrome client supplies real
 javascript confirmations. asynchronous exit replies belong to the same live view

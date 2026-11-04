@@ -35,9 +35,9 @@ import styles from "./share.module.css";
 type SharedFile = { index: number; name: string | null; size: number | null; type: string | null };
 type Share = { kind: "Manual" } | { kind: "Activity"; entries: readonly SharedFile[] };
 type ShareAccount = { user_id: string; calendar_time_zone: string; capture: { noteId: string; localDate: string } | null };
-/** No local binding yet, or a share made for another account than the one open here. */
+/** Admission ends when its account retires; another host owns signing in again. */
 class CaptureAdmissionError extends Error {
-  constructor(readonly kind: "Unbound" | "OtherAccount") { super(kind); }
+  constructor(readonly kind: "Unbound" | "OtherAccount" | "Retired") { super(kind); }
 }
 
 const openPath = (share: Share, path: string) => share.kind === "Activity" ? `nexus-share://open?path=${encodeURIComponent(path)}` : path;
@@ -184,12 +184,15 @@ function SharedImports({ links, share }: { links: readonly string[]; share: Shar
 const NOT_OPENED = "couldn’t open your notes on this device.";
 function PlainShareAdmission({ text, share }: { text: string; share: Share }) {
   const transportVerbs = useTransportVerbs();
+  const openWorkspace = () => window.location.assign(openPath(share, "/downloads"));
   const [account, setAccount] = useState<ShareAccount | null>(null);
   const [failure, setFailure] = useState<unknown | null>(null);
   const [admissionDefect, setAdmissionDefect] = useState<{ error: unknown } | null>(null);
   const [attempt, retry] = useState(0);
   useEffect(() => {
     let active = true;
+    const retired = () => { active = false; setAccount(null); setFailure(new CaptureAdmissionError("Retired")); };
+    window.addEventListener("nexus:authored-retired", retired);
     void (async () => {
       const binding = "nexusAuthored" in window ? (await readDeviceStartup())?.binding ?? null : await readBrowserBinding();
       if (!binding) throw new CaptureAdmissionError("Unbound");
@@ -204,7 +207,7 @@ function PlainShareAdmission({ text, share }: { text: string; share: Share }) {
       }
       if (active) { setAccount({user_id:binding.account.account_id,calendar_time_zone:binding.account.calendar_time_zone,capture});setFailure(null); }
     })().catch(error => { if (!active) return; if (error instanceof CaptureAdmissionError || isAuthoredStorageFailure(error) || isApiError(error)) setFailure(error); else setAdmissionDefect({ error }); });
-    return () => {active=false;};
+    return () => { active = false; window.removeEventListener("nexus:authored-retired", retired); };
   },[attempt,share]);
   // A failed read heals: a repair (focus, back online) reads again.
   useEffect(() => isApiError(failure) ? subscribeRepair(() => retry(value => value + 1)) : undefined, [failure]);
@@ -212,15 +215,20 @@ function PlainShareAdmission({ text, share }: { text: string; share: Share }) {
   if (admissionDefect !== null) throw admissionDefect.error;
   const retryAdmission: CommandVerb = { label: "retry", commandKey: "RetryShareAdmission", run: () => retry(value => value + 1) };
   if (failure !== null) {
-    if (failure instanceof CaptureAdmissionError) return failure.kind === "Unbound"
-      ? <Fact line={{ fact: "your notes aren’t on this device yet.", reason: "open nexus once, then share again." }} verbs={[retryAdmission]} speak />
-      : <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />;
+    if (failure instanceof CaptureAdmissionError) {
+      switch (failure.kind) {
+        case "Unbound": return <Fact line={{ fact: "your notes aren’t on this device yet.", reason: "open nexus once, then share again." }} verbs={[retryAdmission]} speak />;
+        case "OtherAccount": return <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />;
+        case "Retired": return <Fact line={{ fact: "your notes are closed here." }}
+          verbs={[{ label: "open workspace", commandKey: "OpenShareWorkspace", run: openWorkspace }]} speak />;
+      }
+    }
     if (!isApiError(failure)) return <Fact line={{ fact: NOT_OPENED }} verbs={[retryAdmission]} speak />;
     const transport = transportOf(failure);
     return <Fact line={TRANSPORT_LINES[transport].command(NOT_OPENED)} verbs={transportVerbs(transport, { retry: retryAdmission }) ?? undefined} speak />;
   }
   if (account === null) return <Ruling />;
-  return <AuthoredProvider accountId={account.user_id} host="share" openWorkspace={() => window.location.assign(openPath(share, "/downloads"))}>
+  return <AuthoredProvider accountId={account.user_id} host="share" openWorkspace={openWorkspace}>
     <PlainShare text={text} share={share} account={account} />
   </AuthoredProvider>;
 }
