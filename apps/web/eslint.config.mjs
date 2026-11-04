@@ -72,7 +72,6 @@ export default [
       "src/components/ui/ActionMenu.tsx",
       "src/components/ui/PickerSurface.tsx",
       "src/components/ui/ChoicePicker.tsx",
-      "src/components/chat/EffortPicker.tsx",
       "src/components/ui/HoverPreview.tsx",
     ],
     rules: {
@@ -112,7 +111,6 @@ export default [
     },
   },
   {
-    // EffortPicker's gauge leaves this list when playback lane 6 draws `Effort`.
     files: [
       "src/app/opengraph-image.tsx",
       "src/app/apple-icon.tsx",
@@ -122,7 +120,6 @@ export default [
       "src/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody.tsx",
       "src/components/AsterismMark.tsx",
       "src/components/media/MediaIdentity.tsx",
-      "src/components/chat/EffortPicker.tsx",
     ],
     rules: {
       "no-restricted-syntax": ["error", ...SYNTAX],

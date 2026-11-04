@@ -91,16 +91,8 @@ export default function EffortPicker({
               show();
             }
           }}>
-          <svg width="19" height="17" viewBox="0 0 24 20" fill="none" aria-hidden="true">
-            <path d="M4 15a8 8 0 0 1 16 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            {index >= 0 && choices.length > 1 ? (
-              <path d="M12 15V8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-                className={styles.needle}
-                style={{ transform: `rotate(${-90 + index / (choices.length - 1) * 180}deg)` }} />
-            ) : null}
-            <circle cx="12" cy="15" r="1.5" fill="currentColor" />
-          </svg>
-          <span>{label}</span><span className={styles.chevron}><ControlContents busy={waiting} icon={<Icon.Choose size={13} aria-hidden="true" />} /></span>
+          <span aria-hidden="true"><Icon.Effort size={20} position={current !== null && index >= 0 && choices.length > 1 ? index / (choices.length - 1) : null} /></span>
+          <span>{label}</span><span className={styles.chevron}><ControlContents busy={waiting} icon={<Icon.Choose size={14} aria-hidden="true" />} /></span>
         </button>
       )}
       <PickerSurface active={open} onClose={() => setOpen(false)} anchor={() => trigger.current}

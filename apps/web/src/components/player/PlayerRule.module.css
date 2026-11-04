@@ -1,0 +1,237 @@
+/* the rule is the bar's top edge: y 0 is the slot's top, x its full width. */
+.line,
+.played {
+  position: absolute;
+  inset: 0 0 auto;
+}
+
+.line { height: var(--stroke-hairline); background: var(--edge); }
+
+.played {
+  height: 2px;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  transform: scaleX(var(--played, 0));
+}
+
+:global([data-theme="elvish"]) .played { background: linear-gradient(90deg, var(--gilt-a), var(--gilt-b)); }
+
+/* cold: nothing sounds, so the played line withdraws its colour; in slowly, out at once. */
+.played::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--edge-strong);
+  opacity: 0;
+  transition: opacity var(--duration-instant) var(--ease-glide);
+}
+
+[data-cold="true"] > .played::after {
+  opacity: 1;
+  transition: opacity var(--duration-deliberate) var(--ease-glide);
+}
+
+/* the band: 18px inside the bar and 6px above it. the 6px take the pointer only once it is in the
+   bar, the rail's parent, so the pane canvas's scrollbar on that edge stays reachable from above. */
+.rail {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: 18px;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+
+.rail::before {
+  content: "";
+  position: absolute;
+  inset: -6px 0 auto;
+  height: 6px;
+  pointer-events: none;
+}
+
+:hover > .rail::before { pointer-events: auto; }
+
+.rail[data-inert="true"] { pointer-events: none; cursor: default; }
+
+.cut {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 4px;
+  margin-left: -1px;
+  background: var(--surface-1);
+}
+
+.stem,
+.tick {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 10px;
+  background: var(--ink);
+  visibility: hidden;
+}
+
+.tick { background: var(--ink-muted); }
+
+/* approach and scrub are poses: the line thickens and the stem marks the hand; scrub adds the
+   tick at the audio. */
+[data-approach="true"] > .line,
+[data-scrub="true"] > .line { height: 4px; background: var(--ink-faint); }
+[data-approach="true"] > .played,
+[data-scrub="true"] > .played { height: 4px; }
+[data-approach="true"] > .stem,
+[data-scrub="true"] > .stem,
+[data-scrub="true"] > .tick { visibility: visible; }
+
+.bubble {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  white-space: nowrap;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.bubble[data-shown="true"] { visibility: visible; }
+.bubbleTime { font: var(--weight-medium) var(--text-xs) / 1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
+.bubbleChapter { color: var(--ink-muted); font-size: var(--text-xs); line-height: 1.3; }
+.bubbleChapter[data-snapped="true"] { color: var(--accent); }
+
+/* the range keeps value, keys and name; the rail owns the pointer. */
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rail:has(.input:focus-visible),
+.band:has(.input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* the origin mark: a staff and a pennant at where a long seek began. */
+.mark {
+  position: absolute;
+  top: 0;
+  width: 24px;
+  height: 18px;
+  margin-left: -12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.mark:hover { color: var(--ink); }
+
+.mark::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 11px;
+  background: currentColor;
+}
+
+.mark::after {
+  content: "";
+  position: absolute;
+  left: calc(50% + 1px);
+  top: 5px;
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+.mark:focus-visible { outline: var(--focus-ring-width) solid var(--ring); }
+
+@media (any-pointer: coarse) {
+  .rail { height: 44px; }
+  [data-scrub="true"] > .line,
+  [data-scrub="true"] > .played { height: 6px; }
+  .mark { width: 44px; height: 44px; margin-left: -22px; }
+}
+
+/* the mini's edge: decorative, never seekable. */
+.edge {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  pointer-events: none;
+}
+
+.edge > .line,
+.edge > .played { height: 2px; }
+
+/* the sheet: a readout, a 44px band around a 4px rule, then elapsed and time left. */
+.sheet { display: grid; }
+
+.readout {
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  height: 28px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.band {
+  position: relative;
+  height: 44px;
+  touch-action: pan-y;
+}
+
+.band > .line,
+.band > .played,
+.band > .cut {
+  top: 20px;
+  height: 4px;
+}
+
+.band > .line { border-radius: 2px; background: var(--edge); }
+
+.times {
+  display: flex;
+  justify-content: space-between;
+  margin: -8px 0 0;
+  color: var(--ink-muted);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* solar's gilt outranks `.played`, so forced colours name its room too. */
+@media (forced-colors: active) {
+  .line,
+  .played,
+  :global([data-theme="elvish"]) .played,
+  .played::after,
+  .stem,
+  .tick {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .cut { forced-color-adjust: none; background: Canvas; }
+  .mark { forced-color-adjust: none; color: CanvasText; }
+  .bubble { background: Canvas; border-color: CanvasText; }
+}

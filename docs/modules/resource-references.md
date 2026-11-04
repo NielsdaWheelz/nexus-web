@@ -23,8 +23,9 @@ conversation messages retain their message layout.
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
 | `lib/resourceGraph/resourceRef.ts` / `lib/resources/type.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
-| `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
-| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance; `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
+| `IndexBibliography.tsx` | compact byline (observed author names, or an episode's show) and first-publication year; complete credits remain in existing metadata |
+| `lib/media/mediaByline.ts` | a media row's byline, an episode's show in the authors' slot and none on the show's own page, and the names its list filter matches |
+| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance: draws `mediaByline` for the show page its rows sit in (`ShowPage`); `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
@@ -76,7 +77,7 @@ every wire key is present and snake_case; absence is null.
 | body | primary content |
 | --- | --- |
 | `named` | title/name, ordered credits and nullable live show artwork |
-| `media` | canonical `MediaSummaryOut`: title, credits, original publication, consumption and time |
+| `media` | canonical `MediaSummaryOut`: title, show, credits, original publication, consumption and time |
 | `passage` | frozen excerpt structure with selected runs in saved colour; compact or full view |
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
@@ -88,7 +89,8 @@ and search rows retain consumption facts and resource quick actions; context
 shows literal target content, source provenance and minus/overflow controls. indexes
 never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
-command primary. only shows have index artwork; episodes never do.
+command primary. only shows have resource-index artwork; episode index rows
+have none. playback bar, mini, sheet and up next display the episode’s show art.
 
 full excerpt recovery is one current outcome. a remote conflict offers retry of
 the frozen capture and a separate choice to read the current excerpt; it does not
@@ -149,8 +151,8 @@ container owns adaptation at its explicit base text size: above `32em - 1px`,
 show up to three observed author names; at or below that boundary, show the first
 and a passive omitted count. the default 15px type gives a 479px boundary;
 enlarged text compacts earlier. compact media facts remain visible and do not
-shrink or ellipsize. `IndexBibliography` owns a compact, left-aligned author/year
-group: no level grows into spare width, and names prefer their natural text width
+shrink or ellipsize. `IndexBibliography` owns a compact, left-aligned byline/year
+group; an episode's show is one credited name, linked to its page: no level grows into spare width, and names prefer their natural text width
 or a `1em` minimum, whichever is larger. under pressure, names shrink
 proportionally toward that minimum and ellipsize individually; commas, omitted
 count, separator and year retain natural widths. those protected minima propagate

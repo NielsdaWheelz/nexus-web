@@ -106,11 +106,6 @@ internal class DeviceSession private constructor(private val context: Context) {
         return result
     }
     fun recentLifetime(): Long = lifetime.get()
-    fun recordRecentPreview(target: String, current: () -> Boolean = { true }) {
-        val value = JSONObject().put("target", JSONObject().put("kind", "preview").put("target", target))
-            .put("href", "/browse/preview?target=$target").put("title_hint", JSONObject.NULL).put("detail_hint", JSONObject.NULL)
-        recentOperation("record", null, value, current)
-    }
     fun recordRecentMedia(mediaId: UUID, current: () -> Boolean = { true }) {
         val target = JSONObject().put("kind", "resource_ref").put("ref", "media:$mediaId")
         val value = JSONObject().put("target", target).put("href", "/media/$mediaId")

@@ -82,6 +82,8 @@ export interface ViewState {
     id: string;
     target: TargetView;
     phase: CapturePhase;
+    /** Advanced only when this draft publishes a capture failure. */
+    failure_attempt: number;
     destinations: LibraryDestination[];
     /** submitted choices stay fixed until a definitive refusal is reviewed */
     locked: boolean;

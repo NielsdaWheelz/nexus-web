@@ -107,6 +107,7 @@ interface Draft {
   target: { kind: "article"; windowId: number; url: string } | DocumentTarget;
   view: TargetView;
   phase: CapturePhase;
+  failure_attempt: number;
   destinations: Schema<"LibraryDestinationOut">[];
   locked: boolean;
   submission: {
@@ -374,6 +375,7 @@ async function viewState(): Promise<ViewState> {
             id: draft.id,
             target: draft.view,
             phase: draft.phase,
+            failure_attempt: draft.failure_attempt,
             destinations: draft.destinations,
             locked: draft.locked,
             editable: session !== null && !draft.locked && active === null && !needsRecapture,
@@ -415,7 +417,8 @@ function setDraft(next: Draft | null, reason: string | null = null, failedCheck 
 }
 
 function setPhase(phase: CapturePhase): void {
-  if (draft !== null) setDraft({ ...draft, phase });
+  if (draft !== null) setDraft({ ...draft, phase,
+    failure_attempt: draft.failure_attempt + (phase.kind === "failed" ? 1 : 0) });
 }
 
 /** nexus and storage always; the target's origin while the background must still
@@ -734,6 +737,7 @@ async function activate(): Promise<void> {
         webChoice: captureTarget?.capture_binding?.kind !== "XArticle",
       },
       phase: { kind: "draft" },
+      failure_attempt: 0,
       destinations: [],
       locked: false,
       submission: null,
@@ -773,6 +777,7 @@ function documentDraft(
       documentKind: "unknown",
     },
     phase: { kind: "draft" },
+    failure_attempt: 0,
     destinations: [],
     locked: false,
     submission: null,

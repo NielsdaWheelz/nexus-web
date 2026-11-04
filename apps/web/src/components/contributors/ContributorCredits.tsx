@@ -13,6 +13,26 @@ import {
 import { cx } from "@/lib/ui/cx";
 import styles from "./ContributorCredits.module.css";
 
+/** A credited name that opens its subject's pane: an author's, or an episode's show. */
+export function CreditLink({ href, label, title, className }: {
+  readonly href: string;
+  readonly label: string;
+  readonly title: string;
+  readonly className?: string;
+}) {
+  return (
+    <a
+      href={href}
+      className={cx(styles.link, className)}
+      title={title}
+      dir="auto"
+      data-pane-label-hint={label}
+    >
+      {label}
+    </a>
+  );
+}
+
 export function ContributorName({ credit, className }: {
   readonly credit: ContributorCredit;
   readonly className?: string;
@@ -25,15 +45,7 @@ export function ContributorName({ credit, className }: {
       ? `${name.label} (${canonical})`
       : name.label;
   return name.href ? (
-    <a
-      href={name.href}
-      className={cx(styles.link, className)}
-      title={title}
-      dir="auto"
-      data-pane-label-hint={name.label}
-    >
-      {name.label}
-    </a>
+    <CreditLink href={name.href} label={name.label} title={title} className={className} />
   ) : (
     <span className={cx(styles.name, className)} title={title} dir="auto">
       {name.label}

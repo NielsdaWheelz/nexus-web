@@ -46,11 +46,6 @@
   flex: none;
 }
 
-.needle {
-  transform-origin: 12px 15px;
-  transition: transform var(--duration-fast) var(--ease-glide);
-}
-
 .surface {
   --picker-surface-width: 320px;
 }
