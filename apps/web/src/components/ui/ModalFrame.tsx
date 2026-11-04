@@ -146,6 +146,7 @@ export default function ModalFrame({
       >
         <section
           ref={setPanel}
+          data-modal-panel="true"
           id={id}
           className={cx(styles.panel, className)}
           tabIndex={-1}

@@ -560,7 +560,7 @@ export function subscribeOverlayStack(listener: () => void): () => void {
 /** Provided by ModalFrame: the modal its children render inside. */
 export const OverlayContext = createContext<Layer | null>(null);
 
-/** Where a transient or tooltip renders: its containing modal's panel, else the body. */
+/** Where a transient or tooltip renders: its containing modal's semantic room, else the body. */
 export function useOverlayContainer(): HTMLElement | null {
   const parent = useContext(OverlayContext);
   if (typeof document === "undefined") return null;

@@ -101,7 +101,8 @@ function meaning(title: string, content: MenuContent): string {
 
 /** The trailing region may change after publication; only published rows define geometry. */
 function geometry(anchor: HTMLElement, body: HTMLElement, mobile: boolean, selector: string | null): readonly number[] {
-  const panel = mobile ? body.closest<HTMLElement>('[role="dialog"]') ?? body : body;
+  const panel = mobile ? body.closest<HTMLElement>("[data-modal-panel]") : body;
+  if (!panel) throw new Error("a mobile action menu requires its visual sheet panel");
   const box = panel.getBoundingClientRect();
   let panelX = box.x;
   let panelY = box.y;
@@ -142,7 +143,7 @@ function trailingRoom(scroller: HTMLElement, mobile: boolean): number {
     + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
     + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
   if (!mobile) return parseFloat(style.maxBlockSize) - used;
-  const panel = scroller.closest<HTMLElement>('[role="dialog"]');
+  const panel = scroller.closest<HTMLElement>("[data-modal-panel]");
   const parent = panel?.parentElement;
   if (!panel || !parent) throw new Error("a mobile trailing menu requires its sheet containing block");
   const containing = getComputedStyle(parent);
