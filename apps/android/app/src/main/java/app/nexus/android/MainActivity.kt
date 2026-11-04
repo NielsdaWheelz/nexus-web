@@ -385,7 +385,11 @@ class MainActivity : AppCompatActivity() {
                         if (canGoBack) webView.goBack()
                         else {
                             isEnabled = false
-                            onBackPressedDispatcher.onBackPressed()
+                            try {
+                                onBackPressedDispatcher.onBackPressed()
+                            } finally {
+                                isEnabled = true
+                            }
                         }
                     }
                     try {
