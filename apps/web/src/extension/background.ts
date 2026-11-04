@@ -1098,15 +1098,17 @@ async function save(signal: AbortSignal): Promise<void> {
       submission.confirmationUncertain = false;
       submission.createOutcomeUnknown = false;
       recovery = VERIFICATION_REJECTIONS.has(shown.code) ? "Discard" : "Recapture";
+    } else if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
+      // Technical contention is busy; filing refusal follows the published-receipt check.
+      if (submission === null) throw new Error("Refused confirmation has no owner.");
+      submission.confirmation = null;
+      submission.confirmationUncertain = false;
+      recovery = "Review";
     } else if (submission?.confirmationUncertain || submission?.createOutcomeUnknown) {
       recovery = "Check";
     } else if (error instanceof CaptureFailureError && (error.status === 401 ||
                shown.code === "E_SIGN_UPLOAD_FAILED" || shown.code === "E_STORAGE_ERROR")) {
       recovery = "Retry";
-    } else if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
-      if (submission === null) throw new Error("Refused confirmation has no owner.");
-      submission.confirmation = null;
-      recovery = "Review";
     } else if (shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_STORAGE_MISSING" ||
                shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED") {
       recovery = "Recapture";
