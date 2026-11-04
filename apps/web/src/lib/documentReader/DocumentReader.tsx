@@ -136,7 +136,7 @@ export interface DocumentReaderViewProps {
   readonly profile: Schema<"ReaderProfileOut">;
   readonly isMobile: boolean;
   /** Passive source position; never a reader navigation command. */
-  readonly playback: { readonly identity: string; readonly unit: string } | null;
+  readonly playback: { readonly identity: string; readonly unit: string; readonly warm: boolean } | null;
   readonly decorations?: Decorations;
   /** The composing passage, independent of the saved decoration map. */
   readonly activePassage?: Passage | null;

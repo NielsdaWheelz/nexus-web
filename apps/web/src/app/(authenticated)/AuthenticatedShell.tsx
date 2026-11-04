@@ -173,7 +173,7 @@ function Workspace(props: {
                     <ShareControllerProvider>
                       <WorkspacePlayer accountId={accountId}>
                         <ResourceActionsProvider>
-                          <AuthenticatedWorkspaceErrorBoundary>
+                          <WorkspaceCanvas>{(player, readerComposition) => <AuthenticatedWorkspaceErrorBoundary>
                             <ChatSelectionProvider>
                               <ResourceActionPresentation />
                               <MediaAdmissionsHost />
@@ -183,13 +183,19 @@ function Workspace(props: {
                                   <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
                                     <WorkspaceNavigation>
                                       <Nexus />
-                                      <WorkspaceCanvas />
+                                      <div className={styles.layout}>
+                                        <AppNav />
+                                        <main className={styles.main} data-reader-composition={readerComposition || undefined}>
+                                          <WorkspaceHost />
+                                          {player}
+                                        </main>
+                                      </div>
                                     </WorkspaceNavigation>
                                   </WorkspacePresentationsProvider>
                                 </ImportIntakeHost>
                               </ImportsProvider>
                             </ChatSelectionProvider>
-                          </AuthenticatedWorkspaceErrorBoundary>
+                          </AuthenticatedWorkspaceErrorBoundary>}</WorkspaceCanvas>
                         </ResourceActionsProvider>
                       </WorkspacePlayer>
                     </ShareControllerProvider>
@@ -221,20 +227,14 @@ function WorkspaceNavigation({ children }: { children: ReactNode }) {
 }
 
 /** A route selects the shell composition before loading or mounting its reader. */
-function WorkspaceCanvas() {
+function WorkspaceCanvas({ children }: { children: (player: ReactNode, readerComposition: boolean) => ReactNode }) {
   const { state } = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
   const active = state.panes.find(pane => pane.id === state.active_primary_pane_id);
   if (!active) throw new Error("workspace active pane is missing");
   const readerComposition = isMobile && resolvePaneRouteModel(active.current_visit.href).returnKind === "Reader";
   return <MobileReaderCompositionContext value={readerComposition}>
-    <div className={styles.layout}>
-      <AppNav />
-      <main className={styles.main} data-reader-composition={readerComposition || undefined}>
-        <WorkspaceHost />
-        <GlobalPlayerSurfaces readerComposition={readerComposition} />
-      </main>
-    </div>
+    <GlobalPlayerSurfaces readerComposition={readerComposition}>{player => children(player, readerComposition)}</GlobalPlayerSurfaces>
   </MobileReaderCompositionContext>;
 }
 

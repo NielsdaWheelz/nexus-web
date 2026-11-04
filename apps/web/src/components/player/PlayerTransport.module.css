@@ -1,0 +1,31 @@
+/* five 44px slots, gap 4: 236px. */
+.transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.key {
+  --control-icon-size: 20px;
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+
+.skip { --control-icon-size: 28px; }
+
+.disc { --control-icon-size: 22px; --control-radius: var(--radius-full); }
+.key.disc[aria-disabled="true"] { background: var(--surface-active); }
+
+/* a key the mode lacks holds its slot, unseen and unreachable. */
+.absent { visibility: hidden; }
+
+@container player (width < 60rem) {
+  .absent,
+  .tiered .outer { display: none; }
+}
+
+/* the sheet spaces its keys wider around a larger disc: 44 44 56 44 44, gap 8. */
+.sheet { gap: var(--space-2); }
+.sheet .disc { --control-icon-size: 28px; width: 56px; height: 56px; }

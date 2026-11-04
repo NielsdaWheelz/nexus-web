@@ -1,28 +1,16 @@
-# player announces paused sync during a normal save
+# native normal-save speech needs final qualification
 
-status: open · origin: 2026-10-15 final `fdd0a3e` phone acceptance · area: playback / accessibility
+original phone observation at `fdd0a3e`: starting episode 113 announced “progress
+sync paused” while three listening puts returned 200 and two activity posts 204
+(2026-10-15, 21:54:45–21:55:07 utc). no failed upload was established. the old
+player treated every `synced=false` as failure and retained its last announcement.
 
-starting episode 113 produced the aria-live announcement “progress sync paused”.
-the full paused player later showed no error or retry notice. three listening
-puts returned 200 and two activity posts returned 204 between 21:54:45 and
-21:55:07 utc; this evidence does not establish a failed upload.
+source corrected: `components/player/usePlayerAnnouncement.ts` never derives
+speech from `synced`; `PlayerOutcomes.tsx` distinguishes `playbackFailed` from
+`PlaceTrouble` and projects only actual unresolved recovery. the bar model keeps
+ordinary pending delivery and progress recovery separate from failed sound.
 
-`apps/web/src/components/player/GlobalPlayerSurfaces.tsx:229` treats every
-`synced=false` as paused. its effect at line 297 retains the last nonempty
-announcement when sync recovers. native `ListeningRecorder.kt:245,281,294`
-sets false while an ordinary queued write drains, then true on completion.
-the status conflates normal delivery with a blocked queue and can leave stale
-accessibility feedback.
-
-evidence: private campaign `coordinator/finalfdd0a3e/phone-sync-diagnosis/api-observation-1.json`;
-the phone owner's actual playback and queue receipts remain the runtime authority.
-reproduce by starting playback with a healthy connection and observing the live
-region during a normal progress save.
-
-fix the existing player status owner: distinguish pending delivery from a
-paused/refused queue and clear or replace the announcement on recovery. reuse
-the recorder's actual delivery state; do not infer failure from pending work.
-
-acceptance: normal successful progress writes never announce a false pause;
-a real retained failure remains visible and accessible, and successful recovery
-removes stale failure feedback without losing queued progress.
+remaining acceptance on the final merged native tree: successful progress writes
+never announce a false pause; an actual retained failure remains accessible and
+settlement removes it without losing queued progress. the earlier phone evidence
+is private under `coordinator/finalfdd0a3e/phone-sync-diagnosis/api-observation-1.json`.

@@ -25,8 +25,6 @@ import {
   type Engine,
   type EngineState,
   type PlayerDescriptor,
-  type PlayerSource,
-  type PreviewAudioDescriptor,
 } from "@/lib/player/playerRuntime";
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
@@ -46,10 +44,7 @@ interface Port {
 
 interface NativeSnapshot {
   readonly snapshot_id: number;
-  readonly source:
-    | { readonly kind: "Episode"; readonly descriptor: Omit<PlayerDescriptor, "chapters">; readonly package_id: string | null }
-    | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor; readonly package_id: null }
-    | null;
+  readonly source: { readonly descriptor: Omit<PlayerDescriptor, "chapters">; readonly package_id: string | null } | null;
   readonly queue: QueueHeader | null;
   readonly load_id: string | null;
   readonly phase: EngineState["phase"];
@@ -110,18 +105,11 @@ function decodeHeader(raw: unknown): QueueHeader {
 }
 
 function decodeSource(raw: unknown): NativeSnapshot["source"] {
-  const value = expectExactRecord(raw, ["kind", "package_id", "descriptor"], "source");
-  const kind = expectOneOf(value.kind, ["Episode", "Preview"] as const, "source.kind");
+  const value = expectExactRecord(raw, ["package_id", "descriptor"], "source");
   const descriptor = expectRecord(value.descriptor, "source.descriptor");
-  if (kind === "Preview") {
-    if (value.package_id !== null) throw new TypeError("source.package_id must be null for a preview");
-    expectString(descriptor.target, "source.descriptor.target");
-    // justify-type-assertion: a preview descriptor is the renderer's own frozen bridge input, echoed back.
-    return { kind, descriptor: descriptor as unknown as PreviewAudioDescriptor, package_id: null };
-  }
   expectCanonicalRfcUuid(descriptor.media_id, "source.descriptor.media_id");
   // justify-type-assertion: an episode descriptor is the server's PlayerDescriptor (or a lease's rendition in that shape).
-  return { kind, descriptor: descriptor as unknown as Omit<PlayerDescriptor, "chapters">,
+  return { descriptor: descriptor as unknown as Omit<PlayerDescriptor, "chapters">,
     package_id: nullable(value.package_id, raw => expectCanonicalRfcUuid(raw, "source.package_id")) };
 }
 
@@ -249,13 +237,10 @@ export function createNativeEngine(
     lastError = snapshot.error;
     // Keep the source's identity across position pushes, so session readers do not re-render.
     const held = state.source;
-    const same = loadId === state.playbackSubject && pushed?.kind === held?.kind &&
-      (pushed?.kind !== "Episode" || held?.kind === "Episode" && pushed.package_id === held.packageId) &&
-      JSON.stringify(pushed?.descriptor) === JSON.stringify(held?.kind === "Episode" ? { ...held.descriptor, chapters: undefined } : held?.descriptor);
-    const source: PlayerSource | null = pushed === null ? null : pushed.kind === "Episode"
-      ? { kind: "Episode", packageId: pushed.package_id,
-          descriptor: { ...pushed.descriptor, chapters: loadId === chaptersSubject ? chapters : [] } }
-      : { kind: "Preview", descriptor: pushed.descriptor };
+    const same = loadId === state.playbackSubject && pushed?.package_id === held?.packageId &&
+      JSON.stringify(pushed?.descriptor) === JSON.stringify(held === null ? undefined : { ...held.descriptor, chapters: undefined });
+    const source = pushed === null ? null : { packageId: pushed.package_id,
+      descriptor: { ...pushed.descriptor, chapters: loadId === chaptersSubject ? chapters : [] } };
     state = {
       source: same ? state.source : source,
       queue: JSON.stringify(snapshot.queue) === JSON.stringify(state.queue) ? state.queue : snapshot.queue,
@@ -274,7 +259,7 @@ export function createNativeEngine(
       synced: snapshot.synced,
       consumptionRevision: snapshot.consumption_revision,
     };
-    if (source?.kind === "Episode" && loadId !== null && loadId !== chaptersSubject) {
+    if (source !== null && loadId !== null && loadId !== chaptersSubject) {
       chaptersSubject = loadId;
       chapters = [];
       void readChapters(source.descriptor.media_id, loadId);
@@ -358,14 +343,7 @@ export function createNativeEngine(
       if (error.message !== "NotResponding" && error.message !== "Stale")
         console.warn("native_player_op_rejected", { op, error: error.message });
     });
-  const key = () => {
-    const source = state.source;
-    return source === null
-      ? null
-      : source.kind === "Episode"
-        ? source.descriptor.media_id
-        : source.descriptor.target;
-  };
+  const key = () => state.source?.descriptor.media_id ?? null;
   const keyed = (op: string, args: Record<string, unknown> = {}) => {
     const loaded = key();
     const subject = state.playbackSubject;
@@ -399,7 +377,7 @@ export function createNativeEngine(
         collected.push(...(reply.chapters ?? []));
         count = reply.chapter_count ?? 0;
       }
-      if (state.playbackSubject !== subject || state.source?.kind !== "Episode") return;
+      if (state.playbackSubject !== subject || state.source === null) return;
       chapters = collected;
       state = { ...state, source: { ...state.source, descriptor: { ...state.source.descriptor, chapters } } };
       for (const listener of listeners) listener();
@@ -514,7 +492,6 @@ export function createNativeEngine(
     async load(descriptor, play, positionMs) {
       await command("load", { media_id: descriptor.media_id, play, position_ms: positionMs }, LOAD_TIMEOUT_MS);
     },
-    preview: descriptor => command("preview", { descriptor }, LOAD_TIMEOUT_MS).then(() => {}),
     play,
     retry: play, // listeningSaveFailed pauses the service, so its line's retry resumes it
     async resumeLoaded(expectedSubject) {

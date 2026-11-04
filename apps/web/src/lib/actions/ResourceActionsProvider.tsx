@@ -443,7 +443,7 @@ export default function ResourceActionsProvider({
           if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact: PROGRESS_PREPARATION_FACT }));
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
-          const failure = actionOutcome(command.id, command.feedbackLabel, command.title, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
+          const failure = actionOutcome(command.id, command.feedbackLabel, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
           if (failure.kind === "Unknown") {
             attempt.phase = "Unknown";
             if (attempt.line === null) { attempt.line = failure.line; attempt.attempt = 0; }

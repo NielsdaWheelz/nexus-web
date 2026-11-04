@@ -1,0 +1,89 @@
+/* the stationary slot is measured; only the inner surface retreats. */
+.slot {
+  container: player / inline-size;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.slot[data-reader-composition="true"] {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.slot[data-reader-composition="true"] > .surface {
+  pointer-events: auto;
+}
+
+.slot[hidden] {
+  display: none;
+}
+
+/* the rule is the top edge; the surface draws no border of its own. */
+.surface {
+  --control-min-size: 44px;
+  --mobile-chrome-offset: var(--space-2);
+  position: relative;
+  color: var(--ink);
+  background: var(--surface-1);
+}
+
+/* one 44px row at y=18..62 of 80, every state centred on y=40. the 18px above it are the rail's
+   band, which does not scale with text, so enlarged text grows the bar downward and never under the
+   band. the side columns share the width, so the disc sits at the centre of the slot. */
+.bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-6);
+  min-height: 80px;
+  padding: 18px var(--space-4);
+}
+
+@container player (width < 60rem) {
+  .bar { grid-template-columns: minmax(0, 1fr) auto auto; }
+}
+
+/* a coarse pointer gets a 44px band above a row that never moves between states. */
+@media (any-pointer: coarse) {
+  .bar { min-height: 96px; padding-block: 44px 8px; }
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.key { --control-icon-size: 20px; width: 44px; height: 44px; }
+
+/* the mini: 64px and the safe inset; its 2px edge never takes a row. */
+.mini {
+  display: flex;
+  align-items: center;
+  min-height: calc(64px + var(--viewport-safe-bottom));
+  padding: var(--space-2) var(--space-3) calc(var(--space-2) + var(--viewport-safe-bottom));
+}
+
+.miniRow { display: flex; align-items: center; gap: var(--space-2); min-width: 0; width: 100%; }
+.miniRow > :first-child { flex: 1 1 auto; }
+
+.picker {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.queuePicker {
+  inline-size: min(42rem, var(--anchored-max-width, 100%));
+  overflow: hidden;
+}
+
+.queueScrollport {
+  max-block-size: min(36rem, var(--anchored-max-height, 70dvh));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
