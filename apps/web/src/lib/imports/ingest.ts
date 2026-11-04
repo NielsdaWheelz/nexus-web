@@ -213,9 +213,10 @@ export async function uploadIngestFile({ file, attempt, guard, signal = new Abor
 
   async function transferAndConfirm(): Promise<Schema<"Published">> {
     const upload = attempt.session!;
-    if (!attempt.bytes_uploaded) {
+    const remaining = Date.parse(upload.expires_at) - Date.now();
+    // Expired bytes cannot settle an unanswered confirmation; replay it for the actual outcome.
+    if (!attempt.bytes_uploaded && (remaining > 0 || !attempt.confirmation_unsettled)) {
       onPhaseChange?.("Uploading");
-      const remaining = Date.parse(upload.expires_at) - Date.now();
       if (remaining <= 0) { attempt.expired = true; throw outcome({ kind: "Expired" }); }
       let status: number;
       try {
