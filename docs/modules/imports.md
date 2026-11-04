@@ -129,7 +129,9 @@ uncertain commands retain their own controls across filtering, selection and
 inspector closure; those presentation changes prove no outcome. the common
 work guard protects their in-flight and uncertain lifetime. removal and discard
 name the same session deletion, so acceptance settles that one intent.
-neither a read nor a restored view sends a command.
+an authoritative filing refusal retires uncertainty but retains the same file and staged
+generation for explicit review. that retry reads a fresh guard; a failed guard read retains
+the command without claiming uncertainty. neither a read nor a restored view sends a command.
 
 every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
 
@@ -152,19 +154,23 @@ for every surface and for the intake's slips. nothing survives a reload.
   `into`. a created library joins the `into` of the visit its latest send began in, while
   that visit lasts, and that visit's waiting admissions either way: a create that outlives
   its visit never sets the next one's, and one retried in a later visit files for that one.
+  a retry sent while closed joins no visit or deferred admission.
 - **send.** enter's one `GET /libraries/destinations` freezes each line's guard: the removal
   revision and its libraries. a failed read is `no start`, or `offline`, and so is a send
   the shell's admission holds at its start, when no earlier send went unanswered. a held
-  replay stays unknown: that attempt never left, but an earlier one may have landed.
+  replay stays unknown: that acquisition did not run, but an earlier one may have landed.
   a held first confirm reads `couldn’t check the file.` with the transport's reason: the
-  bytes are up and nexus was asked nothing. links go one at a time and file puts two at a
+  bytes are up and the check did not run. links go one at a time and file puts two at a
   time; a link's accept and an upload's confirm, both serializable under the viewer lock,
   take one slot between them. every send answers within 30 s, the put within its upload window.
   acceptance drops a file's `File`: nothing sends it again.
 - **answers.** a line is unknown only where an answer was lost after the server could act:
   a link's accept, or a confirm. a lost answer before confirm published nothing: `upload
   stopped`. 401 and 426 answer before any route: handoff on a first send, still unknown
-  after an earlier unanswered send. a storage failure at a first confirm published nothing:
+  after an earlier unanswered send. exact pre-route `E_AUTH_UNAVAILABLE` likewise preserves
+  uncertainty, or uses no-start/check-held for a first acquisition/check with the shared busy
+  reason. the shared upload attempt owns confirmation uncertainty; the intake has no second flag.
+  a storage failure at a first confirm published nothing:
   `couldn’t check the file`; after an unanswered confirm it is
   unknown. a refused create forgets the attempt's guard; a fence or library refusal at
   confirm opens it to review. an undeclared refusal reads `couldn’t import this.` and warns
@@ -199,7 +205,8 @@ for every surface and for the intake's slips. nothing survives a reload.
   of one, asks `window.confirm` first, since either may have landed.
 - **visit.** the intake owns the field, its attempt feedback, destinations and whether a
   nonempty admission was made. admission marks the visit even while library creation holds
-  it; draining that admission later changes no later visit's facts. explicit field
+  it; draining that admission later changes no later visit's facts. the controller starts a
+  visit synchronously at the palette's opening edge; a closed palette has none. explicit field
   replacement and new file admission clear attempt feedback; the link sieve owns its
   remaining-prose feedback.
 - **disarmExcept** retains only an explicitly selected line's open intent and clears every
@@ -274,7 +281,9 @@ from sending, so a failed guard read cannot become an unknown write. an authorit
 filing refusal permits review against the same staged generation before expiry.
 technical busy replies and unanswered confirmations retain the exact command; an
 in-call abort lacks a dispatch fact and conservatively preserves uncertainty.
-a published receipt or a typed terminal upload result settles that confirmation.
+callers read the shared upload attempt's `confirmation_unsettled` fact. a published
+receipt or authoritative terminal confirmation clears it; local expiry before a
+new dispatch cannot settle an earlier unanswered confirmation.
 losing the owner requires file reselection; replay state does not survive browser
 restart. imports exposes its existing retry-upload action, not a second live
 confirmation or placement owner.

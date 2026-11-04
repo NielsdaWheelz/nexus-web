@@ -96,6 +96,7 @@ export function useNexusController() {
   const player = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const intake = useImportIntake();
+  const { beginVisit } = intake;
   const workspace = useWorkspaceStore();
   const latestWorkspace = useLatestWorkspace();
   const subscribeWorkspace = useSubscribeWorkspace();
@@ -138,6 +139,7 @@ export function useNexusController() {
   useLayoutEffect(() => guard.register(pageOwner), [guard, pageOwner]);
   const [announcementOccurrence, writeAnnouncement] = useState({ text: "" });
   const pendingImportSpeech = useRef<{ readonly text: string } | null>(null);
+  const deliveredAnnouncement = useRef<object | null>(null);
   const setAnnouncement = useCallback((text: string) => {
     pendingImportSpeech.current = null;
     writeAnnouncement({ text });
@@ -150,6 +152,7 @@ export function useNexusController() {
     writeAnnouncement(next);
   }, []);
   const publishedAnnouncement = useCallback((occurrence: object) => {
+    deliveredAnnouncement.current = occurrence;
     if (pendingImportSpeech.current === occurrence) pendingImportSpeech.current = null;
   }, []);
   const announcement = announcementOccurrence.text;
@@ -159,10 +162,11 @@ export function useNexusController() {
     if (said !== null) announceImport(said);
   });
   const setOpen = useCallback((next: boolean) => {
+    if (next && !visible.current) beginVisit();
     visible.current = next;
     setShown(next && currentPage.current.kind === "Import");
     writeOpen(next);
-  }, [setShown]);
+  }, [setShown, beginVisit]);
   const [focusRevision, setFocusRevision] = useState(0);
   const [list, setList] = useState(EMPTY);
   const latestList = useRef(list);
@@ -384,6 +388,7 @@ export function useNexusController() {
   // Capture focus before the retiring shell disappears. The desktop query also
   // owns pane browsing; arranging panes does not imply mobile text entry.
   if (shell.current !== viewport.isMobile) {
+    if (deliveredAnnouncement.current === announcementOccurrence) setAnnouncement("");
     if (open) {
       if (page.kind === "Root" && reordering) {
         transferFocus.current = "PaneList";

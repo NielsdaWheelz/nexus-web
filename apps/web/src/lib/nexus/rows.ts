@@ -219,7 +219,7 @@ export function syncRows(input: Reference & {
   switch (intent.kind) {
     case "Resource": return [referenceRow(intent.ref, input, panes, usage)];
     case "ImportLinks": return [{
-      key: "Import", localMatch: null, icon: Icon.Upload,
+      key: `Import:${JSON.stringify(intent.links)}`, localMatch: null, icon: Icon.Upload,
       ...(intent.links.length === 1 ? { label: "import", detail: linkPointer(intent.links[0]!), name: `import ${linkPointer(intent.links[0]!)}` } : { label: `import ${intent.links.length} links` }),
       action: intent.links.length > ADMIT_LIMIT
         ? { kind: "Unavailable", reason: `100 at a time. this has ${intent.links.length}.` }

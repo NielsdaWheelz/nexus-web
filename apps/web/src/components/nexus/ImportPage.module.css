@@ -10,6 +10,7 @@
 }
 
 .page[data-mobile] { --text-edge: var(--space-4); }
+.header { padding-inline: var(--space-4); }
 
 .fieldRow {
   display: flex;

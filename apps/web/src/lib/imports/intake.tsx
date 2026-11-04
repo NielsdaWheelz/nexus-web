@@ -68,10 +68,10 @@ export type LineRefusal =
   | { readonly kind: "Handoff"; readonly transport: "SignIn" | "Update" }
   /** Not sent. */
   | { readonly kind: "Offline" }
-  /** Not sent: enter's destinations read failed, or admission held the send. */
+  /** Acquisition did not run: its destinations read, admission or pre-route auth held it. */
   | { readonly kind: "NoStart"; readonly transport: Exclude<Transport, "Offline"> }
-  /** The bytes are in storage, but admission held the confirm at its turn: nexus was asked
-   * nothing, and the same session's confirm can still go. */
+  /** The bytes are in storage, but admission or pre-route auth held the check. The same
+   * session's confirmation can still go. */
   | { readonly kind: "CheckHeld"; readonly transport: Transport }
   | { readonly kind: "WrongType" }
   | { readonly kind: "TooBig"; readonly fileKind: UploadFileKind }
@@ -127,9 +127,6 @@ type Entry = IntakeLine & {
   readonly guard: AcquisitionGuard | null;
   readonly upload: UploadAttempt | null;
   readonly sourceAttemptId: string | null;
-  /** Whether a confirm of this line's session went unanswered: a later storage failure at
-   * confirm may then follow a publication, so it reads unknown, not refused. */
-  readonly confirmUnanswered: boolean;
   /** Waiting to replay a send whose answer was lost, which may have landed: its id, guard
    * and confirmation go out unchanged, so no batch reread re-freezes it. */
   readonly replay: boolean;
@@ -137,7 +134,7 @@ type Entry = IntakeLine & {
 
 /** An admission waiting on a library create, holding its visit's `into` from when it was
  * entered; a library created during that visit joins it. */
-type Deferral = { readonly input: Admission & { readonly into: readonly LibraryDestination[] }; readonly visit: object };
+type Deferral = { readonly input: Admission & { readonly into: readonly LibraryDestination[] }; readonly visit: object | null };
 
 type State = {
   readonly lines: readonly IntakeLine[];
@@ -189,13 +186,12 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
   let into: readonly LibraryDestination[] = [];
   let defect: State["defect"] = null;
   let deferred: readonly Deferral[] = [];
-  /** The open visit: `endVisit` replaces it, so a create that outlives its visit never
-   * writes the next one's `into`. */
-  let visit = {};
+  /** Only an open palette has a visit; a closed retry cannot select for a later visit. */
+  let visit: object | null = null;
   /** The visit each library create's latest send began in, keyed by the `onCreated` the
    * intake gave it, which its attempt carries: a retry or a retyped name in a later visit
    * sends for that visit. */
-  const sentIn = new WeakMap<(destination: LibraryDestination) => void, object>();
+  const sentIn = new WeakMap<(destination: LibraryDestination) => void, object | null>();
   let showing = false;
   let lifetime: AbortController | null = null;
   let host: Host | null = null;
@@ -255,9 +251,9 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     update(id, line => ({ ...line, stage, openOnAccept: null }));
   const refuse = (id: string, refusal: LineRefusal) => settle(id, { kind: "Refused", refusal });
 
-  /** This attempt never ran; that cannot answer an earlier unanswered send. */
+  /** This acquisition did not run; that cannot answer an earlier unanswered send. */
   function didNotRun(line: Entry, refusal: LineRefusal) {
-    if (line.replay || line.confirmUnanswered) settle(line.id, { kind: "Unknown" });
+    if (line.upload === null ? line.replay : line.upload.confirmation_unsettled) settle(line.id, { kind: "Unknown" });
     else refuse(line.id, refusal);
   }
 
@@ -279,7 +275,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     return turn;
   }
 
-  /** A line that never left, by the transport that held it. */
+  /** An acquisition that did not run, by the transport that held it. */
   const notSent = (transport: Transport): LineRefusal => transport === "Offline" ? { kind: "Offline" } : { kind: "NoStart", transport };
   /** Why a send must not go out now: offline, or the refusal `apiFetch` would throw unsent. */
   function held(): Transport | null {
@@ -354,7 +350,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const file = line === null ? null : fileOf(line);
       if (!alive(scope) || line === null || file === null || line.upload === null || line.guard === null) return;
       const holding = held();
-      if (holding !== null) return didNotRun(line, notSent(holding));
+      if (holding !== null) return didNotRun(line, line.upload.bytes_uploaded ? { kind: "CheckHeld", transport: holding } : notSent(holding));
       const at = (stage: LineStage) => { if (alive(scope) && !stop.signal.aborted) update(id, current => ({ ...current, stage })); };
       at({ kind: "Sending" });
       try {
@@ -402,17 +398,19 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     if (line === null || isAbortError(error)) return;
     if (error instanceof ConfirmHeld) return didNotRun(line, { kind: "CheckHeld", transport: error.transport });
     const confirming = line.stage.kind === "Verifying";
-    if (error instanceof UploadSessionError) return uploadFail(line, error.outcome, confirming, scope);
+    if (error instanceof UploadSessionError) return line.upload?.confirmation_unsettled
+      ? settle(id, { kind: "Unknown" }) : uploadFail(line, error.outcome, confirming, scope);
     if (!isApiError(error) || isSameSystemApiDefect(error)) {
       settle(id, { kind: "Unknown" });
       return publishDefect(error);
     }
     const transport = transportOf(error);
     if (transport === "SignIn" || transport === "Update") return didNotRun(line, { kind: "Handoff", transport });
+    if (error.code === "E_AUTH_UNAVAILABLE") return didNotRun(line, confirming ? { kind: "CheckHeld", transport } : notSent(transport));
     if (!isRefusal(error)) {
-      // unanswered: before confirm a file published nothing
-      if (line.source.kind === "File" && !confirming) return refuse(id, { kind: "BytesLost" });
-      update(id, current => ({ ...current, confirmUnanswered: current.confirmUnanswered || confirming, stage: { kind: "Unknown" }, openOnAccept: null }));
+      // without an unsettled confirmation, a pre-confirm failure published nothing
+      if (line.source.kind === "File" && !line.upload?.confirmation_unsettled) return refuse(id, { kind: "BytesLost" });
+      settle(id, { kind: "Unknown" });
       return;
     }
     switch (error.code) {
@@ -445,7 +443,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       case "LibraryForbidden": return libraryGone(line, scope);
       case "Unresolved":
         if (!confirming) return refuse(line.id, { kind: "NotPrepared" });
-        return line.confirmUnanswered ? settle(line.id, { kind: "Unknown" }) : refuse(line.id, { kind: "NotChecked" });
+        return refuse(line.id, { kind: "NotChecked" });
       case "IntentMalformed":
         console.warn(JSON.stringify({ event: "import_refusal_undeclared", outcome: cause.kind }));
         return refuse(line.id, { kind: "Undeclared" });
@@ -565,7 +563,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     const listed = new Set(entries.flatMap(line => line.source.kind === "Link" ? [line.source.url] : []));
     const line = (source: IntakeSource, stage: LineStage): Entry => ({
       id: crypto.randomUUID(), source, into: libraries, batch, openOnAccept: null, stage,
-      attemptId: crypto.randomUUID(), guard: null, sourceAttemptId: null, confirmUnanswered: false, replay: false,
+      attemptId: crypto.randomUUID(), guard: null, sourceAttemptId: null, replay: false,
       upload: source.kind === "File" && source.file !== null ? createUploadAttempt() : null,
     });
     const added: Entry[] = [];
@@ -622,7 +620,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
    * and generation once an authoritative refusal opened it to review. */
   const refrozen = (line: Entry): Entry => {
     if (line.upload !== null) reviewUploadAttempt(line.upload);
-    return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID(), replay: false, confirmUnanswered: false };
+    return { ...line, stage: { kind: "Waiting" }, guard: null, attemptId: crypto.randomUUID(), replay: false };
   };
   const refusalOf = (line: Entry) => line.stage.kind === "Refused" ? line.stage.refusal.kind : null;
 
@@ -630,7 +628,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
     const line = get(id);
     if (line === null || refusalOf(line) !== "Expired") return;
     const refusal = uploadFileRefusal(file);
-    const next: Entry = { ...line, source: { kind: "File", name: file.name, sizeBytes: file.size, file }, upload: createUploadAttempt(), confirmUnanswered: false };
+    const next: Entry = { ...line, source: { kind: "File", name: file.name, sizeBytes: file.size, file }, upload: createUploadAttempt() };
     if (refusal === null) return enqueue([refrozen(next)]);
     entries = entries.map(entry => entry.id === id ? next : entry);
     refuse(id, refusal === "TooBig" ? { kind: "TooBig", fileKind: getFileUploadKind(file)! } : { kind: refusal });
@@ -664,6 +662,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const joined = (destination: LibraryDestination) => {
         const during = sentIn.get(joined);
         sentIn.delete(joined);
+        if (during === null || during === undefined) return;
         const join = (libraries: readonly LibraryDestination[]) => libraries.some(library => library.id === destination.id) ? libraries : [...libraries, destination];
         if (during === visit) into = join(into);
         deferred = deferred.map(waiting => waiting.visit === during ? { ...waiting, input: { ...waiting.input, into: join(waiting.input.into) } } : waiting);
@@ -703,7 +702,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
         unsubscribe();
         if (lifetime !== scope) return;
         lifetime = null;
-        entries = []; queue = []; deferred = []; field = ""; fieldLine = null; hasAdmitted = false; into = [];
+        entries = []; queue = []; deferred = []; field = ""; fieldLine = null; hasAdmitted = false; into = []; visit = null;
         freezing = false; linkSending = false; filesSending = 0; showing = false;
         settledBatches = new Map(); unseen = new Set(); accepting = new Set();
         publish();
@@ -741,7 +740,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       switch (line.stage.refusal.kind) {
         // one reread re-freezes the batch: a removal must not cost a press per line
         case "Changed": return enqueue(batch.filter(other => refusalOf(other) === "Changed" || other.stage.kind === "Waiting" && !other.replay).map(refrozen));
-        // nothing left, so one press sends the batch's held lines again: a held confirm sends
+        // acquisition or check did not run, so one press sends the held lines again: a held confirm sends
         // its session's confirm. an id goes out with one guard only, so a line holding one
         // resends what it may have sent before, perhaps as an unknown's replay; a line whose
         // freeze failed holds none and reads afresh
@@ -790,13 +789,14 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       if (line !== null && linePhase(line.stage) === "Running") update(id, current => ({ ...current, openOnAccept: disposition }));
     },
     disarmExcept,
+    beginVisit() { visit = {}; },
     /** The visit's end: the field and `into` reset, and what is done leaves. */
     endVisit() {
       field = "";
       fieldLine = null;
       hasAdmitted = false;
       into = [];
-      visit = {};
+      visit = null;
       entries = entries.filter(line => !(line.stage.kind === "Accepted" && (line.stage.truth.kind === "Readable" || line.stage.truth.kind === "Removed")
         || refusalOf(line) === "Superseded"));
       queue = queue.filter(id => get(id) !== null);
@@ -839,7 +839,7 @@ export function useImportIntake() {
     into: state.into, running: state.running, unsettled: state.unsettled, defect: state.defect,
     settledAt: (batch: string): number | null => state.settledAt.get(batch) ?? null,
     setField: intake.setField, setFieldLine: intake.setFieldLine, setInto: intake.setInto, admit: intake.admit, retry: intake.retry, retryWithout: intake.retryWithout,
-    reselect: intake.reselect, stop: intake.stop, remove: intake.remove, arm: intake.arm, disarmExcept: intake.disarmExcept, endVisit: intake.endVisit,
+    reselect: intake.reselect, stop: intake.stop, remove: intake.remove, arm: intake.arm, disarmExcept: intake.disarmExcept, beginVisit: intake.beginVisit, endVisit: intake.endVisit,
   };
 }
 

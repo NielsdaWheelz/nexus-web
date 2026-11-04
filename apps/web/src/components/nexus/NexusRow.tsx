@@ -144,7 +144,7 @@ export function nexusRowVerbs(
   if (row.key.startsWith("Continuation:") || row.key === "Resource:Playback:Current") return null;
   const href = controller.destinationHref(row);
   const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
-  const run = row.key === "Import" || /^(QuickAction|Intent):/.test(row.key);
+  const run = row.key.startsWith("Import:") || /^(QuickAction|Intent):/.test(row.key);
   // Opening the import field ignores disposition; sending links can arm a fresh pane.
   const opensImport = row.key === "QuickAction:Nexus.Quick.Import";
   const verb = (fork: boolean): NexusVerb => {

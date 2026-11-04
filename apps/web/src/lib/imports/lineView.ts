@@ -1,6 +1,6 @@
 /**
  * What an intake line says, for every surface that shows one (the import page, share)
- * and for the intake's own slips: the words of docs/import-spec.md's line states,
+ * and for the intake's own slips: the module's line states,
  * composed from the line alone. Pure but for the build's update remedy, which the
  * transport lines read. It knows no surface: verbs are named, never run.
  */
@@ -99,7 +99,7 @@ function refusalView(line: IntakeLine, refusal: LineRefusal): Said {
     case "Handoff": return { two: transportLine(refusal.transport, "couldn’t import this."), tone: "Warning", verb: transportVerb(refusal.transport) };
     case "Offline": return { two: "you’re offline. this hasn’t been sent.", tone: "Warning", verb: RETRY };
     case "NoStart": return { two: transportLine(refusal.transport, "couldn’t start."), tone: "Warning", verb: transportVerb(refusal.transport) };
-    // the bytes went, so nothing failed to start: nexus was never asked to check them
+    // bytes reached storage, but the confirmation did not run
     case "CheckHeld": return { two: transportLine(refusal.transport, "couldn’t check the file."), tone: "Warning",
       verb: refusal.transport === "Offline" ? RETRY : transportVerb(refusal.transport) };
     case "WrongType": return { two: "pdf or epub only", tone: "Danger", verb: null };
@@ -180,7 +180,7 @@ const OUTCOMES: readonly (readonly [Outcome, string])[] = [
   ["Refused", "refused"], ["NotSent", "not sent"], ["AlreadyHere", "already here"], ["RemovedSince", "removed since"],
 ];
 
-/** Nexus was never asked to publish: a held confirm's bytes wait in storage, unpublished. */
+/** These refusals establish no publication; any uploaded bytes remain unpublished. */
 const NOT_SENT: ReadonlySet<LineRefusal["kind"]> = new Set(["Offline", "NoStart", "CheckHeld", "BytesLost", "NotPrepared", "Unreadable"]);
 
 /** A settled line's part in its batch's ledger. */

@@ -238,7 +238,7 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   return (
     <section className={styles.page} data-import-page="" data-mobile={mobile || undefined} style={readerSurfaceStyle(profile)}>
       {mobile
-        ? <header className={switchboard.header}>{back}<h2 tabIndex={-1} data-switchboard-heading>import</h2></header>
+        ? <header className={`${switchboard.header} ${styles.header}`}>{back}<h2 tabIndex={-1} data-switchboard-heading>import</h2></header>
         : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>import</h2>}
       <div className={styles.fieldRow} data-feedback-controls="true">
         <div className={styles.fieldBox}>
