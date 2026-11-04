@@ -81,14 +81,42 @@ export async function openLabAndroid(input: {
     const port = await adb("forward", "tcp:0", `localabstract:webview_devtools_remote_${pid}`);
     if (!/^\d+$/.test(port)) throw new Error("android lab forward did not publish a port");
     forward = `tcp:${port}`;
+    // justify-polling: devtools has no pre-CDP target notification; retain the bounded startup cadence.
     await expect.poll(async () => {
-      try { return (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) })).ok; }
-      catch { return false; }
-    }, { timeout: 20_000, message: "owned android WebView devtools readiness" }).toBe(true);
+      let targets: unknown;
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) });
+        if (!response.ok) return { http_status: response.status };
+        targets = await response.json();
+      } catch (error) {
+        // report malformed protocol data without echoing titles, urls or authentication material.
+        if (error instanceof SyntaxError) throw new Error("android lab owned WebView target list is not valid JSON");
+        // justify-ignore-error: connection startup and this request's timeout are bounded readiness failures.
+        if (error instanceof TypeError || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")))
+          return { reachable: false };
+        throw error;
+      }
+      if (!Array.isArray(targets)) throw new Error("android lab owned WebView target list is not an array");
+      const urls: string[] = [];
+      for (const target of targets) {
+        if (typeof target !== "object" || target === null || typeof target.type !== "string")
+          throw new Error("android lab owned WebView target has no type");
+        if (target.type !== "page") continue;
+        if (typeof target.url !== "string") throw new Error("android lab owned WebView page target has no URL");
+        urls.push(target.url);
+      }
+      return { targets: targets.length, pages: urls.length,
+        owned_pages: urls.filter(url => URL.canParse(url) && new URL(url).origin === input.web_origin).length };
+    }, { timeout: 20_000, intervals: [100, 250, 500, 1000], message: `owned android WebView page readiness (pid ${pid}, forward ${forward})` })
+      .toMatchObject({ pages: 1, owned_pages: 1 });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 20_000, noDefaults: true });
-    const pages = browser.contexts()[0]?.pages() ?? [];
+    const contexts = browser.contexts();
+    const pageCounts = contexts.map(context => context.pages().length);
+    const pages = contexts.length === 1 ? contexts[0].pages() : [];
     const found = pages[0];
-    if (pages.length !== 1 || !found) throw new Error("android lab expected one owned application WebView page");
+    const ownedOrigin = found !== undefined && URL.canParse(found.url()) && new URL(found.url()).origin === input.web_origin;
+    if (contexts.length !== 1 || pages.length !== 1 || !found || !ownedOrigin)
+      throw new Error(`android lab expected one owned application WebView page (pid ${pid}, forward ${forward}, contexts ${contexts.length}, pages [${pageCounts.join(", ")}], owned origin ${ownedOrigin})`);
     page = found;
     return page;
   };
