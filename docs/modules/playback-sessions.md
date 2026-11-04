@@ -70,7 +70,9 @@ queues or retain descriptor authority.
 
 up next composes shared compact rows over the complete sequence. earlier, current
 and later entries share one list; exhaustion retains history. current paint names
-an occurrence, not audible playback. title navigation and occurrence selection
+an occurrence, not audible playback. up next is a playback surface: each row
+reserves 44px show artwork, episode title and linked show credit. a null show
+leaves metadata absent and uses episode-title initials. title navigation and occurrence selection
 remain independent; generic media actions do not own queue-row playback.
 
 the web runtime publishes confirmed playback authority independently of index

@@ -3,21 +3,17 @@
 // The anonymous reader for `/s#share=<token>`: the share's title, source and
 // quote over the whole shared document, read-only, opened at the shared
 // highlight. Another `#share=` hash opens in place; any other hash change (an
-// in-document link) leaves the reading alone.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FeedbackBusy,
-  FeedbackProvider,
-  FeedbackRecoveryControl,
-  FeedbackState,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import {
-  apiTransportFeedback,
-  isApiError,
-  readResponse,
-} from "@/lib/api/client";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+// in-document link) leaves the reading alone. What a read finds stands where the
+// reading would; slips stand at the page's root, over the viewport. Focus inside
+// the share's main, gate or reading, moves to whichever main replaces it.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
+import { StageAnchor } from "@/components/feedback/Slips";
+import type { Shell } from "@/components/feedback/stage";
+import { isApiError, readResponse, type ApiError } from "@/lib/api/client";
+import { useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Dialog from "@/components/ui/Dialog";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -31,15 +27,23 @@ import DocumentReaderView, {
 } from "@/lib/documentReader/DocumentReader";
 import type { ReaderTarget } from "@/lib/documentReader/model";
 import { isAbortError } from "@/lib/errors";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { publicFetch, publicSource } from "./publicSource";
 import styles from "./publicShare.module.css";
 
 type Share = Schema<"PublicShareOut">;
 type State =
-  | "Resolving"
-  | "Unavailable"
-  | { readonly token: string; readonly failure: FeedbackContent; readonly retrying: boolean }
-  | { readonly token: string; readonly share: Share };
+  | { readonly kind: "Resolving" }
+  /** No token, or the server's masked 404: nothing is shared at this link. */
+  | { readonly kind: "Absent" }
+  /** The share's identity changed under the reading again, after one reread. */
+  | { readonly kind: "Changed"; readonly token: string; readonly retrying: boolean }
+  | { readonly kind: "Failed"; readonly token: string; readonly error: ApiError; readonly retrying: boolean }
+  | { readonly kind: "Ready"; readonly token: string; readonly share: Share };
+const RESOLVING: State = { kind: "Resolving" };
+const ABSENT: State = { kind: "Absent" };
+/** Every share read sends no credentials, so no verb here signs in. */
+const SHELL: Shell = { signIn: null };
 
 const TOKEN = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/;
 const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
@@ -53,22 +57,33 @@ const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
 };
 
 export default function PublicShareReader() {
-  const [state, setState] = useState<State>("Resolving");
+  const [state, setState] = useState<State>(RESOLVING);
   const [attempt, setAttempt] = useState(0);
-  const [readOccurrence, setReadOccurrence] = useState(() => ({}));
+  const throwLater = useThrowLater();
   const shell = useRef<HTMLDivElement>(null);
-  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
-  const bindShell = useCallback((element: HTMLDivElement | null) => { shell.current = element; setBounds(element); }, []);
   const reloadedToken = useRef<string | null>(null);
   const contentChanged = useCallback((token: string) => {
     if (reloadedToken.current === token) {
-      setState({ token, retrying: false, failure: { tone: "Warning", title: "this piece changed. reload to continue." } });
+      setState({ kind: "Changed", token, retrying: false });
       return;
     }
     reloadedToken.current = token;
-    setState("Resolving");
+    setState(RESOLVING);
     setAttempt(value => value + 1);
   }, []);
+  const reread = () => setAttempt(value => value + 1);
+  // A ref's cleanup runs before react removes its element, so focus is still where it was.
+  // Each kind has its own main, so every change of kind replaces it.
+  const mainHeldFocus = useRef(false);
+  const main = useCallback((element: HTMLElement | null) => {
+    if (element === null) return;
+    return () => { mainHeldFocus.current = element.contains(document.activeElement); };
+  }, []);
+  useLayoutEffect(() => {
+    if (!mainHeldFocus.current) return;
+    mainHeldFocus.current = false;
+    shell.current?.querySelector("main")?.focus({ preventScroll: true });
+  }, [state.kind]);
 
   useEffect(() => {
     let controller = new AbortController();
@@ -76,34 +91,22 @@ export default function PublicShareReader() {
       controller.abort();
       controller = new AbortController();
       const { signal } = controller;
-      setReadOccurrence({});
       const token = TOKEN.exec(window.location.hash)?.[1];
-      setState((current) => token && typeof current === "object" && "failure" in current && current.token === token
-        ? { ...current, retrying: true }
-        : token ? "Resolving" : "Unavailable");
+      setState((current) => !token ? ABSENT
+        : (current.kind === "Failed" || current.kind === "Changed") && current.token === token ? { ...current, retrying: true }
+        : RESOLVING);
       if (!token) return;
       try {
         const body = await readResponse<
           ApiJson<"/public/resource-share", "get">
         >(await publicFetch("", token, signal));
-        if (!signal.aborted) setState({ token, share: body.data });
+        if (!signal.aborted) setState({ kind: "Ready", token, share: body.data });
       } catch (error) {
         if (signal.aborted || isAbortError(error)) return;
+        // A defect is not a dead link: it reaches the route's boundary.
+        if (!isApiError(error)) { throwLater({ error }); return; }
         // Only the server's masked 404 means the link is dead.
-        if (!isApiError(error) || error.status === 404) setState("Unavailable");
-        else {
-          const title = "This shared reading couldn’t be opened";
-          setState({
-            token,
-            retrying: false,
-            failure: apiTransportFeedback(error, title) ?? {
-              tone: "Danger",
-              title,
-              message: "Something went wrong. Try again.",
-              requestId: error.requestId,
-            },
-          });
-        }
+        setState(error.status === 404 ? ABSENT : { kind: "Failed", token, error, retrying: false });
       }
     };
     void resolve();
@@ -115,62 +118,48 @@ export default function PublicShareReader() {
       controller.abort();
       window.removeEventListener("hashchange", changed);
     };
-  }, [attempt]);
+  }, [attempt, throwLater]);
+  useFailedReadRepair(state.kind === "Failed", state.kind === "Failed" && state.retrying, reread);
 
-  const ready = typeof state === "object" && "share" in state ? state : null;
-  const failure =
-    typeof state === "object" && "failure" in state ? state : null;
-  const title =
-    ready?.share.title ??
-    (state === "Unavailable" ? "Share unavailable" : "Shared reading");
+  const title = state.kind === "Ready" ? state.share.title : state.kind === "Absent" ? "Share unavailable" : "Shared reading";
   return (
-    <FeedbackProvider><div className={styles.shell} ref={bindShell} tabIndex={-1}>
-      <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-        protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header, main." + styles.header)] : []}
-        returnFocus={() => shell.current}>
+    <FeedbackProvider shell={SHELL}><div className={styles.shell} ref={shell} tabIndex={-1}>
       {/* The route emits no metadata title, so this is the document's only one. */}
       <title>{`${title} · Nexus`}</title>
-      {ready ? (
+      {state.kind === "Ready" ? (
         <SharedDocument
-          key={`${ready.token}:${attempt}`}
-          token={ready.token}
-          share={ready.share}
+          key={`${state.token}:${attempt}`}
+          token={state.token}
+          share={state.share}
           onContentChanged={contentChanged}
+          mainRef={main}
         />
       ) : (
         <main
-          className={styles.header}
+          key={state.kind}
+          ref={main}
+          className={`${styles.header} ${styles.gate}`}
+          style={readerSurfaceStyle(PUBLIC_PROFILE)}
           tabIndex={-1}
         >
-          <span className={styles.recoverySlot}><FeedbackRecoveryControl /></span>
           <div className={styles.brand}>Nexus</div>
-          {state === "Resolving" ? (
-            <FeedbackBusy pending subject={readOccurrence} />
-          ) : state === "Unavailable" ? (
-            <FeedbackState content={{ tone: "Neutral", title: "share unavailable", message: "this link is invalid, revoked, or no longer readable." }} announcement="Polite" />
-          ) : failure ? (
-            <FeedbackState
-              content={failure.failure}
-              announcement="Assertive"
-              returnFocus={() => shell.current?.querySelector<HTMLElement>("main") ?? shell.current}
-              actions={[
-                {
-                  label: "retry",
-                  busy: failure.retrying,
-                  onClick: () => {
-                    if (failure.retrying) return;
-                    setState({ ...failure, retrying: true });
-                    setAttempt((n) => n + 1);
-                  },
-                },
-              ]}
-            />
-          ) : null}
+          <Gate state={state} reread={reread} />
         </main>
       )}
-      </FeedbackSurface>
+        <div className={styles.stage}><StageAnchor kind="Root" /></div>
     </div></FeedbackProvider>
   );
+}
+
+/** What stands where the reading would, until it opens. */
+function Gate({ state, reread }: { readonly state: Exclude<State, { kind: "Ready" }>; readonly reread: () => void }) {
+  switch (state.kind) {
+    case "Resolving": return <Ruling />;
+    case "Absent": return <Fact line={{ fact: "nothing is shared at this link." }} speak />;
+    case "Changed": return <Fact line={{ fact: "this reading changed since it opened." }} speak
+      verbs={[{ label: "retry", commandKey: "PublicShare.reread", run: reread, busy: state.retrying }]} />;
+    case "Failed": return <Failed error={state.error} noun="the shared pages" retry={{ run: reread, busy: state.retrying }} />;
+  }
 }
 
 /** The shared highlight as the reader's one mark, addressed by unit ordinal. */
@@ -196,15 +185,18 @@ function SharedDocument({
   token,
   share,
   onContentChanged,
+  mainRef,
 }: {
   readonly token: string;
   readonly share: Share;
   readonly onContentChanged: (token: string) => void;
+  readonly mainRef: (element: HTMLElement | null) => (() => void) | undefined;
 }) {
   const highlight = share.highlight;
   const changed = useCallback(() => onContentChanged(token), [onContentChanged, token]);
+  const throwLater = useThrowLater();
   const [note, setNote] = useState<Schema<"PublicApparatusOut"> | null>(null);
-  const [noteFailure, setNoteFailure] = useState<string | null>(null);
+  const [noteFailure, setNoteFailure] = useState<{ readonly ordinal: string; readonly error: ApiError; readonly retrying: boolean } | null>(null);
   const noteRequest = useRef<AbortController | null>(null);
   useEffect(() => () => noteRequest.current?.abort(), []);
   const mark = useMemo(() => sharedMark(share), [share]);
@@ -257,22 +249,24 @@ function SharedDocument({
     const controller = new AbortController();
     noteRequest.current = controller;
     setNote(null);
-    setNoteFailure(null);
+    setNoteFailure(current => current?.ordinal === ordinal ? { ...current, retrying: true } : null);
     try {
       const response = await publicFetch(`/apparatus/${ordinal}?expected_identity=${encodeURIComponent(identity)}`,
         token, controller.signal, { "X-Nexus-Wire": String(WIRE_REVISION) });
-      if (response.status === 409) { onContentChanged(token); return; }
       const body = await readResponse<ApiJson<"/public/resource-share/apparatus/{ordinal}", "get">>(response);
-      if (!controller.signal.aborted) setNote(body.data);
+      if (!controller.signal.aborted) { setNote(body.data); setNoteFailure(null); }
     } catch (error) {
-      if (!controller.signal.aborted && !isAbortError(error)) setNoteFailure("this note couldn’t be opened");
+      if (controller.signal.aborted || isAbortError(error)) return;
+      if (!isApiError(error)) { throwLater({ error }); return; }
+      if (error.code === "E_READER_CONTENT_CHANGED") { onContentChanged(token); return; }
+      setNoteFailure({ ordinal, error, retrying: false });
     }
-  }, [identity, onContentChanged, token]);
+  }, [identity, onContentChanged, token, throwLater]);
+  useFailedReadRepair(noteFailure !== null, noteFailure?.retrying ?? false, () => { if (noteFailure) void openNote(noteFailure.ordinal); });
 
   return (
     <>
       <header className={styles.header}>
-        <span className={styles.recoverySlot}><FeedbackRecoveryControl /></span>
         <div className={styles.brand}>Nexus</div>
         <h1>{share.title}</h1>
         {share.bylines.length > 0 ? <p>{share.bylines.join(", ")}</p> : null}
@@ -297,6 +291,7 @@ function SharedDocument({
         </aside>
       ) : null}
       <main
+        ref={mainRef}
         className={epub ? `${styles.reader} ${styles.epub}` : styles.reader}
         tabIndex={-1}
       >
@@ -313,7 +308,8 @@ function SharedDocument({
       </main>
       <Dialog open={note !== null || noteFailure !== null} title={note?.label ?? "note"}
         onClose={() => { noteRequest.current?.abort(); setNote(null); setNoteFailure(null); }}>
-        {noteFailure ? <p role="alert">{noteFailure}</p> : note ?
+        {noteFailure ? <Failed error={noteFailure.error} noun="this note’s contents"
+          retry={{ run: () => void openNote(noteFailure.ordinal), busy: noteFailure.retrying }} /> : note ?
           <PublicNote token={token} note={note} onContentChanged={changed} onReturn={(unit,anchor) => {
             setNote(null);
             void reader.inspect({ target: anchor === null ? { kind: "point", point: { kind: "text", unit, offset: 0 } } : { kind: "anchor", unit, id: anchor } });

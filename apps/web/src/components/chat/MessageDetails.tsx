@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import ResourceLink from "@/components/resources/ResourceLink";
 import type { MessageAction } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
@@ -72,7 +72,7 @@ function Action({ action, undone, onInspect }: {
   const { activity } = action;
   const expandable = Boolean(activity.detail) || action.retrievals.length > 0;
   const state = undone || action.reverted_at !== null ? "undone"
-    : action.status === "error" ? "failed" : action.status === "complete" ? null : action.status;
+    : action.status === "error" ? "didn’t work" : action.status === "complete" ? null : action.status;
   const label = [activity.verb, activity.subject === null ? null : truncateText(activity.subject, 80)].filter(Boolean).join(" · ");
   return <li data-message-action={action.tool_call_index}>
     <div className={styles.actionLine}>
@@ -89,7 +89,7 @@ function Action({ action, undone, onInspect }: {
           onInspect(event.currentTarget);
           if (open && content.current?.contains(document.activeElement)) event.currentTarget.focus({ preventScroll: true });
           setOpen(!open);
-        }}>{open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</button> : null}
+        }}><Icon.Disclose open={open} size={14} aria-hidden="true" /></button> : null}
     </div>
     <div ref={content} id={id} hidden={!open || !expandable}>
       <div className={styles.actionContent}>

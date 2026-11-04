@@ -20,11 +20,12 @@ reader completion can select the next readable lectern row. audio previous,
 next and natural end follow the device queue. `lecternNext` serves readers
 only. natural completion records the real terminal sample, marks played and
 removes lectern intent regardless of playback origin. every activation resolves
-current consumption authority; finished media starts over.
+current consumption authority; finished media starts over. audio playback requires
+a stored episode; discovery does not start an audio preview.
 
 [playback sessions](playback-sessions.md) owns queue schemas, source capture,
 conditional browser persistence, retry postconditions and account cleanup.
-quick reads and suggestions own no playback sequence. browse owns previews;
+quick reads and suggestions own no playback sequence. browse owns discovery previews;
 [podcasts](podcast.md) owns acquisition and sync;
 [consumption activity](consumption-activity.md) owns observed activity/stats;
 [offline](offline.md) owns downloaded files and their leases.
@@ -118,11 +119,11 @@ inverses. inert collection choices preserve still-valid earlier offers.
   checked under the viewer lock before actor/successor validation.
 - `state.py` — sole DML owner of `consumption_overrides`,
   `reader_engagement_states` and `consumption_completion_facts`: the player
-  read, the reader cursor composition, listening writes, finish, undo, unread,
-  reset, the natural-end settle, the collection batch state and media teardown.
-  `settle_natural_end_in_txn` composes completion/removal with browser cursor
-  persistence; `natural_end_is_settled` inspects the full retry postcondition
-  without reapplying it.
+  read, the reader cursor composition, listening writes, finish,
+  undo, unread, reset, the natural-end settle, the collection batch state and
+  media teardown. `settle_natural_end_in_txn` composes completion/removal with
+  browser cursor persistence; `natural_end_is_settled` inspects the full retry
+  postcondition without reapplying it.
 - `listening.py` — sole DML owner of `podcast_listening_states` (position,
   duration, nullable episode rate, reset epoch, `last_engaged_at`). A write is
   `UPDATE … WHERE reset_epoch = :epoch`, else an insert when the epoch is 0;
@@ -246,8 +247,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   application playback source permit a descriptor. processing/transcript readiness
   does not gate audio; remote delivery remains the engine's responsibility.
 - `playAudio({mediaId, knownDescriptor, positionMs, source, recapture})` returns
-  `Applied` or `Superseded` and receives explicit source context. ordinary play matching the current media preserves queue
-  edits and pauses/resumes that occurrence; explicit recapture prepares a new
+  `Applied`, `Superseded` or `Refused` and receives explicit source context. a
+  refusal has already been reported by the player. ordinary timed or untimed play
+  matching the queue cursor’s media preserves queue edits and selects that occurrence; explicit recapture prepares a new
   source snapshot. list owners capture the complete matching source; detail,
   search and suggestion starts create singleton queues. preparation resolves
   before replacement; cancellation before commit preserves the prior queue.
@@ -261,12 +263,13 @@ finish, undo, unread, reset and settle publish `Consumption`.
   activation immediately. `positionMs: null` resumes; a number starts at that exact
   source time. timed play on the live current occurrence seeks in place, preserves
   its load subject and queue edits, and acknowledges play requested, not audibility.
+  activation waits through an in-progress remote-admission recheck.
   another, absent or ended source requires fresh authority before a timed start;
   unanswered authority never substitutes a retained descriptor. its selected
   occurrence installs with the requested time before play is acknowledged.
 - `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
   state/timeline context split, occurrence commands, serialized loads with
-  latest-intent checks, playback preferences and keyboard shortcuts. previous
+  latest-intent checks, playback preferences. previous
   restarts after three seconds or selects the preceding occurrence; exhausted
   previous selects the last occurrence paused. next, natural end and up next
   share one sequence/cursor. manual next preserves play/pause intent without
@@ -323,7 +326,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   narrow broadcast channel. passive tabs mirror state and forward non-play
   commands. explicit play resolves its source, requests cooperative release,
   pauses old audio and drains writes before acquiring/reading paused state.
-  transfer never steals a lock; a five-second timeout prevents late autoplay.
+  transfer never steals a lock; the five-second timeout bounds the other tab's
+  answer. a transfer that wins the lock proceeds within its descriptor-read
+  deadline, so a slow successful handover can start later than the answer budget.
   uncertain persistence prevents release. opening/observing a tab never
   acquires ownership merely because another tab is playing.
 - `lib/player/browserEngine.ts` owns the audio element, listening writes,
@@ -336,12 +341,19 @@ finish, undo, unread, reset and settle publish `Consumption`.
   the shared element; outgoing writes retain their own captured sample/fences.
   an internal resume/retry reload binds its new load subject to the same current
   queue occurrence, never merely to another occurrence of the same media.
+  a paused seek to the end records an ordinary listening sample, keeps the cursor
+  and rests in `Ended`; the next play replays from the beginning. natural end is
+  the separate terminal completion/advance operation. the native downloaded
+  [rest marker does not yet survive process restart](../issues/native-rest-lost-across-restart.md).
 - `lib/player/nativeEngine.ts` — the Android engine, a thin client of
   `window.nexusPlayer` (below). frames are decoded strictly at this boundary and
   snake snapshots map onto the engine state; `source.package_id` identifies a
   downloaded recording (`packageId`). an unanswered bounded request or the
-  service's `{unavailable: true}` frame shows "Player unavailable", never an empty
-  player, until the next frame arrives. `listening_revision` invalidates the
+  service's `{unavailable: true}` frame preserves an explicit unavailable state,
+  never an invented empty player. an unanswered change stays unknown until a
+  deliberate check; focus and reconnect do not reconcile it. a queue revision
+  cannot prove whether a resume, restart or concurrently overtaken command
+  landed. `listening_revision` invalidates the
   listening facts below; observations and explicit delivery retry use its
   `observe_consumption`/`retry_listening` operations. preference commands resolve
   after application and snapshot publication. expired replies are ignored; live
@@ -371,78 +383,138 @@ finish, undo, unread, reset and settle publish `Consumption`.
   epoch, clears unread and makes completion sticky; its natural end applies at its
   captured override revision and leaves the lectern. duration is the activity's,
   else the observed listening record's, else the dated feed's; zero stays unknown.
-- `components/player/` — the persistent desktop/mobile player, loaded-source
-  sheet, desktop playback/chapter pickers and shared presentational fields.
-  the authenticated workspace keeps one mounted player and live-region owner.
-  a hidden desktop slot contributes no geometry or tab stops; its operation
-  owners remain mounted. the permanent rail disclosure indicates active playback
-  or engine/queue/preference-application failure without forcing reopen.
-  a retained stopped queue
-  remains reachable with resume/up next even when the engine is absent.
-  exhausted and empty queues are distinct; before queue authority is known,
-  the player shows loading or its read failure, never “nothing queued”;
-  restoration never starts audio.
-  `Loaded` retains identity, transport and stop while load-scoped preferences
-  initialize; preference-dependent controls require the current settings subject.
-  `Unavailable` exposes the actual warning and android update link only when
-  required. stop unloads and retains sequence/cursor. closing an overlay preserves playback. the downloaded shelf is a
-  separate composition.
-  desktop shares one source/transport/seek/options anatomy across empty, pending,
-  unavailable and loaded states. unavailable controls are natively disabled;
-  unloaded clocks read `—` and speed reads `speed`. pending pause remains usable,
-  and unknown queues never display invented emptiness or counts. wide desktop
-  starts at 80px, narrow desktop at 128px; coarse pointing adds 16px for seeking.
-  the 64rem breakpoint belongs to
-  the player container. equal side tracks center transport in the whole player.
-  enlarged text and substantive failures may grow without clipping controls.
-  the 64px mobile mini adds the existing safe inset and shows artwork, title,
-  subtitle and play/pause in one row, with a decorative progress edge.
-  the mobile drawer orders identity, transport, seek and utilities. its native
-  handle is the only header control. playback and chapters begin closed and
-  are mutually exclusive plain disclosures; opening/closing the sheet, changing
-  subject or changing viewport mode retires them. desktop retains anchored
-  pickers and an interactive footer.
-  standalone chapter pickers use intrinsic list height within available anchored
-  space; embedded mobile chapters retain their host's scrolling. both render the
-  same source order, timestamps and current marker. desktop opening retains
-  current/first focus without seeking. only positive saved-time totals appear
-  beneath silence as `approx. time saved on this device`: the existing device
-  estimate, with no episode, precise or cross-device claim. episode up-next
-  lives inside playback; chapter context lives in chapters.
-  numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
-  work uses control markers and shared app feedback. preparing and saving mark
-  up next busy; other pending activation marks transport busy independently of
-  loaded buffering. routine work adds no footer row. failures expose details and
-  recovery through the same feedback owner. up next is the complete compact
-  occurrence index; its opening/focus, revision-bound commands and shared replacement
-  undo follow [playback sessions](playback-sessions.md). mobile queue/player
-  invocation chooses one initial target inside the same sheet; automatic advance
-  does not refocus it. application
-  gain is unity; volume belongs exclusively to the os/device.
-  pointer scrubbing previews locally and commits once on captured release,
-  including outside the range. cancellation, capture loss, source retirement or
-  sheet closure discards it. keyboard seeks carry the rendered range's subject.
-  mobile motion, reader overlay composition, ordinary-pane flow and
-  keyboard/sheet suppression follow the shared
-  [workspace geometry contract](workspace.md#mobile-reader-chrome).
-  source-specific overlays close on absence, unavailability or viewport-mode
-  change. mobile keeps now playing open across loaded-source changes. ordinary
-  dismissal returns to its actual opener; disappearing player controls recover
-  owned focus to the visible idle link, otherwise the active pane landmark,
-  without scrolling or reclaiming unrelated focus. an open mobile sheet owns
-  lost settings-field focus across load-subject changes and preserves surviving
-  controls. source navigation keeps destination focus. one live region outside
-  inert surfaces owns session/status
-  announcements: initial idle is silent, confirmed absence after a known source
-  says “playback stopped”, and unavailability warns once without claiming a stop.
-  last confirmed source kind/identity survive unavailability, so recovery of that
-  source does not announce a new play. settings actions retain their own feedback.
+## player presentation
+
+`components/player/` owns one persistent player root, desktop bar, mobile mini
+and now-playing sheet. `GlobalPlayerSurfaces` composes session state, one summary
+named by `barSubjectId`, settings, origin, picker refs, focus and announcements;
+it never subscribes to the timeline. the root, `PlayerKeys`, `PlayerOriginObserver`
+and `PlayerOutcomes` remain above workspace error containment whenever the player
+provider is mounted.
+the required render slot places visual surfaces inside the workspace boundary:
+a workspace fallback can replace that subtree while command, origin, settings
+and outcome ownership survives. hiding the desktop slot retires no owner.
+`PlayerOriginObserver` owns the position effect for landing and retirement; visual
+rules do not own origin validity. `PlayerRule`, `PlayerFolio` and reckoning/saved-time
+leaves own their display clock reads. identity and chapters use the chapter selector.
+`savedSilenceMs` is timeline data.
+
+`lib/player/barModel.ts` is the total clock-free projection. first match wins:
+unavailable; loaded without a confirmed subject or while starting another media;
+loaded; pending start; unknown queue; empty queue; exhausted queue; stopped cursor.
+episode identity is `Pending | Unnamed | Named`: pending paints a frame without
+text; named paints the episode before its state. `Ended` remains an active phase.
+
+| mode | identity / clock | bar keys | mini keys |
+| --- | --- | --- | --- |
+| `Unknown` | loading after 400ms while loading; first index failure names the failed read; otherwise its outcome owner speaks | up next only for the first index failure, to reach retry | same |
+| `Empty` | nothing queued; open lectern; hairline | up next | up next |
+| `Stopped` | cursor episode or unnamed stopped state; cold saved progress and remaining time | previous, disc, next, up next | up next, disc |
+| `Finished` | queue finished and episode count; full cold rule | previous, up next | up next |
+| `Starting` | pending episode; starting; hairline | pause disc, up next | disc |
+| `Advancing` | previous loaded identity muted; unseekable loaded clock | loaded keys remain; only disc acts | disc |
+| `Active` | episode and chapter or show; `playbackFailed` alone means failed sound | all eligible keys; chapters absent if none | disc while playing/buffering without sound failure; otherwise up next and disc |
+| `UpdateRequired` | android update fact/link; hairline | none | none |
+| `NotResponding` | known cursor muted; unavailable fact; hairline | none | none |
+
+`liveKeys` owns offered/enabled keys; absent keys are unpainted and blocked ones
+remain focusable with guarded `aria-disabled`. stopped previous needs a preceding
+occurrence; next needs a successor. the first-read failure's up-next exception
+preserves the queue panel's `Failed`/`Fact` retry and supersedes the original
+all-hidden unknown row. loading is not emptiness.
+
+`BarClock` is `Live {loaded, seekable, cold}` or
+`Still {progress, remainingMinutes, cold: true}`. paused, ended and failed sound
+are cold. progress `PlaceTrouble` belongs to recovery and never implies failed
+sound, a cold clock or an artwork dot; `synced` is never a bar failure signal.
+`Active` mode is seekable, including paused and ended audio; `Advancing` is inert.
+stopped uses the summary's saved progress and media minutes at 1×; finished is
+full. unknown duration makes no remaining-time claim. android uses the descriptor
+until the engine knows duration.
+
+the desktop bar is one row, at least 80px high (96px with coarse input). text
+scaling grows it without clipping. its full-width top edge is the rule. at 60rem
+and above equal outer columns center transport and absent keys retain slots.
+below 60rem previous/next leave the live layout; below 46rem chapters leaves and
+remaining time folds into loaded identity; below 36rem up next leaves. at-rest
+keys stay available. play, skips, speed and more never tier-hide. more derives
+rows from live keys and actual control rectangles when opened, then offers stop,
+hide and open episode. opening reads the current subject at activation. stop
+unloads and retains the cursor; hide changes desktop presentation alone.
+
+the mini is 64px plus safe inset, with 44px artwork and rightmost disc; its rule
+is decorative. identity opens the sheet in active, advancing, stopped and starting
+modes. the sheet shares the mode and uses 64px artwork, active-only readout and
+seek/times, transport, active-only speed/chapters/stop, one mutually exclusive
+disclosure, then up next. player invocation focuses the disc; queue invocation
+reveals current once. automatic advance never takes focus. viewport changes
+retire disclosures; a loaded replacement retains the sheet.
+
+the unattended loaded remaining-time form samples at most once per real minute
+between subject/rate/silence/cold/known-duration/draft transitions. skip-silence
+jumps do not reset cadence; a warm seek without a draft may retain the preceding
+sample. cold samples and attended exact time stay live. remaining minutes are
+`ceil(media remaining / observed rate)`, prefixed `≈` under skip silence; zero
+paints nothing. exact media time appears on pointer attention, range keyboard
+focus, scrub, pause/end or failed sound. play focus alone starts no seconds clock.
+the wide folio reserves 17ch. a same-load observed rate change with settings closed
+flashes `speed {rate}` for 1200ms; a load does not. decorative clocks are hidden
+from assistive technology; the range owns elapsed/duration/chapter speech.
+
+`PlayerRule` uses one `positionAt` mapping for hover, draft and release. press
+changes the draft, release seeks once. escape, capture loss, subject retirement,
+loss of seekability or sheet closure cancels it. the released draft lasts until
+within 1.5 seconds of its target or 1500ms. only drawn chapter cuts snap: 2px gaps
+more than 6px apart, excluding first/out-of-duration starts; reach is 3px for mouse
+and 6px for coarse input. bubble dwell is 100ms, immediate on re-entry within
+1.5 seconds. the six-pixel overhang takes no pointer until slot hover; actual
+[scrollbar dragging remains unqualified](../issues/playback-scrollbar-drag-unverified.md).
+
+`usePlayerOrigin` is one session-local, load-keyed return point shared by rail,
+chapters and keys. a seek of at least 60 seconds publishes the origin only after
+the observed clock lands within two seconds of the target within ten seconds.
+a ten-second seek burst keeps its first origin. return seeks and swaps only after
+landing. crossing the mark, moving five media minutes from the target or changing
+load retires it. command-time position reads subscribe to nothing; the isolated
+observer keeps landing, return settlement and retirement active even when workspace
+containment removes every visual rule.
+
+`PlayerKeys` owns global playback keys, retaining edit, composition, modifier and
+interaction-owner guards. `k` toggles; left/right skip −15/+30; shift-left/right
+select previous/next; `[`/`]` step rate; `\` toggles 1× and the session's last
+non-1× choice (1.5× initially); comma/period seek chapters; apostrophe returns only
+while a usable mark exists. space retains native control and reader paging
+behavior. in a reader, horizontal skips need an active player and a scrollport at
+the requested edge. the focused range owns unmodified arrow/page/home/end seeking
+and scrub escape; browser/selection modifier chords stay unclaimed. keys read
+`commands.readPositionMs()` at admission, never subscribe to the timeline.
+
+`PlayerChapters` shares one source-ordered list across popup and sheet. plain and
+shifted row activation both seek through the origin owner. trailing `read from
+here` opens a covered transcript location; shift forks that read. transcript
+availability is read on that command, never to populate the menu. an uncovered
+time says `no transcript for “{chapter}”.` through the shared outcome owner and
+leaves seeking available. stale-load work cannot seek or open for its replacement.
+up next retains [playback sessions](playback-sessions.md#index-and-interaction)'s
+occurrence identity, complete manifest window, navigation and exact commands.
+
+picker return focus uses the actual opener. a hidden/removed owned key recovers
+to disc, up next, then player region; sheet recovery uses its disc. source
+navigation keeps destination focus. one session announcer uses the shared
+`Announcement` and global hidden-text primitive outside inert surfaces. initial
+idle is silent; user stop says playback stopped; exhaustion says queue finished;
+rate changes speak only after application is ready. unavailability warns once;
+retained identity prevents a false new-play claim on recovery. `PlayerOutcomes`
+projects load-specific playback/unread-place outcomes and held unsaved-place or
+unknown-queue writes through main's shared feedback contract. routine progress
+saves create no failure badge or footer. the artwork dot means failed sound alone.
 
 `Engine` and `PlayerSession` expose local
 `readonly supportsSilenceSkipping: boolean`. it is immutable per engine: browser
 false, native true. the session exposes that engine fact, or false before an
 engine exists. it describes capability, not availability or enabled state, and
-belongs to neither `EngineState` nor the native/http wire. the browser's
+belongs to neither `EngineState` nor the native/http wire.
+the browser's
 observed silence remains false; a saved android default cannot create an
 inherited application failure. an explicit unsupported on command still refuses
 at the browser engine boundary.

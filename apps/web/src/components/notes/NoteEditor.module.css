@@ -151,6 +151,10 @@
 
 /* Header prose scrolls independently; its owned controls remain outside the
    scrolling host and inside the shell's usable header space. */
+.shell[data-words-at-risk] {
+  caret-color: var(--danger);
+}
+
 .shell[data-header-editor="true"] {
   display: flex;
   flex-direction: column;

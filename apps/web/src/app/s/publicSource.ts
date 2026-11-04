@@ -3,7 +3,7 @@
 // header, on requests that send no credentials, skip every cache and refuse
 // redirects. The pdf's bytes ride it too: pdf.js's own fetches send cookies.
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
-import { ApiError, readResponse, captureApiAccount, observeApiFailure } from "@/lib/api/client";
+import { ApiError, isApiError, readResponse, captureApiAccount, observeApiFailure } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
@@ -60,14 +60,18 @@ export function publicSource(token: string, onContentChanged: () => void): Reade
           token,
           signal,
         ).then(async response => {
-          if (response.status === 409) { if (!signal.aborted) onContentChanged(); return; }
-          if (!response.ok || signal.aborted) return;
+          if (!response.ok) await readResponse<never>(response);
+          if (signal.aborted) return;
           const blob = await response.blob();
           if (signal.aborted) return;
           const url = URL.createObjectURL(blob);
           signal.addEventListener("abort", () => URL.revokeObjectURL(url), { once: true });
           image.setAttribute(image.tagName.toLowerCase() === "image" ? "href" : "src", url);
-        }).catch(error => { if (!isAbortError(error)) console.error("shared image unavailable", error); });
+        }).catch(error => {
+          if (signal.aborted || isAbortError(error)) return;
+          if (isApiError(error) && error.code === "E_READER_CONTENT_CHANGED") onContentChanged();
+          else console.error("shared image unavailable", error);
+        });
       }
     },
   };

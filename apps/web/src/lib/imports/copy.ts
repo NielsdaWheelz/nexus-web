@@ -6,11 +6,10 @@
  * `SafeFailureCode`, so a new server code is a type error until it is worded.
  */
 
-import type {
-  FeedbackContent,
-  FeedbackTone,
-} from "@/components/feedback/Feedback";
-import { apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+
+import type { Line } from "@/components/feedback/stage";
+import { isApiError, outcomeUnknown, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { assertNever } from "@/lib/assertNever";
 import { formatDisplayDate, formatRelativeTime } from "@/lib/display/format";
 import {
@@ -40,290 +39,284 @@ import { pluralize } from "@/lib/text/pluralize";
 
 /** What one recorded failure code means to a reader; offers come from the server. */
 export interface FailureCopy {
-  /** One short line for a row or an attempt. No terminal period. */
+  /** The ordinary row/history label, without a terminal period. */
   readonly reason: string;
-  /** The headline for a surface that explains the failure. */
+  /** The complete feedback fact. */
   readonly title: string;
-  /** What the reader can understand or do about the cause. */
-  readonly explanation: string;
+  /** An optional factual reason; fact and reason compose to at most 14 lowercase words. */
+  readonly explanation: string | null;
 }
 
 export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
   E_PART_SOURCE_PINNED: {
     reason: "saved text is pinned",
-    title: "pieces refer to this saved text, so it can’t be replaced",
-    explanation: "view pieces in the saved source.",
+    title: "couldn’t replace this source.",
+    explanation: "pieces refer to its saved text.",
   },
   E_ARCHIVE_UNSAFE: {
     reason: "Unsafe EPUB archive",
-    title: "This EPUB cannot be opened safely.",
-    explanation: "Use a valid EPUB from a trusted source.",
+    title: "this epub can’t be opened safely.",
+    explanation: null,
   },
   E_CAPTURE_TOO_LARGE: {
     reason: "Capture too large",
-    title: "This capture is too large to import.",
-    explanation: "Capture a smaller part of the page.",
+    title: "this capture exceeds the size limit.",
+    explanation: null,
   },
   E_EMBEDDING_NOT_CONFIGURED: {
     reason: "related matches are unavailable",
-    title: "text search is ready; related matches are unavailable",
+    title: "text search is ready; related matches are unavailable.",
     explanation: "the embedding provider is not configured.",
   },
   E_EMBEDDING_PROVIDER_UNAVAILABLE: {
-    reason: "Search provider unavailable",
-    title: "The search indexing provider did not respond.",
-    explanation: "Nothing about the source caused this.",
+    reason: "related matches aren’t available",
+    title: "related matches aren’t available.",
+    explanation: null,
   },
   E_FILE_TOO_LARGE: {
     reason: "File too large",
-    title: "This file exceeds the import limit.",
-    explanation: "Remove this import and start a new one with a smaller file.",
+    title: "this file exceeds the import limit.",
+    explanation: null,
   },
   E_FORBIDDEN: {
     reason: "Access refused",
-    title: "Nexus was not allowed to read this source.",
-    explanation: "Use a source you have access to.",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_INGEST_FAILED: {
     reason: "Import failed",
-    title: "This source could not be imported.",
-    explanation: "The import stopped before the reader was ready.",
+    title: "couldn’t import this source.",
+    explanation: null,
   },
   E_INGEST_TIMEOUT: {
-    reason: "Import timed out",
-    title: "Processing took too long.",
-    explanation: "The source was still being processed when the time ran out.",
+    reason: "this import took too long",
+    title: "this import took too long.",
+    explanation: null,
   },
   E_INTERNAL: {
-    reason: "Nexus error",
-    title: "Nexus failed while importing this source.",
-    explanation: "Nothing about the source caused this.",
+    reason: "couldn’t process this source",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_INVALID_CONTENT_TYPE: {
     reason: "Unexpected content type",
-    title: "This source did not return the expected content type.",
-    explanation: "Use a direct link to a PDF, an EPUB or an article.",
+    title: "nexus can’t use this source’s content type.",
+    explanation: null,
   },
   E_INVALID_FILE_TYPE: {
-    reason: "Not a PDF or EPUB",
-    title: "This file is not a valid PDF or EPUB.",
-    explanation: "Use a valid PDF or EPUB, or a direct download link to one.",
+    reason: "file could not be read",
+    title: "nexus couldn’t read that file.",
+    explanation: null,
   },
   E_INVALID_KIND: {
     reason: "Unsupported kind",
-    title: "This source is not a kind Nexus imports.",
-    explanation:
-      "Import an article, a PDF, an EPUB, a podcast episode or a video.",
+    title: "nexus can’t import this kind of source.",
+    explanation: null,
   },
   E_INVALID_REQUEST: {
     reason: "Import request refused",
-    title: "This import request was refused.",
-    explanation: "Start a new import from the source you want.",
+    title: "couldn’t import this source.",
+    explanation: null,
   },
   E_MEDIA_NOT_FOUND: {
     reason: "Import no longer exists",
-    title: "This import is no longer available.",
-    explanation: "It was removed while the work was still running.",
+    title: "this source isn’t available.",
+    explanation: null,
   },
   E_MEDIA_NOT_READY: {
     reason: "Not ready for this step",
-    title: "This import was not ready for that step.",
-    explanation: "Review its current status before commanding it again.",
+    title: "this source wasn’t ready for that step.",
+    explanation: null,
   },
   E_OWNER_REQUIRED: {
     reason: "Only the owner can do this",
-    title: "Only the person who created this import can recover it.",
-    explanation: "Ask them to retry it, or start your own import.",
+    title: "only this source’s creator can do that.",
+    explanation: null,
   },
   E_PDF_PASSWORD_REQUIRED: {
     reason: "PDF is password-protected",
-    title: "This PDF is password-protected.",
-    explanation: "Upload an unlocked PDF to read it in Nexus.",
+    title: "this pdf is password-protected.",
+    explanation: null,
   },
   E_PDF_TEXT_UNAVAILABLE: {
     reason: "Imported without selectable text",
-    title: "This PDF has no selectable text.",
-    explanation: "It can be read as pages; search and quoting need OCR first.",
+    title: "this pdf has no selectable text.",
+    explanation: "search and quoting need text recognition.",
   },
   E_PODCAST_PROVIDER_UNAVAILABLE: {
-    reason: "Podcast provider unavailable",
-    title: "The podcast provider did not respond.",
-    explanation: "The episode is unavailable until the provider answers again.",
+    reason: "the podcast source isn’t available",
+    title: "the podcast source isn’t available.",
+    explanation: null,
   },
   E_REPAIR_NOT_ALLOWED: {
-    reason: "Repair no longer offered",
-    title: "This import can no longer be repaired.",
-    explanation: "Its work moved on. Review its current status.",
+    reason: "repair unavailable",
+    title: "couldn’t repair this source.",
+    explanation: null,
   },
   E_RESOURCE_CONFLICT: {
-    reason: "Import changed",
-    title: "This import changed.",
-    explanation: "Review its current status.",
+    reason: "couldn’t update this import",
+    title: "couldn’t update this import.",
+    explanation: null,
   },
   E_RESOURCE_LIMIT: {
     reason: "Too large to process",
-    title: "This source needs more resources than an import may use.",
-    explanation: "Import a smaller or simpler source.",
+    title: "processing reached a resource limit.",
+    explanation: null,
   },
   E_RETRY_INVALID_STATE: {
     reason: "Retry no longer applies",
-    title: "This import was not in a state that can be retried.",
-    explanation: "Review its current status.",
+    title: "couldn’t retry this source.",
+    explanation: "its state didn’t allow it.",
   },
   E_RETRY_NOT_ALLOWED: {
     reason: "Retry not offered",
-    title: "This import cannot be retried.",
-    explanation: "Start a new import from a different source.",
+    title: "couldn’t retry this source.",
+    explanation: null,
   },
   E_SANITIZATION_FAILED: {
     reason: "Content could not be made safe",
-    title: "Nexus could not make this content safe to read.",
-    explanation: "Use a different source for this document.",
+    title: "nexus couldn’t prepare this content for reading.",
+    explanation: null,
   },
   E_SELECTION_CHANGED: {
     reason: "Another copy won",
-    title: "Another copy of this document became the one Nexus keeps.",
-    explanation: "Open that copy; this one is no longer maintained.",
+    title: "couldn’t update this source.",
+    explanation: null,
   },
   E_SIGN_UPLOAD_FAILED: {
     reason: "Upload could not be prepared",
-    title: "Nexus could not prepare this upload.",
-    explanation: "Storage did not issue an upload link.",
+    title: "couldn’t prepare this upload.",
+    explanation: null,
   },
   E_SOURCE_ACCESS_DENIED: {
     reason: "Page blocked the import",
-    title: "This page blocked the import.",
-    explanation:
-      "Open the original page in your browser and use Nexus Capture there.",
+    title: "the source refused access.",
+    explanation: null,
   },
   E_SOURCE_FETCH_FAILED: {
-    reason: "Source could not be fetched",
-    title: "Nexus could not fetch this source.",
-    explanation: "The source did not respond.",
+    reason: "couldn’t fetch this source",
+    title: "couldn’t fetch this source.",
+    explanation: null,
   },
   E_SOURCE_GONE: {
-    reason: "Source no longer exists",
-    title: "This source no longer exists.",
-    explanation:
-      "Its address answered that nothing is there. Use another copy.",
+    reason: "source unavailable",
+    title: "this source isn’t available.",
+    explanation: null,
   },
   E_SOURCE_INTEGRITY: {
     reason: "Stored bytes did not verify",
-    title: "Nexus could not verify the uploaded bytes.",
-    explanation: "Remove this import and start a new one.",
+    title: "the stored file didn’t match this import.",
+    explanation: null,
   },
   E_SOURCE_NOT_READABLE: {
     reason: "No readable content found",
-    title: "No readable content was found.",
-    explanation: "Try another copy of this source with readable content.",
+    title: "no readable content was found.",
+    explanation: null,
   },
   E_SOURCE_POSITION_UNMAPPABLE: {
     reason: "a saved reading spot has no clear match",
-    title:
-      "refresh not applied: a saved reading spot has no clear match. saved copy kept.",
-    explanation:
-      "open the saved copy and deliberately save another reading spot before retrying, or retry after the source changes. retrying alone may reach the same conflict.",
+    title: "couldn’t refresh this source.",
+    explanation: null,
   },
   E_SOURCE_TOO_LARGE: {
     reason: "Source too large",
-    title: "This document is too large to import.",
-    explanation: "Use a smaller PDF or EPUB, or upload a smaller file.",
+    title: "this source exceeds the processing limit.",
+    explanation: null,
   },
   E_SSRF_BLOCKED: {
     reason: "Address not allowed",
-    title: "This address is not one Nexus may fetch.",
-    explanation: "Use a public link to the document.",
+    title: "nexus can’t fetch this address.",
+    explanation: null,
   },
   E_STORAGE_ERROR: {
-    reason: "Storage failed",
-    title: "Storage failed during this import.",
-    explanation: "Nothing about the source caused this.",
+    reason: "couldn’t process this source",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_STORAGE_MISSING: {
     reason: "Stored file is missing",
-    title: "The stored file for this import is missing.",
-    explanation: "Send the file again, or start a new import.",
+    title: "the source file isn’t available.",
+    explanation: null,
   },
   E_TRANSCRIPTION_FAILED: {
-    reason: "transcription failed",
-    title: "This recording could not be transcribed.",
-    explanation: "The audio was reached but no transcript came back.",
+    reason: "couldn’t transcribe this recording",
+    title: "couldn’t transcribe this recording.",
+    explanation: null,
   },
   E_TRANSCRIPTION_TIMEOUT: {
-    reason: "transcription timed out",
-    title: "Transcribing this recording took too long.",
-    explanation: "The recording was still being transcribed when time ran out.",
+    reason: "transcribing this recording took too long",
+    title: "transcribing this recording took too long.",
+    explanation: null,
   },
   E_TRANSCRIPT_UNAVAILABLE: {
-    reason: "no transcript available",
-    title: "This recording has no transcript.",
-    explanation: "It can be played; search and quoting need a transcript.",
+    reason: "no transcript is available",
+    title: "no transcript is available.",
+    explanation: "search and quoting need a transcript.",
   },
   E_UPLOAD_CAPABILITY_EXPIRED: {
     reason: "Upload link expired",
-    title: "The upload link expired.",
-    explanation: "Choose the original file to upload it again.",
+    title: "this upload link expired.",
+    explanation: null,
   },
   E_WORKER_HANDLER_FAILED: {
-    reason: "Processing failed",
-    title: "Processing this import failed.",
-    explanation: "Nothing about the source caused this.",
+    reason: "couldn’t process this source",
+    title: "couldn’t process this source.",
+    explanation: null,
   },
   E_WORKER_INTERRUPTED: {
     reason: "Processing was interrupted",
-    title: "Processing was interrupted.",
-    explanation: "The run stopped before it could finish or fail.",
+    title: "processing was interrupted.",
+    explanation: null,
   },
   E_X_POST_UNAVAILABLE: {
     reason: "Post unavailable",
-    title: "This post is not available.",
-    explanation: "It was removed, or it is not public.",
+    title: "this post isn’t available.",
+    explanation: null,
   },
   E_X_ARTICLE_BODY_UNAVAILABLE: {
     reason: "article unavailable through x’s api",
-    title: "article unavailable through x’s api",
-    explanation: "x did not provide a complete structured article. open the original on x.",
+    title: "couldn’t read this article from x.",
+    explanation: null,
   },
   E_X_ARTICLE_IDENTITY_CHANGED: {
-    reason: "the post now points to a different article",
-    title: "this post’s article changed",
-    explanation: "refresh the related thread to inspect the article now linked by this post.",
+    reason: "article identity could not be confirmed",
+    title: "couldn’t import this article.",
+    explanation: null,
   },
   E_X_IDENTITY_CONFLICT: {
-    reason: "saved threads overlap",
-    title: "these saved threads overlap. both were kept; repair is required.",
-    explanation: "the new evidence joins more than one saved thread.",
+    reason: "saved x identities conflict",
+    title: "couldn’t import this x source.",
+    explanation: null,
   },
   E_X_SOURCE_CONFLICT: {
-    reason: "source changed during capture",
-    title: "couldn’t refresh from x. saved copy kept.",
-    explanation: "another capture changed this source. retry the refresh.",
+    reason: "couldn’t refresh from x",
+    title: "couldn’t refresh from x.",
+    explanation: null,
   },
   E_X_PROVIDER_AUTH_REJECTED: {
-    reason: "X rejected the request",
-    title: "X rejected this import.",
-    explanation: "X imports are unavailable until that is resolved.",
+    reason: "x imports aren’t available",
+    title: "x imports aren’t available.",
+    explanation: null,
   },
   E_X_PROVIDER_CREDITS_DEPLETED: {
     reason: "X allowance used up",
-    title: "Import allowance reached.",
-    explanation:
-      "This source can’t be imported right now because an import allowance was used up.",
+    title: "the x import allowance is used up.",
+    explanation: null,
   },
   E_X_PROVIDER_RATE_LIMITED: {
     reason: "X is limiting imports",
-    title: "X is limiting imports right now.",
-    explanation: "The post could not be read at this rate.",
+    title: "x is limiting imports.",
+    explanation: null,
   },
   E_X_PROVIDER_TIMEOUT: {
     reason: "X did not respond in time",
-    title: "X took too long to respond.",
-    explanation: "The post could not be read before the time ran out.",
+    title: "x didn’t answer in time.",
+    explanation: null,
   },
   E_X_PROVIDER_UNAVAILABLE: {
-    reason: "X is unavailable",
-    title: "X did not respond.",
-    explanation: "couldn’t refresh from x. saved copy kept.",
+    reason: "x imports aren’t available",
+    title: "x imports aren’t available.",
+    explanation: null,
   },
 };
 
@@ -408,8 +401,8 @@ export const STATE_KIND_LABEL: Readonly<Record<Classification, string>> = {
 };
 
 /** The bytes arrived and verification refused them (stage Validate). */
-const UPLOAD_REJECTED_LABEL = "upload rejected";
-export const UNAVAILABLE_LINE = "This import is no longer available";
+export const UPLOAD_REJECTED_LABEL = "upload rejected";
+export const UNAVAILABLE_LINE = "this import isn’t available.";
 /** The mark on the one recorded event a History filter matched. */
 export const MATCHED_LABEL = "Matched";
 /** The same mark read inside the event's sentence. */
@@ -501,8 +494,6 @@ export function sourceFailureLine(item: ImportItem): string | null {
     source.classification !== "NeedsAttention"
   )
     return null;
-  if (source.failure_code === "E_SOURCE_POSITION_UNMAPPABLE")
-    return FAILURE_COPY[source.failure_code].title;
   return "couldn’t refresh source · saved copy kept";
 }
 
@@ -635,7 +626,7 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
   SameSourceTerminal:
     "No retry is currently available for this import. If you have another copy, start a new import.",
   SourceNotReacquirable:
-    "The original file is no longer stored, so it cannot be processed again.",
+    "this source can’t be processed again.",
   UploadRejected: "This upload was rejected. Remove it and start a new import.",
 };
 
@@ -909,11 +900,10 @@ export function attentionPhrase(count: number): string {
   return count === 1 ? "1 needs attention" : `${count} need attention`;
 }
 
-/** The complete description of a positive Imports attention observation. */
-export function importAttentionDescription(count: number, refresh_failed: boolean): string {
-  return refresh_failed
-    ? `couldn’t refresh imports; last update: ${attentionPhrase(count)}`
-    : `imports: ${attentionPhrase(count)}`;
+/** The complete description of a positive Imports attention observation. `_refreshFailed`
+ * stays until the account menu stops passing it (L7): a failed refresh says nothing. */
+export function importAttentionDescription(count: number): string {
+  return `imports: ${attentionPhrase(count)}`;
 }
 
 /** A count as the badge and mode navigation print it; the exact count is spoken. */
@@ -921,367 +911,175 @@ export function countText(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-export const STALE_NOTICE: FeedbackContent = {
-  tone: "Warning",
-  title: "Couldn’t refresh imports",
-  message: "Showing the last update",
-};
+/** An import revision conflict, only when owner evidence establishes it. A generic
+ * E_RESOURCE_CONFLICT can instead be an edge busy refusal and proves no revision change. */
+export const CONFLICT_REASON = "this import changed since it was shown.";
 
-export const CONFLICT_NOTICE: FeedbackContent = {
-  tone: "Warning",
-  title: "This import changed",
-  message: "Review its current status",
-};
-
-export function emptyCopy(
-  view: ImportsView,
-  hasSearch: boolean,
-  hasFilters: boolean,
-): { readonly title: string; readonly body: string } {
-  if (hasSearch && hasFilters) {
-    return {
-      title: "No imports match this search and filters",
-      body: "Change the search or clear filters to broaden the results.",
-    };
-  }
-  if (hasSearch) {
-    return {
-      title: "No imports match this search",
-      body: "Try another search or clear it.",
-    };
-  }
-  if (hasFilters) {
-    return {
-      title: "No imports match these filters",
-      body: "Change or clear filters to broaden the results.",
-    };
-  }
+/** An empty view, stated, never advised. */
+export function emptyLine(view: ImportsView, hasSearch: boolean, hasFilters: boolean): string {
+  if (hasSearch && hasFilters) return "no imports match this search and these filters.";
+  if (hasSearch) return "no imports match this search.";
+  if (hasFilters) return "no imports match these filters.";
   switch (view) {
-    case "NeedsAttention":
-      return {
-        title: "No imports need attention",
-        body: "Failed work and unreviewed metadata results appear here.",
-      };
-    case "InProgress":
-      return {
-        title: "No imports are in progress",
-        body: "Uploads, source processing, search indexing, and metadata operations appear here.",
-      };
-    case "History":
-      return {
-        title: "No imports have recorded history",
-        body: "History shows every import with recorded evidence, including the ones that finished.",
-      };
-    default:
-      return assertNever(view, "Unreachable imports view");
+    case "NeedsAttention": return "no imports need attention.";
+    case "InProgress": return "no imports in progress.";
+    case "History": return "no imports recorded.";
+    default: return assertNever(view, "Unreachable imports view");
   }
 }
 
 /** A modeled ApiError, or the defect rethrown for the screen boundary. */
-function modeled(error: unknown) {
+function modeled(error: unknown): ApiError {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
   return error;
 }
 
-/** A failed accepted-source read; undeclared codes and defects are rethrown. */
-export function savedSourceReadFailure(error: unknown): FeedbackContent {
+/** A failed saved-source read: the server has no saved source by that id (services/imports.py),
+ * or the transport speaks for the noun `source details`. Defects rethrow. */
+export function savedSourceReadLine(error: unknown): Line {
   const failure = modeled(error);
-  const title = "couldn’t check this saved source";
-  const transport = apiTransportFeedback(failure, title);
-  if (transport !== null) return transport;
   if (failure.code === "E_IMPORT_NOT_FOUND" || failure.code === "E_INVALID_REQUEST")
-    return { tone: "Warning", title, message: "this save link is invalid or no longer available." };
-  throw error;
+    return { fact: "this saved source isn’t available." };
+  const transport = transportOf(failure);
+  return TRANSPORT_LINES[transport].read("source details");
 }
 
-/** A failed Imports read; undeclared codes and defects are rethrown. */
-export function loadFailure(error: unknown): FeedbackContent {
-  const { code, requestId } = modeled(error);
-  const failed = (
-    tone: FeedbackTone,
-    message: string,
-    title = "Imports couldn’t be loaded",
-  ): FeedbackContent => ({ tone, title, message, requestId });
-  switch (code) {
-    case "E_NETWORK":
-      return failed("Danger", "Check your connection and refresh.");
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return failed(
-        "Danger",
-        "Nexus couldn’t complete the request. Wait a moment, then refresh.",
-      );
-    case "E_RATE_LIMITED":
-      return failed("Warning", "Wait a moment, then refresh.");
-    case "E_INVALID_CURSOR":
-      return failed(
-        "Danger",
-        "Refresh this view to start loading again.",
-        "More imports couldn’t be loaded",
-      );
-    default: {
-      const transport = apiTransportFeedback(modeled(error), "Imports couldn’t be loaded");
-      if (transport !== null) return transport;
-      throw error;
-    }
-  }
-}
+/** What verification said about the stored bytes, as a reason. */
+const verificationReason = (outcome: Extract<UploadSessionOutcome, { kind: "VerificationRejected" }>) => ({
+  E_SOURCE_INTEGRITY: "the stored file didn’t match this upload.",
+  E_INVALID_FILE_TYPE: "nexus couldn’t read that file.",
+  E_FILE_TOO_LARGE: "it’s over the size limit.",
+  E_CAPTURE_TOO_LARGE: "it’s over the capture size limit.",
+})[outcome.code];
 
-/** The one reason a terminal upload verification gives, on every surface. */
-function verificationSentence(
-  outcome: Extract<UploadSessionOutcome, { kind: "VerificationRejected" }>,
-): string {
-  const copy = FAILURE_COPY[outcome.code];
-  return `${copy.title} ${copy.explanation}`;
-}
+/** One reason per upload-session outcome, on every surface (lib/imports/ingest.ts OUTCOMES). */
+const OUTCOME_REASON = {
+  BytesMissing: undefined,
+  Expired: "the upload expired.",
+  Unresolved: "file storage isn’t answering.",
+  UnsupportedFileType: "only pdf and epub files can be added.",
+  FileTooLarge: "it’s over the size limit.",
+  LibraryForbidden: "you can’t add to one of these libraries.",
+  FileMismatch: "that file doesn’t match this upload.",
+} satisfies Readonly<Record<Exclude<UploadSessionOutcome["kind"], "VerificationRejected" | "IntentMalformed" | "Superseded">, string | undefined>>;
 
-type PlainOutcome = Exclude<
-  UploadSessionOutcome["kind"],
-  "VerificationRejected" | "IntentMalformed"
->;
+export type UploadCommand = "RetryUpload" | "RemoveUpload";
+export const UPLOAD_COMMAND_FACT: Readonly<Record<UploadCommand, string>> = {
+  RetryUpload: "couldn’t retry the upload.",
+  RemoveUpload: "couldn’t remove this import.",
+};
 
-/**
- * A surface's sentence for an upload-session outcome: its table, or
- * verification's one reason. A malformed intent, or an outcome the surface
- * settles itself (Imports' commands treat Superseded as done), is rethrown as
- * the defect it is here.
- */
-function outcomeSentence(
-  error: UploadSessionError,
-  table: Readonly<Partial<Record<PlainOutcome, string>>>,
-): string {
+/** Imports' Retry upload, refused by its session, and whether choosing the file again can help:
+ * the same session id gets a fresh upload, so all but lost access and rejected bytes can. The
+ * file the import began with already passed type and size, so a refusal of either means another
+ * file was chosen. Null when another attempt superseded it, which counts as done; a malformed
+ * intent is a defect. */
+export function retryUploadRefusal(error: UploadSessionError): { readonly line: Line; readonly retry: boolean } | null {
   const outcome = error.outcome;
-  if (outcome.kind === "VerificationRejected") {
-    return verificationSentence(outcome);
+  const fact = UPLOAD_COMMAND_FACT.RetryUpload;
+  switch (outcome.kind) {
+    case "IntentMalformed": throw error;
+    case "Superseded": return null;
+    case "VerificationRejected": return { line: { fact, reason: verificationReason(outcome) }, retry: false };
+    case "LibraryForbidden": return { line: { fact, reason: OUTCOME_REASON.LibraryForbidden }, retry: false };
+    case "UnsupportedFileType":
+    case "FileTooLarge":
+    case "FileMismatch": return { line: { fact, reason: OUTCOME_REASON.FileMismatch }, retry: true };
+    case "BytesMissing":
+    case "Expired":
+    case "Unresolved": return { line: { fact, reason: OUTCOME_REASON[outcome.kind] }, retry: true };
+    default: return assertNever(outcome, "Unreachable upload outcome");
   }
-  const sentence =
-    outcome.kind === "IntentMalformed" ? undefined : table[outcome.kind];
-  if (sentence === undefined) throw error;
-  return sentence;
-}
-
-const FILE_DOES_NOT_MATCH =
-  "That file doesn’t match this import. Choose the same file, or start a new import.";
-
-/** Imports' Retry upload and Remove: one truthful next step per outcome. */
-const COMMAND_OUTCOME: Readonly<
-  Record<Exclude<PlainOutcome, "Superseded">, string>
-> = {
-  BytesMissing: "The upload didn’t finish. Choose the original file to retry.",
-  Expired: "upload expired. choose the file again.",
-  Unresolved: "Nexus is still verifying this upload. Refresh in a moment.",
-  UnsupportedFileType: FILE_DOES_NOT_MATCH,
-  FileTooLarge: FILE_DOES_NOT_MATCH,
-  FileMismatch: FILE_DOES_NOT_MATCH,
-  LibraryForbidden:
-    "You no longer have access to a destination library for this import.",
-};
-
-const BUSY =
-  "Nexus couldn’t complete this action. Wait a moment, then refresh.";
-
-/** The upload commands' transport refusals; any other code is a defect. */
-const COMMAND_REFUSAL: Readonly<Record<string, string>> = {
-  E_NETWORK: "Check your connection and try again.",
-  E_UPSTREAM: BUSY,
-  E_UPSTREAM_TIMEOUT: BUSY,
-  E_RATE_LIMITED: BUSY,
-};
-
-/** A refused upload command says what was refused, in the command's words. */
-export function uploadCommandFeedback(
-  command: "RetryUpload" | "RemoveUpload",
-  error: unknown,
-): FeedbackContent {
-  const title =
-    command === "RetryUpload"
-      ? "Couldn’t retry the upload"
-      : "Couldn’t remove the import";
-  if (error instanceof UploadSessionError) {
-    return {
-      tone: "Danger",
-      title,
-      message: outcomeSentence(error, COMMAND_OUTCOME),
-    };
-  }
-  const { code } = modeled(error);
-  if (!Object.hasOwn(COMMAND_REFUSAL, code)) {
-    const transport = apiTransportFeedback(modeled(error), title);
-    if (transport !== null) return transport;
-    throw error;
-  }
-  return { tone: "Danger", title, message: COMMAND_REFUSAL[code] };
 }
 
 export type CaptureOperation = "SaveSource" | "AddAttachment";
-
-const UNSUPPORTED_FILE = "This file type isn’t supported. Use a PDF or EPUB.";
-
-/**
- * Capture and attachments hold one file and no session row, so each outcome is
- * one sentence and, where Imports holds the obligation, a pointer to it.
- */
-const CAPTURE_OUTCOME: Readonly<Record<PlainOutcome, string>> = {
-  BytesMissing: "Nexus never received this file. Attach it again.",
-  Expired: "upload expired. choose the file again.",
-  Superseded: "This upload finished elsewhere. Open Imports to find it.",
-  Unresolved:
-    "Nexus couldn’t confirm this upload. Open Imports before attaching it again.",
-  UnsupportedFileType: UNSUPPORTED_FILE,
-  FileTooLarge: "This file is too large. Attach a smaller file.",
-  LibraryForbidden:
-    "You no longer have access to a destination library for this attachment.",
-  FileMismatch: "This upload changed. Attach the file again.",
+const CAPTURE_FACT: Readonly<Record<CaptureOperation, string>> = {
+  SaveSource: "couldn’t save this source.",
+  AddAttachment: "couldn’t attach this file.",
 };
 
-const X_UNAVAILABLE = "X imports are temporarily unavailable.";
+/** A one-file upload's refusal, as the reason under its operation's fact: capture, attachment and
+ * Add hold no session row. A malformed intent is a defect. */
+function outcomeReason(error: UploadSessionError): string | undefined {
+  const outcome = error.outcome;
+  switch (outcome.kind) {
+    case "IntentMalformed": throw error;
+    case "Superseded": return "this upload can’t continue.";
+    case "VerificationRejected": return verificationReason(outcome);
+    default: return OUTCOME_REASON[outcome.kind];
+  }
+}
 
-/** The capture endpoints' declared refusals; any other code is a defect. */
-const CAPTURE_REFUSAL: Readonly<Record<string, string>> = {
-  E_RESOURCE_CONFLICT: "save needs review. review your choices and save again.",
-  E_SOURCE_IMPORT_ACTIVE: "this source is already importing. retry once it finishes.",
-  E_X_IDENTITY_CONFLICT: "these saved threads overlap. both were kept; repair is required.",
-  E_X_SOURCE_CONFLICT: "couldn’t refresh from x. saved copy kept.",
-  E_NETWORK: "Check your connection and retry.",
-  E_UPSTREAM: "The source service is unavailable. Retry in a moment.",
-  E_UPSTREAM_TIMEOUT: "The source took too long to respond. Retry the capture.",
-  E_RATE_LIMITED: "Wait a moment, then retry.",
-  E_FILE_TOO_LARGE: "This capture is too large. Save a smaller source.",
-  E_CAPTURE_TOO_LARGE: "This capture is too large. Save a smaller source.",
-  E_INVALID_FILE_TYPE: UNSUPPORTED_FILE,
-  E_INVALID_REQUEST: "This link can’t be saved. Check it and retry.",
-  E_X_ARTICLE_POST_LINK_REQUIRED: "use the article’s post link.",
-  E_X_PROVIDER_UNAVAILABLE:
-    "X imports are temporarily unavailable. Retry in a moment.",
-  E_X_PROVIDER_CREDITS_DEPLETED: X_UNAVAILABLE,
-  E_X_PROVIDER_AUTH_REJECTED: X_UNAVAILABLE,
-  E_X_PROVIDER_RATE_LIMITED:
-    "X is limiting imports. Wait a moment, then retry.",
-  E_X_PROVIDER_TIMEOUT: "X took too long to respond. Retry the capture.",
+/** The capture endpoints' domain codes, as reasons (media_source_ingest.py, x_ingest.py,
+ * x_client.py). E_RESOURCE_CONFLICT and E_X_SOURCE_CONFLICT have none that anything keeps true: the
+ * first answers a moved library guard, a moved removal fence, a taken attempt id, another post of
+ * the thread importing, and an unreadable saved version alike. */
+const CAPTURE_REFUSAL: Readonly<Record<string, string | null>> = {
+  E_RESOURCE_CONFLICT: null,
+  E_LIBRARY_FORBIDDEN: OUTCOME_REASON.LibraryForbidden,
+  E_SOURCE_IMPORT_ACTIVE: "this source is already importing.",
+  E_X_IDENTITY_CONFLICT: "it matches more than one thread you saved.",
+  E_X_SOURCE_CONFLICT: null,
+  E_FILE_TOO_LARGE: OUTCOME_REASON.FileTooLarge,
+  E_CAPTURE_TOO_LARGE: OUTCOME_REASON.FileTooLarge,
+  E_INVALID_FILE_TYPE: OUTCOME_REASON.UnsupportedFileType,
+  E_INVALID_REQUEST: "this link can’t be saved.",
+  E_X_ARTICLE_POST_LINK_REQUIRED: "x articles save from their post link.",
+  E_X_PROVIDER_UNAVAILABLE: "x imports aren’t available.",
+  E_X_PROVIDER_CREDITS_DEPLETED: "x imports aren’t available.",
+  E_X_PROVIDER_AUTH_REJECTED: "x imports aren’t available.",
+  E_X_PROVIDER_RATE_LIMITED: "x is limiting imports.",
+  E_X_PROVIDER_TIMEOUT: "x didn’t answer in time.",
 };
 
 /**
- * A failed capture or attachment. Anything this does not model, a programming
- * error included, is rethrown for the screen boundary.
+ * A failed capture or attachment: the operation's fact, with its domain code or upload outcome as
+ * the reason, ahead of the transport. A malformed intent and same-system defects rethrow.
  */
-export function captureErrorFeedback(
-  error: unknown,
-  operation: CaptureOperation,
-): FeedbackContent {
-  const title =
-    operation === "SaveSource" ? "Couldn’t save" : "Attachment wasn’t added";
-  if (error instanceof UploadSessionError) {
-    return {
-      tone: "Danger",
-      title,
-      message: outcomeSentence(error, CAPTURE_OUTCOME),
-    };
-  }
-  const { code, requestId } = modeled(error);
-  if (!Object.hasOwn(CAPTURE_REFUSAL, code)) {
-    const transport = apiTransportFeedback(modeled(error), title);
-    if (transport !== null) return transport;
-    throw error;
-  }
-  return { tone: "Danger", title, message: CAPTURE_REFUSAL[code], requestId };
+export function captureErrorLine(error: unknown, operation: CaptureOperation): Line {
+  const fact = CAPTURE_FACT[operation];
+  if (error instanceof UploadSessionError) return { fact, reason: outcomeReason(error) };
+  const failure = modeled(error);
+  if (Object.hasOwn(CAPTURE_REFUSAL, failure.code)) return { fact, reason: CAPTURE_REFUSAL[failure.code] ?? undefined };
+  const transport = transportOf(failure);
+  return TRANSPORT_LINES[transport].command(fact);
 }
 
 /** Acceptance records a saved source, independently of processing success. */
 export function captureStatusLine(result: AcceptedIngest): string {
-  return !result.available ? "this item was saved, then removed" : result.processing === "failed" ? "saved · processing failed" : "saved";
+  return !result.available ? "saved, then removed." : result.processing === "failed" ? "saved. nexus couldn’t process it." : "saved.";
 }
 
-export type AcceptanceFailure =
-  | { readonly kind: "Rejected"; readonly feedback: FeedbackContent }
-  | {
-      readonly kind: "AcceptanceUnresolved";
-      readonly reason: "StatusUnknown" | "UploadIncomplete";
-      readonly feedback: FeedbackContent;
-    }
-  | { readonly kind: "Superseded" };
+/** An Add whose acceptance is unknown: resending its id answers the same acceptance. */
+export const UNCONFIRMED_LINE: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 
-/** An Add row whose acceptance is unknown; Check status replays its intent. */
-export const UNCONFIRMED: FeedbackContent = {
-  tone: "Warning",
-  title: "change not confirmed",
-  message: "check save to retry the original request.",
-};
-
-const notAdded = (
-  message: string,
-): Extract<AcceptanceFailure, { kind: "Rejected" }> => ({
-  kind: "Rejected",
-  feedback: { tone: "Danger", title: "Couldn’t save", message },
-});
-
-/** Add's answer to each upload-session outcome of one frozen intent. */
-const ADD_OUTCOME = {
-  Expired: { kind: "Rejected", feedback: { tone: "Warning", title: "upload expired", message: "upload expired. choose the file again." } },
-  BytesMissing: {
-    kind: "AcceptanceUnresolved",
-    reason: "UploadIncomplete",
-    feedback: {
-      tone: "Warning",
-      title: "Upload didn’t complete",
-      message:
-        "Nexus never received this file. Retry the upload, or remove it and start a new import.",
-    },
-  },
-  Superseded: { kind: "Superseded" },
-  Unresolved: {
-    kind: "AcceptanceUnresolved",
-    reason: "StatusUnknown",
-    feedback: UNCONFIRMED,
-  },
-  UnsupportedFileType: notAdded(
-    "This file type isn’t supported. Start a new import with a PDF or EPUB.",
-  ),
-  FileTooLarge: notAdded(
-    "This file exceeds the import limit. Start a new import with a smaller file.",
-  ),
-  LibraryForbidden: notAdded(
-    "You no longer have access to a destination library. Choose different libraries and start a new import.",
-  ),
-  FileMismatch: notAdded(FILE_DOES_NOT_MATCH),
-} satisfies Readonly<Record<PlainOutcome, AcceptanceFailure>>;
+/** An added file's fact, apart from a link's. */
+const ADDED_FILE = "couldn’t save this file.";
 
 /**
- * Why an Add acceptance did not land: refused, unknown (send its id again to
- * find out), or superseded. A transport failure or a 5xx leaves the
- * acceptance unknown; defects and a malformed intent are rethrown.
+ * Why an Add acceptance did not land: refused, unknown (send its id again to find out), or
+ * superseded. Only a sent unknown holds; unsent and 4xx refusals are rejected. A pool timeout
+ * can answer 503 after a commit. Defects and a malformed intent rethrow.
  */
-export function acceptanceFailure(error: unknown): AcceptanceFailure {
+export type AcceptanceLineFailure =
+  | { readonly kind: "Rejected"; readonly line: Line }
+  | { readonly kind: "AcceptanceUnresolved"; readonly reason: "StatusUnknown" | "UploadIncomplete"; readonly line: Line }
+  | { readonly kind: "Superseded" };
+
+export function acceptanceFailureLine(error: unknown): AcceptanceLineFailure {
   if (error instanceof UploadSessionError) {
-    if (error.outcome.kind === "IntentMalformed") throw error;
-    if (error.outcome.kind === "VerificationRejected") {
-      return {
-        kind: "Rejected",
-        feedback: {
-          tone: "Danger",
-          title: UPLOAD_REJECTED_LABEL,
-          message: verificationSentence(error.outcome),
-        },
+    const outcome = error.outcome;
+    switch (outcome.kind) {
+      case "IntentMalformed": throw error;
+      case "Superseded": return { kind: "Superseded" };
+      case "Unresolved":
+      case "BytesMissing": return {
+        kind: "AcceptanceUnresolved", reason: outcome.kind === "Unresolved" ? "StatusUnknown" : "UploadIncomplete",
+        line: { fact: ADDED_FILE, reason: OUTCOME_REASON[outcome.kind] },
       };
+      default: return { kind: "Rejected", line: { fact: ADDED_FILE, reason: outcomeReason(error) } };
     }
-    return ADD_OUTCOME[error.outcome.kind];
   }
-  const { status, code, requestId } = modeled(error);
-  if (
-    status >= 500 || outcomeUnknown(error)
-  ) {
-    return {
-      kind: "AcceptanceUnresolved",
-      reason: "StatusUnknown",
-      feedback: { ...UNCONFIRMED, requestId },
-    };
-  }
-  if (code === "E_RESOURCE_CONFLICT") return { kind: "Rejected", feedback: { tone: "Warning", title: "save needs review. review your choices and save again.", requestId } };
-  if (code === "E_LIBRARY_FORBIDDEN") {
-    const failure = ADD_OUTCOME.LibraryForbidden;
-    return { ...failure, feedback: { ...failure.feedback, requestId } };
-  }
-  return {
-    kind: "Rejected",
-    feedback: captureErrorFeedback(error, "SaveSource"),
-  };
+  if (outcomeUnknown(modeled(error))) return { kind: "AcceptanceUnresolved", reason: "StatusUnknown", line: UNCONFIRMED_LINE };
+  return { kind: "Rejected", line: captureErrorLine(error, "SaveSource") };
 }

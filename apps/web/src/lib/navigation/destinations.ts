@@ -1,13 +1,13 @@
 // The identity of every in-app place. The rail and Nexus each
 // project it; a destination without an icon takes its route's icon.
-import { CalendarDays, Sparkles, UserRound, type LucideIcon } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 interface Place {
   label: string;
   href: string;
   keywords: string[];
-  icon?: LucideIcon;
+  icon?: Icon.Glyph;
 }
 
 /** A place with its id. (Place alone types the registry: the id type is derived from it.) */
@@ -20,7 +20,7 @@ const REGISTRY = {
     label: "Today",
     href: "/daily",
     keywords: ["daily", "journal", "date"],
-    icon: CalendarDays,
+    icon: Icon.Today,
   },
   lectern: {
     label: "Lectern",
@@ -71,7 +71,7 @@ const REGISTRY = {
     label: "Oracle",
     href: "/oracle",
     keywords: ["oracle", "divination", "reading", "folio", "fortune", "sortes", "motto"],
-    icon: Sparkles,
+    icon: Icon.Oracle,
   },
   search: {
     label: "Search",
@@ -83,7 +83,7 @@ const REGISTRY = {
     label: "Authors",
     href: "/search?kinds=people",
     keywords: ["contributors", "people", "writers"],
-    icon: UserRound,
+    icon: Icon.Author,
   },
   settings: {
     label: "Settings",

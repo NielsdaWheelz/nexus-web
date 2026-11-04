@@ -1,9 +1,9 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useRef, type ReactNode } from "react";
+import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import { useCollectionLayout } from "@/lib/ui/collection";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
-import { X } from "lucide-react";
 import { cx } from "@/lib/ui/cx";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./Dialog.module.css";
@@ -22,27 +22,29 @@ export default function Dialog({
   readonly children: ReactNode;
 }) {
   const body = useRef<HTMLDivElement>(null);
+  const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
   useCollectionLayout(body, modal.open);
   return (
     <ModalFrame
       {...modal}
+      slipContent={modal.slipContent ?? body}
       onDismiss={onClose}
       label={title}
       backdropClassName={styles.backdrop}
+      backdropStyle={{ top: visualViewportTopPx, bottom: keyboardBottomInsetPx }}
       className={cx(styles.dialog, className)}
     >
       {(requestDismiss) => (
         <>
           <header className={styles.header}>
             <h2 className={styles.title}>{title}</h2>
-            <FeedbackRecoveryControl />
             <button
               type="button"
               className={styles.closeBtn}
               onClick={requestDismiss}
               aria-label="Close dialog"
             >
-              <X size={16} />
+              <Icon.Dismiss size={16} />
             </button>
           </header>
           <div ref={body} className={styles.body}>{children}</div>

@@ -7,17 +7,19 @@ import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { candidateDetail, decidePart } from "@/lib/media/parts";
-import { isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/client";
+import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
+import { Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import PartPreview, { usePartPreview } from "./PartPreview";
-import { partBlockMessage, partError } from "./PartEditor";
-import { isAbortError } from "@/lib/errors";
+import { partBlockMessage, partFailure, UNSURE } from "./PartEditor";
 import styles from "./parts.module.css";
 
 type Draft = { detail: Schema<"CandidateDetail"> | null; partId: string;
-  request: Schema<"PartCandidateDecision"> | null; busy: boolean; conflict: boolean; error: string | null; retired: boolean };
+  request: Schema<"PartCandidateDecision"> | null; busy: boolean; attempt: number; conflict: boolean; retired: boolean };
 export default function CandidateReview({ source, candidate, onClose, onSaved, onChoose, returnFocusTo }: {
   readonly source: string; readonly candidate: string; readonly onClose: () => void;
   readonly onSaved: (id: string | null) => Promise<void>;
@@ -26,22 +28,24 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
 }) {
   const loaded = usePaneFreeServerValue({ key: `/media/${source}/part-candidates/${candidate}`, stale: "",
     load: signal => candidateDetail(source, candidate, signal) });
-  const draft = useResourceDraft<Draft>(`proposal:${source}:${candidate}`, () => ({ detail: null, partId: crypto.randomUUID(), request: null, busy: false, conflict: false, error: null, retired: false }),
+  const draft = useResourceDraft<Draft>(`proposal:${source}:${candidate}`, () => ({ detail: null, partId: crypto.randomUUID(), request: null, busy: false, attempt: 0, conflict: false, retired: false }),
     value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   useEffect(() => {
     if (loaded.status === "ready" && (draft.read().detail === null || draft.read().retired)) draft.set(value => ({ ...value, detail: loaded.data, retired: false }));
   }, [loaded, draft]);
-  const { detail, request, busy, conflict, error } = draft.value;
+  const { detail, request, busy, conflict } = draft.value;
+  const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
   const preview = usePartPreview(source, detail?.selection ?? null);
   const guard = useWorkGuard();
   const run = async (body: Schema<"PartCandidateDecision">, retry = false) => {
     if (draft.read().busy || draft.read().request !== null && !retry) return;
-    draft.set(value => ({ ...value, request: body, busy: true, error: null }));
+    draft.set(value => ({ ...value, request: body, busy: true, attempt: retry ? value.attempt : 0 }));
     try {
       await decidePart(source, candidate, body);
     } catch (failure) {
-      draft.set(value => ({ ...value, request: isRefusal(failure) ? null : body, busy: false,
-        conflict: isApiError(failure) && failure.status === 409, error: partError(failure) }));
+      const said = partFailure(outcome, failure, body.decision === "accepted" ? "couldn’t save this work." : "couldn’t change this suggestion.") === "Said";
+      draft.set(value => ({ ...value, request: said && !retry ? null : body, busy: false, attempt: value.attempt + 1, conflict: isApiError(failure) && failure.status === 409 }));
       return;
     }
     draft.set(value => ({ ...value, request: null, busy: false }));
@@ -55,11 +59,9 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
   const reviewCurrent = async () => {
     try {
       await loaded.refetch();
-      draft.set(value => ({ ...value, detail: null, conflict: false, error: null }));
+      draft.set(value => ({ ...value, detail: null, conflict: false }));
     } catch (failure) {
-      if (isAbortError(failure)) return;
-      if (!isApiError(failure) || isSameSystemApiDefect(failure)) throw failure;
-      draft.set(value => ({ ...value, error: partError(failure) }));
+      outcome.fail(failure, "couldn’t load the current suggestion.", { label: "retry", commandKey: "ReviewCurrentProposal", run: () => void reviewCurrent() });
     }
   };
   const blocking = busy || request !== null;
@@ -67,11 +69,11 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
   return <Dialog open title="review suggestion" onClose={onClose} returnFocusTo={returnFocusTo}
     onDismissRequest={() => {
       if (!guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return "blocked";
-      if (draft.read().request === null) draft.set(value => ({ ...value, retired: true, detail: null, error: null, conflict: false }));
+      if (draft.read().request === null) draft.set(value => ({ ...value, retired: true, detail: null, conflict: false }));
       return "accepted";
     }}>
     <div className={styles.editor}>
-      {detail === null ? loaded.status === "failed" ? <><p role="alert">couldn’t load this suggestion</p><Button onClick={() => void loaded.refetch()}>try again</Button></> : <p role="status">loading suggestion…</p> : <>
+      {detail === null ? loaded.status === "failed" ? <Failed error={loaded.error} noun="suggestion details" retry={{ run: () => void loaded.refetch(), busy: loaded.retrying }} /> : <Ruling /> : <>
         <h3>{detail.finding.title ?? "untitled suggestion"}</h3>
         {detail.user_decision === "rejected" ? <p>dismissed</p> : null}
         {detail.finding.uncertainty_reason ? <p>{detail.finding.uncertainty_reason}</p> : null}
@@ -82,11 +84,11 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
         <div className={styles.actions}>
           <Button emphasis="strong" disabled={blocking || conflict || !accept} onClick={() => void run({ expected_version: detail.version, expected_navigation_key: detail.selection!.navigation_key, decision: "accepted", part_id: draft.value.partId })}>extract</Button>
           {detail.user_decision !== "rejected" ? <Button disabled={blocking || conflict} onClick={() => void run({ expected_version: detail.version, expected_navigation_key: null, decision: "rejected", part_id: null })}>dismiss</Button> : null}
-          <Button disabled={blocking} onClick={() => { draft.set(value => ({ ...value, retired: true, detail: null, error: null, conflict: false })); onChoose(detail); }}>choose sections…</Button>
+          <Button disabled={blocking} onClick={() => { draft.set(value => ({ ...value, retired: true, detail: null, conflict: false })); onChoose(detail); }}>choose sections…</Button>
         </div>
       </>}
-      {error ? <p role="alert">{error}</p> : null}
-      {request !== null && !busy ? <Button onClick={() => void run(request, true)}>try same request again</Button> : null}
+      {request !== null && draft.value.attempt > 0 ? <Hold id={`part-candidate:${source}:${candidate}`} attempt={draft.value.attempt} {...resendFeedback({ line: UNSURE,
+          resend: { label: "retry", commandKey: "RetryCandidateDecision", busy, run: () => void run(request, true) } })} /> : null}
       {conflict || stalePreview ? <Button disabled={blocking || loaded.status === "ready" && loaded.refreshing} onClick={() => void reviewCurrent()}>review current proposal</Button> : null}
     </div>
   </Dialog>;

@@ -36,6 +36,8 @@ export interface ActionButtonSpec {
   readonly icon: ReactElement;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
+  /** `disabledReason` names a wait: a screen reader reads it, the control does not show it. */
+  readonly waiting: boolean;
   readonly busy: boolean;
   readonly hasPopup: "dialog" | null;
   readonly invoke: (input: PodcastActionFocus) => void;

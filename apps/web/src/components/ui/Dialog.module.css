@@ -13,7 +13,7 @@
   flex-direction: column;
   max-width: 560px;
   width: 100%;
-  max-height: calc(100vh - var(--space-8));
+  max-height: 100%;
   border: 1px solid var(--edge);
   border-radius: var(--radius-xl);
   background: var(--surface-canvas);

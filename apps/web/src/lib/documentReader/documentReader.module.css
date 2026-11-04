@@ -390,6 +390,11 @@
   overflow: auto;
 }
 
+/* A cold reader is ruled at its line pitch, wherever the ruling stands. */
+.readerPitch {
+  --ruling-pitch: calc(var(--reader-font-size-px, var(--text-md)) * var(--reader-line-height, var(--leading-normal)));
+}
+
 .pdfFrame > .readerState {
   position: absolute;
   inset: 0;

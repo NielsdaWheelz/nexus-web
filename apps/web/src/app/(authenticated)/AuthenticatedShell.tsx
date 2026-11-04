@@ -1,20 +1,21 @@
 "use client";
 
-import { NavigationIdentity, useHostPolicy } from "@/lib/host/policy";
+import { NavigationIdentity } from "@/lib/host/policy";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
-  useTransition,
   type ReactNode,
 } from "react";
 import { installedApp } from "@/lib/native/admission";
 import { DeviceSettingsProvider } from "@/lib/native/settingsRefresh";
 import { SignOutProvider } from "@/components/appnav/AccountMenu";
 import AppNav from "@/components/appnav/AppNav";
-import { FeedbackProvider, useFeedback } from "@/components/feedback/Feedback";
+import { FeedbackProvider, useOutcome } from "@/components/feedback/Feedback";
+import type { Shell } from "@/components/feedback/stage";
 import Nexus from "@/components/nexus/Nexus";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
@@ -23,9 +24,9 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import type { AuthenticatedAccount } from "@/lib/account/contract";
 import ResourceActionsProvider, { ResourceActionPresentation } from "@/lib/actions/ResourceActionsProvider";
 import { MediaContinuationHost } from "@/lib/actions/mediaContinuation";
-import { ServerSeedsProvider } from "@/lib/api/serverState";
+import { ServerArrivalsProvider } from "@/lib/api/serverState";
 import { RecentProvider } from "@/lib/recent/store";
-import { AuthoredProvider } from "@/lib/authored/provider";
+import { AuthoredProvider, useAuthoredSignIn } from "@/lib/authored/provider";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
@@ -61,7 +62,6 @@ import { WorkspacePresentationsProvider } from "@/lib/workspace/presentations";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import styles from "./layout.module.css";
 
-
 export default function AuthenticatedShell(props: {
   browserLifetime?: string;
   account: AuthenticatedAccount;
@@ -69,27 +69,35 @@ export default function AuthenticatedShell(props: {
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   initialPresentations?: InitialPresentations;
-  seeds: Record<string, Record<string, unknown>>;
-  entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
 }) {
+  // The workspace signs in through the account's one sign-in owner, which ignores a press while
+  // a sign-in runs and tells its result. That owner sits beneath the feedback provider, so the
+  // workspace binds it here once the account opens. One value, so `fail` stays stable.
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [{ shell, bindSignIn }] = useState(() => {
+    let owner: (() => void) | null = null;
+    const shell: Shell = { signIn: { label: "sign in", commandKey: "SignIn", run: () => owner?.() } };
+    return { shell, bindSignIn: (signIn: (() => void) | null, busy: boolean) => { owner = signIn; setSignInBusy(busy); } };
+  });
+  const boundShell = useMemo(() => ({ ...shell, signInBusy }), [shell, signInBusy]);
   return (
     <AuthenticatedAccountProvider key={props.account.accountId} account={props.account}>
       <RenderEnvironmentProvider value={props.renderEnvironment}>
         <MobileViewportProvider>
-          <FeedbackProvider>
+          <FeedbackProvider shell={boundShell}>
             <AuthoredProvider accountId={props.account.accountId}>
               <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
                 <UnauthenticatedApiBoundary>
                 <DeviceSettingsProvider>
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                     <ActivityCapture />
-                    <ServerSeedsProvider seeds={props.seeds}>
+                    <ServerArrivalsProvider>
                       <ReaderProvider initialProfile={props.readerProfile}>
                         <Workspace accountId={props.account.accountId} initialState={props.initialState}
-                          initialPresentations={props.initialPresentations} entryFailure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
+                          initialPresentations={props.initialPresentations} locationLinkFailure={props.locationLinkFailure} bindSignIn={bindSignIn} />
                       </ReaderProvider>
-                    </ServerSeedsProvider>
+                    </ServerArrivalsProvider>
                   </MediaAdmissionsProvider>
                 </DeviceSettingsProvider>
                 </UnauthenticatedApiBoundary>
@@ -106,10 +114,13 @@ function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
   initialPresentations?: InitialPresentations;
-  entryFailure: { requestId?: string } | null;
   locationLinkFailure: "TooLong" | null;
+  bindSignIn: (signIn: (() => void) | null, busy: boolean) => void;
 }) {
-  const { accountId } = props;
+  const { accountId, bindSignIn } = props;
+  const { signIn, busy } = useAuthoredSignIn();
+  useLayoutEffect(() => { bindSignIn(signIn, busy); }, [bindSignIn, signIn, busy]);
+  useLayoutEffect(() => () => bindSignIn(null, false), [bindSignIn]);
   const { profile } = useReaderContext();
   // The reader column is every pane's preferred and default width: the server
   // estimates it from the profile, and this hidden probe measures it.
@@ -145,7 +156,7 @@ function Workspace(props: {
         columnWidthPx={columnWidthPx}
       >
         <ChatWorkOwners />
-        <WorkspaceEntryNotice failure={props.entryFailure} locationLinkFailure={props.locationLinkFailure} />
+        <WorkspaceEntryNotice locationLinkFailure={props.locationLinkFailure} />
         <SignOutProvider>
           <MobileChromeProvider>
             {/* One Lectern owner wraps the workspace leaves and the player
@@ -158,7 +169,7 @@ function Workspace(props: {
                     <ShareControllerProvider>
                       <WorkspacePlayer accountId={accountId}>
                         <ResourceActionsProvider>
-                          <AuthenticatedWorkspaceErrorBoundary>
+                          <WorkspaceCanvas>{(player, readerComposition) => <AuthenticatedWorkspaceErrorBoundary>
                             <ChatSelectionProvider>
                               <ResourceActionPresentation />
                               <MediaAdmissionsHost />
@@ -167,12 +178,18 @@ function Workspace(props: {
                                 <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
                                   <WorkspaceNavigation>
                                     <Nexus />
-                                    <WorkspaceCanvas />
+                                    <div className={styles.layout}>
+                                      <AppNav />
+                                      <main className={styles.main} data-reader-composition={readerComposition || undefined}>
+                                        <WorkspaceHost />
+                                        {player}
+                                      </main>
+                                    </div>
                                   </WorkspaceNavigation>
                                 </WorkspacePresentationsProvider>
                               </ImportsProvider>
                             </ChatSelectionProvider>
-                          </AuthenticatedWorkspaceErrorBoundary>
+                          </AuthenticatedWorkspaceErrorBoundary>}</WorkspaceCanvas>
                         </ResourceActionsProvider>
                       </WorkspacePlayer>
                     </ShareControllerProvider>
@@ -201,20 +218,14 @@ function WorkspaceNavigation({ children }: { children: ReactNode }) {
 }
 
 /** A route selects the shell composition before loading or mounting its reader. */
-function WorkspaceCanvas() {
+function WorkspaceCanvas({ children }: { children: (player: ReactNode, readerComposition: boolean) => ReactNode }) {
   const { state } = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
   const active = state.panes.find(pane => pane.id === state.active_primary_pane_id);
   if (!active) throw new Error("workspace active pane is missing");
   const readerComposition = isMobile && resolvePaneRouteModel(active.current_visit.href).returnKind === "Reader";
   return <MobileReaderCompositionContext value={readerComposition}>
-    <div className={styles.layout}>
-      <AppNav />
-      <main className={styles.main} data-reader-composition={readerComposition || undefined}>
-        <WorkspaceHost />
-        <GlobalPlayerSurfaces readerComposition={readerComposition} />
-      </main>
-    </div>
+    <GlobalPlayerSurfaces readerComposition={readerComposition}>{player => children(player, readerComposition)}</GlobalPlayerSurfaces>
   </MobileReaderCompositionContext>;
 }
 
@@ -223,27 +234,14 @@ function ChatWorkOwners() {
   return null;
 }
 
-/** Entry failures are discrete outcomes: the open workspace stays in this tab either way. */
-function WorkspaceEntryNotice({ failure, locationLinkFailure }: { failure: { requestId?: string } | null; locationLinkFailure: "TooLong" | null }) {
-  const host = useHostPolicy();
-  const feedback = useFeedback();
-  const reportedLocation = useRef(false);
-  const [, startTransition] = useTransition();
-
+/** A link the workspace could not open is a discrete outcome: the workspace opened without it. */
+function WorkspaceEntryNotice({ locationLinkFailure }: { locationLinkFailure: "TooLong" | null }) {
+  const { say } = useOutcome();
+  const reported = useRef(false);
   useEffect(() => {
-    if (locationLinkFailure === null || reportedLocation.current) return;
-    reportedLocation.current = true;
-    feedback.receipt({ tone: "Warning", title: "this location link is too long" });
-  }, [feedback, locationLinkFailure]);
-
-  useEffect(() => {
-    if (failure === null) return;
-    feedback.receipt({
-      tone: "Warning",
-      title: "workspace update not confirmed",
-      message: "your open workspace remains in this tab.",
-      requestId: failure.requestId,
-    }, { label: "try again", onClick: () => startTransition(() => host.recover()) });
-  }, [failure, feedback, host]);
+    if (locationLinkFailure === null || reported.current) return;
+    reported.current = true;
+    say({ fact: "this link is too long to open." });
+  }, [say, locationLinkFailure]);
   return null;
 }

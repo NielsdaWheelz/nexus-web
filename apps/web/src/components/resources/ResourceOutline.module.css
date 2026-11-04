@@ -8,6 +8,8 @@
 }
 .row {position: relative; min-width: 0; padding-block: var(--outline-gap); color: var(--ink);}
 .head {position: relative; display: flex; align-items: flex-start; gap: var(--outline-gap); min-width: 0; min-block-size: var(--outline-control-block-size);}
+.inSource:not(.inRow) > .head,
+.inSource:not(.inRow) > .head .row:not(.inRow) > .head,
 .row:not(.inRow) > .head:has(> .actions > .control) {min-block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap));}
 .row[hidden] {display: none;}
 .row[data-selected="true"] > .head {background: var(--accent-muted);}
@@ -68,12 +70,6 @@
 .bullet:disabled {
   color: var(--ink-muted);
 }
-.arrow {
-  transition: transform var(--duration-fast) var(--ease-snap);
-}
-.arrow[data-open="true"] {
-  transform: rotate(90deg);
-}
 .content {
   flex: 1;
   min-width: 0;
@@ -90,6 +86,8 @@
   inline-size: calc(var(--outline-control-inline-size) + var(--outline-gap));
   block-size: calc(var(--outline-control-block-size) - 2 * var(--space-1));
 }
+.inSource:not(.inRow) > .head > .content::before,
+.inSource:not(.inRow) > .head .row:not(.inRow) > .head > .content::before,
 .head:has(> .actions > .control) > .content::before {
   block-size: calc(2 * var(--outline-control-block-size) + var(--outline-gap) - var(--outline-content-top));
 }
@@ -109,6 +107,8 @@
 }
 .quote {display: block;}
 .quote:hover {text-decoration: none;}
+/* an unnamed resource still holds its one line. */
+.pending:empty::before {content: "\00a0";}
 .metadata {
   display: flex;
   flex-wrap: wrap;
@@ -139,10 +139,4 @@
   margin: var(--space-1) 0;
   font-size: var(--content-meta-font-size, var(--text-sm));
   color: var(--ink-muted);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arrow {
-    transition: none;
-  }
 }

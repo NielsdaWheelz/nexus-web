@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import AsterismMark from "@/components/AsterismMark";
 import EntryCanvas from "@/components/EntryCanvas";
-import { FeedbackState } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
 import styles from "./EntryFailure.module.css";
 
 export default function EntryFailure({
@@ -17,10 +17,7 @@ export default function EntryFailure({
     <EntryCanvas>
       <main className={styles.surface}>
         <AsterismMark size={32} className={styles.mark} />
-        <FeedbackState
-          content={{ tone: "Danger", title, message: description }}
-          announcement="None"
-        />
+        <Fact line={{ fact: title, reason: description }} />
         {children}
       </main>
     </EntryCanvas>

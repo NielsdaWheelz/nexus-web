@@ -8,7 +8,7 @@ the same pane. a palette row can swap drawing under focus when a local match res
 remotely.
 
 evidence: `apps/web/src/components/notes/OutlineEditorRow.tsx:57`,
-`app/(authenticated)/search/SearchPaneBody.tsx:375`, `lib/nexus/rows.ts:279`.
+`app/(authenticated)/search/SearchPaneBody.tsx:375`, `lib/nexus/rows.ts:270`.
 `ResourceProjection` has no kind (`node/authored/src/types.ts:49`). `capture.kind` looks
 close and is not: it is a free string holding schemes, media kinds and `x_capture`
 (`links.ts:129`, `ShelfReader.tsx:159`, `CapturePaneBody.tsx:102`), typed `str` at

@@ -1,9 +1,11 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
-import { useId, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, Lock, Minus, Plus } from "lucide-react";
-import { FeedbackFailure, FeedbackBusy, FeedbackStatus, type FeedbackContent } from "@/components/feedback/Feedback";
-import {ControlContents} from "@/components/ui/control";
+import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fact, Field } from "@/components/feedback/Fact";
+
+import { Ruling } from "@/components/feedback/Ruling";
+import { ControlContents } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import collection from "@/components/ui/Collection.module.css";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
@@ -16,22 +18,20 @@ export interface ChooserRow {
   readonly name: string;
   readonly confirmed: Membership | null;
   readonly intended: Membership | null;
-  readonly progress: "Settled" | "Pending" | "Uncertain" | "Reconciling";
+  readonly progress: "Settled" | "Pending" | "Uncertain";
+  /** A visible lane note on the row's second line. */
   readonly note?: string;
+  /** `Blocked` waits, and says why to a screen reader alone, or nothing when the list's own failure
+   * says it; `Locked` is durable, says why on the row and carries the lock mark. */
   readonly action:
     | { readonly kind: "Set"; readonly included: boolean; readonly label: string }
-    | { readonly kind: "Blocked"; readonly reason: string };
-}
-export interface ChooserError {
-  readonly occurrence: object;
-  readonly content: FeedbackContent;
-  readonly retry: (() => void) | null;
-  readonly retryLabel?: string;
-  readonly busy?: boolean;
-  readonly commandKey?: string;
+    | { readonly kind: "Blocked"; readonly reason: string | null }
+    | { readonly kind: "Locked"; readonly reason: string };
 }
 export interface ChooserCreation {
   readonly available: boolean;
+  /** Why creation waits, said on its row while unavailable; without it the row is not offered. */
+  readonly gate?: string;
   readonly pendingNames: readonly string[];
   readonly onCreate: (name: string) => boolean;
 }
@@ -51,8 +51,7 @@ function membership(value: Membership | null, kind: "Confirmed" | "Chosen"): str
 function progress(row: ChooserRow): string | null {
   switch (row.progress) {
     case "Settled": return null;
-    case "Uncertain": return "change not confirmed";
-    case "Reconciling": return "checking membership…";
+    case "Uncertain": return "not sure that saved";
     case "Pending": {
       if (row.confirmed === null || row.intended === null) return "updating…";
       const difference = row.intended.included - row.confirmed.included;
@@ -61,18 +60,23 @@ function progress(row: ChooserRow): string | null {
   }
 }
 
-/** Search actions retain their query. Checks show confirmed membership or an explicitly chosen draft destination; highlight is the current suggestion. */
+/** Search actions retain their query. Each row carries two marks: its status (spinner, alert or
+ * lock) and its membership (check, minus, or `?` while unknown). The only failure in the list region
+ * is the owner's read; a command's outcome speaks where its owner raises it. A create row its owner
+ * gates stands disabled with the reason. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, error, create, empty,
+  context, membershipKind, rows, onToggle, loading, summary, failure, create, empty, scrollRef,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly membershipKind: "Confirmed" | "Chosen";
   readonly rows: readonly ChooserRow[];
   readonly onToggle: (change: { id: string; included: boolean }) => boolean;
   readonly loading: boolean;
   readonly summary: string | null;
-  readonly error: ChooserError | null;
+  /** The owner's read failure: its `Failed`, or a domain `Fact`. */
+  readonly failure?: ReactNode;
   readonly create: ChooserCreation | null;
   readonly empty: string;
   readonly label?: string;
@@ -93,13 +97,16 @@ export default function LibraryChooser({
       .toSorted((a, b) => rank(a) - rank(b) || compareLibraryNames(a, b));
   }, [rows, q]);
   const invalid = create === null || name === "" ? null : libraryNameError(name);
-  const canCreate = create?.available === true && name !== "" && invalid === null
+  const named = create !== null && name !== "" && invalid === null
     && !rows.some(row => row.name.trim().toLowerCase() === q)
     && !create.pendingNames.some(pending => pending.trim().toLowerCase() === q);
+  const canCreate = named && create?.available === true;
+  const createGate = named && create?.available === false ? create.gate ?? null : null;
   const createKey = `create:${name}`;
   const options = [
-    ...matching.map(row => ({ key: row.id, disabledReason: row.action.kind === "Blocked" ? row.action.reason : null })),
-    ...(canCreate ? [{ key: createKey, disabledReason: null }] : []),
+    // A blocked row with nothing to say is still disabled: an empty reason.
+    ...matching.map(row => ({ key: row.id, disabledReason: row.action.kind === "Set" ? null : row.action.reason ?? "" })),
+    ...(canCreate || createGate !== null ? [{ key: createKey, disabledReason: createGate }] : []),
   ];
   const searchContext = JSON.stringify([context, query]);
   const current = reconcileSearchActive({
@@ -120,6 +127,10 @@ export default function LibraryChooser({
       if (row?.action.kind === "Set") onToggle({ id: row.id, included: row.action.included });
     },
   });
+  const shownFailure = failure;
+  const invalidId = `${base}-invalid`;
+  const nothing = !loading && !shownFailure && matching.length === 0 && !canCreate && createGate === null;
+  const refused = nothing && invalid !== null;
 
   return (
     <div className={styles.chooser}>
@@ -130,6 +141,7 @@ export default function LibraryChooser({
           className={collection.search}
           {...navigation.inputProps}
           aria-label={label}
+          aria-describedby={refused ? invalidId : undefined}
           value={query}
           placeholder={label}
           autoCapitalize="off"
@@ -145,47 +157,49 @@ export default function LibraryChooser({
           }}
         />
       </div>
+      <div ref={scrollRef} className={styles.body}>
       {summary !== null ? <p className={`${styles.summary} ${collection.detail}`}>{summary}</p> : null}
-      <FeedbackBusy subject={context} pending={loading && rows.length === 0}/>
-      {error ? <FeedbackFailure scope="Local" occurrence={error.occurrence} content={error.content} announcement="Assertive"
-        returnFocus={() => input.current}
-        actions={error.retry ? [{ label: error.retryLabel ?? "retry", onClick: error.retry, busy: error.busy ?? loading, commandKey: error.commandKey }] : undefined} /> : null}
-      <div ref={navigation.listRef} {...navigation.listProps}
-        aria-busy={loading || undefined} className={collection.compactViewport}>
+      {shownFailure ? <div className={styles.region}>{shownFailure}</div> : null}
+      {loading && rows.length === 0 && !shownFailure ? <div className={styles.ruling}><Ruling /></div> : null}
+      <div ref={navigation.listRef} {...navigation.listProps} className={collection.compactViewport}>
         {matching.map(row => {
           const binding = navigation.optionProps(row.id);
           const count = membershipKind === "Confirmed" ? row.confirmed : row.intended;
-          const blocked = row.action.kind === "Blocked";
-          const changing = progress(row);
-          const description = [membership(count, membershipKind), changing, row.note,
+          const description = [membership(count, membershipKind), progress(row), row.note,
             row.action.kind === "Set" ? row.action.label : row.action.reason].filter(Boolean).join(" · ");
           const detail = [count !== null && count.total > 1 ? membership(count, membershipKind) : null,
-            row.note].filter(Boolean).join(" · ");
+            row.note, row.action.kind === "Locked" ? row.action.reason : null].filter(Boolean).join(" · ");
           return <div key={row.id} {...binding}
             aria-labelledby={`${binding.id}-name`} aria-describedby={`${binding.id}-description`}
-            className={collection.row} aria-busy={row.progress === "Pending" || row.progress === "Reconciling"} data-selected={count !== null && count.total > 0 && count.included === count.total || undefined}>
+            className={collection.row} aria-busy={row.progress === "Pending" || undefined}
+            data-selected={count !== null && count.total > 0 && count.included === count.total || undefined}>
             <span className={collection.content}>
               <span id={`${binding.id}-name`}>{row.name}</span>
               {detail ? <span className={collection.detail} aria-hidden="true">{detail}</span> : null}
               <span id={`${binding.id}-description`} className="sr-only">{description}</span>
             </span>
             <span className={`${collection.adornment} ${styles.marks}`} aria-hidden="true">
-              <span><ControlContents reserveIcon busyKey={row.id} busy={row.progress === "Pending" || row.progress === "Reconciling"}
-                icon={row.progress === "Uncertain" ? <CircleAlert size={16}/> : undefined}/></span>
-              <span>{blocked ? <Lock size={16} /> : null}</span>
-              <span>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Check size={16} />
-                : count.included > 0 ? <Minus size={16} /> : null}</span>
+              <ControlContents busy={row.progress === "Pending"}
+                icon={row.progress === "Uncertain" ? <Icon.Warning /> : row.action.kind === "Locked" ? <Icon.Blocked /> : undefined} />
+              <span className={styles.mark}>{count === null ? "?" : count.total > 0 && count.included === count.total ? <Icon.Check size={16} />
+                : count.included > 0 ? <Icon.Remove size={16} /> : null}</span>
             </span>
           </div>;
         })}
-        {canCreate ? <div {...navigation.optionProps(createKey)}
-          aria-label={`create “${name}”`} className={collection.row} data-tone="accent">
-          <Plus className={collection.adornment} size={16} aria-hidden="true" />
-          <span className={collection.content}>create “{name}”</span>
+        {canCreate || createGate !== null ? <div {...navigation.optionProps(createKey)}
+          aria-label={`create “${name}”`} aria-describedby={createGate === null ? undefined : `${base}-create-gate`}
+          className={collection.row} data-tone="accent">
+          <Icon.Add className={collection.adornment} size={16} aria-hidden="true" />
+          <span className={collection.content}>
+            <span>create “{name}”</span>
+            {createGate === null ? null : <span id={`${base}-create-gate`} className={collection.detail}>{createGate}</span>}
+          </span>
         </div> : null}
       </div>
-      {!loading && error === null && matching.length === 0 && !canCreate ? <div className={styles.empty}><FeedbackStatus content={{ tone: "Neutral", title: invalid
-          ?? (q === "" ? empty : "no libraries match") }} announcement="None" /></div> : null}
+      {nothing ? <div className={styles.region}>{refused
+        ? <Field id={invalidId} line={{ fact: invalid }} />
+        : <Fact line={{ fact: q === "" ? empty : "no libraries match." }} />}</div> : null}
+      </div>
     </div>
   );
 }

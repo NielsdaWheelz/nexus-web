@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type {
   DOMAttributes,
   FocusEvent,
@@ -28,7 +27,7 @@ export type ControlHelp = {
   openDelayMs?: number;
 };
 
-export type ControlContent = { reserveIcon?: boolean; busyKey?: unknown } & (
+export type ControlContent =
   | {
       iconOnly: true;
       icon: ReactElement;
@@ -42,8 +41,7 @@ export type ControlContent = { reserveIcon?: boolean; busyKey?: unknown } & (
       "aria-label"?: string;
       children: ReactNode;
       tooltip?: ControlHelp;
-    }
-);
+    };
 
 type Trigger = HTMLButtonElement | HTMLAnchorElement;
 
@@ -56,24 +54,20 @@ export function buttonClassName({ emphasis, tone, size, iconOnly }: ControlAppea
   return cx(styles.control, emphasis && styles.strong, tone && styles.danger, size && styles.comfortable, iconOnly && styles.iconOnly);
 }
 
-export function ControlContents({ icon, reserveIcon = false, busy, busyKey, children }: {
+/** The spinner mounts with `busy` and appears by css after a delay, so a fast wait paints
+ * nothing and settlement needs no timer. It takes the icon's slot, or sits over a label kept at
+ * width. A new subject is a keyed remount of the control. */
+export function ControlContents({ icon, busy, children }: {
   icon?: ReactElement;
-  reserveIcon?: boolean;
   busy: boolean;
-  busyKey?: unknown;
   children?: ReactNode;
 }) {
-  const [waiting, setWaiting] = useState<{ key: unknown } | null>(null);
-  useEffect(() => {
-    if (!busy) return;
-    const timer = setTimeout(() => setWaiting({ key: busyKey }), 200);
-    return () => { clearTimeout(timer); setWaiting(null); };
-  }, [busy, busyKey]);
+  const spinner = busy ? <span className={styles.busy} aria-hidden="true" /> : null;
+  const labelled = !icon && children !== undefined;
   return <>
-    {icon || reserveIcon ? <span className={styles.icon} aria-hidden="true">
-      {busy && waiting !== null && Object.is(waiting.key, busyKey) ? <span className={styles.busy} /> : icon}
-    </span> : null}
-    {children !== undefined ? <span className={styles.label}>{children}</span> : null}
+    {labelled ? null : <span className={cx(styles.icon, busy && styles.waiting)} aria-hidden="true">{icon}{spinner}</span>}
+    {children !== undefined ? <span className={cx(styles.label, busy && labelled && styles.waiting)}>{children}</span> : null}
+    {labelled ? spinner : null}
   </>;
 }
 
@@ -90,7 +84,7 @@ export function ControlTooltip({ content, triggerRef, expanded, renderTrigger }:
     text={help?.text ?? ""}
     placement={help?.placement}
     openDelayMs={help?.openDelayMs}
-    disabled={help === null || expanded}
+    disabled={!help?.text || expanded}
     triggerRef={triggerRef}
     renderTrigger={renderTrigger}
   />;

@@ -13,15 +13,11 @@ import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merg
 import { MAX_COMMAND_BYTES, CommandTooLargeError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
-export interface DocumentReadSnapshot { retrying: boolean; error: unknown | null; occurrence: object | null }
 export interface WritingDocument {
   ref: string; doc: Y.Doc; retain(): () => void; capture(): Promise<WritingSnapshot>;
   onCommitted(listener: (receipt: LocalCommit, origin: unknown) => void): () => void;
   hasPendingEdits(): boolean;
   subscribePendingEdits(listener: () => void): () => void;
-  readSnapshot(): DocumentReadSnapshot;
-  subscribeRead(listener: () => void): () => void;
-  retryRead(): void;
 }
 export class LocalCommitError extends Error {
   constructor(message: string, readonly cause: unknown, readonly retry: () => Promise<LocalCommit>, readonly completion: Promise<LocalCommit>) { super(message); this.name = "LocalCommitError"; }
@@ -39,7 +35,7 @@ export interface LocalCommit {
 }
 export interface LocalGraphCommit extends LocalCommit {states: MergeResult}
 export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "create_highlight" | "edit_body" | "edit_title"}>;
-interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; publishRead(state: DocumentReadSnapshot): void; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
+interface CachedDocument extends WritingDocument { text_pending: Set<Promise<LocalCommit>>; read_attempt: number; read_subscription: number; pins: number; bytes: number; last_used: number; pending: number; prelude: readonly Intent[]; receive(resource: ResourceState): void; track(result: Promise<LocalCommit>, origin: unknown): void; unsubscribe: () => void }
 interface SaveState { saving: boolean; error: unknown | null; error_occurrence: object | null; error_refs: string[]; revision: number }
 interface FailedCommit {
   occurrence: object;
@@ -509,18 +505,9 @@ export class WritingRuntime {
     const pending_edits = new Set<Promise<LocalCommit>>();
     const committed = new Set<(receipt: LocalCommit, origin: unknown) => void>();
     const pendingListeners = new Set<() => void>();
-    const readListeners = new Set<() => void>();
-    let readState: DocumentReadSnapshot = {retrying: false, error: null, occurrence: null};
     const cached: CachedDocument = {
       ref, doc, pins: 0, pending: 0, prelude, bytes: Y.encodeStateAsUpdate(doc).byteLength, last_used: Date.now(), unsubscribe: () => {},
       text_pending: new Set(), read_attempt: 0, read_subscription: 0,
-      readSnapshot: () => readState,
-      subscribeRead: listener => {readListeners.add(listener); return () => readListeners.delete(listener);},
-      publishRead: next => {
-        if (next.retrying === readState.retrying && next.error === readState.error && next.occurrence === readState.occurrence) return;
-        readState = next; for (const listener of readListeners) listener();
-      },
-      retryRead: () => {if (store) this.listenDocument(cached, store, null, true);},
       receive: latest => {
         if (this.retired) return;
         if (Object.entries(latest.touch_vv).some(([replica,sequence])=>BigInt(sequence)>BigInt(latest.delete_vv[replica]??"0"))) cached.prelude=[];
@@ -528,7 +515,6 @@ export class WritingRuntime {
         Y.applyUpdate(doc, decodeBytes(latest.kind !== "page" ? latest.body_state : latest.title_state), REMOTE);
         cached.bytes = Y.encodeStateAsUpdate(doc).byteLength;
         cached.read_attempt++;
-        cached.publishRead({retrying: false, error: null, occurrence: null});
         void this.evict();
       },
       onCommitted: listener => { committed.add(listener); return () => committed.delete(listener); },
@@ -591,20 +577,16 @@ export class WritingRuntime {
     if (store) this.listenDocument(cached, store, loadedRevision === null ? null : { revision: loadedRevision, resource });
     return cached;
   }
-  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: ResourceState } | null, retrying = false): void {
+  /** Keeps an open document current. A refresh that fails over it shows nothing: the subscription
+   * reads again at the next change. Only a defect is reported. */
+  private listenDocument(cached: CachedDocument, store: AuthoredStore, loaded: { revision: string; resource: ResourceState } | null): void {
     const {ref} = cached;
     const entry = this.documents.get(ref);
     const subscription = ++cached.read_subscription;
     cached.read_attempt++;
     cached.unsubscribe();
     const current = () => !this.retired && this.documents.get(ref) === entry && cached.read_subscription === subscription && (!entry?.value || entry.value === cached);
-    const failed = (error: unknown) => {
-      if (!current()) return;
-      cached.read_attempt++;
-      cached.publishRead({retrying: false, error, occurrence: cached.readSnapshot().occurrence ?? {}});
-    };
-    if (retrying) cached.publishRead({...cached.readSnapshot(), retrying: true});
-    cached.retryRead = () => {if (current()) this.listenDocument(cached, store, null, true);};
+    const failed = (error: unknown) => {if (current() && !isAuthoredStorageFailure(error)) reportError(error);};
     const refresh = (result: QueryResult) => {
       if (!current()) return;
       const attempt = ++cached.read_attempt;
@@ -614,7 +596,6 @@ export class WritingRuntime {
         if (!current() || cached.read_attempt !== attempt) return;
         const latest = states.resources.find(resource => resource.ref === ref);
         if (latest) cached.receive(latest);
-        else cached.publishRead({retrying: false, error: null, occurrence: null});
       }).catch(error => {if (current() && cached.read_attempt === attempt) failed(error);});
     };
     cached.unsubscribe = store.subscribe({kind: "resource", ref}, refresh, failed);

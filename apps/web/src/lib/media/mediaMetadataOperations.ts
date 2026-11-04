@@ -17,10 +17,9 @@ import { publishImportsInvalidation } from "@/lib/imports/api";
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
 export type MetadataOperation = Schema<"MetadataOperationOut">;
 
+/** A lost or paused stream over a shown view says nothing; a later mount or admission reads again. */
 interface Observation {
   readonly view: MetadataEnrichmentView | null;
-  readonly disconnected: boolean;
-  readonly error: Error | null;
 }
 interface Entry {
   snapshot: Observation;
@@ -29,7 +28,7 @@ interface Entry {
   stop: (() => void) | null;
   readonly listeners: Set<() => void>;
 }
-const EMPTY: Observation = { view: null, disconnected: false, error: null };
+const EMPTY: Observation = { view: null };
 const entries = new Map<string, Entry>();
 interface AccountScope {
   accountId: string;
@@ -59,7 +58,7 @@ function show(entry: Entry, snapshot: Observation): void {
 function receive(entry: Entry, view: MetadataEnrichmentView): void {
   const known = entry.stamp;
   entry.stamp = view.last_enriched_at;
-  show(entry, { view, disconnected: false, error: null });
+  show(entry, { view });
   if (known === undefined || view.last_enriched_at === known) return;
   // An older job can land while a newer one is latest: without its fields, assume a change.
   const latest = view.operation;
@@ -87,11 +86,9 @@ function follow(scope: AccountScope, mediaId: string, restart = false): void {
     onComplete: () => {
       entry.stop = null;
     },
-    onReconnect: () => show(entry, { ...entry.snapshot, disconnected: true }),
-    onSuspended: error => show(entry, { ...entry.snapshot, disconnected: true, error }),
-    onError: (error) => {
+    onSuspended: () => {},
+    onError: () => {
       entry.stop = null;
-      show(entry, { ...entry.snapshot, disconnected: true, error });
     },
   });
 }
@@ -150,6 +147,7 @@ export function useMediaMetadataOperations(
 export async function submitMetadataResultReview(
   mediaId: string,
   jobId: string,
+  onAccepted?: () => void,
 ): Promise<void> {
   const scope = account;
   if (scope === null) return;
@@ -162,6 +160,7 @@ export async function submitMetadataResultReview(
     if (account !== scope) return;
     throw error;
   }
+  onAccepted?.();
   if (account !== scope) return;
   publishImportsInvalidation();
   follow(scope, mediaId, true);

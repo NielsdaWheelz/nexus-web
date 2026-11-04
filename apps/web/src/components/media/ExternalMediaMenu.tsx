@@ -23,6 +23,7 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
     disabled: action.disabled,
     disabledReason: action.disabledReason ?? undefined,
     busy: action.busy,
+    waiting: action.waiting || undefined,
     hasPopup: action.hasPopup ?? undefined,
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ trigger: triggerEl, returnFocus, afterRemoval: returnFocus }),

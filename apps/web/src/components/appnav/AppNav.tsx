@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Headphones, Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -109,7 +109,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         </a>
         <Button
           iconOnly
-          icon={collapsed ? <ChevronRight /> : <ChevronLeft />}
+          icon={collapsed ? <Icon.Right /> : <Icon.Left />}
           className={styles.collapseButton}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
           onClick={onToggle}
@@ -148,7 +148,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         ) : null}
         <ul ref={listRef} className={styles.list}>
           {NAV_RAIL.map((item) => {
-            const Icon = item.icon;
+            const Glyph = item.icon;
             const active = item.id === section;
             return (
               <li key={item.id}>
@@ -167,7 +167,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                       onClick={(event) => navigate(event, item)}
                       onKeyDown={(event) => navigate(event, item)}
                     >
-                      <Icon className={styles.icon} size={20} aria-hidden="true" />
+                      <Glyph className={styles.icon} size={20} aria-hidden="true" />
                       <span className={styles.label}>{item.label}</span>
                     </a>
                   )}
@@ -197,7 +197,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                 seed: { kind: "Content", initialDestinations: [] },
               })}
             >
-              <Plus className={styles.icon} size={20} aria-hidden="true" />
+              <Icon.Add className={styles.icon} size={20} aria-hidden="true" />
               <span className={styles.label}>Add</span>
             </button>
           )}
@@ -248,7 +248,7 @@ function PlayerDisclosure({ collapsed }: { collapsed: boolean }) {
         aria-describedby={cx(help["aria-describedby"], description !== null && statusId) || undefined}
         onClick={() => visible ? hide() : show({ focus: true })}>
         <span className={styles.playerIcon}>
-          <Headphones className={styles.icon} size={20} aria-hidden="true" />
+          <Icon.Player className={styles.icon} size={20} aria-hidden="true" />
           {failed || active ? <span className={cx(styles.playerMarker, failed && styles.playerFailure)} aria-hidden="true">{failed ? "!" : null}</span> : null}
         </span>
         <span className={styles.label}>player</span>

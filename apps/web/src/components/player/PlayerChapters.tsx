@@ -1,12 +1,12 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import collection from "@/components/ui/Collection.module.css";
 import { readerDestinationHref } from "@/app/(authenticated)/media/[id]/hostedReader";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { readerDocument, transcriptUnitAtTime } from "@/lib/documentReader/model";
@@ -59,9 +59,8 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   readonly onOpened: () => void;
 }) {
   const { ctx } = useActionRuntime();
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const { say, fail } = useOutcome();
   const [opening, setOpening] = useState(false);
-  const occurrence = useFeedbackOccurrence(failure !== null || opening, expectedSubject);
   const resolve = async (signal: AbortSignal): Promise<OpenResult | null> => {
     try {
       const { data } = await apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(`/api/media/${mediaId}/reader`, { signal });
@@ -77,8 +76,7 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
   };
   const report = (error: unknown) => {
     if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
-    if (!isApiError(error) || isSameSystemApiDefect(error)) { ctx.reportDefect({ error }); return; }
-    setFailure(apiTransportFeedback(error, "couldn’t open chapter transcript") ?? { tone: "Warning", title: "couldn’t open chapter transcript", requestId: error.requestId });
+    fail(error, `couldn’t open the transcript for “${chapter.title}”.`);
   };
   const seek = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
@@ -99,14 +97,13 @@ function ChapterRow({ mediaId, title, chapter, current, subject, expectedSubject
       onOpened,
       create: async () => {
         const result = await resolve(ctx.sessionSignal());
-        if (!ctx.sessionSignal().aborted) setFailure(result ? null : {tone: "Warning", title: "no transcript at this time", message: chapter.title});
+        if (!ctx.sessionSignal().aborted && result === null) say({ fact: `no transcript for “${chapter.title}”.` });
         return result;
       },
     }).catch(report).finally(() => setOpening(false));
   };
   const time = formatClock(chapter.start_ms / 1000);
   return <li className={styles.chapterRow}>
-    {failure ? <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> : null}
     <button type="button" className={`${collection.row} ${styles.chapter}`} aria-current={current ? "true" : undefined}
       aria-label={`seek to ${chapter.title}, ${time}`} disabled={expectedSubject === null} onClick={seek} onKeyDown={seek}>
       <span>{chapter.title}</span>

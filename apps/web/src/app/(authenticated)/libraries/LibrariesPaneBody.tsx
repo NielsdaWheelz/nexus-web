@@ -3,11 +3,13 @@
 // The viewer's libraries in the url's sort. Creation and filtering belong to
 // this visit, independently of whether its collection is available.
 
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { useCallback, useId, useState } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import LibraryInvitations from "@/components/libraries/LibraryInvitations";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import LibraryInvitations, { useLibraryInvitations } from "@/components/libraries/LibraryInvitations";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
@@ -20,7 +22,6 @@ import { useLibrariesIndexRead } from "@/lib/panes/indexPaneEntry";
 import { libraryDisplayName, presentLibrary } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
 import { type Library } from "@/lib/libraries/api";
-import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { INDEX_SORTS, offered } from "@/lib/libraries/views";
 import { truncatePaneSearchQuery, usePaneChrome, type PaneRefreshExecute } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
@@ -41,6 +42,7 @@ const UNIT = { singular: "library", plural: "libraries" };
 export default function LibrariesPaneBody() {
   const router = usePaneRouter();
   const creation = useLibraryCreation();
+  const invitations = useLibraryInvitations();
   const params = usePaneSearchParams();
   const sort = params.get("sort");
   const query = indexPaneQuery("libraries", params)!;
@@ -49,7 +51,6 @@ export default function LibrariesPaneBody() {
   const list = useServerValue({ ...descriptor, catalog, visit: VISIT });
   const indexItems = list.status === "ready" ? list.data.items : [];
   const failure = list.status === "loading" ? null : list.error;
-  const readOccurrence = useFeedbackOccurrence(failure !== null, "Libraries.Index");
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const invalid =
@@ -77,14 +78,9 @@ export default function LibrariesPaneBody() {
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const emptyTitle = text
-    ? "no libraries match this filter."
-    : "no libraries yet.";
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active: usePaneIsActive(), unit: UNIT, waiting: list.status === "loading" && !invalid,
-    outcome: visible.length > 0 ? "results updated." : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  // Every account has its default library, so only a filter empties the index.
+  const emptyTitle = text ? "no libraries match this filter." : null;
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: usePaneIsActive(), waiting: list.status === "loading" && !invalid, outcome: visible.length > 0 ? null : emptyTitle });
   const canReset = Boolean(sort);
   // The count describes the complete view, never a subset.
   const headerMeta: PaneHeaderMeta = invalid
@@ -101,13 +97,15 @@ export default function LibrariesPaneBody() {
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
   };
   const { refetch } = list;
+  // Success and a failed reread over shown rows both say nothing.
   const execute = useCallback<PaneRefreshExecute>(async () => {
     try {
       await refetch();
-      return { kind: "Complete", announcement: "Libraries refreshed" };
-    } catch {
-      return { kind: "Failed", announcement: "Libraries failed to refresh" };
+    } catch (error) {
+      if (isAbortError(error) || !isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      // justify-ignore-error: the displayed read retains its failure and heals on demand.
     }
+    return null;
   }, [refetch]);
   usePaneChrome({
     primaryAction: creation.primaryAction,
@@ -138,36 +136,17 @@ export default function LibrariesPaneBody() {
       <>
         {readFeedback.announcement}
         {creation.content}
-        <FeedbackNotice
-          content={{ tone: "Danger", title: "Invalid libraries view" }}
-          announcement="Assertive"
-          actions={[{ label: "Reset view", onClick: reset }]}
-        />
+        {invitations.held}
+        <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: "libraries-view-reset", run: reset }]} />
       </>
     );
   }
-  const loadFailure =
-    failure !== null ? (
-      <FeedbackFailure scope="Local" occurrence={readOccurrence}
-        content={
-          libraryErrorFeedback(
-            failure,
-            list.status === "ready"
-              ? "couldn’t refresh libraries"
-              : "couldn’t load libraries",
-            throwDefect,
-          ) ?? { tone: "Danger", title: "couldn’t load libraries" }
-        }
-        announcement={list.status === "ready" ? "None" : "Polite"}
-        actions={[{ label: "try again", onClick: retry, busy }]}
-        returnFocus={() => inputRef.current}
-      />
-    ) : null;
   return (
     <>
       {readFeedback.announcement}
       {creation.content}
-      <LibraryInvitations returnFocus={() => inputRef.current} />
+      {invitations.held}
+      <LibraryInvitations state={invitations} />
       <CollectionView geometry="UniformIndex"
         returnScope="Libraries.Items"
         rows={visible.map(presentLibrary)}
@@ -175,15 +154,8 @@ export default function LibrariesPaneBody() {
         ariaLabel="Libraries"
         anchorKey={text}
         collectionBusy={busy}
-        error={loadFailure}
-        notice={list.status === "ready" ? loadFailure : null}
-        empty={
-          <FeedbackNotice
-            content={{ tone: "Neutral", title: emptyTitle,
-              message: !text && (list.status === "ready") ? "use new library to create one." : undefined }}
-            announcement="None"
-          />
-        }
+        error={list.status === "failed" ? <Failed error={list.error} noun="libraries" retry={{ run: retry, busy }} /> : null}
+        empty={emptyTitle === null ? null : <Fact line={{ fact: emptyTitle }} />}
       />
     </>
   );

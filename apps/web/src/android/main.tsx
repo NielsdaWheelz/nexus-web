@@ -8,7 +8,6 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "./fonts.css";
 import { SolarEffects } from "@/components/theme/SolarEffects";
 import ShareCapture from "@/app/share/ShareCapture";
-import shareStyles from "@/app/share/share.module.css";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import BrowserWorkspace from "@/lib/authored/BrowserWorkspace";
@@ -42,6 +41,6 @@ if (root === null) throw new Error("installed application root missing");
 createRoot(root).render(
   <HostPolicyProvider value={{ ...installedHostPolicy, Image: PackagedImage }}>
     <SolarEffects />
-    {isCapture ? <RenderEnvironmentProvider value={environment}><MobileViewportProvider><div className={shareStyles.backdrop}><main className={shareStyles.card}><ShareCapture text={new URL(location.href).searchParams.get("text") ?? ""} isShell={nativeHost} /></main></div></MobileViewportProvider></RenderEnvironmentProvider> : installedApp ? <DeviceWorkspace renderEnvironment={environment} /> : <BrowserWorkspace renderEnvironment={environment} />}
+    {isCapture ? <RenderEnvironmentProvider value={environment}><MobileViewportProvider><ShareCapture text={new URL(location.href).searchParams.get("text") ?? ""} isShell={nativeHost} /></MobileViewportProvider></RenderEnvironmentProvider> : installedApp ? <DeviceWorkspace renderEnvironment={environment} /> : <BrowserWorkspace renderEnvironment={environment} />}
   </HostPolicyProvider>,
 );

@@ -1,29 +1,31 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { usePlaybackSource, type PlaybackSource } from "./playbackSource";
 import { projectConsumptionUndoActions, projectDownloadActions, projectPlaybackAction, projectResourceActions, type ResourceActions } from "@/lib/actions/project";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useActionRuntime, useBusyActionIds, resourceActionRequiresRemote } from "@/lib/actions/ResourceActionsProvider";
-import { installedApp, remoteAttemptAllowed, remoteGeneration } from "@/lib/native/admission";
-import { ApiError, apiFetch, apiTransportFeedback } from "@/lib/api/client";
+import { admissionReason } from "@/lib/actions/catalog";
+import { installedApp, remoteGeneration } from "@/lib/native/admission";
+import { ApiError, admissionRefusal, apiFetch } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import type { PodcastActionFocus } from "./inlineActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
+type Failure = { readonly error: ApiError };
 type ReadState =
   | null
-  | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal; readonly failure: {readonly feedback: FeedbackContent; readonly error: ApiError | null} | null }
+  | { readonly kind: "Loading"; readonly ref: string; readonly request: AbortSignal; readonly failure: Failure | null }
   | { readonly kind: "Ready"; readonly ref: string; readonly request: AbortSignal; readonly facts: ResourceActions; readonly generation: number; readonly source: PlaybackSource | null }
-  | { readonly kind: "Failed"; readonly ref: string; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly error: ApiError | null };
+  | ({ readonly kind: "Failed"; readonly ref: string; readonly request: AbortSignal } & Failure);
 
 /**
  * Reads one invocation's authoritative facts. The caller owns its signal and
  * visible lifetime; abort, replacement and departure cancel and forget the read.
- * Projection uses current runtime availability; this reader owns no menu or timer.
+ * Admission refuses a read unsent, in its own words. Projection uses current runtime
+ * availability; this reader owns no menu or timer.
  */
 export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void, focus?: PodcastActionFocus) {
   const { ctx, run } = useActionRuntime();
@@ -43,10 +45,6 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     flight.current = null;
     replaced?.cancel();
     if (ref === null || request.aborted) {setLoad(null); return;}
-    if (!remoteAttemptAllowed()) {
-      setLoad({ kind: "Failed", ref, request, error: null, feedback: { tone: "Neutral", title: "requires a connection" } });
-      return;
-    }
     const generation = remoteGeneration();
     const controller = new AbortController();
     const attempt = {
@@ -63,7 +61,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     flight.current = attempt;
     request.addEventListener("abort", attempt.cancel, { once: true });
     setLoad(previous => ({kind: "Loading", ref, request, failure: previous?.ref === ref && previous.request === request && !request.aborted
-      ? previous.kind === "Failed" ? {feedback: previous.feedback, error: previous.error}
+      ? previous.kind === "Failed" ? { error: previous.error }
         : previous.kind === "Loading" ? previous.failure : null : null}));
     apiFetch<ApiJson<"/resource-items/{resource_ref}/actions", "get">>(
       `/api/resource-items/${encodeURIComponent(ref)}/actions`,
@@ -77,10 +75,8 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
       if (flight.current !== attempt || subject.current !== ref || request.aborted) return;
       request.removeEventListener("abort", attempt.cancel);
       flight.current = null;
-      const failure = modeledApiError(error, fail.current);
-      if (failure) setLoad({
-        kind: "Failed", ref, request, error: failure, feedback: apiTransportFeedback(failure, "actions couldn’t load") ?? { tone: "Warning", title: "actions couldn’t load", requestId: failure.requestId },
-      });
+      const modeled = modeledApiError(error, fail.current);
+      if (modeled) setLoad({ kind: "Failed", ref, request, error: modeled });
     });
   }, [ref, source]);
 
@@ -92,7 +88,7 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     const attempt = flight.current;
     if (ctx.online || !installedApp || attempt === null) return;
     attempt.cancel();
-    setLoad({ kind: "Failed", ref: attempt.ref, request: attempt.request, error: null, feedback: { tone: "Neutral", title: "requires a connection" } });
+    setLoad({ kind: "Failed", ref: attempt.ref, request: attempt.request, error: admissionRefusal() });
   }, [ctx.online]);
 
   const state = load !== null && load.ref === ref && !load.request.aborted ? load : null;
@@ -101,16 +97,16 @@ export function useResourceActions(ref: string | null, onDefect?: (defect: { rea
     state: state?.kind === "Ready" ? {
       ...state, options: projectResourceActions(state.facts, ctx, busy, command => run({
         ...command,
-        execute: () => {
+        execute: acknowledged => {
           if (installedApp && resourceActionRequiresRemote(command.id, command.tracked) && state.generation !== remoteGeneration())
-            throw new ApiError(409, "E_ACTION_FACTS_STALE", "reopen actions to check current availability");
-          return command.execute();
+            throw new ApiError(409, "E_ACTION_FACTS_STALE", "the menu was out of date");
+          return command.execute(acknowledged);
         },
       }), pane?.paneId ?? null, state.source, focus).map<ActionDescriptor>(action => {
         const transcript = state.facts.actions.find(item => item.kind === "Transcript");
         const tracked = action.id !== "Transcript" || transcript?.kind !== "Transcript" || !["ready", "partial", "queued", "running"].includes(transcript.state);
         if (!installedApp || !resourceActionRequiresRemote(action.id, tracked) || ctx.online && state.generation === remoteGeneration()) return action;
-        return { ...action, disabled: true, disabledReason: ctx.online ? "reopen actions to check current availability" : "requires a connection" };
+        return { ...action, disabled: true, disabledReason: ctx.online ? "these actions may be out of date. reopen the menu." : admissionReason() };
       }),
     } : state,
   };

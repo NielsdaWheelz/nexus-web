@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Announcement } from "@/components/feedback/Announcement";
+import PlayerOutcomes from "./PlayerOutcomes";
 import Button from "@/components/ui/Button";
 import PickerSurface from "@/components/ui/PickerSurface";
 import { activateTargetLink, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
@@ -32,7 +34,7 @@ import PlayerSheet, { MobileDisclosure } from "./PlayerSheet";
 import PlayerKeys from "./PlayerKeys";
 import PlayerMore from "./PlayerMore";
 import { usePlayerAnnouncement } from "./usePlayerAnnouncement";
-import { usePlayerOrigin } from "./usePlayerOrigin";
+import { PlayerOriginObserver, usePlayerOrigin } from "./usePlayerOrigin";
 import styles from "./GlobalPlayerSurfaces.module.css";
 
 const PICKER_DIALOGS = '[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]';
@@ -48,7 +50,11 @@ const shown = (element: HTMLElement | null): element is HTMLElement => element !
  * desktop chrome without retiring settings or announcements; overlays return only to shown
  * controls and never reclaim unrelated focus.
  */
-export default function GlobalPlayerSurfaces({ readerComposition }: { readerComposition: boolean }) {
+export default function GlobalPlayerSurfaces({ readerComposition, children }: {
+  readerComposition: boolean;
+  /** Place the visual slot below workspace containment without retiring the player root. */
+  children: (surface: ReactNode) => ReactNode;
+}) {
   const session = Player.usePlayerSession();
   const { state, queue, preferences, playbackSubject, supportsSilenceSkipping } = session;
   const presentation = usePlayerPresentation();
@@ -75,7 +81,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const [sheetOpen, setSheetOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"Player" | "Queue">("Player");
-  const { announcement, announce } = usePlayerAnnouncement(mode);
+  const announcement = usePlayerAnnouncement(mode);
   const slotRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLElement>(null);
   const discRef = useRef<HTMLButtonElement>(null);
@@ -92,11 +98,31 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
   const sourceOpened = useRef(false);
   const loaded = state.kind === "Loaded" ? state : null;
   const { accountId } = useAuthenticatedAccount();
-  const settings = usePlaybackSettings({ loaded, playbackSubject, preferences, opening });
+  const settings = usePlaybackSettings({ loaded, playbackSubject, preferences, opening, panelOpen: shownPicker === "Playback" });
   const sheetShown = !modeChanged && isMobile && sheetOpen;
   const currentSurface = useRef({ sheetShown, playbackSubject, desktopVisible: presentation.visible });
   currentSurface.current = { sheetShown, playbackSubject, desktopVisible: presentation.visible };
-  const suppressed = isMobile ? sheetShown || (textEntryFocused && nativeKeyboard !== false) : !presentation.visible;
+  const keyboardSuppressed = textEntryFocused && nativeKeyboard !== false;
+  const keyboardSuppressedRef = useRef(keyboardSuppressed);
+  keyboardSuppressedRef.current = keyboardSuppressed;
+  const [keyboardPress, setKeyboardPress] = useState(false);
+  // Keep the mini hidden through the press that leaves typing, so its target does not move.
+  useEffect(() => {
+    if (!isMobile) return;
+    let release = 0;
+    const down = () => { if (keyboardSuppressedRef.current) setKeyboardPress(true); };
+    const up = () => { cancelAnimationFrame(release); release = requestAnimationFrame(() => setKeyboardPress(false)); };
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+    return () => {
+      cancelAnimationFrame(release);
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+    };
+  }, [isMobile]);
+  const suppressed = isMobile ? sheetShown || keyboardSuppressed || keyboardPress : !presentation.visible;
   const setFooter = useCallback((element: HTMLElement | null) => {
     footerRef.current = element;
     presentation.regionRef.current = isMobile ? null : element;
@@ -196,7 +222,7 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
     : <PlayerChapters loaded={loaded} presentation={surface} onSeek={origin.seek} onOpened={opened} />;
   const mini = miniKeys(mode);
   const contents = isMobile ? <>
-    <PlayerRule variant="Mini" clock={clock} origin={origin} />
+    <PlayerRule variant="Mini" clock={clock} />
     <div className={styles.miniRow}>
       <PlayerIdentity variant="Mini" mode={mode} open={open} buttonRef={openerRef}
         onOpenSheet={() => { sourceOpened.current = false; setSheetTarget("Player"); setSheetOpen(true); }} />
@@ -215,8 +241,10 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
 
   return <>
     <PlayerKeys origin={origin} />
-    <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
-    <div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
+    <PlayerOriginObserver origin={origin} />
+    <Announcement text={announcement?.text ?? ""} occurrence={announcement?.occurrence} level="Polite" />
+    <PlayerOutcomes />
+    {children(<div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
       onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}
       onBlurCapture={event => { if (event.relatedTarget !== null) focusedControl.current = null; }}>
       <footer ref={setFooter} id={isMobile ? undefined : presentation.regionId} tabIndex={isMobile ? undefined : -1}
@@ -242,14 +270,14 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           target?.focus({ preventScroll: true });
           return target;
         }}>
-        <div className={styles.queueScrollport}><QueuePanel announce={announce} scrollport={section => section.parentElement} runtime={linkRuntime} onOpened={opened} revealOnOpen /></div>
+        <div className={styles.queueScrollport}><QueuePanel scrollport={section => section.parentElement} runtime={linkRuntime} onOpened={opened} revealOnOpen /></div>
       </PickerSurface>
       <PlayerSheet active={sheetShown} target={sheetTarget} contentRef={sheetContentRef}
         onDismiss={() => { focusedControl.current = null; setPicker(null); setSheetOpen(false); }}
         skipReturnFocus={() => sourceOpened.current}
         returnFocusTo={() => returnFocus([openerRef.current, queueRef.current])}
         returnFocusFallback={() => returnFocus([])}
-        announce={announce} runtime={linkRuntime} onOpened={opened}>
+        runtime={linkRuntime} onOpened={opened}>
         <PlayerIdentity variant="Sheet" mode={mode} open={open} />
         {mode.kind === "Active" ? <PlayerRule variant="Sheet" clock={clock} origin={origin} draft={draft} onDraft={setDraft} /> : null}
         <PlayerTransport variant="Sheet" mode={mode} keys={keys} />
@@ -261,6 +289,6 @@ export default function GlobalPlayerSurfaces({ readerComposition }: { readerComp
           {shownPicker === "Playback" ? playbackPanel("Embedded") : chapterPanel("Embedded")}
         </MobileDisclosure> : null}
       </PlayerSheet>
-    </div>
+    </div>)}
   </>;
 }

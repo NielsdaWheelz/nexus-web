@@ -1,6 +1,9 @@
 // Local binding is not server authority. This document retains its owners while
 // native alone verifies admission; explicit Ready transitions wake reads, never writes.
-// A browser response can restore reachability without waking every read.
+// A browser response can restore reachability without waking every read; a repair
+// wakes only the owners holding a failed read, whichever way reachability returned.
+// A demand is a repair no response raised, and the only kind a read may answer without limit.
+import { androidShellDocument } from "@/lib/androidShell";
 import type { RemoteAdmission } from "./contracts";
 
 export const installedApp = typeof window !== "undefined" && "nexusApp" in window;
@@ -13,8 +16,13 @@ export function bindBrowserAdmission(): () => void {
 }
 let admission: RemoteAdmission = installedApp ? "Checking" : "Ready";
 let generation = 0;
+let repairs = 0;
+let demands = 0;
 let check: (() => Promise<unknown>) | null = null;
+let workerStale = false;
+let shellWaiting = false;
 const listeners = new Set<() => void>();
+const repairListeners = new Set<() => void>();
 export const remoteReady = () => admission === "Ready";
 /** A demand request may test unknown browser reachability without admitting background work. */
 export const remoteAttemptAllowed = () => remoteReady() || !installedApp && admission === "Unavailable";
@@ -24,14 +32,70 @@ export function subscribeAdmission(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+/** Resolves once admission is not `Checking`, or after `ms` whatever it is; rejects with the
+ * signal's reason if it aborts first. A command's wait for a session check to settle. */
+export function whenChecked(ms: number, signal: AbortSignal | null | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    if (admission !== "Checking") { resolve(); return; }
+    const settle = (finish: () => void) => { clearTimeout(timer); listeners.delete(checked); signal?.removeEventListener("abort", aborted); finish(); };
+    const checked = () => { if (admission !== "Checking") settle(resolve); };
+    const aborted = () => settle(() => reject(signal!.reason));
+    const timer = setTimeout(() => settle(resolve), ms);
+    listeners.add(checked);
+    signal?.addEventListener("abort", aborted, { once: true });
+  });
+}
+export const repairGeneration = () => repairs;
+export const demandGeneration = () => demands;
+function repair(demanded: boolean): void {
+  repairs += 1;
+  if (demanded) demands += 1;
+  for (const listener of repairListeners) listener();
+}
+const demandRepair = () => repair(true);
+/** Held only with a failed read. Focus is its natural demand; `online` keeps "back online"
+ * true for a document with no browser admission binding. Never a timed loop. */
+export function subscribeRepair(listener: () => void): () => void {
+  if (repairListeners.size === 0) { window.addEventListener("focus", demandRepair); window.addEventListener("online", demandRepair); }
+  repairListeners.add(listener);
+  return () => {
+    repairListeners.delete(listener);
+    if (repairListeners.size === 0) { window.removeEventListener("focus", demandRepair); window.removeEventListener("online", demandRepair); }
+  };
+}
+/** What can replace a stale build. Reload replaces this document alone: it cannot replace a
+ * shared worker another tab holds, nor an installed shell. */
+export type UpdateRemedy = "Reload" | "CloseTabs" | "Reinstall";
+export const updateRemedy = (): UpdateRemedy =>
+  installedApp || androidShellDocument ? "Reinstall" : workerStale || shellWaiting ? "CloseTabs" : "Reload";
+/** A 426 the sync transport met: the worker is stale, whatever this document is. */
+export function observeWorkerUpdate(): void {
+  if (!workerStale) {
+    workerStale = true;
+    for (const listener of listeners) listener();
+  }
+  observeRemoteFailure(426);
+}
+/** Whether an installed shell update waits for every old tab to close. */
+export const updateWaiting = () => shellWaiting;
+export function observeShellWaiting(waiting: boolean): void {
+  if (waiting === shellWaiting) return;
+  shellWaiting = waiting;
+  for (const listener of listeners) listener();
+}
 function setAdmission(next: RemoteAdmission, wakeReads: boolean): void {
   if (next === admission) return;
+  const reachable = admission === "Unavailable" && next === "Ready";
   admission = next;
   if (next === "Ready" && wakeReads) generation += 1;
   for (const listener of listeners) listener();
+  if (reachable) repair(wakeReads);
 }
 export function publishAdmission(next: RemoteAdmission): void { setAdmission(next, true); }
+/** The native bridge binds the one session check; a browser binds none, so it has no check. */
 export function bindSessionCheck(run: () => Promise<unknown>): void { check = run; }
+/** Asks native authority to recheck the session. Nothing where no bridge can answer. */
 export function checkSession(): void { void check?.(); }
 /** A current-account successful request is another browser reachability witness. */
 export function observeRemoteSuccess(): void {

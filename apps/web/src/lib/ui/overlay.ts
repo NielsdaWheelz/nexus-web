@@ -28,6 +28,9 @@ import {
   useSyncExternalStore,
 } from "react";
 
+/** A modal family dispatches this on its panel immediately after moving it imperatively. */
+export const MODAL_GEOMETRY_CHANGE = "nexus-modal-geometry-change";
+
 export type DismissDecision = "accepted" | "blocked";
 export type DismissReason = "escape" | "back" | "outside" | "tab" | "navigation";
 export type ReturnFocusTarget = () =>
@@ -84,7 +87,7 @@ export interface Layer {
   /** The modal this layer renders inside (React context), or null on the page. */
   parent: Layer | null;
   readonly options: { readonly current: OverlayOptions };
-  /** A modal's role="dialog" panel: the Tab trap root and its transients' container. */
+  /** A modal's semantic role="dialog" room: the Tab trap root and its transients' container. */
   element: HTMLElement | null;
   /** The interactive layer's trigger, captured at open; tooltips keep null. */
   opener: ReturnType<ReturnFocusTarget>;
@@ -99,7 +102,14 @@ const listeners = new Set<() => void>();
 let interactionGeneration = 0;
 
 const isModal = (layer: Layer) => layer.options.current.kind === "modal";
-const topModal = () => layers.findLast(isModal) ?? null;
+/** The topmost open modal; the stage reads it at raise and on every stack change. */
+export function topModal(): Layer | null {
+  return layers.findLast(isModal) ?? null;
+}
+/** A frame's children commit before it registers, so a layer can be rendered and not yet stand. */
+export function onOverlayStack(layer: Layer): boolean {
+  return layers.includes(layer);
+}
 function topmost(layer: Layer): boolean {
   if (topModal() !== (isModal(layer) ? layer : layer.parent)) return false;
   const options = layer.options.current;
@@ -139,7 +149,7 @@ export function hasActiveModal(): boolean {
 
 /** Observe the existing stack; feedback never owns modal state. */
 export function useModalActive(): boolean {
-  return useSyncExternalStore(subscribe, hasActiveModal, () => false);
+  return useSyncExternalStore(subscribeOverlayStack, hasActiveModal, () => false);
 }
 
 const openerElement = (layer: Layer) =>
@@ -192,7 +202,7 @@ export function getInteractionOwnerBelow(layer: Layer): Layer | null {
 
 /** Pending destination focus resumes when the existing overlay owner leaves. */
 export function useInteractionOwner(): Layer | null {
-  return useSyncExternalStore(subscribe, getInteractionOwner, () => null);
+  return useSyncExternalStore(subscribeOverlayStack, getInteractionOwner, () => null);
 }
 
 export function isTopmostInteractionOwner(scope: string): boolean {
@@ -206,7 +216,7 @@ export function getInteractionGeneration(): number {
 
 export function useInteractionBlocked(scope: string): boolean {
   return useSyncExternalStore(
-    subscribe,
+    subscribeOverlayStack,
     () => {
       const current = owner();
       return current !== undefined && current.options.current.scope !== scope;
@@ -434,18 +444,18 @@ function onKeyDown(event: KeyboardEvent): void {
 export function handleModalTab(
   event: Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
 ): void {
-  const panel = topModal()?.element;
-  if (event.key !== "Tab" || !panel) return;
-  // The Tab trap: focus wraps inside the top modal's panel.
-  const items = focusableElements(panel);
+  const room = topModal()?.element;
+  if (event.key !== "Tab" || !room) return;
+  // The Tab trap: focus wraps inside the top modal's room.
+  const items = focusableElements(room);
   const first = items[0];
   const last = items.at(-1);
   const active = document.activeElement as HTMLElement;
   if (!first || !last) {
     event.preventDefault();
-    panel.focus();
+    room.focus();
   } else if (
-    !panel.contains(active) ||
+    !room.contains(active) ||
     active === (event.shiftKey ? first : last) ||
     // A programmatic trigger may have tabindex=-1. Let native Tab continue
     // from its position unless no tabbable remains in that direction.
@@ -484,7 +494,7 @@ function onPointerDown(event: PointerEvent): void {
       if (kind === "transient") closed = true;
     }
   }
-  if (!closed && modal && target === modal.element?.parentElement) {
+  if (!closed && modal && target === modal.element) {
     scrimPress = modal;
   }
 }
@@ -497,7 +507,7 @@ function onClick(event: MouseEvent): void {
   if (
     modal &&
     modal === topModal() &&
-    event.target === modal.element?.parentElement
+    event.target === modal.element
   ) {
     dispatch(modal, "outside");
   }
@@ -541,7 +551,8 @@ function changed(): void {
   });
 }
 
-function subscribe(listener: () => void): () => void {
+/** Every change to the stack, and to focus within it. */
+export function subscribeOverlayStack(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -549,7 +560,7 @@ function subscribe(listener: () => void): () => void {
 /** Provided by ModalFrame: the modal its children render inside. */
 export const OverlayContext = createContext<Layer | null>(null);
 
-/** Where a transient or tooltip renders: its containing modal's panel, else the body. */
+/** Where a transient or tooltip renders: its containing modal's semantic room, else the body. */
 export function useOverlayContainer(): HTMLElement | null {
   const parent = useContext(OverlayContext);
   if (typeof document === "undefined") return null;
@@ -626,7 +637,7 @@ export function useOverlay(
   // A host re-renders when its own layer is pushed or popped, covered or
   // exposed, or moves in depth: not on every change to the stack.
   useSyncExternalStore(
-    subscribe,
+    subscribeOverlayStack,
     () => (layers.includes(layer) ? `${topmost(layer)}:${depth(layer)}` : ""),
     () => "",
   );

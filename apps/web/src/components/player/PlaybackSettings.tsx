@@ -1,6 +1,8 @@
 "use client";
 
-import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useRef } from "react";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import type { Line } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import ChoiceField from "@/components/ui/ChoiceField";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -11,11 +13,9 @@ import { formatClock } from "@/lib/formatClock";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import * as Player from "@/lib/player/playerRuntime";
 import { getPodcastSettings, type PodcastSettings } from "@/lib/podcasts/api";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import { usePodcastSettingsSave } from "@/lib/podcasts/usePodcastSettingsSave";
 import { cx } from "@/lib/ui/cx";
 import PlaybackRateEditor from "./PlaybackRateEditor";
-import { PlayerFailures } from "./PlayerFailures";
 import styles from "./PlaybackSettings.module.css";
 
 type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
@@ -25,12 +25,13 @@ export type PlaybackSettings = ReturnType<typeof usePlaybackSettings>;
  * The loaded podcast's saved defaults and this load's save. The player root owns it:
  * its status reaches identity while the panel is closed, and a save outlives the picker.
  */
-export function usePlaybackSettings({ loaded, playbackSubject, preferences, opening }: {
+export function usePlaybackSettings({ loaded, playbackSubject, preferences, opening, panelOpen }: {
   readonly loaded: Loaded | null;
   readonly playbackSubject: string | null;
   readonly preferences: Player.PlaybackPreferences | null;
   /** each opening of the panel rereads the saved defaults. */
   readonly opening: number;
+  readonly panelOpen: boolean;
 }) {
   const { accountId } = useAuthenticatedAccount();
   const podcastId = loaded?.source.descriptor.podcast_id ?? null;
@@ -43,8 +44,11 @@ export function usePlaybackSettings({ loaded, playbackSubject, preferences, open
       return getPodcastSettings(podcastId, signal);
     },
   });
-  const readOccurrence = useFeedbackOccurrence(read.status !== "loading" && read.error !== null, podcastId);
-  const save = usePodcastSettingsSave(podcastId, playbackSubject === null ? null : `${accountId}:${playbackSubject}`);
+  const surface = useRef({ panelOpen, playbackSubject });
+  surface.current = { panelOpen, playbackSubject };
+  const save = usePodcastSettingsSave(podcastId, loaded?.source.descriptor.subtitle ?? "this podcast",
+    playbackSubject === null ? null : `${accountId}:${playbackSubject}`,
+    () => surface.current.panelOpen && surface.current.playbackSubject === playbackSubject);
   const operation = save.state;
   let status: string | null = null;
   let failed = false;
@@ -67,10 +71,10 @@ export function usePlaybackSettings({ loaded, playbackSubject, preferences, open
       case "Ready": break;
       case "Applying": break;
       case "Failed": status = "couldn’t apply playback settings. open playback settings to try again."; failed = true; break;
-      default: assertNever(preferences.application);
+      default: assertNever(preferences.application.kind);
     }
   }
-  return { status, failed, read, readOccurrence, save };
+  return { status, failed, read, save };
 }
 
 /** Live fields, then this podcast's saved defaults. The caller owns every state shown here. */
@@ -82,7 +86,7 @@ export function PlaybackPanel({ loaded, preferences, supportsSilenceSkipping, se
   readonly presentation: "Popup" | "Embedded";
 }) {
   const commands = Player.usePlayerCommands();
-  const { read, readOccurrence, save } = settings;
+  const { read, save } = settings;
   const episode = loaded.source.descriptor;
   const podcast = episode.subtitle ?? "this podcast";
   const saved = read.status === "ready" ? read.data : null;
@@ -105,12 +109,13 @@ export function PlaybackPanel({ loaded, preferences, supportsSilenceSkipping, se
       pause_shortening_mode: supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : baseline.pause_shortening_mode,
     });
   };
-  let feedback: FeedbackContent | null = null;
-  if (replaced) feedback = { tone: "Warning", title: "playback defaults changed. reopen settings before saving." };
-  else if (missing) feedback = { tone: "Warning", title: "this podcast is unavailable. current playback is unchanged." };
-  else if (operation?.kind === "Review") feedback = { tone: "Warning",
-    title: operation.reason === "Conflict" ? "podcast defaults changed elsewhere." : "the saved settings do not confirm this request.",
-    message: `${podcast}: ${defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}` };
+  const unread = operation?.kind === "ReadFailed" && operation.reason === "Conflict";
+  const fact: Line | null = replaced ? { fact: "these defaults were replaced elsewhere.", reason: "reopen to edit them." }
+    : missing ? { fact: "this podcast isn’t available." }
+    : operation?.kind === "Review" ? { fact: operation.reason === "Conflict" ? "couldn’t save these defaults." : "the saved defaults differ from this change." }
+    : unread ? { fact: "couldn’t save these defaults.", reason: "couldn’t load the current ones." }
+    : null;
+  const readFailed = !missing && read.status !== "loading" && read.error !== null ? read.error : null;
   return <section className={cx(styles.panel, presentation === "Popup" ? styles.popup : styles.embedded)} aria-label="playback">
     <div className={styles.panelHeading}>
       <h2>playback</h2>
@@ -121,20 +126,19 @@ export function PlaybackPanel({ loaded, preferences, supportsSilenceSkipping, se
     {supportsSilenceSkipping ? <SkipSilenceField checked={preferences.skipSilence} onChange={commands.setShortenPauses} label="skip silence" />
       : <p className={styles.eyebrow}>skip silence · android app only</p>}
     <SavedSilence />
-    <PlayerFailures />
-    {save.feedback}
     {episode.podcast_id !== null ? <div className={styles.panelRow}>
-      {!missing && !replaced ? <Button reserveIcon busyKey={operation?.command} size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
+      {!missing && !replaced ? <Button size="comfortable" className={styles.remember} aria-busy={save.busy || undefined} disabled={!readReady || save.busy || preferences.application.kind !== "Ready" || needsCheck} onClick={remember}>
         {supportsSilenceSkipping ? "remember settings for this podcast" : "remember speed for this podcast"}
       </Button> : null}
-      {feedback ? <FeedbackNotice content={feedback} announcement="None" /> : null}
-      {operation && operation.kind !== "Accepted" && operation.kind !== "Saving" && !missing && !replaced ? <p className={styles.eyebrow}>requested for {podcast}: {defaults(operation.command.patch.default_playback_speed, operation.command.patch.pause_shortening_mode)}</p> : null}
+      {fact ? <Fact line={fact} verbs={unread ? [{ label: "check", commandKey: `check podcast defaults ${episode.podcast_id}`, run: save.check }] : undefined} /> : null}
       {reviewed && !replaced ? <div className={styles.comparison}>
         <p>saved defaults: {defaults(reviewed.default_playback_speed, reviewed.pause_shortening_mode)}</p>
         <p>proposed defaults: {defaults(preferences.rate, supportsSilenceSkipping ? (preferences.skipSilence ? "Natural" : "Off") : reviewed.pause_shortening_mode)}</p>
       </div> : null}
-      {(!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null}
-      {!missing && ((read.status === "failed") || (read.status === "ready" && read.error)) ? <FeedbackFailure scope="Local" occurrence={readOccurrence} content={podcastErrorMessage(read.error, "couldn’t load podcast defaults.")} announcement="None" actions={[{ label: "retry loading", onClick: read.refetch }]} /> : null}
+      {readFailed === null ? (!operation || operation.kind === "Accepted") && saved ? <p className={styles.eyebrow}>saved defaults: {defaults(saved.default_playback_speed, saved.pause_shortening_mode)}</p> : null
+        : read.status === "failed" ? <Failed error={readFailed} noun="playback defaults" retry={{ run: read.refetch }} />
+        : <Fact line={{ fact: "couldn’t refresh playback defaults.", reason: "they may be out of date." }}
+          verbs={[{ label: "retry", commandKey: "retry playback defaults", run: read.refetch }]} />}
     </div> : null}
   </section>;
 }
@@ -146,7 +150,7 @@ function Reckoning({ loaded, ready }: { readonly loaded: Loaded; readonly ready:
   const remaining = (duration - positionMs) / loaded.rate;
   if (!ready || duration <= 0 || remaining <= 0) return null;
   let arrival = "";
-  if (loaded.phase === "Playing" && !loaded.shortenPauses && !loaded.playbackFailed && loaded.error === null) {
+  if (loaded.phase === "Playing" && !loaded.shortenPauses && !loaded.playbackFailed) {
     const finish = new Date(Date.now() + remaining);
     const hour = finish.getHours();
     arrival = `, done about ${hour % 12 || 12}:${String(finish.getMinutes()).padStart(2, "0")} ${hour < 12 ? "am" : "pm"}`;

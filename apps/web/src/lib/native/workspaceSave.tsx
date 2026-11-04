@@ -2,13 +2,13 @@
 // The one device save loop. Only canonical navigation is serialized. A lost
 // commit answer is reconciled against durable bytes before another write.
 import { useEffect, useState } from "react";
-import { FeedbackFailure } from "@/components/feedback/Feedback";
+import { Hold } from "@/components/feedback/Feedback";
 import type { WorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { readDeviceStartup, saveDeviceWorkspace } from "./client";
 
 export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: WorkspaceState; revision: { current: string } } | null) {
-  const [failure, setFailure] = useState<{ retry: () => void; busy: boolean; occurrence: object } | null>(null);
+  const [failure, setFailure] = useState<{ retry: () => void; busy: boolean; attempt: number } | null>(null);
   const initial = local?.initial;
   const revision = local?.revision;
   useEffect(() => {
@@ -39,7 +39,7 @@ export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: 
         saved = desired;
         if (live) setFailure(null);
       } catch {
-        if (live) setFailure(previous => ({ retry: () => void save(), busy: false, occurrence: previous?.occurrence ?? {} }));
+        if (live) setFailure(previous => ({ retry: () => void save(), busy: false, attempt: previous === null ? 0 : previous.attempt + 1 }));
       } finally {
         sending = false;
         if (live && queued) { queued = false; if (JSON.stringify(store.value().state) !== desired) void save(); }
@@ -66,5 +66,7 @@ export function useDeviceWorkspaceSave(store: WorkspaceStore, local: { initial: 
       document.removeEventListener("visibilitychange", hidden);
     };
   }, [initial, revision, store]);
-  return failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence} announcement="Polite" content={{ tone: "Danger", title: "couldn’t confirm workspace changes on this device", message: "keep the app open and retry. reopening may restore an earlier workspace." }} actions={[{ label: "retry", onClick: failure.retry, busy: failure.busy }]} /> : null;
+  // The device still holds its last committed workspace, so reopening may restore that one.
+  return failure ? <Hold id="device-workspace-save" attempt={failure.attempt} line={{ fact: "couldn’t save your workspace on this device.", reason: "reopening may restore an earlier one." }}
+    verbs={[{ label: "retry", commandKey: "RetryWorkspaceSave", run: failure.retry, busy: failure.busy }]} /> : null;
 }

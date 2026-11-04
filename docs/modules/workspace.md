@@ -492,9 +492,10 @@ and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
-by icon-only results, optional return and mobile close. applied-option chips
-remain visible. options uses sliders; the results trigger and companion tab use
-the same text-search glyph. results opens its existing companion presentation and never
+by the word `results` (named and tooltipped "Show search results"), the optional
+icon-only return and mobile close. applied-option chips remain visible. options
+draws `Filter`, return `Locate`; the companion's search-results tab draws
+`Search`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
@@ -532,9 +533,9 @@ neither retries the delete nor reads a commit witness.
 `primaryAction` is one link or command descriptor with a required decorative
 icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
 ghost button or native anchor, accessible name, tooltip, projected state and
-disabled explanation. chats publish `new chat`, libraries `new library`, an
-individual library `add content`, and podcasts `browse podcasts`, each with a
-20px plus. existing menu entries reuse those descriptors; `Libraries.Create`
+disabled explanation. chats publish `new chat`, libraries `new library` and an
+individual library `add content`, drawn `Add`; podcasts `browse podcasts`, drawn
+`Browse`. existing menu entries reuse those descriptors; `Libraries.Create`
 exists only as the primary action, independent of list loading, filtering and
 invalid views. native anchors retain modified-click behavior; commands receive
 their actual invoking button. query controls contain no primary action.
@@ -588,7 +589,7 @@ does not change layout.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
-it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
+it is the only source of its name and sign (both `Inspector`) and disclosure
 state. both headers render its decorative 20px glyph with the stable accessible
 name `Inspector`. both projections use the shared icon-only ghost `Button` and
 header density. its open state is visually distinct and
@@ -832,8 +833,7 @@ rules:
 
 1. a menu offers verbs on its own subject. adjacent pages are not the pane
    menu's subject.
-2. no menu or trigger exists only to carry a fork; the player chapter menu is
-   the one recorded violation ([issue](../issues/chapter-shift-changes-verb.md)).
+2. no menu or trigger exists only to carry a fork.
 3. a menu inside a pane never offers to open the pane's own subject:
    `ContextualActionMenu` omits `Open` and `OpenInNewPane` when its resource is
    the subject the pane's body publishes (`PaneChrome.resourceRef`, read through

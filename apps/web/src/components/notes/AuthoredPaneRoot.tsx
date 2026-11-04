@@ -2,8 +2,9 @@
 /** Header presentation of the outline's retained root. Disclosure never owns a
  * document, save boundary, query draft or undo chronology. */
 import {useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type ReactNode} from "react";
-import {noteBodySchema, rawBodyText} from "@nexus/authored/body";
+import {noteBodySchema} from "@nexus/authored/body";
 import {readBody} from "@nexus/authored/documents";
+import {bodyDisplayText} from "@/lib/resources/localResource";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import type {OutlineController, RootField} from "@/lib/notes/outlineController";
 import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
@@ -125,8 +126,9 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
       <BoundPageTitleEditor header pageRef={controller.rootRef} document={root} history={history} label="page title" placeholder={field.placeholder}
         onEnter={() => controller.focusFirst()} onEditorReady={ready} onSelectionChange={selectionChanged}/>
     </div></RootAttachment>} satisfies PaneHeaderEditor};
-  const body = noteBodySchema.nodeFromJSON(readBody(root.doc).body_pm_json);
-  const text = rawBodyText(body);
+  const saved = readBody(root.doc).body_pm_json;
+  const body = noteBodySchema.nodeFromJSON(saved);
+  const text = bodyDisplayText(saved);
   const line = text.split(/\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/u)[0]!;
   const blank = line.trim().length === 0;
   let omitted = body.content.size > 0 && blank;

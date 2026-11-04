@@ -19,7 +19,7 @@ losing their place. owners, under `apps/web/src/`:
   remain a [separate issue](../issues/selection-dock-does-not-follow-scroll.md).
 - `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
   mobile viewport (`lib/mobileShell/viewport.tsx` keeps the report stack).
-- `components/ui/ModalFrame.tsx`: the scrim + `role="dialog"` panel every modal
+- `components/ui/ModalFrame.tsx`: the semantic dialog room and visual panel every modal
   renders through, with initial focus, the dismissal guard, depth z-index and
   suspension. its skins: `Dialog` (centred, titled), `MobileSheet` (bottom
   sheet, drag to dismiss), `MobileFullScreenTask` (opaque task on the visual
@@ -50,7 +50,7 @@ reads it too, ignoring an owner whose element or boxes contain `element`; a null
 element counts any owner. tooltips never become this owner.
 `useOverlay` subscribes to its layer's registration, coverage and depth. for a
 tooltip, `topmost` additionally requires a live trigger inside the current
-owner's boxes or modal panel, or on the page when no owner is open. hidden,
+owner's boxes or modal room, or on the page when no owner is open. hidden,
 inert and detached triggers are ineligible. this permits help within an active
 composer or chooser while suppressing help behind another surface.
 
@@ -107,14 +107,14 @@ the react tree.
 
 ## focus
 
-only the topmost frame is `aria-modal` and interactive; a covered frame's panel
+only the topmost frame is `aria-modal` and interactive; a covered modal room
 is `inert` and its scrim `data-suspended="true"` (clear, no pointer events). Tab
-wraps inside the top modal's panel (a handler that prevented Tab keeps it;
+wraps inside the top modal room, including its slips (a handler that prevented Tab keeps it;
 `contenteditable` counts as focusable). tab candidates follow native radio
 scope: a group is one name and one form owner across the document (an unnamed
 radio stands alone), and offers one stop: its checked member when focusable,
 otherwise its first focusable member. a stop outside
-the panel is not a candidate. a frame focuses `initialFocus(panel)`,
+the room is not a candidate. a frame focuses `initialFocus(panel)`,
 else its first focusable, else the panel, one frame after it becomes topmost,
 once per open and `focusKey`.
 
@@ -200,11 +200,15 @@ modal reopens on load). giving them up means giving up Back on desktop.
 
 frames render in `document.body` and stack at `calc(var(--z-modal) + depth)`,
 depth being the frame's index among open modals: activation order alone decides
-which is on top. transients and tooltips render in their containing modal's panel
+which is on top. transients and tooltips render in their containing modal room
 (`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
-chrome (`--z-overlay`), below every modal. workspace receipts use a passive portal
-above chrome and below popovers; they own no overlay interaction and retire when
-a menu, picker or modal opens. a page's own fixed shell (the `/share` card)
+chrome (`--z-overlay`), below every modal. the room owns `role="dialog"` and
+contains the visual panel marked `data-modal-panel="true"`. sheet menu sizing
+and trailing-room measurement use that panel; the semantic room is not a
+geometry substitute. slips portal into their registered
+root, pane or modal anchors and own no overlay layer. desktop menus, pickers and
+previews neither clear nor gate them; modal addressing controls their eligibility.
+a page's own fixed shell (the `/share` card)
 takes no z-index, or it
 buries them. the app's body never scrolls (panes do); where a bundle lets it
 scroll (the android shelf), css locks it while any frame is open
@@ -466,7 +470,33 @@ composition and touch preview of a real available source require device checks.
 `scrollIntoView`, `maximum-scale=1`, global `touchmove` `preventDefault`,
 user-agent sniffing, the VirtualKeyboard API.
 
-## feedback disclosure
+## feedback placement
+
+the semantic modal room includes the visual panel and its feedback. it owns
+containment, inertness, the tab trap and topmost speech together. initial focus
+is chosen from the visual panel, so a slip cannot take it on appearance. a bare
+scrim press may dismiss the room; pressing a slip cannot.
+
+ordinary modal slips and their tucked tabs stand on visible backdrop outside
+the panel. their appearance changes no panel geometry and covers no panel
+controls. constrained full-screen or tall surfaces with no usable backdrop may
+place them over their explicitly owned scrollable content, clear of fixed
+actions. no empty feedback strip is reserved. the modal family supplies that
+content boundary; the stage does not guess it from descendants.
+
+the sibling anchor is outside the panel's clipping. placement follows actual
+visual bounds during the modal family's finite entrance and drag motion. the
+available rectangle bounds the frame's scrolling and the tab's whole hit area.
+frame and tab occupy separate parts of the same overlay group in every room,
+including root and pane anchors, so restoring cannot cover the tab or change
+the frame's width. constrained groups can be
+narrower and require scrolling. pointer, focus and press holds preserve the
+standing controls when feedback changes; keyboard, viewport and panel motion
+remain owned geometry changes. plain rows raised elsewhere wait behind the
+modal, while words at risk remain visible, assertive and actionable in the
+topmost room.
+
+## non-modal disclosure
 
 `FloatingActionSurface` supports non-modal disclosure using the same overlay
 stack and positioning owner. the compact summary is its geometry anchor and the

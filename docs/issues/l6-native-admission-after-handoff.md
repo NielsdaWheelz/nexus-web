@@ -1,0 +1,7 @@
+# native playback unavailable after handoff and reload
+
+the first native lane-6 playback attempt failed before reaching playback. on actual owned emulator-5668, lab `20261102-195517-dd768bdd895a` signed in and loaded the library, but every episode's play action remained disabled with `requires a connection`. the api log shows successful handoff, account/profile/workspace and offline-catalog responses; the device's active wifi was validated. no player load was requested.
+
+evidence: `l6/.nexus-local/lab/20261102-195517-dd768bdd895a/artifacts/playwright/l6-native-native-skip-sile-91166-r-and-exact-attended-clocks/` contains the full aria snapshot, screenshot and trace. `lib/actions/project.tsx` maps installed remote admission other than `Ready` to this refusal. `lib/native/DeviceWorkspace.tsx` mounts the saved workspace independently of admission and checks on foreground/online.
+
+the established podcast-page navigation succeeds in lab `20261102-200436-44b1cdb34be8`: media3 plays, native silence skipping accrues saved time, and remembering persists `Natural`. the complete native cadence/rate/speech/remember journey now passes in `20261102-203339-b8ab34add478`, with 60.0083 seconds between published resting estimates. this unblocks lane 6 without changing admission. the library-navigation refusal remains unexplained and outside this lane; compare the two real navigation paths before considering the record resolved.

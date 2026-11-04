@@ -23,19 +23,17 @@ const chapterAt = (chapters: readonly Chapter[], ms: number) => chapters.findLas
  * once and holds the draft until the clock arrives; esc cancels. The native range keeps the value,
  * the keys and the name. The mini's rule is a decorative edge.
  */
-export default function PlayerRule(props: { readonly clock: BarClock; readonly origin: PlayerOrigin } & (
+export default function PlayerRule(props: { readonly clock: BarClock } & (
   | { readonly variant: "Mini" }
-  | { readonly variant: "Bar" | "Sheet"; readonly draft: number | null; readonly onDraft: (draft: number | null) => void }
+  | { readonly variant: "Bar" | "Sheet"; readonly origin: PlayerOrigin; readonly draft: number | null; readonly onDraft: (draft: number | null) => void }
 )) {
-  return props.variant === "Mini" ? <Edge clock={props.clock} origin={props.origin} />
+  return props.variant === "Mini" ? <Edge clock={props.clock} />
     : <Rail variant={props.variant} clock={props.clock} origin={props.origin} draft={props.draft} onDraft={props.onDraft} />;
 }
 
 /** The clock of a live load, with android's descriptor duration until media3 knows its own. */
-function useLiveClock(clock: BarClock, origin: PlayerOrigin) {
+function useLiveClock(clock: BarClock) {
   const { positionMs, durationMs } = Player.usePlayerTimeline();
-  const { retire } = origin;
-  useEffect(() => { retire(positionMs); }, [retire, positionMs]);
   const live = clock.kind === "Live" ? clock.loaded : null;
   const durationMsKnown = live === null ? 0 : durationMs > 0 ? durationMs : live.source.descriptor.duration_ms ?? 0;
   return { live, positionMs, durationMs: durationMsKnown };
@@ -43,8 +41,8 @@ function useLiveClock(clock: BarClock, origin: PlayerOrigin) {
 
 const fill = (fraction: number) => ({ "--played": Math.min(1, Math.max(0, fraction)) }) as CSSProperties;
 
-function Edge({ clock, origin }: { readonly clock: BarClock; readonly origin: PlayerOrigin }) {
-  const { live, positionMs, durationMs } = useLiveClock(clock, origin);
+function Edge({ clock }: { readonly clock: BarClock }) {
+  const { live, positionMs, durationMs } = useLiveClock(clock);
   const fraction = live !== null ? durationMs > 0 ? positionMs / durationMs : 0 : clock.kind === "Still" ? clock.progress : null;
   return <span className={styles.edge} data-cold={clock.cold} aria-hidden="true">
     <span className={styles.line} />
@@ -59,7 +57,7 @@ function Rail({ variant, clock, origin, draft, onDraft }: {
   readonly draft: number | null;
   readonly onDraft: (draft: number | null) => void;
 }) {
-  const { live, positionMs, durationMs } = useLiveClock(clock, origin);
+  const { live, positionMs, durationMs } = useLiveClock(clock);
   const { playbackSubject } = Player.usePlayerSession();
   const seekable = clock.kind === "Live" && clock.seekable && playbackSubject !== null && durationMs > 0;
   const chapters = live?.source.descriptor.chapters ?? NO_CHAPTERS;

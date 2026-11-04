@@ -3,7 +3,7 @@
 // The publisher's contents, the current section marked; and the notice that
 // names a publication's recorded defects.
 import type { ReactElement, ReactNode } from "react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
 import { useReaderState, type Reader } from "../DocumentReader";
 import type { SourceIssue, TocNode } from "../model";
 import { ReaderLink } from "../navigation";
@@ -62,56 +62,23 @@ export function Contents({ reader, onNavigate }: { readonly reader: Reader; read
   </nav>;
 }
 
-export function SourceIssuesNotice({
-  issues,
-  readable,
-}: {
+/** What this copy lacks, at the head of its contents. */
+export function SourceIssuesNotice({ issues }: {
   readonly issues: readonly SourceIssue[];
-  readonly readable: boolean;
 }): ReactElement | null {
   if (issues.length === 0) return null;
   const images = issues.filter((issue) => issue.kind === "MissingImage").length;
   const links = issues.filter((issue) => issue.kind === "UnresolvedNavigationTarget").length;
-  const unavailable = [
+  const parts = [
     images > 0 ? `${images} ${images === 1 ? "image" : "images"}` : null,
     links > 0 ? `${links} contents ${links === 1 ? "link" : "links"}` : null,
-  ].filter(Boolean).join(" and ");
+  ].filter((part) => part !== null);
+  const one = parts.length === 1 && images + links === 1;
   return (
     <aside className={styles.issues} aria-label="Source issues">
-      <FeedbackNotice
-        content={{
-          tone: "Warning",
-          // TooManyNotes alone: a web article's notes over budget stay in its text
-          title: unavailable ? `${unavailable} unavailable in this copy` : "notes kept in the text",
-          message: !unavailable
-            ? "this article has too many notes to show them separately."
-            : readable
-              ? "the available text can still be read."
-              : undefined,
-        }}
-        announcement="None"
-      />
-      <details>
-        <summary>Issue details ({issues.length})</summary>
-        <ol>
-          {issues.map((issue, index) => (
-            <li key={index}>
-              {issue.kind === "MissingImage" ? (
-                <>
-                  Image {issue.marker_ordinal + 1}:{" "}
-                  <code>{issue.resource_path}</code>
-                </>
-              ) : issue.kind === "UnresolvedNavigationTarget" ? (
-                <>
-                  Contents link {issue.node_id}: <code>{issue.href}</code>
-                </>
-              ) : (
-                <>Notes: too many to extract; they stay in the text</>
-              )}
-            </li>
-          ))}
-        </ol>
-      </details>
+      <Fact line={parts.length ? { fact: `${parts.join(" and ")} ${one ? "isn’t" : "aren’t"} in this copy.` }
+        // TooManyNotes alone: a web article's notes over budget stay in its text
+        : { fact: "notes stay in the text.", reason: "this article has too many to list separately." }} />
     </aside>
   );
 }

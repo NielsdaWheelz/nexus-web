@@ -1,4 +1,4 @@
-import { useId, type ReactElement, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
 import ChoiceField from "./ChoiceField";
 import styles from "./ChoiceField.module.css";
@@ -10,7 +10,7 @@ export default function RadioGroup<V extends string>({
 }: {
   readonly label: string;
   readonly value: V;
-  readonly choices: readonly { readonly value: V; readonly label: ReactNode; readonly icon?: ReactElement; readonly disabled?: boolean }[];
+  readonly choices: readonly { readonly value: V; readonly label: ReactNode; readonly disabled?: boolean }[];
   readonly onChange: (value: V) => void;
   readonly disabled?: boolean;
   readonly description?: string;
@@ -26,7 +26,7 @@ export default function RadioGroup<V extends string>({
       aria-describedby={cx(describedBy, description && descriptionId) || undefined}>
       <legend className={legend === "Hidden" ? "sr-only" : undefined}>{label}</legend>
       <div className={segmented ? styles.segments : styles.choices}>
-        {choices.map((choice) => <ChoiceField key={choice.value} type="radio" name={name} value={choice.value} label={choice.label} icon={choice.icon} disabled={choice.disabled} presentation={segmented ? "Segment" : "Inline"} checked={value === choice.value} onChange={() => onChange(choice.value)} />)}
+        {choices.map((choice) => <ChoiceField key={choice.value} type="radio" name={name} value={choice.value} label={choice.label} disabled={choice.disabled} presentation={segmented ? "Segment" : "Inline"} checked={value === choice.value} onChange={() => onChange(choice.value)} />)}
       </div>
       {description ? <p id={descriptionId} className={styles.groupDescription}>{description}</p> : null}
     </fieldset>

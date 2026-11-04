@@ -1,4 +1,5 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import {
   createContext,
@@ -13,13 +14,14 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowDown } from "lucide-react";
+import { StageAnchor } from "@/components/feedback/Slips";
 import Button from "@/components/ui/Button";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { CommandState } from "@/lib/chat/commands";
 import type { Live } from "@/lib/chat/runTail";
 import { alternatives, type Alternative, type BranchDraft, type ChatView } from "@/lib/chat/tree";
 import type { Catalog, Message } from "@/lib/chat/wire";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import AssistantMessage from "./AssistantMessage";
 import type { ChatState, ChatStore } from "./conversationStore";
 import { AlternativeSelector } from "./Forks";
@@ -50,7 +52,9 @@ export function useChatPane(): ChatPane {
 
 const NONE: readonly Alternative[] = [];
 
-/** The active transcript, its local disclosures, and the docked composer. */
+/** The active transcript, its local disclosures, and the docked composer. Slips stand above the
+ * composer: its stage anchor is a zero-height line at the composer's top edge, outside the
+ * composer's scroller. */
 const ChatSurface = forwardRef<
   ChatScrollHandle,
   {
@@ -59,11 +63,14 @@ const ChatSurface = forwardRef<
     command: CommandState;
     catalog: ServerValue<Catalog>;
     loading: boolean;
+    /** What stands in an empty transcript: its ruling, its failed read, or its absence. */
+    absent: ReactNode;
     store: ChatStore;
     fork(draft: BranchDraft): void;
     composer: ReactNode;
   }
->(function ChatSurface({ view, live, command, catalog, loading, store, fork, composer }, ref) {
+>(function ChatSurface({ view, live, command, catalog, loading, absent, store, fork, composer }, ref) {
+  const { paneId } = requirePaneRuntime(usePaneRuntime(), "ChatSurface");
   const scrollport = useRef<HTMLDivElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const lastUserId = view.path.findLast((message) => message.role === "user")?.id ?? null;
@@ -96,7 +103,6 @@ const ChatSurface = forwardRef<
           role="region"
           tabIndex={0}
           aria-label="Chat conversation"
-          aria-busy={loading}
           onScroll={scroll.onScroll}
           onFocus={scroll.onFocus}
           onWheel={scroll.onUserScroll}
@@ -105,6 +111,8 @@ const ChatSurface = forwardRef<
           onPointerDown={scroll.onPointerDown}
           onClick={scroll.onClick}
         >
+          {/* outside the log, which would speak its line a second time */}
+          {view.path.length === 0 && absent !== null ? <div className={styles.absent}>{absent}</div> : null}
           <div ref={transcript} className={styles.transcript} role="log" aria-label="Chat messages">
             {roots.length ? (
               <div className={styles.rootAlternatives}>
@@ -126,12 +134,13 @@ const ChatSurface = forwardRef<
           </div>
           {scroll.latestBelow ? (
             <div className={styles.latest}>
-              <Button icon={<ArrowDown size={14} aria-hidden="true" />} onClick={scroll.toLatest}>
+              <Button icon={<Icon.Down aria-hidden="true" />} onClick={scroll.toLatest}>
                 Latest
               </Button>
             </div>
           ) : null}
         </div>
+        <div className={styles.composerAnchor}><StageAnchor kind="Pane" paneId={paneId} /></div>
         <div className={styles.composerSlot} data-has-messages={view.path.length > 0 || undefined} onWheel={scroll.onComposerWheel}>
           {composer}
         </div>

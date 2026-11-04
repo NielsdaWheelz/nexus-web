@@ -1,6 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
 import { flushSync } from "react-dom";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "./targetActivation";
 
@@ -105,11 +104,13 @@ export function projectActionControlState(
 interface ActionBase {
   readonly id: string;
   readonly label: string;
-  readonly indicator?: { readonly kind: "Status" };
   readonly disabled?: boolean;
   readonly busy?: boolean;
   readonly hasPopup?: "dialog";
   readonly disabledReason?: string;
+  /** The reason names a wait, not a lasting cause: the verb is plainly disabled and its reason
+   * is for a screen reader alone. */
+  readonly waiting?: boolean;
   readonly tone?: "default" | "danger";
   readonly separatorBefore?: boolean;
 }
@@ -160,12 +161,11 @@ export type MenuChoice = {
   readonly id: string;
   readonly label: string; // accessible group name; sheet legend
   readonly value: string;
-  readonly choices: readonly { readonly value: string; readonly label: string; readonly icon: ReactElement }[];
+  readonly choices: readonly { readonly value: string; readonly label: string }[];
   readonly onChange: (value: string) => void;
   readonly disabled?: boolean;
   readonly disabledReason?: string;
   readonly separatorBefore?: boolean;
-  readonly indicator?: never;
 };
 export type MenuOption = ActionDescriptor | MenuChoice;
 
@@ -178,23 +178,26 @@ export type MenuContent = {
   }[];
 };
 
-/** A result belongs only to the exact request signal created by its presenter. */
+/** A result belongs only to the exact request signal created by its presenter. A failure carries
+ * its error: the menu says it, in the transport's words. */
 export type PreparationState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly content: MenuContent }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent };
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly error: unknown };
 
 /**
  * Facts that settle after a prepared snapshot is published, for the same request. They
- * render in one region after it; failures retain their owner's recovery. Arrival cannot reorder,
- * replace or close the published actions, move focus or change their meaning.
+ * render in one region after it; a failure ends the menu with `more actions`, which prepares
+ * everything again. Arrival cannot reorder, replace or close the published actions, move focus
+ * or change their meaning. A failure carries its error: under a stale build the menu offers reload,
+ * not `more actions`.
  */
 export type TrailingState =
   | null
   | { readonly kind: "Loading"; readonly request: AbortSignal }
   | { readonly kind: "Ready"; readonly request: AbortSignal; readonly label: string | null; readonly options: readonly ActionDescriptor[] }
-  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly feedback: FeedbackContent; readonly retry: (() => void) | null; readonly pending: boolean };
+  | { readonly kind: "Failed"; readonly request: AbortSignal; readonly error: unknown };
 
 /** The presenter owns invocation, cancellation and its preparation deadline. */
 export type MenuSource = { readonly subjectKey: string; readonly title: string } & (

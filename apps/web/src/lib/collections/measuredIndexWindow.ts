@@ -4,8 +4,8 @@
  * border box supplies its fractional height. This owner measures and mounts sparse
  * ranks only. Pane mementos own scrolling, anchors and focus recovery. */
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { flushSync } from "react-dom";
 import { windowRange, windowRanks } from "./collectionWindow";
+import { scrollFrame } from "./scrollFrame";
 
 export const INDEX_WINDOW_THRESHOLD = 200;
 export type IndexGeometry = "UniformIndex";
@@ -223,7 +223,6 @@ export function useMeasuredIndexWindow({ scopeKey, ids, geometry, listRef, scrol
     const port = committed.current?.port;
     const list = listRef.current;
     if (!enabled || port === null || port === undefined || list === null) return;
-    let frame: number | null = null;
     const resize = new ResizeObserver(changes => {
       const row = changes.find(change => change.target === sample.current);
       // Publication runs through React's normal scheduling, outside this resize
@@ -234,17 +233,9 @@ export function useMeasuredIndexWindow({ scopeKey, ids, geometry, listRef, scrol
     resize.observe(port);
     resize.observe(list);
     if (sample.current !== null) resize.observe(sample.current);
-    const scroll = () => {
-      if (frame !== null) return;
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        flushSync(() => work.current?.(null));
-      });
-    };
-    port.addEventListener("scroll", scroll, { passive: true });
+    const frame = scrollFrame([port], () => work.current?.(null));
     return () => {
-      if (frame !== null) cancelAnimationFrame(frame);
-      port.removeEventListener("scroll", scroll);
+      frame.stop();
       resize.disconnect();
       observer.current = null;
     };

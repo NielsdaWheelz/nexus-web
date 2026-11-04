@@ -3,7 +3,7 @@
 // Collection geometry stays within its owned body. When fixed controls cannot
 // leave one row, the body scrolls instead of nesting two scrolling regions.
 // Resizing keeps the owned focused item visible without moving focus.
-import { useLayoutEffect, type RefObject } from "react";
+import { useLayoutEffect, useState, type RefObject } from "react";
 
 export function revealCollectionItem(viewport: HTMLElement, item: HTMLElement): void {
   const body = viewport.closest<HTMLElement>('[data-collection-constrained="true"]');
@@ -17,7 +17,9 @@ export function revealCollectionItem(viewport: HTMLElement, item: HTMLElement): 
   else if (row.bottom > bottom) scrollport.scrollTop = Math.ceil(scrollport.scrollTop + Math.min(row.bottom - bottom, row.top - top));
 }
 
-export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: boolean): void {
+/** True when the whole body owns scrolling; otherwise the inner collection owns it. */
+export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: boolean): boolean {
+  const [constrained, setConstrained] = useState(false);
   useLayoutEffect(() => {
     const body = ref.current;
     if (!active || !body) return;
@@ -35,6 +37,7 @@ export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: 
       }
       if (!viewport) {
         delete body.dataset.collectionConstrained;
+        setConstrained(false);
         return;
       }
       const bodyScroll = { top: body.scrollTop, left: body.scrollLeft };
@@ -47,7 +50,9 @@ export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: 
       const fixed = body.scrollHeight - viewport.offsetHeight;
       const available = Math.max(0, body.clientHeight - fixed);
       viewport.style.setProperty("--collection-available-height", `${available}px`);
-      body.dataset.collectionConstrained = String(available < row + padding);
+      const wholeBody = available < row + padding;
+      body.dataset.collectionConstrained = String(wholeBody);
+      setConstrained(wholeBody);
       body.scrollTop = bodyScroll.top;
       body.scrollLeft = bodyScroll.left;
       viewport.scrollTop = listScroll.top;
@@ -68,4 +73,5 @@ export function useCollectionLayout(ref: RefObject<HTMLElement | null>, active: 
       delete body.dataset.collectionConstrained;
     };
   }, [ref, active]);
+  return active && constrained;
 }

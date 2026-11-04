@@ -168,7 +168,7 @@ export function rangeReasonMessage(reason: RangeReason): string {
     case "no_preceding": return "no preceding item to nest under";
     case "top_level": return "already at the top level";
     case "invalid_parent": return "this item cannot be nested under that parent";
-    case "shared_edge": return "two selected items are the same link; arrange one of them";
+    case "shared_edge": return "two selected items share a link. arrange one.";
     case "collision": return "an item is already linked under that parent";
     case "changed": return "the outline changed; try again";
     case "capacity": return "close a branch or select fewer items";

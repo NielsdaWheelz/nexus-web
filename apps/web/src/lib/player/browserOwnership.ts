@@ -3,9 +3,10 @@
  * audio/write authority. A transfer carries the originating queue fence and a
  * bounded request lifetime; neither grants permission after cancellation.
  * Holder admission runs in its playback lane before any pause or release. The
- * acquirer rereads and checks that same fence before becoming ready.
+ * acquirer rereads and checks that same fence before becoming ready. The bound is
+ * on the other tab: once the lock is this tab's, its read's own deadline bounds the rest.
  */
-import { QueueCommandError, type QueueFence, type QueueRequest } from "@/lib/player/queue";
+import { QueueCommandError, type QueueFence, type QueueRefusal, type QueueRequest } from "@/lib/player/queue";
 import { ApiError, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { EngineState, PlayerQueue } from "@/lib/player/playerRuntime";
@@ -14,23 +15,37 @@ export const BROWSER_COORDINATION_BOUND_MS = 5_000;
 
 interface BrowserSnapshot { readonly queue: PlayerQueue; readonly engine: EngineState; readonly playing_entry_id: string | null }
 
+/** An error as a channel carries it: structured clone keeps no class, so it travels as fields. */
+type SentFailure =
+  | { readonly kind: "Api"; readonly message: string; readonly status: number; readonly code: string; readonly request_id: string | null; readonly sent: boolean; readonly offline: boolean }
+  | { readonly kind: "Queue"; readonly refusal: QueueRefusal };
+type SentError = SentFailure | { readonly kind: "Defect"; readonly message: string };
+const sendFailure = (error: ApiError | QueueCommandError): SentFailure => error instanceof QueueCommandError
+  ? { kind: "Queue", refusal: error.refusal }
+  : { kind: "Api", message: error.message, status: error.status, code: error.code, request_id: error.requestId ?? null, sent: error.sent, offline: error.offline };
+const sendError = (error: unknown): SentError => error instanceof QueueCommandError || isApiError(error) && !isSameSystemApiDefect(error)
+  ? sendFailure(error) : { kind: "Defect", message: error instanceof Error ? error.message : String(error) };
+const receiveFailure = (error: SentFailure) => error.kind === "Api"
+  ? new ApiError(error.status, error.code, error.message, { requestId: error.request_id ?? undefined, sent: error.sent, offline: error.offline }) : new QueueCommandError(error.refusal);
+
+/** A failed queue index carries its error as sent fields. */
+type SentIndex = Exclude<PlayerQueue["index"], { kind: "Failed" }> | (Omit<Extract<PlayerQueue["index"], { kind: "Failed" }>, "error"> & { readonly error: SentFailure });
+type SentSnapshot = Omit<BrowserSnapshot, "queue"> & { readonly queue: Omit<PlayerQueue, "index"> & { readonly index: SentIndex } };
+
 export type BrowserPlayerCommand =
   | { readonly kind: "queue"; readonly request: QueueRequest }
-  | { readonly kind: "pause" | "resume" | "stop" | "check" }
+  | { readonly kind: "pause" | "resume" | "retry" | "stop" | "check" }
   | { readonly kind: "seek"; readonly position_ms: number; readonly expected_subject: string | null }
   | { readonly kind: "rate"; readonly rate: number }
   | { readonly kind: "silence"; readonly on: boolean };
 
 type Message =
-  | { readonly kind: "state"; readonly sender: string; readonly owner_client_id: string; readonly snapshot: BrowserSnapshot }
+  | { readonly kind: "state"; readonly sender: string; readonly owner_client_id: string; readonly snapshot: SentSnapshot }
   | { readonly kind: "observe"; readonly sender: string }
   | { readonly kind: "transfer"; readonly sender: string; readonly id: string; readonly expected_queue: QueueFence | null; readonly expires_at: number }
   | { readonly kind: "cancel"; readonly sender: string; readonly id: string }
   | { readonly kind: "command"; readonly sender: string; readonly id: string; readonly command: BrowserPlayerCommand }
-  | { readonly kind: "result"; readonly sender: string; readonly target: string; readonly id: string; readonly error:
-      | { readonly kind: "Api"; readonly message: string; readonly status: number; readonly code: string; readonly request_id: string | null }
-      | { readonly kind: "Queue" | "Defect"; readonly message: string }
-      | null };
+  | { readonly kind: "result"; readonly sender: string; readonly target: string; readonly id: string; readonly error: SentError | null };
 
 export function createBrowserOwnership(input: {
   readonly accountId: string;
@@ -58,19 +73,20 @@ export function createBrowserOwnership(input: {
   const transfers = new Map<string, { cancelled: boolean }>();
   const post = (message: Message) => channel?.postMessage(message);
   const publish = () => {
-    if (owner && ready && ownerClientId !== null) post({ kind: "state", sender,
-      owner_client_id: ownerClientId, snapshot: input.snapshot() });
+    if (!owner || !ready || ownerClientId === null) return;
+    const snapshot = input.snapshot();
+    const index = snapshot.queue.index;
+    post({ kind: "state", sender, owner_client_id: ownerClientId, snapshot: { ...snapshot, queue: { ...snapshot.queue,
+      index: index.kind === "Failed" ? { ...index, error: sendFailure(index.error) } : index } } });
   };
   const result = (target: string, id: string, error: unknown) => post({ kind: "result", sender, target, id,
-    error: error === null ? null : isApiError(error) && !isSameSystemApiDefect(error)
-      ? { kind: "Api", message: error.message, status: error.status, code: error.code, request_id: error.requestId ?? null }
-      : { message: error instanceof Error ? error.message : "couldn’t change playback", kind: error instanceof QueueCommandError ? "Queue" : "Defect" } });
+    error: error === null ? null : sendError(error) });
   const release = async (expectedQueue: QueueFence | null, isCurrent: () => boolean) => {
-    if (!owner || !ready || releasing || !isCurrent()) throw new QueueCommandError("playback is moving to another tab");
+    if (!owner || !ready || releasing || !isCurrent()) throw new QueueCommandError("Moving");
     releasing = true;
     try {
       await input.release(expectedQueue, isCurrent);
-      if (!isCurrent()) throw new QueueCommandError("playback request expired");
+      if (!isCurrent()) throw new QueueCommandError("Superseded");
       owner = false;
       ready = false;
       unlock?.();
@@ -91,7 +107,9 @@ export function createBrowserOwnership(input: {
           if (closed || owner || receipt < accepted ||
               !locks.held?.some(lock => lock.name === lockName && lock.clientId === message.owner_client_id)) return;
           accepted = receipt;
-          input.mirror(message.snapshot);
+          const index = message.snapshot.queue.index;
+          input.mirror({ ...message.snapshot, queue: { ...message.snapshot.queue,
+            index: index.kind === "Failed" ? { ...index, error: receiveFailure(index.error) } : index } });
         });
         return;
       }
@@ -121,17 +139,18 @@ export function createBrowserOwnership(input: {
         if (request === undefined) return;
         requests.delete(message.id);
         if (message.error === null) request.resolve();
-        else if (message.error.kind === "Api") {
-          const error = new ApiError(message.error.status, message.error.code, message.error.message, message.error.request_id ?? undefined);
+        else if (message.error.kind === "Defect") request.reject(new Error(message.error.message));
+        else {
+          const error = receiveFailure(message.error);
           handleUnauthenticatedApiError(error);
           request.reject(error);
-        } else request.reject(message.error.kind === "Queue" ? new QueueCommandError(message.error.message) : new Error(message.error.message));
+        }
       }
     }
   };
   const acquire = (transfer: boolean, expectedQueue: QueueFence | null): Promise<boolean> => {
-    if (!supported || closed) return Promise.reject(new QueueCommandError("playback needs a browser with web locks and broadcast channels"));
-    if (releasing) return Promise.reject(new QueueCommandError("playback is moving to another tab"));
+    if (!supported || closed) return Promise.reject(new QueueCommandError("Unsupported"));
+    if (releasing) return Promise.reject(new QueueCommandError("Moving"));
     cancelAcquisition();
     if (owner && ready) return Promise.resolve(true);
     const abort = new AbortController();
@@ -151,31 +170,32 @@ export function createBrowserOwnership(input: {
         }
         if (error === null) resolve(acquired); else reject(error);
       };
-      cancel = () => finish(null, false);
-      const timer = setTimeout(() => finish(new QueueCommandError("playback is still in another tab"), false), BROWSER_COORDINATION_BOUND_MS);
+      cancel = () => finish(new QueueCommandError("Superseded"), false);
+      const timer = setTimeout(() => finish(new QueueCommandError("OwnerSilent"), false), BROWSER_COORDINATION_BOUND_MS);
       const options: LockOptions = transfer ? { mode: "exclusive", signal: abort.signal } : { mode: "exclusive", ifAvailable: true };
       void navigator.locks.request(lockName, options, async lock => {
         if (lock === null || closed || abort.signal.aborted) { finish(null, false); return; }
+        clearTimeout(timer);
         owner = true;
         let free = () => {};
         const held = new Promise<void>(done => { free = done; unlock = done; });
         try {
           await input.acquired();
-          if (closed || abort.signal.aborted || Date.now() >= expiresAt) { finish(null, false); return; }
+          if (closed || abort.signal.aborted) { finish(null, false); return; }
           const header = input.snapshot().queue.header;
           if (expectedQueue !== null && (header?.queue_id !== expectedQueue.queue_id || header.revision !== expectedQueue.expected_revision))
-            throw new QueueCommandError("queue changed; try again");
+            throw new QueueCommandError("Changed");
           const locks = await navigator.locks.query();
-          if (closed || abort.signal.aborted || Date.now() >= expiresAt) { finish(null, false); return; }
+          if (closed || abort.signal.aborted) { finish(null, false); return; }
           ownerClientId = locks.held?.find(heldLock => heldLock.name === lockName)?.clientId ?? null;
-          if (ownerClientId === null) throw new QueueCommandError("playback ownership could not be confirmed");
+          if (ownerClientId === null) throw new QueueCommandError("NotMoved");
           ready = true;
           input.changed();
           publish();
           finish(null, true);
           await held;
         } catch (error) {
-          finish(error instanceof Error ? error : new Error("playback ownership failed"), false);
+          finish(error instanceof Error ? error : new Error(String(error)), false);
         } finally {
           owner = false;
           ready = false;
@@ -197,6 +217,12 @@ export function createBrowserOwnership(input: {
   return {
     supported,
     owner: () => owner && ready,
+    /** Another tab holds the player: the lock is held, and not by this tab. */
+    async heldElsewhere() {
+      if (!supported || owner) return false;
+      const locks = await navigator.locks.query();
+      return !owner && (locks.held?.some(lock => lock.name === lockName) ?? false);
+    },
     acquire,
     cancelAcquisition,
     publish,
@@ -205,7 +231,7 @@ export function createBrowserOwnership(input: {
       if (await acquire(false, null)) return input.command(command);
       const id = crypto.randomUUID();
       return new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => { requests.delete(id); reject(new QueueCommandError("playback is still in another tab")); }, BROWSER_COORDINATION_BOUND_MS);
+        const timer = setTimeout(() => { requests.delete(id); reject(new QueueCommandError("OwnerSilent")); }, BROWSER_COORDINATION_BOUND_MS);
         requests.set(id, {
           resolve: () => { clearTimeout(timer); resolve(); },
           reject: error => { clearTimeout(timer); reject(error); },
@@ -216,7 +242,7 @@ export function createBrowserOwnership(input: {
     close() {
       closed = true;
       cancelAcquisition();
-      for (const request of requests.values()) request.reject(new QueueCommandError("playback account changed"));
+      for (const request of requests.values()) request.reject(new QueueCommandError("Superseded"));
       requests.clear();
       // Account teardown already paused the engine; sent writes keep their lane position.
       const leaving = owner && ready ? input.release(null, () => true) : Promise.resolve();

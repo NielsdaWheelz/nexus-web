@@ -566,6 +566,10 @@ export function selectedExcerpt(view: ExcerptView): ExcerptView {
     if (node.kind === "table" && start < hi && end > lo) {lo = Math.min(lo, start); hi = Math.max(hi, end);}
   return {...view, body: clipBody(body, lo, hi), omitted_before: view.selected_truncated_before, omitted_after: view.selected_truncated_after};
 }
+/** The compact view lost selected words, or the whole table. */
+export function excerptClipped(view: ExcerptView): boolean {
+  return view.kind !== "content" || view.selected_truncated_before || view.selected_truncated_after;
+}
 function clippedExtent(full: FrozenExcerpt, body: ExcerptBody, lo: number, hi: number): ExcerptExtent | null {
   if (full.source_extent === null) return null;
   const projected=textBuffer();let length=0;

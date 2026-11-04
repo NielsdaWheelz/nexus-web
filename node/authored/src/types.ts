@@ -51,6 +51,9 @@ export interface MergeResult extends Corpus { projections: ResourceProjection[] 
 export interface FeedChange { server_seq: Counter; replica_id: string; change: Change }
 export interface ReplicaState { account_id: string; replica_id: string; command_seq: Counter; store_revision: Counter; lamport: Counter; server_cursor: Counter; format_revision: number; provisioning_complete: boolean }
 export type SyncStatus = "preparing" | "saving" | "offline" | "syncing" | "current" | "sign_in_required" | "update_required" | "local_error" | "sync_error";
+/** Writing replication's standing failure, worker to page only; never persisted, never on the
+ * wire. Refused will not heal by repetition, Retrying may. `since` is its kind's onset. */
+export type SyncFailure = { kind: "Retrying" | "Refused"; since: number } | null;
 export type SemanticKey =
   | { kind: "daily"; local_date: string }
   | { kind: "link"; endpoint_a: string; endpoint_b: string }
@@ -100,6 +103,6 @@ export interface AuthoredStore {
   commit(frame: CommitFrame): Promise<CommitResult>;
   /** Derived peer annotations are remote evidence, never canonical corpus changes. */
   annotations_changed(listener: () => void): () => void;
-  sync_status(listener: (status: SyncStatus, detail: string | null) => void): () => void;
+  sync_status(listener: (status: SyncStatus, detail: string | null, failure: SyncFailure) => void): () => void;
   close(): Promise<void>;
 }
