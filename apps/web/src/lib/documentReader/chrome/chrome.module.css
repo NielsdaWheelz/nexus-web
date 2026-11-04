@@ -219,6 +219,22 @@
   list-style: none;
 }
 
+.highlightChoices > li {
+  min-width: 0;
+}
+
+.highlightChoices button {
+  max-width: 100%;
+}
+
+.highlightChoiceLabel {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .annotationList ul {
   display: grid;
   gap: var(--space-4);
@@ -248,3 +264,11 @@
 .tocTitle { min-width: 0; overflow-wrap: anywhere; }
 .tocRow > :last-child:not(:first-child) { flex: 0 0 auto; white-space: nowrap; }
 .tocAttachment { padding-inline-start: var(--space-2); }
+
+/* Row text beside a highlight or a captured article: plain, muted, no notice. */
+.placement,
+.articleContent {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}

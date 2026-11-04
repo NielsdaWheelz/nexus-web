@@ -1,19 +1,24 @@
 "use client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 // The draft owns its baseline/version and exact unconfirmed command. Preparation
 // changes available geometry, never the user's title or a reviewed generation.
 // A confirmed save stays busy until refresh and close settle together.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { Hold, useResendFeedback, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import { Fact, Failed, Field } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import SelectField from "@/components/ui/SelectField";
-import { captureApiAccount, isCurrentApiAccount, isApiError, isRefusal } from "@/lib/api/client";
+import { captureApiAccount, isCurrentApiAccount, isApiError, type ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { prepareParts, savePart } from "@/lib/media/parts";
+import { outcomeUnknown } from "@/lib/api/client";
 import PartPreview, { usePartPreview } from "./PartPreview";
 import styles from "./parts.module.css";
 
@@ -22,54 +27,65 @@ type Request = { kind: "prepare"; body: Schema<"PartPrepare"> }
 type Draft = {
   title: string; first: string | null; last: string | null; generation: number | null;
   baseline: string; version: number | null; baselineSelection: Schema<"SectionSelection"> | null; request: Request | null;
-  busy: boolean; error: string | null; conflict: boolean; retired: boolean;
+  busy: boolean; failed: boolean; attempt: number; conflict: boolean; retired: boolean;
 };
-export function partError(error: unknown): string {
-  if (!isApiError(error)) throw error;
-  if (error.status === 409) return "this work or its source changed. review the current sections and try again.";
-  if (error.status === 400) return error.message;
-  if (error.status === 403 || error.status === 404) return "this work is no longer available to change.";
-  return "couldn’t confirm this request";
+/** A part command that didn't land says so once, by `fact`. One the server may have taken says
+ * nothing here: its owner keeps the request and holds `unsure(...)` until a resend settles it. */
+export function partFailure(outcome: Outcome, error: unknown, fact: string): "Said" | "Unknown" {
+  if (isApiError(error) && error.status === 409) outcome.say({ fact });
+  else if (isApiError(error) && (error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED" || error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND")) outcome.say({ fact, reason: "this work isn’t available to change." });
+  else if (outcomeUnknown(error)) return "Unknown";
+  else outcome.fail(error, fact);
+  return "Said";
 }
+/** An unknown outcome, by what the command does: `saved`, `started`. */
+export const unsure = (fact: string) => ({ fact, reason: UNKNOWN_OUTCOME_REASON });
+export const UNSURE = unsure("not sure that saved.");
 export function partBlockMessage(reason: Schema<"PartAction">["reason"]): string {
   switch (reason) {
-    case "unknown_end": return "this section’s end hasn’t been identified";
-    case "unproved_structure": return "this section can’t be extracted without losing content";
-    case "navigation_changed": return "the sections changed. choose from the current contents";
-    case "missing_title": return "choose a title before extracting";
-    case "existing_piece": return "this range already belongs to an extracted work";
-    case "bound_candidate": return "this range already belongs to a work whose sections changed";
-    case "preparing_structure": return "prepare text before extracting this section";
-    case "not_creator": return "only the source creator can extract works";
-    case "unsupported_source": return "independent works aren’t available for this source";
-    case "not_ready": return "the source text isn’t ready yet";
-    case "active": return "extraction is already in progress";
-    case null: return "this section is unavailable";
+    case "unknown_end": return "this section’s end hasn’t been identified.";
+    case "unproved_structure": return "this section can’t be extracted without losing content.";
+    case "navigation_changed": return "the sections changed. choose from the current contents.";
+    case "missing_title": return "choose a title before extracting.";
+    case "existing_piece": return "this range already belongs to an extracted work.";
+    case "bound_candidate": return "this range already belongs to a work whose sections changed.";
+    case "preparing_structure": return "prepare text before extracting this section.";
+    case "not_creator": return "only the source creator can extract works.";
+    case "unsupported_source": return "independent works aren’t available for this source.";
+    case "not_ready": return "the source text isn’t ready yet.";
+    case "active": return "extraction is already in progress.";
+    case null: return "this section isn’t available.";
   }
 }
 
-export default function PartEditor({ source, initialSection, initialTitle, initialSelection = null, page, definition, onClose, onSaved, onRefresh, readFailure, readPending, returnFocusTo }: {
+export default function PartEditor({ source, initialSection, initialTitle, initialSelection = null, page, definition, onClose, onSaved, onRefresh, readError, readPending, returnFocusTo }: {
   readonly source: string; readonly initialSection: string | null; readonly initialTitle: string;
   readonly initialSelection?: Schema<"SectionSelection"> | null;
   readonly page: Schema<"SourceContentsOut"> | null; readonly definition: Schema<"PartDefinition"> | null;
   readonly onClose: () => void; readonly onSaved: (id: string) => Promise<void>;
-  readonly onRefresh: () => Promise<void>; readonly readFailure: boolean; readonly readPending: boolean; readonly returnFocusTo: ReturnFocusTarget;
+  readonly onRefresh: () => Promise<void>;
+  /** The sections' failed read, if it failed. */
+  readonly readError: ApiError | null; readonly readPending: boolean; readonly returnFocusTo: ReturnFocusTarget;
 }) {
+  const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
+  const fieldId = useId();
+  const blockedId = useId();
   const navigation = page?.navigation ?? null;
   const initial = useMemo(() => ({ title: definition?.title ?? initialTitle,
     first: definition?.selection?.section_ids[0] ?? initialSelection?.section_ids[0] ?? initialSection,
     last: definition?.selection?.section_ids.at(-1) ?? initialSelection?.section_ids.at(-1) ?? initialSection }), [definition, initialTitle, initialSection, initialSelection]);
   const state = useResourceDraft<Draft>(definition === null ? `extract:${source}:${initialSection}` : `work:${definition.media_id}`, () => ({
     ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
-    baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, error: null, conflict: false, retired: false,
+    baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, attempt: 0, conflict: false, retired: false,
   }), value => ({ changed: JSON.stringify({ title: value.title, first: value.first, last: value.last }) !== value.baseline,
     unconfirmed: value.request !== null, stopsBrowserWork: false }));
   useEffect(() => {
     if (!state.read().retired) return;
     state.set({ ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
-      baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, error: null, conflict: false, retired: false });
+      baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, attempt: 0, conflict: false, retired: false });
   }, [state, initial, definition, initialSelection, navigation]);
-  const { title, first, last, busy, request, error, conflict } = state.value;
+  const { title, first, last, busy, request, failed, conflict } = state.value;
   const [adjacent, setAdjacent] = useState(first !== last);
   const [preparationStarted, setPreparationStarted] = useState(false);
   const guard = useWorkGuard();
@@ -106,16 +122,17 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   const run = async (sent: Request, retry = false) => {
     if (state.read().busy || state.read().request !== null && !retry) return;
     const account = captureApiAccount();
-    state.set(value => ({ ...value, request: sent, busy: true, error: null }));
+    state.set(value => ({ ...value, request: sent, busy: true, failed: retry && value.failed }));
     let receipt: Schema<"PartReceipt"> | null = null;
     try {
       if (sent.kind === "prepare") await prepareParts(source, sent.body);
       else receipt = await savePart(source, sent.id, sent.body);
     } catch (failure) {
       if (!isCurrentApiAccount(account)) return;
-      state.set(value => ({ ...value, busy: false, request: isRefusal(failure) ? null : sent,
-        conflict: value.conflict || sent.kind === "save" && sent.id !== null && isApiError(failure) && failure.status === 409, error: partError(failure) }));
-      if (isRefusal(failure)) { void onRefresh(); preview.revalidate(); }
+      const said = partFailure(outcome, failure, sent.kind === "prepare" ? "couldn’t prepare the text." : "couldn’t save this work.") === "Said";
+      state.set(value => ({ ...value, busy: false, request: said && !retry ? null : sent, failed: true, attempt: value.attempt + 1,
+        conflict: value.conflict || sent.kind === "save" && sent.id !== null && isApiError(failure) && failure.status === 409 }));
+      if (said) { void onRefresh(); preview.revalidate(); }
       return;
     }
     if (!isCurrentApiAccount(account)) return;
@@ -134,7 +151,7 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
     // The current snapshot and retained request are checked before admission.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsPreparation, preparing, preparationStarted, page?.preparation?.classification]);
-  const chooseFirst = (id: string) => state.set(value => ({ ...value, first: id, last: id, generation: navigation?.generation ?? null, error: null }));
+  const chooseFirst = (id: string) => state.set(value => ({ ...value, first: id, last: id, generation: navigation?.generation ?? null, failed: false }));
   const save = () => {
     const current = state.read();
     if (current.busy || current.request !== null || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)) return;
@@ -156,31 +173,33 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
     <div className={styles.editor}>
       <label>title<Input value={title} disabled={blocking} onChange={event => state.set(value => ({ ...value, title: event.target.value }))} /></label>
       {canBounds ? <>
-        {readFailure ? <><p role="alert">couldn’t load current sections</p><Button onClick={() => void onRefresh()}>try again</Button></> : page === null ? <p role="status">loading current sections…</p> : null}
-        {preparing || needsPreparation && !error ? <p role="status">preparing text…</p> : null}
-        {(page?.preparation?.classification === "NeedsAttention" || error !== null) && needsPreparation ? <><p role="alert">couldn’t prepare text</p><Button disabled={blocking} onClick={() => navigation && void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } })}>try again</Button></> : null}
-        {freshChoice ? <p>the sections changed. choose from the current contents</p> : null}
-        {navigation && (definition !== null || freshChoice) ? <SelectField layout="Stacked" label="first section" value={freshChoice ? "" : first ?? ""} disabled={blocking} onChange={event => chooseFirst(event.target.value)}>
+        {readError ? <Failed error={readError} noun="sections" retry={{ run: () => void onRefresh(), busy: readPending }} /> : page === null ? <Ruling /> : null}
+        {preparing || needsPreparation && !failed ? <Fact line={{ fact: "preparing text." }} /> : null}
+        {(page?.preparation?.classification === "NeedsAttention" || failed && request === null) && needsPreparation ? <Fact line={{ fact: "couldn’t prepare the text." }}
+          verbs={[{ label: "retry", commandKey: "RetryPreparePart", busy: blocking, run: () => { if (navigation && !blocking) void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } }); } }]} /> : null}
+        {freshChoice ? <Field id={fieldId} line={{ fact: "the sections changed. choose again." }} /> : null}
+        {navigation && (definition !== null || freshChoice) ? <SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} layout="Stacked" label="first section" value={freshChoice ? "" : first ?? ""} disabled={blocking} onChange={event => chooseFirst(event.target.value)}>
           {freshChoice ? <option value="" disabled>choose a section</option> : null}
           {navigation.sections.map(section => <option key={section.section_id} value={section.section_id} disabled={!eligible(section.section_id)}>{section.label}</option>)}
         </SelectField> : start ? <p>{start.label}</p> : null}
         {definition === null ? <details open={adjacent} onToggle={event => setAdjacent(event.currentTarget.open)}><summary>include adjacent sections</summary>
-          <SelectField layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
+          <SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
             {ends.map(section => <option key={section.section_id} value={section.section_id}>{section.label}</option>)}
           </SelectField>
-        </details> : <><SelectField layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
+        </details> : <><SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} layout="Stacked" label="last section" value={last ?? ""} disabled={blocking} onChange={event => state.set(value => ({ ...value, last: event.target.value }))}>
           {ends.map(section => <option key={section.section_id} value={section.section_id}>{section.label}</option>)}
         </SelectField><p>changing these sections also changes this work’s shared links.</p></>}
         {selector ? <PartPreview preview={preview} /> : null}
-        {blockedPreview ? <p role="alert">{partBlockMessage(previewConflict?.reason ?? null)}</p> : null}
+        {blockedPreview ? <Field id={blockedId} line={{ fact: partBlockMessage(previewConflict?.reason ?? null) }} /> : null}
       </> : null}
-      {error ? <p role="alert">{error}</p> : null}
       {conflict && definition ? <section aria-label="current saved work"><p>currently saved: {definition.title}</p>
         <p>{savedLabels !== null && savedLabels.length > 0 && savedLabels.every(label => label !== null) ? savedLabels.join(" through ") : "saved range"}</p>
-        <Button disabled={blocking || readFailure || readPending || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} onClick={() => state.set(value => ({ ...value, version: definition.version, baselineSelection: definition.selection, conflict: false, error: null }))}>keep my changes</Button>
+        <Button disabled={blocking || readError !== null || readPending || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} onClick={() => state.set(value => ({ ...value, version: definition.version, baselineSelection: definition.selection, conflict: false, failed: false }))}>keep my changes</Button>
       </section> : null}
-      {request !== null && !busy ? <Button onClick={() => void run(request, true)}>try same request again</Button> : null}
-      <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy} onClick={save}>{definition === null ? "extract" : "save"}</Button>
+      {request !== null && failed ? <Hold id={`part-editor:${source}`} attempt={state.value.attempt} {...resendFeedback({ line: request.kind === "prepare" ? unsure("not sure preparation started.") : UNSURE,
+          resend: { label: "retry", commandKey: "RetryPartCommand", busy, run: () => void run(request, true) } })} /> : null}
+      <Button emphasis="strong" disabled={blocking || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)} aria-busy={busy}
+        aria-describedby={[freshChoice ? fieldId : null, canBounds && blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} onClick={save}>{definition === null ? "extract" : "save"}</Button>
     </div>
   </Dialog>;
 }

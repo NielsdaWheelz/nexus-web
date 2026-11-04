@@ -54,6 +54,6 @@ export default function ReaderExcerpt({ excerpt, color, full = false }: { excerp
     {body.content.map(render)}
     {body.structure !== "captured" && start === end ? <mark className={styles.selected} data-color={color ?? undefined}><span className={styles.notice} data-excerpt-interface>selected region</span></mark> : null}
     {excerpt.omitted_after ? <span className={styles.notice} aria-label="later text omitted">…</span> : null}
-    {full && body.structure === "unknown" ? <div className={styles.notice}>original formatting wasn’t saved</div> : null}
+    {full && body.structure === "unknown" ? <div className={styles.notice}>shown without its original formatting.</div> : null}
   </div>;
 }

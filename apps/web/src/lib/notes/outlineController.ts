@@ -37,7 +37,11 @@ export interface OutlineRow {
   origin: unknown;
 }
 export interface BranchRead {pending: boolean; error: unknown | null; occurrence: object | null; retry(): void}
-export class OutlineActionRefusal extends Error {}
+/** A command the outline refused before it changed anything: its fact and, where one is known, why. */
+export class OutlineActionRefusal extends Error {
+  constructor(readonly line: {readonly fact: string; readonly reason?: string}) {super(line.fact);}
+}
+const AT_LIMIT = "this outline has reached its editing limit.";
 /** What a session retains across its controllers: open occurrences by row id, and the ids by parent row and link. */
 export interface OutlineSession {opened: Set<string>; identities: Map<string, {id: string; origin: unknown}>}
 export interface BranchRequest {parent_id: string; ref: string; branch: OutlineBranch; cursor: string | null; anchor: string | null; limit: number; foreground?: boolean;
@@ -428,6 +432,14 @@ export class OutlineController {
     for (const id of [...protectedRows]) {let parent = this.parent(id); while (parent) {protectedRows.add(parent); parent = this.parent(parent);}}
     return protectedRows;
   }
+  /** Why these rows cannot leave view now, or null: writing not yet saved, else a block selection
+   * among them, else the caret in one. */
+  private keepReason(rows: ReadonlySet<string>): string | null {
+    const ids = [...rows];
+    if (ids.some(id => this.pending.fields.get(id)?.pending || this.pending.fields.get(id)?.relocating)) return "it has writing that isn’t saved yet.";
+    if (ids.some(id => this.selected.has(id))) return "items in it are selected.";
+    return this.view?.hasFocus() && this.selectionRow !== null && rows.has(this.selectionRow) ? "the caret is in it." : null;
+  }
   private protectedDescendants(parent_id: string): boolean {
     for (const id of this.protectedRows()) {let parent = this.parent(id); while (parent) {if (parent === parent_id) return true; parent = this.parent(parent);}}
     return false;
@@ -470,7 +482,7 @@ export class OutlineController {
     return [...wanted].reduce((bytes, ref) => {const document = this.writing(ref) ?? captured.find(document => document.ref === ref); return bytes + (document ? Y.encodeStateAsUpdate(document.doc).byteLength : 0);},
       this.reservedBytes + (this.rootAttachment?.handle.encodedBytes() ?? (this.rootDocument ? Y.encodeStateAsUpdate(this.rootDocument.doc).byteLength : 0)) + this.binding.encodedBytes(baselines) + this.capturedBytes() + historyBytes);
   }
-  private denied(parent: string, message: string): void {if (this.attempted.has(parent)) {this.error = new OutlineActionRefusal(message); this.notify();}}
+  private denied(parent: string): void {if (this.attempted.has(parent)) {this.error = new OutlineActionRefusal({fact: "couldn’t open more here.", reason: AT_LIMIT}); this.notify();}}
   private navigationValid(parent: string): boolean {
     const request = this.requests.get(parent);
     if (!request?.navigation || request.navigation.lease()) return true;
@@ -486,12 +498,12 @@ export class OutlineController {
     // Outstanding captures remain protected; actual admission still checks all charge.
     const visibleBaselines = new Map([...this.baselineRefs(windows).keys()].map(id => [id, 0]));
     if (this.slots(windows, withoutHistory) + count > MAX_REFS || this.bytes(this.refs(windows, withoutHistory), 0, visibleBaselines) > MAX_BYTES) {
-      this.error = new OutlineActionRefusal("close a branch or load a smaller window before adding more writing"); this.notify(); return false;
+      this.error = new OutlineActionRefusal({fact: "couldn’t add more writing here.", reason: AT_LIMIT}); this.notify(); return false;
     }
     while ((this.slots(windows) + count > MAX_REFS || this.bytes(this.refs(windows)) > MAX_BYTES) && this.history.releaseOldest()) {}
     if (this.slots() + count <= MAX_REFS && this.bytes() <= MAX_BYTES) {this.error = null; return true;}
-    const message = "finishing older edits; try again";
-    const finishing = this.error instanceof OutlineActionRefusal && this.error.message === message ? this.error : new OutlineActionRefusal(message);
+    const fact = "couldn’t add writing yet.";
+    const finishing = this.error instanceof OutlineActionRefusal && this.error.message === fact ? this.error : new OutlineActionRefusal({fact, reason: "older edits are still finishing."});
     this.error = finishing; this.notify();
     this.admission = this.admission.then(async () => {
       await this.history.settleRetired();
@@ -608,7 +620,7 @@ export class OutlineController {
       };
       if (!valid()) return;
       while (this.slots(next) > MAX_REFS && this.history.releaseOldest()) {await this.history.settleRetired();}
-      if (this.slots(next) > MAX_REFS) {this.denied(parent_id, "this editing window is full; close a branch before loading more items"); return;}
+      if (this.slots(next) > MAX_REFS) {this.denied(parent_id); return;}
       const refs = this.refs(next);
       const store = await this.runtime.store;
       const snapshot = await store.readSnapshot({refs: [...refs], link_ids: [], anchor_ids: [], source_refs: []});
@@ -627,7 +639,7 @@ export class OutlineController {
       while (charge() > MAX_BYTES && this.history.releaseOldest()) {await this.history.settleRetired();}
       const newRefs = [...this.refs(next)].filter(ref => !this.documents.has(ref));
       const newBindings = [...baselineRefs.keys()].some(id => this.binding.document(id) === null);
-      if ((newRefs.length || newBindings) && charge() > MAX_BYTES) {this.denied(parent_id, "this editing window is full; close a branch before loading more writing"); return;}
+      if ((newRefs.length || newBindings) && charge() > MAX_BYTES) {this.denied(parent_id); return;}
       const keep = this.refs(next), retired = [...this.documents].filter(([ref]) => !keep.has(ref));
       const activeRow = this.selectionRow ? this.rows.get(this.selectionRow) : null;
       if (this.view?.hasFocus() && activeRow?.ref && retired.some(([ref]) => ref === activeRow.ref)) return;
@@ -652,7 +664,7 @@ export class OutlineController {
       try {
         const editable = this.refs(next);
         for (const ref of editable) if (!this.documents.has(ref)) {
-          if (this.slots(next) > MAX_REFS) {this.denied(parent_id, "this editing window is full; close a branch before loading more writing"); return;}
+          if (this.slots(next) > MAX_REFS) {this.denied(parent_id); return;}
           const resource = snapshot.states.resources.find(resource => resource.ref === ref);
           const prelude = ref === this.rootRef ? this.prelude : [];
           const document = await (resource && resource.kind !== "highlight"
@@ -662,7 +674,7 @@ export class OutlineController {
         }
         if (!valid() || this.view && this.windows.size > 0 && (this.hasPendingWriting() || !this.handle?.canArrange())) return;
         if ((newRefs.length || newBindings) && (charge(new Map(acquired)) > MAX_BYTES || this.slots(next) > MAX_REFS)) {
-          this.denied(parent_id, "this editing window is full; close a branch before loading more writing"); return;
+          this.denied(parent_id); return;
         }
         for (const [ref, held] of acquired.splice(0)) this.documents.set(ref, held);
         this.configure(this.rootField);
@@ -1107,7 +1119,7 @@ export class OutlineController {
     return count === 1 ? `moved; it was already under ${parent}` : `moved ${count} items; ${merged.length} already under ${parent}`;
   }
   private refuse(message: string): void {
-    if (this.handle) this.handle.refuse(message); else {this.error = new OutlineActionRefusal(message); this.notify();}
+    if (this.handle) this.handle.refuse(message); else {this.error = new OutlineActionRefusal({fact: "couldn’t change this outline.", reason: message}); this.notify();}
   }
   /** The adjacent selectable or gap row in the same scope. */
   private neighbour(row_id: string, direction: "up" | "down"): SelectionRow | undefined {
@@ -1225,16 +1237,17 @@ export class OutlineController {
     const open = force ?? !this.opened.has(row_id);
     if (open === this.opened.has(row_id)) return;
     if (!open) {
-      const lease = this.lease(), descendants = this.descendants(row_id), protectedWriting = () => this.protectedBeneath(descendants);
-      if (protectedWriting()) {this.refuse("finish the writing in this branch before closing it"); return;}
+      const lease = this.lease(), descendants = this.descendants(row_id);
+      const kept = this.keepReason(descendants);
+      if (kept !== null) {this.error = new OutlineActionRefusal({fact: "couldn’t close this branch.", reason: kept}); this.notify(); return;}
       this.admission = this.admission.then(async () => {
-        if (!this.active || !lease() || protectedWriting() || !this.handle?.canArrange()) return;
+        if (!this.active || !lease() || this.keepReason(descendants) !== null || !this.handle?.canArrange()) return;
         for (const id of descendants) this.blockedRows.add(id);
         this.syncReadOnly(); this.notify();
         try {
           const refs = new Set([...descendants].flatMap(id => {const ref = this.rows.get(id)?.ref; return ref ? [ref] : [];}));
           await Promise.all([...refs].map(ref => this.captureDocument(ref)));
-          if (!this.active || !lease() || protectedWriting() || !this.handle?.canArrange()) return;
+          if (!this.active || !lease() || this.keepReason(descendants) !== null || !this.handle?.canArrange()) return;
           this.opened.delete(row_id);
           for (const id of [row_id, ...descendants]) {this.requests.delete(id); this.windows.delete(id);}
           for (const [id, embed] of this.embedded) if (embed.projection !== null && descendants.has(embed.owner)) {this.requests.delete(id); this.windows.delete(id);}
@@ -1247,7 +1260,7 @@ export class OutlineController {
       return;
     }
     const capacity = MAX_REFS - this.refs().size - 3;
-    if (capacity < 1) {this.refuse("this editing window is full; close a branch first"); return;}
+    if (capacity < 1) {this.error = new OutlineActionRefusal({fact: "couldn’t open this branch.", reason: AT_LIMIT}); this.notify(); return;}
     this.opened.add(row_id);
     this.attempted.add(row_id);
     const branch = enterOutlineOccurrence({branch: row.branch, ref: row.ref, target: {kind: "occurrence", key: row_id}, edgeIds: row.link ? [row.link.link_id] : []});
@@ -1291,17 +1304,6 @@ export class OutlineController {
     if (navigation) {const previous = this.requests.get(request.parent_id)!; request = {...request, navigation: {lease: typeof navigation === "function" ? navigation : this.lease(), previous: previous.navigation?.previous ?? previous}};}
     request.foreground = true;
     this.requests.set(request.parent_id, request); this.attempted.add(request.parent_id); this.versions.set(request.parent_id, (this.versions.get(request.parent_id) ?? 0) + 1); this.proposals.delete(request.parent_id);
-  }
-  get canRetry(): boolean {return this.proposals.size > 0;}
-  retry(): void {
-    this.error = null;
-    for (const [parent, window] of this.proposals) {
-      const request = this.requests.get(parent);
-      if (request) request.foreground = true;
-      if (request?.navigation) request.navigation.lease = this.lease();
-      this.accept(parent, window);
-    }
-    this.notify();
   }
   capture(): InputBookmark {
     if (this.blockRange) return {kind: "blocks", ...this.blockRange};
@@ -1417,12 +1419,12 @@ export class OutlineController {
       let parent = row.parent_id;
       while (parent) {if (parent === id) {descendants.add(row.row_id); break;} parent = this.parent(parent);}
     }
-    const protectedWriting = () => [...descendants].some(row => this.pending.fields.get(row)?.pending || this.pending.fields.get(row)?.relocating || this.selected.has(row) || this.view?.hasFocus() && this.selectionRow === row);
-    if (protectedWriting() || !this.handle?.canArrange()) {this.error = new OutlineActionRefusal("finish the writing in this preview before closing it"); this.notify(); return false;}
+    const kept = this.keepReason(descendants);
+    if (kept !== null || !this.handle?.canArrange()) {this.error = new OutlineActionRefusal(kept !== null ? {fact: "couldn’t close this preview.", reason: kept} : {fact: "couldn’t close this preview."}); this.notify(); return false;}
     try {
       const refs = new Set([...descendants].flatMap(row => {const ref = this.rows.get(row)?.ref; return ref ? [ref] : [];}));
       await Promise.all([...refs].map(ref => this.captureDocument(ref)));
-      return this.active && lease() && this.embedded.get(id) === branch && branch.projection !== null && !protectedWriting() && !!this.handle?.canArrange();
+      return this.active && lease() && this.embedded.get(id) === branch && branch.projection !== null && this.keepReason(descendants) === null && !!this.handle?.canArrange();
     } catch (error) {if (this.active) {this.error = error; this.notify();} return false;}
   }
   commandState(command: OutlineCommand) {

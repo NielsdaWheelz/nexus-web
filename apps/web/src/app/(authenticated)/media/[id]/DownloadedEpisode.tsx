@@ -4,9 +4,10 @@
 // transcript uses the ordinary reader with no cursor writes or playback highlighting;
 // its annotations are the account's local authored highlights of this media.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import Artwork from "@/components/ui/Artwork";
 import Button from "@/components/ui/Button";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { WIRE_HEADER } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -19,14 +20,14 @@ import { useCompactAnnotations } from "@/lib/documentReader/chrome/CompactAnnota
 import { locatePassage } from "@/lib/documentReader/annotations";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
-import { localCall, localContentAvailable, localMutation, readyEpisode, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
+import { LocalMutationObservationError, localCall, localContentAvailable, localMutation, readyEpisode, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
-import { useSourceArrival } from "@/lib/reader/sourceArrival";
+import { useArrivalFailure, useSourceArrival } from "@/lib/reader/sourceArrival";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -49,7 +50,7 @@ export interface EpisodeManifest {
 export type SavedEpisode =
   | { readonly kind: "Loading" }
   | { readonly kind: "Absent" }
-  | { readonly kind: "Failed"; readonly message: string; readonly retry: () => void }
+  | { readonly kind: "Failed"; readonly retry: () => void }
   | { readonly kind: "Ready"; readonly manifest: EpisodeManifest; readonly item: LocalItem };
 const componentPath = (id: string, packageId: string, component: string) =>
   `/_nexus/device/episodes/${encodeURIComponent(id)}/${encodeURIComponent(packageId)}/${component}`;
@@ -67,22 +68,22 @@ export function useSavedEpisode(mediaId: string): SavedEpisode {
   const accountId = index?.account_id ?? null;
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => { setResult(null); setAttempt(value => value + 1); void localCall("hello").catch(() => undefined); }, []);
-  const [result, setResult] = useState<{ readonly packageId: string; readonly manifest: EpisodeManifest | null; readonly error: string | null } | null>(null);
+  const [result, setResult] = useState<{ readonly packageId: string; readonly manifest: EpisodeManifest | null } | null>(null);
   useEffect(() => {
     if (packageId === null || accountId === null) return;
     const abort = new AbortController();
     void localResponse(componentPath(mediaId, packageId, "episode.json"), abort.signal).then(response => response.json()).then((manifest: EpisodeManifest) => {
       if (manifest.format_version !== 1 || manifest.account_id !== accountId || manifest.media_id !== mediaId || manifest.package_id !== packageId || manifest.capture.media_id !== mediaId)
         throw new Error("downloaded episode identity is invalid");
-      if (!abort.signal.aborted) setResult({ packageId, manifest, error: null });
-    }).catch(() => { if (!abort.signal.aborted) setResult({ packageId, manifest: null, error: "downloaded episode couldn’t be opened" }); });
+      if (!abort.signal.aborted) setResult({ packageId, manifest });
+    }).catch(() => { if (!abort.signal.aborted) setResult({ packageId, manifest: null }); });
     return () => abort.abort();
   }, [accountId, mediaId, packageId, attempt]);
   if (!localContentAvailable) return { kind: "Absent" };
-  if (index === null) return error === null ? { kind: "Loading" } : { kind: "Failed", message: error.message, retry };
+  if (index === null) return error === null ? { kind: "Loading" } : { kind: "Failed", retry };
   if (item === null || packageId === null) return { kind: "Absent" };
   if (result?.packageId !== packageId) return { kind: "Loading" };
-  if (result.manifest === null) return { kind: "Failed", message: result.error ?? "downloaded episode couldn’t be opened", retry };
+  if (result.manifest === null) return { kind: "Failed", retry };
   return { kind: "Ready", manifest: result.manifest, item };
 }
 
@@ -93,7 +94,6 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const { manifest, item } = saved;
   const { capture, media_id: id, package_id: packageId } = manifest;
   const runtime = requirePaneRuntime(usePaneRuntime(), "DownloadedEpisode");
-  const active = usePaneIsActive();
   const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
   const chrome = useMobileChrome();
@@ -104,11 +104,9 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const listening = useListening();
   const [contents, setContents] = useState(false);
   const [artwork, setArtwork] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const failureOccurrence = useFeedbackOccurrence(failure !== null);
+  const { say } = useOutcome();
   const [retrying, setRetrying] = useState(false);
   const transcriptReady = item.extras?.transcript.kind === "Ready";
-  const artworkState = item.extras?.artwork;
   const readerRef = useRef<Reader | null>(null);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
   const savedView = useReaderVisit(readerRef);
@@ -193,6 +191,9 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     },
   });
   arrivalRef.current = arrival;
+  useArrivalFailure(arrival.failure);
+  const retryListening = () => void retryNativeListening(id).catch(() =>
+    say({ fact: "couldn’t resume listening sync." }, [{ label: "retry", commandKey: "RetryListeningSync", run: retryListening }]));
   usePaneChrome({ displayTitle: capture.rendition.title, resourceRef: canonicalResourceRef({ scheme: "media", id }),
     header: { kind: "Resource", resource: { status: "Ready", creditGroups: [] } } });
   usePaneReturnReady(!transcriptReady || document.status === "ready" || document.status === "failed");
@@ -217,7 +218,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const sourceUnavailable = entry?.local?.disposition === "SourceUnavailable";
   const loaded = player.kind === "Loaded" && player.source.descriptor.media_id === id;
   const play = useCallback((ms: number | null) => {
-    run({ ref: `media:${id}`, id: "Playback", label: "play", title: capture.rendition.title, confirmation: null, tracked: false,
+    run({ ref: `media:${id}`, id: "Playback", label: "play", feedbackLabel: "play", title: capture.rendition.title, confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: id, knownDescriptor: null, positionMs: ms, source: null, recapture: false }) });
   }, [capture.rendition.title, id, playAudio, run]);
   const openTime = (event: TargetActivationEvent, ms: number) => {
@@ -227,23 +228,33 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     if (intent.kind === "Consume") return;
     onIntent();
     if (intent.intent === "new_pane") {
-      setFailure("open the downloaded episode, then choose this timestamp"); return;
+      say({ fact: "this timestamp can’t open in a new pane." }); return;
     }
     play(ms);
   };
+  const [extrasUnknown, setExtrasUnknown] = useState<number | null>(null);
   const extrasFailed = item.extras !== null && Object.values(item.extras).some(extra => extra.kind === "Failed" && extra.reason !== "Changed" && extra.reason !== "TooLarge" && extra.reason !== "E_MEDIA_NOT_READY");
+  useEffect(() => { if (!extrasFailed) setExtrasUnknown(null); }, [extrasFailed]);
   async function retryExtras() {
+    if (retrying) return;
     setRetrying(true);
-    try { await localMutation("retry_extras", { media_id: id, package_id: packageId }); setFailure(null); }
-    catch { setFailure("missing content retry not confirmed · try again"); }
+    try { await localMutation("retry_extras", { media_id: id, package_id: packageId }); setExtrasUnknown(null); }
+    catch (error) {
+      if (error instanceof LocalMutationObservationError) {
+        if (error.observation.receipt !== null) setExtrasUnknown(null);
+        else setExtrasUnknown(attempt => (attempt ?? 0) + 1);
+        return;
+      }
+      say({ fact: "couldn’t fetch the missing content." }, [{ label: "retry", commandKey: "RetryMissingContent", run: () => void retryExtras() }]);
+    }
     finally { setRetrying(false); }
   }
   const transcript = item.extras?.transcript;
-  const transcriptCopy = transcript?.kind === "Absent" ? "no published transcript"
-    : transcript?.kind === "Pending" ? "transcript download pending"
-    : transcript?.kind === "Failed" ? transcript.reason === "Changed" ? "transcript publication changed · remove and download again to acquire the current version"
-      : transcript.reason === "TooLarge" ? "transcript exceeds download limit"
-      : transcript.reason === "E_MEDIA_NOT_READY" ? "no published transcript was available at download · remove and download again for newer content" : "transcript download failed"
+  const transcriptCopy = transcript?.kind === "Absent" ? "this episode has no published transcript."
+    : transcript?.kind === "Pending" ? "the transcript is still downloading."
+    : transcript?.kind === "Failed" ? transcript.reason === "Changed" ? "the published transcript changed after download."
+      : transcript.reason === "TooLarge" ? "the transcript was too large to download."
+      : transcript.reason === "E_MEDIA_NOT_READY" ? "no transcript existed when this was downloaded." : "couldn’t download the transcript."
     : null;
   const header = <div className={styles.savedEpisode} onPointerDown={onIntent} onKeyDown={onIntent}>
     <Artwork title={capture.rendition.subtitle ?? ""} source={artwork === null ? { kind: "Absent" } : { kind: "Local", url: artwork }} size={80} className={styles.savedArtwork} />
@@ -252,25 +263,25 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     <p>downloaded · {formatByteCount(manifest.audio.byte_count)}</p>
     {loaded && player.source.packageId !== null ? <p>{player.phase === "Playing" ? "playing downloaded audio" : "downloaded audio"}</p> : null}
     <div className={styles.savedActions}><Button onClick={() => { if (loaded && player.phase === "Playing") pause(); else play(null); }}>{loaded && player.phase === "Playing" ? "pause" : "play"}</Button>
-      {extrasFailed ? <Button reserveIcon aria-busy={retrying} disabled={retrying} onClick={() => void retryExtras()}>retry missing content</Button> : null}
-      {sourceUnavailable ? <Button onClick={() => void retryNativeListening(id).catch(() => setFailure("listening sync not confirmed · try again"))}>retry listening sync</Button> : null}
+      {extrasFailed ? <Button aria-busy={retrying} disabled={retrying} onClick={() => void retryExtras()}>retry missing content</Button> : null}
+      {sourceUnavailable ? <Button onClick={retryListening}>retry listening sync</Button> : null}
       {doc?.kind === "text" && doc.toc.length > 0 ? <Button aria-expanded={contents} onClick={() => { onIntent(); setContents(value => !value); }}>contents</Button> : null}
     </div>
+    {extrasUnknown !== null ? <Hold id={`episode-extras:${id}:${packageId}`} attempt={extrasUnknown}
+      line={{ fact: "not sure the missing content started.", reason: UNKNOWN_OUTCOME_REASON }}
+      verbs={[{ label: "retry", commandKey: "RetryMissingContent", run: () => void retryExtras(), busy: retrying }]} /> : null}
     {fraction === null ? null : <p>{Math.round(fraction * 100)}% listened</p>}
-    {sourceUnavailable ? <FeedbackStatus content={{ tone: "Warning", title: "original no longer available · downloaded copy kept", message: "listening stays saved on this device." }} announcement={active ? "Polite" : "None"} /> : null}
-    {arrival.failure === null ? null : <FeedbackFailure scope="Local" occurrence={arrival.failure} content={{ tone: "Warning", title: arrival.failure.title }} announcement={active ? "Polite" : "None"} />}
-    {failure === null ? null : <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={{ tone: "Warning", title: failure }} announcement={active ? "Polite" : "None"} />}
+    {sourceUnavailable ? <p>the original isn’t available. listening stays saved on this device.</p> : null}
     {capture.show_notes.kind === "Available" ? <PublisherNotes title={capture.rendition.title} html={capture.show_notes.html} hrefForTime={() => null} onOpenTime={openTime} />
-      : capture.show_notes.kind === "Unavailable" ? <FeedbackStatus content={{ tone: "Neutral", title: capture.show_notes.reason === "TooLarge" ? "show notes exceed download limit" : "show notes unavailable" }} announcement="None" /> : null}
-    {artworkState?.kind === "Failed" ? <FeedbackStatus content={{ tone: "Neutral", title: artworkState.reason === "TooLarge" ? "artwork exceeds download limit" : "artwork download failed" }} announcement="None" /> : artworkState?.kind === "Pending" ? <FeedbackStatus content={{ tone: "Neutral", title: "artwork download pending" }} announcement="None" /> : null}
-    {transcriptCopy === null ? null : <FeedbackStatus content={{ tone: transcript?.kind === "Failed" ? "Warning" : "Neutral", title: transcriptCopy }} announcement="None" />}
-    {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <FeedbackStatus content={{ tone: "Neutral", title: "partial transcript" }} announcement="None" /> : null}
+      : capture.show_notes.kind === "Unavailable" ? <p>{capture.show_notes.reason === "TooLarge" ? "show notes were too large to download." : "show notes weren’t available."}</p> : null}
+    {transcriptCopy === null ? null : <p>{transcriptCopy}</p>}
+    {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <p>this transcript is partial.</p> : null}
     {contents ? <Contents reader={reader} /> : null}
   </div>;
   if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile}>{header}{annotations.list}{annotations.panel}</div>;
   return <div className={styles.layout}>
     <DocumentReaderView reader={reader} profile={profile} isMobile={isMobile} playback={null} showCaptureTitle={false}
-      announcement={active ? "Polite" : "None"} before={<>{header}{annotations.list}</>} onSeekTime={ms => { onIntent(); play(ms); }}
+      before={<>{header}{annotations.list}</>} onSeekTime={ms => { onIntent(); play(ms); }}
       inspection={inspection} decorations={annotations.decorations} onSelection={annotations.onSelection} onMarks={annotations.onMarks} />
     {annotations.panel}
   </div>;

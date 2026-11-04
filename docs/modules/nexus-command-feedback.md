@@ -1,27 +1,23 @@
 # nexus command feedback
 
 `useNexusFind.ts` owns query-selection learning; `useNexusController.ts` owns
-creation admission and domain copy. `apiTransportFeedback` owns transport
+creation admission and domain copy. `lib/api/failure.ts` owns transport
 wording. [recent resources](recent-history.md) owns local history failure
 separately; a ranking failure never changes recent history.
 
-an accepted eligible selection sends exactly query and target href. the send
-closure retains its serialized body and coalesces concurrent sends. a failure
-offers `retry save` only if it is still the latest selection when the failure
-arrives. the account-scoped transient feedback owner controls the receipt's
-lifetime; a later selection does not retract an already offered retry. the
-closure stops sending when the nexus owner unmounts. a lost reply may make an
-explicit retry count the selection twice; these are ranking statistics, not an
-idempotent resource write or a history replay. successful acknowledgement
-invalidates frecency. offline selection learning does not queue a later write.
+an accepted eligible selection sends exactly query and target href. this
+background ranking write has no success, failure or retry presentation: opening
+the selected resource already succeeded. an accepted answer updates the current
+open's held usage map. retirement prevents a late answer changing that map.
+offline selection learning does not queue a later write.
 
-auth recovery runs first. admitted transport errors produce the shared
-`selection not confirmed` feedback; unknown errors remain defects. selection
+auth recovery runs first. transport failures stay silent; undeclared failures
+remain defects. selection
 eligibility belongs to each row's `learns_selection`, not its displayed label.
 
 creation retains its own frozen command identity and accepted domain-error
-codes. transport feedback takes precedence over domain copy; an unrecognized
-error reaches the existing defect owner. changing a retryable creation's name
+codes. domain reasons precede the total transport mapping; a same-system defect
+reaches the existing defect owner. changing a retryable creation's name
 rotates its identity; an unchanged retry retains it. delayed creation and focus
 handoff follow the existing workspace activation contract.
 

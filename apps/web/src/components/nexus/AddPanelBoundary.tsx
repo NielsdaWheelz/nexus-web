@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, createRef, type ReactNode } from "react";
+import { Component, createRef, type ReactNode, type RefObject } from "react";
 import Button from "@/components/ui/Button";
 import type { AddContentSessionController } from "./useAddContentSession";
 import type { NexusController } from "./useNexusController";
@@ -8,6 +8,7 @@ import styles from "./AddPanel.module.css";
 
 interface AddPanelBoundaryProps {
   activeDefect: boolean;
+  scrollRef?: RefObject<HTMLElement | null>;
   resetKey: string;
   session: AddContentSessionController;
   controller: Pick<
@@ -64,6 +65,7 @@ export default class AddPanelBoundary extends Component<
     const running = this.props.session.state.mutation.kind === "Running";
     return (
       <section
+        ref={this.props.scrollRef}
         className={styles.addDefectBody}
         aria-labelledby="add-defect-title"
       >

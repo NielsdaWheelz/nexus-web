@@ -2,7 +2,8 @@
 
 // The reader profile: one user's seven typography preferences. Changes apply at
 // once and reach the server as one debounced PATCH (300ms), one request in
-// flight, latest wins; a failed save keeps the change and offers Retry.
+// flight, latest wins; a failed save keeps the change and holds a slip until a save
+// lands, with the verb its transport allows. Nothing resends it on reconnect.
 import {
   createContext,
   useCallback,
@@ -14,11 +15,14 @@ import {
   type ReactNode,
 } from "react";
 import { ReaderProfileProvider } from "./ReaderProfileContext";
-import { remoteReady } from "@/lib/native/admission";
+import { remoteAdmission, remoteReady } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
-import { FeedbackFailure, useFeedback, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import { apiFetch, apiTransportFeedback, outcomeUnknown, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import type { CommandVerb } from "@/components/feedback/stage";
+import { admissionError, apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { admissionReason, admissionTransport, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useHeldSaveFailure } from "@/lib/media/admissions";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
@@ -28,11 +32,10 @@ export interface ReaderProfileCapability {
   readonly profile: ReaderProfile;
   readonly persistence:
     | { readonly state: "Clean" | "Pending" }
-    | { readonly state: "SaveFailed"; readonly failure: unknown };
+    /** `offline`: the device was offline when the save failed. */
+    | { readonly state: "SaveFailed"; readonly failure: ApiError; readonly attempt: number };
   readonly editable: boolean;
   readonly saving: boolean;
-  readonly failureOccurrence: object;
-  readonly connectionOccurrence: object | null;
   readonly unavailableReason: string | null;
   setTheme(value: ReaderProfile["theme"]): void;
   setFontFamily(value: ReaderProfile["font_family"]): void;
@@ -55,19 +58,15 @@ export function ReaderProvider({
   readonly children: ReactNode;
 }) {
   const refreshSettings = useSettingsRefresh();
-  const feedback = useFeedback();
+  const { fail, say } = useOutcome();
+  const heldSaveFailure = useHeldSaveFailure();
   const admission = useRemoteAdmission();
   const editable = admission === "Ready";
-  const blockedOccurrence = useFeedbackOccurrence(admission !== "Ready" && admission !== "Checking");
-  const connectionOccurrence = admission === "Unavailable" ? blockedOccurrence : null;
-  const unavailableReason = admission === "Ready" ? null : admission === "Checking" ? "checking whether reader settings can be changed"
-    : admission === "SignInRequired" ? "sign in to change reader settings"
-    : admission === "UpdateRequired" ? "update nexus to change reader settings" : "changing reader settings requires a connection";
+  const unavailableReason = admission === "Checking" ? "still checking the connection." : admissionReason();
   const [profile, setProfile] = useState(initialProfile);
   const [persistence, setPersistence] = useState<
     ReaderProfileCapability["persistence"]
   >({ state: "Clean" });
-  const occurrence = useFeedbackOccurrence(persistence.state === "SaveFailed");
   const [saving, setSaving] = useState(false);
   const unsent = useRef<Partial<ReaderProfile>>({});
   const timer = useRef<number | undefined>(undefined);
@@ -106,15 +105,17 @@ export function ReaderProvider({
       unsent.current = { ...patch, ...unsent.current };
       handleUnauthenticatedApiError(failure);
       if (!isApiError(failure) || isSameSystemApiDefect(failure)) return setDefect({ error: failure });
-      // The retained owner projects the same failure through current hosts.
-      setPersistence({ state: "SaveFailed", failure });
+      setPersistence((current) => ({ state: "SaveFailed", failure, attempt: current.state === "SaveFailed" ? current.attempt + 1 : 0 }));
     }
   }, [refreshSettings]);
 
   const intend = useCallback(
     (patch: Partial<ReaderProfile>) => {
       if (!remoteReady()) {
-        feedback.receipt({ tone: "Neutral", title: "changing reader settings requires a connection" });
+        const current = remoteAdmission();
+        const fact = "couldn’t change reader settings.";
+        if (admissionTransport(current) === null) say({ fact });
+        else fail(admissionError(current), fact);
         return;
       }
       setProfile((current) => ({ ...current, ...patch }));
@@ -123,7 +124,7 @@ export function ReaderProvider({
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void send(), SAVE_DELAY_MS);
     },
-    [feedback, send],
+    [fail, say, send],
   );
 
   useEffect(() => {
@@ -143,8 +144,6 @@ export function ReaderProvider({
       persistence,
       editable,
       saving,
-      failureOccurrence: occurrence,
-      connectionOccurrence,
       unavailableReason,
       setTheme: (theme) => intend({ theme }),
       setFontFamily: (font_family) => intend({ font_family }),
@@ -155,11 +154,17 @@ export function ReaderProvider({
       setColumnWidth: (column_width_ch) => intend({ column_width_ch }),
       retrySave: () => void send(),
     }),
-    [editable, intend, persistence, profile, send, saving, occurrence, connectionOccurrence, unavailableReason],
+    [editable, intend, persistence, profile, send, saving, unavailableReason],
   );
   if (defect) throw defect.error;
+  const retry: CommandVerb = { label: "retry", commandKey: "RetryReaderSettings", run: () => void send(), busy: saving };
+  const failed = persistence.state === "SaveFailed"
+    ? { attempt: persistence.attempt, ...heldSaveFailure(persistence.failure, retry, SAVE_COPY) } : null;
   return (
-    <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>{children}</ReaderProfileProvider></ReaderContext.Provider>
+    <ReaderContext.Provider value={value}><ReaderProfileProvider profile={profile}>
+      {children}
+      {failed ? <Hold id="reader-settings" attempt={failed.attempt} line={failed.line} verbs={failed.verbs ?? undefined} /> : null}
+    </ReaderProfileProvider></ReaderContext.Provider>
   );
 }
 
@@ -170,16 +175,9 @@ export function useReaderContext(): ReaderProfileCapability {
   return context;
 }
 
-/** The profile owner retains this recovery when typography controls leave their pane. */
-export function ReaderSettingsFailure() {
-  const reader = useReaderContext();
-  if (reader.persistence.state !== "SaveFailed") return null;
-  const failure = reader.persistence.failure;
-  const content = (isApiError(failure) && apiTransportFeedback(failure, "couldn’t save reader settings")) || {
-    tone: "Warning" as const, title: "couldn’t save reader settings", message: "your settings are applied in this tab. retry to sync them.",
-    requestId: isApiError(failure) ? failure.requestId : undefined};
-  return <FeedbackFailure scope="Local" occurrence={reader.failureOccurrence}
-    content={outcomeUnknown(failure) && failure.code !== "E_UNAUTHENTICATED"
-      ? {...content, title: "change not confirmed", message: "the request may have succeeded."} : content}
-    announcement="Polite" actions={[{label: "retry", onClick: reader.retrySave, busy: reader.saving}]} />;
-}
+/** The change applies here whatever its save met. */
+const SAVE_COPY = {
+  fact: "couldn’t save reader settings.",
+  unsure: { fact: "not sure reader settings saved.", reason: UNKNOWN_OUTCOME_REASON },
+  kept: { fact: "couldn’t save reader settings.", reason: "they apply in this tab only." },
+};

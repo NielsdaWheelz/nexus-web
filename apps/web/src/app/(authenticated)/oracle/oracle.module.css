@@ -112,7 +112,9 @@
   font-style: italic;
 }
 
+/* Relative: control busy's spinner sits over the kept label. */
 .button {
+  position: relative;
   background: transparent;
   color: var(--oracle-gold);
   border: 1px solid var(--oracle-gold);

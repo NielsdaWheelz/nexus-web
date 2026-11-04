@@ -101,9 +101,9 @@ branches on the same table, after the guard:
 restored means the query and its blank/typed root, with the originating row armed
 when it still exists. desktop focus rests in the combobox. on a phone, returning
 to an unsent typed origin focuses the field; returning to blank focuses the
-originating row or import row and keeps the keyboard down. after a send, the
-arrow clears the query and returns to blank with the import row armed. pickers
-consume esc first. the defect view has no arrow and keeps esc. both roots record
+originating row or import row and keeps the keyboard down. after a send,
+back clears the query and returns to blank with the import row armed. pickers
+consume esc first. the defect view has no back and keeps esc. both roots record
 scroll on their actual list scrollport and restore it once the rows compose.
 
 ## saved placement

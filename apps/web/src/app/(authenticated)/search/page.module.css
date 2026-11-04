@@ -4,17 +4,13 @@
   font-size: var(--text-xs);
 }
 
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
+/* Old rows for a new key, until it lands. */
+.stale {
+  animation: stale-in var(--duration-fast) var(--ease-glide) 200ms forwards;
 }
 
-.emptyActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+@keyframes stale-in {
+  to { opacity: 0.6; }
 }
 
 .section + .section {

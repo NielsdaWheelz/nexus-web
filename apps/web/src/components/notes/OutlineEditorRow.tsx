@@ -9,7 +9,7 @@ import type {MouseEvent as ReactMouseEvent} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
 import {authoredItem} from "@/lib/notes/presentation";
-import {ChevronRight, ChevronsDownUp, ChevronsUpDown, CornerLeftUp, SquareDashedMousePointer, Unlink} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type {BranchRead} from "@/lib/notes/outlineController";
 import AuthoredReadFailure from "./AuthoredReadFailure";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -61,12 +61,12 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     const scheme = parsed === null ? "note_block" : parsed.scheme;
     const type = resourceType(scheme, null);
     const identity = resourceTypeName(type);
-    const marker = row.terminal ? <CornerLeftUp size={14}/> : scheme === "note_block" ? "•" : <ResourceTypeIcon type={type}/>;
-    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: <SquareDashedMousePointer size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.select}];
+    const marker = row.terminal ? <Icon.Locate size={14}/> : scheme === "note_block" ? "•" : <ResourceTypeIcon type={type}/>;
+    const actions: ActionDescriptor[] = [{kind: "command", id: "Outline.SelectBlock", label: "Select item", icon: null, restoreFocusOnClose: false, onSelect: row.select}];
     if (row.childrenAvailable) actions.push(row.open
-      ? {kind: "command", id: "Outline.CollapseBlock", label: "Collapse", icon: <ChevronsDownUp size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.toggle}
-      : {kind: "command", id: "Outline.ExpandBlock", label: "Expand", icon: <ChevronsUpDown size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.toggle});
-    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Unlink size={16} aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
+      ? {kind: "command", id: "Outline.CollapseBlock", label: "Collapse", icon: null, restoreFocusOnClose: false, onSelect: row.toggle}
+      : {kind: "command", id: "Outline.ExpandBlock", label: "Expand", icon: null, restoreFocusOnClose: false, onSelect: row.toggle});
+    if (row.ref !== null) actions.push({kind: "command", id: "Resource.Relation.unlink", label: `Unlink from ${row.parentLabel}`, icon: <Icon.Remove aria-hidden="true" />, restoreFocusOnClose: false, onSelect: row.unlink});
     const control = `${styles.control} ${styles.bullet}`;
     // a touch tap on a bullet extends a standing selection to its row; a fine pointer keeps click to open and shift-click to range.
     const extended = (event: ReactMouseEvent) => {
@@ -93,13 +93,13 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     </span>;
     const disclose = row.childrenAvailable ? <button type="button" className={styles.control} data-row-focusable="true"
       aria-label={`${row.open ? "collapse" : "expand"} ${row.label}`} aria-expanded={row.open} aria-busy={row.read.pending}
-      onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}><ChevronRight size={10} strokeWidth={1.5}/></button> : null;
+      onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}><Icon.Disclose open={row.open} size={12}/></button> : null;
     const trailing = <>
       {row.mirrors > 1 ? <span data-mirrors={row.mirrors}><span aria-hidden="true">{row.mirrors}</span><span className="sr-only">appears under {row.mirrors} parents</span></span> : null}
-      <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
+      <AuthoredReadFailure {...row.read} noun="linked items"/>
     </>;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource, null, row.href)} /><HighlightAnnotation highlightRef={row.resource.ref} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.label,
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource, null, row.href)} /><HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.label,
         mount.content, `${row.row_id}:content`)] : [])];
   });
 }

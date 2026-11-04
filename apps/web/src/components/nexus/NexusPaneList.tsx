@@ -4,7 +4,7 @@
 import { DndContext, DragOverlay, MouseSensor, TouchSensor, closestCenter, useDndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useLayoutEffect, useRef, type ReactNode, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
@@ -50,6 +50,8 @@ export function paneDragStyle(drag: DragBody) {
   return { transform: CSS.Translate.toString(drag.transform), opacity: drag.isDragging ? 0.35 : undefined };
 }
 
+/** The root's pane moves, by drag or placement, and their one live region: dnd-kit's own
+ * announcements are silenced, so the reorder's lines speak here. */
 export function NexusPaneDrag({ controller, scrollport, mobile, children }: {
   controller: NexusController; scrollport(): HTMLElement | null; mobile: boolean; children: ReactNode;
 }) {
@@ -94,6 +96,7 @@ export function NexusPaneDrag({ controller, scrollport, mobile, children }: {
     <PaneSensorRetirement epoch={controller.reorder.sensorEpoch} scrollport={scrollport} retired={retired} />
     {/* The sheet paints its list upward; slot geometry, not index direction, places its rows. */}
     <SortableContext items={controller.paneListComplete ? controller.panes.map(pane => pane.id) : []} strategy={mobile ? rectSortingStrategy : verticalListSortingStrategy}>{children}</SortableContext>
+    <div className="sr-only" role="status" aria-live="polite">{controller.reorderSpeech}</div>
     {overlay ? createPortal(<DragOverlay adjustScale={false} dropAnimation={null} style={{ pointerEvents: "none" }}>{row ? <div className={styles.paneDragPreview} aria-hidden inert><NexusRowBody row={row} here={row.state === "Current"} query={controller.query} /></div> : null}</DragOverlay>, overlay) : null}
   </DndContext>;
 }
@@ -129,7 +132,7 @@ export function NexusPaneListHeader({ controller, mobile }: { controller: NexusC
           onClick={event => { if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) { if (placement === null) controller.reorder.start(); else controller.reorder.cancel(); } }}>{placement === null ? "reorder" : "cancel"}</Button> : null}
         {controller.panePreviewCount < controller.panes.length ? <Button className={cx(styles.paneListAction, mobile && styles.mobileControl)} data-nexus-control="PanesDisclosure" aria-controls={listId} aria-expanded={controller.panesExpanded}
           aria-label={controller.panesExpanded ? `collapse tabs, show ${controller.panePreviewCount} of ${controller.panes.length}` : `expand tabs, show all ${controller.panes.length}`}
-          onClick={controller.togglePanesExpanded} icon={controller.panesExpanded ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}><span className={styles.paneDisclosureText}><span aria-hidden>collapse</span><span>{controller.panesExpanded ? "collapse" : "expand"}</span></span></Button> : null}
+          onClick={controller.togglePanesExpanded} icon={<Icon.Disclose open={controller.panesExpanded} aria-hidden />}><span className={styles.paneDisclosureText}><span aria-hidden>collapse</span><span>{controller.panesExpanded ? "collapse" : "expand"}</span></span></Button> : null}
       </div>
     </div>
     {placement !== null ? <p className={styles.paneMoveHelp}>{placement.kind === "ChoosePane" ? "choose a pane to move" : `choose a position for “${controller.reorder.sourceName}”`}</p> : controller.reorder.available ? <p className={styles.paneMoveHelp}><span className={styles.mouseDragHint}>drag to reorder</span><span className={styles.touchDragHint}>hold and drag to reorder</span></p> : null}
@@ -140,11 +143,11 @@ export function NexusClosedPanes({ controller, mobile }: { controller: NexusCont
   if (!controller.paneListPresented || controller.closedPanes.length === 0) return null;
   const id = mobile ? "mobile-nexus-closed-panes" : "desktop-nexus-closed-panes";
   const disclosure = <Button className={cx(styles.paneListAction, mobile && styles.mobileControl)} data-nexus-control="RecentlyClosedDisclosure" aria-expanded={controller.recentlyClosedExpanded} aria-controls={id}
-    onClick={controller.toggleRecentlyClosed} icon={controller.recentlyClosedExpanded ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}>recently closed · {controller.closedPanes.length}</Button>;
+    onClick={controller.toggleRecentlyClosed} icon={<Icon.Disclose open={controller.recentlyClosedExpanded} aria-hidden />}>recently closed · {controller.closedPanes.length}</Button>;
   const buttons = controller.closedPanes.map(pane => {
     const button = <button type="button" className={cx(styles.paneRecovery, mobile && styles.mobileControl)} data-nexus-control={`ClosedPane:${pane.id}`} aria-label={`reopen ${pane.presentation.title}`}
       onKeyDown={event => { if ((event.key === "Enter" || event.key === " ") && (event.repeat || event.nativeEvent.isComposing)) event.preventDefault(); }}
-      onClick={() => controller.restoreClosedPane(pane.id)}><RotateCcw size={16} aria-hidden /><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}</button>;
+      onClick={() => controller.restoreClosedPane(pane.id)}><Icon.Undo size={16} aria-hidden /><span>{pane.presentation.title}</span>{pane.presentation.detail ? <small>{pane.presentation.detail}</small> : null}</button>;
     return <div key={pane.id} role="row"><div role="gridcell">{button}</div></div>;
   });
   return <div role="rowgroup" aria-label="recently closed" className={styles.closedPanes}><div role="row"><div role="gridcell">{disclosure}</div></div><div id={id} role="presentation" className={styles.closedPaneRows} hidden={!controller.recentlyClosedExpanded}>{controller.recentlyClosedExpanded ? buttons : null}</div></div>;

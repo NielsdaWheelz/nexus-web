@@ -1,95 +1,63 @@
 # browser session recovery
 
-status: implemented, local browser proof and static gate passed · origin:
-2026-10-02 cleanup campaign, base `56b889bdc` · area: web auth
+## purpose and owners
 
-## behavior and ownership
+remote credentials and a confirmed local account have separate lifetimes.
+expiry may stop remote requests; it does not evict the workspace or its local
+writing. `lib/native/admission.ts` owns remote admission, `lib/authored` owns
+local account admission and sign-in, and `lib/auth/UnauthenticatedApiBoundary.tsx`
+owns the remaining browser redirect boundary.
 
 server auth redirects use `APP_PUBLIC_URL` through `lib/auth/session.ts`.
 `next.config.ts` disables middleware url normalization so next preserves that
-canonical origin, including numeric loopback hosts. middleware owns the raw
-app router request path; this app has no pages router data routes to normalize.
+canonical origin, including numeric loopback hosts. workspace GET/HEAD routes
+rewrite to the asset shell before credential redirects. `BrowserWorkspace`
+opens a confirmed local binding without credentials; first provisioning still
+requires verified server data.
 
-`lib/api/client.ts:isUnauthenticatedApiError` owns recognition: the value must
-be an `ApiError`, its status must equal `401`, and its code must equal
-`E_UNAUTHENTICATED`. a plain object, another status, or another code is not
-recognized. `apiFetch` decodes failed structured responses into that class;
-the session bff emits this exact status/code when the session has ended or is
-absent (`lib/api/proxy.ts` `proxySession`, on `lib/auth/session.ts` `liveSession`).
+## a workspace survives expiry
 
-`lib/auth/UnauthenticatedApiBoundary.tsx:handleUnauthenticatedApiError` owns
-the one browser-runtime redirect latch. for an unrecognized error it returns
-false, including after a redirect has started. for a recognized error it:
+`apiFetch` observes a failure against the account that sent its request. a
+retired response cannot change another account's admission. a current browser
+401 requests sign-in; a 403 does so only for `E_ACCOUNT_MISMATCH`. other 403s
+remain their own refusals. a native 401 starts the host's session check.
+`checkSession` has no browser implementation: only the native bridge can answer
+it. an installed unsafe-method request waits for that check, bounded by its
+own deadline or thirty seconds; this includes reads sent as POST.
 
-1. returns true immediately if this runtime already started login navigation;
-2. otherwise, in a non-browser invocation or at a current `/login` location,
-   returns false without navigation or changing the latch;
-3. otherwise pauses writing through `beforeSecurityTeardown`, marks security
-   teardown, calls `window.location.assign` with the same-origin login path,
-   sets the latch and returns true. a pause failure is reported and cannot veto
-   navigation. it never retries a started navigation inside the same runtime.
+`handleUnauthenticatedApiError` returns false in installed documents and in a
+mounted workspace identified by its root. domain owners therefore settle the
+failed request and retain their local state. account conditions and object
+failures present the canonical sign-in remedy; no failure-triggered document
+navigation replaces the workspace.
 
-the return target is the current pathname plus query, without the hash,
-validated by `parseReturnTarget` in `lib/auth/urls.ts`. unsafe or auth
-destinations resolve to `/lectern`; that default omits `next`. an assign
-failure propagates and clears the teardown marker, leaving the latch unset.
-`securityTeardownStarted` lets the shared document-exit guard yield to security
-navigation; it neither discards authored work nor asks for a save decision.
+`AuthoredProvider` owns deliberate sign-in. a browser uses the login path with
+its validated return target; ordinary work guards still protect departure.
+the installed host performs `sessionSignIn`, exposes its pending state, and
+reports a different account or failed attempt without changing local ownership.
+remote read repair can wake when admission recovers; writes resume only after
+a deliberate command. [api edge](api-edge.md) owns the shared failure partition.
 
-the authenticated shell mounts one `UnauthenticatedApiBoundary`
-(`app/(authenticated)/AuthenticatedShell.tsx`). its context provides the
-canonical handler directly. its effect registers one `unhandledrejection`
-listener on mount and removes that exact listener on unmount. the listener
-calls the same handler and prevents the rejection's default handling only
-when it returns true. it has no second latch or handler policy. concurrent
-request failures therefore start at most one navigation, and every later
-recognized failure remains handled while this runtime survives.
+## the remaining redirect boundary
 
-the context hook is a present scope contract: outside the authenticated
-boundary its default handler returns false. `app/share/page.tsx:10-13`
-deliberately keeps the share capture outside the shell and login flow;
-`ShareCapture.tsx` reads the account with `usePaneFreeServerValue` there. a failed
-share account read remains available to that screen's error handling and must
-not navigate to login; its inline sign-in guidance is the share page's own
-([ingest](ingest.md)).
-explicit direct-handler callers retain their
-existing decision to invoke global recovery. no alternate provider, scope
-option, or compatibility api is added.
+`isUnauthenticatedApiError` recognizes only an `ApiError` with status 401 and
+code `E_UNAUTHENTICATED`. plain objects, other codes and other statuses do not
+qualify. outside the workspace and installed-document exclusions, the global
+handler has one runtime latch. a recognized failure after navigation started
+returns true. a non-browser call or current `/login` location returns false.
+otherwise it marks security teardown and assigns the same-origin login path.
 
-## verification receipt
+`parseReturnTarget` validates the current pathname and query, without a hash.
+unsafe or auth destinations resolve to `/lectern`, which omits `next`. an assign
+failure propagates, clears teardown and leaves the latch unset. a successful
+assign sets the latch; the same runtime does not retry navigation.
+`securityTeardownStarted` lets document-exit guards yield to this navigation;
+it does not discard authored work.
 
-2026-10-02: removed the boundary's second redirect ref and callback; the file
-went from 75 to 60 lines. context, its seven consumers, and the shell mount
-remain intact. a separate verifier ran the same reviewed production-bundle
-chromium proof before and after, against real local bff auth rejections.
-baseline passed 31/35 checks and failed repeated context handling
-`[true,false,true,false]`, repeated mounted cancellation `[true,false]`, real
-concurrent rejection cancellation `[true,false]`, and the escaped second
-rejection. candidate passed 35/35 with all those recognized failures handled.
-
-both runs observed exactly one login navigation with the correct pathname,
-query return target and no hash. wrong status/code and nonauth errors remained
-unhandled. unmount/remount prevention was `[false,true,false,true,false]`;
-navigation count alone was not its oracle. fresh `/login` did not redirect;
-a separate non-browser invocation returned false. outside-scope context calls
-returned false, a real `useResource` account read retained its auth error with
-no navigation, and anonymous `/share` retained sign-in guidance on `/share`.
-the expired mounted `ShareCapture` rendering defect was outside this auth slice;
-its later repair is qualified in the separate share capture recovery receipt.
-
-tested source: base `56b889bdc6708d2d913982e22e7566a141b024d6` with only this
-production source change. boundary sha256:
-`a55456758cc49e0e0fa817a38df283dccc98e129a0216945f748b8ee083a7e9c`.
-baseline boundary sha256:
-`b74d5d06fc1023c9e08e0059562fe276f40be17067333b3cfc53ed41b7230890`.
-the same browser oracle passed 35/35 again after integration onto main
-`18232e20a44bcad899cb6326551fba4f68abefcd`, at source commit
-`d427c8d20219f08b9d07597f98b1a2786d3d2c87`; the boundary hash above was
-unchanged. the non-browser check and `./scripts/test` passed on that integrated
-source, canonical migration head `0252`. production and physical device checks
-were not run.
-
-the temporary proof is removed after review; this spec retains the source
-identity, observed outcomes, and limits. there is no maintained automatic
-regression suite under the repository's
-[verification contract](../local-rules/testing-standards.md).
+`UnauthenticatedApiBoundary` supplies the handler and registers one
+`unhandledrejection` listener for its mounted lifetime. it suppresses a rejection
+when login navigation owns it, and also suppresses recognized native 401s whose
+recovery belongs to the installed host. the context outside that boundary
+returns false. public share capture therefore keeps its own sign-in guidance
+and remains on its screen. explicit direct-handler callers still receive the
+same workspace and installed-document exclusions.

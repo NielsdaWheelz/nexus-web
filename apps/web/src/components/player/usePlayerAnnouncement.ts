@@ -1,28 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { assertNever } from "@/lib/assertNever";
 import type { BarMode } from "@/lib/player/barModel";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import * as Player from "@/lib/player/playerRuntime";
-import { unavailableMessages } from "./PlayerFailures";
+import { unavailableMessages } from "@/lib/player/barModel";
 
 type Phase = Extract<Player.PlayerState, { kind: "Loaded" }>["phase"];
 
 /**
  * What the player's one live region says on its own, once each: a start, resume or new source, a
  * stop, the queue running out, and becoming unavailable; nothing on recovery. A playback failure the
- * queue already reports stays unsaid. `announce` lets the queue and the sheet speak through it.
+ * queue already reports stays unsaid. Each onset has a fresh speech identity.
  */
-export function usePlayerAnnouncement(mode: BarMode): { readonly announcement: string | null; readonly announce: (message: string | null) => void } {
+export function usePlayerAnnouncement(mode: BarMode) {
   const { state, queue, preferences, playbackSubject } = Player.usePlayerSession();
-  const [announcement, announce] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState<{ readonly text: string; readonly occurrence: object } | null>(null);
+  const announce = useCallback((text: string | null) => setAnnouncement(text === null ? null : { text, occurrence: {} }), []);
   const announced = useRef<{ source: string | null; phase: Phase | null; unavailable: string | null; stopped: string | null }>({ source: null, phase: null, unavailable: null, stopped: null });
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded?.source.descriptor.media_id ?? null;
   const title = loaded?.source.descriptor.title;
   const queuePlaybackFailure = loaded !== null && loaded.playbackFailed
-    && queue.failure?.kind === "Episode" && queue.failure.entry_id === queue.header?.current_entry_id;
+    && queue.error?.kind === "Episode" && queue.error.entry_id === queue.header?.current_entry_id;
   const unavailable = state.kind === "Unavailable" ? unavailableMessages[state.reason] : null;
 
   useEffect(() => {
@@ -46,10 +47,10 @@ export function usePlayerAnnouncement(mode: BarMode): { readonly announcement: s
         if (queuePlaybackFailure) { said.source = identity; said.phase = state.phase; break; }
         const recovering = said.unavailable !== null;
         said.unavailable = null;
-        const started = state.error === null && state.phase === "Playing";
+        const started = !state.playbackFailed && state.phase === "Playing";
         if (identity !== said.source) {
           const observation = started ? "now playing" : state.phase === "Buffering" ? "buffering" : "audio loaded";
-          announce(state.error === null ? `${observation}: ${title}` : null);
+          announce(!state.playbackFailed ? `${observation}: ${title}` : null);
         } else if (started && said.phase !== "Playing") announce(`now playing: ${title}`);
         else if (recovering) announce(null);
         said.source = identity;
@@ -58,7 +59,7 @@ export function usePlayerAnnouncement(mode: BarMode): { readonly announcement: s
       }
       default: assertNever(state);
     }
-  }, [state, mode.kind, identity, title, unavailable, queuePlaybackFailure]);
+  }, [state, mode.kind, identity, title, unavailable, queuePlaybackFailure, announce]);
 
   const readyRate = useRef<{ subject: string | null; label: string | null }>({ subject: null, label: null });
   useEffect(() => {
@@ -68,7 +69,7 @@ export function usePlayerAnnouncement(mode: BarMode): { readonly announcement: s
     const previous = readyRate.current.label;
     readyRate.current.label = label;
     if (previous !== null && previous !== label) announce(`speed ${label}`);
-  }, [playbackSubject, state, preferences]);
+  }, [playbackSubject, state, preferences, announce]);
 
-  return { announcement, announce };
+  return announcement;
 }

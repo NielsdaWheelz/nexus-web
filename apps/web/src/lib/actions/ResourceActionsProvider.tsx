@@ -11,12 +11,12 @@ import {
   type ReactNode,
 } from "react";
 import {
-  useFeedback,
-  type FeedbackAction,
-  type FeedbackContextValue,
-  FeedbackFailure,
-  type FeedbackContent,
+  Hold,
+  useOutcome,
+  useResendFeedback,
+  type Outcome,
 } from "@/components/feedback/Feedback";
+import type { Line, Retract } from "@/components/feedback/stage";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import type { MetadataSubject } from "./subjects";
@@ -25,16 +25,17 @@ import type { EpisodeState } from "@/lib/podcasts/api";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import { useMediaContinuationOwner } from "@/lib/actions/mediaContinuation";
-import { actionFailure, type ActionId } from "@/lib/actions/catalog";
+import { actionOutcome, type ActionId } from "@/lib/actions/catalog";
 import {
   ResourceActionFailure,
+  ResourceActionUnknown,
   type ActionCommand,
 } from "@/lib/actions/project";
 import { ResourceOverlays } from "@/lib/actions/ResourceOverlays";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { ProgressPreparationError } from "@/lib/consumption/progressFence";
+import { ProgressPreparationError, PROGRESS_PREPARATION_FACT } from "@/lib/consumption/progressFence";
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
@@ -55,17 +56,14 @@ import {
   usePlayerCommands,
   usePlayerSession,
 } from "@/lib/player/playerRuntime";
-import { DeviceSettingsStatus } from "@/lib/native/settingsRefresh";
-import { ReaderSettingsFailure } from "@/lib/reader/ReaderContext";
-import { PlayerFailures, usePlayerFailurePresentation } from "@/components/player/PlayerFailures";
+
 import { usePodcastSettingsOwner } from "@/lib/podcasts/usePodcastSettingsSave";
 import { usePodcastCommands } from "@/lib/podcasts/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { PodcastTarget } from "@/lib/podcasts/api";
-import { QueueCommandError } from "@/lib/player/queue";
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
-import { installedApp, remoteReady } from "@/lib/native/admission";
+import { installedApp, subscribeAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { useShareController } from "@/lib/sharing/controller";
@@ -99,6 +97,8 @@ export interface ActionContext {
   readonly isActive: () => boolean;
   readonly accountId: string;
   readonly online: boolean;
+  /** What can replace a stale build now: a stale verb offers reload only under `Reload`. */
+  readonly remedy: UpdateRemedy;
   readonly offline:
     | { readonly kind: "Unavailable" | "Loading" }
     | { readonly kind: "Ready"; readonly items: readonly LocalItem[] };
@@ -117,7 +117,9 @@ export interface ActionContext {
   readonly workspace: () => WorkspaceStoreValue;
   /** A command captures this provider lifetime before awaiting its result. */
   readonly sessionSignal: () => AbortSignal;
-  readonly feedback: FeedbackContextValue;
+  /** Results and chat outcomes after the invoker leaves. A verb's own failures are `run`'s,
+   * spoken where it was invoked. */
+  readonly feedback: Outcome;
   readonly reportDefect: (failure: { error: unknown }) => void;
   readonly openShare: ReturnType<typeof useShareController>["openShare"];
   readonly openLibraryPlacement: ReturnType<
@@ -152,12 +154,13 @@ export function resourceActionRequiresRemote(id: string, tracked = true): boolea
 
 interface Runtime {
   readonly ctx: ActionContext;
-  readonly run: (command: ActionCommand) => void;
+  /** Runs a verb and reports its failure through `outcome`, the invoker's, so a row carries the
+   * invoking pane's address. */
+  readonly run: (command: ActionCommand, outcome: Outcome) => void;
   readonly busy: BusyKeys;
   readonly defect: { error: unknown } | null;
   readonly overlayPresentation: ReactNode;
   readonly retainedFeedback: ReactNode;
-  readonly playerFeedback: ReactNode;
 }
 
 interface BusyKeys {
@@ -168,10 +171,14 @@ interface BusyKeys {
 
 const RuntimeContext = createContext<Runtime | null>(null);
 
-export function useActionRuntime(): Runtime {
+/** The runtime as its caller sees it: `run` speaks where the caller renders. */
+export function useActionRuntime(): Omit<Runtime, "run"> & { readonly run: (command: ActionCommand) => void } {
   const runtime = useContext(RuntimeContext);
   if (!runtime) throw new Error("ResourceActionsProvider is missing");
-  return runtime;
+  const outcome = useOutcome();
+  const { run } = runtime;
+  const invoked = useCallback((command: ActionCommand) => run(command, outcome), [run, outcome]);
+  return useMemo(() => ({ ...runtime, run: invoked }), [runtime, invoked]);
 }
 
 /** Render action overlays below workspace containment while retained commands survive. */
@@ -215,6 +222,17 @@ function createBusyKeys(): BusyKeys {
   };
 }
 
+/** One invocation owns its frozen command and any unresolved raw write. */
+type Execution = {
+  command: ActionCommand;
+  outcome: Outcome;
+  retract: Retract | null;
+  phase: "Other" | "Running" | "Unknown" | "Acknowledged";
+  line: Line | null;
+  attempt: number;
+  release(): void;
+};
+
 /**
  * The shell's one action runtime: the facts every verb reads, the busy set,
  * confirmation and failure reporting, and the overlays verbs open.
@@ -235,7 +253,8 @@ export default function ResourceActionsProvider({
     session.controller = controller;
     return () => controller.abort();
   }, [session]);
-  const feedback = useFeedback();
+  const feedback = useOutcome();
+  const resendFeedback = useResendFeedback();
   const read = useLectern();
   const commands = useLecternCommands();
   const observedItems = read.status === "ready" ? read.data.items : null;
@@ -250,6 +269,7 @@ export default function ResourceActionsProvider({
   const connectivity = useConnectivity();
   const admission = useRemoteAdmission();
   const online = installedApp ? admission === "Ready" : connectivity === "Online";
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -257,14 +277,15 @@ export default function ResourceActionsProvider({
   const admissions = useMediaAdmissions();
   const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
-  // Only the newest attempt of one action on one resource reports its failure; a new
-  // attempt withdraws the previous attempt's report.
-  const [attempts] = useState(() => new Map<string, { retract: (() => void) | null }>());
-  const [confirmation, setConfirmation] = useState<ActionCommand | null>(null);
+  const busyKeys = useSyncExternalStore(busy.subscribe, busy.keys, busy.keys);
+  const [attempts] = useState(() => new Map<string, Execution>());
+  // Native receipt uncertainty is durable device work, outside remote write admission/guards.
+  const [localUnknown, setLocalUnknown] = useState<ReadonlyMap<string, { readonly line: Line; readonly attempt: number }>>(new Map());
+  useLayoutEffect(() => () => { for (const attempt of attempts.values()) attempt.release(); }, [attempts]);
+  const [confirmation, setConfirmation] = useState<{ readonly command: ActionCommand; readonly outcome: Outcome } | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const podcasts = usePodcastCommands(accountId, setDefect);
   const podcastSettings = usePodcastSettingsOwner(accountId, setDefect);
-  const playerFeedback = usePlayerFailurePresentation();
   const conversationCreation = useConversationCreationOwner(accountId);
   const [destinationCreation] = useState(createDestinationCreation);
   const podcastLibraryCreation = useDestinationCreation(`podcast-libraries:${accountId}`, destinationCreation);
@@ -311,6 +332,7 @@ export default function ResourceActionsProvider({
       isActive: () => !session.controller.signal.aborted,
       accountId,
       online,
+      remedy,
       offline: !localContentAvailable
         ? { kind: "Unavailable" }
         : localIndex === null
@@ -339,6 +361,7 @@ export default function ResourceActionsProvider({
     [
       accountId,
       online,
+      remedy,
       localIndex,
       lectern,
       playerSession.queue,
@@ -364,78 +387,123 @@ export default function ResourceActionsProvider({
     ],
   );
 
-  const run: (command: ActionCommand) => void = useCallback(
-    (command: ActionCommand) => {
+  const run: Runtime["run"] = useCallback(
+    (command, outcome) => {
       const signal = session.controller.signal;
       if (signal.aborted) return;
       const key = `${command.ref}|${command.id}`;
-      if (installedApp && !remoteReady() && resourceActionRequiresRemote(command.id, command.tracked)) {
-        feedback.receipt({ tone: "Neutral", title: "requires a connection" });
-        return;
-      }
-      if (command.tracked && busy.keys().has(key)) return;
+      const workId = `resource-action:${key}`;
+      const previous = attempts.get(key);
+      if (previous?.phase === "Running" || command.tracked && busy.keys().has(key)) return;
       if (command.confirmation) {
-        setConfirmation(command);
+        setConfirmation({ command, outcome });
         return;
       }
-      if (command.tracked) busy.set(key, true);
-      attempts.get(key)?.retract?.();
-      const attempt: { retract: (() => void) | null } = { retract: null };
+      const same = previous?.command === command;
+      if (previous && previous.line !== null && !same &&
+        !workGuard.confirmLoss({ scopes: [], ownerIds: [workId] })) return;
+      previous?.retract?.();
+      const attempt: Execution = {
+        command, outcome, retract: null, phase: command.rawWrite ? "Running" : "Other",
+        line: same ? previous!.line : null, attempt: same ? previous!.attempt : -1, release: () => {},
+      };
       attempts.set(key, attempt);
-      const reportFailure = (content: FeedbackContent, action?: FeedbackAction) => {
-        if (!signal.aborted && attempts.get(key) === attempt) attempt.retract = feedback.receipt(content, action);
+      if (command.rawWrite) {
+        attempt.release = workGuard.register({ id: workId, scope: { kind: "account" }, subscribe: busy.subscribe,
+          read: () => ({ changed: false, unconfirmed: attempt.phase === "Running" || attempt.line !== null, stopsBrowserWork: false }),
+        });
+      }
+      previous?.release();
+      if (command.tracked || command.rawWrite || previous?.line) busy.set(key, command.tracked || command.rawWrite === true);
+      const named = `“${command.feedbackLabel.replace(/…$/, "")}”`;
+      const report = (raise: () => Retract) => {
+        if (!signal.aborted && attempts.get(key) === attempt) attempt.retract = raise();
       };
       void (async () => {
         try {
-          await command.execute();
+          await command.execute(() => {
+            if (!command.rawWrite || signal.aborted || attempts.get(key) !== attempt) return;
+            attempt.phase = "Acknowledged";
+            attempt.line = null;
+            busy.set(key, command.tracked);
+          });
+          if (!signal.aborted && attempts.get(key) === attempt && !command.rawWrite) setLocalUnknown(current => {
+            if (!current.has(key)) return current;
+            const next = new Map(current); next.delete(key); return next;
+          });
         } catch (error) {
           if (signal.aborted || attempts.get(key) !== attempt) return;
-          if (error instanceof ResourceActionFailure) {
-            reportFailure(error.content);
+          const replay = attempt.line !== null;
+          if (replay) attempt.attempt += 1;
+          if (error instanceof ResourceActionFailure) return report(() => outcome.say(error.line));
+          if (error instanceof ResourceActionUnknown) {
+            setLocalUnknown(current => new Map(current).set(key, { line: error.line, attempt: (current.get(key)?.attempt ?? -1) + 1 }));
             return;
           }
-          if (error instanceof QueueCommandError) {
-            reportFailure({ tone: "Warning", title: error.message });
-            return;
-          }
-          if (error instanceof ProgressPreparationError) {
-            reportFailure({ tone: "Warning", title: "progress isn’t ready for this change", message: "this attempt did not send the state change. resolve the player or reader position before trying again." });
-            return;
-          }
+          if (error instanceof ProgressPreparationError) return report(() => outcome.say({ fact: PROGRESS_PREPARATION_FACT }));
           if (handleUnauthenticatedApiError(error)) return;
-          if (!isApiError(error) || isSameSystemApiDefect(error))
-            return setDefect({ error });
-          reportFailure(actionFailure(command.id, command.label, error),
-            command.id === "Playback" ? { label: "retry playback", onClick: () => run(command) } : undefined);
+          if (!isApiError(error) || isSameSystemApiDefect(error)) return setDefect({ error });
+          const failure = actionOutcome(command.id, command.feedbackLabel, error, command.rawWrite === true && attempt.phase !== "Acknowledged");
+          if (failure.kind === "Unknown") {
+            attempt.phase = "Unknown";
+            if (attempt.line === null) { attempt.line = failure.line; attempt.attempt = 0; }
+            return;
+          }
+          if (replay) return report(() => outcome.say({ fact: `couldn’t retry ${named}.` }));
+          const retry = { label: "retry", commandKey: `retry ${key}`, run: () => run(command, outcome) };
+          switch (failure.kind) {
+            case "Domain": return report(() => outcome.say(failure.line, failure.retry ? [retry] : undefined));
+            case "Transport": return report(() => outcome.fail(error, failure.fact, failure.retry ? retry : undefined));
+          }
         } finally {
-          if (command.tracked) busy.set(key, false);
-          if (attempts.get(key) === attempt && attempt.retract === null) attempts.delete(key);
+          if (attempt.phase === "Running") attempt.phase = attempt.line === null ? "Other" : "Unknown";
+          if (command.tracked || command.rawWrite || previous?.line) busy.set(key, false);
+          if (attempts.get(key) === attempt && attempt.line === null) {
+            attempt.release();
+            if (attempt.retract === null) attempts.delete(key);
+          }
         }
       })();
     },
-    [attempts, busy, feedback, session],
+    [attempts, busy, session, workGuard],
   );
+  const consumptionReviewKey = overlay?.kind === "CollectionConsumption"
+    ? consumption.commands.pendingCollection(overlay.selection.kind === "Podcast"
+      ? { kind: "Podcast", podcast_id: overlay.selection.podcast_id } : overlay.selection)?.commandKey : undefined;
+  const lecternReview = overlay?.kind === "CollectionLectern" && lectern.collectionPending !== null &&
+    (overlay.target.kind === "Library" && lectern.collectionPending.target.kind === "Library"
+      ? overlay.target.library_id === lectern.collectionPending.target.library_id
+      : overlay.target.kind === "Podcast" && lectern.collectionPending.target.kind === "Podcast" &&
+        overlay.target.podcast_id === lectern.collectionPending.target.podcast_id);
   const runtime = useMemo(() => ({
     ctx, run, busy, defect,
     overlayPresentation: <ResourceOverlays overlay={overlay} close={close} />,
-    retainedFeedback: <>{chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
-      {consumption.collectionFailures.map(failure => <FeedbackFailure key={failure.key} scope="Local" occurrence={failure.occurrence} content={failure.content} actions={failure.actions} announcement="Polite" />)}
-      {lectern.collectionFailure ? <FeedbackFailure scope="Local" occurrence={lectern.collectionFailure.occurrence} content={lectern.collectionFailure.content} actions={lectern.collectionFailure.actions} announcement="Polite" /> : null}</>,
-    playerFeedback,
-  }), [ctx, run, busy, defect, overlay, close, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, playerFeedback]);
+    retainedFeedback: <>{[...localUnknown].map(([key, held]) => <Hold key={key} id={key} attempt={held.attempt} line={held.line} />)}
+      {[...attempts].filter(([, attempt]) => attempt.line !== null).map(([key, attempt]) => <Hold key={key} id={key} attempt={attempt.attempt}
+        {...resendFeedback({ line: attempt.line!, resend: { label: "retry", commandKey: `retry ${key}`, busy: busyKeys.has(key),
+          run: () => {
+            if (attempts.get(key) === attempt && attempt.line !== null) run(attempt.command, attempt.outcome);
+          } } })} />)}
+      {chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
+      {consumption.collectionFailures.filter(failure => failure.key !== consumptionReviewKey).map(failure =>
+        <Hold key={failure.key} id={failure.key} attempt={failure.attempt} line={failure.line} verbs={failure.verbs} />)}
+      {lectern.collectionFailure && !lecternReview ? <Hold id={lectern.collectionFailure.key} attempt={lectern.collectionFailure.attempt}
+        line={lectern.collectionFailure.line} verbs={lectern.collectionFailure.verbs} /> : null}
+      {podcastLibraryCreation.holds}</>,
+  }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, podcastLibraryCreation.holds, resendFeedback]);
 
   return (
     <RuntimeContext.Provider value={runtime}>
       {children}
-      <Dialog open={confirmation !== null} title={confirmation?.confirmation?.title ?? "confirm change"}
-        returnFocusFallback={confirmation?.afterRemoval} onClose={() => setConfirmation(null)}>
-        {confirmation?.confirmation ? <>
-          <p>{confirmation.confirmation.body.replaceAll("{title}", () => confirmation.title)}</p>
+      <Dialog open={confirmation !== null} title={confirmation?.command.confirmation?.title ?? "confirm change"}
+        returnFocusFallback={confirmation?.command.afterRemoval} onClose={() => setConfirmation(null)}>
+        {confirmation?.command.confirmation ? <>
+          <p>{confirmation.command.confirmation.body.replaceAll("{title}", () => confirmation.command.title)}</p>
           <Button emphasis="strong" tone="danger" onClick={() => {
-            const command = confirmation;
+            const { command, outcome } = confirmation;
             setConfirmation(null);
-            run({ ...command, confirmation: null });
-          }}>{confirmation.label}</Button>{" "}
+            run({ ...command, confirmation: null }, outcome);
+          }}>{confirmation.command.label}</Button>{" "}
           <Button onClick={() => setConfirmation(null)}>cancel</Button>
         </> : null}
       </Dialog>
@@ -443,7 +511,7 @@ export default function ResourceActionsProvider({
   );
 }
 
-/** Existing account command owners project through each mounted pane's real host. */
+/** Account command owners' standing reports, mounted once, at the workspace. */
 export function RetainedActionFeedback() {
-  return <>{useActionRuntime().retainedFeedback}<ReaderSettingsFailure /><DeviceSettingsStatus /><PlayerFailures /></>;
+  return <>{useActionRuntime().retainedFeedback}</>;
 }

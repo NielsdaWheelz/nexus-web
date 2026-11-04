@@ -1,10 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, FeedbackStatus, useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import { Fact, Failed, Field } from "@/components/feedback/Fact";
+import { useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { recoveryOf } from "@/lib/chat/commands";
+import { changedLine, recoveryOf, sayRefusal } from "@/lib/chat/commands";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { routeOf, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Message } from "@/lib/chat/wire";
 import { formatDisplayDate } from "@/lib/display/format";
@@ -31,7 +33,7 @@ export default function MessageDialogs({ request, messages, onClose }: {
   onClose(request: MessageDialogRequest): void;
 }) {
   const { region } = useChatPane();
-  const feedback = useFeedback();
+  const { say } = useOutcome();
   const { paneId } = requirePaneRuntime(usePaneRuntime(), "MessageDialogs");
   const workspace = useLatestWorkspace();
   const subscribeWorkspace = useSubscribeWorkspace();
@@ -61,9 +63,9 @@ export default function MessageDialogs({ request, messages, onClose }: {
     if (!request || message) return;
     skipReturn.current = true;
     onClose(request);
-    feedback.receipt({ tone: "Neutral", title: "message no longer available" });
+    say({ fact: "that message was deleted." });
     region.current?.focus({ preventScroll: true });
-  }, [request, message, onClose, feedback, region]);
+  }, [request, message, onClose, say, region]);
   const close = () => request && onClose(request);
   return (
     <Dialog
@@ -107,7 +109,11 @@ function Information({ message }: { message: Message }) {
 
 /**
  * "rerun with…" / "regenerate with…": an explicit model, frozen while its command is pending.
- * A shifted menu choice or button lands the answer in a new pane; nothing downgrades that.
+ * A shifted menu choice or button lands the answer in a new pane; nothing downgrades that. A
+ * refusal is said while the dialog is topmost, so it shows here; an unknown outcome is the pane's,
+ * whose held slip shows here too, and once a stale build refused its retry the press waits on the
+ * slip's reload. A changed chat, or the read after it, is the pane's lane, which
+ * this dialog covers, so it also stands here while the press reads.
  */
 function Repeat({ message, operation, openIntent, onClose }: {
   message: Message;
@@ -131,43 +137,54 @@ function Repeat({ message, operation, openIntent, onClose }: {
       return route ? { ...current, route } : current;
     });
   }, [catalog, own]);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const slips = useOutcome();
+  const resendFeedback = useResendFeedback();
+  const reasonId = useId();
   const [busyCaption, setBusyCaption] = useState<string>(operation);
   const caption = own?.kind === "Busy" ? busyCaption
-    : own?.kind === "Unconfirmed" ? "retry original request"
-    : own?.kind === "RefreshRequired" ? "retry refresh" : operation;
-  const reason = catalog.status === "ready" ? unavailability(catalog.data, draft) : "model availability is not loaded";
-  const submit = async (event: TargetActivationEvent) => {
-    const activation = workspaceTargetActivationIntent(event);
-    if (activation.kind === "Unowned") return;
-    event.preventDefault();
-    if (activation.kind !== "Open") return;
-    const intent = openIntent === "new_pane" ? openIntent : activation.intent;
+    : own?.kind === "Unconfirmed" ? "retry"
+    : own?.kind === "RefreshRequired" ? "check" : operation;
+  const reason = catalog.status === "ready" && draft.kind !== "Uninitialized" ? unavailability(catalog.data, draft) : null;
+  const perform = async (intent: OpenIntent) => {
     setBusyCaption(caption);
-    setFailure(null);
     // a refresh after a refusal settles and leaves the dialog open: the chat changed, decide again
     const outcome = own !== null ? await store.retryCommand(intent)
       : draft.kind === "Selected" ? await store.repeat(operation, message.id, { selection: draft.selection, route: draft.route }, intent) : null;
     if (outcome?.kind === "Gone" || outcome?.kind === "Accepted") onClose();
-    else if (outcome?.kind === "Failed") setFailure(outcome.feedback);
+    else if (outcome) sayRefusal(slips, outcome);
   };
-  const shown = own?.feedback ?? failure;
-  const occurrence = useFeedbackOccurrence(failure !== null);
+  const submit = (event: TargetActivationEvent) => {
+    const activation = workspaceTargetActivationIntent(event);
+    if (activation.kind === "Unowned") return;
+    event.preventDefault();
+    if (activation.kind === "Open") void perform(openIntent === "new_pane" ? openIntent : activation.intent);
+  };
+  const retryKey = `repeat ${message.id}`;
+  const recovery = own?.standing?.kind === "Unknown" ? resendFeedback({
+    line: { fact: "not sure the new answer started.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: retryKey, busy: own.kind === "Busy", run: intent => void perform(intent) },
+  }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === retryKey ? primary : null;
+  const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
+  const refresh = own !== null && own.standing !== null && own.standing.kind !== "Unknown" ? { command: own.command, standing: own.standing } : null;
   return (
     <div className={styles.dialogBody}>
       <GenerationPicker catalogRead={catalog} value={draft} onChange={setDraft} disabled={own !== null && own.kind !== "RefreshRequired"} />
-      {reason ? <FeedbackStatus content={{ tone: "Neutral", title: reason }} announcement="Polite" /> : null}
-      {shown ? <FeedbackFailure scope="Local" occurrence={own?.occurrence ?? occurrence} announcementOccurrence={shown} content={shown} announcement="Polite" /> : null}
+      {reason ? <Field id={reasonId} line={{ fact: reason }} /> : waits ? <span id={reasonId} className="sr-only">{waitReason}</span> : null}
+      {refresh?.standing.kind === "Changed" ? <Fact speak line={changedLine(refresh.command)} />
+        : refresh?.standing.kind === "Unread" ? <Failed error={refresh.standing.error} noun="messages" /> : null}
       <div className={styles.dialogActions}>
         <Button onClick={onClose}>cancel</Button>
         <Button
-          reserveIcon
           emphasis="strong"
-          disabled={own ? own.kind === "Busy" : command.kind !== "Idle" || reason !== null || draft.kind !== "Selected"}
+          disabled={own ? own.kind === "Busy" || waits
+            : command.kind !== "Idle" || catalog.status !== "ready" || reason !== null || draft.kind !== "Selected"}
           onClick={(event) => void submit(event)}
           onKeyDown={(event) => void submit(event)}
-          busyKey={own?.command}
-          aria-busy={own?.kind === "Busy"}
+          aria-describedby={reason || waits ? reasonId : undefined}
+          aria-busy={own?.kind === "Busy" || replay?.busy}
         >
           {caption}
         </Button>

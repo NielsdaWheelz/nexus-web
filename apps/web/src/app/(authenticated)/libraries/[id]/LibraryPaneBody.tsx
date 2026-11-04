@@ -7,18 +7,17 @@
 // the text filter stays local.
 
 import { useCallback, useEffect, useId, useMemo, useRef } from "react";
-import { Plus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import CollectionView from "@/components/collections/CollectionView";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import { suggestionTargetId } from "@/lib/suggestions";
-import { assertNever } from "@/lib/assertNever";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -26,7 +25,6 @@ import RadioGroup from "@/components/ui/RadioGroup";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
 import { useCatalogRead, useCatalogState, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { unstamped } from "@/lib/consumption/listening";
@@ -46,18 +44,16 @@ import {
   presentLibraryEntry,
 } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
-import { OrderNotice, orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
+import { orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   libraryEntriesIndex,
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
-import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
-import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import {
   ENTRY_TYPES,
-  emptyEntriesFeedback,
+  emptyEntries,
   entrySorts,
   offered,
   projections,
@@ -99,7 +95,6 @@ export default function LibraryPaneBody() {
 }
 
 function LibraryPane({ id }: { readonly id: string }) {
-  const { addToLibrary } = useLibraryPlacementController();
   const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
@@ -133,7 +128,6 @@ function LibraryPane({ id }: { readonly id: string }) {
   const index = list.status === "ready" ? list.data : null;
   const indexItems = useMemo(() => index?.items ?? [], [index]);
   const failure = list.status === "loading" ? null : list.error;
-  const readOccurrence = useFeedbackOccurrence(failure !== null, id);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library } : list;
@@ -155,7 +149,6 @@ function LibraryPane({ id }: { readonly id: string }) {
     observed.current = { key: publicationKey, signature: publication };
     if (previous !== null && previous.key === publicationKey && previous.signature !== publication) publishChange("Entries");
   }, [publication, publicationKey]);
-  const detailOccurrence = useFeedbackOccurrence(detail.status === "failed", id);
   const missing = detail.status !== "loading" && detail.error?.status === 404;
   const library = !missing && detail.status === "ready" ? detail.data : null;
   const source = list.status === "ready" ? list.source : LIVE_SOURCE;
@@ -212,7 +205,8 @@ function LibraryPane({ id }: { readonly id: string }) {
   const rows = useMemo(() => ordered.map(entry => ({ ...presentLibraryEntry(entry),
     id: entry.entry_id ?? libraryEntryId(entry) })), [ordered]);
   const ordering = supportsOrder ? presentOrder({ order, complete: (list.status === "ready"),
-    view: params.get("sort") ? "Sorted" : query || text ? "Filtered" : "Custom" }) : undefined;
+    view: params.get("sort") ? "Sorted" : query || text ? "Filtered" : "Custom",
+    titleOf: itemId => shown.find(entry => entry.entry_id === itemId)?.media_summary.title ?? "" }) : undefined;
   const orderingStatus = orderStatus(ordering);
 
   const members = useLibraryMembers(
@@ -226,7 +220,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     scheme: "library",
     handle: library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
     bodies: {
-      members: members ? <LibraryMembers state={members} /> : undefined,
+      members: members.shown ? <LibraryMembers state={members.shown} /> : undefined,
       linkedItems: useMemo(
         () => <ConnectionsSurface resourceRef={{ scheme: "library", id }} />,
         [id],
@@ -258,24 +252,16 @@ function LibraryPane({ id }: { readonly id: string }) {
     change(changes);
   };
   const { refetch: refetchEntries } = list;
-  // Refresh asks the library's shows to sync, then rereads the library.
+  // Refresh asks the library's shows to sync, then rereads the library; only the shows' sync
+  // speaks. A reread or suggestions refresh that fails over shown rows says nothing.
   const execute = useCallback<PaneRefreshExecute>(
     async (context) => {
-      const [result, suggested] = await Promise.all([
+      const [result] = await Promise.all([
         podcastRefresh({ kind: "Library", library_id: id })(context),
         refreshSuggestionFeed(context.signal),
       ]);
-      let entriesFailed = false;
-      try { await refetchEntries(); } catch { entriesFailed = true; }
-      if (entriesFailed) return { kind: result.kind === "Complete" ? "Partial" : result.kind, announcement: `${result.announcement}. couldn’t refresh entries.` };
-      switch (suggested) {
-        case "Refreshed": case "Finding": case "NotApplicable": return result;
-        case "Repair": case "Failed": return {
-          kind: result.kind === "Complete" ? "Partial" : result.kind,
-          announcement: `${result.announcement}. ${suggested === "Repair" ? "suggestions need repair." : "couldn’t refresh suggestions."}`,
-        };
-        default: return assertNever(suggested);
-      }
+      await refetchEntries().catch(() => {});
+      return result;
     },
     [id, refetchEntries, refreshSuggestionFeed],
   );
@@ -284,7 +270,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       kind: "command",
       id: "ViewAction.Library.AddContent",
       label: "Add content",
-      icon: <Plus size={20} aria-hidden="true" />,
+      icon: <Icon.Add aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: ({ triggerEl }) =>
         requestNexusOpen({
@@ -293,15 +279,9 @@ function LibraryPane({ id }: { readonly id: string }) {
         }, triggerEl),
     }
     : undefined;
-  const emptyFeedback = emptyEntriesFeedback({ params, isAll, change: recover });
-  const emptyTitle = text
-    ? "no entries match this filter." : emptyFeedback.content.title;
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active, unit: UNIT,
-    waiting: !invalidView && list.status === "loading",
-    outcome: ordered.length > 0 ? "results updated." : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const emptyState = emptyEntries({ params, isAll, change: recover });
+  const emptyLine = text ? { fact: "no entries match this filter." } : emptyState.line;
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: !invalidView && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
   const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
@@ -361,83 +341,37 @@ function LibraryPane({ id }: { readonly id: string }) {
   }, [sort, type, projection, hideFinished, id, source, visible, text, captureReady]);
 
   if (missing) {
-    return (
-      <>
-      {readFeedback.announcement}
-      <FeedbackNotice
-        content={{
-          tone: "Danger",
-          title: "Library not found",
-          message: "It was deleted, or you are no longer a member.",
-        }}
-        announcement="Assertive"
-      />
-      </>
-    );
-  }
-  if (library === null) {
-    const failure = detail.status === "failed" ? detail.error : null;
     return <>
       {readFeedback.announcement}
-      {failure ? <FeedbackFailure scope="Local" occurrence={detailOccurrence}
-        content={
-          libraryErrorFeedback(failure, "couldn’t load entries", throwDefect) ?? {
-            tone: "Danger",
-            title: "couldn’t load entries",
-          }
-        }
-        announcement="Polite"
-        actions={[{ label: "try again", onClick: retry, busy: detail.status === "failed" && detail.retrying }]}
-      /> : <PaneLoadingState />}
+      {members.held}
+      <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
     </>;
   }
   if (invalidView) {
-    return (
-      <>
+    return <>
       {readFeedback.announcement}
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid library view" }}
-        announcement="Assertive"
-        actions={[
-          {
-            label: "Reset view",
-            onClick: () => {
-              filterRows.clearQuery();
-              router.replace(`/libraries/${id}`);
-              requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-            },
-          },
-        ]}
-      />
-      </>
-    );
+      {members.held}
+      <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => {
+        filterRows.clearQuery();
+        router.replace(`/libraries/${id}`);
+        requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+      } }]} />
+    </>;
+  }
+  if (library === null) {
+    return <>
+      {readFeedback.announcement}
+      {members.held}
+      {detail.status === "failed" ? <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
+    </>;
   }
 
-  const loadFailure =
-    failure;
-  const empty = <FeedbackNotice
-    content={{ tone: "Neutral", title: emptyTitle }}
-    announcement="None"
-    actions={!text && (list.status === "ready") ? emptyFeedback.actions : undefined}
-  />;
-  const firstLoad =
-    list.status === "failed" && loadFailure !== null
-      ? libraryErrorFeedback(loadFailure, "Library entries couldn’t be loaded", throwDefect)
-      : null;
-
-
-
+  const empty = <Fact line={emptyLine} verbs={!text && list.status === "ready" ? emptyState.verbs : undefined} />;
   return (
     <>
       {readFeedback.announcement}
-      <PaneSurface
-        state={<>
-          {ordering !== undefined ? <OrderNotice order={order.state} active={active} paneId={runtime?.paneId ?? null}/> : null}
-          {readFeedback.notice}
-          <MediaSummaryNotice error={summaries.error} retry={summaries.retry} busy={summaries.retrying}
-            returnFocus={() => inputRef.current} />
-        </>}
-      >
+      <PaneSurface>
+        {members.held}
         <LibraryPodcastsSection library={library} active={active} source={shows} />
         <PlaybackSourceContext.Provider value={capture}>
         <CollectionView geometry="UniformIndex"
@@ -445,15 +379,6 @@ function LibraryPane({ id }: { readonly id: string }) {
           rows={rows}
           empty={empty}
           status={list.status === "failed" ? "error" : list.status}
-          error={
-            firstLoad ? (
-              <FeedbackFailure scope="Local" occurrence={readOccurrence}
-                content={firstLoad}
-                announcement="Polite"
-                actions={[{ label: "try again", onClick: retry, busy }]}
-              />
-            ) : null
-          }
           ariaLabel={name}
           anchorKey={text}
           collectionBusy={busy}
@@ -465,15 +390,8 @@ function LibraryPane({ id }: { readonly id: string }) {
             destination={suggestionDestination}
             suggestions={suggestions}
             returnScope="Library.Suggestions"
-            accept={async (target) => {
-              if (target.kind === "Podcast") {
-                ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) }, title: target.title, libraryId: library.is_default ? null : id,
-                  onAccepted: () => suggestions.acknowledge(target.ref) });
-                return "Retained";
-              }
-              const accepted = await addToLibrary({ kind: "Media", id: suggestionTargetId(target) }, id);
-              return accepted ? "Accepted" : "Retained";
-            }}
+            subscribe={target => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) },
+              title: target.title, libraryId: library.is_default ? null : id, onAccepted: () => suggestions.acknowledge(target.ref) })}
           /> : null}
       </PaneSurface>
     </>

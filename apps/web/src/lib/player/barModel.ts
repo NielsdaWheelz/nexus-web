@@ -10,6 +10,11 @@ import type { PlayerSession, PlayerState } from "./playerRuntime";
 
 type Loaded = Extract<PlayerState, { kind: "Loaded" }>;
 
+export const unavailableMessages = {
+  UpdateRequired: "update nexus for android",
+  NotResponding: "player unavailable",
+} satisfies Record<Extract<PlayerState, { kind: "Unavailable" }>["reason"], string>;
+
 /** An episode at rest, as its stored summary names it. */
 export interface BarSubject {
   readonly mediaId: string;

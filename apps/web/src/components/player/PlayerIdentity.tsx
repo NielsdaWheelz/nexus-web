@@ -12,7 +12,7 @@ import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import PlayerFolio from "./PlayerFolio";
-import { unavailableMessages } from "./PlayerFailures";
+import { unavailableMessages } from "@/lib/player/barModel";
 import styles from "./PlayerIdentity.module.css";
 
 /** An episode as the identity shows it: its show's art, its title, the show that names it. */

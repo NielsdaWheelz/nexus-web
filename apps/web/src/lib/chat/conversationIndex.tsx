@@ -1,9 +1,11 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { FeedbackFailure, type FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch } from "@/lib/api/client";
+import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { Hold, useResendFeedback, useOutcome, type Outcome } from "@/components/feedback/Feedback";
+import type { CommandVerb } from "@/components/feedback/stage";
+import { apiFetch, type ApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber } from "@/lib/display/format";
@@ -11,8 +13,9 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { confirmChatDeletion } from "./commands";
 import { createRandomId } from "@/lib/createRandomId";
 import { openAsyncResult } from "@/lib/panes/openResult";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
-import { chatFailure } from "./wire";
+import { failureOf } from "./wire";
 
 // The complete chat index, latest source lookup and deletion. Writers publish "Chats".
 
@@ -58,14 +61,17 @@ interface Creation {
   readonly abort: () => void;
   readonly body: string;
   busy: boolean;
-  ambiguous: boolean;
-  failure: FeedbackContent | null;
+  /** An unanswered creation stays held; each unsuccessful retry keys its speech again. */
+  held: { attempt: number } | null;
   intent: OpenIntent;
 }
 const NO_CREATIONS: readonly Creation[] = [];
+const REFUSED = "couldn’t create the chat.";
 
-/** The original context-create closure belongs to this account until its exact request settles. */
-function creationOwner(accountId: string) {
+/** The original context-create closure belongs to this account until its exact request settles. A
+ * first refusal forgets the creation; an unknown outcome holds it, and its retry resends
+ * the same id, which the server answers with the same chat. A refused retry keeps it held. */
+function creationOwner(accountId: string, refused: (error: ApiError, retry: CommandVerb) => void) {
   let retired = false;
   const entries = new Map<string, Creation>();
   const listeners = new Set<() => void>();
@@ -88,28 +94,34 @@ function creationOwner(accountId: string) {
       if (current(entry)) remove(entry);
     } catch (error) {
       if (!current(entry)) return;
-      const failure = chatFailure(error, "chat couldn’t be created");
+      const failure = failureOf(error);
       if (failure.kind === "Handled") return;
       if (failure.kind === "Defect") {ctx.reportDefect({error: failure.error}); return;}
-      entry.ambiguous = entry.ambiguous || failure.ambiguous;
-      entry.failure = entry.ambiguous ? {...failure.feedback, title: "change not confirmed", message: "the request may have succeeded."} : failure.feedback;
+      if (failure.kind === "Unknown") {entry.held = {attempt: (entry.held?.attempt ?? 0) + 1}; return;}
+      if (entry.held !== null) {
+        entry.held = {attempt: entry.held.attempt + 1};
+        return;
+      }
+      remove(entry);
+      refused(failure.error, {label: "retry", commandKey: `create ${entry.key}`, run: intent => void owner.create({...entry.input, intent})});
     } finally {entry.busy = false; if (current(entry)) emit();}
   };
-  return {
+  const owner = {
     subscribe(listener: () => void) {listeners.add(listener); return () => {listeners.delete(listener);};},
     snapshot: () => snapshot,
+    hasUnconfirmed: () => entries.size > 0,
     start() {retired = false; return () => {retired = true; for (const entry of entries.values()) entry.signal.removeEventListener("abort", entry.abort); entries.clear(); emit();};},
     async create(input: ConversationCreationInput) {
       if (retired || input.ctx.accountId !== accountId || input.ctx.sessionSignal().aborted) return;
       const key = `${accountId}:${input.ref}`;
       let entry = entries.get(key);
       if (entry?.busy) return;
-      if (!entry || !entry.ambiguous) {
+      if (!entry || entry.held === null) {
         if (entry) remove(entry);
         const id = createRandomId();
         const signal = input.ctx.sessionSignal();
         const abort = () => remove(admitted);
-        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, ambiguous: false, failure: null, intent: input.intent};
+        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, held: null, intent: input.intent};
         entry = admitted;
         entries.set(key, entry);
         signal.addEventListener("abort", abort, {once: true});
@@ -118,16 +130,28 @@ function creationOwner(accountId: string) {
     },
     retry(entry: Creation, intent: OpenIntent) {return submit(entry, intent, entry.input.ctx.workspace().state.active_primary_pane_id);},
   };
+  return owner;
 }
 
 export function useConversationCreationOwner(accountId: string) {
-  const owner = useMemo(() => creationOwner(accountId), [accountId]);
+  const { fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
+  const guard = useWorkGuard();
+  const told = useRef<Outcome["fail"]>(fail);
+  useLayoutEffect(() => { told.current = fail; });
+  const owner = useMemo(() => creationOwner(accountId, (error, retry) => told.current(error, REFUSED, retry)), [accountId]);
   useLayoutEffect(() => owner.start(), [owner]);
+  useLayoutEffect(() => guard.register({ id: JSON.stringify(["chat-creations", accountId]), scope: { kind: "account" },
+    subscribe: owner.subscribe,
+    read: () => ({ changed: false, unconfirmed: owner.hasUnconfirmed(), stopsBrowserWork: false }),
+  }), [accountId, guard, owner]);
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => NO_CREATIONS);
-  return {create: owner.create, feedback: entries.map(entry => entry.failure === null ? null :
-    <FeedbackFailure key={entry.key} scope="Local" occurrence={entry} announcementOccurrence={entry.failure}
-      content={entry.failure} announcement="Polite" actions={entry.ambiguous ? [{label: "retry creation", busy: entry.busy,
-        onClick: intent => {void owner.retry(entry, intent);}}] : undefined} />)};
+  return {create: owner.create, feedback: entries.map(entry => {
+    if (entry.held === null) return null;
+    const {line, verbs} = resendFeedback({ line: { fact: "not sure the chat was created.", reason: UNKNOWN_OUTCOME_REASON },
+      resend: {label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}} });
+    return <Hold key={entry.key} id={entry.key} attempt={entry.held.attempt} line={line} verbs={verbs} />;
+  })};
 }
 
 export function openConversationAbout(input: ConversationCreationInput & {

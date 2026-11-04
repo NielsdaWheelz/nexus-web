@@ -18,7 +18,8 @@ but it runs static checks only:
 1. `actionlint` over tracked workflows and `shellcheck` over tracked shell;
 2. ruff formatting and linting over python owners;
 3. pyright over the whole `nexus` package and explicit runtime entrypoints;
-4. css-token lint, freshness of the generated wire types, browser tool contract
+4. css-token lint, the glyph registry's one-drawing-one-export check
+   (`lint:icons`), freshness of the generated wire types, browser tool contract
    ([typed-wire.md](typed-wire.md)) and shared citation-parser bundle, eslint, and
    typescript checking for the web app; and
 5. structural alembic checks: exactly one canonical head, and no migration

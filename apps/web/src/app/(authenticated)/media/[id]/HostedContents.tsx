@@ -1,20 +1,18 @@
 "use client";
 
-// Only the active hosted contents body owns inspection and its modal feedback.
+// Only the active hosted contents body owns inspection. A failed jump is the reader's to say; it
+// raises while the contents modal is topmost, so it shows there.
 // The reader owns departure/progress; the shell owns presentation and focus.
-import { useContext, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { assertNever } from "@/lib/assertNever";
-import { FeedbackFailure } from "@/components/feedback/Feedback";
 import { PieceDetails, SourcePieces } from "@/components/media/containedWorks/Pieces";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { localTarget } from "@/lib/documentReader/model";
-import type { NavigationFailure } from "@/lib/documentReader/navigator";
-import { navigationFailureContent } from "@/lib/documentReader/navigationFeedback";
 import type { MediaDetail } from "@/lib/media/mediaDetail";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { getInteractionGeneration, getInteractionOwner, OverlayContext } from "@/lib/ui/overlay";
+import { getInteractionGeneration, getInteractionOwner } from "@/lib/ui/overlay";
 
 export default function HostedContents({ id, media, reader, focusTarget }: {
   readonly id: string;
@@ -23,10 +21,7 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
   readonly focusTarget: () => HTMLElement | null;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "HostedContents");
-  const modal = useContext(OverlayContext);
   const doc = useReaderState(reader, state => state.document.status === "ready" && state.document.doc.kind === "text" ? state.document.doc : null);
-  const liveFailure = useReaderState(reader, state => state.navigation.failure);
-  const [failure, setFailure] = useState<NavigationFailure | null>(null);
   const request = useRef<AbortController | null>(null);
   const publication = doc ? JSON.stringify([doc.identity, doc.generation, doc.part]) : null;
   useLayoutEffect(() => () => {
@@ -38,7 +33,6 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
-    setFailure(null);
     const owner = getInteractionOwner();
     const generation = getInteractionGeneration();
     const current = () => {
@@ -67,7 +61,7 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
         if (target) runtime.revealPrimary({ focusTarget: target });
         break;
       }
-      case "Unavailable": setFailure(reader.getState().navigation.failure); break;
+      case "Unavailable":
       case "Cancelled": break;
       default: assertNever(outcome);
     }
@@ -77,9 +71,7 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
   const rich = media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x"
     && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post");
   return <>
-    {modal && failure !== null && liveFailure === failure ? <FeedbackFailure scope="Local" content={navigationFailureContent(failure)} occurrence={failure}
-      announcement="Polite" onDismiss={() => reader.dismissNavigationFailure(failure)} /> : null}
-    <SourceIssuesNotice issues={doc.sourceIssues} readable />
+    <SourceIssuesNotice issues={doc.sourceIssues} />
     {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} onNavigate={onNavigate} /></>
       : rich ? <SourcePieces source={id} reader={reader} onNavigate={onNavigate} /> : <Contents reader={reader} onNavigate={onNavigate} />}
   </>;

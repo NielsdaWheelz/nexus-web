@@ -1,5 +1,5 @@
 // The Nexus input grammar: raw text becomes one typed intent plus the owned-search query.
-import { FilePlus2, FileText, Globe, Library, MessageSquarePlus, Upload } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { extractUrls } from "@/lib/extractUrls";
 import { browseHref } from "@/lib/browse/query";
@@ -9,7 +9,7 @@ import { parseSearchInput } from "@/lib/search/parseSearchInput";
 import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { searchHref } from "@/lib/search/searchParams";
 import { MAX_ADD_ITEMS, parseAddUrlList } from "./addInput";
-import type { NexusAction, NexusCommandId, NexusIcon } from "./model";
+import type { NexusAction, NexusCommandId } from "./model";
 
 export type BrowseKind = "WebArticle" | "Podcast" | "Video" | "Epub";
 
@@ -20,17 +20,17 @@ export const NEXUS_COMMANDS: Record<
     readonly aliases: readonly [string, ...string[]];
     readonly argumentLabel: string;
     readonly keywords: readonly string[];
-    readonly icon: NexusIcon;
+    readonly icon: Icon.Glyph;
     action(argument: string): NexusAction;
   }
 > = {
   "Nexus.Quick.Note": {
-    label: "quick note", aliases: ["/n"], argumentLabel: "text", icon: FileText,
+    label: "quick note", aliases: ["/n"], argumentLabel: "text", icon: Icon.Today,
     keywords: ["note", "new note", "create note", "jot", "capture"],
     action: (argument) => ({ kind: "Available", target: { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "AppendNote", initialText: argument } } }),
   },
   "Nexus.Quick.Page": {
-    label: "new page", aliases: ["/p"], argumentLabel: "title", icon: FilePlus2,
+    label: "new page", aliases: ["/p"], argumentLabel: "title", icon: Icon.Page,
     keywords: ["page", "new page", "create page", "document"],
     action: (argument) => ({ kind: "Available", target: {
       kind: "InternalHref", href: "/pages/new",
@@ -38,7 +38,7 @@ export const NEXUS_COMMANDS: Record<
     } }),
   },
   "Nexus.Quick.Chat": {
-    label: "new chat", aliases: ["/c", "/a"], argumentLabel: "message", icon: MessageSquarePlus,
+    label: "new chat", aliases: ["/c", "/a"], argumentLabel: "message", icon: Icon.NewChat,
     keywords: ["chat", "new chat", "start chat", "conversation"],
     action: (argument) => ({ kind: "Available", target: {
       kind: "InternalHref", href: "/conversations/new", labelHint: "new chat",
@@ -46,12 +46,12 @@ export const NEXUS_COMMANDS: Record<
     } }),
   },
   "Nexus.Quick.Library": {
-    label: "new library", aliases: ["/l"], argumentLabel: "name", icon: Library,
+    label: "new library", aliases: ["/l"], argumentLabel: "name", icon: Icon.Library,
     keywords: ["library", "new library", "create library", "collection"],
     action: (argument) => ({ kind: "Available", target: { kind: "CreateLibrary", nameDraft: argument } }),
   },
   "Nexus.Quick.Import": {
-    label: "import", aliases: ["/i"], argumentLabel: "links", icon: Upload,
+    label: "import", aliases: ["/i"], argumentLabel: "links", icon: Icon.Upload,
     keywords: ["add", "import", "url", "file"],
     action: (argument) => parseAddUrlList(argument).cells.length > MAX_ADD_ITEMS
       ? { kind: "Unavailable", reason: `add up to ${MAX_ADD_ITEMS} items at a time` }
@@ -61,7 +61,7 @@ export const NEXUS_COMMANDS: Record<
       } },
   },
   "Nexus.Quick.Browse": {
-    label: "browse…", aliases: ["/b"], argumentLabel: "query", icon: Globe,
+    label: "browse…", aliases: ["/b"], argumentLabel: "query", icon: Icon.Browse,
     keywords: ["browse", "find"],
     action: (argument) => ({ kind: "Available", target: { kind: "ChooseBrowse", query: argument } }),
   },

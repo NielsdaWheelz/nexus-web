@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./MobileFullScreenTask.module.css";
@@ -18,12 +18,14 @@ export default function MobileFullScreenTask({
   ...modal
 }: Omit<ModalProps, "open" | "initialFocus"> & {
   readonly active: boolean;
+  readonly slipContent: RefObject<HTMLElement | null>;
   readonly panelId?: string;
   readonly initialFocus: NonNullable<ModalProps["initialFocus"]>;
   readonly focusKey: unknown;
   readonly ariaLabel: string;
   readonly children: ReactNode | ((requestDismiss: () => void) => ReactNode);
 }) {
+  const motion = useRef<HTMLDivElement>(null);
   const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
   useKeyboardReport(active);
   return (
@@ -40,8 +42,9 @@ export default function MobileFullScreenTask({
         bottom: keyboardBottomInsetPx,
       }}
       className={styles.frame}
+      motionElement={motion}
     >
-      {(requestDismiss) => <div className={styles.content} style={{ paddingBottom: `max(0px, calc(var(--viewport-safe-bottom) - ${keyboardBottomInsetPx}px))` }}>
+      {(requestDismiss) => <div ref={motion} className={styles.content} style={{ paddingBottom: `max(0px, calc(var(--viewport-safe-bottom) - ${keyboardBottomInsetPx}px))` }}>
         {typeof children === "function" ? children(requestDismiss) : children}
       </div>}
     </ModalFrame>

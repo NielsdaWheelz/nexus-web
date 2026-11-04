@@ -1,21 +1,17 @@
 "use client";
 
-import {FeedbackFailure} from "@/components/feedback/Feedback";
-import {useWritingDocumentRead} from "@/lib/notes/hooks";
-import {isAuthoredStorageFailure, type WritingDocument} from "@/lib/notes/runtime";
+import { Fact } from "@/components/feedback/Fact";
+import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 
-/** Local storage failures have a real read retry; invariant defects retain their boundary. */
-export default function AuthoredReadFailure({error, occurrence, retry, pending = false, title = "couldn’t refresh this note"}: {
-  error: unknown | null; occurrence: object | null; retry(): void; pending?: boolean; title?: string;
+/** A cold local read that failed, where its object would stand, with a real read retry: `couldn’t
+ * open {noun} on this device.` Local reads have no transport, so a singular noun reads well. A
+ * refresh over shown writing is no site of this: the editor is the proof. Invariant defects keep
+ * their boundary. */
+export default function AuthoredReadFailure({ error, retry, pending = false, noun }: {
+  error: unknown | null; retry(): void; pending?: boolean; noun: string;
 }) {
   if (error === null) return null;
   if (!isAuthoredStorageFailure(error)) throw error;
-  if (occurrence === null) throw new Error("failed authored read has no occurrence");
-  return <FeedbackFailure scope="Local" occurrence={occurrence} content={{tone: "Warning", title}}
-    announcement="Polite" actions={[{label: "retry", onClick: retry, busy: pending}]}/>;
-}
-
-export function DocumentReadFailure({document, title}: {document: WritingDocument; title?: string}) {
-  const read = useWritingDocumentRead(document);
-  return <AuthoredReadFailure {...read} pending={read.retrying} retry={document.retryRead} title={title}/>;
+  return <Fact line={{ fact: `couldn’t open ${noun} on this device.` }}
+    verbs={[{ label: "retry", commandKey: "RetryAuthoredRead", run: retry, busy: pending }]} />;
 }

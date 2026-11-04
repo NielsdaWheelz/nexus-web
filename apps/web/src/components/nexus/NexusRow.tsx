@@ -2,14 +2,17 @@
 
 // What both presenters share about a row: its gutter and two text lines, its spoken name, its verbs,
 // and the notices that follow the candidates.
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
-import { checkSession } from "@/lib/native/admission";
-import { useRemoteAdmission } from "@/lib/native/admissionHooks";
-import { FeedbackFailure, FeedbackBusy, FeedbackNotice } from "@/components/feedback/Feedback";
+
+// Row parts: resource bodies, menus, and visible search status.
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { ControlContents } from "@/components/ui/control";
+import AsterismMark from "@/components/AsterismMark";
+import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { ExcerptText } from "@/components/resources/ResourceBody";
-import { apiTransportFeedback, isStaleBuild } from "@/lib/api/client";
+import { isStaleBuild } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import type { ContextualActionsInput } from "@/lib/actions/useContextualActions";
 import type { NexusRow } from "@/lib/nexus/model";
@@ -23,7 +26,6 @@ import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
-import { PANE_TITLES_FAILED, useWorkspacePresentations } from "@/lib/workspace/presentations";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
@@ -74,7 +76,7 @@ export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
 
 /** The gutter's glyph (or a reorder position) and the text cell: the title, then one supplement. */
 export function NexusRowBody({ row, here, position, query }: { row: NexusRow; here: boolean; position?: number; query: string }) {
-  const Icon = row.icon;
+  const Glyph = row.icon;
   const title = rowPrimaryText(row);
   let inline = titleMatch(row, title);
   // Synchronous pane/recent names have no remote match window; mark their literal name match here.
@@ -92,7 +94,7 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
   const shown = evidence && reason === null ? windowed(evidence) : null;
   return <>
     <span className={styles.gutter} aria-hidden="true">
-      {position === undefined ? <Icon size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
+      {position === undefined ? <Glyph size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
     </span>
     <span className={styles.text}>
       <span className={styles.title} title={title}>
@@ -100,7 +102,7 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
         <bdi>{inline ? <ExcerptText excerpt={inline.excerpt} match={inline} /> : title}</bdi>
       </span>
       {shown ? <span className={styles.evidence}><ExcerptText excerpt={shown.excerpt} match={shown} /></span>
-        : facts || row.reserveDetail ? <span className={styles.facts}>{facts || "\u00a0"}</span> : null}
+        : facts ? <span className={styles.facts}>{facts}</span> : null}
     </span>
   </>;
 }
@@ -168,7 +170,7 @@ export function nexusRowVerbs(
     const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
     const target = action.kind === "Available" && action.target.kind === "Resource" ? action.target : null;
     const passageHref = target && (target.activation.kind === "route" || target.activation.kind === "external") ? target.activation.href : null;
-    const icon = <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />;
+    const icon = ACTION_CATALOG.Open.icon;
     if (passageHref && target) occurrence.push({ kind: "link", id: "Nexus.OpenMatchingPassage", label: "open matching passage", href: passageHref, icon,
       onActivate: target.activation.kind === "external" ? undefined : (event) => {
         const intent = workspaceTargetActivationIntent(event);
@@ -187,7 +189,7 @@ export function nexusRowVerbs(
     occurrence.push({ kind: "command", id: "Nexus.ShowExcerpt", label: "show excerpt", icon: null, hasPopup: "dialog", restoreFocusOnClose: false, onSelect: () => showExcerpt(capture) });
   if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes) {
     if (here && resourceRef === null && pane.id === closing) continue;
-    occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <X size={16} aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
+    occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <Icon.Dismiss aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
   }
   return {
     pair: [...(here ? [] : [verb(false)]), ...(imports ? [] : [verb(true)])],
@@ -203,51 +205,37 @@ export function nexusRowVerbs(
   };
 }
 
-function NexusTitleFailure({returnFocus}: {returnFocus?:()=>HTMLElement|null}) {
-  const presentations = useWorkspacePresentations();
-  const failure = presentations.titleFailure;
-  return failure ? <FeedbackFailure scope="Local" occurrence={failure.occurrence}
-    content={apiTransportFeedback(failure.error,PANE_TITLES_FAILED) ?? {tone:"Warning",title:PANE_TITLES_FAILED}} announcement="Polite"
-    actions={isStaleBuild(failure.error) ? undefined : [{label:"retry",onClick:presentations.retryTitles,busy:failure.pending}]} returnFocus={returnFocus}/> : null;
+/** The query paints its wait in its existing glyph. */
+export function NexusQuerySpinner({ pending }: { pending: boolean }) {
+  return <ControlContents icon={<AsterismMark />} busy={pending} />;
 }
 
-/** Domain notices follow candidates; operational failures use the same host's recovery. */
+const SOURCE_NOUNS: Record<string, string> = { Hybrid: "related matches", Reference: "linked items", Direct: "destinations" };
+
+/** The query's own facts, after its candidates: each failed source where its results would be,
+ * then what the query and recent say. A refresh failure over shown data says nothing. */
 export function NexusNotices({ controller, returnFocus, id }: {
   controller: NexusController; returnFocus: () => HTMLElement | null; id: string;
 }) {
-  const admission = useRemoteAdmission();
   const { kind, text, action } = controller.searchProgress;
-  const { blank, snapshot, readFailure, writeFailure, read } = controller.recentStatus;
-  // Zero principals say so on `search all results`; the palette paints no empty notice.
-  const notice = kind === "Notice";
-  return <>
-    <FeedbackBusy subject={controller.searchIdentity} pending={controller.pending} />
-    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} title="couldn’t search this device" />)}
-    {[...controller.searchFailures].map(([source, failure]) => {
-      const title = admission !== "Ready" ? "search needs a connection" : source === "Reference" ? "couldn’t open this resource"
-        : source === "Hybrid" ? "related matches aren’t available" : source === "Direct" ? "couldn’t find this destination" : "couldn’t search your content";
-      const blocked = isStaleBuild(failure.error) || ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(failure.error.code);
-      return <FeedbackFailure key={source} scope="Local" occurrence={failure.occurrence} announcementOccurrence={failure.error}
-        content={apiTransportFeedback(failure.error, title) ?? {tone: "Warning", title, requestId: failure.error.requestId}}
-        announcement="Polite" returnFocus={returnFocus}
-        actions={blocked ? undefined : [{label: admission !== "Ready" ? "try again" : source === "Hybrid" ? "retry related matches" : source === "Reference" ? "retry lookup" : "retry search",
-          onClick: () => { if (admission !== "Ready") void checkSession(); else controller.retry(source); }, busy: controller.retrying.has(source)}]} />;
-    })}
-    <NexusTitleFailure returnFocus={returnFocus} />
-    {controller.noticeText !== null && (controller.lookupGuidance !== null || notice || blank) ? <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
-      {controller.lookupGuidance !== null ? <p id={`${id}-guidance`} className={styles.empty}>{controller.lookupGuidance}</p> : null}
-      {notice ? <FeedbackNotice content={{tone: controller.searchUnavailable ? "Warning" : "Info", title: text}} announcement="None"
-        actions={action === null ? undefined : [{label: SEARCH_ACTION_LABELS[action], onClick: () => {
-          if (action === "related") controller.retryRelated();
-          else controller.retrySearch();
-          returnFocus()?.focus({preventScroll: true});
-        }, busy: controller.retrying.size > 0}]} /> : null}
-      {blank ? <>
-        {readFailure ? <FeedbackNotice content={{ tone: "Warning", title: snapshot ? "couldn’t refresh recent. showing the last loaded list." : "couldn’t load recent." }} announcement="None" actions={[{ label: "retry", onClick: read }]} returnFocus={returnFocus} />
-          : snapshot === null ? <FeedbackNotice content={{ tone: "Info", title: "loading recent…" }} announcement="None" />
-          : snapshot.entries.length === 0 ? <FeedbackNotice content={{ tone: "Info", title: "resources you open will appear here." }} announcement="None" /> : null}
-        {writeFailure ? <FeedbackNotice content={{ tone: "Warning", title: writeFailure === "failed" ? "couldn’t update recent." : "recent update wasn’t confirmed." }} announcement="None" actions={[{ label: "check recent", onClick: read }]} returnFocus={returnFocus} /> : null}
-      </> : null}
-    </section> : null}
-  </>;
+  const { blank, snapshot, readFailure, read } = controller.recentStatus;
+  const back = () => returnFocus()?.focus({ preventScroll: true });
+  return <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
+    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} noun="search results" />)}
+    {[...controller.searchFailures].map(([source, failure]) => source === "Reference" && ["E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"].includes(failure.error.code)
+      ? <Fact key={source} line={{ fact: "nothing in nexus matches that link." }} speak />
+      : <Failed key={source} error={failure.error} noun={SOURCE_NOUNS[source] ?? "search results"}
+        retry={isStaleBuild(failure.error) || failure.error.code === "E_INVALID_REQUEST" ? undefined
+          : { run: () => controller.retry(source), busy: controller.retrying.has(source) }} />)}
+    {controller.lookupGuidance !== null ? <div id={`${id}-guidance`}><Fact line={{ fact: controller.lookupGuidance }} speak /></div> : null}
+    {kind === "Pending" && !controller.groups.some(group => group.id === "Results" && group.rows.length > 0) ? <Ruling /> : null}
+    {kind === "Notice" || kind === "Empty" ? <Fact key={text} line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
+      if (action === "related") controller.retryRelated();
+      else controller.retrySearch();
+      back();
+    } }]} /> : null}
+    {!blank ? null
+      : snapshot === null ? readFailure ? <Fact line={{ fact: "couldn’t load recent items." }} speak verbs={[{ label: "retry", commandKey: "retry recent", run: read }]} /> : <Ruling />
+      : snapshot.entries.length === 0 ? <Fact line={{ fact: "items you open will appear here." }} /> : null}
+  </section>;
 }

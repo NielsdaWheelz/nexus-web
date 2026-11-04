@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { ComponentProps } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./Field.module.css";
@@ -20,8 +20,8 @@ export default function Select({
       >
         {children}
       </select>
-      <ChevronDown
-        size={{ sm: 14, md: 16, lg: 18 }[size]}
+      <Icon.Choose
+        size={{ sm: 14, md: 16, lg: 20 }[size]}
         className={styles.chevron}
         aria-hidden="true"
       />

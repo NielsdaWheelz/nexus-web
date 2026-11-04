@@ -1,16 +1,16 @@
 /** User links belong to the local authored graph. Server-owned citation, machine
  * and context facts retain their existing query/removal owners. Unlink observes
  * only the selected edge's add vector and never deletes either endpoint. */
-import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import { insertionPositions, type Intent } from "@nexus/authored/commands";
 import { isVisible } from "@nexus/authored/merge";
 import { linkId, sortedEndpoints, normalizeQuote, passageId, passageKey } from "@nexus/authored/identity";
 import type { PassageCapture } from "@nexus/authored/types";
 import type { LinkState } from "@nexus/authored/types";
 import { type WritingRuntime, selectStates } from "@/lib/notes/runtime";
-import { parseResourceRef } from "./resourceRef";
+import { parseResourceRef, resourceTypeLabel } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
@@ -126,7 +126,7 @@ export async function prepareLink(runtime: WritingRuntime, input: LinkRequest, s
     if(parsed.scheme==="passage_anchor")continue;
     const existing=capturedSources.source_stubs.find(source=>source.source_ref===ref);
     if(existing && label===null)continue;
-    intents.push({ kind: "capture_source", source_ref: ref, capture: { kind: parsed.scheme, label: label ?? ref, publication: existing?.capture.value.publication??null } });
+    intents.push({ kind: "capture_source", source_ref: ref, capture: { kind: parsed.scheme, label: label ?? resourceTypeLabel(parsed.scheme), publication: existing?.capture.value.publication??null } });
   }
   return { link_id: id, intents };
 }
@@ -158,30 +158,30 @@ export async function queryConnections(input: Schema<"ConnectionQueryRequest">, 
   const { data } = await apiFetch<ApiJson<"/resource-graph/connections/query", "post">>("/api/resource-graph/connections/query", { method: "POST", signal, body: JSON.stringify({ ...input, limit: Math.min(input.limit ?? 100, 100) }) });
   return data;
 }
-export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand): Promise<void> {
+export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand, signal?: AbortSignal): Promise<void> {
   if (command.kind === "unlink") return deleteLink(runtime, { linkId: command.link_id });
-  if (command.kind === "remove_fact") { await apiFetch(`/api/resource-graph/facts/${command.edge_id}`, { method: "DELETE" }); return; }
-  await apiFetch(`/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`, { method: "DELETE" });
-}
-export function connectionMutationErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) return { tone: "Warning", title: "couldn’t save this change on this device", message: "keep this page open and retry saving." };
-  if (outcomeUnknown(error)) return { tone: "Warning", title: "couldn’t confirm removal", requestId: error.requestId };
-  return apiTransportFeedback(error, "couldn’t remove connection") ?? { tone: "Warning", title: "this connection can’t be removed here", requestId: error.requestId };
+  if (command.kind === "remove_fact") { await apiFetch(`/api/resource-graph/facts/${command.edge_id}`, { method: "DELETE", signal }); return; }
+  await apiFetch(`/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`, { method: "DELETE", signal });
 }
 
+const PASSAGE_REFUSAL: Line = { fact: "couldn’t link this passage.", reason: "its quote or location is missing." };
 /** A passage picker result carries its own quote/locator baseline. Known semantic
- * bindings survive deletion; no server reread is substituted during acceptance. */
-export class LinkInputRefusal extends Error {}
+ * bindings survive deletion; no server reread is substituted during acceptance. A passage
+ * missing its retained quote or location is refused, and `line` says so. */
+export class LinkInputRefusal extends Error {
+  readonly line = PASSAGE_REFUSAL;
+  constructor() { super(`${PASSAGE_REFUSAL.fact} ${PASSAGE_REFUSAL.reason}`); }
+}
 export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget): Promise<{ ref: string; intents: Intent[] }> {
   if (target.kind === "resource") return { ref: target.ref, intents: [] };
   const capture = target.capture;
   const capturedTarget = target.passage_target;
-  if (capture === null || capturedTarget === null) throw new LinkInputRefusal("This passage has no retained selection. select it again before linking.");
+  if (capture === null || capturedTarget === null) throw new LinkInputRefusal();
   const locator = capture.locator;
-  if (locator === null) throw new LinkInputRefusal("This passage has no retained location.");
+  if (locator === null) throw new LinkInputRefusal();
   const selector = "text_quote_selector" in locator ? locator.text_quote_selector : null;
   const quote_exact = capture.quote_exact;
-  if (quote_exact === null || quote_exact.length === 0) throw new LinkInputRefusal("This passage has no retained quote. select it again before linking.");
+  if (quote_exact === null || quote_exact.length === 0) throw new LinkInputRefusal();
   const prefix = normalizeQuote(selector?.prefix ?? (locator.type === "pdf_page_geometry" ? locator.prefix ?? "" : ""));
   const suffix = normalizeQuote(selector?.suffix ?? (locator.type === "pdf_page_geometry" ? locator.suffix ?? "" : ""));
   const normalized_exact = normalizeQuote(quote_exact);
@@ -194,7 +194,7 @@ export async function prepareTarget(runtime: WritingRuntime, target: LinkTarget)
   const source = parseResourceRef(source_ref);
   if (!source) throw new TypeError("Invalid passage source");
   const sources=await store.readStates(selectStates({source_refs:[source_ref]}));
-  const stub:Intent[] = /^(note_block|page|highlight):/u.test(source_ref) || sources.source_stubs.some(stub=>stub.source_ref===source_ref) ? [] : [{kind:"capture_source",source_ref,capture:{kind:source.scheme,label:source_ref,publication}}];
+  const stub:Intent[] = /^(note_block|page|highlight):/u.test(source_ref) || sources.source_stubs.some(stub=>stub.source_ref===source_ref) ? [] : [{kind:"capture_source",source_ref,capture:{kind:source.scheme,label:resourceTypeLabel(source.scheme),publication}}];
   return { ref: `passage_anchor:${anchor_id}`, intents: [
     ...stub,
     { kind: "capture_passage", anchor_id, source_ref, normalized_exact, prefix, suffix, capture },

@@ -1,7 +1,8 @@
 // The Nexus vocabulary: what a row is, where it leads, how the list holds, and which page the launcher shows.
-import type { ComponentType } from "react";
+import type * as Icon from "@/lib/ui/icons";
 import type { RecentEntry } from "@/lib/recent/model";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
+import type { ApiError } from "@/lib/api/client";
 import type { LocalMatch } from "@/lib/search/localSearch";
 import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestination } from "@/lib/libraries/api";
@@ -13,7 +14,6 @@ import type {
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 
-export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
 export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import" | "Browse"}`;
 
 
@@ -89,11 +89,9 @@ export interface NexusRow {
   readonly key: string;
   readonly localMatch: LocalMatch | null;
   readonly label: string;
-  readonly icon: NexusIcon;
+  readonly icon: Icon.Glyph;
   /** The facts line's byline or reason: contributors, a source, a state word. */
   readonly detail?: string | null;
-  /** Keep the supplement line's geometry while its text changes. */
-  readonly reserveDetail?: boolean;
   /** Bylines a query may match as Substring. */
   readonly keywords?: readonly string[];
   readonly state?: "Current" | "Minimized";
@@ -168,11 +166,22 @@ export type UseTextPage = { readonly kind: "UseText"; readonly text: string; rea
 export type ChoiceReturn = { readonly kind: "Root"; readonly origin: NexusRootOrigin } | UseTextPage;
 type CreateChoice = { readonly kind: "ChooseCreate"; readonly draft: string; readonly returnTo: ChoiceReturn; readonly activation: NexusTargetActivation };
 
+/** Why a submit stopped. `Unknown`: the server may have it, so submitting replays it. `Refused`:
+ * the server's own reason. `Transport`: the transport's line after `fact`. `AtRisk`: words not
+ * yet saved on this device. */
+export type SubmitFailure =
+  | { readonly kind: "Unknown" }
+  | { readonly kind: "Refused"; readonly line: Line }
+  | { readonly kind: "Transport"; readonly fact: string; readonly error: ApiError }
+  | { readonly kind: "AtRisk" };
+
+/** A running submit keeps the failure it is retrying, so its report stands until it settles.
+ * `failures` counts this submit's failed attempts, so a report that stands spoken speaks again. */
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
-  | { readonly kind: "Acknowledged"; readonly content: FeedbackContent }
-  | { readonly kind: "Running"; readonly unconfirmed: boolean; readonly content?: FeedbackContent }
-  | { readonly kind: "Retryable"; readonly unconfirmed: boolean; readonly content: FeedbackContent };
+  | { readonly kind: "Acknowledged" }
+  | { readonly kind: "Running"; readonly unconfirmed: boolean; readonly failure?: SubmitFailure; readonly failures: number }
+  | { readonly kind: "Retryable"; readonly unconfirmed: boolean; readonly failure: SubmitFailure; readonly failures: number };
 
 export type NexusPage =
   | { readonly kind: "Root" }

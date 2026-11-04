@@ -26,6 +26,12 @@ export const SHORTCUTS = {
     key: "ArrowLeft",
     shift: true,
   },
+  "Stage.Reach": {
+    label: "Go to notices",
+    description: "Moves focus to a standing notice. Esc closes or tucks it and returns focus.",
+    key: ".",
+    shift: false,
+  },
 } as const;
 
 export const NEW_PANE_HINT = "shift-click or shift-enter opens in a new pane";

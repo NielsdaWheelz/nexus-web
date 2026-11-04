@@ -2,27 +2,29 @@
 
 // The Android share sheet's capture card (`/share?text=`). Links get their list,
 // a destination field (create allowed) and Save; each link is saved under its
-// own id, kept for the page's life, so Retry resends the same acceptance. Plain
+// own id, kept for the page's life. An accepted link retries only its reads. Plain
 // text is appended to today's daily note once per attempt, under a date and a
 // note id fixed on first send. Results offer Open (in the shell, through
 // `nexus-share://open`) and Done.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FeedbackBusy, FeedbackFailure, FeedbackProvider, FeedbackRecoveryControl, FeedbackState, FeedbackStatus, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { FeedbackProvider, Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
+import { useTransportVerbs } from "@/components/feedback/stage";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import { StageAnchor } from "@/components/feedback/Slips";
+import { sentence, type CommandVerb, type Line, type Shell } from "@/components/feedback/stage";
+import { UNKNOWN_OUTCOME_REASON, TRANSPORT_LINES, transportOf, type Transport } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import DestinationField from "@/components/libraries/DestinationField";
 import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
-import {
-  isApiError,
-  outcomeUnknown,
-  isUnauthenticatedApiError,
-} from "@/lib/api/client";
+import { captureApiAccount, isCurrentApiAccount, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { extractUrls } from "@/lib/extractUrls";
-import { captureErrorFeedback, captureStatusLine } from "@/lib/imports/copy";
-import { addMediaFromUrl } from "@/lib/imports/ingest";
+import { captureErrorLine, captureStatusLine } from "@/lib/imports/copy";
+import { addMediaFromUrl, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance, type AcceptedIngest } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 import { dailyId, linkId } from "@nexus/authored/identity";
@@ -32,48 +34,57 @@ import { getWritingRuntime, isAuthoredStorageFailure, LocalCommitError } from "@
 import { AuthoredProvider } from "@/lib/authored/provider";
 import { readBrowserBinding } from "@/lib/authored/binding";
 import { readDeviceStartup } from "@/lib/native/client";
+import { subscribeAdmission, subscribeRepair, updateRemedy } from "@/lib/native/admission";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import { WorkProvider, useWorkGuard } from "@/lib/unsavedWork";
 import styles from "./share.module.css";
 
 type Result =
   | { label: string; ok: true; status: string; path: string; available: boolean }
-  | { label: string; ok: false; retryable: boolean; review: boolean; local_commit: boolean; feedback: FeedbackContent };
+  /** `transport` is an api refusal's, whose verbs it decides; null is a local note's, whose verb is `retry`. */
+  | { label: string; ok: false; transport: Transport | null; recovery: "Retry" | "Review" | "Unknown" | "Read"; attempt: number; local_commit: boolean; line: Line };
 
-/** A refusal as a result row: sign-out is final for this share; anything the
-    surface does not model throws. */
-function failed(
-  label: string,
-  error: unknown,
-  describe: () => FeedbackContent | null,
-): Extract<Result, { ok: false }> {
-  if (isUnauthenticatedApiError(error)) {
-    const feedback: FeedbackContent = {
-      tone: "Danger",
-      title: "Sign in to save this",
-      message: "Open Nexus, sign in, then share again.",
-      requestId: error.requestId,
-    };
-    return { label, ok: false, retryable: false, review: false, local_commit: false, feedback };
-  }
-  const feedback = describe();
-  if (feedback === null) throw error;
-  return { label, ok: false, retryable: true, local_commit: false, review: isApiError(error) && ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code), feedback };
+type UrlCommand = {
+  id: string;
+  guard: AcquisitionGuard;
+  account: ReturnType<typeof captureApiAccount>;
+  unconfirmed: boolean;
+  attempt: number;
+  accepted: Extract<MediaAcceptance, { kind: "Url" }> | null;
+};
+
+const SAVE_FAILED = "couldn’t save this.";
+/** A refusal as a result row: sign-in is the workspace's; an unknown outcome resends the same id; a
+ * domain refusal takes L6's domain line; anything else its transport's. Its verbs are the
+ * transport's, so a stale build offers reload alone. */
+function failed(label: string, error: unknown, attempt = 0, unknown = outcomeUnknown(error)): Extract<Result, { ok: false }> {
+  if (!isApiError(error)) throw error;
+  const transport = transportOf(error);
+  const review = ["E_RESOURCE_CONFLICT", "E_LIBRARY_FORBIDDEN"].includes(error.code);
+  const domain = transport === "Refused" ? captureErrorLine(error, "SaveSource").reason : undefined;
+  const line = unknown ? { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }
+    : transport === "SignIn" ? { fact: "sign in to save this." }
+    : transport !== "Refused" ? TRANSPORT_LINES[transport].command(SAVE_FAILED)
+    : domain === undefined ? { fact: SAVE_FAILED } : { fact: SAVE_FAILED, reason: domain };
+  return { label, ok: false, transport, local_commit: false, recovery: unknown ? "Unknown" : review ? "Review" : "Retry", attempt, line };
 }
 
-class CaptureAdmissionError extends Error {}
+/** No local binding yet, or a share made for another account than the one open here. */
+class CaptureAdmissionError extends Error {
+  constructor(readonly kind: "Unbound" | "OtherAccount") { super(kind); }
+}
 type ShareAccount = { user_id: string; calendar_time_zone: string; capture: {noteId: string; localDate: string} | null };
+/** Sign-in belongs to the workspace: capture's verb opens it. */
+const SHELL: Shell = { signIn: { label: "open workspace", commandKey: "OpenWorkspace", run: () => window.location.assign("nexus-share://open?path=%2Fdownloads") } };
 export default function ShareCapture(props: { text: string; isShell: boolean }) {
-  const [bounds, setBounds] = useState<HTMLDivElement | null>(null);
-  return <FeedbackProvider><div ref={setBounds} tabIndex={-1} className={styles.capture}>
-    <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-      protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("[data-feedback-controls]")] : []} returnFocus={() => bounds}>
-      <span className={styles.recoverySlot} data-feedback-controls="true"><FeedbackRecoveryControl /></span>
-      <ShareCaptureAdmission {...props} />
-    </FeedbackSurface>
+  return <FeedbackProvider shell={SHELL}><div tabIndex={-1} className={styles.backdrop}>
+    <StageAnchor kind="Root" />
+    <main className={styles.card}><div className={styles.capture}><ShareCaptureAdmission {...props} /></div></main>
   </div></FeedbackProvider>;
 }
+const NOT_OPENED = "couldn’t open your notes on this device.";
 function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
+  const transportVerbs = useTransportVerbs();
   const plain = props.text.trim() !== "" && extractUrls(props.text).length === 0;
   const [account, setAccount] = useState<ShareAccount | null>(null);
   const [failure, setFailure] = useState<unknown | null>(null);
@@ -84,21 +95,34 @@ function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
     let active = true;
     void (async () => {
       const binding = "nexusAuthored" in window ? (await readDeviceStartup())?.binding ?? null : await readBrowserBinding();
-      if (!binding) throw new CaptureAdmissionError("open nexus once to prepare your notes on this device, then share again.");
+      if (!binding) throw new CaptureAdmissionError("Unbound");
       let capture: ShareAccount["capture"] = null;
       if (props.isShell) {
         const params = new URL(location.href).searchParams;
+        if (params.get("capture_account_id") !== binding.account.account_id) throw new CaptureAdmissionError("OtherAccount");
         const noteId = params.get("capture_id"), localDate = params.get("capture_date");
-        if (params.get("capture_account_id") !== binding.account.account_id || noteId === null || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(noteId) || localDate === null || !isLocalDate(localDate)) throw new CaptureAdmissionError("this capture no longer belongs to the account open on this device. share again from the original app.");
+        // the share shell writes these: a malformed one is our defect, not another account's share.
+        if (noteId === null || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(noteId) || localDate === null || !isLocalDate(localDate)) throw new Error("share shell sent a malformed capture");
         capture = {noteId, localDate};
       }
       if (active) { setAccount({user_id:binding.account.account_id,calendar_time_zone:binding.account.calendar_time_zone,capture});setFailure(null); }
     })().catch(error => { if (!active) return; if (error instanceof CaptureAdmissionError || isAuthoredStorageFailure(error) || isApiError(error)) setFailure(error); else setAdmissionDefect({ error }); });
     return () => {active=false;};
   },[plain,attempt,props.isShell]);
+  // A failed read heals: a repair (focus, back online) reads again.
+  useEffect(() => isApiError(failure) ? subscribeRepair(() => retry(value => value + 1)) : undefined, [failure]);
+  useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
   if (admissionDefect !== null) throw admissionDefect.error;
-  if (plain && failure) return <FeedbackState content={{tone:"Warning",title:"couldn’t open notes on this device",message:failure instanceof CaptureAdmissionError?failure.message:"open nexus and try sharing again."}} announcement="Polite" actions={[{label:"retry",onClick:()=>retry(value=>value+1)}]} />;
-  if (plain && !account) return <FeedbackBusy pending />;
+  const retryAdmission: CommandVerb = { label: "retry", commandKey: "RetryShareAdmission", run: () => retry(value => value + 1) };
+  if (plain && failure) {
+    if (failure instanceof CaptureAdmissionError) return failure.kind === "Unbound"
+      ? <Fact line={{ fact: "your notes aren’t on this device yet.", reason: "open nexus once, then share again." }} verbs={[retryAdmission]} speak />
+      : <Fact line={{ fact: "this share belongs to another account.", reason: "share again from the original app." }} speak />;
+    if (!isApiError(failure)) return <Fact line={{ fact: NOT_OPENED }} verbs={[retryAdmission]} speak />;
+    const transport = transportOf(failure);
+    return <Fact line={TRANSPORT_LINES[transport].command(NOT_OPENED)} verbs={transportVerbs(transport, { retry: retryAdmission }) ?? undefined} speak />;
+  }
+  if (plain && !account) return <Ruling />;
   return <WorkProvider>{plain && account ? <AuthoredProvider accountId={account.user_id} host="share"><ShareCaptureContent {...props} account={account} /></AuthoredProvider> : <ShareCaptureContent {...props} account={null} />}</WorkProvider>;
 }
 
@@ -114,7 +138,6 @@ function ShareCaptureContent({
   const trimmed = text.trim();
   const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
   const [results, setResults] = useState<Result[] | null>(null);
-  const resultArea = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const [destinationCreation] = useState(createDestinationCreation);
   const creation = useDestinationCreation(trimmed, destinationCreation);
@@ -124,7 +147,7 @@ function ShareCaptureContent({
   >([]);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const commands = useRef(new Map<string, { id: string; guard: AcquisitionGuard;unconfirmed:boolean }>());
+  const commands = useRef(new Map<string, UrlCommand>());
   const [reviewUrls, setReviewUrls] = useState<readonly string[] | null>(null);
   const note = useRef<{ accountId: string; localDate: string; noteId: string; capture: Promise<boolean>; failure: LocalCommitError | null; committed: boolean; check: () => Promise<boolean>; run: () => Promise<boolean> } | null>(null);
   const sentAttempt = useRef<number | null>(null);
@@ -135,6 +158,8 @@ function ShareCaptureContent({
   const captureDate = account?.capture?.localDate ?? null;
   const guard = useWorkGuard();
 
+
+  useLayoutEffect(() => () => { commands.current = new Map(); }, [trimmed, accountId]);
 
   useLayoutEffect(()=>guard.register({id:"share-submitted-acquisition",scope:{kind:"surface",id:"share"},
     subscribe:destinationCreation.subscribe,
@@ -196,8 +221,9 @@ function ShareCaptureContent({
           void current.capture.then(accepted, failed);
         }, () => {});
       } else if (!isAuthoredStorageFailure(error)) { if(active)setDefect({error}); return; }
-      if(active)setResults([{label:trimmed,ok:false,retryable:true,review:false,local_commit:error instanceof LocalCommitError,
-        feedback:{tone:"Warning",title:current.committed?"couldn’t check this capture":"couldn’t save on this device",message:current.committed?"retry checking the saved note.":"keep this page open. retry saving."}}]);
+      // `save` is the retry: it checks a committed note, or saves again.
+      if(active)setResults([{label:trimmed,ok:false,transport:null,recovery:"Retry",attempt,local_commit:error instanceof LocalCommitError,
+        line:{fact:current.committed?"couldn’t confirm this note on this device.":"couldn’t save this note on this device."}}]);
     };
     void current.capture.then(accepted, failed).finally(()=>{if(active)setSaving(false);});
     return()=>{active=false;};
@@ -205,51 +231,80 @@ function ShareCaptureContent({
 
   if (defect !== null) throw defect.error;
 
-  async function saveUrl(url: string): Promise<Result> {
-    const command = commands.current.get(url);
-    if (command === undefined) throw new Error("share submission has no frozen acquisition command");
+  async function saveUrl(url: string, command: UrlCommand): Promise<Result> {
+    const previouslyUnknown = command.unconfirmed;
     try {
-      command.unconfirmed=true;
-      const accepted = await addMediaFromUrl({ url,id:command.id,guard:command.guard });
-      command.unconfirmed=false;
-      return {
-        label: url,
-        ok: true,
-        available: accepted.available,
-        status: captureStatusLine(accepted),
-        path: accepted.href,
-      };
+      let accepted: Extract<AcceptedIngest, { kind: "Url" }>;
+      if (command.accepted !== null) {
+        const receipt = command.accepted;
+        const current = await fetchAcceptedSource(receipt.sourceAttemptId);
+        accepted = { ...receipt, mediaId: current.media_id, importRef: current.import_ref,
+          href: `/media/${current.media_id}?source_attempt_id=${encodeURIComponent(receipt.sourceAttemptId)}`,
+          available: await mediaAcquisitionAvailable(current.media_id) };
+      } else {
+        command.unconfirmed = true;
+        accepted = await addMediaFromUrl({ url, id: command.id, guard: command.guard, onAccepted: receipt => {
+          if (commands.current.get(url) !== command || !isCurrentApiAccount(command.account)) return;
+          command.accepted = receipt;
+          command.unconfirmed = false;
+        } });
+      }
+      command.unconfirmed = false;
+      return { label: url, ok: true, available: accepted.available, status: captureStatusLine(accepted), path: accepted.href };
     } catch (error) {
-      command.unconfirmed=outcomeUnknown(error);
-      if (isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
-      return failed(url, error, () =>
-        captureErrorFeedback(error, "SaveSource"),
-      );
+      command.attempt += 1;
+      if (command.accepted !== null) {
+        command.unconfirmed = false;
+        if (!isApiError(error)) throw error;
+        if (error.status === 404) return { label: url, ok: true, available: false,
+          status: captureStatusLine({ ...command.accepted, available: false }), path: command.accepted.href };
+        return { label: url, ok: false, transport: transportOf(error), recovery: "Read", attempt: command.attempt,
+          local_commit: false, line: { fact: "saved.", reason: "couldn’t load source details." } };
+      }
+      command.unconfirmed = previouslyUnknown || outcomeUnknown(error);
+      if (commands.current.get(url) === command && !command.unconfirmed && isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 401) commands.current.delete(url);
+      return failed(url, error, command.attempt, command.unconfirmed);
     }
   }
 
   async function save(targets: readonly string[]): Promise<void> {
-    if (saving || creating) return;
+    if (saving || creating || targets.some(url => {
+      const command = commands.current.get(url);
+      return command !== undefined && !isCurrentApiAccount(command.account);
+    })) return;
+    const owner = commands.current;
+    const account = captureApiAccount();
+    const active = () => commands.current === owner && isCurrentApiAccount(account);
     setSaving(true);
     setReviewUrls(null);
     try {
       if (targets.some(url => !commands.current.has(url))) {
         const snapshot = await libraryDestinations();
-        for (const url of targets) if (!commands.current.has(url)) commands.current.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision),unconfirmed:false });
+        if (!active()) return;
+        for (const url of targets) if (!owner.has(url)) owner.set(url, { id: crypto.randomUUID(), guard: acquisitionGuard(destinations, snapshot.removal_revision), account, unconfirmed: false, attempt: 0, accepted: null });
       }
     } catch (error) {
-      setResults(targets.map(url => failed(url, error, () => captureErrorFeedback(error, "SaveSource"))));
+      if (!active()) return;
+      if (isApiError(error)) setResults(targets.map(url => failed(url, error)));
+      else setDefect({ error });
       setSaving(false);
       return;
     }
     // one at a time: the server serializes an account's acquisitions, and a
     // concurrent one can exhaust its retries into a refusal.
-    runBoundedTasks({ items: targets, concurrency: 1, run: saveUrl })
+    runBoundedTasks({ items: targets, concurrency: 1, run: url => {
+      if (!active()) return Promise.resolve(null);
+      const command = owner.get(url);
+      if (command === undefined) throw new Error("share submission has no frozen acquisition command");
+      return saveUrl(url, command);
+    } })
       .then((outcomes) => {
-        const settled = outcomes.map((outcome) => {
+        if (!active()) return;
+        const settled: Result[] = [];
+        for (const outcome of outcomes) {
           if (outcome.kind === "Rejected") throw outcome.error;
-          return outcome.value;
-        });
+          if (outcome.value !== null) settled.push(outcome.value);
+        }
         setResults((current) =>
           current === null
             ? settled
@@ -259,13 +314,13 @@ function ShareCaptureContent({
               ),
         );
       })
-      .catch((error: unknown) => setDefect({ error }))
-      .finally(() => setSaving(false));
+      .catch((error: unknown) => { if (active()) setDefect({ error }); })
+      .finally(() => { if (active()) setSaving(false); });
   }
 
   const retry = (result: Result) => {
     if (saving) return;
-  if (urls.length > 0 && !result.ok && result.review) {
+  if (urls.length > 0 && !result.ok && result.recovery === "Review") {
       setSaving(true);
       void libraryDestinations().then(snapshot => {
         const current = new Map(snapshot.destinations.map(destination => [destination.id, destination]));
@@ -285,15 +340,7 @@ function ShareCaptureContent({
   if (trimmed === "") {
     return (
       <>
-        <h1 className={styles.heading}>Nothing to share</h1>
-        <p className={styles.body}>
-          The shared text was empty, so there was nothing to save.
-        </p>
-        <div className={styles.actions}>
-          <a className={styles.actionPrimary} href={done}>
-            Done
-          </a>
-        </div>
+        <Fact line={{ fact: "nothing to share.", reason: "the shared text was empty." }} verbs={[{ label: "done", href: done }]} />
       </>
     );
   }
@@ -304,123 +351,94 @@ function ShareCaptureContent({
       <h1 className={styles.heading}>save to nexus</h1>
       <p className={styles.body}>{trimmed}</p>
       <div className={styles.actions}>
-        <Button reserveIcon aria-busy={saving || undefined} disabled={saving || result === null || result.ok || !result.retryable}
+        <Button aria-busy={saving || undefined} disabled={saving || result === null || result.ok}
           onClick={() => { if (result !== null) retry(result); }}>save</Button>
         {result?.ok ? <a className={styles.actionPrimary} href={open(result.path)}>open</a> : null}
         <a className={styles.action} href={done}>done</a>
       </div>
       {result !== null && !result.ok && !result.local_commit ? <CaptureFailure result={result} saving={saving} retry={() => retry(result)} /> : null}
-      {result?.ok ? <FeedbackStatus content={{ tone: "Neutral", title: result.status }} announcement="None" /> : null}
+      {result?.ok ? <Fact line={{ fact: result.status }} /> : null}
     </>;
   }
 
-  if (urls.length > 0 && (results === null || reviewUrls !== null || results.some(result => !result.ok))) {
-    return (
-      <>
-        <h1 className={styles.heading}>Save to Nexus</h1>
-        <div className={styles.results}>
-          {urls.map((url) => (
-            <div key={url} className={styles.resultItem}>
-              <span className={styles.resultLabel} title={url}>
-                {url}
-              </span>
-            </div>
-          ))}
-        </div>
-        <DestinationField
-          context={trimmed}
-          label="Library destinations"
-          emptyLabel="No additional libraries"
-          chosen={destinations}
-          onSet={change => {
-            if (saving) return false;
-            setDestinations(current => setDestination(current, change));
-            return true;
-          }}
-          disabled={saving}
-          create={{ available: !saving, pendingNames: creation.pendingNames,
-            onCreate: name => creation.admit({ name, scope: trimmed,
-              onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
-            }) }}
-          error={creation.error}
-        />
-        {results?.filter((result): result is Extract<Result, { ok: false }> => !result.ok).map(result => <CaptureFailure key={result.label} result={result} saving={saving} retry={() => retry(result)} />)}
-        <div className={styles.actions}>
-          <Button reserveIcon
-            className={styles.actionPrimary}
-            aria-busy={saving || undefined}
-            disabled={creating || saving}
-            onClick={() => void save(reviewUrls ?? urls)}
-          >
-            Save
-          </Button>
-          <a
-            className={styles.action}
-            href={
-              isShell ? "nexus-share://dismiss" : APP_AUTHENTICATED_HOME_HREF
-            }
-          >
-            Cancel
-          </a>
-        </div>
-      </>
-    );
+  // Every link saved: each row says what became of it.
+  if (results !== null && reviewUrls === null && results.every((result): result is Extract<Result, { ok: true }> => result.ok)) {
+    const anySaved = results.some(result => result.available);
+    return <>
+      <h1 className={styles.heading}>{anySaved ? "saved to nexus" : "saved, then removed"}</h1>
+      <div className={styles.results}>
+        {results.map(result => <div key={result.label} className={styles.resultItem}>
+          <span className={styles.resultLabel} title={result.label}>{result.label}</span>
+          <Fact line={{ fact: result.status }} speak verbs={result.available ? [{ label: "open", href: open(result.path) }] : undefined} />
+        </div>)}
+      </div>
+      <div className={styles.actions}>
+        <a className={anySaved ? styles.actionPrimary : styles.action} href={done}>Done</a>
+      </div>
+    </>;
   }
 
-  const shown =
-    results;
-  if (shown === null) {
-    return (
-      <>
-        <FeedbackBusy pending />
-      </>
-    );
-  }
-
-  const anySaved = shown.some((result) => result.ok && result.available);
-  const signedOut = shown.some((result) => !result.ok && result.feedback.title === "Sign in to save this");
   return (
     <>
-      <h1 className={styles.heading}>
-        {anySaved
-          ? "Saved to Nexus"
-          : shown.some(result => result.ok) ? "this item was saved, then removed"
-          : signedOut
-            ? "Sign in to save this"
-            : "Couldn’t save"}
-      </h1>
-      <div className={styles.results} ref={resultArea} tabIndex={-1}>
-        {shown.map((result) => (
-          <div key={result.label} className={styles.resultItem}>
-            <span className={styles.resultLabel} title={result.label}>
-              {result.label}
+      <h1 className={styles.heading}>Save to Nexus</h1>
+      <div className={styles.results}>
+        {urls.map((url) => (
+          <div key={url} className={styles.resultItem}>
+            <span className={styles.resultLabel} title={url}>
+              {url}
             </span>
-            {result.ok ? (
-              <FeedbackStatus
-                content={{ tone: "Neutral", title: result.status }}
-                announcement="Polite"
-                actions={result.available ? [{ label: result.path.startsWith("/daily/") ? "open" : "open in nexus", href: open(result.path) }] : undefined}
-              />
-            ) : (
-              <CaptureFailure result={result} saving={saving} retry={() => retry(result)} />
-            )}
           </div>
         ))}
       </div>
+      <DestinationField
+        context={trimmed}
+        label="Library destinations"
+        emptyLabel="No additional libraries"
+        chosen={destinations}
+        onSet={change => {
+          if (saving) return false;
+          setDestinations(current => setDestination(current, change));
+          return true;
+        }}
+        disabled={saving}
+        create={{ available: !saving, pendingNames: creation.pendingNames,
+          onCreate: name => creation.admit({ name, scope: trimmed,
+            onCreated: destination => setDestinations(current => setDestination(current, { destination, included: true })),
+          }) }}
+      />
+      {creation.holds}
+      {results?.filter((result): result is Extract<Result, { ok: false }> => !result.ok).map(result => <CaptureFailure key={result.label} result={result} saving={saving} retry={() => retry(result)} />)}
       <div className={styles.actions}>
-        <a
-          className={anySaved ? styles.actionPrimary : styles.action}
-          href={done}
+        <Button
+          className={styles.actionPrimary}
+          aria-busy={saving || undefined}
+          disabled={creating || saving}
+          onClick={() => void save(reviewUrls ?? urls)}
         >
-          Done
+          Save
+        </Button>
+        <a
+          className={styles.action}
+          href={
+            isShell ? "nexus-share://dismiss" : APP_AUTHENTICATED_HOME_HREF
+          }
+        >
+          Cancel
         </a>
       </div>
     </>
   );
 }
 
+/** A failed result on its row. `review libraries` opens review; `retry` sends. Every settle makes a
+ * new result, so a failed retry speaks again while the row and the verb under the hand stand. */
 function CaptureFailure({ result, saving, retry }: { result: Extract<Result, { ok: false }>; saving: boolean; retry: () => void }) {
-  const occurrence = useFeedbackOccurrence(true, result.label);
-  return <FeedbackFailure scope="Local" occurrence={occurrence} content={result.feedback} announcement="Polite"
-    actions={result.retryable ? [{ label: result.review ? "review and save" : "retry same save", onClick: retry, busy: saving }] : undefined} />;
+  const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
+  const verb: CommandVerb = { label: result.recovery === "Review" ? "review libraries" : "retry", commandKey: result.recovery === "Review" ? "ReviewCaptureResult" : "RetryCaptureResult", run: retry, busy: saving };
+  if (result.recovery === "Unknown") return <Hold id={`share-capture:${result.label}`} attempt={result.attempt} {...resendFeedback({ line: result.line, resend: verb })} />;
+  return <>
+    <Fact line={result.line} verbs={(result.transport === null ? [verb] as const : transportVerbs(result.transport, { retry: verb })) ?? undefined} />
+    <Announcement text={sentence(result.line)} level="Polite" occurrence={result} />
+  </>;
 }

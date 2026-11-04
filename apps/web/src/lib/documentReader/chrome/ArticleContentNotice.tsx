@@ -1,6 +1,6 @@
 // The saved representation's limits. This copy never enters authored text or quote offsets.
-import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { Schema } from "@/lib/api/wire";
+import styles from "./chrome.module.css";
 
 export function articleContentLabel(content: Schema<"XArticleContent">): string {
   if (content.completeness === "incomplete") return "incomplete text";
@@ -8,10 +8,8 @@ export function articleContentLabel(content: Schema<"XArticleContent">): string 
 }
 
 export function ArticleContentNotice({ content }: { readonly content: Schema<"XArticleContent"> }) {
-  const message = content.representation === "browser_capture"
-    ? "captured from the open article; completeness is unverified."
-    : content.completeness === "incomplete"
-      ? "x reports that this text is incomplete. original formatting and media aren’t preserved."
-      : "text supplied by x’s api. original formatting and media aren’t preserved; completeness is unverified.";
-  return <FeedbackNotice content={{ tone: "Neutral", title: `${articleContentLabel(content)} · ${message}` }} announcement="None" />;
+  const line = content.representation === "browser_capture" ? "captured from your browser. it may be incomplete."
+    : content.completeness === "incomplete" ? "x reports this text is incomplete. formatting and media aren’t kept."
+      : "text from x’s api. formatting and media aren’t kept.";
+  return <p className={styles.articleContent}>{line}</p>;
 }

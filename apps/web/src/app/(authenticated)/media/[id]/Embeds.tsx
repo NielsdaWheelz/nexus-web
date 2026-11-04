@@ -1,9 +1,12 @@
 "use client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 // A recognised document embed as a card in its placeholder: provider and
 // state, title and description, and its actions (open the child media, open
 // the original, or inspect a failed article's import). Cards sit outside the canonical text.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { sentence } from "@/components/feedback/stage";
 import type { DocumentEmbed, TextUnit } from "@/lib/documentReader/model";
 import { articleContentLabel } from "@/lib/documentReader/chrome/ArticleContentNotice";
 import { usePaneIsVisible, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -17,6 +20,8 @@ import type { ApiJson } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
 import { addMediaFromUrl } from "@/lib/imports/ingest";
+import { VerbControl } from "@/components/feedback/Fact";
+import Button from "@/components/ui/Button";
 import styles from "./media.module.css";
 
 const PROVIDER: Record<DocumentEmbed["provider"], string> = {
@@ -28,6 +33,53 @@ const PROVIDER: Record<DocumentEmbed["provider"], string> = {
   generic: "Embedded content",
   unknown: "Unknown provider",
 };
+
+/** One immutable request, keyed by its caller. Its callbacks retire with the command; a
+ * canonical refresh reads only, and a refused resend preserves earlier uncertainty. */
+function CaptureRetry({ request, label, fact, unsure, busy, setBusy, refresh, accepted }: {
+  readonly request: { readonly path: `/api/${string}`; readonly method: "POST" | "PUT"; readonly body: string };
+  readonly label: string;
+  readonly fact: string;
+  readonly unsure: string;
+  readonly busy: boolean;
+  readonly setBusy: (busy: boolean) => void;
+  readonly refresh: () => void;
+  readonly accepted?: () => void;
+}) {
+  const id = useId();
+  const live = useRef(true);
+  const sending = useRef(false);
+  const [attempt, setAttempt] = useState<number | null>(null);
+  const { fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
+  useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  async function run() {
+    if (!live.current || busy || sending.current) return;
+    sending.current = true;
+    setBusy(true);
+    try { await apiFetch(request.path, { method: request.method, body: request.body }); }
+    catch (error) {
+      if (!live.current) return;
+      if (outcomeUnknown(error)) setAttempt(value => (value ?? 0) + 1);
+      else fail(error, fact, retry);
+      return;
+    } finally {
+      sending.current = false;
+      setBusy(false);
+      if (live.current) refresh();
+    }
+    if (!live.current) return;
+    setAttempt(null);
+    accepted?.();
+  }
+  const retry = { label: "retry", commandKey: id, run: () => void run(), busy };
+  const feedback = resendFeedback({ line: { fact: unsure, reason: UNKNOWN_OUTCOME_REASON }, resend: retry });
+  return <>
+    {attempt === null ? <Button disabled={busy} aria-busy={busy || undefined} onClick={() => void run()}>{label}</Button>
+      : feedback.verbs === null ? null : <><span id={`${id}:context`} className="sr-only">{sentence(feedback.line)}</span><VerbControl verb={feedback.verbs[0]} contextId={`${id}:context`} /></>}
+    {attempt === null ? null : <Hold id={id} attempt={attempt} {...feedback} />}
+  </>;
+}
 
 /** An http(s) url or an in-app path; anything else is no link. */
 function safeHref(value: string | null | undefined): string | null {
@@ -45,22 +97,10 @@ export default function EmbedCard({ embed, reader }: { readonly embed: DocumentE
   const runtime = usePaneRuntime();
   const { display, target } = embed;
   const visible = usePaneIsVisible();
-  const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const retrieval = embed.retrieval;
   useIntervalPoll({ enabled: visible && retrieval !== null && ["queued", "running", "recovering"].includes(retrieval.status), pollIntervalMs: 2000,
     onPoll: () => { if (document.visibilityState === "visible") reader.reload(); } });
-  async function retryQuote() {
-    if (!embed.media_id || !retrieval || busy) return;
-    setBusy(true); setFailure(null);
-    try {
-      await apiFetch(`/api/media/${embed.media_id}/embeds/${embed.id}/retry`, {
-        method: "POST", body: JSON.stringify({ expected_job_id: retrieval.job_id }),
-      });
-      reader.reload();
-    } catch { setFailure(target.capture_id ? "couldn't fetch the full post; captured excerpt kept" : "post not captured"); }
-    finally { setBusy(false); }
-  }
   const article = embed.provider === "x" && embed.kind === "link_preview";
   const thumbnail = safeHref(target.thumbnail_url);
   const title = target.title?.trim() ?? null;
@@ -88,9 +128,11 @@ export default function EmbedCard({ embed, reader }: { readonly embed: DocumentE
           <p>{description}</p>
         ) : null}
         <span className={styles.embedActions}>
-          {retrieval?.status === "failed" ? <span>{target.capture_id ? "couldn’t fetch the full post; captured excerpt kept" : "post not captured"}</span> : null}
-          {retrieval?.can_retry ? <button type="button" disabled={busy} onClick={() => void retryQuote()}>retry</button> : null}
-          {failure ? <span role="status">{failure}</span> : null}
+          {retrieval?.status === "failed" ? <span>{target.capture_id ? "couldn’t fetch the full post. the captured excerpt is kept." : "this post wasn’t captured."}</span> : null}
+          {retrieval?.can_retry && embed.media_id ? <CaptureRetry key={JSON.stringify([embed.media_id, embed.id, retrieval.job_id])}
+            request={{ path: `/api/media/${embed.media_id}/embeds/${embed.id}/retry`, method: "POST", body: JSON.stringify({ expected_job_id: retrieval.job_id }) }}
+            label="retry" fact="couldn’t fetch the full post." unsure="not sure the full post started downloading."
+            busy={busy} setBusy={setBusy} refresh={reader.reload} /> : null}
           {display.actions.filter(action => action.kind !== "retry_quote").map((action) => {
             const href =
               safeHref(action.href) ??
@@ -131,13 +173,24 @@ export default function EmbedCard({ embed, reader }: { readonly embed: DocumentE
 export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPost"]> }) {
   const [requestId, setRequestId] = useState(() => createRandomId());
   const guard = useRef<AcquisitionGuard | null>(null);
+  const live = useRef(true);
+  const requestOwner = useRef(requestId);
+  requestOwner.current = requestId;
+  useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
-  const [saveUnconfirmed, setSaveUnconfirmed] = useState(false);
+  const [saveUnconfirmed, setSaveUnconfirmed] = useState<number | null>(null);
+  const [threadUnconfirmed, setThreadUnconfirmed] = useState<number | null>(null);
   const [threadId, setThreadId] = useState(() => createRandomId());
   const threadGuard = useRef<AcquisitionGuard | null>(null);
+  const threadOwner = useRef(threadId);
+  threadOwner.current = threadId;
   const [threadHref, setThreadHref] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<{ mediaId: string; generation: number; stamp: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{ mediaId: string; generation: number } | null>(null);
+  const { fail } = useOutcome();
+  const fullOnlyId = useId();
+  const saveContext = useId();
+  const threadContext = useId();
+  const resendFeedback = useResendFeedback();
   const captureId = post.owner?.capture_id ?? null;
   const stamp = useChangeStamp("Entries");
   const binding = usePaneFreeServerValue({
@@ -147,11 +200,11 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
       return { mediaId: data.units.find(unit => unit.x_post?.owner?.capture_id === captureId && unit.x_post.relation === "primary")?.x_post?.saved_media_id ?? null };
     },
   });
-  const currentConflict = conflict?.stamp === stamp ? conflict : null;
   useEffect(() => {
-    if (!saveUnconfirmed || binding.status !== "ready" || !binding.fresh || !binding.data.mediaId) return;
-    setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(false); setError(null);
-  }, [saveUnconfirmed, binding]);
+    if (binding.status !== "ready" || !binding.fresh || !binding.data.mediaId) return;
+    if (saveUnconfirmed) { setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(null); }
+    if (conflict?.mediaId === binding.data.mediaId) setConflict(null);
+  }, [saveUnconfirmed, binding, conflict]);
   const visible = usePaneIsVisible();
   const archive = usePaneFreeServerValue({
     key: captureId ? `x-archive:${captureId}` : null, stale: "",
@@ -177,61 +230,74 @@ export function PostActions({ post }: { readonly post: NonNullable<TextUnit["xPo
   }, [captureId, assets]);
   if (!captureId) return null;
   async function save() {
-    if (busy) return;
-    setBusy(true); setError(null);
+    if (busy || !live.current || requestOwner.current !== requestId) return;
+    setBusy(true);
+    try { guard.current ??= await readAcquisitionGuard([]); }
+    catch (error) { if (live.current) { fail(error, "couldn’t save the post."); setBusy(false); } return; }
+    if (!live.current || requestOwner.current !== requestId) { setBusy(false); return; }
     try {
-      guard.current ??= await readAcquisitionGuard([]);
       await apiFetch<ApiJson<"/media/from-x-capture", "post">>("/api/media/from-x-capture", {
         method: "POST", body: JSON.stringify({ id: requestId, capture_id: captureId, ...guard.current }),
       });
-      setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(false); setConflict(null);
+      if (!live.current || requestOwner.current !== requestId) return;
+      setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(null); setConflict(null);
       publishChange("Entries");
     } catch (failure) {
+      if (!live.current || requestOwner.current !== requestId) return;
       if (isApiError(failure) && failure.code === "E_X_CAPTURE_DIFFERENT" && typeof failure.details?.media_id === "string" && typeof failure.details.reader_generation === "number") {
-        setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(false);
-        setConflict({ mediaId: failure.details.media_id, generation: failure.details.reader_generation, stamp });
+        setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(null);
+        setConflict({ mediaId: failure.details.media_id, generation: failure.details.reader_generation });
+      } else if (outcomeUnknown(failure)) {
+        // the kept request id makes the resend the same save.
+        setSaveUnconfirmed(attempt => (attempt ?? 0) + 1); invalidateReads("Entries");
       } else {
-        if (isApiError(failure) && !outcomeUnknown(failure)) { setRequestId(createRandomId()); guard.current = null; setSaveUnconfirmed(false); }
-        else { setSaveUnconfirmed(true); invalidateReads("Entries"); }
-        setError("couldn't save post; captured text was kept");
+        if (!saveUnconfirmed) { setRequestId(createRandomId()); guard.current = null; }
+        fail(failure, "couldn’t save the post.");
       }
     } finally { setBusy(false); }
   }
-  async function replace() {
-    if (!currentConflict || busy) return;
-    setBusy(true); setError(null);
-    try {
-      await apiFetch<ApiJson<"/media/{media_id}/x-capture", "put">>(`/api/media/${currentConflict.mediaId}/x-capture`, {
-        method: "PUT", body: JSON.stringify({ capture_id: captureId, expected_reader_generation: currentConflict.generation }),
-      });
-      setConflict(null); publishChange("Entries");
-    } catch { setError("couldn't change saved version; captured text was kept"); }
-    finally { setBusy(false); }
-  }
   async function saveThread() {
-    if (busy) return;
-    setBusy(true); setError(null);
+    if (busy || !live.current || threadOwner.current !== threadId) return;
+    setBusy(true);
+    try { threadGuard.current ??= await readAcquisitionGuard([]); }
+    catch (error) { if (live.current) { fail(error, "couldn’t save the thread."); setBusy(false); } return; }
+    if (!live.current || threadOwner.current !== threadId) { setBusy(false); return; }
     try {
-      threadGuard.current ??= await readAcquisitionGuard([]);
       const accepted = await addMediaFromUrl({ id: threadId, url: post.source_url, guard: threadGuard.current });
+      if (!live.current || threadOwner.current !== threadId) return;
       setThreadHref(accepted.href);
+      setThreadUnconfirmed(null); setThreadId(createRandomId()); threadGuard.current = null;
     } catch (failure) {
-      if (isApiError(failure) && !outcomeUnknown(failure)) { setThreadId(createRandomId()); threadGuard.current = null; }
-      setError("couldn't save thread; captured text was kept");
+      if (!live.current || threadOwner.current !== threadId) return;
+      // only a definite refusal renews the id; an unknown outcome resends the same save.
+      if (outcomeUnknown(failure)) setThreadUnconfirmed(attempt => (attempt ?? 0) + 1);
+      else { if (!threadUnconfirmed) { setThreadId(createRandomId()); threadGuard.current = null; } fail(failure, "couldn’t save the thread."); }
     } finally { setBusy(false); }
   }
+  const saveFeedback = resendFeedback({ line: { fact: "not sure the post saved.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry post", commandKey: `RetryPost:${requestId}`, run: () => void save(), busy } });
+  const threadFeedback = resendFeedback({ line: { fact: "not sure the thread saved.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry thread", commandKey: `RetryThread:${threadId}`, run: () => void saveThread(), busy } });
   return <>
     <a href={`/x/captures/${captureId}`}>open post</a>
     {binding.status === "ready" && binding.fresh && binding.data.mediaId ? <a href={`/media/${binding.data.mediaId}`}>open saved post</a>
-      : post.capture_kind === "article_excerpt" ? <span>full post required to save</span>
-      : currentConflict ? null : binding.status === "failed" || (binding.status === "ready" && !binding.fresh && binding.error) ? <button type="button" onClick={() => void binding.refetch()}>retry saved post status</button>
-      : <button type="button" disabled={busy || binding.status !== "ready" || !binding.fresh} onClick={() => void save()}>{busy ? "saving…" : saveUnconfirmed ? "retry save" : "save post"}</button>}
-    {currentConflict ? <><a href={`/media/${currentConflict.mediaId}`}>open saved post</a><button type="button" disabled={busy} onClick={() => void replace()}>use this captured version</button></> : null}
-    {threadHref ? <a href={threadHref}>open thread</a> : <button type="button" disabled={busy} onClick={() => void saveThread()}>save thread</button>}
-    {archive.status === "failed" ? <button type="button" onClick={archive.refetch}>retry image status</button> : null}
-    {work?.can_retry ? <button type="button" onClick={() => void apiFetch<ApiJson<"/x/captures/{capture_id}/retry-images", "post">>(`/api/x/captures/${captureId}/retry-images`, {
-      method: "POST", body: JSON.stringify({ expected_job_id: work.job_id }),
-    }).then(() => archive.refetch()).catch(() => setError("couldn't retry images; captured text was kept"))}>retry missing images</button> : null}
-    {error ? <span role="status">{error}</span> : null}
+      : post.capture_kind === "article_excerpt" ? <><Button aria-disabled="true" aria-describedby={fullOnlyId}>save post</Button><span id={fullOnlyId}>only the full post can be saved.</span></>
+      : conflict ? null : binding.status === "failed" || (binding.status === "ready" && !binding.fresh && binding.error) ? <Button onClick={() => void binding.refetch()}>check saved post</Button>
+      : saveUnconfirmed ? saveFeedback.verbs === null ? null : <VerbControl verb={saveFeedback.verbs[0]} contextId={saveContext} />
+      : <Button disabled={busy || binding.status !== "ready" || !binding.fresh} aria-busy={busy || undefined} onClick={() => void save()}>save post</Button>}
+    {conflict ? <><a href={`/media/${conflict.mediaId}`}>open saved post</a>
+      <CaptureRetry key={JSON.stringify([conflict.mediaId, captureId, conflict.generation])}
+        request={{ path: `/api/media/${conflict.mediaId}/x-capture`, method: "PUT", body: JSON.stringify({ capture_id: captureId, expected_reader_generation: conflict.generation }) }}
+        label="use this captured version" fact="couldn’t replace the saved post." unsure="not sure the saved post changed."
+        busy={busy} setBusy={setBusy} refresh={() => invalidateReads("Entries")} accepted={() => { setConflict(null); publishChange("Entries"); }} />
+    </> : null}
+    {threadHref ? <a href={threadHref}>open thread</a> : threadUnconfirmed ? threadFeedback.verbs === null ? null : <VerbControl verb={threadFeedback.verbs[0]} contextId={threadContext} /> : <Button disabled={busy} aria-busy={busy || undefined} onClick={() => void saveThread()}>save thread</Button>}
+    {archive.status === "failed" ? <Button onClick={archive.refetch}>check images</Button> : null}
+    {work?.can_retry ? <CaptureRetry key={JSON.stringify([captureId, work.job_id])}
+      request={{ path: `/api/x/captures/${captureId}/retry-images`, method: "POST", body: JSON.stringify({ expected_job_id: work.job_id }) }}
+      label="retry missing images" fact="couldn’t fetch the missing images." unsure="not sure the images started downloading."
+      busy={busy} setBusy={setBusy} refresh={archive.revalidate} /> : null}
+    {saveUnconfirmed ? <><span id={saveContext} className="sr-only">{sentence(saveFeedback.line)}</span><Hold id={`x-post-save:${requestId}`} attempt={saveUnconfirmed ?? 0} {...saveFeedback} /></> : null}
+    {threadUnconfirmed ? <><span id={threadContext} className="sr-only">{sentence(threadFeedback.line)}</span><Hold id={`x-thread-save:${threadId}`} attempt={threadUnconfirmed ?? 0} {...threadFeedback} /></> : null}
   </>;
 }

@@ -9,6 +9,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import { flushSync } from "react-dom";
 import type { QueueManifest } from "@/lib/player/queue";
 import { windowRange, windowRanks } from "@/lib/collections/collectionWindow";
+import { scrollFrame } from "@/lib/collections/scrollFrame";
 
 export function useQueueWindow({ manifest, root, scrollport, openingEntryId, focusedEntryId, menuEntryId, recoveryEntryIds }: {
   readonly manifest: QueueManifest | null;
@@ -104,7 +105,6 @@ export function useQueueWindow({ manifest, root, scrollport, openingEntryId, foc
   useLayoutEffect(() => {
     const port = ownedPort.current;
     if (port === null || root.current === null) return;
-    let frame: number | null = null;
     const resize = new ResizeObserver(changes => {
       const sample = changes.find(change => change.target === probe.current);
       flushSync(() => work.current?.(sample?.borderBoxSize[0].blockSize ?? null));
@@ -114,17 +114,9 @@ export function useQueueWindow({ manifest, root, scrollport, openingEntryId, foc
     resize.observe(root.current);
     resize.observe(root.current.parentElement!);
     if (probe.current !== null) resize.observe(probe.current);
-    const scroll = () => {
-      if (frame !== null) return;
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        flushSync(() => work.current?.(null));
-      });
-    };
-    port.addEventListener("scroll", scroll, { passive: true });
+    const frame = scrollFrame([port], () => work.current?.(null));
     return () => {
-      if (frame !== null) cancelAnimationFrame(frame);
-      port.removeEventListener("scroll", scroll);
+      frame.stop();
       resize.disconnect();
       observer.current = null;
       work.current = null;

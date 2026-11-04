@@ -53,6 +53,13 @@
   );
 }
 
+/* A cold sky's wait, or a failed read, stands where the sky would. */
+.state {
+  position: absolute;
+  inset-block-start: 1rem;
+  inset-inline: 1rem;
+}
+
 .canvas {
   display: block;
   width: 100%;

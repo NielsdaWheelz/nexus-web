@@ -3,7 +3,6 @@
  * retain their server/catalog owner. Saved visit hints are display evidence only.
  * `detail` is the byline or the reason a title is missing, never a kind word: the glyph is the kind. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
 import { localResourceLabel } from "@/lib/resources/localResource";
 import { ApiError } from "@/lib/api/client";
 import { useChangeStamp } from "@/lib/api/changes";
@@ -26,9 +25,8 @@ import { authoredPresentation as authored, remotePresentation, readPresentationF
 import type { AuthoredStore, ResourceProjection } from "@nexus/authored/types";
 type Canonical = Schema<"WorkspacePresentationOut">;
 interface TitleFacts { ref: string; title: string; local_date: string | null }
-export const PANE_TITLES_FAILED = "couldn’t refresh pane titles.";
 export interface PanePresentation { title: string; name:string|null; detail: string | null; mediaKind?: MediaKind; status: "Ready" | "Unsaved" | "Loading" | "Unresolved" | "Unavailable" | "Failed" }
-interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; resourceRefForVisit(visit: PaneVisit): string | null; /** Re-run the remote title reads in place: held titles stay until the new ones land. */ retryTitles(): void; titleFailure: {error: ApiError; occurrence: object; pending: boolean} | null }
+interface Presentations { forVisit(visit: PaneVisit): PanePresentation; forRecent(entry: RecentEntry): PanePresentation; isRecentRemoved(entry: RecentEntry): boolean; resourceRefForVisit(visit: PaneVisit): string | null; /** Re-run the remote title reads in place: held titles stay until the new ones land. */ retryTitles(): void }
 const Context = createContext<Presentations | null>(null);
 type PublishTitle = (key: string, facts: TitleFacts | null, storeRevision: string, usedRevision?: string) => void;
 function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
@@ -128,10 +126,8 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     });
   }, [remoteFacts]);
   const remoteStatus = remote.status;
+  const remoteFailed = remote.status !== "loading" && remote.error !== null;
   const remoteFresh = remote.status === "ready" && remote.fresh;
-  const titleError = remote.status === "loading" ? null : remote.error;
-  const remoteFailed = titleError !== null;
-  const titleOccurrence = useFeedbackOccurrence(remoteFailed, remoteKey);
   const titlePending = remote.status === "loading" || (remote.status === "failed" ? remote.retrying : remote.refreshing);
   const forVisit = useCallback((visit: PaneVisit): PanePresentation => {
     const route = resolvePaneRouteModel(visit.href);
@@ -142,7 +138,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     const key = panePresentationLocatorKey(locator);
     if (authored(locator)) {
       const resource = local.entries.get(key)?.facts;
-      if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "loading title…", status: "Loading" };
+      if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: null, status: "Loading" };
       if (resource === null) return { title: route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint, detail: route.id === "dailyDate" ? null : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
       const title = resource.title;
       const name = title.trim() ? title : resource.local_date !== null ? pageTitle("", resource.local_date) : null;
@@ -258,7 +254,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     if (!titlePending) void remoteRefetch().catch(() => {});
     if (!capturePending) void captureRefetch().catch(() => {});
   }, [remoteRefetch, captureRefetch, titlePending, capturePending]);
-  const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles, titleFailure: titleError !== null ? {error: titleError, occurrence: titleOccurrence, pending: titlePending} : null }), [forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles, titleError, titleOccurrence, titlePending]);
+  const value = useMemo(() => ({ forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles }), [forVisit, forRecent, isRecentRemoved, resourceRefForVisit, retryTitles]);
   useEffect(() => {
     for (const pane of state.panes) {
       const visit = pane.current_visit; const route = resolvePaneRouteModel(visit.href);

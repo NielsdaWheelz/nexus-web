@@ -27,7 +27,15 @@ export type ProgressView =
       readonly device: Locator;
       readonly adoptUnresolved: boolean;
     };
+/** A sent device write whose resulting view could not be read. Acceptance never implies a
+ * fabricated view. The next load must reread the index covering that write before returning. */
+export type ProgressUnobserved = {
+  readonly kind: "Unobserved";
+  readonly acceptance: "Accepted" | "Unknown";
+  readonly error: unknown;
+};
 export type ProgressSaveResult =
+  | ProgressUnobserved
   | { readonly kind: "ContentChanged" }
   | { readonly kind: "Canonical"; readonly snapshot: CursorSnapshot }
   /** Refused: canonical moved past the base (hosted 409). The reader offers the newer spot. */
@@ -46,7 +54,7 @@ export interface ReaderProgressPort {
   resolve(
     choice: "Canonical" | "Device",
     conflict: { readonly canonical: CursorSnapshot; readonly device: Locator },
-  ): Promise<ProgressView>;
+  ): Promise<ProgressView | ProgressUnobserved>;
 }
 
 export interface ReaderHost {
