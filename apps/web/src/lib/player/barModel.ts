@@ -79,7 +79,7 @@ export function barMode(session: PlayerSession, read: SubjectRead): BarMode {
     case "Loaded":
       if (playbackSubject === null || pendingPlayback !== null && pendingPlayback.mediaId !== state.source.descriptor.media_id)
         return { kind: "Advancing", loaded: state };
-      return { kind: "Active", loaded: state, failed: state.playbackFailed || state.error !== null };
+      return { kind: "Active", loaded: state, failed: state.playbackFailed };
     case "Absent": {
       if (pendingPlayback !== null) return { kind: "Starting", episode: episode(read) };
       if (!queue.known)
@@ -165,8 +165,8 @@ export type BarClock =
   | { readonly kind: "Live"; readonly loaded: Loaded; readonly seekable: boolean; readonly cold: boolean }
   | { readonly kind: "Still"; readonly progress: number | null; readonly remainingMinutes: number | null; readonly cold: true };
 
-/** Paused, ended or failed: a failure stops the sound whatever the phase says. */
-const cold = ({ phase, playbackFailed, error }: Loaded) => phase === "Paused" || phase === "Ended" || playbackFailed || error !== null;
+/** Progress trouble has its own feedback owner; it says nothing about the sound. */
+const cold = ({ phase, playbackFailed }: Loaded) => phase === "Paused" || phase === "Ended" || playbackFailed;
 
 export function barClock(mode: BarMode): BarClock {
   switch (mode.kind) {

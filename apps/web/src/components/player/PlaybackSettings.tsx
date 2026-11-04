@@ -150,7 +150,7 @@ function Reckoning({ loaded, ready }: { readonly loaded: Loaded; readonly ready:
   const remaining = (duration - positionMs) / loaded.rate;
   if (!ready || duration <= 0 || remaining <= 0) return null;
   let arrival = "";
-  if (loaded.phase === "Playing" && !loaded.shortenPauses && !loaded.playbackFailed && loaded.error === null) {
+  if (loaded.phase === "Playing" && !loaded.shortenPauses && !loaded.playbackFailed) {
     const finish = new Date(Date.now() + remaining);
     const hour = finish.getHours();
     arrival = `, done about ${hour % 12 || 12}:${String(finish.getMinutes()).padStart(2, "0")} ${hour < 12 ? "am" : "pm"}`;
