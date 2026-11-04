@@ -70,3 +70,18 @@ playwright did not surface.
 
 resolved when one run attaches and passes every step above on api 34 with real adb
 touch and the real handoff.
+
+playback-cut recurrence, 2026-11-04 at `e00e61c855fe402b55e4294697f6d1523c6ce1b2`:
+unchanged natural-advance and fixture-proof journeys each failed at the same
+one-page guard before login in an eight-journey native run. the guard did not
+record its exact page count. one bounded fresh-reboot retry of each passed
+without changing attachment. passive reads of the existing owned forward saw
+`/json/version` return 200 while `/json/list` was empty, then one page on the
+same package pid/forward in successive samples roughly 0.4 seconds apart.
+those observations establish target-readiness lag in the passing attempts;
+they do not establish the earlier failures’ cause or playwright page count.
+no helper repair or timeout extension was made. this admission issue remains
+open, independently of those two completed playback journeys. the observer
+was limited to 25 seconds from case start, so missing later observations prove
+nothing about attachment. retain the contemporaneous target/process/context
+diagnostic requirement above before choosing a repair.
