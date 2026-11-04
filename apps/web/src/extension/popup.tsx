@@ -242,8 +242,8 @@ function Popup() {
           <span className={styles.host}>{draft.target.host}</span>
         </header>
       ) : (
-        state.checkingFailed ? <Fact line={{ fact: "couldn’t check this page.", reason: state.unsupported ?? undefined }} verbs={[{ label: "retry", commandKey: "RetryChecking", run: () => sendWithOrigins({ kind: "retry_checking" }) }]} />
-          : state.unsupported !== null ? <Fact line={{ fact: "this page can’t be imported.", reason: state.unsupported }} />
+        state.checkingFailed ? <Fact line={{ fact: "couldn’t check this page.", reason: state.unsupported ?? undefined }} speak verbs={[{ label: "retry", commandKey: "RetryChecking", run: () => sendWithOrigins({ kind: "retry_checking" }) }]} />
+          : state.unsupported !== null ? <Fact line={{ fact: "this page can’t be imported.", reason: state.unsupported }} speak />
           : <Fact line={{ fact: "nothing here to import." }} />
       )}
 
