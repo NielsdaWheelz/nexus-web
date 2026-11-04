@@ -27,7 +27,7 @@ import {
   type SafeFailureCode,
   type UploadSessionOutcome,
 } from "@/lib/imports/api";
-import type { AcceptedIngest } from "@/lib/imports/ingest";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import {
   METADATA_FAILURE_COPY,
   metadataOperationName,
@@ -74,7 +74,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: null,
   },
   E_FILE_TOO_LARGE: {
-    reason: "the file is too big",
+    reason: IMPORT_WORDS.tooBig,
     title: "this file exceeds the import limit.",
     explanation: null,
   },
@@ -114,7 +114,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: null,
   },
   E_INVALID_REQUEST: {
-    reason: "nexus refused it",
+    reason: IMPORT_WORDS.refused,
     title: "couldn’t import this source.",
     explanation: null,
   },
@@ -204,7 +204,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: null,
   },
   E_SOURCE_INTEGRITY: {
-    reason: "what arrived doesn’t match the file",
+    reason: IMPORT_WORDS.integrity,
     title: "the stored file didn’t match this import.",
     explanation: null,
   },
@@ -254,7 +254,7 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: "search and quoting need a transcript.",
   },
   E_UPLOAD_CAPABILITY_EXPIRED: {
-    reason: "upload timed out",
+    reason: IMPORT_WORDS.timedOut,
     title: "this upload link expired.",
     explanation: null,
   },
@@ -630,8 +630,8 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
   UploadRejected: "This upload was rejected. Remove it and start a new import.",
 };
 
-function offerLine(offer: RecoveryOffer): string {
-  if (offer.kind === "BrowserCapture") return "when the article is visible, use nexus capture to finish this import.";
+export function offerLine(offer: RecoveryOffer): string {
+  if (offer.kind === "BrowserCapture") return "the nexus extension for firefox can finish this from the open article.";
   const stored = offer.input === "StoredSource";
   switch (offer.kind) {
     case "RetryUpload":
@@ -982,14 +982,7 @@ export function retryUploadRefusal(error: UploadSessionError): { readonly line: 
   }
 }
 
-export type CaptureOperation = "SaveSource" | "AddAttachment";
-const CAPTURE_FACT: Readonly<Record<CaptureOperation, string>> = {
-  SaveSource: "couldn’t save this source.",
-  AddAttachment: "couldn’t attach this file.",
-};
-
-/** A one-file upload's refusal under its operation's fact: capture and attachments show no
- * import-session row. A malformed intent is a defect. */
+/** Attachments show no import-session row. A malformed upload intent is a defect. */
 function outcomeReason(error: UploadSessionError): string | undefined {
   const outcome = error.outcome;
   switch (outcome.kind) {
@@ -1003,7 +996,7 @@ function outcomeReason(error: UploadSessionError): string | undefined {
 /** The acquisition endpoints' domain codes, shared with intake lines. A conflict says only
  * that something changed; it does not attribute the refusal to a particular guard. */
 export const CAPTURE_REFUSAL = {
-  E_RESOURCE_CONFLICT: "something changed while this was sending.",
+  E_RESOURCE_CONFLICT: IMPORT_WORDS.changed,
   E_LIBRARY_FORBIDDEN: OUTCOME_REASON.LibraryForbidden,
   E_SOURCE_IMPORT_ACTIVE: "another import of this is running",
   E_X_IDENTITY_CONFLICT: "this post is in more than one imported thread.",
@@ -1019,24 +1012,19 @@ export const CAPTURE_REFUSAL = {
   E_X_PROVIDER_RATE_LIMITED: "x is limiting imports.",
   E_X_PROVIDER_TIMEOUT: "x didn’t answer in time.",
   E_SOURCE_TARGET_AMBIGUOUS: "more than one import uses this address",
-  E_MEDIA_DELETING: "this is being removed",
+  E_MEDIA_DELETING: IMPORT_WORDS.deleting,
 } as const;
 
 /**
- * A failed capture or attachment: the operation's fact, with its domain code or upload outcome as
+ * A failed attachment: its fact, with its domain code or upload outcome as
  * the reason, ahead of the transport. A malformed intent and same-system defects rethrow.
  */
-export function captureErrorLine(error: unknown, operation: CaptureOperation): Line {
-  const fact = CAPTURE_FACT[operation];
+export function captureErrorLine(error: unknown): Line {
+  const fact = "couldn’t attach this file.";
   if (error instanceof UploadSessionError) return { fact, reason: outcomeReason(error) };
   const failure = modeled(error);
   if (Object.hasOwn(CAPTURE_REFUSAL, failure.code)) return { fact, reason: CAPTURE_REFUSAL[failure.code as keyof typeof CAPTURE_REFUSAL] ?? undefined };
   const transport = transportOf(failure);
   return TRANSPORT_LINES[transport].command(fact);
-}
-
-/** Acceptance records a saved source, independently of processing success. */
-export function captureStatusLine(result: AcceptedIngest): string {
-  return !result.available ? "saved, then removed." : result.processing === "failed" ? "saved. nexus couldn’t process it." : "saved.";
 }
 

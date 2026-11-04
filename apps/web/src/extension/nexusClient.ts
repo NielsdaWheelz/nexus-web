@@ -1,11 +1,13 @@
 // The background's nexus adapter: `/api/extension/*` under the build's pinned
 // origin, authorized by the bearer alone (cookies omitted), typed by the
-// generated wire, failing with one CaptureFailureError. The storage PUT never
-// sees the bearer. Source urls are data: nothing here logs one.
+// generated wire, failing with one CaptureFailureError whose message is words for
+// a person, never the server’s own message. The storage PUT never sees the bearer.
+// Source urls are data: nothing here logs one.
 
 import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import { isAbortError } from "@/lib/errors";
 import {
   expectArray,
@@ -152,7 +154,7 @@ async function call<T>(
     throw failure("E_NETWORK", navigator.onLine === false ? "you’re offline." : "nexus isn’t answering.", null, null, navigator.onLine === false);
   }
   if (response.status === 426) {
-    const message = "nexus updated. update this extension to keep capturing.";
+    const message = "update the nexus extension to keep importing.";
     throw failure("E_WIRE_MISMATCH", message, null, 426);
   }
   if (response.status === 204) return undefined as T;
@@ -167,20 +169,55 @@ async function call<T>(
       typeof error.request_id === "string" ? error.request_id : null;
     if (isCaptureDefect(error.code)) {
       console.error("capture server defect:", { status: response.status, error });
-      throw failure(error.code, "nexus capture stopped unexpectedly.", requestId, response.status);
+      throw failure(error.code, "the extension stopped unexpectedly.", requestId, response.status);
     }
     throw failure(error.code, refusal(error.code, response.status), requestId, response.status);
   }
   console.error("capture server defect:", { status: response.status, response: json });
-  throw failure("E_UNKNOWN", "nexus capture stopped unexpectedly.", null, response.status);
+  throw failure("E_UNKNOWN", "the extension stopped unexpectedly.", null, response.status);
 }
 
-/** What the popup says of a refusal: its transport's reason, never the server's own text. */
+/** The fixed reasons this extension's routes can answer with; a generic request
+    refusal cannot identify an address or upload kind as its cause. */
 function refusal(code: string, status: number): string {
-  if (status === 401) return "sign in to keep capturing.";
+  if (status === 401) return "sign in to continue.";
   if (code === "E_DATABASE_BUSY" || code === "E_RATE_LIMITED" || code === "E_AUTH_UNAVAILABLE") return "nexus is busy.";
-  if (status >= 500) return "nexus isn’t answering.";
-  return "nexus refused this.";
+  switch (code) {
+    case "E_RESOURCE_CONFLICT":
+      return IMPORT_WORDS.changed;
+    case "E_MEDIA_DELETING":
+      return `${IMPORT_WORDS.deleting}.`;
+    case "E_INVALID_REQUEST":
+      return `${IMPORT_WORDS.refused}.`;
+    case "E_FILE_TOO_LARGE":
+      return `${IMPORT_WORDS.tooBig}.`;
+    case "E_INVALID_FILE_TYPE":
+      return "nexus refused what arrived.";
+    case "E_SOURCE_INTEGRITY":
+      return `${IMPORT_WORDS.integrity}.`;
+    case "E_CAPTURE_TOO_LARGE":
+      return "this page is too large to import.";
+    case "E_LIBRARY_NOT_FOUND":
+    case "E_LIBRARY_FORBIDDEN":
+      return "can’t file to one of these libraries.";
+    case "E_CAPTURE_TARGET_CHANGED":
+      return "the imported copy changed since this was read.";
+    case "E_UPLOAD_CAPABILITY_EXPIRED":
+      return `${IMPORT_WORDS.timedOut}.`;
+    case "E_SIGN_UPLOAD_FAILED":
+      return `${IMPORT_WORDS.notPrepared}.`;
+    case "E_STORAGE_ERROR":
+      return `${IMPORT_WORDS.notChecked}.`;
+    case "E_STORAGE_MISSING":
+      return `${IMPORT_WORDS.stopped}.`;
+    case "E_UPLOAD_SESSION_NOT_FOUND":
+      return "removed since.";
+    case "E_UPLOAD_GENERATION_STALE":
+      return "this upload was replaced.";
+    case "E_UNAUTHENTICATED":
+      return "sign in to continue.";
+  }
+  return status >= 500 ? "nexus isn’t answering." : `${IMPORT_WORDS.refused}.`;
 }
 
 export function nexus(token: string) {
@@ -229,10 +266,7 @@ export async function putBytes(
 ): Promise<void> {
   const remaining = Date.parse(upload.expires_at) - Date.now();
   if (remaining <= 0) {
-    throw failure(
-      "E_UPLOAD_EXPIRED",
-      "this upload expired.",
-    );
+    throw failure("E_UPLOAD_EXPIRED", `${IMPORT_WORDS.timedOut}.`);
   }
   let response: Response;
   try {
@@ -245,13 +279,7 @@ export async function putBytes(
     });
   } catch (error) {
     if (signal.aborted) throw error;
-    throw failure(
-      "E_UPLOAD_TRANSPORT",
-      "couldn’t confirm the upload.",
-    );
+    throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
   }
-  if (!response.ok) {
-    const message = "couldn’t confirm the upload.";
-    throw failure("E_UPLOAD_TRANSPORT", message);
-  }
+  if (!response.ok) throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
 }

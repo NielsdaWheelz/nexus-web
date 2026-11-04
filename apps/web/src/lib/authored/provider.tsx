@@ -63,7 +63,11 @@ const DIFFERENT_ACCOUNT: Line = { fact: "wrong account for this device.", reason
 const SIGN_IN_FAILED: Line = { fact: "couldn’t sign in." };
 const NOT_OPENED = "couldn’t open your notes on this device.";
 const PREPARING: { status: SyncStatus; detail: string | null; failure: SyncFailure } = { status: "preparing", detail: null, failure: null };
-export function AuthoredProvider({ accountId, children, host = "workspace" }: { accountId: string; children: ReactNode; host?: "workspace" | "shelf" | "share" }) {
+export function AuthoredProvider(props: { accountId: string; children: ReactNode } & (
+  | { host: "share"; openWorkspace: () => void }
+  | { host?: "workspace" | "shelf"; openWorkspace?: never }
+)) {
+  const { accountId, children, host = "workspace" } = props;
   const [store, setStore] = useState<AuthoredStore | null>(null);
   const [sync, setSync] = useState(PREPARING);
   const [ready, setReady] = useState(false);
@@ -90,7 +94,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const signIn = () => {
     if (signInRunning.current || !ready && opening) return;
     if (host === "shelf") { void localCall("open_hosted", { path: "/downloads" }).catch(reportError); return; }
-    if (host === "share") { window.location.assign("nexus-share://open?path=%2Fdownloads"); return; }
+    if (props.host === "share") { props.openWorkspace(); return; }
     if (!installedApp) { window.location.assign(ready ? loginPath(parseReturnTarget(`${window.location.pathname}${window.location.search}`)) : "/login?switch_account=1"); return; }
     signInRunning.current = true; setSigningIn(true); setSignInResult(null);
     const refused = (line: Line) => { if (ready) say(line, [signInVerb]); else setSignInResult(line); };
@@ -149,7 +153,7 @@ export function AuthoredProvider({ accountId, children, host = "workspace" }: { 
   const retryVerb: CommandVerb = { label: "retry", commandKey: "RetrySetup", run: retrySetup, busy: opening };
   const leaveVerb: CommandVerb = { label: host === "workspace" ? "sign out on this device" : "open workspace", commandKey: "LeaveSetup", run: () => {
     if (host === "shelf") void localCall("open_hosted", { path: "/downloads" }).catch(fail);
-    else if (host === "share") window.location.assign("nexus-share://open?path=%2Fdownloads");
+    else if (props.host === "share") props.openWorkspace();
     else void discardFailedAuthoredSetup(accountId).catch(fail);
   } };
   const recover: Verbs = [retryVerb, leaveVerb];

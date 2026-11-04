@@ -19,6 +19,7 @@ import { parseRoom, ROOM_CHROME } from "@/lib/theme/room";
 
 const nativeHost = "nexusAuthored" in window;
 const isCapture = window.location.pathname === "/share";
+const params = new URL(location.href).searchParams;
 const theme = parseRoom(document.documentElement.dataset.theme);
 document.querySelector('meta[name="theme-color"]')?.setAttribute("content", ROOM_CHROME[theme]);
 const environment: RenderEnvironment = {
@@ -41,6 +42,6 @@ if (root === null) throw new Error("installed application root missing");
 createRoot(root).render(
   <HostPolicyProvider value={{ ...installedHostPolicy, Image: PackagedImage }}>
     <SolarEffects />
-    {isCapture ? <RenderEnvironmentProvider value={environment}><MobileViewportProvider><ShareCapture text={new URL(location.href).searchParams.get("text") ?? ""} isShell={nativeHost} /></MobileViewportProvider></RenderEnvironmentProvider> : installedApp ? <DeviceWorkspace renderEnvironment={environment} /> : <BrowserWorkspace renderEnvironment={environment} />}
+    {isCapture ? <RenderEnvironmentProvider value={environment}><MobileViewportProvider><ShareCapture text={params.get("text") ?? ""} files={Number(params.get("files") ?? "0")} /></MobileViewportProvider></RenderEnvironmentProvider> : installedApp ? <DeviceWorkspace renderEnvironment={environment} /> : <BrowserWorkspace renderEnvironment={environment} />}
   </HostPolicyProvider>,
 );
