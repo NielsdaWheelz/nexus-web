@@ -289,9 +289,14 @@ class ShareActivity : AppCompatActivity() {
                 textSize = 18f
             })
             if (!checking) {
-                addView(Button(this@ShareActivity).apply { text = "retry"; setOnClickListener { admit() } })
+                addView(Button(this@ShareActivity).apply {
+                    text = "retry"
+                    isAllCaps = false
+                    setOnClickListener { admit() }
+                })
                 addView(Button(this@ShareActivity).apply {
                     text = "open nexus"
+                    isAllCaps = false
                     setOnClickListener { openMain(Uri.parse(BuildConfig.NEXUS_BASE_URL)) }
                 })
             }
