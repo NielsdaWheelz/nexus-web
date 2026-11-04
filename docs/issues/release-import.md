@@ -1,21 +1,9 @@
-# paired import release
+# paired outward import release
 
-the outward import cut requires matching hosted web, android apk and owner-signed
-firefox xpi after feedback-homes' release. older installed share activities do not
-serve the new file manifest; the web must not treat a bridge as arrival consent.
+the outward cut requires matching hosted web, android apk and owner-signed firefox xpi. only an actual native200 manifest authorizes arrival capture; browser/main404 retains the explicit press. source composition, emulator evidence and static checks do not establish deployed or physical-device acceptance.
 
-release gates: integrate the held import slices after feedback-homes' cut, pass
-the canonical static gate and qualify the temporary browser/emulator journeys.
-the owner signs and installs the matching apk/xpi. verify actual hosted wire and
-build identity, browser/manual share consent, native url/pdf/multiple/unreadable
-shares, mixed failure retention, rotation without resend, epub/multiple picker,
-plain capture identity and the extension's real enrollment/import recovery.
+preserve the accepted release gates in `release-import-update-uncertainty.md`, `release-upload-confirmation-local-expiry.md`, `release-extension-uncertain-filing-refusal.md` and `release-import-native-rotation-leave.md`. source qualification grants no release waiver; stopped oracle actions stay stopped.
 
-emulator proof does not establish physical-device or deployed acceptance. release
-is complete only when the matching installed clients and hosted build pass their
-actual entry and recovery checks, and retained issue gates are resolved or named.
+the owner signs and installs paired clients, verifies actual hosted wire/build identity and their entry/recovery boundaries, and resolves or explicitly dispositions remaining release gates. no deployment or signing is performed by this change.
 
-rollback is a coordinated return to the prior compatible hosted web/apk/xpi set,
-subject to its database/wire compatibility. if storage has crossed an irreversible
-migration boundary, retain data and deploy a forward repair; do not downgrade one
-client, erase authored state or replay an uncertain import as a new command.
+rollback restores a compatible hosted/apk/xpi set only where database/wire compatibility permits. after an irreversible storage boundary, retain data and forward-repair; never erase authored state or replay uncertainty as a new command.

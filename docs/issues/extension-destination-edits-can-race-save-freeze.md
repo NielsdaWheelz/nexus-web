@@ -1,13 +1,7 @@
-# extension destination edits can race the save boundary
+# qualify extension destination ordering
 
-status: open · origin: 2026-10-14 library chooser specification · area: extension / destination ordering
+the former asynchronous draft-storage diagnosis no longer describes `apps/web/src/extension/background.ts:182-216,291-320,412-416`: view commands apply destination deltas synchronously, `exclusive` claims the active owner before save awaits, later edits are refused, and `setDraft` changes the current draft synchronously.
 
-problem: save can remain in editable draft phase while waiting for permissions or hashing; destination writes can overlap save or draft clearing. simply removing the popup's selection busy state would additionally lose rapid edits.
+that source repair is not runtime qualification of every rapid-edit, permission-wait, clear and failure interleaving. preserve background draft authority, the real permission gesture and the existing command sequence/ack; unrelated extension passes do not close the broader ordering claim.
 
-evidence: `apps/web/src/extension/background.ts:208-226` starts messages independently; `:417-420` updates memory only after asynchronous draft storage; `:832-857` gates edits on phase but freezes save after awaits. `apps/web/src/extension/popup.tsx:193-197` leaves choices enabled while phase is draft. source-derived; no live reproduction yet.
-
-prerequisites: keep the background as draft authority and preserve the existing permission-request user gesture and capture lifecycle. this is draft persistence, not live membership mutation.
-
-fix: order explicit destination deltas at background admission, retain current desired selection during storage, and close edit admission synchronously when save/clear starts. save waits for preceding choices to persist; clear cannot be overtaken by an earlier storage write. stale pushes/replies must not erase newer intent.
-
-acceptance: delayed storage with add a/add b/remove a then save includes only b; save followed by edit rejects the edit; closing the popup preserves admitted work; discard during storage never resurrects a draft; storage failure retains intent and starts no capture mutation.
+resolve the remaining supported boundaries with ordinary commands and exact retained selection/command ownership. do not revive a nonexistent draft-storage race or add a second command lifecycle merely to replay the old diagnosis.
