@@ -70,6 +70,7 @@ import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
+import { offerLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import {
   paneSourceKey,
@@ -145,8 +146,8 @@ function FailedSource({ mediaId, code, content, announcement }: {
   if (code === "E_SOURCE_NOT_READABLE") title = "no readable article was found.";
   return <>
     <FeedbackState content={{ tone: "Danger", title }} announcement={announcement}
-      actions={[{ label: "open source in new tab", href: offer.source_url, target: "_blank" }]} />
-    <p>when the article is visible, use nexus capture to finish this import.</p>
+      actions={[{ label: "open original", href: offer.source_url, target: "_blank" }]} />
+    <p>{offerLine(offer)}</p>
   </>;
 }
 
@@ -939,7 +940,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Serve
           {arrivalNotice}
           {transcriptChrome}
           {captureHint}
-          {transcript ? (
+          {transcript && media.processing_status !== "suspended" ? (
             <TranscriptState media={media} holdFocus={holdTranscriptFocus}
               announcement={paneActive ? "Polite" : "None"}
               returnFocus={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? root.current}

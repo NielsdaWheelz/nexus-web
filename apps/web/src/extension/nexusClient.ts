@@ -1,11 +1,13 @@
 // The background's nexus adapter: `/api/extension/*` under the build's pinned
 // origin, authorized by the bearer alone (cookies omitted), typed by the
-// generated wire, failing with one CaptureFailureError. The storage PUT never
-// sees the bearer. Source urls are data: nothing here logs one.
+// generated wire, failing with one CaptureFailureError whose message is words for
+// a person, never the server's own message. The storage PUT never sees the
+// bearer. Source urls are data: nothing here logs one.
 
 import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { ApiJson, Schema } from "@/lib/api/wire";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import { isAbortError } from "@/lib/errors";
 import {
   expectArray,
@@ -121,6 +123,51 @@ function recoveryPage(raw: unknown): Schema<"RecoveryCandidatePage"> {
   }, "recovery candidates"), next_cursor: value.next_cursor === null ? null : expectString(value.next_cursor, "next cursor") };
 }
 
+/** The fixed reasons this extension's routes can answer with; a generic request
+    refusal cannot identify an address or upload kind as its cause. */
+function words(code: string, status: number): string {
+  switch (code) {
+    case "E_RESOURCE_CONFLICT":
+      return IMPORT_WORDS.changed;
+    case "E_MEDIA_DELETING":
+      return `${IMPORT_WORDS.deleting}.`;
+    case "E_INVALID_REQUEST":
+      return `${IMPORT_WORDS.refused}.`;
+    case "E_FILE_TOO_LARGE":
+      return `${IMPORT_WORDS.tooBig}.`;
+    case "E_INVALID_FILE_TYPE":
+      return "nexus refused what arrived.";
+    case "E_SOURCE_INTEGRITY":
+      return `${IMPORT_WORDS.integrity}.`;
+    case "E_CAPTURE_TOO_LARGE":
+      return "this page is too large to import.";
+    case "E_LIBRARY_NOT_FOUND":
+    case "E_FORBIDDEN":
+    case "E_LIBRARY_FORBIDDEN":
+      return "can’t file to one of these libraries.";
+    case "E_CAPTURE_TARGET_CHANGED":
+      return "the imported copy changed since this was read.";
+    case "E_UPLOAD_CAPABILITY_EXPIRED":
+      return `${IMPORT_WORDS.timedOut}.`;
+    case "E_SIGN_UPLOAD_FAILED":
+      return `${IMPORT_WORDS.notPrepared}.`;
+    case "E_STORAGE_ERROR":
+      return `${IMPORT_WORDS.notChecked}.`;
+    case "E_STORAGE_MISSING":
+      return `${IMPORT_WORDS.stopped}.`;
+    case "E_UPLOAD_SESSION_NOT_FOUND":
+      return "removed since.";
+    case "E_UPLOAD_GENERATION_STALE":
+      return "this upload was replaced.";
+    case "E_UNAUTHENTICATED":
+      return "sign in to continue.";
+    case "E_DATABASE_BUSY":
+    case "E_AUTH_UNAVAILABLE":
+      return "nexus is busy.";
+  }
+  return status >= 500 ? "nexus isn’t answering." : `${IMPORT_WORDS.refused}.`;
+}
+
 async function call<T>(
   token: string,
   method: "GET" | "POST" | "DELETE",
@@ -143,35 +190,24 @@ async function call<T>(
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
-    throw failure("E_NETWORK", "Nexus could not be reached.");
+    throw failure("E_NETWORK", "nexus isn’t answering.");
   }
   if (response.status === 426) {
-    const message = "Update the Nexus extension to keep capturing.";
-    throw failure("E_WIRE_MISMATCH", message, null, 426);
+    throw failure("E_WIRE_MISMATCH", "update the nexus extension to keep importing.", null, 426);
   }
   if (response.status === 204) return undefined as T;
   const json = (await response.json().catch(() => null)) as {
     data?: T;
-    error?: { code?: unknown; message?: unknown; request_id?: unknown };
+    error?: { code?: unknown; request_id?: unknown };
   } | null;
   if (response.ok && json !== null) return json.data as T;
   const error = json?.error;
   if (typeof error?.code === "string") {
     const requestId =
       typeof error.request_id === "string" ? error.request_id : null;
-    throw failure(
-      error.code,
-      String(error.message),
-      requestId,
-      response.status,
-    );
+    throw failure(error.code, words(error.code, response.status), requestId, response.status);
   }
-  throw failure(
-    "E_UNKNOWN",
-    `Nexus answered HTTP ${response.status}.`,
-    null,
-    response.status,
-  );
+  throw failure("E_UNKNOWN", "the extension couldn’t read nexus’s answer.", null, response.status);
 }
 
 export function nexus(token: string) {
@@ -220,10 +256,7 @@ export async function putBytes(
 ): Promise<void> {
   const remaining = Date.parse(upload.expires_at) - Date.now();
   if (remaining <= 0) {
-    throw failure(
-      "E_UPLOAD_EXPIRED",
-      "The upload window closed. Retry to open a new one.",
-    );
+    throw failure("E_UPLOAD_EXPIRED", `${IMPORT_WORDS.timedOut}.`);
   }
   let response: Response;
   try {
@@ -236,13 +269,7 @@ export async function putBytes(
     });
   } catch (error) {
     if (signal.aborted) throw error;
-    throw failure(
-      "E_UPLOAD_TRANSPORT",
-      "The upload did not complete. Retry to send it again.",
-    );
+    throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
   }
-  if (!response.ok) {
-    const message = `Storage refused the upload (HTTP ${response.status}). Retry to send it again.`;
-    throw failure("E_UPLOAD_TRANSPORT", message);
-  }
+  if (!response.ok) throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
 }

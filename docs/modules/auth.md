@@ -138,8 +138,10 @@ runs `services/bootstrap.ensure_user_and_default_library` in its own session:
 the `users` row (email mirrored; another row still holding the address gives it
 up), the default library "My Library" and the owner's admin membership.
 Idempotent; concurrent first sights converge through the SERIALIZABLE retry
-(`users_pkey`, `uix_libraries_one_default_per_user`). A failure is 500
-`E_INTERNAL` for that request and is retried by the next.
+(`users_pkey`, `uix_libraries_one_default_per_user`). Bootstrap transaction busy
+and checkout exhaustion answer 503 `E_DATABASE_BUSY` before routing; they cannot
+resolve a prior domain command. Other unexpected failures answer 500 `E_INTERNAL`.
+The next request retries bootstrap; only success marks the pair seen.
 
 `GET /me`, `PATCH /me` (display name, calendar time zone; absolute values, so a
 resend is a no-op) answer `UserProfileOut`; `email_ingest_address` only to the
