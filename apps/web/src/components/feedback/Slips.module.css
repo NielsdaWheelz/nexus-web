@@ -77,6 +77,7 @@
   margin-inline: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: none;
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
@@ -90,6 +91,9 @@
     opacity var(--duration-fast) var(--ease-glide),
     transform var(--duration-fast) var(--ease-glide);
 }
+
+.frame[data-many],
+.frame[data-scrolls] { touch-action: pan-y; }
 
 .frame[data-dragging] { transition: none; }
 
@@ -244,11 +248,6 @@
 
 @media (any-pointer: coarse) {
   .anchor { --stage-tab-width: 48px; }
-
-  .frame { touch-action: none; }
-
-  .frame[data-many],
-  .frame[data-scrolls] { touch-action: pan-y; }
 
   .row { min-block-size: 52px; }
 
