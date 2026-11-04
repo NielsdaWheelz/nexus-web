@@ -237,6 +237,8 @@ speak only in the topmost modal, else the active pane or standalone host. short
 facts and reasons enter the live region, never controls; risk is assertive and
 other lines polite.
 appearance takes no focus. a withdrawing verb restores only focus it owns.
+a changed command keeps the former control disabled while pointer or keyboard
+focus holds it. its replacement appears in that position only after both leave.
 `mod+.` reaches the first slip control; escape closes or tucks and returns focus.
 coarse-pointer downward swipe dismisses plain rows and tucks held rows when
 the frame fits. an overflowing frame uses native scrolling; its visible close
