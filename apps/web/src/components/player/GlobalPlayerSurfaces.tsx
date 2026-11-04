@@ -81,7 +81,7 @@ export default function GlobalPlayerSurfaces({ readerComposition, children }: {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [sheetTarget, setSheetTarget] = useState<"Player" | "Queue">("Player");
-  const announcement = usePlayerAnnouncement(mode);
+  const { announcement, deferred } = usePlayerAnnouncement(mode);
   const slotRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLElement>(null);
   const discRef = useRef<HTMLButtonElement>(null);
@@ -242,7 +242,7 @@ export default function GlobalPlayerSurfaces({ readerComposition, children }: {
   return <>
     <PlayerKeys origin={origin} />
     <PlayerOriginObserver origin={origin} />
-    <Announcement text={announcement?.text ?? ""} occurrence={announcement?.occurrence} level="Polite" />
+    <Announcement text={announcement?.text ?? ""} occurrence={announcement?.occurrence} deferred={deferred} level="Polite" />
     <PlayerOutcomes />
     {children(<div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
       onFocusCapture={event => { focusedControl.current = event.target; sourceOpened.current = false; }}

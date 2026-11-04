@@ -8,6 +8,10 @@ import * as Player from "@/lib/player/playerRuntime";
 import { unavailableMessages } from "@/lib/player/barModel";
 
 type Phase = Extract<Player.PlayerState, { kind: "Loaded" }>["phase"];
+type PlayerAnnouncement = { readonly text: string; readonly occurrence: object } & (
+  | { readonly kind: "Playback" }
+  | { readonly kind: "Rate"; readonly subject: string; readonly label: string }
+);
 
 /**
  * What the player's one live region says on its own, once each: a start, resume or new source, a
@@ -16,8 +20,8 @@ type Phase = Extract<Player.PlayerState, { kind: "Loaded" }>["phase"];
  */
 export function usePlayerAnnouncement(mode: BarMode) {
   const { state, queue, preferences, playbackSubject } = Player.usePlayerSession();
-  const [announcement, setAnnouncement] = useState<{ readonly text: string; readonly occurrence: object } | null>(null);
-  const announce = useCallback((text: string | null) => setAnnouncement(text === null ? null : { text, occurrence: {} }), []);
+  const [announcement, setAnnouncement] = useState<PlayerAnnouncement | null>(null);
+  const announce = useCallback((text: string | null) => setAnnouncement(text === null ? null : { kind: "Playback", text, occurrence: {} }), []);
   const announced = useRef<{ source: string | null; phase: Phase | null; unavailable: string | null; stopped: string | null }>({ source: null, phase: null, unavailable: null, stopped: null });
   const loaded = state.kind === "Loaded" ? state : null;
   const identity = loaded?.source.descriptor.media_id ?? null;
@@ -68,8 +72,13 @@ export function usePlayerAnnouncement(mode: BarMode) {
     const label = formatPlaybackRate(state.rate);
     const previous = readyRate.current.label;
     readyRate.current.label = label;
-    if (previous !== null && previous !== label) announce(`speed ${label}`);
-  }, [playbackSubject, state, preferences, announce]);
+    if (previous !== null && previous !== label)
+      setAnnouncement({ kind: "Rate", text: `speed ${label}`, occurrence: {}, subject: playbackSubject, label });
+  }, [playbackSubject, state, preferences]);
 
-  return announcement;
+  // keep queued rate speech tied to the current ready observation through publication.
+  const deferred = announcement?.kind === "Rate" && (state.kind !== "Loaded"
+    || playbackSubject !== announcement.subject || preferences?.application.kind !== "Ready"
+    || formatPlaybackRate(state.rate) !== announcement.label);
+  return { announcement, deferred };
 }

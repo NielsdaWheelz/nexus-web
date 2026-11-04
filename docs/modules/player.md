@@ -502,9 +502,13 @@ picker return focus uses the actual opener. a hidden/removed owned key recovers
 to disc, up next, then player region; sheet recovery uses its disc. source
 navigation keeps destination focus. one session announcer uses the shared
 `Announcement` and global hidden-text primitive outside inert surfaces. initial
-idle is silent; user stop says playback stopped; exhaustion says queue finished;
-rate changes speak only after application is ready. unavailability warns once;
-retained identity prevents a false new-play claim on recovery. `PlayerOutcomes`
+idle is silent; user stop says playback stopped; exhaustion says queue finished.
+a rate occurrence can publish only for its captured load and observed label with
+the current application ready. shared deferral discards an ineligible occurrence;
+returning to readiness does not replay it. a new ready rate change creates a fresh
+occurrence. playback onsets, stop and unavailability never inherit rate deferral.
+unavailability warns once; retained identity prevents a false new-play claim on
+recovery. `PlayerOutcomes`
 projects load-specific playback/unread-place outcomes and held unsaved-place or
 unknown-queue writes through main's shared feedback contract. routine progress
 saves create no failure badge or footer. the artwork dot means failed sound alone.
