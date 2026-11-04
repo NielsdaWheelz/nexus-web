@@ -25,8 +25,8 @@ by reading:
 exact failing step: `openLabAndroid(...).attachPage()` in
 `apps/web/scripts/lab/android.ts`. the devtools socket answers `/json/version`,
 `connectOverCDP` connects, and the default context holds no page, in two of four
-runs. a bounded 20 s wait (run 4, reverted) saw none, so this is no late
-attachment of an existing target.
+runs. a bounded 20 s post-connection wait (run 4, reverted) saw none. those
+runs did not record the target list, so their missing-page cause remains unproved.
 
 evidence, lab runs of the temporary case `outline-android-10-touch` on branch
 `outline` at `c71c02f6e` (read-only cold boot of `nexus-api34`, own console port,
@@ -63,9 +63,9 @@ the webview rather than window focus; map css to device px with one calibration
 press; drive touch with `input motionevent`; read sync status attached, not
 visible (a phone keeps it in the closed switchboard).
 
-blockers: the attach failure's cause. next diagnostic: when the context has no
-page, log the forwarded port's `/json/list`, `pidof` (every pid) and
-`dumpsys activity top | grep -A2 WebView`, then tell a missing target from one
+blockers: the complete outline touch journey and the older attachment failures'
+cause. if admission fails again, retain the forwarded port's `/json/list`,
+`pidof` (every pid) and `dumpsys activity top | grep -A2 WebView`, then tell a missing target from one
 playwright did not surface.
 
 resolved when one run attaches and passes every step above on api 34 with real adb
@@ -85,3 +85,19 @@ open, independently of those two completed playback journeys. the observer
 was limited to 25 seconds from case start, so missing later observations prove
 nothing about attachment. retain the contemporaneous target/process/context
 diagnostic requirement above before choosing a repair.
+
+four playback journeys failed the same pre-login guard again at `4a5047881`:
+natural advance, catalog refusal, saved artwork and fixture proof. each failing
+start's observer saw version 200 with an empty target list, then one owned page
+on the same package pid/forward in samples 0.38–0.55 seconds apart. the exact
+playwright page counts and rejection-time alignment were not captured. these
+observations prove that devtools availability can precede target readiness;
+they do not establish every historical attachment failure's cause.
+
+`attachPage` now waits for one page target at the supplied owned web origin
+before its single cdp connection, within the existing readiness budget. non-page
+targets remain allowed. it then requires one context and one owned-origin page,
+reporting safe counts on rejection. retained-data restart uses the same owner;
+cleanup, connection deadlines and caller responsibilities are unchanged. this
+admission repair does not qualify the outline's touch/typing/back journey or
+resolve the separate interrupted-driver mapping record.

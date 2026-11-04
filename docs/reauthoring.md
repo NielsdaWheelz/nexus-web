@@ -7,7 +7,7 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 playback bar against `b115cbce7`: +1,153 net authored runtime lines
 (3,296 added, 2,143 deleted), assigned once across 18 affected area rows below.
 this is feature-only accounting against current main; merged feedback/glyph
-work is not charged again. configuration/tooling is +5/−4; generated wire types
+work is not charged again. configuration/tooling is +38/−9; generated wire types
 are +18/−59. docs and private qualification artifacts are excluded from runtime.
 the persistent composition root is 294 raw lines; its separate under-300
 contract remains, while the owner already retired the old area budget.
