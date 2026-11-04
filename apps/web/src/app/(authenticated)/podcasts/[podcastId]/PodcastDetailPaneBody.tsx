@@ -20,6 +20,8 @@ import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { catalogLine } from "@/lib/catalog/copy";
 import { Ruling } from "@/components/feedback/Ruling";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
 import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
@@ -114,6 +116,7 @@ export default function PodcastDetailPaneBody() {
 }
 
 function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
+  const speak = useActiveRegion();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const active = usePaneIsActive();
@@ -164,6 +167,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const episodeItems = episodes.status === "ready" ? episodes.data.items : [];
   const source = episodes.status === "ready" ? episodes.source : LIVE_SOURCE;
   const episodeFailure = episodes.status === "loading" ? null : episodes.error;
+  const catalogFailure = episodeFailure === null ? null : catalogLine(episodeFailure);
   const busy = indexReading(episodes);
   const retry = () => { void episodes.refetch().catch(() => {}); };
   const head: ServerValue<PodcastDetail> = episodes.status === "ready" ? { ...episodes, data: episodes.data.podcast } : episodes;
@@ -443,6 +447,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 verbs={[{ label: "reset view", commandKey: "reset episodes view", run: () => replaceView({ state: null, sort: null }) }]} />
               : episodeFailure.code === "E_NOT_FOUND" || episodeFailure.code === "E_PODCAST_NOT_FOUND" || episodeFailure.code === "E_FORBIDDEN"
                 ? <Fact line={{ fact: "this podcast isn’t available." }} />
+              : catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
               : <Failed error={episodeFailure} noun="episodes" retry={{ run: retry, busy }} />
           ) : known === undefined || ready === null ? null : (
             <PlaybackSourceContext.Provider value={async selected_media_id => {

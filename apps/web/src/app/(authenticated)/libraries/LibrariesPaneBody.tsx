@@ -9,6 +9,8 @@ import { useCallback, useId, useState } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { catalogLine } from "@/lib/catalog/copy";
 import LibraryInvitations, { useLibraryInvitations } from "@/components/libraries/LibraryInvitations";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
@@ -40,6 +42,7 @@ const FILTER = definePaneVisitDataKey<string>("Libraries.Filter");
 const UNIT = { singular: "library", plural: "libraries" };
 
 export default function LibrariesPaneBody() {
+  const speak = useActiveRegion();
   const router = usePaneRouter();
   const creation = useLibraryCreation();
   const invitations = useLibraryInvitations();
@@ -51,6 +54,7 @@ export default function LibrariesPaneBody() {
   const list = useServerValue({ ...descriptor, catalog, visit: VISIT });
   const indexItems = list.status === "ready" ? list.data.items : [];
   const failure = list.status === "loading" ? null : list.error;
+  const catalogFailure = failure === null ? null : catalogLine(failure);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const invalid =
@@ -154,7 +158,8 @@ export default function LibrariesPaneBody() {
         ariaLabel="Libraries"
         anchorKey={text}
         collectionBusy={busy}
-        error={list.status === "failed" ? <Failed error={list.error} noun="libraries" retry={{ run: retry, busy }} /> : null}
+        error={list.status === "failed" ? catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
+          : <Failed error={list.error} noun="libraries" retry={{ run: retry, busy }} /> : null}
         empty={emptyTitle === null ? null : <Fact line={{ fact: emptyTitle }} />}
       />
     </>
