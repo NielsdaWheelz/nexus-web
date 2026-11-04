@@ -380,9 +380,5 @@
 
 .savedArtwork {
   float: inline-start;
-  width: var(--space-20);
-  height: var(--space-20);
-  object-fit: cover;
   margin-inline-end: var(--space-4);
-  border-radius: var(--radius-sm);
 }

@@ -1,0 +1,70 @@
+/* the dial and the disc keep scaling strokes: the sweep is a dash measured on a 360-unit circle,
+   and the disc's stroke is the rounded corner of a filled shape, so its width is drawing, set in
+   the 24 viewbox, not the app's weight. */
+.speed > *,
+.playPause > * {
+  vector-effect: none;
+}
+
+.playPause > * {
+  stroke-width: 1.5;
+  transition: d var(--duration-fast) var(--ease-snap);
+}
+
+/* the speed dial draws one number: degrees clockwise from twelve. the number glides, and needle and
+   sweep are computed from it on every frame, so the sweep spans twelve to the needle throughout a
+   glide, across 1× too. registered, because only a typed custom property interpolates. */
+@property --dial-angle {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+/* away from 1× the needle inks and the sweep gilds. a disabled key and forced colours keep the
+   angle alone. */
+.speed {
+  --dial-ink: currentColor;
+  --dial-sweep: var(--accent);
+  transition: --dial-angle var(--duration-fast) var(--ease-glide);
+}
+
+.altered {
+  --dial-ink: var(--ink);
+}
+
+:is(:disabled, [aria-disabled="true"]) .speed {
+  --dial-ink: currentColor;
+  --dial-sweep: none;
+}
+
+@media (forced-colors: active) {
+  .speed {
+    --dial-ink: currentColor;
+    --dial-sweep: none;
+  }
+}
+
+.speed > .needle,
+.speed > .sweep {
+  transform-origin: 12px 12.5px;
+}
+
+.speed > .needle {
+  stroke: var(--dial-ink);
+  transform: rotate(calc(var(--dial-angle) * 1deg));
+}
+
+.speed > .hub {
+  fill: var(--dial-ink);
+}
+
+/* a dash |θ| units long, turned to start at twelve, or at the needle when θ < 0. */
+.speed > .sweep {
+  stroke: var(--dial-sweep);
+  stroke-dasharray: calc(max(var(--dial-angle), -1 * var(--dial-angle)) * 1px) 360px;
+  transform: rotate(calc((min(var(--dial-angle), 0) - 90) * 1deg));
+}
+
+.effort > .needle {
+  transition: transform var(--duration-fast) var(--ease-glide);
+}

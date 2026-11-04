@@ -238,7 +238,8 @@ equal it, else 409 `E_READER_CONTENT_CHANGED`.
 - list completion/failure announces once, never on byte-progress ticks.
   removal recovers owned focus to a surviving row or heading. publisher notes
   remain expanded formatted text with links and image placeholders; empty
-  sections are omitted. artwork failures remain optional and visible.
+  sections are omitted. artwork download failures remain optional and visible;
+  saved artwork that will not open leaves the show's initials in its box.
 
 ## invariants
 

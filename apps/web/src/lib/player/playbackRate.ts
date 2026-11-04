@@ -1,27 +1,23 @@
-export const PLAYBACK_RATE_MIN = 0.5;
-export const PLAYBACK_RATE_MAX = 3;
-export const PLAYBACK_RATE_STEP = 0.05;
-export const PLAYBACK_RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2] as const;
+/** New choices use one ladder; retained rates remain literal until explicitly changed. */
+export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
 
-// Rates are compared and stepped in whole hundredths, so 0.05 steps never drift.
-const hundredths = (rate: number) => Math.round(rate * 100);
-const clamp = (h: number) =>
-  Math.min(
-    hundredths(PLAYBACK_RATE_MAX),
-    Math.max(hundredths(PLAYBACK_RATE_MIN), h),
-  ) / 100;
+/** Numeric distance, with the lower stop winning a tie. */
+export function nearestRateIndex(rate: number): number {
+  return PLAYBACK_RATES.reduce<number>((nearest, stop, index) =>
+    Math.abs(stop - rate) < Math.abs(PLAYBACK_RATES[nearest] - rate) ? index : nearest, 0);
+}
 
-/** "1.5×", "2×", "0.75×". */
+/** The first stop strictly past the actual rate; an endpoint sends no command. */
+export function stepRate(rate: number, direction: -1 | 1): number | null {
+  return (direction === 1 ? PLAYBACK_RATES.find(stop => stop > rate) : PLAYBACK_RATES.findLast(stop => stop < rate)) ?? null;
+}
+
+/** One hundredth-precision presentation for both needle and figure, never a storage write. */
+export function presentPlaybackRate(rate: number): { readonly rate: number; readonly label: string } {
+  const shown = Math.round(rate * 100) / 100;
+  return { rate: shown, label: `${shown}×` };
+}
+
 export function formatPlaybackRate(rate: number): string {
-  return `${(hundredths(rate) / 100).toFixed(2).replace(/\.?0+$/, "")}×`;
-}
-
-export function stepPlaybackRate(rate: number, direction: -1 | 1): number {
-  return clamp(hundredths(rate) + direction * hundredths(PLAYBACK_RATE_STEP));
-}
-
-export function snapPlaybackRate(rate: number): number {
-  const step = hundredths(PLAYBACK_RATE_STEP);
-  const min = hundredths(PLAYBACK_RATE_MIN);
-  return clamp(min + Math.round((hundredths(rate) - min) / step) * step);
+  return presentPlaybackRate(rate).label;
 }

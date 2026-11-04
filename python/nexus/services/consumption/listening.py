@@ -73,31 +73,6 @@ def write(db: Session, *, viewer_id: UUID, media_id: UUID, sample: ListeningIn) 
     return None if row is None else _listening(row)
 
 
-def install_preview(
-    db: Session, *, viewer_id: UUID, media_id: UUID, position_ms: int, duration_ms: int | None
-) -> bool:
-    """Install only when no listening row exists; an owned zero bookmark wins."""
-    if position_ms == 0:
-        return False
-    installed = (
-        db.execute(
-            text("""
-                INSERT INTO podcast_listening_states (user_id, media_id, position_ms,
-                    duration_ms, last_engaged_at)
-                VALUES (:viewer_id, :media_id, :position_ms, :duration_ms, now())
-                ON CONFLICT (user_id, media_id) DO NOTHING
-                RETURNING 1
-            """),
-            {"viewer_id": viewer_id, "media_id": media_id}
-            | {"position_ms": position_ms, "duration_ms": duration_ms},
-        ).one_or_none()
-        is not None
-    )
-    if installed:
-        observation.advance(db, viewer_id)
-    return installed
-
-
 def fence(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
     """Retire earlier samples without moving position or changing recency."""
     db.execute(

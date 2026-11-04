@@ -17,6 +17,8 @@ import { suggestionTargetId } from "@/lib/suggestions";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { catalogLine } from "@/lib/catalog/copy";
 import { Ruling } from "@/components/feedback/Ruling";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -58,7 +60,7 @@ import {
   offered,
   projections,
 } from "@/lib/libraries/views";
-import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
@@ -86,7 +88,7 @@ const ENTRIES = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryEn
 const UNIT = { singular: "entry", plural: "entries" };
 
 const fields = (entry: LibraryEntry) =>
-  mediaListFilterFields(entry.media_summary);
+  mediaListFilterFields(entry.media_summary.title, mediaByline(entry.media_summary, null));
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
@@ -95,6 +97,7 @@ export default function LibraryPaneBody() {
 }
 
 function LibraryPane({ id }: { readonly id: string }) {
+  const speak = useActiveRegion();
   const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
@@ -128,6 +131,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const index = list.status === "ready" ? list.data : null;
   const indexItems = useMemo(() => index?.items ?? [], [index]);
   const failure = list.status === "loading" ? null : list.error;
+  const catalogFailure = failure === null ? null : catalogLine(failure);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library } : list;
@@ -362,7 +366,8 @@ function LibraryPane({ id }: { readonly id: string }) {
     return <>
       {readFeedback.announcement}
       {members.held}
-      {detail.status === "failed" ? <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
+      {detail.status === "failed" ? catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
+        : <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
     </>;
   }
 

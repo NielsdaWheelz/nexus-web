@@ -958,7 +958,7 @@ capability-owned:
 - `epub_assets.py`: private EPUB resource asset authorization and byte-size
   checked reads.
 - `api/routes/playback.py`: the player read (`GET /media/{id}/player`), the
-  epoch-fenced listening write, the preview hand-off and activity capture;
+  epoch-fenced listening write, episode downloads and queue snapshot/session;
   listening DML is owned by `services/consumption/listening.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: in-process queued, extraction-start, readiness,
@@ -1514,12 +1514,7 @@ end is one `POST /media/{id}/natural-end` sent by the engine that heard it; on
 settling, from the position the server reports. See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
-full file map. The shared player also owns an exhaustive ephemeral
-`PreviewAudio` session: it starts at `1x` and has no Media ID, queue/history
-origin, heartbeat, podcast preference, activity/completion writes, or
-previous/next behavior. After Episode Add, the
-consumption owner may install the observed Preview position once, only when
-owned progress is still empty. `SuggestionsSection` delegates add to the existing
+full file map. `SuggestionsSection` delegates add to the existing
 lectern or library owner; its suggestions hook owns adopted/staged pools,
 current-fact reconciliation, active-only observation/admission and local refill.
 rows survive refresh, errors and suspended work; successful empty and first

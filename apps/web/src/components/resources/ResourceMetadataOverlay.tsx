@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
-import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import { Fact as FeedbackFact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import InformationFrame from "./InformationFrame";
@@ -48,7 +48,7 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
     <h3 className={styles.resourceTitle}>{podcast.title}</h3>
-    <PodcastArtwork title={podcast.title} image={podcast.image_url === null ? { kind: "Absent" } : { kind: "Remote", url: podcast.image_url }} size={96} className={styles.group} />
+    <Artwork title={podcast.title} source={remoteArtwork(podcast.image_url)} size={96} className={styles.group} />
     <ContributorRoleGroups credits={podcast.contributors} />
     <dl className={styles.facts}>
       <Fact label="description">{podcast.description}</Fact>
@@ -95,7 +95,7 @@ function DirectoryPodcastMetadata({ directory }: { readonly directory: Schema<"P
   return <div className={styles.content}>
     <h3 className={styles.resourceTitle}>{directory.title}</h3>
     <p>directory metadata</p>
-    {image !== null ? <PodcastArtwork title={directory.title} image={{ kind: "Proxied", url: image }} size={96} className={styles.group} /> : null}
+    {image !== null ? <Artwork title={directory.title} source={{ kind: "Proxied", url: image }} size={96} className={styles.group} /> : null}
     <ContributorRoleGroups credits={directory.contributors} />
     <dl className={styles.facts}>
       <Fact label="description">{directory.description}</Fact>
