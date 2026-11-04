@@ -90,6 +90,12 @@ never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
 
+full excerpt recovery is one current outcome. a remote conflict offers retry of
+the frozen capture and a separate choice to read the current excerpt; it does not
+prove changed text. a local revision comparison does. a later modeled failure
+replaces that recovery with the current transport remedy. successful replacement
+clears prior failure before reading the new full capture.
+
 type is the displayed identity's scheme, narrowed for `media` by that media's own
 kind where the surface already holds it; never its body grammar or another
 resource's source. a collection row's media subject is that row's displayed

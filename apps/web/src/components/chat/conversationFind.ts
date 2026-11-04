@@ -84,14 +84,14 @@ export function useConversationFindSource(input: {
           const snapshot = snapshots.get(id)!;
           const cursor = messageCursor(scroll.current, id);
           if (!captured.isCurrent(snapshot.message) || !cursor || cursor.emitted !== snapshot.cursor.emitted)
-            return { kind: "Failed", message: "this match is no longer available" };
+            return { kind: "Failed", message: "the matched text changed." };
           snapshots.set(id, { ...snapshot, cursor });
         }
         const rows: FindRow<ChatFindMatch>[] = [];
         for (const row of outcome.rows) {
           const { message, cursor } = snapshots.get(row.at.unit)!;
           const ranges = resolveDomTextRanges(cursor, row.at.start, row.at.end);
-          if (!ranges) return { kind: "Failed", message: "this match is no longer available" };
+          if (!ranges) return { kind: "Failed", message: "the matched text changed." };
           rows.push({ ...row, at: {
             destination: { kind: "find_match", message_id: message.id, start: row.at.start, end: row.at.end, text_sha256: digests.get(message.id)! },
             leafId: activeLeafMessageId, message, renderedText: cursor.emitted, ranges,
@@ -106,7 +106,7 @@ export function useConversationFindSource(input: {
         const cursor = messageCursor(surface, at.destination.message_id);
         const ranges = cursor && cursor.emitted === at.renderedText && captured.isCurrent(at.message)
           ? resolveDomTextRanges(cursor, at.destination.start, at.destination.end) : null;
-        if (!surface || !ranges?.[0]) return { kind: "Failed", message: "this match is no longer available" };
+        if (!surface || !ranges?.[0]) return { kind: "Failed", message: "the matched text changed." };
         captured.onInspect();
         origin ??= surface.captureReadingPosition();
         surface.revealRange(ranges[0]);

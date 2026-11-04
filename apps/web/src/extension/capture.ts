@@ -15,17 +15,16 @@ export interface CaptureFailure {
   code: string;
   message: string;
   requestId: string | null;
+  status: number | null;
+  offline: boolean;
 }
 
 export class CaptureFailureError extends Error {
-  constructor(
-    readonly failure: CaptureFailure,
-    /** nexus's HTTP status when it answered, else null */
-    readonly status: number | null = null,
-  ) {
+  constructor(readonly failure: CaptureFailure) {
     super(failure.message);
     this.name = "CaptureFailureError";
   }
+  get status(): number | null { return this.failure.status; }
 }
 
 export function failure(
@@ -33,8 +32,9 @@ export function failure(
   message: string,
   requestId: string | null = null,
   status: number | null = null,
+  offline = false,
 ): CaptureFailureError {
-  return new CaptureFailureError({ code, message, requestId }, status);
+  return new CaptureFailureError({ code, message, requestId, status, offline });
 }
 
 export type TargetView =
@@ -73,7 +73,7 @@ export interface ViewState {
     displayName: string | null;
   } | null;
   /** a disconnect nexus did not confirm: the credential is kept, Retry offered */
-  revocationFailure: CaptureFailure | null;
+  revocationFailure: { kind: "Refused" | "Unknown"; failure: CaptureFailure; attempt: number } | null;
   /** origins Firefox must grant before login or save; granted ones omitted */
   requiredOrigins: string[];
   draft: {
@@ -238,18 +238,10 @@ function classify(chunks: Uint8Array<ArrayBuffer>[]): DocumentKind | null {
 }
 
 function readFailure(code: string, message: string): DocumentRead {
-  return { kind: "failed", failure: { code, message, requestId: null } };
+  return { kind: "failed", failure: { code, message, requestId: null, status: null, offline: false } };
 }
 
-function notADocument(response: Response): DocumentRead {
-  const type = response.headers.get("content-type")?.split(";")[0].trim();
-  return readFailure(
-    "E_INVALID_FILE_TYPE",
-    type
-      ? `The link returned ${type}, not a PDF or EPUB.`
-      : "The link did not return a PDF or EPUB.",
-  );
-}
+const notADocument = (): DocumentRead => readFailure("E_INVALID_FILE_TYPE", "this link isn’t a pdf or epub.");
 
 /** The last path segment of `url`, decoded, or null. */
 export function urlFilename(url: string): string | null {
@@ -298,12 +290,9 @@ export async function readDocument(
   limits: Record<DocumentKind, number>,
 ): Promise<DocumentRead> {
   if (!response.ok) {
-    return readFailure(
-      "E_CAPTURE_HTTP",
-      `The link answered HTTP ${response.status}.`,
-    );
+    return readFailure("E_CAPTURE_HTTP", "couldn’t download this link.");
   }
-  if (response.body === null) return notADocument(response);
+  if (response.body === null) return notADocument();
   const reader = response.body.getReader();
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let size = 0;
@@ -317,7 +306,7 @@ export async function readDocument(
       kind = classify(chunks);
       if (kind === null) {
         await reader.cancel();
-        return notADocument(response);
+        return notADocument();
       }
     }
     const limit =
@@ -325,14 +314,11 @@ export async function readDocument(
     if (size > limit) {
       await reader.cancel();
       const megabytes = Math.round(limit / 2 ** 20);
-      return readFailure(
-        "E_FILE_TOO_LARGE",
-        `The ${kind ?? "file"} is larger than ${megabytes} MB.`,
-      );
+      return readFailure("E_FILE_TOO_LARGE", `this ${kind ?? "file"} is over ${megabytes} megabytes.`);
     }
   }
   kind ??= classify(chunks);
-  if (kind === null) return notADocument(response);
+  if (kind === null) return notADocument();
   return {
     kind: "document",
     documentKind: kind,

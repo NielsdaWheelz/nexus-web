@@ -57,16 +57,22 @@ export function useScrollport(
     const feedback = feedbackRef.current!;
     // justify-type-assertion: DocumentReader owns the indicator as a direct frame child.
     const readerFrame = indicator.parentElement!;
+    // A pane's stage anchor stands in its content row, beside the pane body, not under this port.
+    const row = port.parentElement?.closest<HTMLElement>("[data-pane-content]")?.parentElement ?? null;
+    /** On the port, the strip's reach above the port's bottom. On the row, the part of it above
+     * the visible chrome, which the anchor's clearance already covers. */
     const syncFeedback = () => {
       const overlay = port.style.getPropertyValue("--reader-content-inset-top") !== "";
       readerFrame.toggleAttribute("data-reader-overlay", overlay);
       const style = getComputedStyle(port);
-      feedback.style.bottom = overlay ? `${Number.parseFloat(style.getPropertyValue("--reader-occlusion-bottom")) || 0}px` : "";
+      const chrome = Number.parseFloat(style.getPropertyValue("--reader-occlusion-bottom")) || 0;
+      feedback.style.bottom = overlay ? `${chrome}px` : "";
       const bounds = feedback.getBoundingClientRect();
       const height = overlay ? bounds.height : 0;
       const previous = Number.parseFloat(port.style.getPropertyValue("--reader-feedback-height")) || 0;
       port.style.setProperty("--reader-feedback-height", `${height}px`);
-      port.style.setProperty("--reader-feedback-occlusion-bottom", `${overlay && height > 0 ? Math.max(0, port.getBoundingClientRect().bottom - bounds.top) : 0}px`);
+      port.style.setProperty("--reader-feedback-occlusion-bottom", `${height > 0 ? Math.max(0, port.getBoundingClientRect().bottom - bounds.top) : 0}px`);
+      if (row) row.style.setProperty("--reader-feedback-occlusion-bottom", `${height > 0 ? Math.max(0, row.getBoundingClientRect().bottom - bounds.top - chrome) : 0}px`);
       return height !== previous;
     };
     let idle: ReturnType<typeof setTimeout> | null = null;
@@ -277,6 +283,7 @@ export function useScrollport(
       feedback.style.removeProperty("bottom");
       port.style.removeProperty("--reader-feedback-height");
       port.style.removeProperty("--reader-feedback-occlusion-bottom");
+      row?.style.removeProperty("--reader-feedback-occlusion-bottom");
       if (idle !== null) clearTimeout(idle);
       indicator.removeAttribute("data-scrolling");
       finish(true);

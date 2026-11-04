@@ -4,12 +4,13 @@ import type { Catalog, Selection } from "./wire";
 // The exact generation a draft will run: chosen from the catalog, never
 // substituted. The browser owns no allowlist; the server rejects stale choices.
 
-export const MISSING_SELECTION = "this model or reasoning option is no longer offered. choose an available option.";
+export const MODEL_UNAVAILABLE = "this model isn’t available now.";
 
 export type Route = Schema<"CodexPersonalRoute"> | Schema<"ProviderApiRoute">;
 type CatalogRoute = Catalog["routes"][number];
 type CatalogModel = CatalogRoute["models"][number];
 export type ReasoningChoice = CatalogModel["reasoning"][number];
+type Unready = Exclude<ReasoningChoice["chat_state"], { kind: "Selectable" }> | Exclude<CatalogRoute["readiness"], { kind: "Ready" }>;
 /** A draft keeps incomplete intent; only `Selected` can be sent. */
 export type SelectionEditor =
   | { readonly kind: "Uninitialized" }
@@ -88,8 +89,27 @@ export function editorVariant(catalog: Catalog, value: SelectionEditor): ModelVa
     variant.model.key === modelKeyOf(value.selection) && variant.mode === choice.mode) ?? null;
 }
 
+/** Why a route or choice can't run, by kind and code. Closed: the server's explanation is
+ * operator voice and never reaches the screen. */
+export function unreadyReason(state: Unready): string {
+  switch (state.kind) {
+    case "TemporarilyUnavailable":
+      return "this provider isn’t reachable now.";
+    case "OperatorActionRequired":
+      switch (state.code) {
+        case "codex_host_unavailable": return "this provider needs repair.";
+        case "required_tool_unavailable": return "chat tools aren’t set up.";
+      }
+    case "Ineligible":
+      switch (state.code) {
+        case "unsupported_capability": return "this model can’t run chat.";
+        case "selection_not_configured": return "the default model isn’t set up.";
+      }
+  }
+}
+
 export function choiceUnavailable(choice: ReasoningChoice): string | null {
-  return choice.chat_state.kind === "Selectable" ? null : choice.chat_state.explanation;
+  return choice.chat_state.kind === "Selectable" ? null : unreadyReason(choice.chat_state);
 }
 
 export function isSelectable(catalog: Catalog, selection: Selection, route: Route | null = null): boolean {
@@ -144,20 +164,16 @@ export function chooseThinking(
 /** Why this draft cannot be sent; null when it can. */
 export function unavailability(
   catalog: Catalog,
-  draft: SelectionEditor,
+  draft: Exclude<SelectionEditor, { kind: "Uninitialized" }>,
 ): string | null {
   const route = editorRoute(draft);
   const row = route ? catalogRoute(catalog, route) : null;
-  if (row && row.readiness.kind !== "Ready") return row.readiness.explanation;
+  if (row && row.readiness.kind !== "Ready") return unreadyReason(row.readiness);
   if (draft.kind === "DefaultUnavailable") {
-    if (!catalogRoute(catalog, draft.route)) return "provider unavailable. choose provider.";
-    const variant = editorVariant(catalog, draft);
-    return variant ? "default effort unavailable" : "default model unavailable";
+    if (!row) return "this provider isn’t available now.";
+    return editorVariant(catalog, draft) ? "your default effort isn’t available now." : "your default model isn’t available now.";
   }
-  if (draft.kind === "Uninitialized") return "loading models…";
   const { model, choice } = lookup(catalog, draft.selection, route);
-  if (!model || !choice) return MISSING_SELECTION;
-  const state = choice.chat_state;
-  if (state.kind === "Selectable") return null;
-  return state.explanation;
+  if (!model || !choice) return MODEL_UNAVAILABLE;
+  return choiceUnavailable(choice);
 }

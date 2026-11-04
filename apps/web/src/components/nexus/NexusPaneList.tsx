@@ -50,6 +50,8 @@ export function paneDragStyle(drag: DragBody) {
   return { transform: CSS.Translate.toString(drag.transform), opacity: drag.isDragging ? 0.35 : undefined };
 }
 
+/** The root's pane moves, by drag or placement, and their one live region: dnd-kit's own
+ * announcements are silenced, so the reorder's lines speak here. */
 export function NexusPaneDrag({ controller, scrollport, mobile, children }: {
   controller: NexusController; scrollport(): HTMLElement | null; mobile: boolean; children: ReactNode;
 }) {
@@ -94,6 +96,7 @@ export function NexusPaneDrag({ controller, scrollport, mobile, children }: {
     <PaneSensorRetirement epoch={controller.reorder.sensorEpoch} scrollport={scrollport} retired={retired} />
     {/* The sheet paints its list upward; slot geometry, not index direction, places its rows. */}
     <SortableContext items={controller.paneListComplete ? controller.panes.map(pane => pane.id) : []} strategy={mobile ? rectSortingStrategy : verticalListSortingStrategy}>{children}</SortableContext>
+    <div className="sr-only" role="status" aria-live="polite">{controller.reorderSpeech}</div>
     {overlay ? createPortal(<DragOverlay adjustScale={false} dropAnimation={null} style={{ pointerEvents: "none" }}>{row ? <div className={styles.paneDragPreview} aria-hidden inert><NexusRowBody row={row} here={row.state === "Current"} query={controller.query} /></div> : null}</DragOverlay>, overlay) : null}
   </DndContext>;
 }

@@ -1,0 +1,4 @@
+/* A panel keeps its family positioning; the semantic room owns the modal anchor. */
+:where(.panel) {
+  position: relative;
+}

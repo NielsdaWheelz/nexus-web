@@ -18,11 +18,12 @@ export interface ChoiceOption {
 }
 
 /** A controlled exclusive choice; navigating never changes its value. */
-export default function ChoicePicker({ label, value, options, disabled, footer, onOpen, onChange }: {
+export default function ChoicePicker({ label, value, options, disabled, busy = false, footer, onOpen, onChange }: {
   readonly label: string;
   readonly value: string | null;
   readonly options: readonly ChoiceOption[];
   readonly disabled: boolean;
+  readonly busy?: boolean;
   readonly footer: ReactNode | null;
   readonly onOpen: () => void;
   readonly onChange: (id: string) => void;
@@ -89,6 +90,7 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
       aria-expanded={open}
       aria-controls={open ? id : undefined}
       disabled={disabled}
+      aria-busy={busy || undefined}
       data-unavailable={current?.unavailable_reason !== null && current !== undefined || undefined}
       onClick={event => {
         event.stopPropagation();
@@ -113,6 +115,7 @@ export default function ChoicePicker({ label, value, options, disabled, footer, 
       <Icon.Choose size={14} aria-hidden="true" className={styles.chevron} />
     </button>
     <PickerSurface
+      slipContent={list}
       active={open}
       onClose={() => setOpen(false)}
       anchor={() => trigger.current}

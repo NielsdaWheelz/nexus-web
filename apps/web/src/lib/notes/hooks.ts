@@ -4,19 +4,26 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import type { Intent } from "@nexus/authored/commands";
 import type { AuthoredQuery, QueryResult } from "@nexus/authored/types";
 import { useAuthoredStore, useAuthoredAccountId } from "@/lib/authored/provider";
-import { getWritingRuntime, type DocumentReadSnapshot, type WritingDocument, type WritingRuntime } from "./runtime";
-export function useWritingRuntime(): WritingRuntime | null {
+import { getWritingRuntime, type WritingDocument, type WritingRuntime } from "./runtime";
+export function useWritingRuntime(): WritingRuntime {
   const accountId = useAuthoredAccountId();
-  return useMemo(() => accountId === null ? null : getWritingRuntime(accountId), [accountId]);
+  return useMemo(() => getWritingRuntime(accountId), [accountId]);
+}
+/** Whether a failed commit holds one of these refs. Their editor turns its caret `--danger`
+ * while the words are at risk: an echo of the risk slip, never the sole signal. */
+export function useWordsAtRisk(refs: readonly string[]): boolean {
+  const runtime = useWritingRuntime();
+  const read = () => { const writing = runtime.snapshot(); return writing.error !== null && writing.error_refs.some(ref => refs.includes(ref)); };
+  return useSyncExternalStore(runtime.subscribe, read, () => false);
 }
 export function useAuthoredQuery(query: AuthoredQuery | null) {
   const accountId = useAuthoredAccountId();
   const store = useAuthoredStore();
   const key = JSON.stringify(query);
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ key: string; accountId: string | null; data: QueryResult | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ key, accountId, data: null, error: null, occurrence: null, pending: query !== null });
+  const [state, setState] = useState<{ key: string; accountId: string; data: QueryResult | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ key, accountId, data: null, error: null, occurrence: null, pending: query !== null });
   useEffect(() => {
-    if (query === null || accountId === null) { setState({ key, accountId, data: null, error: null, occurrence: null, pending: false }); return; }
+    if (query === null) { setState({ key, accountId, data: null, error: null, occurrence: null, pending: false }); return; }
     setState(old => old.key === key && old.accountId === accountId ? {...old, pending: true} : {key, accountId, data: null, error: null, occurrence: null, pending: true});
     let retired = false;
     let latestRevision: bigint | null = null;
@@ -37,20 +44,14 @@ export function useAuthoredQuery(query: AuthoredQuery | null) {
   const current = state.key === key && state.accountId === accountId;
   return { data: current ? state.data : null, error: current ? state.error : null, occurrence: current ? state.occurrence : null, pending: query !== null && (!current || state.pending), retry };
 }
-const NO_READ: DocumentReadSnapshot = {retrying: false, error: null, occurrence: null};
-const noSubscribe = () => () => {};
-const noRead = () => NO_READ;
-export function useWritingDocumentRead(document: WritingDocument | null): DocumentReadSnapshot {
-  return useSyncExternalStore(document?.subscribeRead ?? noSubscribe, document?.readSnapshot ?? noRead, noRead);
-}
 export function useWritingDocument(ref: string | null, prelude: readonly Intent[] = []) {
   const runtime = useWritingRuntime();
   const preludeKey = JSON.stringify(prelude);
   const [attempt,setAttempt]=useState(0);
   const retry=useCallback(()=>setAttempt(value=>value+1),[]);
-  const [state, setState] = useState<{ ref: string | null; runtime: WritingRuntime | null; document: WritingDocument | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ ref, runtime, document: null, error: null, occurrence: null, pending: ref !== null });
+  const [state, setState] = useState<{ ref: string | null; runtime: WritingRuntime; document: WritingDocument | null; error: unknown | null; occurrence: object | null; pending: boolean }>({ ref, runtime, document: null, error: null, occurrence: null, pending: ref !== null });
   useEffect(() => {
-    if (!runtime || !ref) return;
+    if (!ref) return;
     setState(old => old.ref === ref && old.runtime === runtime ? {...old, pending: true} : {ref, runtime, document: null, error: null, occurrence: null, pending: true});
     let retired = false;
     let release: (() => void) | null = null;

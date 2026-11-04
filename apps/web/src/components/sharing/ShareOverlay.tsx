@@ -1,8 +1,13 @@
 "use client";
-
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Icon from "@/lib/ui/icons";
-import { Announcement, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
+import { Ruling } from "@/components/feedback/Ruling";
+import type { Retract } from "@/components/feedback/stage";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -11,17 +16,16 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import PeopleSearch, { personLabel } from "@/components/users/PeopleSearch";
 import {
   apiFetch,
-  apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
-  outcomeUnknown,
   type ApiPath,
 } from "@/lib/api/client";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
-import type { ShareSession } from "@/lib/sharing/controller";
+import type { ShareSession, ShareCommands, ShareChange } from "@/lib/sharing/controller";
 import type { CanonicalResourceRef, ShareMode } from "@/lib/sharing/types";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -56,32 +60,8 @@ function sharesPath(ref: CanonicalResourceRef): ApiPath {
   return `/api/resource-items/${encodeURIComponent(ref)}/shares`;
 }
 
-/** The notice for a failed load or change, or null after a 401 went to the auth boundary. */
-function feedbackFor(error: unknown, title: string, mutation: boolean): FeedbackContent | null {
-  if (handleUnauthenticatedApiError(error)) return null;
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  if (mutation && outcomeUnknown(error)) {
-    return {
-      tone: "Danger",
-      title: "change not confirmed",
-      message: "the request may have succeeded.",
-      requestId: error.requestId,
-    };
-  }
-  const transport = apiTransportFeedback(error, title);
-  if (transport) return transport;
-  const known = new Map([
-    ["E_USER_NOT_FOUND", "This person is no longer available to share with."],
-    ["E_FORBIDDEN", mutation ? title : "You don’t have access to these sharing options."],
-    ["E_NOT_FOUND", title],
-    ["E_INVALID_REQUEST", title],
-  ]).get(error.code);
-  if (known === undefined) throw error;
-  return { tone: "Danger", title: known, requestId: error.requestId };
-}
-
-export default function ShareOverlay(props: { session: ShareSession | null; onClose: () => void }) {
-  const { session, onClose } = props;
+export default function ShareOverlay(props: { session: ShareSession | null; commands: ShareCommands; onClose: () => void }) {
+  const { session, commands, onClose } = props;
   const isMobile = useIsMobileViewport();
   const navigated = useRef(false);
   useEffect(() => { navigated.current = false; }, [session]);
@@ -91,7 +71,7 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
     returnFocusTo: session?.options.returnFocusTo,
     returnFocusFallback: fallback ?? undefined,
   };
-  const panel = session && <SharePanel key={session.key} session={session} onClose={() => { navigated.current = true; onClose(); }} />;
+  const panel = session && <SharePanel key={session.key} session={session} commands={commands} onClose={() => { navigated.current = true; onClose(); }} />;
   return (
     <>
       <Dialog open={session !== null && !isMobile} onClose={onClose} title="Share" {...focus}>
@@ -110,59 +90,54 @@ export default function ShareOverlay(props: { session: ShareSession | null; onCl
   );
 }
 
-/** What the grant editor borrows from the panel: the live region, errors, copy and share. */
+/** The editor borrows native sharing; server changes belong to its controller. */
 interface PanelActions {
-  announce: (message: string) => void;
-  fail: (error: unknown, title: string, occurrence: object) => void;
   nativeShare: (url: string, title: string) => Promise<boolean>;
 }
 
-function SharePanel({ session, onClose }: { session: ShareSession; onClose: () => void }) {
+function SharePanel({ session, commands, onClose }: { session: ShareSession; commands: ShareCommands; onClose: () => void }) {
   const { target } = session;
-  // A failed read keeps its recovery control until the replacement read settles.
+  const outcome = useOutcome();
+  const resendFeedback = useResendFeedback();
+  // A failed read stands where the options would until a replacement read lands; over a shown
+  // snapshot, a failed reread says nothing, except that a held change's `check` that fails holds
+  // it again. Either reruns on a repair; a defect throws.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
-  const [actionError, setActionError] = useState<{ content: FeedbackContent; check: boolean; occurrence: object } | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const pending = commands.pending;
+  const observe = commands.observe;
   const [loading, setLoading] = useState(false);
-  const readOccurrence = useFeedbackOccurrence(loadError !== null);
   const reading = useRef<AbortSignal | null>(null);
   const lifetime = useRef<AbortController | null>(null);
-  const panel = useRef<HTMLDivElement>(null);
   // A defect found in a callback is rethrown while rendering, so the error boundary sees it.
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const workspace = useWorkspaceStore();
 
-  const explain = useCallback((error: unknown, title: string, mutation: boolean) => {
-    if (lifetime.current?.signal.aborted) return null;
-    try {
-      return feedbackFor(error, title, mutation);
-    } catch (thrown) {
-      setDefect({ error: thrown });
-      return null;
-    }
-  }, []);
-
+  /** Whether a snapshot landed. */
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal): Promise<boolean> => {
       const currentSignal = signal ?? lifetime.current?.signal;
-      if (target.kind === "Route" || !currentSignal || currentSignal.aborted || (reading.current !== null && !reading.current.aborted)) return;
+      if (target.kind === "Route" || !currentSignal || currentSignal.aborted || (reading.current !== null && !reading.current.aborted)) return false;
       reading.current = currentSignal;
       setLoading(true);
       try {
         const next = (await apiFetch<SharesJson<"get">>(sharesPath(target.ref), { signal: currentSignal })).data;
-        if (currentSignal.aborted) return;
+        if (currentSignal.aborted) return false;
         setSnapshot(next);
         setLoadError(null);
-        setActionError((current) => current?.check ? null : current);
+        observe(session, next);
+        return true;
       } catch (error) {
-        if (currentSignal.aborted) return;
-        setLoadError(explain(error, "Sharing options couldn’t be loaded.", false));
+        if (currentSignal.aborted || handleUnauthenticatedApiError(error)) return false;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
+        else setLoadError(error);
+        return false;
       } finally {
         if (reading.current === currentSignal) reading.current = null;
         if (!currentSignal.aborted) setLoading(false);
       }
     },
-    [explain, target],
+    [target, session, observe],
   );
 
   useEffect(() => {
@@ -172,15 +147,10 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
     return () => controller.abort();
   }, [load]);
 
+  useFailedReadRepair(isApiError(loadError) && loadError.status !== 404, loading, () => void load());
   if (defect !== null) throw defect.error;
 
-  const showError = (content: FeedbackContent | null, check = false, occurrence = {}) => {
-    if (!content) return;
-    setActionError({ content, check, occurrence });
-  };
   const actions: PanelActions = {
-    announce: () => setActionError(null),
-    fail: (error, title, occurrence) => showError(explain(error, title, true), outcomeUnknown(error), occurrence),
     nativeShare: async (url, title) => {
       try {
         await navigator.share({ title, url });
@@ -188,9 +158,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       } catch (error) {
         const expected = ["AbortError", "DataError", "InvalidStateError", "NotAllowedError"];
         if (!(error instanceof DOMException && expected.includes(error.name))) setDefect({ error });
-        else if (error.name !== "AbortError") {
-          showError({ tone: "Danger", title: "The share menu could not be opened." });
-        }
+        else if (error.name !== "AbortError") outcome.say({ fact: "couldn’t open the share menu." });
         return false;
       }
     },
@@ -214,9 +182,9 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
   };
 
   return (
-    <div className={styles.panel} ref={panel} tabIndex={-1}>
-      {target.kind === "Resource" && !snapshot && !loadError
-        ? <FeedbackBusy pending />
+    <div className={styles.panel} tabIndex={-1}>
+      {target.kind === "Resource" && !snapshot && loadError === null
+        ? <Ruling />
         : <p className={styles.note}>{MODE_INTRO[mode]}</p>}
       <Section
         id="share-nexus-link"
@@ -237,19 +205,15 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           </span>
         }
       />
-      {loadError ? (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={loadError}
-          announcement="Assertive"
-          actions={actionError?.check ? undefined : [{ label: "retry", onClick: () => void load(), busy: loading }]}
-          returnFocus={() => panel.current}
-        />
-      ) : null}
+      {loadError !== null && snapshot === null ? isApiError(loadError) && loadError.status === 404
+        ? <Fact line={{ fact: "this item is no longer available." }} />
+        : <Failed error={loadError} noun="sharing options" retry={{ run: () => void load(), busy: loading }} /> : null}
       {snapshot &&
       target.kind === "Resource" &&
       (mode === "ResourceGrants" || mode === "HighlightGrants") ? (
         <GrantEditor
-          subject={target.ref}
+          session={session}
+          commands={commands}
           snapshot={snapshot}
           onChange={setSnapshot}
           actions={actions}
@@ -267,14 +231,22 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
           aside={members.can_manage ? <ButtonLink href={snapshot!.authenticated_href} data-workspace-rich-target="true" onClick={manageMembers} onKeyDown={manageMembers}>Manage members</ButtonLink> : null}
         />
       ) : null}
-      {actionError ? <FeedbackFailure scope="Local" occurrence={actionError.occurrence} announcementOccurrence={actionError}
-        content={actionError.content}
-        announcement="Assertive"
-        actions={actionError.check ? [{ label: "refresh sharing options", onClick: () => void load(), busy: loading }] : undefined}
-        returnFocus={() => panel.current}
-      /> : null}
+      {pending !== null && pending.unknown > 0 ? <Hold id={`share-change:${session.key}:${pending.key}`} attempt={pending.unknown}
+        {...resendFeedback({line: {fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON},
+          resend: {label: "retry", commandKey: `share-retry:${session.key}:${pending.key}`, busy: pending.running,
+            run: () => void commands.retry(session, pending.request).then(change => change && setSnapshot(current => current && applyChange(current, change)))},
+          secondary: {label: "check", commandKey: `share-check:${session.key}`, busy: loading,
+            run: () => void load()}})} /> : null}
     </div>
   );
+}
+
+/** Accepted server facts update only the grant they concern. */
+function applyChange(snapshot: Snapshot, change: ShareChange): Snapshot {
+  if (change.kind === "Revoked") return {...snapshot, shares: snapshot.shares.filter(share => share.id !== change.id),
+    received_access: snapshot.received_access.filter(share => share.id !== change.id)};
+  return {...snapshot, shares: snapshot.shares.some(share => share.id === change.share.id)
+    ? snapshot.shares : [...snapshot.shares, change.share]};
 }
 
 function Section(props: {
@@ -299,24 +271,17 @@ function Section(props: {
 }
 
 function GrantEditor(props: {
-  subject: CanonicalResourceRef;
+  session: ShareSession;
+  commands: ShareCommands;
   snapshot: Snapshot;
   onChange: (snapshot: Snapshot) => void;
   actions: PanelActions;
 }) {
-  const { snapshot, onChange, actions } = props;
+  const { snapshot, onChange, actions, session, commands } = props;
   // One change at a time: `busy` names the change in flight and disables every other one.
   const [busy, setBusy] = useState<string | null>(null);
   // One question at a time: a grant's id, or "Native" / "X" for a bearer-link warning.
   const [confirm, setConfirm] = useState<string | null>(null);
-  // Keep an uncertain create's id until its receipt or an authoritative snapshot
-  // confirms that exact grant. Later creates must never reuse a revoked grant id.
-  const attempts = useRef(new Map<string, {id: string; occurrence: object}>());
-  useEffect(() => {
-    for (const [key, attempt] of attempts.current) {
-      if (snapshot.shares.some(share => share.id === attempt.id)) attempts.current.delete(key);
-    }
-  }, [snapshot.shares]);
   const link = snapshot.shares.find((s): s is Schema<"LinkShareOut"> => s.kind === "Link");
   const people = snapshot.shares.filter((s): s is Schema<"UserShareOut"> => s.kind === "User");
   const { user: userAvailability, link: linkAvailability } = snapshot.creation_availability;
@@ -325,51 +290,18 @@ function GrantEditor(props: {
   const create = async (
     audience: Schema<"CreateResourceShareRequest">["audience"],
     key: string,
-    [created, existing]: [string, string],
-    errorTitle: string,
+    fact: string,
   ) => {
-    setBusy(key);
-    const attempt = attempts.current.get(key) ?? {id: crypto.randomUUID(), occurrence: {}};
-    attempts.current.set(key, attempt);
-    const {id} = attempt;
-    try {
-      const { data } = await apiFetch<SharesJson<"post">>(sharesPath(props.subject), {
-        method: "POST",
-        body: JSON.stringify({ id, audience }),
-      });
-      attempts.current.delete(key);
-      const known = snapshot.shares.some((share) => share.id === data.share.id);
-      onChange({ ...snapshot, shares: known ? snapshot.shares : [...snapshot.shares, data.share] });
-      actions.announce(data.created ? created : existing);
-      return true;
-    } catch (error) {
-      actions.fail(error, errorTitle, attempt.occurrence);
-      return false;
-    } finally {
-      setBusy(null);
-    }
+    const change = await commands.create(session, audience, key, fact);
+    if (change) onChange(applyChange(snapshot, change));
+    return change !== null;
   };
 
-  const revoke = async (id: string, message: string, errorTitle: string) => {
-    setBusy(id);
-    const attempt = attempts.current.get(id) ?? {id, occurrence: {}};
-    attempts.current.set(id, attempt);
-    try {
-      await apiFetch(`/api/resource-shares/${id}`, { method: "DELETE" });
-      onChange({
-        ...snapshot,
-        shares: snapshot.shares.filter((share) => share.id !== id),
-        received_access: snapshot.received_access.filter((share) => share.id !== id),
-      });
-      setConfirm(null);
-      attempts.current.delete(id);
-      actions.announce(message);
-    } catch (error) {
-      actions.fail(error, errorTitle, attempt.occurrence);
-    } finally {
-      setBusy(null);
-    }
+  const revoke = async (id: string, fact: string) => {
+    const change = await commands.revoke(session, id, fact);
+    if (change) {onChange(applyChange(snapshot, change)); setConfirm(null);}
   };
+  const blocked = busy !== null || commands.pending !== null;
 
   /** A control that asks first: `trigger` until pressed, then its question in its place. */
   const guarded = (
@@ -388,13 +320,13 @@ function GrantEditor(props: {
         <Button
           emphasis="strong"
           tone={consequence === "Destructive" ? "danger" : undefined}
-          aria-busy={busy === key || undefined}
-          disabled={busy !== null}
+          aria-busy={busy === key || commands.pending?.key === key && commands.pending.running || undefined}
+          disabled={blocked}
           onClick={onYes}
         >
           {yes}
         </Button>
-        <Button disabled={busy !== null} onClick={() => setConfirm(null)}>
+        <Button disabled={busy !== null || commands.pending?.running === true} onClick={() => setConfirm(null)}>
           {no}
         </Button>
       </span>
@@ -403,16 +335,16 @@ function GrantEditor(props: {
   /** Remove, Decline or Turn off: a quiet danger button that asks, then deletes the grant. */
   const revocation = (
     id: string,
-    copy: { label: string; prompt: string; yes: string; no: string; done: string; failed: string },
+    copy: { label: string; prompt: string; yes: string; no: string; failed: string },
   ) =>
     guarded(
       id,
-      <Button tone="danger" disabled={busy !== null} onClick={() => setConfirm(id)}>
+      <Button tone="danger" disabled={blocked} onClick={() => setConfirm(id)}>
         {copy.label}
       </Button>,
       copy.prompt,
       [copy.yes, copy.no],
-      () => void revoke(id, copy.done, copy.failed),
+      () => void revoke(id, copy.failed),
     );
 
   return (
@@ -431,19 +363,18 @@ function GrantEditor(props: {
                 : ""}
             </p>
             <PeopleSearch
-              context={JSON.stringify(props.subject)}
+              context={JSON.stringify(session.target)}
               label="Search people to share with"
               placeholder="Search people…"
               description="Search display names, or enter an account’s exact email."
-              disabled={busy !== null}
+              disabled={blocked}
               onSelect={(person) => {
                 if (person === null) return;
                 const name = personLabel(person);
                 return create(
                   { kind: "User", user_id: person.user_id, email: person.email },
                   person.user_id,
-                  [`Shared with ${name}.`, `${name} already has this share.`],
-                  "Access could not be shared.",
+                  `couldn’t share with ${name}.`,
                 );
               }}
             />
@@ -462,8 +393,7 @@ function GrantEditor(props: {
               prompt: "Remove only this direct share?",
               yes: "Remove direct share",
               no: "Keep",
-              done: `Removed the share for ${personLabel(share.user)}.`,
-              failed: "The share could not be removed.",
+              failed: `couldn’t remove ${personLabel(share.user)}’s share.`,
             })}
           </div>
         ))}
@@ -485,8 +415,7 @@ function GrantEditor(props: {
                 prompt: "Decline only this access path?",
                 yes: "Decline shared access",
                 no: "Keep",
-                done: "This shared access path was declined.",
-                failed: "The shared access could not be declined.",
+                failed: "couldn’t decline this share.",
               })}
             </div>
           ))}
@@ -508,7 +437,7 @@ function GrantEditor(props: {
                     "Native",
                     <Button
                       icon={<Icon.Share />}
-                      disabled={busy !== null}
+                      disabled={blocked}
                       onClick={() => setConfirm("Native")}
                     >
                       Share public link
@@ -528,7 +457,7 @@ function GrantEditor(props: {
                 "X",
                 <Button
                   icon={<Icon.Send />}
-                  disabled={busy !== null}
+                  disabled={blocked}
                   onClick={() => setConfirm("X")}
                 >
                   Post to X
@@ -550,21 +479,18 @@ function GrantEditor(props: {
                 "Turn off only your public link? Existing copies and other access paths are unaffected.",
               yes: "Turn off public link",
               no: "Keep on",
-              done: "Your public link was turned off.",
-              failed: "The share could not be removed.",
+              failed: "couldn’t turn off your public link.",
             })}
           </>
         ) : linkAvailability.kind === "Available" ? (
           <Button
-            reserveIcon
-            aria-busy={busy === "new-link" || undefined}
-            disabled={busy !== null}
+            aria-busy={commands.pending?.key === "new-link" && commands.pending.running || undefined}
+            disabled={blocked}
             onClick={() =>
               void create(
                 { kind: "Link" },
                 "new-link",
-                ["Your public link is on.", "Your public link was already on."],
-                "Your public link could not be turned on.",
+                "couldn’t turn on your public link.",
               )
             }
           >
@@ -581,21 +507,28 @@ function GrantEditor(props: {
 
 function ShareCopyButton({href, label}: {href: string | null; label: string}) {
   const copied = useCopyFeedback(href);
-  const [failure, setFailure] = useState<object | null>(null);
+  const outcome = useOutcome();
   const [manual, setManual] = useState(false);
-  useEffect(() => {setFailure(null); setManual(false);}, [href]);
+  useEffect(() => {setManual(false);}, [href]);
+  // The slip's `show link` opens this button's dialog, so the slip leaves with the button.
+  const slip = useRef<Retract>(() => {});
+  useEffect(() => () => slip.current(), []);
   const [defect, setDefect] = useState<{error: unknown} | null>(null);
   if (defect) throw defect.error;
   const copy = async () => {
     if (href === null) return;
-    try {await copied.copy(href); setFailure(null);}
-    catch (error) {if (error instanceof ClipboardWriteUnavailableError) setFailure({}); else setDefect({error});}
+    try {await copied.copy(href);}
+    catch (error) {
+      if (error instanceof ClipboardWriteUnavailableError) {
+        slip.current();
+        slip.current = outcome.say({ fact: "couldn’t copy the link." }, [{ label: "show link", commandKey: `show-link:${href}`, run: () => setManual(true) }]);
+      }
+      else setDefect({error});
+    }
   };
   return <>
     <Button icon={copied.copied ? <Icon.Check /> : <Icon.Copy />} disabled={href === null} onClick={() => void copy()}>{label}</Button>
     {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
-    {failure ? <FeedbackFailure scope="Local" occurrence={failure} content={{tone: "Warning", title: "couldn’t copy link"}} announcement="Polite"
-      actions={[{label: "copy manually", onClick: () => setManual(true)}]} /> : null}
     <Dialog open={manual} title="copy link" onClose={() => setManual(false)} initialFocus={panel => panel.querySelector('textarea')}>
       <textarea readOnly aria-label="link to copy" value={href ?? ""} onFocus={event => event.currentTarget.select()} />
     </Dialog>

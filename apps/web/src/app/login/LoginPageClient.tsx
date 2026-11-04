@@ -4,20 +4,17 @@
 // user agent grants no identity and never selects an auth protocol.
 import * as Icon from "@/lib/ui/icons";
 import Link from "next/link";
-import { useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import authStyles from "@/components/auth/AuthForms.module.css";
 import AuthSurface from "@/components/auth/AuthSurface";
-import {
-  FeedbackNotice,
-  FieldFeedback,
-  type FeedbackAnnouncement,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Field } from "@/components/feedback/Fact";
+import type { Line } from "@/components/feedback/stage";
+import { TRANSPORT_LINES } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import { beginBrowserSignIn } from "@/lib/authored/binding";
-import { useAuthForm, WRONG_ADDRESS } from "@/lib/auth/useAuthForm";
+import { useAuthForm, WRONG_ADDRESS_LINE } from "@/lib/auth/useAuthForm";
 import { useReturnTarget } from "@/lib/auth/useReturnTarget";
 import {
   DEFAULT_RETURN_TARGET,
@@ -31,35 +28,12 @@ import {
 } from "@/lib/auth/urls";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 
-type Feedback = {
-  content: FeedbackContent;
-  announcement: FeedbackAnnouncement;
+const INITIAL: Record<LoginError, Line> = {
+  oauth_start_failed: { fact: "couldn’t start sign-in." },
+  sign_in_failed: { fact: "couldn’t finish sign-in." },
 };
-
-const INITIAL: Record<LoginError, Feedback> = {
-  oauth_start_failed: {
-    content: {
-      tone: "Danger",
-      title: "We couldn't start sign in.",
-      message: "Please try again.",
-    },
-    announcement: "Assertive",
-  },
-  sign_in_failed: {
-    content: {
-      tone: "Danger",
-      title: "We couldn't complete sign in.",
-      message: "Please try again.",
-    },
-    announcement: "Assertive",
-  },
-};
-
-const UNAVAILABLE: FeedbackContent = {
-  tone: "Danger",
-  title: "Sign in is temporarily unavailable.",
-  message: "Try again in a moment.",
-};
+const SIGN_IN_FAILED = "couldn’t sign in.";
+/** L1 owns this copy; until it is a `Line`, its title and message are one. */
 
 function GitHubMark() {
   return (
@@ -122,7 +96,9 @@ function ProviderButton({
   handoff: HandoffContext | null;
   disabled: boolean;
 }) {
-  const [localFailure, setLocalFailure] = useState<Error | null>(null);
+  // a new object per failure: focus stays on the button, so each failure speaks.
+  const [localFailure, setLocalFailure] = useState<object | null>(null);
+  const failureId = useId();
   const href = disabled || nextPath === null ? null : handoff && provider === "google"
     ? nativeGoogleDeepLink(nextPath, handoff)
     : oauthPath(provider, nextPath, handoff);
@@ -133,16 +109,17 @@ function ProviderButton({
       onClick={() => {
         if (href === null) return;
         if (handoff !== null) { window.location.assign(href); return; }
-        void beginBrowserSignIn().then(() => window.location.assign(href)).catch(error => setLocalFailure(error));
+        void beginBrowserSignIn().then(() => window.location.assign(href)).catch(() => setLocalFailure({}));
       }}
       emphasis={provider === "google" ? "strong" : undefined}
       size="comfortable"
       icon={provider === "google" ? <GoogleMark /> : <GitHubMark />}
       tabIndex={disabled ? -1 : undefined}
+      aria-describedby={localFailure ? failureId : undefined}
     >
       {`Continue with ${PROVIDER_NAMES[provider]}`}
     </Button>
-    {localFailure ? <FeedbackNotice announcement="Polite" content={{ tone: "Danger", title: "couldn’t open local account storage", message: localFailure.message }} /> : null}
+    {localFailure ? <Field id={failureId} line={{ fact: "couldn’t prepare sign-in on this device." }} /> : null}
   </>;
 }
 
@@ -183,13 +160,10 @@ export default function LoginPageClient({
   const connectivity = useConnectivity();
   const target = useReturnTarget(nextPath);
   const [revealed, setRevealed] = useState(false);
-  const [emailError, setEmailError] = useState<FeedbackContent | null>(null);
-  const [passwordError, setPasswordError] = useState<FeedbackContent | null>(
-    null,
-  );
-  const [feedback, setFeedback] = useState<Feedback | null>(
-    initial && initial !== "session_ended" ? INITIAL[initial] : null,
-  );
+  const [emailError, setEmailError] = useState<Line | null>(null);
+  const [passwordError, setPasswordError] = useState<Line | null>(null);
+  const initialOutcome = initial && initial !== "session_ended" ? INITIAL[initial] : null;
+  const [outcome, setOutcome] = useState<Line | null>(initialOutcome);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
@@ -197,29 +171,15 @@ export default function LoginPageClient({
   const { pending, submit } = useAuthForm<
     "InvalidCredentials" | "RateLimited" | "ServiceUnavailable"
   >((kind) => {
-    let content: FeedbackContent;
-    if (kind === "InvalidCredentials") {
-      content = { tone: "Danger", title: "Email or password is incorrect." };
-    } else if (kind === "RateLimited") {
-      content = {
-        tone: "Danger",
-        title: "Too many sign-in attempts.",
-        message: "Wait a few minutes, then try again.",
-      };
-    } else if (kind === "Unreachable" && connectivity === "Offline") {
-      content = {
-        tone: "Danger",
-        title: "You’re offline.",
-        message: "Reconnect to sign in.",
-      };
-    } else if (kind === "ServiceUnavailable" || kind === "Unreachable") {
-      content = UNAVAILABLE;
-    } else if (kind === "Forbidden") {
-      content = WRONG_ADDRESS;
-    } else {
-      throw new Error(`Unexpected sign-in outcome ${kind}`);
-    }
-    setFeedback({ content, announcement: "Assertive" });
+    // `incorrect` would be false for a banned or unconfirmed account, which the server folds in.
+    let line: Line;
+    if (kind === "InvalidCredentials") line = { fact: "couldn’t sign in with that email and password." };
+    else if (kind === "RateLimited") line = { fact: "too many sign-in attempts.", reason: "wait a while, then try again." };
+    else if (kind === "Unreachable") line = TRANSPORT_LINES[connectivity === "Offline" ? "Offline" : "Unavailable"].command(SIGN_IN_FAILED);
+    else if (kind === "ServiceUnavailable") line = TRANSPORT_LINES.Busy.command(SIGN_IN_FAILED);
+    else if (kind === "Forbidden") line = WRONG_ADDRESS_LINE;
+    else throw new Error(`Unexpected sign-in outcome ${kind}`);
+    setOutcome(line);
     if (passwordRef.current) passwordRef.current.value = "";
     setRevealed(false);
     passwordRef.current?.focus();
@@ -231,14 +191,14 @@ export default function LoginPageClient({
     const email = emailRef.current;
     const password = passwordRef.current;
     if (!email || !password) throw new Error("Sign-in controls are missing");
-    const nextEmailError: FeedbackContent | null = !email.value.trim()
-      ? { tone: "Danger", title: "Enter your email address." }
+    const nextEmailError: Line | null = !email.value.trim()
+      ? { fact: "enter your email address." }
       : email.validity.typeMismatch
-        ? { tone: "Danger", title: "Enter a valid email address." }
+        ? { fact: "enter a valid email address." }
         : null;
-    const nextPasswordError: FeedbackContent | null = password.value
+    const nextPasswordError: Line | null = password.value
       ? null
-      : { tone: "Danger", title: "Enter your password." };
+      : { fact: "enter your password." };
     setEmailError(nextEmailError);
     setPasswordError(nextPasswordError);
     if (nextEmailError) email.focus();
@@ -256,15 +216,12 @@ export default function LoginPageClient({
       }
     >
       <div className={authStyles.stack}>
-        {feedback ? (
+        {outcome ? (
           <div
             className={pending ? authStyles.feedbackPending : undefined}
             aria-hidden={pending || undefined}
           >
-            <FeedbackNotice
-              content={feedback.content}
-              announcement={feedback.announcement}
-            />
+            <Field id="password-sign-in-outcome" line={outcome} />
           </div>
         ) : null}
 
@@ -314,14 +271,7 @@ export default function LoginPageClient({
                   emailError ? "password-sign-in-email-error" : undefined
                 }
               />
-              {emailError ? (
-                <div role="alert">
-                  <FieldFeedback
-                    id="password-sign-in-email-error"
-                    content={emailError}
-                  />
-                </div>
-              ) : null}
+              {emailError ? <Field id="password-sign-in-email-error" line={emailError} /> : null}
             </label>
 
             <div className={authStyles.field}>
@@ -345,9 +295,8 @@ export default function LoginPageClient({
                   onChange={() => setPasswordError(null)}
                   aria-invalid={passwordError ? true : undefined}
                   aria-describedby={
-                    passwordError
-                      ? "password-sign-in-password-error"
-                      : undefined
+                    [passwordError ? "password-sign-in-password-error" : null, outcome ? "password-sign-in-outcome" : null]
+                      .filter(Boolean).join(" ") || undefined
                   }
                 />
                 <Button
@@ -361,21 +310,14 @@ export default function LoginPageClient({
                   onClick={() => setRevealed((current) => !current)}
                 />
               </span>
-              {passwordError ? (
-                <div role="alert">
-                  <FieldFeedback
-                    id="password-sign-in-password-error"
-                    content={passwordError}
-                  />
-                </div>
-              ) : null}
+              {passwordError ? <Field id="password-sign-in-password-error" line={passwordError} /> : null}
             </div>
 
             <Link className={authStyles.forgot} href="/forgot-password">
               Forgot password?
             </Link>
             <Button emphasis="strong" size="comfortable" type="submit" aria-busy={pending || undefined} disabled={completedTarget === null || pending}>
-              {pending ? "Signing in…" : "Sign in"}
+              Sign in
             </Button>
           </form>
         </Disclosure>

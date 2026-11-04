@@ -1,5 +1,11 @@
+/* A ruling here stands six outline rows tall: a row is its control plus its padding. */
 .section {
+  --ruling-pitch: var(--size-md);
   min-width: 0;
+}
+
+@media (any-pointer: coarse) {
+  .section { --ruling-pitch: calc(var(--size-xl) + 2 * var(--space-1)); }
 }
 
 .header {

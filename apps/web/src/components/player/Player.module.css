@@ -1,12 +1,3 @@
-.srOnly {
-  position: fixed;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
-
 /* the stationary slot is measured; only the inner surface retreats. */
 .slot {
   container: player / inline-size;
@@ -74,28 +65,11 @@
 }
 
 .options > .rateBadge {
-  position: relative;
   min-width: 56px;
   padding-inline: var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
 }
-
-.controlMarker {
-  position: absolute;
-  top: 0;
-  right: 0;
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-}
-
-.feedback {
-  flex-basis: 100%;
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
-.feedback:empty { display: none; }
 
 .idle,
 .unavailable {
@@ -181,7 +155,6 @@
 }
 
 .artworkBox { position: relative; flex: 0 0 auto; display: inline-flex; }
-.identityStatus { position: absolute; right: -2px; bottom: -2px; display: inline-flex; padding: 2px; border-radius: var(--radius-full); background: var(--surface-1); color: var(--ink); }
 
 .artwork,
 .placeholder {

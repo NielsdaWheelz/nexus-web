@@ -16,11 +16,11 @@ import {
   type MouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
+import { admissionReason } from "@/lib/actions/catalog";
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { StageAnchor } from "@/components/feedback/Slips";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import compact from "@/components/ui/CompactChrome.module.css";
 import Companion, {
@@ -77,11 +77,11 @@ import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/l
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
 import type { PaneVisit, WorkspacePane } from "@/lib/workspace/model";
-import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { primaryWidth } from "@/lib/workspace/paneSizing";
 import { useWorkspacePresentations } from "@/lib/workspace/presentations";
-import { useWorkspaceStore, WorkspaceSessionNotice, type PaneHistoryOptions } from "@/lib/workspace/store";
+import { useWorkspaceStore, type PaneHistoryOptions } from "@/lib/workspace/store";
 import styles from "./PaneShell.module.css";
 
 /** One route-owned composition, derived by the workspace before its body mounts. */
@@ -184,7 +184,6 @@ function PaneView({
   readonly companionMaxWidthPx: number;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneShell");
-  const [feedbackBounds, setFeedbackBounds] = useState<HTMLDivElement | null>(null);
   const { paneId, router } = runtime;
   const { resizePrimaryPane } = useWorkspaceStore();
   const activateHistory = (back: boolean, event: TargetActivationEvent) => {
@@ -251,7 +250,6 @@ function PaneView({
   const controlsFrameRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const scrollportRef = useRef<HTMLDivElement>(null);
-  const bindFeedbackBounds = useCallback((element: HTMLDivElement | null) => { scrollportRef.current = element; setFeedbackBounds(element); }, []);
   const contentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const focusFrame = useRef(0);
@@ -359,6 +357,7 @@ function PaneView({
       icon: <Icon.Search aria-hidden="true" />,
       disabled: resolving || undefined,
       disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
+      waiting: resolving || undefined,
       restoreFocusOnClose: false,
       state: findVisible
         ? { kind: "disclosure", expanded: true, controls: rowId, menuLabels }
@@ -380,7 +379,8 @@ function PaneView({
     kind: "command", id: "Catalog.Save", label: "Save catalog for offline",
     icon: <Icon.Download aria-hidden="true" />,
     disabled: admission !== "Ready" || catalog.accepting || catalog.status?.refreshing === true,
-    disabledReason: admission !== "Ready" ? "requires a connection" : catalog.accepting || catalog.status?.refreshing ? "updating catalog…" : undefined,
+    disabledReason: admission !== "Ready" ? admissionReason() : catalog.accepting || catalog.status?.refreshing ? "the catalog is updating." : undefined,
+    waiting: admission === "Ready" && (catalog.accepting || catalog.status?.refreshing === true) || undefined,
     onSelect: () => { void catalog.refresh(); },
   });
   const share = resolvePaneRouteShareIdentity(route, header.title);
@@ -514,11 +514,6 @@ function PaneView({
   const railPx = rail ? Math.ceil(rail.widthPx) : 0;
 
   return (
-    <FeedbackSurface bounds={feedbackBounds} interaction={null} modal={null} active={isActive}
-      protectedTargets={() => [chromeRef.current, paneRef.current?.querySelector<HTMLElement>("[data-feedback-recovery]") ?? null].filter((element): element is HTMLElement => element !== null)}
-      returnFocus={() => findPaneLandmarkFocusTarget(pane.id) ?? findPaneChromeFocusTarget(pane.id)}>
-    <RetainedActionFeedback />
-    <WorkspaceSessionNotice />
     <section
       ref={paneRef}
       className={styles.paneShell}
@@ -595,7 +590,7 @@ function PaneView({
           }}
         >
           <div
-            ref={bindFeedbackBounds}
+            ref={scrollportRef}
             id={bodyId}
             className={styles.body}
             data-body-mode={route.bodyMode}
@@ -609,6 +604,7 @@ function PaneView({
             {refresh.indicator}
           </div>
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
+          <StageAnchor kind="Pane" paneId={paneId} floor />
         </div>
         {outlineCommands ? <div className={styles.outlineAccessory} data-pane-outline-accessory="true" style={{marginBottom: commandsBottom}}>
           <OutlineCommands publication={outlineCommands} current={() => {
@@ -629,7 +625,6 @@ function PaneView({
           />
         </div>
       )}
-      {refresh.announcement}
       <Companion
         resourceTitle={header.title}
         paneId={paneId}
@@ -643,7 +638,6 @@ function PaneView({
         resourceRef={body?.resourceRef}
       />
     </section>
-    </FeedbackSurface>
   );
 }
 
@@ -661,6 +655,11 @@ function WholeSourceArrival({ resourceRef, paneRef }: {
       return "Applied";
     },
   });
-  const occurrence = useFeedbackOccurrence(arrival.failure !== null, resourceRef);
-  return arrival.failure ? <FeedbackFailure occurrence={occurrence} scope="Local" content={{ tone: "Warning", title: arrival.failure.title }} announcement="Polite" /> : null;
+  const { say, fail } = useOutcome();
+  const failure = arrival.failure;
+  useEffect(() => {
+    if (failure === null) return;
+    return failure.error === null ? say({ fact: failure.title }) : fail(failure.error, failure.title);
+  }, [failure, say, fail]);
+  return null;
 }

@@ -1,92 +1,65 @@
 "use client";
 
-import { installedApp } from "@/lib/native/admission";
-import { useEffect, useId, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackBusy, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useEffect, useId, useMemo, useRef } from "react";
+import { useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
+import { Fact, Failed, VerbControl } from "@/components/feedback/Fact";
+import { sentence } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
 import { BLOCKED_COPY } from "@/lib/actions/catalog";
-import {
-  useActionRuntime,
-} from "@/lib/actions/ResourceActionsProvider";
+import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
+import { ResourceActionFailure, type ActionCommand } from "@/lib/actions/project";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
-import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { apiTransportFeedback, outcomeUnknown, isStaleBuild } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/client";
+import { admissionTransport, TRANSPORT_LINES } from "@/lib/api/failure";
 import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
 } from "@/lib/media/mediaMetadataCopy";
 import { useMediaAdmissions } from "@/lib/media/admissions";
+import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { submitMetadataResultReview } from "@/lib/media/mediaMetadataOperations";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 
-/** Where focus goes once a control leaves: its pane's landmark, else its dialog. */
-function homeOf(control: HTMLElement): () => HTMLElement | null {
-  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
-  const dialog = control.closest<HTMLElement>("[role=dialog]");
-  return () => findPaneLandmarkFocusTarget(paneId) ?? dialog;
-}
-
 /** Repair focus only when the control owning it actually left the document. */
 async function landing(control: HTMLElement, work: () => Promise<void>) {
   const held = document.activeElement === control;
-  const home = homeOf(control);
+  const paneId = control.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+  const dialog = control.closest<HTMLElement>("[role=dialog]");
   await work();
   const active = document.activeElement;
-  const target = home();
+  const target = findPaneLandmarkFocusTarget(paneId) ?? dialog;
   if (held && !control.isConnected && active === document.body && target?.isConnected)
     target.focus({ preventScroll: true });
 }
 
-/** Review one exact no-findings job (history passes its own; the menu is unrelated). */
-export function MetadataReviewButton({
-  mediaId,
-  jobId,
-}: {
-  readonly mediaId: string;
-  readonly jobId: string;
-}) {
-  const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const fail = useThrowLater();
-  const occurrence = useFeedbackOccurrence(failure !== null || pending, jobId);
-  const review = async (trigger: HTMLButtonElement) => {
-    if (pending) return;
-    setPending(true);
-    try {
-      await landing(trigger, () => submitMetadataResultReview(mediaId, jobId));
-      setFailure(null);
-    } catch (error) {
-      const modeled = modeledApiError(error, fail);
-      if (modeled !== null) {
-        const content = apiTransportFeedback(modeled, "couldn't confirm this review.") ??
-          (modeled.code === "E_MEDIA_NOT_FOUND" || modeled.code === "E_NOT_FOUND"
-            ? { tone: "Warning" as const, title: "this result is no longer available", requestId: modeled.requestId }
-            : modeled.code === "E_RESOURCE_CONFLICT"
-              ? { tone: "Warning" as const, title: "this result changed", message: "only a result with no findings can be marked reviewed.", requestId: modeled.requestId }
-              : null);
-        if (content === null) fail({ error });
-        else setFailure(outcomeUnknown(modeled) && modeled.code !== "E_UNAUTHENTICATED" ? {...content, title: "change not confirmed", message: "the request may have succeeded."} : content);
-      }
-    } finally {
-      setPending(false);
-    }
-  };
-  return (
-    <>
-    <Button reserveIcon busyKey={jobId}
-      data-metadata-action=""
-      aria-disabled={pending || undefined}
-      aria-busy={pending || undefined}
-      tooltip={{ text: METADATA_REVIEW_HELP }}
-      onClick={(event) => void review(event.currentTarget)}
-    >
-      mark reviewed
-    </Button>
-    {failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure} content={failure} announcement="Polite" />}
-    </>
-  );
+/** Review one exact no-findings job through the account's retained action owner. */
+export function MetadataReviewButton({ mediaId, jobId }: { readonly mediaId: string; readonly jobId: string }) {
+  const { run } = useActionRuntime();
+  const contextId = useId();
+  const fact = "couldn’t mark this reviewed.";
+  const ref = `media:${mediaId}`;
+  const busy = useBusyActionIds(ref).has("ReviewMetadataResult");
+  const resendFeedback = useResendFeedback();
+  const command = useMemo<ActionCommand>(() => ({ ref, id: "ReviewMetadataResult", label: "mark reviewed", feedbackLabel: "mark reviewed", title: "",
+    confirmation: null, tracked: true, rawWrite: true,
+    execute: acknowledged => submitMetadataResultReview(mediaId, jobId, acknowledged).catch(error => {
+      if (isApiError(error) && (error.code === "E_MEDIA_NOT_FOUND" || error.code === "E_NOT_FOUND"))
+        throw new ResourceActionFailure({ fact, reason: "this result isn’t available." });
+      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT") throw new ResourceActionFailure({ fact });
+      throw error;
+    }),
+  }), [ref, mediaId, jobId]);
+  const presentation = resendFeedback({ line: { fact: "metadata review." }, resend: { label: "mark reviewed", commandKey: `review metadata:${mediaId}:${jobId}`,
+    run: () => run(command), busy } });
+  const line = presentation.line.reason ? presentation.line : { fact: METADATA_REVIEW_HELP };
+  return <>
+    <span id={contextId} className="sr-only">{sentence(line)}</span>
+    {presentation.verbs === null ? <div data-metadata-action=""><Fact line={line} /></div>
+      : <span data-metadata-action=""><VerbControl contextId={contextId} verb={presentation.verbs[0]} /></span>}
+  </>;
 }
 
 /**
@@ -106,9 +79,12 @@ export default function MetadataResearchActions({
 }) {
   const { ctx, run } = useActionRuntime();
   const reasonId = useId();
+  const transportVerbs = useTransportVerbs();
   const admissions = useMediaAdmissions();
   const pending = admissions.pending("MetadataResearch", mediaId);
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
+  const { say, fail } = useOutcome();
+  const resendFeedback = useResendFeedback();
+  const heldBack = admissionTransport(useRemoteAdmission());
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
   const reviewJob =
@@ -122,9 +98,7 @@ export default function MetadataResearchActions({
   const remedies = useResourceActions(remedyNeeded ? ref : null);
   const { prepare, state } = remedies;
   const remedyRequest = useRef<AbortController | null>(null);
-  const remedyFailure = state?.kind === "Failed" ? state.feedback : state?.kind === "Loading" ? state.failure?.feedback ?? null : null;
-  const failureOccurrence = useFeedbackOccurrence(failure !== null, mediaId);
-  const remedyOccurrence = useFeedbackOccurrence(remedyFailure !== null, mediaId);
+  const remedyFailure = state?.kind === "Failed" ? { error: state.error } : state?.kind === "Loading" ? state.failure : null;
   useEffect(() => {
     if (!remedyNeeded) return;
     const controller = new AbortController();
@@ -151,45 +125,33 @@ export default function MetadataResearchActions({
       ref,
       id: "RetryMetadata",
       label: metadataResearchLabel(null, retry.purpose),
+      feedbackLabel: metadataResearchLabel(null, retry.purpose).toLowerCase(),
       title: "",
       confirmation: null,
       tracked: false,
       execute: () => landing(trigger, async () => {
         const result = await admissions.admit({ kind: "MetadataResearch", mediaId,
           request: { expected_job_id: retry.expected_job_id } });
-        if (result.kind !== "OwnerGone")
-          setFailure(result.kind === "LocalFailure" ? result.content : null);
+        if (result.kind !== "LocalFailure") return;
+        if (result.error) fail(result.error, result.line.fact);
+        else say(result.line, result.verbs ?? undefined);
       }),
     });
   };
+  const pendingFeedback = pending === null ? null : resendFeedback({ line: { fact: "metadata search" },
+    resend: { label: "retry", commandKey: `RetryMetadata:${pending.key}`, busy: pending.kind === "sending",
+      run: () => run({ ref, id: "RetryMetadata", label: "retry", feedbackLabel: "retry", title: "", confirmation: null, tracked: false,
+        execute: () => admissions.retry(pending.key) }) } });
   return (
     <>
-      {!ctx.online ? <span id={reasonId} className="sr-only">{BLOCKED_COPY.RequiresOnline}</span> : null}
+      <span id={reasonId} className="sr-only">{pendingFeedback !== null ? sentence(pendingFeedback.line) : ctx.online ? "metadata search" : BLOCKED_COPY.RequiresOnline}</span>
       {reviewJob !== null ? (
-        <MetadataReviewButton mediaId={mediaId} jobId={reviewJob} />
+        <MetadataReviewButton key={reviewJob} mediaId={mediaId} jobId={reviewJob} />
       ) : null}
-      {pending !== null ? (
-        isStaleBuild(pending.error) ? <Button reserveIcon data-metadata-action="" aria-disabled={installedApp || undefined}
-          tooltip={installedApp ? { text: "install the current nexus apk, then reopen the app." } : undefined}
-          onClick={() => { if (!installedApp) window.location.reload(); }}>
-          {installedApp ? "update nexus" : "reload app"}
-        </Button> :
-        <Button reserveIcon
-          data-metadata-action=""
-          aria-busy={pending.kind === "sending" || undefined}
-          aria-disabled={pending.kind === "sending" || !ctx.online || undefined}
-          aria-describedby={!ctx.online ? reasonId : undefined}
-          tooltip={ctx.online ? undefined : { text: BLOCKED_COPY.RequiresOnline }}
-          onClick={(event) => {
-            if (pending.kind === "sending" || !ctx.online) return;
-            const trigger = event.currentTarget;
-            run({ ref, id: "RetryMetadata", label: "retry same request", title: "", confirmation: null, tracked: false,
-              execute: () => landing(trigger, () => admissions.retry(pending.key)),
-            });
-          }}
-        >retry same request</Button>
+      {pendingFeedback !== null ? (
+        pendingFeedback.verbs === null ? null : <span data-metadata-action=""><VerbControl contextId={reasonId} verb={pendingFeedback.verbs[0]} /></span>
       ) : retry.status === "allowed" && (!primaryOnly || reviewJob === null) ? (
-        <Button reserveIcon
+        <Button
           data-metadata-action=""
           aria-disabled={!ctx.online || undefined}
           aria-describedby={!ctx.online ? reasonId : undefined}
@@ -199,15 +161,16 @@ export default function MetadataResearchActions({
           {metadataResearchLabel(operation, retry.purpose)}
         </Button>
       ) : null}
-      {failure ? <FeedbackFailure scope="Local" occurrence={failureOccurrence} content={failure} announcement="Polite" /> : null}
-      {remedyNeeded && (state === null || state.kind === "Loading") && remedyFailure === null ? <FeedbackBusy pending /> : null}
-      {remedyNeeded && remedyFailure ? <FeedbackFailure scope="Local" occurrence={remedyOccurrence} content={remedyFailure} announcement="Polite"
-        actions={[{label: "retry", busy: state?.kind === "Loading", onClick: () => {
+      {remedyNeeded && remedyFailure ? remedyFailure.error
+        ? <Failed error={remedyFailure.error} noun="source actions" retry={{ busy: state?.kind === "Loading", run: () => {
           const request = remedyRequest.current;
           if (request !== null && !request.signal.aborted) prepare(request.signal);
-        }}]} /> : null}
+        } }} />
+        // no request went out: admission says why, once a reason is true.
+        : <Fact line={heldBack === null ? { fact: "couldn’t load source actions." } : TRANSPORT_LINES[heldBack].read("source actions")}
+          verbs={heldBack === null ? undefined : transportVerbs(heldBack) ?? undefined} /> : null}
       {remedyNeeded && sourceRemedy?.kind === "command" ? (
-        <Button reserveIcon
+        <Button
           data-metadata-action=""
           onClick={(event) => {
             const detail = prepareActionSelect(event, event.currentTarget);

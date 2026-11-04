@@ -1,0 +1,4 @@
+/* A ruling stands where the capture will, six reader lines tall. */
+.body {
+  --ruling-pitch: calc(var(--reader-font-size-px, var(--text-md)) * var(--reader-line-height, var(--leading-normal)));
+}

@@ -8,7 +8,9 @@ import { excerptTextParts } from "@nexus/authored/excerpt";
 // assistant links. Mounted X owners are read separately and their offsets enter only
 // occurrences at that publication generation. Authored echoes never replace local rows.
 // Restored admission retries mounted remote evidence under its original account binding.
+// A failed re-read over a shown section says nothing: the section stands until a read lands.
 import { apiFetch, captureApiAccount, isCurrentApiAccount } from "@/lib/api/client";
+import { requestWithRetry } from "@/lib/api/serverState";
 import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -39,6 +41,7 @@ export interface MediaAnnotationsState {
   readonly local: AnnotationsState;
   readonly links: Section<readonly LocalLink[]>;
   readonly remote: Section<RemoteMap>;
+  readonly remoteRead: { readonly failed: boolean; readonly running: boolean };
   readonly decorations: Pick<Decorations, "identity" | "marks" | "noteRefs">;
   readonly markers: readonly RailMarker[];
 }
@@ -125,7 +128,9 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   let wires: WireDocumentMap[] = [];
   let links: MediaAnnotationsState["links"] = { status: "loading" };
   let remote: MediaAnnotationsState["remote"] = { status: "loading" };
-  let state: MediaAnnotationsState = { local: local.getState(), links, remote, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
+  let remoteFailed = false;
+  let remoteReading = false;
+  let state: MediaAnnotationsState = { remoteRead: { failed: false, running: true }, local: local.getState(), links, remote, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
   let controller = new AbortController();
   let stops: (() => void)[] = [];
   let linkReads = 0;
@@ -182,7 +187,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         id: marker.item_id, position: marker.position, end: marker.end_position, kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview })));
       markers.sort((a, b) => a.position - b.position);
     }
-    state = { local: localState, links, remote, decorations: { identity: doc?.identity ?? "", marks: [...localState.marks, ...shared], noteRefs }, markers };
+    state = { remoteRead: { failed: remoteFailed, running: remoteReading }, local: localState, links, remote, decorations: { identity: doc?.identity ?? "", marks: [...localState.marks, ...shared], noteRefs }, markers };
     for (const listener of listeners) listener();
   }
 
@@ -192,28 +197,37 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
     controller = new AbortController();
     const signal = controller.signal, mounted = doc;
     if (mounted === null) return;
-    if (remote.status === "failed") { remote = { ...remote, retrying: true }; project(); }
+    remoteReading = true;
+    if (remote.status === "failed") remote = { ...remote, retrying: true };
+    project();
     try {
       const captureIds = mounted.kind === "text" ? [...new Set(mounted.units.flatMap(unit => unit.xPost?.owner && (unit.xPost.relation === "primary" || unit.xPost.relation === "embedded") ? [unit.xPost.owner.capture_id] : []))] : [];
       const [mediaMaps, captureMaps] = await Promise.all([
         Promise.all(remoteMediaIds(mounted).map(async id => {
-          const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal });
+          const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(`/api/media/${id}/document-map`, { signal: attempt }), signal);
           return data;
         })),
         Promise.all(captureIds.map(async id => {
-          const { data } = await apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal });
+          const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal: attempt }), signal);
           return { ...data, media_id: mediaId, identity: mounted.identity };
         })),
       ]);
       const next = [...mediaMaps, ...captureMaps];
       if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account)) return;
       wires = next;
+      remoteFailed = false;
       project(true);
     } catch (error) {
-      if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account) || handleUnauthenticatedApiError(error)) return;
+      if (signal.aborted || doc !== mounted || !isCurrentApiAccount(account)) return;
+      handleUnauthenticatedApiError(error);
       controller.abort();
-      remote = { status: "failed", error, retrying: false };
-      project();
+      remoteFailed = true;
+      if (remote.status !== "ready") remote = { status: "failed", error, retrying: false };
+    } finally {
+      if (controller.signal === signal && doc === mounted && isCurrentApiAccount(account)) {
+        remoteReading = false;
+        project();
+      }
     }
   }
 
@@ -229,7 +243,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       const seen = new Set(linked.map(entry => entry.resource.ref));
       links = { status: "ready", data: [...linked, ...referencing.flatMap(({ resource }) => seen.has(resource.ref) ? [] : [{ resource, link: null }])] };
     } catch (error) {
-      if (read !== linkReads) return;
+      if (read !== linkReads || links.status === "ready") return;
       links = { status: "failed", error, retrying: false };
     }
     project();

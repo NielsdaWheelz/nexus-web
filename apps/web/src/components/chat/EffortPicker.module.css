@@ -126,3 +126,9 @@
     min-height: var(--size-xl);
   }
 }
+
+.chevron {
+  --control-icon-size: 13px;
+  position: relative;
+  display: inline-flex;
+}

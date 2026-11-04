@@ -74,7 +74,7 @@ export interface ReaderState {
         readonly doc: ReaderDocument;
         readonly structure: Structure;
         readonly refreshing: boolean;
-        readonly refreshFailure: { readonly error: unknown } | null;
+        readonly refreshFailed: boolean;
       };
   readonly viewport: Viewport | null;
   /** The pixel placement from the same measurement as viewport; no geometry read. */
@@ -320,7 +320,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       if (current?.doc.identity === doc.identity && (!recoverPosition || sync?.state().kind !== "LoadFailed")) {
         // Body identity fixes text coordinates; chapter navigation is replaceable.
         // Keep measured coordinates, held origin and unsaved progress intact.
-        set({ document: { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailure: null } });
+        set({ document: { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailed: false } });
         return;
       }
       const view = previous
@@ -341,13 +341,13 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       };
       set({
         document: current?.doc.identity === doc.identity
-          ? { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailure: null }
+          ? { ...current, doc: displayed, structure: displayed.kind === "text" ? structureOf(displayed, null) : current.structure, refreshFailed: false }
           : {
               status: "ready",
               doc,
               structure: structureOf(doc, doc.kind === "pdf" ? doc.pages : null),
               refreshing: true,
-              refreshFailure: null,
+              refreshFailed: false,
             },
         viewport: null,
         placement: null,
@@ -357,11 +357,9 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       });
       void restoreOnce();
     } catch (error) {
-      if (!controller.signal.aborted) {
-        set({ document: state.document.status === "ready"
-          ? { ...state.document, refreshFailure: { error } }
-          : { status: "failed", error, retrying: false } });
-      }
+      if (!controller.signal.aborted) set({ document: state.document.status === "ready"
+        ? { ...state.document, refreshFailed: true }
+        : { status: "failed", error, retrying: false } });
     } finally {
       if (loading === controller) {
         loading = null;
@@ -568,7 +566,8 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     reload(generation) {
       if (generation !== undefined) {
-        if (expectedGeneration !== null && generation <= expectedGeneration) return;
+        const failed = state.document.status === "failed" || state.document.status === "ready" && state.document.refreshFailed;
+        if (expectedGeneration !== null && (generation < expectedGeneration || generation === expectedGeneration && (!failed || loading !== null))) return;
         expectedGeneration = generation;
       }
       void load({ recoverPosition: false });

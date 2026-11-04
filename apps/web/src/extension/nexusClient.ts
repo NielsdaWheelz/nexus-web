@@ -121,6 +121,12 @@ function recoveryPage(raw: unknown): Schema<"RecoveryCandidatePage"> {
   }, "recovery candidates"), next_cursor: value.next_cursor === null ? null : expectString(value.next_cursor, "next cursor") };
 }
 
+/** Same-system envelopes stop this installed capture host; they are not refusals.
+ * justify-defect: these codes denote broken server/client invariants, not domain outcomes. */
+export function isCaptureDefect(code: string): boolean {
+  return code === "E_INTERNAL" || code === "E_UNKNOWN" || code === "E_INVALID_RESPONSE" || code === "E_CAPTURE_DEFECT" || code === "E_CAPTURE_CONTENT";
+}
+
 async function call<T>(
   token: string,
   method: "GET" | "POST" | "DELETE",
@@ -143,10 +149,10 @@ async function call<T>(
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
-    throw failure("E_NETWORK", "Nexus could not be reached.");
+    throw failure("E_NETWORK", navigator.onLine === false ? "you’re offline." : "nexus isn’t answering.", null, null, navigator.onLine === false);
   }
   if (response.status === 426) {
-    const message = "Update the Nexus extension to keep capturing.";
+    const message = "nexus updated. update this extension to keep capturing.";
     throw failure("E_WIRE_MISMATCH", message, null, 426);
   }
   if (response.status === 204) return undefined as T;
@@ -159,19 +165,22 @@ async function call<T>(
   if (typeof error?.code === "string") {
     const requestId =
       typeof error.request_id === "string" ? error.request_id : null;
-    throw failure(
-      error.code,
-      String(error.message),
-      requestId,
-      response.status,
-    );
+    if (isCaptureDefect(error.code)) {
+      console.error("capture server defect:", { status: response.status, error });
+      throw failure(error.code, "nexus capture stopped unexpectedly.", requestId, response.status);
+    }
+    throw failure(error.code, refusal(error.code, response.status), requestId, response.status);
   }
-  throw failure(
-    "E_UNKNOWN",
-    `Nexus answered HTTP ${response.status}.`,
-    null,
-    response.status,
-  );
+  console.error("capture server defect:", { status: response.status, response: json });
+  throw failure("E_UNKNOWN", "nexus capture stopped unexpectedly.", null, response.status);
+}
+
+/** What the popup says of a refusal: its transport's reason, never the server's own text. */
+function refusal(code: string, status: number): string {
+  if (status === 401) return "sign in to keep capturing.";
+  if (code === "E_DATABASE_BUSY" || code === "E_RATE_LIMITED" || code === "E_AUTH_UNAVAILABLE") return "nexus is busy.";
+  if (status >= 500) return "nexus isn’t answering.";
+  return "nexus refused this.";
 }
 
 export function nexus(token: string) {
@@ -183,7 +192,7 @@ export function nexus(token: string) {
       try {
         await call<void>(token, "DELETE", "/session", undefined, signal);
       } catch (error) {
-        if (!(error instanceof CaptureFailureError && error.status === 401))
+        if (!(error instanceof CaptureFailureError && error.status === 401 && !isCaptureDefect(error.failure.code)))
           throw error;
       }
     },
@@ -222,7 +231,7 @@ export async function putBytes(
   if (remaining <= 0) {
     throw failure(
       "E_UPLOAD_EXPIRED",
-      "The upload window closed. Retry to open a new one.",
+      "this upload expired.",
     );
   }
   let response: Response;
@@ -238,11 +247,11 @@ export async function putBytes(
     if (signal.aborted) throw error;
     throw failure(
       "E_UPLOAD_TRANSPORT",
-      "The upload did not complete. Retry to send it again.",
+      "couldn’t confirm the upload.",
     );
   }
   if (!response.ok) {
-    const message = `Storage refused the upload (HTTP ${response.status}). Retry to send it again.`;
+    const message = "couldn’t confirm the upload.";
     throw failure("E_UPLOAD_TRANSPORT", message);
   }
 }

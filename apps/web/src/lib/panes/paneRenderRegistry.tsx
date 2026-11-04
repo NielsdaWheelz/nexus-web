@@ -3,8 +3,8 @@
 import { Suspense, useDeferredValue, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
 import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { ServerSeedsSpent } from "@/lib/api/serverState";
+import { Ruling } from "@/components/feedback/Ruling";
+import { ServerArrivalsSpent } from "@/lib/api/serverState";
 import { PaneModuleLoadError } from "@/lib/panes/PaneModuleLoadError";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
@@ -100,8 +100,8 @@ function load(id: LazyPaneRouteId): ModuleEntry {
 }
 
 function PaneBody({ id }: { readonly id: Exclude<PaneRouteId, "pageNew"> }) {
-  if (id === "note") return <><NotePaneBody /><ServerSeedsSpent /></>;
-  if (id === "page" || id === "dailyDate") return <><PagePaneBody /><ServerSeedsSpent /></>;
+  if (id === "note") return <><NotePaneBody /><ServerArrivalsSpent /></>;
+  if (id === "page" || id === "dailyDate") return <><PagePaneBody /><ServerArrivalsSpent /></>;
   return <LazyPaneBody id={id} />;
 }
 
@@ -112,17 +112,17 @@ function LazyPaneBody({ id }: { readonly id: LazyPaneRouteId }) {
   // retry's minimum fallback delay. No initial value: SSR must keep its ready body.
   const snapshot = useDeferredValue(current);
   if (current.kind === "Failed") throw current.error;
-  if (snapshot.kind === "Pending") return <PaneLoadingState />;
+  if (snapshot.kind === "Pending") return <Ruling />;
   if (snapshot.kind === "Failed") throw snapshot.error;
   const Body = snapshot.Body;
-  return <><Body /><ServerSeedsSpent /></>;
+  return <><Body /><ServerArrivalsSpent /></>;
 }
 
 export function renderPane(id: PaneRouteId): ReactNode {
   if (id === "pageNew") id = "page";
   return (
     <Suspense
-      fallback={<PaneLoadingState />}
+      fallback={<Ruling />}
     >
       <PaneBody key={id} id={id} />
     </Suspense>

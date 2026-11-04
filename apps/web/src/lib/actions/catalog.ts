@@ -1,7 +1,8 @@
 import * as Icon from "@/lib/ui/icons";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiTransportFeedback, outcomeUnknown, type ApiError } from "@/lib/api/client";
-import { CONFLICT_NOTICE } from "@/lib/imports/copy";
+
+import type { Line } from "@/components/feedback/stage";
+import { outcomeUnknown, type ApiError } from "@/lib/api/client";
+import { admissionReason as currentAdmissionReason } from "@/lib/api/failure";
 
 type Group =
   | "Navigate"
@@ -277,68 +278,56 @@ export const ACTION_CATALOG = {
 
 export type ActionId = keyof typeof ACTION_CATALOG;
 
+/** The server's `blocked` reasons. `Loading` and `Busy` describe waits, so their sites keep them
+ * off screen, for a screen reader alone. */
 export const BLOCKED_COPY = {
-  PodcastSubscription: "included by this podcast subscription",
-  PermissionDenied: "You don’t have permission to do this.",
-  Locked: "This item is locked.",
-  Processing: "Available when processing finishes.",
-  TemporarilyUnavailable: "Temporarily unavailable. Try again.",
-  Loading: "Still loading. Try again in a moment.",
-  CapacityReached: "Lectern is full. Remove an item to add this one.",
-  RequiresOnline: "Connect to the internet to use this action.",
-  UnsupportedOnDevice: "Not supported on this device.",
-  Busy: "This action is in progress.",
+  PodcastSubscription: "included by this podcast subscription.",
+  PermissionDenied: "you don’t have permission.",
+  Locked: "this item is locked.",
+  Processing: "available once processing finishes.",
+  TemporarilyUnavailable: "unavailable right now.",
+  Loading: "still loading.",
+  CapacityReached: "lectern is full. remove an item first.",
+  RequiresOnline: "needs a connection.",
+  UnsupportedOnDevice: "not available on this device.",
+  Busy: "in progress.",
 } as const;
 
 export type BlockedReason = keyof typeof BLOCKED_COPY;
 
-/** A verb's modeled failure; a recovery that met newer work is the imports conflict. */
-export function actionFailure(
-  id: ActionId,
-  label: string,
-  error: ApiError,
-): FeedbackContent {
-  if (id === "Playback" && error.code === "E_AUDIO_UNAVAILABLE")
-    return { tone: "Warning", title: "audio unavailable", requestId: error.requestId };
-  if (id === "Playback" && (error.code === "E_PLAYBACK_REFUSED" || error.code === "E_PLAYBACK_STALE"))
-    return { tone: "Warning", title: `couldn’t complete “${label.replace(/…$/, "")}”`, message: error.message };
-  if (id === "Playback" && error.code === "E_PLAYBACK_UNCONFIRMED")
-    return { tone: "Warning", title: "playback request not confirmed",
-      message: "check the player’s current state before trying again." };
-  const recovery =
-    id === "RetrySource" || id === "RepairSource" || id === "RepairSearch";
-  if (
-    id === "LecternMembership" &&
-    error.code === "E_RESOURCE_CONFLICT"
-  )
-    return {
-      tone: "Warning",
-      title: "lectern changed",
-      message: "review its current state before trying again.",
-      requestId: error.requestId,
-    };
-  if (recovery && error.code === "E_RESOURCE_CONFLICT")
-    return { ...CONFLICT_NOTICE, requestId: error.requestId };
-  const unconfirmed = outcomeUnknown(error);
-  const title = unconfirmed
-    ? `couldn't confirm: ${label.replace(/…$/, "")}`
-    : `couldn't complete “${label.replace(/…$/, "")}”`;
-  const transport = apiTransportFeedback(error, title);
-  if (transport !== null) return unconfirmed ? {
-    ...transport,
-    tone: "Warning",
-    message: "check the item's current state before trying again.",
-  } : transport;
-  return {
-    tone: "Danger",
-    title,
-    message: error.code === "E_FORBIDDEN" || error.code === "E_OWNER_REQUIRED"
-      ? "this account doesn't have permission for that change."
-      : error.code === "E_NOT_FOUND" || error.code === "E_MEDIA_NOT_FOUND"
-        ? "this item is no longer available."
-        : error.code === "E_LIMIT"
-          ? "the destination is full. make room before trying again."
-          : undefined,
-    requestId: error.requestId,
-  };
+/** Why a remote verb is unavailable, from admission. A browser offline while admitted lacks a
+ * connection too. A durable reason, shown. */
+export function admissionReason(): string {
+  return currentAdmissionReason() ?? BLOCKED_COPY.RequiresOnline;
+}
+
+/** What a failed verb tells. `Domain` is the verb's own line, translated from a domain code ahead
+ * of the transport; `Transport` leaves the reason and verb to the transport; `Unknown` is a write
+ * that may have gone through, held until the verb runs again. `retry` resends the same verb. */
+export type ActionOutcome =
+  | { readonly kind: "Domain"; readonly line: Line; readonly retry: boolean }
+  | { readonly kind: "Transport"; readonly fact: string; readonly retry: boolean }
+  | { readonly kind: "Unknown"; readonly line: Line };
+
+export function actionOutcome(id: ActionId, feedbackLabel: string, title: string, error: ApiError, rawWrite: boolean): ActionOutcome {
+  const named = `“${feedbackLabel.replace(/…$/, "")}”`;
+  const fact = `couldn’t complete ${named}.`;
+  const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
+  if (id === "Playback") switch (error.code) {
+    case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
+  }
+  if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
+    return domain({ fact: "couldn’t change the lectern." });
+  if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")
+    return domain({ fact });
+  if (rawWrite && outcomeUnknown(error)) return { kind: "Unknown", line: { fact: `not sure ${named} worked.` } };
+  switch (error.code) {
+    case "E_ACTION_FACTS_STALE": return domain({ fact, reason: "the menu is outdated. reopen it." });
+    case "E_FORBIDDEN":
+    case "E_OWNER_REQUIRED": return domain({ fact, reason: "you don’t have permission." });
+    case "E_NOT_FOUND":
+    case "E_MEDIA_NOT_FOUND": return domain({ fact, reason: "this item is gone." });
+    case "E_LIMIT": return domain({ fact, reason: "the destination is full." });
+  }
+  return { kind: "Transport", fact, retry: id === "Playback" };
 }

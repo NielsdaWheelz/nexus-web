@@ -1,14 +1,12 @@
 "use client";
-
-import { useEffect, useState, type ComponentProps, type FormEvent } from "react";
-import {
-  Announcement,
-  FeedbackNotice,
-  FeedbackFailure,
-  useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
 import * as Icon from "@/lib/ui/icons";
+
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useId, useState, type ComponentProps, type FormEvent } from "react";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
+import { Failed, Field } from "@/components/feedback/Fact";
+import type { Line } from "@/components/feedback/stage";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -16,13 +14,8 @@ import Input from "@/components/ui/Input";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, apiTransportFeedback, outcomeUnknown } from "@/lib/api/client";
-import {
-  modeledApiError,
-  useServerValue,
-  useThrowLater,
-  type Visit,
-} from "@/lib/api/serverState";
+import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
@@ -33,43 +26,25 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import { installedApp } from "@/lib/native/admission";
 import { accountEmailChange } from "@/lib/native/client";
-import { useSettingsRefresh, DeviceSettingsStatus } from "@/lib/native/settingsRefresh";
+import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import type { EmailChangeResult } from "@/lib/account/settingsWire";
 import AssistantWrites from "./AssistantWrites";
 import styles from "./page.module.css";
 
 type Profile = ApiJson<"/me", "get">["data"];
-/** What a save tells its form: feedback, and whether the field shows the saved value again. */
-type Outcome = {
-  readonly feedback: FeedbackContent | null;
-  readonly done: boolean;
-};
+/** A form retains its submitted intent independently of mutable writing. Only acceptance or
+ * deliberate guarded departure settles an unknown; a later refusal does not. */
+type Outcome =
+  | { readonly kind: "Saved" }
+  | { readonly kind: "Refused"; readonly line: Line }
+  | { readonly kind: "Unknown" }
+  | { readonly kind: "Told" };
 
+type ProfileCommand = { value: string; phase: "Sending" | "Unknown" | "Retrying"; attempt: number };
+const UNKNOWN: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
 const VISIT = definePaneVisitDataKey<Visit<Profile>>("Settings.Account");
 // the server owns the bound (python schemas/user.py DISPLAY_NAME_MAX_LENGTH)
 const NAME_MAX = 100;
-
-/** A failed command's feedback; null when the shell took it (sign-in, defect). */
-function failure(
-  error: unknown,
-  fail: (defect: { error: unknown }) => void,
-  title: string,
-  invalid?: string,
-): Outcome {
-  const modeled = modeledApiError(error, fail);
-  if (modeled === null) return { feedback: null, done: false };
-  const { requestId } = modeled;
-  const feedback: FeedbackContent =
-    invalid && modeled.code === "E_INVALID_REQUEST"
-      ? { tone: "Danger" as const, title, message: invalid, requestId }
-      : (apiTransportFeedback(modeled, title) ?? {
-          tone: "Danger" as const,
-          title,
-          requestId,
-        });
-  return { feedback: outcomeUnknown(modeled) && !feedback.reload && modeled.code !== "E_UNAUTHENTICATED"
-    ? {...feedback, title: "change not confirmed", message: "the request may have succeeded."} : feedback, done: false };
-}
 
 /** One profile field: its current value, a draft, and a save. */
 function ProfileForm(props: {
@@ -87,37 +62,47 @@ function ProfileForm(props: {
   readonly save: (value: string) => Promise<Outcome>;
 }) {
   const current = props.current;
-  const draft = useResourceDraft<{ text: string | null; pending: boolean }>(
+  const resendFeedback = useResendFeedback();
+  const draft = useResourceDraft<{ text: string | null; command: ProfileCommand | null; refusal: Line | null }>(
     `Settings.Account.${props.title}`,
-    () => ({ text: null, pending: false }),
+    () => ({ text: null, command: null, refusal: null }),
     value => ({
       changed: value.text !== null && (props.normalize ?? String)(value.text.trim()) !== current,
-      unconfirmed: value.pending,
+      unconfirmed: value.command !== null,
       stopsBrowserWork: false,
     }),
   );
-  const setDraft = (text: string | null) => draft.set(value => ({ ...value, text }));
-  const setPending = (pending: boolean) => draft.set(value => ({ ...value, pending }));
-  const { pending } = draft.value;
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const occurrence = useFeedbackOccurrence(feedback !== null || pending);
+  const { command, refusal } = draft.value;
+  const pending = command !== null && command.phase !== "Unknown";
+  const lineId = useId();
   const value = draft.value.text ?? current ?? "";
   const next = (props.normalize ?? String)(value.trim());
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setPending(true);
-    const outcome = await props.save(next);
-    setPending(false);
-    setFeedback(outcome.feedback);
-    if (outcome.done) setDraft(null);
+  const send = async (submitted: string) => {
+    const previous = draft.read().command;
+    if (previous !== null && previous.phase !== "Unknown") return;
+    const running: ProfileCommand = { value: previous?.value ?? submitted, phase: previous === null ? "Sending" : "Retrying", attempt: previous?.attempt ?? 0 };
+    draft.set(value => ({ ...value, command: running, refusal: null }));
+    const result = await props.save(running.value);
+    if (draft.read().command !== running) return;
+    if (result.kind === "Saved") draft.set(value => ({
+      text: value.text !== null && (props.normalize ?? String)(value.text.trim()) !== running.value ? value.text : null,
+      command: null, refusal: null,
+    }));
+    else if (result.kind === "Unknown" || previous !== null) draft.set(value => ({ ...value, command: { ...running, phase: "Unknown", attempt: running.attempt + 1 } }));
+    else draft.set(value => ({ ...value, command: null, refusal: result.kind === "Refused" ? result.line : null }));
   };
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (draft.read().command === null) void send(next);
+  };
+  const held = command === null || command.phase === "Sending" ? null : resendFeedback({ line: UNKNOWN,
+    resend: { label: "retry", commandKey: `RetryProfile:${props.title}`, busy: pending, run: () => { void send(command.value); } },
+  });
+
   return (
     <PaneSection title={props.title}>
       <form className={styles.form} onSubmit={submit}>
-        {feedback ? (
-          feedback.tone === "Info" ? <FeedbackNotice content={feedback} announcement="Polite" />
-            : <FeedbackFailure scope="Local" occurrence={occurrence} content={feedback} announcement="Assertive" />
-        ) : null}
+        {held === null || command === null ? null : <Hold id={`${draft.owner}:profile`} attempt={command.attempt} {...held} />}
         <p className={styles.current}>
           Current: {props.current || "(not set)"}
         </p>
@@ -126,17 +111,20 @@ function ProfileForm(props: {
           <Input
             {...props.input}
             value={value}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => draft.set(value => ({ ...value, text: event.target.value, refusal: null }))}
             disabled={props.current === null || pending}
+            aria-describedby={refusal !== null ? lineId : undefined}
           />
         </label>
+        {/* a save never moves focus to its input, so its refusal speaks */}
+        {refusal !== null ? <Field id={lineId} line={refusal} /> : null}
         {props.hint ? <p className={styles.current}>{props.hint}</p> : null}
-        <Button reserveIcon
+        <Button
           type="submit"
           emphasis="strong"
           aria-busy={pending || undefined}
           disabled={
-            pending ||
+            command !== null ||
             props.current === null ||
             next === props.current ||
             (props.input.required && !next)
@@ -155,7 +143,14 @@ export default function SettingsAccountPaneBody() {
   const toolCallId = params.get("tool_call_id");
   const refreshSettings = useSettingsRefresh();
   const { accountId, setCalendarTimeZone } = useAuthenticatedAccount();
-  const fail = useThrowLater();
+  const { say, fail } = useOutcome();
+  /** A refusal of the input is the field's; an unknown outcome holds; the rest is a slip. */
+  const failed = (error: unknown, title: string, invalid?: Line): Outcome => {
+    if (invalid && isApiError(error) && error.code === "E_INVALID_REQUEST") return { kind: "Refused", line: invalid };
+    if (outcomeUnknown(error)) return { kind: "Unknown" };
+    fail(error, title);
+    return { kind: "Told" };
+  };
   const account = useServerValue({
     key: "/me",
     stale: "",
@@ -168,7 +163,6 @@ export default function SettingsAccountPaneBody() {
   const [saved, setSaved] = useState<{ profile: Profile; over: number } | null>(
     null,
   );
-  const [copyFailure, setCopyFailure] = useState<object | null>(null);
   usePaneReturnReady(account.status !== "loading");
   const profile =
     account.status !== "ready"
@@ -178,12 +172,11 @@ export default function SettingsAccountPaneBody() {
         : account.data;
 
   const copied = useCopyFeedback(profile?.email_ingest_address);
-  useEffect(() => setCopyFailure(null), [profile?.email_ingest_address]);
-  // PATCH /me sets absolute values: a retry that already landed is a no-op success.
+  // Feedback retains the submitted value; PATCH /me still has no version fence.
   const patch = async (
     body: { display_name: string | null } | { calendar_time_zone: string },
     title: string,
-    invalid: string,
+    invalid: Line,
   ): Promise<Outcome> => {
     const over = account.status === "ready" ? account.generation : -1;
     try {
@@ -196,68 +189,43 @@ export default function SettingsAccountPaneBody() {
       if ("calendar_time_zone" in body)
         setCalendarTimeZone(response.data.calendar_time_zone);
       if ("calendar_time_zone" in body) void refreshSettings();
-      return { feedback: null, done: true };
+      return { kind: "Saved" };
     } catch (error) {
-      return failure(error, fail, title, invalid);
+      return failed(error, title, invalid);
     }
   };
   const changeEmail = async (email: string): Promise<Outcome> => {
-    const title = "We couldn't update your email. Please try again.";
+    const title = "couldn’t update your email.";
     try {
       const { data: { outcome } } = installedApp
         ? await accountEmailChange(email)
         : await apiFetch<{ data: EmailChangeResult }>("/api/me/email-change", { method: "POST", body: JSON.stringify({ email }) });
-      if (outcome === "Sent")
-        return {
-          feedback: {
-            tone: "Info",
-            title: `Check ${email} to confirm the change.`,
-            message: "Your email changes when you follow the link in it.",
-          },
-          done: true,
-        };
-      const reason =
-        outcome === "InUse"
-          ? "An account with that email already exists."
-          : outcome === "Invalid"
-            ? "Enter a valid email address."
-            : title;
-      return { feedback: { tone: "Danger", title: reason }, done: false };
+      switch (outcome) {
+        case "Sent":
+          say({ fact: `check ${email} to confirm the change.`, reason: "your email changes when you follow its link." });
+          return { kind: "Saved" };
+        case "InUse": return { kind: "Refused", line: { fact: "another account already uses this email." } };
+        case "Invalid": return { kind: "Refused", line: { fact: "enter a valid email address." } };
+        case "Failed": return { kind: "Unknown" };
+      }
     } catch (error) {
-      return failure(error, fail, title);
+      return failed(error, title);
     }
   };
   const copy = async (address: string) => {
     try {
       await copied.copy(address);
-      setCopyFailure(null);
     } catch (error) {
-      if (!(error instanceof ClipboardWriteUnavailableError)) fail({ error });
-      else setCopyFailure({});
+      // The address stands as selectable text beside its copy control.
+      if (error instanceof ClipboardWriteUnavailableError) say({ fact: "couldn’t copy the address.", reason: "select it to copy it." });
+      else fail(error, "couldn’t copy the address.");
     }
   };
 
-  const loadTitle = "Account settings couldn’t be loaded";
-  const loadError = account.status === "loading" ? null : account.error;
-  const occurrence = useFeedbackOccurrence(loadError !== null);
   return (
     <PaneSurface>
-      <DeviceSettingsStatus />
-      {copyFailure ? <FeedbackFailure scope="Local" occurrence={copyFailure} content={{ tone: "Warning", title: "couldn’t copy address", message: "select the address and copy it." }} announcement="Polite" onDismiss={() => setCopyFailure(null)} /> : null}
       {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
-      {loadError ? (
-        <FeedbackFailure scope="Local" occurrence={occurrence}
-          content={
-            apiTransportFeedback(loadError, loadTitle) ?? {
-              tone: "Danger",
-              title: loadTitle,
-              requestId: loadError.requestId,
-            }
-          }
-          announcement="Assertive"
-          actions={[{ label: "Retry", onClick: account.refetch, busy: account.status === "failed" ? account.retrying : account.status === "ready" && account.refreshing }]}
-        />
-      ) : null}
+      {account.status === "failed" ? <Failed error={account.error} noun="account settings" retry={{ run: account.refetch, busy: account.retrying }} /> : null}
       <ProfileForm
         title="Email"
         label="New email"
@@ -284,8 +252,8 @@ export default function SettingsAccountPaneBody() {
         save={(name) =>
           patch(
             { display_name: name || null },
-            "We couldn't update your display name. Please try again.",
-            `Enter a display name of at most ${NAME_MAX} characters.`,
+            "couldn’t update your display name.",
+            { fact: `enter a display name of at most ${NAME_MAX} characters.` },
           )
         }
       />
@@ -299,8 +267,8 @@ export default function SettingsAccountPaneBody() {
         save={(zone) =>
           patch(
             { calendar_time_zone: zone },
-            "Calendar time zone couldn’t be updated",
-            "Enter an IANA time zone such as America/Los_Angeles.",
+            "couldn’t update your calendar time zone.",
+            { fact: "enter a recognized time zone." },
           )
         }
       />

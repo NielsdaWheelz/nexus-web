@@ -3,7 +3,7 @@
 // port keeps the position on the device through the bridge, which syncs it.
 // Annotations are the account's local authored state, not part of the copy.
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackFailure, FeedbackNotice, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import type { Schema } from "@/lib/api/wire";
 import { WIRE_HEADER } from "@/lib/api/client";
@@ -33,6 +33,8 @@ import type {
 import {
   currentLocalContent,
   localMutation,
+  LocalMutationObservationError,
+  readLocalContent,
   type LocalItem,
 } from "@/lib/offline/localContent";
 import styles from "./shelf.module.css";
@@ -74,6 +76,7 @@ function shelfSource(mediaId: string, generation: number): ReaderSource {
  * The device position; mutations await a readable index covering the receipt. A save never touches canonical: in a conflict it moves the device side.
  */
 function shelfProgress(mediaId: string): ReaderProgressPort {
+  let observation: LocalMutationObservationError | null = null;
   const view = (): ProgressView => {
     const item = currentLocalContent().index?.items.find(
       (entry) => entry.media_id === mediaId,
@@ -83,12 +86,24 @@ function shelfProgress(mediaId: string): ReaderProgressPort {
     return item.progress.kind === "Canonical" ? item.progress : { ...item.progress, adoptUnresolved: item.progress.adopt_unresolved };
   };
   return {
-    load: async () => view(),
+    load: async () => {
+      if (observation !== null) {
+        // A retired adapter cannot borrow a later connection's cached index.
+        if (observation.observation.kind === "Retired") throw observation;
+        await readLocalContent(observation.observation.receipt);
+        observation = null;
+      }
+      return view();
+    },
     async save(locator, base) {
       try {
         await localMutation("save", { media_id: mediaId, locator, base_revision: base.revision,
           expected_reader_generation: base.expectedReaderGeneration, adopt_unresolved: base.adoptUnresolved });
       } catch (error) {
+        if (error instanceof LocalMutationObservationError) {
+          observation = error;
+          return { kind: "Unobserved", acceptance: error.observation.receipt === null ? "Unknown" : "Accepted", error };
+        }
         if (error instanceof Error && error.message === "ContentChanged") return { kind: "ContentChanged" };
         if (error instanceof Error && error.message === "Conflict") {
           const current = view();
@@ -100,7 +115,12 @@ function shelfProgress(mediaId: string): ReaderProgressPort {
       return { kind: "Device", view: view() };
     },
     async resolve(choice) {
-      await localMutation("resolve", { media_id: mediaId, choice });
+      try { await localMutation("resolve", { media_id: mediaId, choice }); }
+      catch (error) {
+        if (!(error instanceof LocalMutationObservationError)) throw error;
+        observation = error;
+        return { kind: "Unobserved", acceptance: error.observation.receipt === null ? "Unknown" : "Accepted", error };
+      }
       return view();
     },
   };
@@ -117,11 +137,10 @@ const SHELF_PROFILE: Schema<"ReaderProfileOut"> = {
   hyphenation: "auto",
 };
 
-const NOTICE: Partial<Record<ProgressView["kind"], string>> = {
-  ContentChanged:
-    "A newer source version exists. This downloaded copy and its position remain only on this device.",
-  SourceUnavailable:
-    "The source was deleted or is unavailable. Your downloaded copy and device position remain.",
+/** The native progress kinds that leave this copy and its position on the device alone. */
+const NOTICE: Partial<Record<ProgressView["kind"], { fact: string; reason: string }>> = {
+  ContentChanged: { fact: "a newer source version exists.", reason: "this copy and position stay only on this device." },
+  SourceUnavailable: { fact: "the source is unavailable.", reason: "this copy and position remain on this device." },
 };
 
 export default function ShelfReader({
@@ -158,8 +177,8 @@ export default function ShelfReader({
     <ReaderNoteEditorHost identity={`shelf:${item.media_id}:${item.saved_at}`}>
       <CompactAnnotationLayer reader={reader} mediaId={item.media_id} source={{ kind: item.kind, label: item.title }} available report={setAnnotations} />
     </ReaderNoteEditorHost>
-  </AuthoredProvider> : account.kind === "Unavailable" ? <FeedbackFailure scope="Local" occurrence={account.occurrence} content={{ tone: "Warning", title: "your notes aren’t available in this reader" }} announcement="Polite"
-    actions={[{ label: "retry", onClick: account.retry, busy: account.retrying }]} /> : null;
+  </AuthoredProvider> : account.kind === "Unavailable" ? <Fact line={{ fact: "couldn’t open your notes here." }}
+    verbs={[{ label: "retry", commandKey: "RetryShelfAccount", run: account.retry, busy: account.retrying }]} /> : null;
 
   const text =
     document.status === "ready" && document.doc.kind === "text"
@@ -170,23 +189,17 @@ export default function ShelfReader({
   return (
     <ReaderProfileProvider profile={SHELF_PROFILE}><div className={styles.documentReader} ref={frame} tabIndex={-1}>
       {document.status === "failed" ? (
-        <FeedbackState
-          content={{ tone: "Warning", title: "downloaded copy couldn’t open", message: "retry opening it. you can also remove this copy and download it again from nexus." }}
-          announcement="Assertive"
-          actions={[
-            { label: "retry", onClick: reader.retryLoad, busy: document.retrying },
-            { label: "remove downloaded copy", onClick: onRemove },
-          ]}
-          disclosure="Anchored"
-          returnFocus={() => frame.current}
-        />
+        <Fact line={{ fact: "couldn’t open this downloaded copy." }} speak verbs={[
+          { label: "retry", commandKey: "RetryDownloadedCopy", run: reader.retryLoad, busy: document.retrying },
+          { label: "remove copy", commandKey: "RemoveDownloadedCopy", run: onRemove },
+        ]} />
       ) : <>
-        {text ? <SourceIssuesNotice issues={text.sourceIssues} readable /> : null}
+        {text ? <SourceIssuesNotice issues={text.sourceIssues} /> : null}
         {text?.format === "web" ? (
-          <FeedbackStatus content={{ tone: "Neutral", title: "text-only copy · images not included" }} announcement="None" />
+          <Fact line={{ fact: "text-only copy.", reason: "images aren’t included." }} />
         ) : null}
         {notice ? (
-          <FeedbackNotice content={{ tone: "Warning", title: progress === "ContentChanged" ? "source version changed" : "source unavailable", message: notice }} announcement="Polite" />
+          <Fact line={notice} speak />
         ) : null}
         {progress === "ContentChanged" && !continued ? (
           <div className={styles.actions} aria-label="Changed source">

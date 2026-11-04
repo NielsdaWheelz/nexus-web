@@ -28,11 +28,14 @@ const SYNTAX = [
     message: "glyphs load statically, through `import * as Icon`.",
   },
   {
-    // A title is the second argument. A compound PascalCase word there (`"SourceChanged"`)
-    // is a kind tag passed to a local `fail`, never copy, so it alone is spared.
-    selector:
+    // A fail title is its second argument; a compound local kind tag is not copy.
+    // A say line carries its fact in the first argument.
+    selector: [
       "CallExpression:matches([callee.name='fail'], [callee.property.name='fail']) > :matches(Literal[value=/^[A-Z]/][value!=/^([A-Z][a-z]+){2,}$/], TemplateLiteral[quasis.0.value.raw=/^[A-Z]/]):nth-child(2)",
-    message: "a failure title is lowercase, except a user's own titles and names.",
+      "CallExpression:matches([callee.name='say'], [callee.property.name='say']) > :matches(Literal[value=/^[A-Z]/], TemplateLiteral[quasis.0.value.raw=/^[A-Z]/]):first-child",
+      "CallExpression:matches([callee.name='say'], [callee.property.name='say']) > ObjectExpression.arguments:first-child > Property[key.name='fact'] > :matches(Literal[value=/^[A-Z]/], TemplateLiteral[quasis.0.value.raw=/^[A-Z]/])",
+    ].join(", "),
+    message: "a feedback fact is lowercase, except a user's own titles and names.",
   },
 ];
 
@@ -62,6 +65,24 @@ export default [
       ],
       "no-restricted-imports": ["error", { paths: LUCIDE_PATHS, patterns: LUCIDE_PATTERNS }],
       "no-restricted-syntax": ["error", ...SYNTAX, ...RAW_DRAWING_SYNTAX],
+    },
+  },
+  {
+    files: [
+      "src/components/ui/ActionMenu.tsx",
+      "src/components/ui/PickerSurface.tsx",
+      "src/components/ui/ChoicePicker.tsx",
+      "src/components/chat/EffortPicker.tsx",
+      "src/components/ui/HoverPreview.tsx",
+    ],
+    rules: {
+      "no-restricted-imports": ["error", {
+        paths: LUCIDE_PATHS,
+        patterns: [...LUCIDE_PATTERNS, {
+          group: ["@/components/feedback", "@/components/feedback/**", "**/feedback", "**/feedback/**"],
+          message: "this surface holds verbs, options and their row marks; its host owns feedback.",
+        }],
+      }],
     },
   },
   {

@@ -7,9 +7,9 @@
  * reviewed choices with those same bytes. No request identity is persisted. */
 
 import { publishChange } from "@/lib/api/changes";
-import { ApiError, apiFetch, isApiError, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
+import { placements, type AcquisitionGuard } from "@/lib/libraries/api";
 import type { BrowsePreview } from "@/lib/browse/api";
 import { resolvePodcastEpisode } from "@/lib/podcasts/api";
 import {
@@ -118,10 +118,8 @@ export function getFileUploadKind(file: File): UploadFileKind | null {
 /** What the browser can tell before sending; the size limit is the server's. */
 export function getFileUploadError(file: File): string | null {
   const kind = getFileUploadKind(file);
-  if (kind === null) return "Only PDF and EPUB files are supported.";
-  return file.size === 0
-    ? `${kind.toUpperCase()} files must not be empty.`
-    : null;
+  if (kind === null) return "only pdf and epub files can be added.";
+  return file.size === 0 ? `this ${kind.toLowerCase()} file is empty.` : null;
 }
 
 /** The actual form/visit owns this memory; it never lives in browser storage. */
@@ -130,30 +128,32 @@ export interface UploadAttempt {
   guard: AcquisitionGuard | null;
   session: Schema<"UploadRequired"> | null;
   confirmation: Schema<"ConfirmUploadRequest"> | null;
+  confirmation_unsettled: boolean;
   bytes_uploaded: boolean;
   review_required: boolean;
   expired: boolean;
 }
 
 export function createUploadAttempt(id = crypto.randomUUID()): UploadAttempt {
-  return { id, guard: null, session: null, confirmation: null, bytes_uploaded: false, review_required: false, expired: false };
+  return { id, guard: null, session: null, confirmation: null, confirmation_unsettled: false, bytes_uploaded: false, review_required: false, expired: false };
 }
 
 /** Explicit review after a known refusal. An unknown confirmation cannot be edited. */
 export function reviewUploadAttempt(attempt: UploadAttempt): void {
-  if (!attempt.review_required) return;
+  if (!attempt.review_required || attempt.confirmation_unsettled) return;
   attempt.guard = null;
   attempt.confirmation = null;
   attempt.review_required = false;
 }
 
-/** A live attempt reuses its staged bytes and exact confirmation after response loss.
+/** The caller prepares the acquisition guard before entering this write. A live attempt reuses
+ * its staged bytes and exact confirmation after response loss.
  * A fence or authority refusal permits explicit review with the same session/generation.
  * Losing the owner requires file reselection; expired bytes cannot be resumed. */
 export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseChange, onImportRef }: {
   file: File;
   attempt: UploadAttempt;
-  guard?: AcquisitionGuard;
+  guard: AcquisitionGuard;
   signal?: AbortSignal;
   onPhaseChange?: (phase: UploadPhase) => void;
   onImportRef?: (ref: string) => void;
@@ -162,7 +162,7 @@ export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseCh
   if (kind === null || getFileUploadError(file) !== null) throw outcome({ kind: "UnsupportedFileType" });
   if (attempt.expired) throw outcome({ kind: "Expired" });
   if (attempt.review_required) throw new ApiError(409, "E_RESOURCE_CONFLICT", "save needs review");
-  attempt.guard ??= guard ?? await readAcquisitionGuard([], signal);
+  attempt.guard ??= guard;
   onPhaseChange?.("Preparing");
   let published: Schema<"Published">;
   if (attempt.session === null) {
@@ -209,14 +209,22 @@ export async function uploadIngestFile({ file, attempt, guard, signal, onPhaseCh
     }
     onPhaseChange?.("Verifying");
     attempt.confirmation ??= { generation: upload.generation, ...attempt.guard! };
+    if (signal?.aborted) throw signal.reason;
+    const unsettled = attempt.confirmation_unsettled;
+    attempt.confirmation_unsettled = true;
     try {
-      return (await call("Confirm", () => apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
+      const published = (await call("Confirm", () => apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
         `/api/media/uploads/${encodeURIComponent(upload.session_id)}/confirm`,
         { method: "POST", body: JSON.stringify(attempt.confirmation), signal },
       ))).data;
+      attempt.confirmation_unsettled = false;
+      return published;
     } catch (error) {
-      if (isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
-        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden") attempt.review_required = true;
+      if (isRefusal(error) || error instanceof UploadSessionError) attempt.confirmation_unsettled = unsettled;
+      if (error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+        || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected")) attempt.confirmation_unsettled = false;
+      if (!attempt.confirmation_unsettled && (isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
+        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden")) attempt.review_required = true;
       if (error instanceof UploadSessionError && error.outcome.kind === "Expired") attempt.expired = true;
       if (error instanceof UploadSessionError && error.outcome.kind === "BytesMissing") attempt.bytes_uploaded = false;
       throw error;

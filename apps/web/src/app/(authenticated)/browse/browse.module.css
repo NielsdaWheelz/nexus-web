@@ -2,7 +2,6 @@
   overflow-wrap: anywhere;
 }
 
-.invalid,
 .chapter,
 .sourceSection {
   display: flex;
@@ -15,8 +14,8 @@
   gap: var(--space-4);
 }
 
-.invalid {
-  align-items: flex-start;
+.chapter[hidden] {
+  display: none;
 }
 
 .chapterHeading,

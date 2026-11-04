@@ -96,7 +96,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
       onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}><Icon.Disclose open={row.open} size={12}/></button> : null;
     const trailing = <>
       {row.mirrors > 1 ? <span data-mirrors={row.mirrors}><span aria-hidden="true">{row.mirrors}</span><span className="sr-only">appears under {row.mirrors} parents</span></span> : null}
-      <AuthoredReadFailure {...row.read} title="couldn’t open linked resources"/>
+      <AuthoredReadFailure {...row.read} noun="linked items"/>
     </>;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource, null, row.href)} /><HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.label,

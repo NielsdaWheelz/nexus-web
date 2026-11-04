@@ -39,11 +39,9 @@
 .workflow { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; }
 
 /* One 40px gutter: the caret and every title share one x. */
-.query { display: grid; flex: 0 0 auto; grid-template-columns: 40px minmax(0, 1fr) 40px; align-items: center; min-height: 48px; border-bottom: 1px solid var(--edge-subtle); }
+.query { display: grid; flex: 0 0 auto; grid-template-columns: 40px minmax(0, 1fr); align-items: center; min-height: 48px; border-bottom: 1px solid var(--edge-subtle); }
 .query .input { min-width: 0; min-height: 48px; padding: 0 var(--space-3) 0 0; color: var(--ink); font-size: var(--text-md); }
 .query .gutter { color: var(--accent); }
-.queryStatus { display: grid; place-items: center; }
-.queryStatusButton { --control-min-size: 32px; }
 
 .body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .list { flex: 1 1 auto; min-height: 0; padding: var(--space-1) 0 var(--space-2); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -122,9 +120,9 @@
 @media (forced-colors: none) {
   .rail .verb:not([aria-disabled="true"]) { color: var(--ink); }
 }
-.railBusy { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; align-self: stretch; }
 
 .notices { display: grid; flex: 0 0 auto; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 40px; overflow-wrap: anywhere; }
+.notices:empty { display: none; }
 .notices:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
 .empty { margin: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
 
@@ -159,7 +157,6 @@
 @media (any-pointer: coarse) {
   .grid .row { min-block-size: 44px; }
   .trailing > button { --control-min-size: 44px; }
-  .queryStatusButton { --control-min-size: 44px; }
 }
 
 @media (max-width: 640px), (pointer: coarse) {

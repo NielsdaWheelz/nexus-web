@@ -9,22 +9,20 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 
-import { StrictMode, useCallback, useEffect, useId, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  FeedbackNotice,
-  FeedbackProvider,
-  FeedbackRecoveryControl,
-  FeedbackStatus,
-  useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
+import { FeedbackProvider, Hold, useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
+import { StageAnchor } from "@/components/feedback/Slips";
+import { sentence, type CommandVerb, type Line, type Shell, type Verbs } from "@/components/feedback/stage";
 import { DestinationTrigger } from "@/components/libraries/DestinationChooser";
 import LibraryChooser, { type ChooserRow } from "@/components/libraries/LibraryChooser";
 import Button from "@/components/ui/Button";
-import ButtonLink from "@/components/ui/ButtonLink";
 import ChoicePicker from "@/components/ui/ChoicePicker";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
@@ -40,6 +38,7 @@ import {
   type ViewCommand,
   type ViewMessage,
 } from "@/extension/capture";
+import { isCaptureDefect } from "@/extension/nexusClient";
 import styles from "./popup.module.css";
 
 type LibraryDestination = Schema<"LibraryDestinationOut">;
@@ -50,34 +49,29 @@ async function command(sent: Command): Promise<CommandResult> {
     return (await browser.runtime.sendMessage(sent)) as CommandResult;
   } catch (error) {
     console.error("Capture background could not be reached:", error);
-    const message = "nexus capture couldn’t be reached. reopen the popup to try again.";
+    const message = "nexus capture isn’t answering. reopen this popup.";
     return {
       kind: "failure",
-      failure: { code: "E_CAPTURE_POPUP", message, requestId: null },
+      failure: { code: "E_CAPTURE_POPUP", message, requestId: null, status: null, offline: false },
     };
   }
 }
 
-function failureContent(
-  failure: CaptureFailure,
-  title?: string,
-): FeedbackContent {
-  return {
-    tone: "Danger",
-    title: title ?? failure.message,
-    message: title === undefined ? undefined : failure.message,
-    requestId: failure.requestId ?? undefined,
-  };
-}
+/** The popup's one sign-in, wherever it shows: the account row's press, which asks firefox for
+ * the origins login waits on and says a failed login. One value, so a slip's verb outlives the
+ * render that raised it; the popup binds it to its latest state. */
+const signIn = { current: () => {} };
+const SIGN_IN: CommandVerb = { label: "sign in", commandKey: "CaptureSignIn", run: () => signIn.current() };
+const SHELL: Shell = { signIn: SIGN_IN };
+/** Refusals that a sign-in answers carry it. */
+const SIGN_IN_CODES = new Set(["E_UNAUTHENTICATED", "E_CAPTURE_SIGNED_OUT", "E_CAPTURE_LOGIN", "E_CAPTURE_LOGIN_STATE"]);
 
-const STATUS: Record<CapturePhase["kind"], string> = {
-  draft: "",
-  review: "",
-  failed: "",
-  acquiring: "Reading the source…",
-  uploading: "uploading capture…",
-  confirming: "submitting capture…",
-  saved: "added to nexus",
+/** Why a save asks for a new capture, by the code that asked. A superseded upload has no truer fact
+ * than the save's own. */
+const RECAPTURE: Partial<Record<string, string>> = {
+  E_CAPTURE_TARGET_CHANGED: "this import changed since capture.",
+  E_UPLOAD_CAPABILITY_EXPIRED: "this upload expired.",
+  E_STORAGE_MISSING: "the uploaded file isn’t available.",
 };
 
 /** "https://nexus.example/*" -> "nexus.example" */
@@ -86,11 +80,14 @@ const patternHost = (pattern: string) =>
 
 function Popup() {
   const [state, setState] = useState<ViewState | null>(null);
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
+  const { say } = useOutcome();
+  const [stopped, setStopped] = useState<CaptureFailure | null>(null);
+  const tell = useCallback((failure: CaptureFailure) => {
+    if (isCaptureDefect(failure.code)) setStopped(failure);
+    else say({ fact: failure.message }, SIGN_IN_CODES.has(failure.code) ? [SIGN_IN] : undefined);
+  }, [say]);
+  const [disconnected, setDisconnected] = useState(false);
   const [retryFailure, setRetryFailure] = useState<Extract<CapturePhase, { kind: "failed" }> | null>(null);
-  const frame = useRef<HTMLElement>(null);
-  const [bounds, setBounds] = useState<HTMLElement | null>(null);
-  const bindFrame = useCallback((element: HTMLElement | null) => { frame.current = element; setBounds(element); }, []);
   const submittedSaveCaption = useRef<{ scope: string; label: string } | null>(null);
   const [pending, setPending] = useState<ViewCommand[]>([]);
   const [connected, setConnected] = useState(false);
@@ -101,11 +98,10 @@ function Popup() {
   } | null>(null);
 
   const send = (sent: Command) => {
-    setNotice(null);
     setRetryFailure((sent.kind === "retry" || sent.kind === "review") && state?.draft?.phase.kind === "failed" ? state.draft.phase : null);
     void command(sent).then((result) => {
       if (result.kind === "failure") {
-        setNotice(failureContent(result.failure));
+        tell(result.failure);
         setRetryFailure(null);
       }
     });
@@ -125,7 +121,7 @@ function Popup() {
       setState(message.state);
       const phase = message.state.draft?.phase.kind;
       if (phase !== "acquiring" && phase !== "uploading" && phase !== "confirming") setRetryFailure(null);
-      if (message.failure !== null) setNotice(failureContent(message.failure));
+      if (message.failure !== null) tell(message.failure);
     });
     port.onDisconnect.addListener(() => {
       if (connection.current !== current) return;
@@ -133,17 +129,18 @@ function Popup() {
       setPending([]);
       setConnected(false);
       setRetryFailure(null);
-      setNotice({ tone: "Danger", title: "Capture disconnected", message: "Close and reopen the popup to read the capture." });
+      setDisconnected(true);
     });
     void command({ kind: "activate" }).then((result) => {
       if (connection.current !== current) return;
-      if (result.kind === "failure") setNotice(failureContent(result.failure));
+      if (result.kind === "failure") tell(result.failure);
     });
     return () => {
       if (connection.current === current) connection.current = null;
       port.disconnect();
     };
-  }, []);
+    // `say`, and so `tell`, is one value for the stage's life, so the port connects once.
+  }, [tell]);
 
   const post = (action: { kind: "set_destination"; destination: LibraryDestination; included: boolean } | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null } | { kind: "save" }): boolean => {
     const current = connection.current;
@@ -151,13 +148,12 @@ function Popup() {
     const sent: ViewCommand = { ...action, sequence: ++current.sequence, draftId: state.draft.id, accountId: state.account.userId };
     try {
       current.port.postMessage(sent);
-    } catch (error) {
-      setNotice({ tone: "Danger", title: "Capture disconnected", message: String(error) });
+    } catch {
+      setDisconnected(true);
       return false;
     }
     current.pending = [...current.pending, sent];
     setPending(current.pending);
-    setNotice(null);
     return true;
   };
 
@@ -176,36 +172,27 @@ function Popup() {
       (granted) => {
         if (granted) return;
         setRetryFailure(null);
-        const kept = state.draft ? " Your capture is kept." : "";
-        setNotice({
-          tone: "Warning",
-          title: "Firefox did not allow access",
-          message: `Nexus needs access to ${origins.map(patternHost).join(", ")}.${kept}`,
-        });
+        const fact = `firefox didn’t allow access to ${origins.map(patternHost).join(", ")}.`;
+        // The background keeps the draft whatever firefox answered.
+        say(state.draft ? { fact, reason: "your capture is kept." } : { fact });
       },
       (error: unknown) => {
         console.error("Capture permission request failed:", error);
         setRetryFailure(null);
-        setNotice({ tone: "Warning", title: "source access not granted", message: "try again to request access to this source." });
+        say({ fact: "firefox didn’t allow access to this source." });
       },
     );
   };
 
-  if (state === null) {
-    return (
-      <main className={styles.popup} ref={bindFrame} aria-busy="true">
-        <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-          protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
-          <FeedbackRecoveryControl className={styles.recovery} />
-        {notice ? (
-          <FeedbackNotice content={notice} announcement="Assertive" />
-        ) : (
-          <FeedbackStatus content={{ tone: "Neutral", title: "opening capture…" }} announcement="Polite" />
-        )}
-      </FeedbackSurface>
-      </main>
-    );
-  }
+  useLayoutEffect(() => { signIn.current = () => sendWithOrigins({ kind: "login" }); });
+  // Each failure onset counts, a failed retry's too: it speaks again while its fact and verbs stand.
+  const failedNow = state?.draft?.phase.kind === "failed";
+  const [failures, setFailures] = useState({ failed: false, attempt: 0, occurrence: {} });
+  if (failedNow !== failures.failed) setFailures(failedNow ? { failed: true, attempt: failures.attempt + 1, occurrence: {} } : { ...failures, failed: false });
+
+  const disconnection = disconnected ? <Hold id="capture-disconnected" line={{ fact: "capture disconnected.", reason: "reopen this popup to continue." }} /> : null;
+  if (stopped !== null) return <main className={styles.popup} tabIndex={-1}><div className={styles.body}><Fact line={{ fact: stopped.message }} speak /></div></main>;
+  if (state === null) return <main className={styles.popup} tabIndex={-1}><StageAnchor kind="Root" />{disconnection}<div className={styles.body}><Ruling /></div></main>;
 
   const { account, draft } = state;
   const chosen = pending.reduce((destinations, edit) => edit.kind === "set_destination" && edit.draftId === draft?.id && edit.accountId === account?.userId
@@ -235,10 +222,10 @@ function Popup() {
           : draft.target.documentKind.toUpperCase();
 
   return (
-    <main className={styles.popup} ref={bindFrame} tabIndex={-1}>
-      <FeedbackSurface bounds={bounds} interaction={null} modal={null} active
-        protectedTargets={() => bounds ? [...bounds.querySelectorAll<HTMLElement>("header")] : []} returnFocus={() => bounds}>
-        <FeedbackRecoveryControl className={styles.recovery} />
+    <main className={styles.popup} tabIndex={-1}>
+      <StageAnchor kind="Root" />
+      {disconnection}
+      <div className={styles.body}>
       {draft !== null ? (
         <header className={styles.source}>
           <span className={styles.kind}>{kindLabel}</span>
@@ -246,48 +233,18 @@ function Popup() {
           <span className={styles.host}>{draft.target.host}</span>
         </header>
       ) : (
-        <FeedbackNotice
-          content={
-            state.unsupported !== null
-              ? {
-                  tone: "Neutral",
-                  title: state.checkingFailed ? "couldn’t check this page" : "This page can’t be saved",
-                  message: state.unsupported,
-                }
-              : {
-                  tone: "Neutral",
-                  title: "Open a web page, PDF or EPUB to save it",
-                }
-          }
-          announcement="Polite"
-          actions={state.checkingFailed ? [{ label: "retry checking", onClick: () => sendWithOrigins({ kind: "retry_checking" }) }] : undefined}
-        />
+        state.checkingFailed ? <Fact line={{ fact: "couldn’t check this page." }} verbs={[{ label: "retry", commandKey: "RetryChecking", run: () => sendWithOrigins({ kind: "retry_checking" }) }]} />
+          : state.unsupported !== null ? <Fact line={{ fact: "this page can’t be saved.", reason: state.unsupported }} />
+          : <Fact line={{ fact: "open a web page, pdf or epub to save it." }} />
       )}
 
       {state.revocationFailure !== null ? (
-        <FeedbackNotice
-          content={failureContent(
-            state.revocationFailure,
-            "Couldn’t disconnect from Nexus",
-          )}
-          announcement="Assertive"
-          actions={[
-            {
-              label: "Retry",
-              onClick: () => sendWithOrigins({ kind: "disconnect" }),
-            },
-          ]}
-        />
-      ) : account === null ? (
-        <div className={styles.account}>
-          <span>Not signed in</span>
-          <Button
-            emphasis="strong"
-            onClick={() => sendWithOrigins({ kind: "login" })}
-          >
-            Sign in to Nexus
-          </Button>
-        </div>
+        // Revocation keeps the credential until nexus confirms it.
+        <Hold id="capture-revocation" attempt={state.revocationFailure.attempt} line={state.revocationFailure.kind === "Unknown" ? { fact: "not sure disconnection finished.", reason: UNKNOWN_OUTCOME_REASON } : { fact: "couldn’t disconnect from nexus." }}
+          verbs={[{ label: "retry", commandKey: "RetryDisconnect", run: () => sendWithOrigins({ kind: "disconnect" }) }]} />
+      ) : null}
+      {account === null ? (
+        state.revocationFailure === null ? <Fact line={{ fact: "not signed in." }} verbs={[SIGN_IN]} /> : null
       ) : (
         <div className={styles.account}>
           <span className={styles.accountName}>
@@ -320,8 +277,7 @@ function Popup() {
       ) : null}
 
       {replacement !== null && phase?.kind !== "saved" ? (
-        <FeedbackNotice content={{ tone: "Neutral", title: "this capture will replace the saved article",
-          message: replacement.title ?? undefined }} announcement="Polite" />
+        <Fact line={{ fact: replacement.title === null ? "this capture replaces a saved article." : `this capture replaces the saved article “${replacement.title}”.` }} />
       ) : null}
 
       {recovery !== null && phase?.kind !== "saved" ? <section className={styles.destinations}>
@@ -329,73 +285,23 @@ function Popup() {
         <p>{recovery.candidate.summary.source_label} · {new Date(recovery.candidate.summary.accepted_at).toLocaleDateString()}</p>
         {recovery.candidate.binding.source_relation === "AlternativeCopy" ? <p>this page has a different address. use its captured text to finish “{recovery.candidate.summary.title}”.</p> : null}
       </section> : null}
-      {notice !== null ? (
-        <FeedbackNotice
-          content={notice}
-          announcement="Assertive"
-          actions={[{ label: "Dismiss", onClick: () => setNotice(null) }]}
-        />
-      ) : null}
-
-      {captureFailure ? (
-        <FeedbackNotice
-          content={captureFailure.recovery === "Check"
-            ? { tone: "Danger", title: "submission not confirmed", requestId: captureFailure.failure.requestId ?? undefined }
-            : failureContent(captureFailure.failure,
-                captureFailure.failure.code === "E_CAPTURE_TARGET_CHANGED" ? "this import changed. capture the page again."
-                  : captureFailure.recovery === "Review" ? "save needs review" : "capture not saved")}
-          announcement="Assertive"
-          returnFocus={() => frame.current}
-          actions={
-            captureFailure.recovery === "Check"
-              ? account !== null && !draft?.needsRecapture
-                ? [{ label: "check submission", onClick: () => sendWithOrigins({ kind: "retry" }), busy: retrying },
-                    { label: "stop checking", onClick: () => send({ kind: "stop_checking" }), disabledReason: retrying ? "capture is being checked" : undefined }]
-                : [{ label: "stop checking", onClick: () => send({ kind: "stop_checking" }) }]
-              : recaptureFailure && account !== null
-              ? [{ label: "capture again", onClick: () => send({ kind: "capture_again" }) },
-                  { label: "discard", onClick: () => send({ kind: "discard" }) }]
-              : captureFailure.recovery === "Review" && account !== null
-              ? [{ label: "review and save", onClick: () => sendWithOrigins({ kind: "review" }), busy: retrying },
-                  { label: "discard", onClick: () => send({ kind: "discard" }), disabledReason: retrying ? "save is being reviewed" : undefined }]
-              : captureFailure.recovery === "Retry" && account !== null
-              ? [
-                  {
-                    label: "retry",
-                    onClick: () => sendWithOrigins({ kind: "retry" }),
-                    busy: retrying,
-                  },
-                  {
-                    label: "discard capture",
-                    onClick: () => send({ kind: "discard" }),
-                    disabledReason: retrying ? "capture is being retried" : undefined,
-                  },
-                ]
-              : [{ label: "Discard", onClick: () => send({ kind: "discard" }) }]
-          }
-        />
-      ) : null}
-
-      {captureFailure?.recovery === "Check" ? <p className={styles.fine}>the request may have succeeded. if you stop checking, the import may still finish.</p> : null}
-      {phase !== null && STATUS[phase.kind] !== "" ? <FeedbackStatus content={{ tone: "Neutral", title: phase.kind === "saved"
-        ? phase.openUrl === null ? "this item is no longer available" : recovery !== null ? "capture submitted" : replacement !== null ? "replacement submitted" : STATUS.saved
-        : STATUS[phase.kind] }} announcement="Polite" /> : null}
+      {captureFailure ? <CaptureFailureFact failure={captureFailure} onset={failures} account={account !== null} recapture={recaptureFailure} retrying={retrying}
+        send={send} sendWithOrigins={sendWithOrigins} /> : null}
 
       {draft === null ||
       phase === null ||
       phase.kind === "failed" ? null : phase.kind === "saved" ? (
         <>
-          {openUrl !== null ? <ButtonLink href={openUrl} target="_blank" rel="noopener noreferrer" emphasis="strong" className={styles.primary}>
-            {recovery !== null ? "view import" : "Open in Nexus"}
-          </ButtonLink> : null}
+          {openUrl === null ? <Fact line={{ fact: "saved, then removed." }} speak />
+            : <Fact line={{ fact: recovery !== null ? "import finished." : replacement !== null ? "saved article replaced." : "saved to nexus." }} speak
+              verbs={[{ label: recovery !== null ? "view import" : "open in nexus", href: openUrl, target: "_blank" }]} />}
           <Button onClick={() => send({ kind: "capture_again" })}>
             capture again
           </Button>
         </>
       ) : draft.needsRecapture && account !== null ? (
         <>
-          <FeedbackNotice content={{ tone: "Neutral", title: "capture again for this account",
-            message: "check the current saved article before uploading this page." }} announcement="Polite" />
+          <Fact line={{ fact: "the account changed since this capture." }} />
           <Button emphasis="strong" className={styles.primary} onClick={() => send({ kind: "capture_again" })}>capture again</Button>
         </>
       ) : (
@@ -440,7 +346,7 @@ function Popup() {
           ) : null}
         </div>
       ) : null}
-    </FeedbackSurface>
+      </div>
       </main>
   );
 }
@@ -468,7 +374,10 @@ function RecoveryPicker({ draft, accountId, enabled, onSet }: {
       if (result.kind === "recovery_targets") {
         setItems(previous => next === null ? result.page.items : [...previous, ...result.page.items]);
         setCursor(result.page.next_cursor); setError(null);
-      } else if (result.kind === "failure") setError(result.failure);
+      } else if (result.kind === "failure") {
+        // justify-ignore-error: the background publishes host defects to Popup's stopped owner.
+        if (!isCaptureDefect(result.failure.code)) setError(result.failure);
+      }
     });
   };
   const choices = selected !== null && !items.some(item => item.binding.target.media_id === selected.binding.target.media_id) ? [selected, ...items] : items;
@@ -479,8 +388,8 @@ function RecoveryPicker({ draft, accountId, enabled, onSet }: {
       options={choices.map(item => ({ id: item.binding.target.media_id, label: item.summary.title,
         detail: `${item.summary.source_label} · ${new Date(item.summary.accepted_at).toLocaleDateString()}`, unavailable_reason: null }))}
       footer={<><input aria-label="search failed imports" value={q} onChange={event => { setQ(event.target.value); load(event.target.value, null); }} />
-        {error ? <Button onClick={() => load(q, null)}>retry checking</Button> : null}
-        {cursor !== null ? <Button disabled={loading} onClick={() => load(q, cursor)}>load more</Button> : null}</>} />
+        {error ? <Fact line={{ fact: "couldn’t load unfinished imports.", reason: error.message }} verbs={[{ label: "retry", commandKey: "RetryRecoveryTargets", busy: loading, run: () => load(q, null) }]} /> : null}
+        {cursor !== null ? <Button disabled={loading} aria-busy={loading || undefined} onClick={() => load(q, cursor)}>load more</Button> : null}</>} />
     {selected !== null && target?.webMatch === "None" ? <Button disabled={!enabled} onClick={() => onSet(null)}>save as new</Button> : null}
   </section>;
 }
@@ -511,8 +420,8 @@ function Destinations({
   const [catalog, setCatalog] = useState<LibraryDestination[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<CaptureFailure | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [retry, setRetry] = useState(0);
-  const occurrence = useFeedbackOccurrence(failure !== null || loading, context);
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
@@ -533,13 +442,16 @@ function Destinations({
         setCatalog(result.snapshot.destinations);
         setFailure(null);
       }
-      else setFailure(result.kind === "failure" ? result.failure : {
-        code: "E_CAPTURE_DEFECT", message: "Libraries answered without a catalog.", requestId: null,
-      });
+      else if (result.kind === "failure") {
+        // justify-ignore-error: the background publishes host defects to Popup's stopped owner.
+        if (!isCaptureDefect(result.failure.code)) setFailure(result.failure);
+      }
+      else setDefect({ error: new Error(`libraries answered ${result.kind}, not a catalog`) });
     });
     return () => { disposed = true; };
   }, [open, retry]);
 
+  if (defect) throw defect.error;
   const available = new Map(catalog?.map(destination => [destination.id, destination]) ?? []);
   const all = new Map(available);
   for (const destination of [...confirmed, ...chosen]) {
@@ -559,7 +471,7 @@ function Destinations({
       progress: "Settled",
       note: missing ? "unavailable" : needsReview ? "needs review" : undefined,
       action: enabled ? { kind: "Set", included: desired, label: desired ? "choose destination" : "remove destination" }
-        : { kind: "Blocked", reason: "this capture cannot be changed now" },
+        : { kind: "Blocked", reason: "this capture can’t change now." },
     };
   });
   return (
@@ -570,7 +482,7 @@ function Destinations({
       {open ? <div id={regionId} ref={regionRef} className={styles.chooser} data-collection-body>
         <LibraryChooser context={context} membershipKind="Chosen" rows={rows} loading={loading} create={null}
           summary={null}
-          error={failure === null ? null : { occurrence, content: failureContent(failure), retry: () => setRetry(value => value + 1), busy: loading }}
+          failure={failure === null ? null : <Failed error={new ApiError(failure.status ?? 0, failure.code, failure.message, { requestId: failure.requestId ?? undefined, offline: failure.offline })} noun="libraries" retry={{ run: () => setRetry(value => value + 1), busy: loading }} />}
           empty="no libraries you can add to"
           onToggle={({ id, included }) => {
             const destination = all.get(id);
@@ -580,6 +492,38 @@ function Destinations({
       <p className={styles.fine}>Members of selected libraries can read this item.</p>
     </section>
   );
+}
+
+/** A failed save, by what can recover it. An unknown outcome holds; `retry` resends, `forget` drops
+ * the local draft. A recapture or review names why; the others say the transport's reason. A failed
+ * retry speaks its onset again, while its fact and the verb under the hand stand where they were. */
+function CaptureFailureFact({ failure, onset, account, recapture, retrying, send, sendWithOrigins }: {
+  failure: Extract<CapturePhase, { kind: "failed" }>; onset: { attempt: number; occurrence: object }; account: boolean; recapture: boolean; retrying: boolean;
+  send(command: Command): void; sendWithOrigins(command: Command): void;
+}) {
+  const verb = (label: string, run: () => void, busy = false): CommandVerb => ({ label, commandKey: `Capture.${label}`, run, busy });
+  const discard = verb("discard", () => send({ kind: "discard" }));
+  if (failure.failure.code === "E_WIRE_MISMATCH") {
+    if (failure.recovery === "Check") return <Hold id="capture-unconfirmed" attempt={onset.attempt}
+      line={{ fact: "not sure that saved.", reason: failure.failure.message }} />;
+    return <Fact line={{ fact: failure.failure.message }} speak />;
+  }
+  if (failure.recovery === "Check") {
+    const forget = verb("forget", () => send({ kind: "stop_checking" }));
+    return <Hold id="capture-unconfirmed" attempt={onset.attempt} line={{ fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON }}
+      verbs={account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), forget] : [forget]} />;
+  }
+  const said = (line: Line, verbs: Verbs) => <>
+    <Fact line={line} verbs={verbs} />
+    <Announcement text={sentence(line)} level="Polite" occurrence={onset.occurrence} />
+  </>;
+  // `needsRecapture` without a recapture code is the account's change.
+  if (recapture && account) return said({ fact: failure.recovery === "Recapture" ? RECAPTURE[failure.failure.code] ?? "couldn’t save this capture." : "the account changed since this capture.",
+    reason: "capture the page again." }, [verb("capture again", () => send({ kind: "capture_again" })), discard]);
+  if (failure.recovery === "Review" && account) return said({ fact: "couldn’t save.", reason: "your save needs review." },
+    [verb("review", () => sendWithOrigins({ kind: "review" }), retrying), discard]);
+  return said({ fact: "couldn’t save this capture.", reason: failure.failure.message },
+    failure.recovery === "Retry" && account ? [verb("retry", () => sendWithOrigins({ kind: "retry" }), retrying), discard] : [discard]);
 }
 
 createRoot(document.getElementById("root")!).render(
@@ -592,7 +536,7 @@ createRoot(document.getElementById("root")!).render(
       currentInstant: new Date().toISOString(),
       navCollapsed: false,
     }}>
-      <MobileViewportProvider><FeedbackProvider><Popup /></FeedbackProvider></MobileViewportProvider>
+      <MobileViewportProvider><FeedbackProvider shell={SHELL}><Popup /></FeedbackProvider></MobileViewportProvider>
     </RenderEnvironmentProvider>
   </StrictMode>,
 );

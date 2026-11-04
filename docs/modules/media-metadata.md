@@ -275,8 +275,8 @@ memory. retry sends that same request; a new expectation requires a new action.
 every sent attempt wakes imports and metadata observation; the existing deadline
 includes body consumption. accepted replies and definitive first-attempt refusals
 retire their exact entry. a refusal after response loss preserves uncertainty
-about the earlier attempt. the common work guard protects explicit dismissal
-and document exit; dismissal does not cancel server work. only the captured
+about the earlier attempt. the common work guard protects account/document
+departure; tucking the notice does not discard the request. only the captured
 current entry may settle local feedback. reload forgets local requests and posts
 nothing; canonical job reads still show accepted work.
 [imports](imports.md#source-refresh) describes the shared two-command boundary.

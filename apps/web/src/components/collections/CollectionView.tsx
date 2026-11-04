@@ -11,7 +11,7 @@ import {
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { Ruling } from "@/components/feedback/Ruling";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
 import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
@@ -177,7 +177,7 @@ export default function CollectionView({
   });
   const body =
     status === "loading" ? (
-      <PaneLoadingState />
+      <Ruling />
     ) : status === "error" ? (
       error
     ) : rows.length === 0 ? (
@@ -194,8 +194,6 @@ export default function CollectionView({
         listRef={listRef}
       />
     ) : (
-      <>
-      {window.plan.kind === "Measure" ? <PaneLoadingState /> : null}
       <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
         {(window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots).map(slot => {
           const row = rows[slot.index];
@@ -206,7 +204,6 @@ export default function CollectionView({
         })}
         {window.plan.kind === "Ready" && window.plan.tailGapPx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: window.plan.tailGapPx, flexShrink: 0 }} /> : null}
       </ResourceList>
-      </>
     );
 
   return (

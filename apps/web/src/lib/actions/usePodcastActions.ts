@@ -26,7 +26,7 @@ export function usePodcastActions(subject: PodcastActionSubject): readonly Actio
   return project(subject, ctx, run).map<ActionButtonSpec>((action, index) => ({
     controlKey: index === 0 ? "PodcastSubscription" : "PodcastLibraries", id: action.id,
     menuLabel: action.label, accessibleLabel: action.accessibleLabel, icon: action.icon,
-    disabled: action.disabled === true, disabledReason: action.disabledReason ?? null, busy: false, hasPopup: "dialog",
+    disabled: action.disabled === true, disabledReason: action.disabledReason ?? null, waiting: action.waiting === true, busy: false, hasPopup: "dialog",
     invoke: focus => { project(subject, ctx, run, focus)[index].onSelect({ triggerEl: focus.trigger, openIntent: "default" }); },
   }));
 }
@@ -35,7 +35,7 @@ export function usePodcastMenuActions(subject: PodcastActionSubject, focus: Podc
   const { ctx, run } = useActionRuntime();
   const actions: ActionDescriptor[] = project(subject, ctx, run, focus);
   const facts = subject.facts;
-  if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "Retry checking subscription", icon: createElement(Icon.Again, { "aria-hidden": true }), disabled: facts.retrying, onSelect: facts.retry });
+  if (facts.kind === "Failed") actions.push({ kind: "command", id: "RetryPodcastFacts", label: "check subscription again", icon: createElement(Icon.Again, { "aria-hidden": true }), busy: facts.retrying, onSelect: facts.retry });
   if (facts.kind === "Ready" && facts.resolution.kind === "Canonical") actions.push(...projectConsumptionUndoActions({ kind: "Podcast", podcast_id: facts.resolution.podcast_id }, ctx));
   return actions;
 }

@@ -72,7 +72,9 @@ export function usePaneCanvas(input: {
     widthPx: number;
   } | null>(null);
   const inView = useStringIdSet();
+  const fullyInView = useStringIdSet();
   const { add, remove } = inView;
+  const { add: addFull, remove: removeFull } = fullyInView;
   const paneIdsKey = input.paneIds.join(",");
   const releaseHeldTarget = useCallback(() => {
     heldPane.current = null;
@@ -255,9 +257,11 @@ export function usePaneCanvas(input: {
           const id = entry.target.getAttribute("data-pane-id");
           if (id && entry.isIntersecting) add(id);
           else if (id) remove(id);
+          if (id && entry.intersectionRatio >= 1) addFull(id);
+          else if (id) removeFull(id);
         }
       },
-      { root: canvas, threshold: 0 },
+      { root: canvas, threshold: [0, 1] },
     ) : null;
     resizes.observe(canvas);
     for (const wrap of canvas.querySelectorAll("[data-pane-id]")) {
@@ -270,7 +274,7 @@ export function usePaneCanvas(input: {
       resizes.disconnect();
       visibility?.disconnect();
     };
-  }, [mode, enabled, paneIdsKey, add, remove]);
+  }, [mode, enabled, paneIdsKey, add, remove, addFull, removeFull]);
 
   const onWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
@@ -366,5 +370,6 @@ export function usePaneCanvas(input: {
       : null,
     edges: enabled ? edges : NO_EDGES,
     inViewPaneIds: enabled ? inView.ids : NONE,
+    fullyInViewPaneIds: enabled ? fullyInView.ids : NONE,
   };
 }

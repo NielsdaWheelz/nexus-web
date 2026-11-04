@@ -1,7 +1,7 @@
 "use client";
 
 // One account owns live refresh/research submissions. Retries send the original
-// bytes; dismissal forgets uncertainty without cancelling accepted server work.
+// bytes. An unconfirmed attempt holds a slip until it is accepted or its guarded owner leaves.
 // Only the captured, still-current entry may settle itself. Canonical reads are
 // invalidated after every sent attempt while the original account remains active.
 import {
@@ -13,19 +13,20 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { remoteReady } from "@/lib/native/admission";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
 import {
   apiFetch,
-  apiTransportFeedback,
   isApiError,
   isStaleBuild,
-  isUnauthenticatedApiError,
+  isRefusal,
   outcomeUnknown,
   requestWithDeadline,
-  STALE_BUILD_FEEDBACK,
   type ApiError,
 } from "@/lib/api/client";
+import { admissionTransport, TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { remoteAdmission } from "@/lib/native/admission";
 import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -36,7 +37,6 @@ import {
   reconnectMetadataOperations,
   startMetadataAccount,
 } from "@/lib/media/mediaMetadataOperations";
-import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
 import { resolveResourceItem } from "@/lib/resources/items";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 
@@ -46,13 +46,16 @@ export type AdmissionIntent =
 export type AdmissionResult =
   | { kind: "Accepted" }
   | { kind: "Pending"; key: string }
-  | { kind: "LocalFailure"; content: FeedbackContent }
+  /** Nothing started; error retains transport authority, otherwise line and verbs are complete. */
+  | { kind: "LocalFailure"; line: Line; verbs: Verbs | null; error: ApiError | null }
   | { kind: "OwnerGone" };
 interface AdmissionEntry {
   readonly key: string;
   readonly intent: AdmissionIntent;
   kind: "sending" | "unconfirmed";
   error: ApiError | null;
+  /** Unconfirmed outcomes so far; each one speaks again. */
+  unconfirmed: number;
 }
 interface LiveEntry extends AdmissionEntry {
   readonly body: string;
@@ -69,18 +72,43 @@ function definiteRefusal(intent: AdmissionIntent, error: ApiError): boolean {
       (intent.kind === "SourceRefresh" && error.code === "E_REPAIR_NOT_ALLOWED"));
 }
 
-function refusalContent(intent: AdmissionIntent, error: ApiError): FeedbackContent {
-  const subject = intent.kind === "SourceRefresh" ? "source refresh" : "metadata request";
-  const message = error.code === "E_MEDIA_NOT_FOUND"
-    ? "this item is no longer available to this account."
-    : error.code === "E_OWNER_REQUIRED" || error.code === "E_FORBIDDEN"
-      ? "only the item's owner can start this work."
-      : error.code === "E_RESOURCE_CONFLICT"
-        ? "this item changed. review its current state before starting another request."
-        : error.code === "E_REPAIR_NOT_ALLOWED"
-          ? "the published document can't be replaced by this request."
-          : "this work can't start in the item's current state. review its current status.";
-  return { tone: "Warning", title: `${subject} not started`, message, requestId: error.requestId };
+const FACT: Readonly<Record<AdmissionIntent["kind"], string>> = {
+  SourceRefresh: "couldn’t refresh the source.",
+  MetadataResearch: "couldn’t start the metadata search.",
+};
+
+function refusalReason(error: ApiError): string | undefined {
+  switch (error.code) {
+    case "E_MEDIA_NOT_FOUND": return "this item isn’t available to you.";
+    case "E_OWNER_REQUIRED":
+    case "E_FORBIDDEN": return "only the item’s owner can do this.";
+    case "E_RESOURCE_CONFLICT": return undefined;
+    case "E_REPAIR_NOT_ALLOWED": return "its published text can’t be replaced.";
+    default: return "it can’t start in this item’s current state.";
+  }
+}
+
+/** A kept save uses the shared write partition and the shell's current remedies. */
+export function useHeldSaveFailure() {
+  const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
+  return (error: ApiError, retry: CommandVerb, copy: {
+    readonly fact: string; readonly unsure: Line; readonly kept: Line;
+  }): { line: Line; verbs: Verbs | null } => {
+    if (outcomeUnknown(error)) return resendFeedback({ line: copy.unsure, resend: retry });
+    const transport = transportOf(error);
+    if (transport === "SignIn" && admissionTransport(remoteAdmission()) !== "SignIn")
+      return resendFeedback({ line: copy.kept, resend: retry });
+    if (transport === "Offline") return navigator.onLine === false
+      ? { line: TRANSPORT_LINES.Offline.command(copy.fact), verbs: null }
+      : resendFeedback({ line: copy.kept, resend: retry });
+    const line = transport === "Refused" ? copy.kept : TRANSPORT_LINES[transport].command(copy.fact);
+    return transport === "Update" ? { line, verbs: transportVerbs(transport) } : resendFeedback({ line, resend: retry });
+  };
+}
+
+function localFailure(line: Line, verbs: Verbs | null, error: ApiError | null): AdmissionResult {
+  return { kind: "LocalFailure", line, verbs, error };
 }
 
 function createAdmissions(accountId: string, guard: WorkGuard) {
@@ -139,20 +167,18 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
       if (!current(entry, scope)) return { kind: "OwnerGone" };
       entry.kind = "unconfirmed";
       entry.error = isApiError(error) ? error : null;
+      entry.unconfirmed += 1;
       publish();
-      if (isUnauthenticatedApiError(error)) {
-        handleUnauthenticatedApiError(error);
-        return { kind: "Pending", key: entry.key };
-      }
+      handleUnauthenticatedApiError(error);
       if (isAbortError(error) || outcomeUnknown(error)) return { kind: "Pending", key: entry.key };
-      if (isApiError(error) && (definiteRefusal(intent, error) || isStaleBuild(error) || error.code === "E_RATE_LIMITED")) {
+      if (isRefusal(error)) {
         if (!fresh) return { kind: "Pending", key: entry.key };
-        const content = apiTransportFeedback(error, "request not started") ?? refusalContent(intent, error);
         retire(entry);
-        return { kind: "LocalFailure", content };
+        return definiteRefusal(intent, error) ? localFailure({ fact: FACT[intent.kind], reason: refusalReason(error) }, null, null)
+          : localFailure(TRANSPORT_LINES[transportOf(error)].command(FACT[intent.kind]), null, error);
       }
       // The existing defect boundary owns unexpected replies; uncertainty remains
-      // registered until explicit dismissal or account teardown.
+      // registered until guarded account departure.
       throw error;
     } finally {
       if (live(scope)) {
@@ -180,7 +206,6 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
     pending: (kind: AdmissionIntent["kind"], mediaId: string) =>
       snapshot.find(entry => entry.intent.kind === kind && entry.intent.mediaId === mediaId) ?? null,
     admit(original: AdmissionIntent): Promise<AdmissionResult> {
-      if (!remoteReady()) return Promise.resolve({ kind: "LocalFailure", content: { tone: "Warning", title: "this request needs a connection", message: "try again after reconnecting." } });
       const scope = lifetime;
       if (scope === null || !live(scope)) return Promise.resolve({ kind: "OwnerGone" });
       const key = `media-admission:${accountId}:${original.kind}:${original.mediaId}`;
@@ -189,7 +214,7 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
         ? { ...original, request: { expected_attempt_id: original.request.expected_attempt_id } }
         : { ...original, request: { expected_job_id: original.request.expected_job_id } };
       const entry: LiveEntry = {
-        key, intent, body: JSON.stringify(intent.request), kind: "sending", error: null,
+        key, intent, body: JSON.stringify(intent.request), kind: "sending", error: null, unconfirmed: 0,
         unregister: guard.register({
           id: key,
           scope: { kind: "account" },
@@ -205,10 +230,6 @@ function createAdmissions(accountId: string, guard: WorkGuard) {
       const entry = entries.get(key);
       if (scope === null || entry === undefined || entry.kind === "sending" || isStaleBuild(entry.error)) return;
       await send(entry, false, scope);
-    },
-    forget(key: string): void {
-      const entry = entries.get(key);
-      if (entry !== undefined && guard.confirmLoss({ scopes: [], ownerIds: [entry.key] })) retire(entry);
     },
   };
 }
@@ -235,11 +256,11 @@ function useOwner() {
 export function useMediaAdmissions() {
   const owner = useOwner();
   useSyncExternalStore(owner.subscribe, owner.getSnapshot, () => EMPTY);
-  return { admit: owner.admit, retry: owner.retry, pending: owner.pending, forget: owner.forget };
+  return { admit: owner.admit, retry: owner.retry, pending: owner.pending };
 }
 
-/** The subject's menu and metadata actions carry an unconfirmed request's retry;
- * this reports each unconfirmed attempt once, even after its initiator closed. */
+/** Each unconfirmed attempt holds one slip until it is accepted or its guarded owner leaves, even after its
+ * initiator closed. A stale build's refusal is said once instead: reload is its only remedy. */
 export function MediaAdmissionsHost() {
   const owner = useOwner();
   const entries = useSyncExternalStore(owner.subscribe, owner.getSnapshot, () => EMPTY);
@@ -248,28 +269,22 @@ export function MediaAdmissionsHost() {
 
 function AdmissionReport({ entry }: { entry: AdmissionEntry }) {
   const owner = useMediaAdmissions();
-  const online = useConnectivity() === "Online";
-  const fail = useThrowLater();
+  const resendFeedback = useResendFeedback();
+  const throwLater = useThrowLater();
+  const { fail } = useOutcome();
   const resource = usePaneFreeServerValue({
     key: `admission-resource:${entry.intent.mediaId}`,
     stale: "",
     load: signal => resolveResourceItem(`media:${entry.intent.mediaId}`, signal),
   });
   const label = resource.status === "ready" && !resource.data.missing ? resource.data.label : null;
-  const subject = entry.intent.kind === "SourceRefresh" ? "source refresh" : "metadata request";
-  const title = `${subject}: request unconfirmed`;
-  const feedback = useFeedback();
-  useEffect(() => {
-    if (entry.kind !== "unconfirmed") return;
-    if (isStaleBuild(entry.error)) return feedback.receipt(STALE_BUILD_FEEDBACK);
-    // A retry or retirement retracts this attempt's report.
-    return feedback.receipt({ tone: "Warning", title: label === null ? title : `${title} · ${label}`,
-      message: "the request may already have started work. retry sends the same request. accepted server work is not cancelled.",
-      requestId: entry.error?.requestId,
-    }, { label: "retry same request", disabledReason: online ? undefined : "this request needs a connection",
-      onClick: () => { void owner.retry(entry.key).catch(error => fail({ error })); } });
-    // One report per unconfirmed attempt; its label may still be resolving.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: keyed to the attempt's outcome alone
-  }, [entry.kind, entry.error]);
-  return null;
+  const refused = isRefusal(entry.error) ? entry.error : null;
+  const fact = FACT[entry.intent.kind];
+  useEffect(() => refused === null ? undefined : fail(refused, fact), [fact, fail, refused]);
+  if (entry.unconfirmed === 0) return null;
+  const subject = entry.intent.kind === "SourceRefresh" ? "the source refresh" : "the metadata search";
+  return <Hold id={entry.key} attempt={entry.unconfirmed}
+    {...resendFeedback({ line: { fact: label === null ? `not sure ${subject} started.` : `not sure ${subject} started for “${label}”.`, reason: UNKNOWN_OUTCOME_REASON },
+      resend: { label: "retry", commandKey: `retry ${entry.key}`, busy: entry.kind === "sending",
+        run: () => { void owner.retry(entry.key).catch(error => throwLater({ error })); } } })} />;
 }

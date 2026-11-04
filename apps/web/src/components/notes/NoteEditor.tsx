@@ -1,5 +1,7 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
 
 // One editing engine for a standalone body or a flat outline projection. Rich
@@ -39,7 +41,6 @@ import ResourceOutlineList, {
 } from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import NoteBodyPreview from "./NoteBodyPreview";
-import AuthoredReadFailure from "./AuthoredReadFailure";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
 import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import {authoredItem} from "@/lib/notes/presentation";
@@ -69,12 +70,16 @@ import {
   undo as ownUndo,
 } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import * as Icon from "@/lib/ui/icons";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { FeedbackBusy, FeedbackFailure, FieldFeedback, useFeedback, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown } from "@/lib/api/client";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import AuthoredReadFailure from "./AuthoredReadFailure";
+import { Failed, Field } from "@/components/feedback/Fact";
+import type { CommandVerb, Line } from "@/components/feedback/stage";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { readAcquisitionGuard } from "@/lib/libraries/api";
 import { createUploadAttempt, getFileUploadError, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "@/lib/imports/ingest";
-import { captureErrorFeedback } from "@/lib/imports/copy";
+import { UploadSessionError } from "@/lib/imports/api";
+import { captureErrorLine } from "@/lib/imports/copy";
 import {
   bodyFromNode,
   bodyText,
@@ -187,6 +192,9 @@ export interface NoteEditorProps {
   writingOrigin?: unknown;
   editorKey: string;
   occurrenceKey?: string;
+  /** A failed commit holds this editor's words: its caret turns `--danger`, never the sole signal. */
+  wordsAtRisk?: boolean;
+  "aria-describedby"?: string;
   /** The acknowledged note identity; drafts supply null. */
   containingNoteRef: string | null;
   body: NoteBody;
@@ -237,7 +245,8 @@ interface LinkDialog {
   text: string;
   query: string;
   baseline: string;
-  error: string | null;
+  /** each refusal is a new line, so a repeated one speaks again */
+  error: Line | null;
   left: number;
   top: number;
 }
@@ -253,11 +262,20 @@ interface CompositionInput {
 export const noteEditorAttachmentOwnerId = (visitId: string, editorKey: string) =>
   resourceDraftOwnerId(visitId, `Notes.Attachment:${editorKey}`);
 
+const NOT_INSERTED: Line = { fact: "couldn’t insert this.", reason: "your writing is kept." };
+const ACROSS_FIELDS: Line = { fact: "couldn’t change text across fields.", reason: "select the items to change them together." };
+const LINK_OPEN: Line = { fact: "couldn’t do that while a link is open.", reason: "your writing is kept." };
+const NOT_ATTACHED = "couldn’t attach this file.";
+const NOT_ADDED = "couldn’t add this attachment.";
+const UNKNOWN: Line = { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON };
+
 export default function NoteEditor(props: NoteEditorProps) {
   const supplied = useOptionalNoteEditorHost();
   return supplied ? <NoteEditorContent {...props} /> : <WorkspaceNoteEditorHost><NoteEditorContent {...props} /></WorkspaceNoteEditorHost>;
 }
 function NoteEditorContent(props: NoteEditorProps) {
+  const describedBy = props["aria-describedby"];
+  const resendFeedback = useResendFeedback();
   const editorHost = useNoteEditorHost();
   const schema = props.projection?.schema ?? canonicalSchema;
   const bindingRef = useRef<EditorBinding | null>(null);
@@ -297,7 +315,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const attachment = useEditorDraft<{
     row_id: string | null;
     controller: AbortController; base: NoteBody; selection: NoteEdit["selectionBefore"];
-    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; failure: FeedbackContent | null; occurrence: object;
+    body: NoteBody | null; pending: boolean; file: File; upload: UploadAttempt; unconfirmed: Line | null; attempt: number;
   } | null>(`Notes.Attachment:${props.editorKey}`, () => null,
     value => ({ changed: value !== null, unconfirmed: value !== null && value.body === null, stopsBrowserWork: value?.pending === true }));
   busy.current = attachment.value?.pending === true;
@@ -324,6 +342,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     }
   }, [retainedInput, readAttachment, setAttachment]);
   const discardAttachment = () => { if (guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) setAttachment(null); };
+  const discardVerb: CommandVerb = { label: "discard", commandKey: "DiscardAttachment", run: discardAttachment };
   const linkInputId = useId();
   const linkErrorId = useId();
   const linkInput = useRef<HTMLInputElement | null>(null);
@@ -334,10 +353,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
   const [presentation, setPresentation] = useState<"title" | "prose" | "code">("prose");
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [attachmentFeedback, setAttachmentFeedback] = useState<FeedbackContent | null>(null);
-  const feedback = useFeedback();
-  const attachmentFeedbackOccurrence = useFeedbackOccurrence(attachmentFeedback !== null, props.editorKey);
+  const { say, fail } = useOutcome();
   const [referenceFocused, setReferenceFocused] = useState(false);
   const [referenceVisible, setReferenceVisible] = useState(true);
   const referenceHost = activeRowId !== null && props.projection ? props.projection.reference(activeRowId) : props.reference ?? null;
@@ -445,11 +461,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     return true;
   };
   const handleUnauthenticated = useUnauthenticatedApiHandler();
-  const warn = useCallback(
-    (title: string, message: string) =>
-      feedback.receipt({ tone: "Warning", title, message }),
-    [feedback],
-  );
+  const warn = useCallback((line: Line) => { say(line); }, [say]);
 
   const reportEdit = useCallback((edit: NoteEdit, row_id?: string | null): boolean => {
     try {
@@ -461,7 +473,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       else latest.current.onEdit(edit);
       queueMicrotask(() => bindingRef.current?.refresh());
       return true;
-    } catch { warn("insertion needs review", "your existing writing is kept."); return false; }
+    } catch { warn(NOT_INSERTED); return false; }
   }, [warn]);
   const presentBody = (view: EditorView, field: EditingField, value: "prose" | "code") => {
     latest.current.history?.boundary();
@@ -499,7 +511,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const field = editingField(view.state);
     if (!field) return false;
     if (from < field.from || to > field.to) {
-      warn("Select text within one field", "Select items to change them together.");
+      warn(ACROSS_FIELDS);
       return true;
     }
     if (field.kind === "title" || $from.parent.attrs.presentation === "code") return false;
@@ -537,7 +549,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (!field) return false;
     const selected = view.state.selection;
     if (selected.from < field.from || selected.to > field.to) {
-      warn("Select text within one field", "Select items to change them together.");
+      warn(ACROSS_FIELDS);
       return true;
     }
     const from = selected.from - field.from, to = selected.to - field.from;
@@ -581,14 +593,14 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (!href)
       return setLink({
         ...link,
-        error: "Enter a web address, email address, or local path.",
+        error: { fact: "enter a web address, email address or local path." },
       });
     const field = link.row_id === null ? editingField(view.state) : editingRow(view.state.doc, link.row_id);
     if (
       !field || field.kind === "title" || link.to > field.node.content.size ||
       field.node.textBetween(link.from, link.to, " ", " ") !== link.text
     ) {
-      return setLink({ ...link, error: "the selected text changed. select it again to add this link; your address is kept." });
+      return setLink({ ...link, error: { fact: "the selected text changed. select it again; your address is kept." } });
     }
     const mark = schema.marks.link!.create({ href });
     const tr = view.state.tr.setMeta(SOURCE, "format");
@@ -612,24 +624,18 @@ function NoteEditorContent(props: NoteEditorProps) {
 
   const attach = useCallback(
     async (view: EditorView, files: File[]) => {
-      const refuse = (message: string) => setAttachmentFeedback({
-        tone: "Danger", title: message,
-      });
+      const refuse = (line: Line) => { say(line); };
       if (!latest.current.editable || activeReference(view.state) !== null)
         return;
-      if (view.composing || compositionBase.current !== null) return refuse("finish typing before adding an attachment.");
+      if (view.composing || compositionBase.current !== null) return refuse({ fact: NOT_ATTACHED, reason: "finish typing first." });
       const field = editingField(view.state);
       if (!field || field.kind === "title") return;
-      setAttachmentFeedback(null);
-      if (!replaceable(view))
-        return refuse(
-          "Select the note body or empty it before attaching a file.",
-        );
-      if (editorHost.uploads === null) return refuse("new uploads aren’t available in this reader.");
-      if (!navigator.onLine) return refuse("connect to add this attachment.");
-      if (files.length > 1) return refuse("Attach one file at a time here.");
+      if (!replaceable(view)) return refuse({ fact: "couldn’t attach this file here.", reason: "select the note body or empty it first." });
+      if (editorHost.uploads === null) return refuse({ fact: NOT_ATTACHED, reason: "uploads aren’t available in this reader." });
+      if (!navigator.onLine) return refuse({ fact: NOT_ATTACHED, reason: "you’re offline." });
+      if (files.length > 1) return refuse({ fact: `couldn’t attach ${files.length} files.`, reason: "attach one at a time." });
       const problem = getFileUploadError(files[0]!);
-      if (problem) return refuse(problem);
+      if (problem) return refuse({ fact: NOT_ATTACHED, reason: problem });
       const prior = readAttachment();
       if (prior?.pending) return;
       if (prior && prior.file !== files[0] && !guard.confirmLoss({ scopes: [], ownerIds: [attachmentOwner] })) return;
@@ -640,30 +646,50 @@ function NoteEditorContent(props: NoteEditorProps) {
       const abort = () => controller.abort();
       signal.addEventListener("abort", abort, { once: true });
       const unsubscribe = uploadHost.subscribe(() => { if (!uploadHost.is_owned()) controller.abort(); });
-      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), failure: retained?.failure ?? null, occurrence: retained?.occurrence ?? {} };
+      const task = { row_id: retained?.row_id ?? field.row_id, controller, base: retained?.base ?? fieldBody(field), selection: retained?.selection ?? fieldSelection(view.state, field), body: null, pending: true, file: files[0]!, upload: retained?.upload ?? createUploadAttempt(), unconfirmed: retained?.unconfirmed ?? null, attempt: retained?.attempt ?? 0 };
+      // Each failure that holds is a new attempt, so the hold speaks when a retry fails, not when it is pressed.
+      const hold = (unconfirmed: Line) => setAttachment({ ...task, pending: false, unconfirmed, attempt: task.attempt + 1 });
       setAttachment(task);
       // Disabling the view can blur it before the layout effect reports.
       latest.current.onAttachmentActiveChange?.(true);
       busy.current = true;
       view.setProps({ editable: () => false });
       try {
-        const upload = await uploadIngestFile({ file: task.file, attempt: task.upload, signal: controller.signal });
+        let prepared = task.upload.guard;
+        if (prepared === null) {
+          try { prepared = await readAcquisitionGuard([], controller.signal); }
+          catch (error) {
+            if (controller.signal.aborted || signal.aborted) return;
+            setAttachment(null);
+            if (!handleUnauthenticated(error)) fail(error, NOT_ADDED);
+            return;
+          }
+        }
+        const upload = await uploadIngestFile({ file: task.file, attempt: task.upload, guard: prepared, signal: controller.signal });
         if (controller.signal.aborted || signal.aborted || readAttachment()?.controller !== controller) return;
         if (!upload.available) {
-          setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "this item was saved, then removed" } });
+          setAttachment(null);
+          say({ fact: "this item was saved, then removed." });
           return;
         }
         const embed = schema.nodes.body!.create(null, schema.nodes.resource_embed!.create({ resource_ref: `media:${upload.mediaId}`, field: null, label: files[0]!.name }));
         setAttachment({ ...task, pending: false, body: bodyFromNode(embed) });
       } catch (error) {
         if (controller.signal.aborted || signal.aborted) return;
-        setAttachment({ ...task, pending: false, failure: { tone: "Warning", title: "attachment unconfirmed", message: "retry the same upload to check its result." } });
-        if (handleUnauthenticated(error)) return;
-        try {
-          setAttachment({ ...task, pending: false, failure: captureErrorFeedback(error, "AddAttachment") });
-        } catch (unmodeled) {
-          setDefect({ error: unmodeled });
+        // A later refusal cannot settle an earlier confirmation. Only acceptance or an exact
+        // publication fence retires it; retry keeps the same bytes and confirmation.
+        // A malformed intent and same-system transport defects retain their failure boundary.
+        if (outcomeUnknown(error)) hold(UNKNOWN);
+        else if (task.upload.review_required) hold({ fact: NOT_ADDED });
+        else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
+        else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
+          const line = { fact: NOT_ADDED, reason: captureErrorLine(error, "AddAttachment").reason };
+          if (task.upload.confirmation_unsettled || error.outcome.kind === "Unresolved") hold(UNKNOWN);
+          else if (error.outcome.kind === "BytesMissing") hold(line);
+          else { setAttachment(null); say(line); }
         }
+        else if (task.upload.confirmation_unsettled && isApiError(error) && !isSameSystemApiDefect(error)) hold(UNKNOWN);
+        else { setAttachment(null); if (!handleUnauthenticated(error)) fail(error, NOT_ADDED); }
       } finally {
         unsubscribe();
         signal.removeEventListener("abort", abort);
@@ -671,13 +697,20 @@ function NoteEditorContent(props: NoteEditorProps) {
         if (!view.isDestroyed) view.setProps({ editable: () => latest.current.editable && inputMode.current === "text" });
       }
     },
-    [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, editorHost, schema.nodes.body, schema.nodes.resource_embed],
+    [handleUnauthenticated, readAttachment, setAttachment, attachmentOwner, guard, editorHost, schema.nodes.body, schema.nodes.resource_embed, say, fail],
   );
 
+  // An uploaded attachment inserts itself where it can. Only a body it declined holds the
+  // `insert` instruction, so an insertion that succeeds never flashes or speaks one.
+  const [declined, setDeclined] = useState<NoteBody | null>(null);
   useEffect(() => {
     const task = attachmentValue;
+    if (!task?.body) return;
     const view = viewRef.current, field = view && editingField(view.state);
-    if (!task?.body || !props.editable || !referenceReady || view?.composing || compositionBase.current !== null || !field || field.row_id !== task.row_id || !sameBody(fieldBody(field), task.base)) return;
+    if (!props.editable || !referenceReady || view?.composing || compositionBase.current !== null || !field || field.row_id !== task.row_id || !sameBody(fieldBody(field), task.base)) {
+      setDeclined(task.body);
+      return;
+    }
     reportEdit({ before: fieldBody(field), after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 1, head: 1 }, source: "attachment" }, task.row_id);
     setAttachment(null);
   }, [attachmentValue, setAttachment, props, referenceReady, reportEdit]);
@@ -693,7 +726,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (view) notifySelection(view.state);
     if (!props.editable) setLinkVisible(false);
-  }, [props.editable, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
+  }, [props.editable, describedBy, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -718,7 +751,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       if (!latest.current.editable || busy.current) return false;
       const field = editingField(state);
       if (field?.kind === "title") {
-        if (referenceRef.current.getState() !== null) warn("finish the open link query first", "your writing is kept.");
+        if (referenceRef.current.getState() !== null) warn(LINK_OPEN);
         else structuralKeys(state)?.enter?.();
         return true;
       }
@@ -762,7 +795,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       if (activeReference(current.state) !== null)
         return (redo ? ownRedo : ownUndo)(current.state, current.dispatch, current);
       if (referenceRef.current.getState() !== null) {
-        warn("finish the open link query first", "your writing is kept.");
+        warn(LINK_OPEN);
         return true;
       }
       if (latest.current.history) {
@@ -807,7 +840,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       const field = editingField(current.state);
       if (!field) return false;
       if (selection.from < field.from || selection.to > field.to) {
-        warn("Select text within one field", "Select items to change them together.");
+        warn(ACROSS_FIELDS);
         return true;
       }
       if ((inputType === "deleteContentBackward" || inputType === "deleteContentForward") && !selection.empty) {
@@ -821,12 +854,12 @@ function NoteEditorContent(props: NoteEditorProps) {
       const deletingBoundary = (inputType === "deleteContentBackward" && selection.empty && selection.from === field.from ||
         inputType === "deleteContentForward" && selection.empty && selection.to === field.to) && (keys?.join || keys?.emptyDelete);
       if (deletingBoundary && keys?.arranging?.()) {
-        warn("finish moving the items before deleting across them", "your writing is kept.");
+        warn({fact: "finish moving the items before deleting across them.", reason: "your writing is kept."});
         return true;
       }
       if (referenceRef.current.getState() !== null && (deletingBoundary || returning &&
         (field.kind === "title" && keys?.enter || body.attrs.presentation !== "code" && keys?.split))) {
-        warn("finish the open link query first", "your writing is kept.");
+        warn(LINK_OPEN);
         return true;
       }
       if (returning) {
@@ -890,7 +923,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           selectionAfter: original.row_id === editingField(current.state)?.row_id ? fieldSelection(current.state, field) : original.selection,
         }, original.row_id);
         else { if (!binding) replaceDoc(current, docFromBody(latest.current.body)); transferred = true; }
-      } catch { warn("insertion needs review", "your existing writing is kept."); }
+      } catch { warn(NOT_INSERTED); }
       finally {
         if (transferred && !current.isDestroyed && compositionBase.current === original) {
           compositionBase.current = null;
@@ -960,6 +993,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               ? {tabindex: inputMode.current !== "text" || nativeEntry ? "0" : "-1"}
               : {}),
           "aria-label": latest.current.label,
+          "aria-describedby": latest.current["aria-describedby"] ?? "",
           "aria-multiline": "true",
           "data-placeholder":
             latest.current.placeholder ??
@@ -1022,7 +1056,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         if (latest.current.projection) {
           try { pasted = inlinePaste(slice, editingField(current.state)?.kind ?? "body"); }
           catch {
-            warn("paste not applied", "this clipboard content cannot be inserted here.");
+            warn({ fact: "couldn’t paste that here." });
             return true;
           }
         }
@@ -1030,10 +1064,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           pasted.content.childCount === 1 &&
           pasted.content.firstChild?.type === schema.nodes.resource_embed;
         if (lone && !replaceable(current)) {
-          warn(
-            "Paste not applied",
-            "Select the note body or empty it before pasting an embedded item.",
-          );
+          warn({ fact: "couldn’t paste this here.", reason: "select the note body or empty it first." });
           return true;
         }
         if (latest.current.projection) {
@@ -1041,7 +1072,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           return true;
         }
         if (oneBlock(slice, schema)) return false;
-        warn("Paste not applied", "Paste one embedded item at a time.");
+        warn({ fact: "couldn’t paste these here.", reason: "paste one embedded item at a time." });
         return true;
       },
       handleDOMEvents: {
@@ -1239,13 +1270,13 @@ function NoteEditorContent(props: NoteEditorProps) {
         };
         const arrangeAt = (action: () => void) => {
           if (referenceRef.current.getState() !== null)
-            return act(() => warn("finish the open link query first", "your writing is kept."));
+            return act(() => warn(LINK_OPEN));
           const selection = current.state.selection;
           if (selection instanceof NodeSelection && typeof selection.node.attrs.row_id === "string") return act(action);
           const field = editingField(current.state);
           if (!field) return false;
           if (selection instanceof TextSelection && (selection.from < field.from || selection.to > field.to))
-            return act(() => warn("Select text within one field", "Select items to change them together."));
+            return act(() => warn(ACROSS_FIELDS));
           return act(action);
         };
         if (event.key === "Enter" && !event.altKey) {
@@ -1326,7 +1357,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         const composingField = compositionBase.current !== null && changed?.row_id === compositionBase.current.row_id;
         if (binding && tr.docChanged && !external && !editingQuery && !(composingField && compositionBase.current?.reference)) {
           try { binding.apply(tr); }
-          catch { warn("edit couldn’t be applied", "your existing writing is kept."); return; }
+          catch { warn({ fact: "couldn’t apply that edit.", reason: "your writing is kept." }); return; }
         }
         if(binding && !editingQuery)tr.setMeta("addToHistory",false);
         const before = view.state;
@@ -1429,7 +1460,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         view.setProps({editable: () => latest.current.editable && !busy.current && inputMode.current === "text"});
         if (mode !== "text") {setToolbar(false); setLinkVisible(false);}
       },
-      refuse(message) {warn("outline unchanged", message);},
+      refuse(message) {warn({ fact: "couldn’t change this outline.", reason: message });},
       canArrange() {
         return latest.current.editable && !busy.current && !nativeInputOpen.current && !view.composing &&
           compositionBase.current === null && referenceRef.current.getState() === null;
@@ -1519,7 +1550,6 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (linkOpen) linkInput.current?.focus();
   }, [linkOpen]);
 
-  if (defect) throw defect.error;
   return (
     <div
       ref={shell}
@@ -1528,6 +1558,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       data-row-focusable="true"
       className={styles.shell}
       data-header-editor={props.header ? "true" : undefined}
+      data-words-at-risk={props.wordsAtRisk || undefined}
       onKeyDownCapture={(event) => {
         if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
         const view = viewRef.current;
@@ -1565,17 +1596,13 @@ function NoteEditorContent(props: NoteEditorProps) {
       }
     >
       <div ref={host} className={styles.host} />
-      {attachmentFeedback ? <FeedbackFailure scope="Local" occurrence={attachmentFeedbackOccurrence} content={attachmentFeedback} announcement="Polite" /> : null}
-      {attachmentValue && attachmentValue.failure && !attachmentValue.body ? <FeedbackFailure scope="Local" occurrence={attachmentValue.occurrence} announcement="Polite"
-        content={attachmentValue.failure ?? { tone: "Warning", title: "attachment unconfirmed" }} actions={attachmentValue.upload.expired
-          ? [{ label: "discard attachment", onClick: discardAttachment }] : [{
-          label: attachmentValue.upload.review_required ? "review and save" : "check save", busy: attachmentValue.pending, onClick: () => {
-            const task = readAttachment(), view = viewRef.current;
-            if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
-          },
-        }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
-      {attachmentValue?.body ? <FeedbackFailure scope="Local" occurrence={attachmentValue.occurrence} announcement="Polite" content={{ tone: "Warning", title: "attachment ready", message: "the note changed while uploading. empty or select its body to insert the attachment." }} actions={[{
-        label: "insert attachment", onClick: () => {
+      {attachmentValue?.unconfirmed && !attachmentValue.body ? <Hold id={`attachment:${props.editorKey}`} attempt={attachmentValue.attempt} {...resendFeedback({ line: attachmentValue.unconfirmed,
+          resend: { label: "retry", commandKey: "RetryAttachment", busy: attachmentValue.pending, run: () => {
+          const task = readAttachment(), view = viewRef.current;
+          if (task && view) { reviewUploadAttempt(task.upload); void attach(view, [task.file]); }
+        } }, secondary: discardVerb })} /> : null}
+      {attachmentValue?.body && attachmentValue.body === declined ? <Hold id={`attachment:${props.editorKey}:ready`} line={{ fact: "attachment uploaded.", reason: "select or empty the note body to insert it." }} verbs={[{
+        label: "insert", commandKey: "InsertAttachment", run: () => {
           const task = readAttachment(), view = viewRef.current;
           if (!view || view.composing || compositionBase.current !== null) return;
           flushNativeDOM(view); syncNativeSelection(view);
@@ -1584,7 +1611,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           reportEdit({ before: fieldBody(field), after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 1, head: 1 }, source: "attachment" }, task.row_id);
           setAttachment(null);
         },
-      }, { label: "discard attachment", onClick: discardAttachment }]} /> : null}
+      }, discardVerb]} /> : null}
       {[...embeds].map(([dom, embed]) => {
         const owner = embed.row_id ?? props.embedding?.row_id ?? null;
         const context = embed.row_id !== null ? props.projection?.context(embed.row_id) : props.embedding?.context;
@@ -1636,7 +1663,7 @@ function NoteEditorContent(props: NoteEditorProps) {
               if(activeReference(view.state)!==null)return;
               const field=editingField(view.state);if(!field||field.kind!=="body")return;
               if(view.state.selection.from<field.from||view.state.selection.to>field.to){
-                warn("Select text within one field","Select items to change them together.");return;
+                warn(ACROSS_FIELDS);return;
               }
               presentBody(view,field,field.node.attrs.presentation==="code"?"prose":"code");
             }} />
@@ -1698,14 +1725,8 @@ function NoteEditorContent(props: NoteEditorProps) {
               Add link
             </Button>
           </div>
-          {link.error ? (
-            <div role="alert">
-              <FieldFeedback
-                id={linkErrorId}
-                content={{ tone: "Danger", title: link.error }}
-              />
-            </div>
-          ) : null}
+          {/* focus is already in the address input, so its description is not read again: the refusal speaks */}
+          {link.error ? <Field id={linkErrorId} line={link.error} /> : null}
         </div>
       ) : null}
     </div>
@@ -1871,8 +1892,6 @@ function EmbeddedAnnotation({resourceRef, label}: {resourceRef: string; label: s
   const read = useAuthoredQuery(held ? null : {kind: "resource", ref: resourceRef});
   const resource = held ? prepared!.get(resourceRef)?.resource : read.data?.rows[0]?.resource;
   return <>
-    <FeedbackBusy subject={resourceRef} pending={read.pending}/>
-    <AuthoredReadFailure {...read} title="couldn’t refresh this annotation"/>
     <a href={`/highlights/${resourceRef.split(":")[1]}#annotation`} data-workspace-rich-target="true">{label !== null ? label : resource?.kind === "highlight" && resource.authored_by_viewer && resource.body_pm_json !== null
       ? <NoteBodyPreview body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}}/>
       : held || read.data ? "annotation unavailable" : "annotation"}</a>
@@ -1887,9 +1906,8 @@ function EmbeddedWholeResource({resourceRef, scope, branch, atomic, inRow, onRev
   const resource = held ? prepared!.get(resourceRef)?.resource : read.data?.rows[0]?.resource;
   const serverOwned = resource ? !resource.authored_by_viewer : (held || read.data !== null) && !hasAuthoredContent(resourceRef);
   const [resolved, setResolved] = useState<ResourceItem | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<unknown | null>(null);
   const [loading, setLoading] = useState(true);
-  const failureOccurrence = useFeedbackOccurrence(failed, resourceRef);
   const [attempt, setAttempt] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const item = resolved?.ref === resourceRef ? resolved : null;
@@ -1900,11 +1918,12 @@ function EmbeddedWholeResource({resourceRef, scope, branch, atomic, inRow, onRev
     const controller = new AbortController();
     setLoading(true);
     void resolveResourceItem(resourceRef, controller.signal).then(
-      value => {if (!controller.signal.aborted) {setResolved(value); setFailed(false); setLoading(false);}},
+      value => {if (!controller.signal.aborted) {setResolved(value); setFailure(null); setLoading(false);}},
       (error: unknown) => {
         if (controller.signal.aborted || handleUnauthenticated(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) setDefect({ error });
-        else {setFailed(true); setLoading(false);}
+        if (!isApiError(error) || isSameSystemApiDefect(error))
+          setDefect({ error });
+        else {setFailure(error); setLoading(false);}
       },
     );
     return () => controller.abort();
@@ -1912,15 +1931,13 @@ function EmbeddedWholeResource({resourceRef, scope, branch, atomic, inRow, onRev
   if (defect) throw defect.error;
   const owned = resource?.authored_by_viewer ? resource : null;
   return <>
-    <AuthoredReadFailure {...read} title="couldn’t refresh this resource"/>
+    {!owned && !item && read.error !== null ? <AuthoredReadFailure {...read} noun="this item"/> : null}
     {owned || item ? atomic ? <ResourceLink item={owned ? authoredItem(owned, null, localResourceHref(owned)) : item!}/> : (
       <ResourceOutlineList scope={scope} ariaLabel="Embedded resource" branch={branch} onRevealRoot={onRevealRoot}>
         <ResourceOutlineRow beforeCollapse={beforeCollapse} editable={false} inRow={inRow} incoming={null} defaultOpen={false}
           {...owned ? {resource: owned} : {item: item!}} occurrenceKey={scope}/>
       </ResourceOutlineList>
-    ) : failed ? <FeedbackFailure scope="Local" occurrence={failureOccurrence}
-      content={{tone: "Warning", title: "couldn’t open embedded resource"}} announcement="Polite"
-      actions={[{label: "retry", busy: loading, onClick: () => setAttempt(value => value + 1)}]}/>
+     ) : failure !== null ? <Failed error={failure} noun="embedded items" retry={{busy: loading, run: () => setAttempt(value => value + 1)}}/>
       : !resource && !serverOwned && (held || read.data) ? <span>not available on this device</span> : null}
   </>;
 }

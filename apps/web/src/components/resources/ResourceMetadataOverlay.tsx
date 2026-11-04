@@ -4,19 +4,22 @@ import type { ReactNode } from "react";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
-import { FeedbackBusy, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact as FeedbackFact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import InformationFrame from "./InformationFrame";
 import { informationFact } from "./InformationFacts";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
+import { isApiError } from "@/lib/api/client";
+import { catalogLine } from "@/lib/catalog/copy";
+import { podcastRefusalReason } from "@/lib/podcasts/paneState";
+import { libraryReason } from "@/lib/libraries/errors";
 import { assertNever } from "@/lib/assertNever";
 import type { Schema } from "@/lib/api/wire";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { getPodcastDetail } from "@/lib/podcasts/api";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import { getLibraryMetadata } from "@/lib/libraries/api";
-import { libraryErrorFeedback, throwDefect } from "@/lib/libraries/errors";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -32,9 +35,15 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
   const display = useRenderEnvironment();
   const key = open ? `metadata:podcast:${podcastId}` : null;
   const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
-  const occurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null, key);
-  if (source.status === "loading") return <FeedbackBusy pending subject={key} />;
-  if (source.status === "failed") return <FeedbackFailure scope="Local" occurrence={occurrence} content={podcastErrorMessage(source.error, "couldn’t load metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
+  if (source.status === "loading") return <Ruling />;
+  if (source.status === "failed") {
+    const catalog = isApiError(source.error) ? catalogLine(source.error) : null;
+    if (catalog !== null) return <FeedbackFact line={catalog}/>;
+    const reason = isApiError(source.error) && ["E_NOT_FOUND", "E_PODCAST_NOT_FOUND", "E_MEDIA_NOT_FOUND"].includes(source.error.code)
+      ? podcastRefusalReason(source.error) : undefined;
+    return reason === undefined ? <Failed error={source.error} noun="podcast details" retry={{run: source.refetch, busy: source.retrying}}/>
+      : <FeedbackFact line={{fact: "couldn’t load podcast details.", reason}}/>;
+  }
   const { podcast, episode_counts: counts } = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
@@ -51,7 +60,6 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
       <Fact label="catalog record created">{date(podcast.created_at)}</Fact>
       <Fact label="catalog record updated">{date(podcast.updated_at)}</Fact>
     </dl>
-    {source.error !== null ? <FeedbackFailure scope="Local" occurrence={occurrence} content={podcastErrorMessage(source.error, "couldn’t refresh metadata.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
   </div>;
 }
 
@@ -59,13 +67,14 @@ function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; read
   const display = useRenderEnvironment();
   const key = open ? `metadata:library:${libraryId}` : null;
   const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Libraries", "Entries", "Podcasts", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
-  const occurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null, key);
-  if (source.status === "loading") return <FeedbackBusy pending subject={key} />;
+  if (source.status === "loading") return <Ruling />;
   if (source.status === "failed") {
-    const failure = libraryErrorFeedback(source.error, "couldn’t load library details.", throwDefect);
-    return failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />;
+    const catalog = isApiError(source.error) ? catalogLine(source.error) : null;
+    if (catalog !== null) return <FeedbackFact line={catalog}/>;
+    const reason = isApiError(source.error) && source.error.code === "E_LIBRARY_NOT_FOUND" ? libraryReason(source.error) : null;
+    return reason === null ? <Failed error={source.error} noun="library details" retry={{run: source.refetch, busy: source.retrying}}/>
+      : <FeedbackFact line={{fact: "couldn’t load library details.", reason}}/>;
   }
-  const refreshFailure = source.error === null ? null : libraryErrorFeedback(source.error, "couldn’t refresh library details.", throwDefect);
   const metadata = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
@@ -77,7 +86,6 @@ function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; read
       <Fact label="created">{date(metadata.created_at)}</Fact>
       <Fact label="updated">{date(metadata.updated_at)}</Fact>
     </dl>
-    {refreshFailure !== null ? <FeedbackFailure scope="Local" occurrence={occurrence} content={refreshFailure} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.refreshing }]} /> : null}
   </div>;
 }
 

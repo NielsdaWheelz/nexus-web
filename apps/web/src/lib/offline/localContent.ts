@@ -9,6 +9,7 @@
 // dropped, and a causal caller waits until the index it can read covers its receipt.
 import { useSyncExternalStore } from "react";
 import { WIRE_HEADER } from "@/lib/api/client";
+import { useFailedReadRepair } from "@/lib/api/serverState";
 import { publishChange } from "@/lib/api/changes";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { CursorSnapshot, Locator } from "@/lib/documentReader/model";
@@ -240,6 +241,7 @@ async function fetchIndex(path: string): Promise<LocalIndex | { readonly code: s
 async function readIndex(): Promise<void> {
   if (reading || binding === null) return;
   reading = true;
+  for (const listener of listeners) listener();
   const mine = lifetime;
   const { accountId, indexPath } = binding;
   try {
@@ -263,7 +265,10 @@ async function readIndex(): Promise<void> {
       }
     }
   } finally {
-    if (mine === lifetime) reading = false;
+    if (mine === lifetime) {
+      reading = false;
+      for (const listener of listeners) listener();
+    }
   }
 }
 
@@ -326,15 +331,42 @@ export function localCall(
   });
 }
 
-/** Resolves once the readable index covers the mutation's durable receipt. */
-export async function localMutation(op: string, args: Record<string, unknown>): Promise<void> {
-  const receipt = (await localCall(op, args)).revision;
+/** A durable receipt survives failed observation. Retirement without a receipt leaves acceptance
+ * unknown; a failed index read always carries the receipt proving acceptance. */
+export class LocalMutationObservationError extends Error {
+  constructor(readonly observation:
+    | { readonly kind: "ReadFailed"; readonly receipt: string }
+    | { readonly kind: "Retired"; readonly receipt: string | null }) {
+    super("Local mutation observation failed");
+    this.name = "LocalMutationObservationError";
+  }
+}
+
+/** Actively reads until the index covers an accepted mutation; never sends the mutation again. */
+export async function readLocalContent(receipt: string): Promise<void> {
+  if (binding === null) throw new Error("Retired");
   const revision = BigInt(receipt);
   if (state.index !== null && BigInt(state.index.revision) >= revision) return;
   await new Promise<void>((resolve, reject) => {
     waits.add({ revision, resolve, reject });
     announce(receipt);
   });
+}
+
+/** Resolves once the readable index covers the mutation's durable receipt. */
+export async function localMutation(op: string, args: Record<string, unknown>): Promise<void> {
+  const mine = lifetime;
+  let receipt: string;
+  try { receipt = (await localCall(op, args)).revision; }
+  catch (error) {
+    if (mine !== lifetime) throw new LocalMutationObservationError({ kind: "Retired", receipt: null });
+    throw error;
+  }
+  if (mine !== lifetime) throw new LocalMutationObservationError({ kind: "Retired", receipt });
+  try { await readLocalContent(receipt); }
+  catch {
+    throw new LocalMutationObservationError({ kind: mine === lifetime ? "ReadFailed" : "Retired", receipt });
+  }
 }
 
 export function currentLocalContent(): LocalContentState {
@@ -347,7 +379,10 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function useLocalContent(): LocalContentState {
-  return useSyncExternalStore(subscribe, currentLocalContent, () => EMPTY);
+  const state = useSyncExternalStore(subscribe, currentLocalContent, () => EMPTY);
+  const running = useSyncExternalStore(subscribe, () => reading, () => false);
+  useFailedReadRepair(state.error !== null, running, () => { void readIndex(); });
+  return state;
 }
 
 /** The Ready episode's downloaded acquisition, independent of catalog and remote reads. */

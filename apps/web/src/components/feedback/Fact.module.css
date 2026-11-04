@@ -1,0 +1,51 @@
+.fact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding-block: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.line {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 44rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.verbs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.verb {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+.blocked {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.field {
+  margin-top: var(--space-1);
+  color: var(--danger-ink);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .field { color: CanvasText; }
+}

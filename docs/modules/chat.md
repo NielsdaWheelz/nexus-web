@@ -296,6 +296,10 @@ authored store; local absence suppresses stale server text but keeps the removab
 row. loading and failed reads remain explicit. failed refresh may retain prior
 local data with retry feedback. source attribution and authorized highlight-id
 navigation remain supplied; local selection clears a stale location label.
+absence is established only by an available authored scope with no item. an
+unavailable scope retains type presentation and any held available projection.
+cold context and destination regions use the shared ruling; shown content stays
+quiet during refresh.
 
 owned highlight previews read the single local annotation body and label it
 separately from the source quotation. peer quotations never load that private

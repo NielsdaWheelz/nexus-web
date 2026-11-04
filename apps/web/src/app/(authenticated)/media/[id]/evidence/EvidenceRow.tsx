@@ -4,11 +4,11 @@
 // held local projections; remote roots keep their server presentation. Membership
 // only selects facets and reveal targets; the shared row owns resource commands.
 import { useCallback, useLayoutEffect, useRef, type CSSProperties } from "react";
-import { FeedbackNotice, FeedbackStatus } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
-import { PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
+import { PlacementNote } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import type { ReaderAnnotation } from "@/lib/documentReader/annotations";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useInteractionOwner } from "@/lib/ui/overlay";
@@ -100,9 +100,10 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
         icon: <ACTION_CATALOG.EditHighlightAnnotation.icon aria-hidden="true" />, restoreFocusOnClose: false, onSelect: () => verbs.annotate(annotation.id) }]}
       annotationFocusRequest={presence === "shown" && verbs.noteEdit?.id === annotation.id ? verbs.noteEdit.request : null}
       onAnnotationClose={verbs.closeNoteEdit} onChanged={actions.refresh}
-      resourceDetails={placement === "unlocated" && unresolvedText ? <FeedbackNotice content={{ tone: "Warning", title: PLACEMENT_COPY.unlocated }} announcement="None"
-        actions={[{ label: "select matching text to relocate", onClick: () => verbs.relocate(annotation.id) }]} />
-        : placement !== "placed" ? <FeedbackStatus content={{ tone: "Neutral", title: PLACEMENT_COPY[placement] }} announcement="None" /> : null} /></PreparedResourcesContext>;
+      resourceDetails={<>
+        {placement !== "placed" ? <PlacementNote kind={placement} /> : null}
+        {placement === "unlocated" && unresolvedText ? <Button onClick={() => verbs.relocate(annotation.id)}>relocate</Button> : null}
+      </>} /></PreparedResourcesContext>;
   }
   if (entry.kind === "link") {
     const { resource, link } = entry.link;

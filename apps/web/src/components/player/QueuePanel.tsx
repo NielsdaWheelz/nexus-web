@@ -1,17 +1,17 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 /** The complete occurrence index renders a measured window of ordinary rows.
  * Identity follows nearby and current/focused/open occurrences.
- * Every edit captures the displayed manifest's authority; playback owns feedback. */
+ * Every edit captures the displayed manifest's authority; playback owns feedback, and an edit's
+ * success says nothing: focus lands on the moved row or a neighbour, whose position is read. */
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
-import * as Icon from "@/lib/ui/icons";
-import { PlayerFailures } from "./GlobalPlayerSurfaces";
 import Button from "@/components/ui/Button";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ActionMenu from "@/components/ui/ActionMenu";
 import MediaIdentity, { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
@@ -19,8 +19,8 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useLocalContent } from "@/lib/offline/localContent";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
-import type { QueueCommand, QueueEntry, QueueManifest, QueueRequest } from "@/lib/player/queue";
+import { queueBlock, usePlayerCommands, usePlayerSession, type QueueBlock } from "@/lib/player/playerRuntime";
+import { QueueCommandError, type QueueCommand, type QueueEntry, type QueueManifest, type QueueRequest } from "@/lib/player/queue";
 import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { useQueueWindow } from "./useQueueWindow";
 import styles from "./Player.module.css";
@@ -33,9 +33,9 @@ type FocusRecovery = {
   readonly accepted: boolean;
 };
 
-type Send = (request: QueueRequest, focus: readonly string[] | null, message: string | null) => Promise<boolean>;
+type Send = (request: QueueRequest, focus: readonly string[] | null) => Promise<boolean>;
 
-const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, current, initialTarget, playing, failed, ready, summary, title, send, rowElement, menuChanged }: {
+const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, current, initialTarget, playing, failed, blocked, summary, title, send, rowElement, menuChanged }: {
   readonly entry: QueueEntry;
   readonly index: number;
   readonly manifest: QueueManifest;
@@ -44,7 +44,7 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   readonly initialTarget: boolean;
   readonly playing: boolean;
   readonly failed: boolean;
-  readonly ready: boolean;
+  readonly blocked: QueueBlock | null;
   readonly summary: MediaSummary | null;
   readonly title: string;
   readonly send: Send;
@@ -52,26 +52,25 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   readonly menuChanged: (entryId: string, open: boolean) => void;
 }) {
   const subject: MediaSubject | null = summary === null ? null : { kind: "Stored", summary };
-  const dispatch = (command: QueueCommand, focus: readonly string[] | null, message: string | null) =>
-    send({ queue_id: manifest.queue_id, expected_revision: manifest.revision, command }, focus, message);
-  const move = (beforeEntryId: string | null, message: string) => {
-    void dispatch({ kind: "move-before", entry_id: entry.id, before_entry_id: beforeEntryId }, [entry.id], message);
+  const dispatch = (command: QueueCommand, focus: readonly string[] | null) =>
+    send({ queue_id: manifest.queue_id, expected_revision: manifest.revision, command }, focus);
+  const move = (beforeEntryId: string | null) => {
+    void dispatch({ kind: "move-before", entry_id: entry.id, before_entry_id: beforeEntryId }, [entry.id]);
   };
   const action = (id: string, label: string, icon: ReactElement | null, onSelect: () => void): ActionDescriptor => ({
-    kind: "command", id, label, icon, disabled: !ready,
-    disabledReason: ready ? undefined : "wait for the queue change to finish", onSelect,
+    kind: "command", id, label, icon, disabled: blocked !== null, disabledReason: blocked?.reason, onSelect,
   });
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
   if (future && index > currentIndex + 1) {
-    options.push(action("next", "Play next", null, () => move(manifest.entries[currentIndex + 1]!.id, `“${title}” moved next`)));
-    options.push(action("earlier", "Move earlier", <Icon.MoveUp />, () => move(manifest.entries[index - 1]!.id, `“${title}” moved earlier`)));
+    options.push(action("next", "Play next", null, () => move(manifest.entries[currentIndex + 1]!.id)));
+    options.push(action("earlier", "Move earlier", <Icon.MoveUp />, () => move(manifest.entries[index - 1]!.id)));
   }
   if (future && index < manifest.entries.length - 1)
-    options.push(action("later", "Move later", <Icon.MoveDown />, () => move(manifest.entries[index + 2]?.id ?? null, `“${title}” moved later`)));
+    options.push(action("later", "Move later", <Icon.MoveDown />, () => move(manifest.entries[index + 2]?.id ?? null)));
   if (future || failed) options.push(action("remove", "Remove from queue", null, () => {
     const neighbors = [manifest.entries[index + 1], manifest.entries[index - 1]].flatMap(item => item === undefined ? [] : [item.id]);
-    void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors, `removed “${title}” from queue`);
+    void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors);
   }));
   const returnFocus = () => rowElement(entry.id)?.querySelector<HTMLElement>('[data-queue-action="more"]')
     ?? rowElement(entry.id)?.querySelector<HTMLElement>("[data-row-focusable]") ?? null;
@@ -83,20 +82,19 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
       "data-queue-initial-target": initialTarget ? "true" : undefined }}
     controls={<>
       <Button iconOnly icon={playing ? <Icon.Pause /> : <Icon.Play />} aria-label={`${failed ? "retry" : playing ? "pause" : "play"} “${title}”`}
-        data-queue-entry={entry.id} data-queue-action="play" aria-disabled={!ready || undefined}
-        onClick={() => { void dispatch({ kind: "select", entry_id: entry.id, play: !playing, position_ms: null }, null, null); }} />
+        data-queue-entry={entry.id} data-queue-action="play" aria-disabled={blocked !== null || undefined}
+        onClick={() => { void dispatch({ kind: "select", entry_id: entry.id, play: !playing, position_ms: null }, null); }} />
       {options.length > 0 ? <ActionMenu returnFocusTo={returnFocus} label={`more actions for “${title}”`}
         triggerAttributes={{ "data-queue-entry": entry.id, "data-queue-action": "more" }}
-        triggerDisabled={!ready} triggerDisabledReason="wait for the queue change to finish"
+        triggerDisabled={blocked !== null} triggerDisabledReason={blocked?.reason}
         onOpenChange={open => menuChanged(entry.id, open)}
         renderTrigger={props => <Button {...props} iconOnly icon={<Icon.More />} />}
-        source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${ready}`, title: "queue actions",
+        source={{ kind: "Immediate", subjectKey: `queue:${manifest.queue_id}:${manifest.revision}:${entry.id}:${blocked?.reason}`, title: "queue actions",
           content: { sections: [{ id: "Queue", label: null, options }] } }} /> : null}
     </>} />;
 });
 
-export default function QueuePanel({ announce, scrollport, runtime, onOpened, revealOnOpen }: {
-  readonly announce: (message: string) => void;
+export default function QueuePanel({ scrollport, runtime, onOpened, revealOnOpen }: {
   readonly scrollport: (section: HTMLElement) => HTMLElement | null;
   readonly runtime: TargetLinkActivationRuntime;
   readonly onOpened: () => void;
@@ -108,8 +106,8 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
   liveCommands.current = commands;
   const header = queue.header;
   const manifest = queue.index.kind === "Ready" ? queue.index.snapshot : queue.index.previous;
-  const ready = queue.known && queue.phase === "Ready" && state.kind !== "Unavailable" && queue.index.kind === "Ready"
-    && manifest?.queue_id === header?.queue_id && manifest?.revision === header?.revision;
+  const blocked = queueBlock(queue, state, "Rows");
+  const ready = blocked === null;
   const authority = useRef({ ready, header });
   useLayoutEffect(() => {
     authority.current = { ready, header };
@@ -138,8 +136,6 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
   const currentEntry = header?.current_entry_id === null || header === null ? null : entries.get(header.current_entry_id)?.entry;
   if (currentEntry !== null && currentEntry !== undefined) mediaIds.push(currentEntry.media_id);
   const summaries = useMediaSummaryIds(online ? mediaIds : []);
-  const summaryOccurrence = useFeedbackOccurrence(summaries.error !== null, manifest?.queue_id);
-  const indexOccurrence = useFeedbackOccurrence(queue.index.kind === "Failed", manifest?.queue_id);
   const menuChanged = useCallback((id: string, open: boolean) => setMenu(current => open ? id : current === id ? null : current), []);
 
   useEffect(() => {
@@ -179,7 +175,7 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
     if (row?.querySelector('[data-queue-action="more"]')) return;
     if (document.activeElement === document.body || row?.contains(document.activeElement))
       row?.querySelector<HTMLElement>("[data-row-focusable]")?.focus({ preventScroll: true });
-  }, [focused, menu, currentIndex, queue.failure, manifest, rowElement]);
+  }, [focused, menu, currentIndex, queue.error, manifest, rowElement]);
 
   useLayoutEffect(() => {
     const pending = pendingFocus;
@@ -200,25 +196,22 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
     setPendingFocus(null);
   }, [pendingFocus, header?.queue_id, ready, queueWindow.geometryReady, rowElement]);
 
-  const send = useCallback<Send>(async (request, focus, message) => {
+  const send = useCallback<Send>(async (request, focus) => {
     const current = authority.current;
     if (!current.ready || current.header?.queue_id !== request.queue_id || current.header.revision !== request.expected_revision) return false;
     const recovery: FocusRecovery | null = focus === null ? null : { queueId: request.queue_id, ids: focus, trigger: document.activeElement,
       opener: ("entry_id" in request.command ? rowElement(request.command.entry_id)?.querySelector('[data-queue-action="more"]') : null) ?? document.activeElement,
       accepted: false };
     if (recovery !== null) setPendingFocus(recovery);
-    try {
-      await liveCommands.current.queueCommand(request);
-      if (authority.current.header?.queue_id !== request.queue_id) return true;
-      if (message !== null) announce(message);
-      if (recovery !== null) setPendingFocus(pending => pending === recovery ? { ...recovery, accepted: true } : pending);
-      return true;
-    } catch {
-      // The command owner reports modeled refusals and defects before rejecting.
+    // The player says a refusal; focus stays where it was.
+    if (await liveCommands.current.queueCommand(request) === "Refused") {
       if (recovery !== null) setPendingFocus(pending => pending === recovery ? null : pending);
       return false;
     }
-  }, [announce, rowElement]);
+    if (authority.current.header?.queue_id !== request.queue_id) return true;
+    if (recovery !== null) setPendingFocus(pending => pending === recovery ? { ...recovery, accepted: true } : pending);
+    return true;
+  }, [rowElement]);
 
   const activateAnchor = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
     const element = event.target instanceof Element ? event.target.closest("a[href]") : null;
@@ -236,11 +229,11 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
       if (event.relatedTarget !== null && !event.currentTarget.contains(event.relatedTarget)) setFocused(null);
     }}>
     <h2 ref={heading} tabIndex={-1} className={styles.panelTitle}>up next</h2>
-    <PlayerFailures />
-    {!empty && queue.index.kind === "Failed" ? <FeedbackFailure scope="Local" occurrence={indexOccurrence} announcement="None" content={{ tone: "Warning", title: "couldn’t load queue" }}
-      actions={[{ label: "retry", onClick: commands.retryQueueIndex }]} /> : null}
-    {online && summaries.error !== null ? <FeedbackFailure scope="Local" occurrence={summaryOccurrence} announcement="None" content={{ tone: "Warning", title: "episode details unavailable" }} actions={[{ label: "retry", onClick: summaries.retry }]} /> : null}
-    {empty ? <p>nothing queued</p> : null}
+    {manifest !== null || queue.index.kind !== "Failed" ? null : queue.index.error instanceof QueueCommandError
+      ? queue.index.error.line === null ? null : <Fact line={queue.index.error.line}
+        verbs={[{ label: "retry", commandKey: "retry queued episodes", run: () => void commands.retryQueueIndex() }]} />
+      : <Failed error={queue.index.error} noun="queued episodes" retry={{ run: () => void commands.retryQueueIndex() }} />}
+    {empty ? <Fact line={{ fact: "nothing queued" }} /> : null}
     {manifest !== null ? <ResourceList key={manifest.queue_id} ariaLabel="queued episodes" busy={!ready || !queueWindow.geometryReady}>
       {queueWindow.rows.map(({ entry, index, gap }) => {
         const summary = (online ? summaries.resolve(entry.media_id) : null) ?? (catalog.data === null ? null : catalogMedia(catalog.data, entry.media_id));
@@ -250,8 +243,8 @@ export default function QueuePanel({ announce, scrollport, runtime, onOpened, re
           {gap > 0 && queueWindow.height !== null ? <li role="presentation" aria-hidden="true" className={styles.queueGap} style={{ blockSize: gap * queueWindow.height }} /> : null}
           <QueueRow entry={entry} index={index} manifest={manifest} currentIndex={currentIndex} current={current}
           initialTarget={queueWindow.geometryReady && (current || header?.current_entry_id === null && index === manifest.entries.length - 1)}
-          playing={entry.id === playingEntryId} failed={current && queue.failure?.kind === "Episode" && queue.failure.entry_id === entry.id}
-          ready={ready} summary={summary} title={title} send={send} rowElement={rowElement} menuChanged={menuChanged} />
+          playing={entry.id === playingEntryId} failed={current && queue.error?.kind === "Episode" && queue.error.entry_id === entry.id}
+          blocked={blocked} summary={summary} title={title} send={send} rowElement={rowElement} menuChanged={menuChanged} />
         </Fragment>;
       })}
     </ResourceList> : null}

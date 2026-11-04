@@ -116,7 +116,7 @@ export default function ResourceIndexRow({
     ? <PodcastRowArtwork title={item.label} imageUrl={body.image_url} /> : undefined;
   const contributors = source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
   const unavailable = item.missing || item.activation.kind === "none";
-  const attention = suppliedAttention ?? (status === null && summary?.processing_status === "failed" ? "processing failed; open metadata for details and recovery" : null);
+  const attention = suppliedAttention ?? (status === null && summary?.processing_status === "failed" ? "couldn’t process this. see its metadata." : null);
   const currentLabel = status ?? item.label;
   const menuLabel = `more actions for ${currentLabel}${attention ? `: ${attention}` : ""}`;
   const rowMetadata = presentation.kind === "Search" ? <span className={styles.metadata}>

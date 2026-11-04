@@ -1,0 +1,4 @@
+/* A frame's ruling stands six of its body's lines tall. */
+.body {
+  --ruling-pitch: calc(var(--text-base) * var(--leading-snug));
+}

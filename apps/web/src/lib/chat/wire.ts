@@ -1,13 +1,10 @@
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import {
-  apiTransportFeedback,
-  isApiError,
-  isSameSystemApiDefect,
-  outcomeUnknown,
-} from "@/lib/api/client";
+
+import type { Line } from "@/components/feedback/stage";
+import { isApiError, isSameSystemApiDefect, outcomeUnknown, type ApiError } from "@/lib/api/client";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { MISSING_SELECTION } from "./selection";
+import { MODEL_UNAVAILABLE } from "./selection";
 
 // Chat's names for the generated FastAPI wire (docs/local-rules/typed-wire.md).
 export type Message = Schema<"MessageOut">;
@@ -32,63 +29,69 @@ export type BranchAnchor =
   | Schema<"AssistantMessageBranchAnchor">
   | Schema<"AssistantSelectionBranchAnchor">;
 
-/** Where a failed chat call goes. Total over ApiError: nothing here throws. */
+/** A failed chat call, by what its owner does next. Total over thrown values: nothing here throws. */
 export type ChatFailure =
-  | { kind: "Handled" } // the auth boundary took it
-  | { kind: "Defect"; error: unknown } // thrown in render by its owner
-  | { kind: "Feedback"; feedback: FeedbackContent; ambiguous: boolean };
+  | { kind: "Handled" } // the sign-in boundary took it
+  | { kind: "Defect"; error: unknown } // its owner throws it to the render boundary
+  | { kind: "Refused"; error: ApiError } // answered: nothing changed
+  | { kind: "Unknown"; error: ApiError }; // unanswered: a write may have landed
 
-const AMBIGUOUS = new Set([
-  "E_NETWORK",
-  "E_UPSTREAM",
-  "E_UPSTREAM_TIMEOUT",
-  "E_GENERATION_RUNTIME_UNAVAILABLE",
-]);
-const GONE = "It’s no longer available.";
-const TARGET = "The reply target changed. Choose a response and send again.";
-const UNQUOTABLE = "This passage can’t be quoted. Remove it to continue.";
-// One copy owner for http failures and modeled send rejections alike.
-const DETAIL: Record<string, string> = {
-  E_NOT_FOUND: GONE,
-  E_CONVERSATION_NOT_FOUND: GONE,
-  E_MESSAGE_NOT_FOUND: GONE,
-  E_FORBIDDEN: "You don’t have access to it.",
-  E_GENERATION_SELECTION_UNAVAILABLE: "Model availability changed. Choose a current model.",
-  E_INVALID_GENERATION_SELECTION: MISSING_SELECTION,
-  E_GENERATION_CONTEXT_TOO_LARGE:
-    "This conversation no longer fits the model’s context window. Start a new chat or choose a larger model.",
-  E_MESSAGE_TOO_LONG: "The message is too long. Shorten it and send again.",
-  E_BRANCH_PATH_INVALID: TARGET,
-  E_BRANCH_ANCHOR_INVALID: TARGET,
-  E_READER_SELECTION_STALE:
-    "The quoted passage changed. Review the refreshed quote and send again.",
+/** Reads have no write outcome. A handled sign-in or defect follows the same boundary contract. */
+export function readFailureOf(error: unknown): { kind: "Handled" } | { kind: "Defect"; error: unknown } | { kind: "Failed"; error: ApiError } {
+  if (handleUnauthenticatedApiError(error)) return { kind: "Handled" };
+  if (!isApiError(error) || isSameSystemApiDefect(error)) return { kind: "Defect", error };
+  return { kind: "Failed", error };
+}
+
+export function failureOf(error: unknown): ChatFailure {
+  const failure = readFailureOf(error);
+  if (failure.kind !== "Failed") return failure;
+  // runtime readiness is checked before chat admission.
+  return failure.error.code !== "E_GENERATION_RUNTIME_UNAVAILABLE" && outcomeUnknown(failure.error)
+    ? { kind: "Unknown", error: failure.error } : { kind: "Refused", error: failure.error };
+}
+
+const MISSING = "it doesn’t exist.";
+const UNQUOTABLE = "this passage can’t be quoted.";
+/** A refusal's reason after its command's fact, by the server's code; null leaves the bare fact.
+ * Closed: a server's explanation never reaches the screen. */
+const REASONS: Readonly<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE", string | null>> = {
+  E_CONVERSATION_CHANGED: "this chat changed meanwhile.",
+  E_MESSAGE_TOO_LONG: "this message is over 20,000 characters.",
+  E_INVALID_GENERATION_SELECTION: MODEL_UNAVAILABLE,
+  E_GENERATION_SELECTION_UNAVAILABLE: MODEL_UNAVAILABLE,
+  E_GENERATION_RUNTIME_UNAVAILABLE: "the model isn’t ready.",
+  E_INVALID_REQUEST: null,
+  E_BRANCH_PATH_INVALID: "you can reply only to a complete answer.",
+  E_BRANCH_ANCHOR_INVALID: null,
+  E_FORBIDDEN: "you don’t have access.",
+  E_NOT_FOUND: MISSING,
+  E_CONVERSATION_NOT_FOUND: MISSING,
+  E_MESSAGE_NOT_FOUND: MISSING,
+  E_RETRY_NOT_ALLOWED: "this answer can’t be rerun.",
+  E_REGENERATION_NOT_ALLOWED: "this answer isn’t complete.",
+  E_READER_SELECTION_STALE: "the quoted passage changed.",
   E_READER_SELECTION_NOT_FOUND: UNQUOTABLE,
   E_READER_SELECTION_FORBIDDEN: UNQUOTABLE,
   E_READER_SELECTION_GEOMETRY_ONLY: UNQUOTABLE,
   E_READER_SELECTION_TOO_LARGE: UNQUOTABLE,
-  E_CONVERSATION_NO_LONGER_EMPTY:
-    "This chat already has messages. Review them and send again.",
-  E_CONVERSATION_CHANGED:
-    "Chat changed elsewhere. Refresh to review it before trying again.",
-  E_RETRY_NOT_ALLOWED: "This response can no longer be rerun.",
-  E_REGENERATION_NOT_ALLOWED: "Only a complete response can be regenerated.",
+  E_CONVERSATION_NO_LONGER_EMPTY: "this chat has messages now.",
+  E_GENERATION_CONTEXT_TOO_LARGE: "this chat is too long for this model.",
 };
-export const failureDetail = (code: string) =>
-  DETAIL[code] ?? "Please try again.";
+const isReasoned = (code: string): code is keyof typeof REASONS => code in REASONS;
 
-export function chatFailure(error: unknown, title: string): ChatFailure {
-  if (handleUnauthenticatedApiError(error)) return { kind: "Handled" };
-  if (!isApiError(error) || isSameSystemApiDefect(error))
-    return { kind: "Defect", error };
-  const feedback = apiTransportFeedback(error, title) ?? {
-    tone: "Danger",
-    title,
-    message: failureDetail(error.code),
-    requestId: error.requestId,
-  };
-  return {
-    kind: "Feedback",
-    feedback,
-    ambiguous: outcomeUnknown(error) || AMBIGUOUS.has(error.code) || error.status >= 500,
-  };
-}
+/** The reader's refusal of a passage, by the same record: its sentence, or null for any other code. */
+export const unquotable = (error: ApiError): string | null =>
+  isReasoned(error.code) && REASONS[error.code] === UNQUOTABLE ? UNQUOTABLE : null;
+
+/** A refused chat command as it reads. `error` is the failure whose transport gave the reason, so
+ * that transport's verbs follow the line; a domain or local reason takes none. */
+export type Refusal = { readonly line: Line; readonly error: ApiError | null };
+
+/** A refusal by the server's code: the command's fact, then the domain's reason, or the bare fact. */
+export const rejected = (fact: string, code: keyof typeof REASONS): Refusal =>
+  ({ line: { fact, reason: REASONS[code] ?? undefined }, error: null });
+
+/** A thrown refusal: a domain code's reason runs ahead of the transport's. */
+export const refusal = (fact: string, error: ApiError): Refusal => isReasoned(error.code)
+  ? rejected(fact, error.code) : { line: TRANSPORT_LINES[transportOf(error)].command(fact), error };

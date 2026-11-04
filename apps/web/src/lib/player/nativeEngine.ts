@@ -20,6 +20,7 @@
 
 import {
   IDLE_ENGINE_STATE,
+  PLAYER_CHANGED,
   PlaybackPreferenceError,
   type Engine,
   type EngineState,
@@ -29,7 +30,9 @@ import {
 } from "@/lib/player/playerRuntime";
 import { publishChange } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { announceListeningRevision, listeningSourceReconnected, setObservationTransport } from "@/lib/consumption/listening";
+import { ProgressPreparationError } from "@/lib/consumption/progressFence";
 import { QueueCommandError, type NativeQueueOwner, type QueueEntry, type QueueHeader, type QueueRequest } from "@/lib/player/queue";
 import {
   expectArray, expectBoolean, expectCanonicalRfcUuid, expectExactRecord, expectFiniteNumber, expectNonnegativeInteger,
@@ -190,7 +193,7 @@ export async function unbindNativePlayer(): Promise<void> {
 
 /** Explicit retry of one media's suspended delivery; native rechecks access and fences. */
 export async function retryNativeListening(mediaId: string): Promise<void> {
-  if (active === null) throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player is not connected. reload the app and try again.");
+  if (active === null) throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player isn’t connected.");
   await active.retryListening(mediaId);
 }
 
@@ -214,9 +217,12 @@ export function createNativeEngine(
   let responding = true;
   let snapshotId = 0;
   let bound = true;
-  let uncertain = false;
+  /** Sends and checks of a queue change that went unanswered; 0 once every change is confirmed. */
+  let unanswered = 0;
   let chaptersSubject: string | null = null;
   let chapters: PlayerDescriptor["chapters"] = [];
+  let lastError: string | null = null;
+  let unsaved = 0; // keys each new native place error, so a repeat refusal speaks again
   const respond = (value: boolean) => {
     if (responding === value) return;
     responding = value;
@@ -239,6 +245,8 @@ export function createNativeEngine(
       publishChange("Consumption");
     const loadId = snapshot.load_id;
     const pushed = snapshot.source;
+    const nativeError = lastError;
+    lastError = snapshot.error;
     // Keep the source's identity across position pushes, so session readers do not re-render.
     const held = state.source;
     const same = loadId === state.playbackSubject && pushed?.kind === held?.kind &&
@@ -259,7 +267,9 @@ export function createNativeEngine(
       rate: snapshot.rate,
       shortenPauses: snapshot.shorten_pauses,
       shortenPausesSavedMs: snapshot.shorten_pauses_saved_ms,
-      error: snapshot.error,
+      // Kotlin's words never show: a non-failed error is read as the listening save stopping.
+      error: snapshot.error === null || snapshot.playback_failed ? null
+        : nativeError === snapshot.error && state.error !== null ? state.error : { kind: "Unsaved", attempt: ++unsaved },
       playbackFailed: snapshot.playback_failed,
       synced: snapshot.synced,
       consumptionRevision: snapshot.consumption_revision,
@@ -324,20 +334,21 @@ export function createNativeEngine(
       return await call(op, args, { timeoutMs });
     } catch (error) {
       if (!(error instanceof Error)) throw error;
+      // Each message is the reason its press is told; the account owns sign-in.
       if (error.message === "Stale" || error.message === "Closed")
-        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+        throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
       if (error.message === "Reconciled")
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress synchronized. press play to resume.");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "its saved place just changed.");
       if (error.message === "Fenced")
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", "listening progress is being synchronized. try again after it finishes.");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "its progress is changing.");
       if (error.message === "Unauthenticated")
-        throw new ApiError(401, "E_UNAUTHENTICATED", "sign in to resume playback.");
+        throw new ApiError(401, "E_UNAUTHENTICATED", "");
       if (error.message === "AuthorityRefused")
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", "the server refused this episode’s playback state. reload and try again.");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "");
       if (error.message === "NotConnected")
-        throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player is not connected. reload the app and try again.");
+        throw new ApiError(409, "E_PLAYBACK_REFUSED", "the player isn’t connected.");
       if (error.message === "NotResponding" || error.message === "Unavailable")
-        throw new ApiError(0, "E_PLAYBACK_UNCONFIRMED", "the playback request was not confirmed.");
+        throw new ApiError(0, "E_PLAYBACK_UNCONFIRMED", UNKNOWN_OUTCOME_REASON);
       throw error;
     }
   };
@@ -364,18 +375,15 @@ export function createNativeEngine(
   const preference = async (op: string, args: Record<string, unknown>) => {
     const loaded = key();
     const subject = state.playbackSubject;
-    if (loaded === null || subject === null)
-      throw new PlaybackPreferenceError("playback source changed. try again.");
-    if (!responding)
-      throw new PlaybackPreferenceError("the native player is not responding. try again.");
+    if (loaded === null || subject === null) throw new PlaybackPreferenceError(PLAYER_CHANGED);
+    if (!responding) throw new PlaybackPreferenceError("the player isn’t responding.");
     try {
       await call(op, { ...args, key: loaded, expected_load_id: subject });
     } catch (error) {
       if (error instanceof Error) {
-        if (error.message === "Stale")
-          throw new PlaybackPreferenceError("playback source changed. try again.");
-        if (nativeUnavailable(error))
-          throw new PlaybackPreferenceError("the native player is not responding. try again.");
+        if (error.message === "Stale") throw new PlaybackPreferenceError(PLAYER_CHANGED);
+        if (error.message === "NotResponding") throw new PlaybackPreferenceError("the player isn’t responding.");
+        if (nativeUnavailable(error)) throw new PlaybackPreferenceError("");
       }
       throw error;
     }
@@ -405,72 +413,79 @@ export function createNativeEngine(
     if (queue == null) throw new Error("NotConnected");
     return queue;
   };
-  const queueError = (error: unknown): Error => {
+  /** A read names what it could not load; a change, what it could not do. A service that did not
+   * answer leaves an unanswered change unsettled, its held line standing; otherwise it says so. */
+  const queueError = (error: unknown, read: boolean): Error => {
     if (!(error instanceof Error)) throw error;
     switch (error.message) {
-      case "Unauthenticated": return new ApiError(401, "E_UNAUTHENTICATED", "sign in to resume playback.");
-      case "Stale": return new QueueCommandError("queue changed. check it and try again.");
-      case "Limit": return new QueueCommandError("too many episodes; narrow this view");
-      case "Invalid": return new QueueCommandError("couldn’t change the queue. reload and try again.");
-      case "NotConnected": return new QueueCommandError("the native player is not connected. reload the app.");
+      case "Unauthenticated": return new ApiError(401, "E_UNAUTHENTICATED", "");
+      case "Stale": return new QueueCommandError(read ? "LoadFailed" : "Changed");
+      case "Limit": return new QueueCommandError("TooMany");
+      case "Invalid": return new QueueCommandError(read ? "LoadFailed" : "Refused");
+      case "NotConnected": return new QueueCommandError("NotConnected");
       case "Unavailable":
-      case "NotResponding": return new QueueCommandError("couldn’t confirm queue change");
+      case "NotResponding": return new QueueCommandError(unanswered > 0 ? "Unsettled" : "Unresponsive");
       default: return error;
     }
   };
   const readQueue = async () => {
-    await call("queue_read", { reconcile: uncertain }, { timeoutMs: LOAD_TIMEOUT_MS });
-    uncertain = false;
+    await call("queue_read", { reconcile: unanswered > 0 }, { timeoutMs: LOAD_TIMEOUT_MS });
+    unanswered = 0;
     return state.queue;
+  };
+  /** A timeout cannot establish whether a change ran. Explicit recovery reconciles and may pause. */
+  const unansweredChange = (): never => {
+    unanswered += 1;
+    throw new QueueCommandError("Unsettled");
   };
   const queue: NativeQueueOwner = {
     known: () => snapshotId > 0,
-    uncertain: () => uncertain,
-    async read() { try { return await readQueue(); } catch (error) { throw queueError(error); } },
+    unanswered: () => unanswered,
+    async read() {
+      try { return await readQueue(); }
+      catch (error) {
+        if (unanswered > 0) unanswered += 1;
+        throw queueError(error, true);
+      }
+    },
     async page(input) {
       try {
         const reply = await call("queue_page", input);
         // justify-defect: every successful queue page supplies its entries, including an empty page.
         if (reply.entries === undefined) throw new TypeError("native queue page omitted entries");
         return reply.entries;
-      } catch (error) { throw queueError(error); }
+      } catch (error) { throw queueError(error, true); }
     },
     async replace({ state: next, expected_revision, is_current }) {
       const begin = { queue_id: next.queue_id, expected_revision, count: next.entries.length,
         current_entry_id: next.current_entry_id };
-      if (!bound) throw queueError(new Error("NotConnected"));
-      if (!is_current()) throw queueError(new Error("Stale"));
-      if (uncertain) throw new QueueCommandError("couldn’t confirm queue change");
-      try { await call("queue_begin", begin); } catch (error) { throw queueError(error); }
+      if (!bound) throw queueError(new Error("NotConnected"), false);
+      if (!is_current()) throw queueError(new Error("Stale"), false);
+      if (unanswered > 0) throw new QueueCommandError("Unsettled");
+      try { await call("queue_begin", begin); } catch (error) { throw queueError(error, false); }
       let committed = false;
       try {
         for (let offset = 0; offset < next.entries.length; offset += 100) {
-          if (!bound) throw queueError(new Error("NotConnected"));
-          if (!is_current()) throw queueError(new Error("Stale"));
+          if (!bound) throw queueError(new Error("NotConnected"), false);
+          if (!is_current()) throw queueError(new Error("Stale"), false);
           await call("queue_chunk", { queue_id: next.queue_id, offset, entries: next.entries.slice(offset, offset + 100) });
         }
-        if (!bound) throw queueError(new Error("NotConnected"));
-        if (!is_current()) throw queueError(new Error("Stale"));
+        if (!bound) throw queueError(new Error("NotConnected"), false);
+        if (!is_current()) throw queueError(new Error("Stale"), false);
         committed = true;
         return header(await call("queue_commit", { queue_id: next.queue_id }, { timeoutMs: LOAD_TIMEOUT_MS }));
       } catch (error) {
-        if (committed && nativeUnavailable(error)) {
-          uncertain = true;
-          await readQueue().catch(() => undefined);
-        }
-        else await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
-        throw queueError(error);
+        if (committed && nativeUnavailable(error) && error.message !== "NotConnected") return unansweredChange();
+        await call("queue_cancel", { queue_id: next.queue_id }).catch(() => undefined);
+        throw queueError(error, false);
       }
     },
     async command(input: QueueRequest) {
-      if (uncertain) throw new QueueCommandError("couldn’t confirm queue change");
+      if (unanswered > 0) throw new QueueCommandError("Unsettled");
       try { return header(await call("queue_command", { ...input }, { timeoutMs: LOAD_TIMEOUT_MS })); }
       catch (error) {
-        if (nativeUnavailable(error)) {
-          uncertain = true;
-          await readQueue().catch(() => undefined);
-        }
-        throw queueError(error);
+        if (!nativeUnavailable(error) || error.message === "NotConnected") throw queueError(error, false);
+        return unansweredChange();
       }
     },
   };
@@ -481,6 +496,12 @@ export function createNativeEngine(
   active = owner;
   setObservationTransport(async (account_id, observations) => { await call("observe_consumption", { account_id, observations }); });
   void call("hello").catch(() => undefined);
+
+  const play = async () => {
+    const loaded = key();
+    if (loaded === null) throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
+    await command("play", { key: loaded, expected_load_id: state.playbackSubject });
+  };
 
   return {
     supportsSilenceSkipping: true,
@@ -494,15 +515,12 @@ export function createNativeEngine(
       await command("load", { media_id: descriptor.media_id, play, position_ms: positionMs }, LOAD_TIMEOUT_MS);
     },
     preview: descriptor => command("preview", { descriptor }, LOAD_TIMEOUT_MS).then(() => {}),
-    async play() {
-      const loaded = key();
-      if (loaded === null) throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
-      await command("play", { key: loaded, expected_load_id: state.playbackSubject });
-    },
+    play,
+    retry: play, // listeningSaveFailed pauses the service, so its line's retry resumes it
     async resumeLoaded(expectedSubject) {
       const loaded = key();
       if (loaded === null || state.playbackSubject !== expectedSubject || state.phase === "Ended" || state.playbackFailed || state.error !== null)
-        throw new ApiError(409, "E_PLAYBACK_STALE", "playback source changed. try again.");
+        throw new ApiError(409, "E_PLAYBACK_STALE", PLAYER_CHANGED);
       await command("play", { key: loaded, expected_load_id: expectedSubject });
     },
     async pause() {
@@ -525,9 +543,9 @@ export function createNativeEngine(
       try {
         await call("fence", { key: mediaId, expected_load_id: state.playbackSubject }, { timeoutMs: LOAD_TIMEOUT_MS });
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== "NotResponding") throw error;
-        throw new ApiError(0, "E_NATIVE_PLAYER_NOT_RESPONDING",
-          "The native player is not responding. Reload the app and try again.");
+        // An unanswered fence leaves the place unsettled: progress's own refusal, never a transport's.
+        if (nativeUnavailable(error)) throw new ProgressPreparationError();
+        throw error;
       }
     },
     async reconcileProgressFence(mediaId) {

@@ -10,25 +10,31 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import type { Line } from "@/components/feedback/stage";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
+import { UploadSessionError } from "@/lib/imports/api";
 import {
-  UNCONFIRMED,
-  acceptanceFailure,
-  captureErrorFeedback,
-  type AcceptanceFailure,
+  UNCONFIRMED_LINE,
+  acceptanceFailureLine,
+  captureErrorLine,
+  savedSourceReadLine,
 } from "@/lib/imports/copy";
 import {
   addMediaFromUrl,
+  fetchAcceptedSource,
+  mediaAcquisitionAvailable,
   createUploadAttempt,
   reviewUploadAttempt,
   type UploadAttempt,
   uploadIngestFile,
   type AcceptedIngest,
+  type MediaAcceptance,
   type UploadFileKind,
   type UploadPhase,
 } from "@/lib/imports/ingest";
@@ -102,7 +108,7 @@ export type AddItem =
       kind: "Rejected";
       id: string;
       intent: AcceptanceIntent;
-      feedback: FeedbackContent;
+      feedback: Line;
       importRef: string | null;
     }
   | {
@@ -110,8 +116,16 @@ export type AddItem =
       id: string;
       intent: AcceptanceIntent;
       reason: "StatusUnknown" | "UploadIncomplete";
-      feedback: FeedbackContent;
+      attempt: number;
+      feedback: Line;
       importRef: string | null;
+    }
+  | {
+      kind: "AcceptedUnobserved";
+      id: string;
+      intent: UrlIntent;
+      receipt: Extract<MediaAcceptance, { kind: "Url" }>;
+      feedback: Line | null;
     }
   | {
       kind: "Accepted";
@@ -131,7 +145,7 @@ type Mutation =
 
 export type AddSessionState = Readonly<{
   sessionId: string;
-  intakeFeedback?: FeedbackContent;
+  intakeFeedback?: Line;
   items: readonly AddItem[];
   newItemDestinations: readonly LibraryDestination[];
   mutation: Mutation;
@@ -226,6 +240,7 @@ export function isPopulatedAddItem(row: AddItem): boolean {
     case "Submitting":
     case "Rejected":
     case "AcceptanceUnresolved":
+    case "AcceptedUnobserved":
     case "Accepted":
       return true;
   }
@@ -253,6 +268,7 @@ export function useAddContentSession(): AddContentSessionController {
   const [state, setState] = useState(() => initialState(EMPTY_SEED));
   const current = useRef(state);
   const guard = useWorkGuard();
+  const outcome = useOutcome();
   const workListeners = useRef(new Set<() => void>());
   const itemWorkId = (id: string) => `add-item:${current.current.sessionId}:${id}`;
   const abort = useRef(new AbortController());
@@ -321,7 +337,7 @@ export function useAddContentSession(): AddContentSessionController {
     }), ...state.items.map(row => guard.register({ id: itemWorkId(row.id), scope: { kind: "surface", id: itemWorkId(row.id) }, subscribe,
       read: () => {
         const item = current.current.items.find(item => item.id === row.id);
-        return { changed: item !== undefined && item.kind !== "Accepted" && isPopulatedAddItem(item)
+        return { changed: item !== undefined && item.kind !== "Accepted" && item.kind !== "AcceptedUnobserved" && isPopulatedAddItem(item)
             && !(item.kind === "Draft" && item.seeded && !current.current.sent),
           unconfirmed: item?.kind === "Submitting" || item?.kind === "AcceptanceUnresolved",
           stopsBrowserWork: false };
@@ -352,7 +368,7 @@ export function useAddContentSession(): AddContentSessionController {
         if (row.kind !== "Submitting") return row;
         return {
           kind: "AcceptanceUnresolved", id: row.id, intent: row.intent, importRef: row.importRef,
-          reason: "StatusUnknown", feedback: { tone: "Warning", title: "change not confirmed", message: "check save to retry the original request." },
+          reason: "StatusUnknown", attempt: 0, feedback: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
         };
       }),
     }));
@@ -361,11 +377,7 @@ export function useAddContentSession(): AddContentSessionController {
     if (current.current.mutation.kind === "Idle") return true;
     update((snapshot) => ({
       ...snapshot,
-      intakeFeedback: {
-        tone: "Warning",
-        title:
-          "Wait for this operation to finish, or stop it before adding items.",
-      },
+      intakeFeedback: { fact: "wait for this to finish, or stop it before adding items." },
     }));
     return false;
   }
@@ -384,11 +396,8 @@ export function useAddContentSession(): AddContentSessionController {
     update((snapshot) => ({
       ...snapshot,
       intakeFeedback: {
-        tone: "Danger",
-        title: `Add up to ${MAX_ADD_ITEMS} items at a time.`,
-        message: `${places} ${places === 1 ? "place" : "places"} left. ${
-          count === 1 ? "This item wasn’t" : `These ${count} items weren’t`
-        } added.`,
+        fact: `add up to ${MAX_ADD_ITEMS} items.`,
+        reason: `${places} places left; these items weren’t added.`,
       },
     }));
     return false;
@@ -526,10 +535,7 @@ export function useAddContentSession(): AddContentSessionController {
     ) {
       update((snapshot) => ({
         ...snapshot,
-        intakeFeedback: {
-          tone: "Warning",
-          title: "Select the whole link to paste a list.",
-        },
+        intakeFeedback: { fact: "select the whole link to paste a list." },
       }));
       return { kind: "Rejected" };
     }
@@ -603,8 +609,8 @@ export function useAddContentSession(): AddContentSessionController {
         ? { ...draft, destinations: draft.destinations.map(destination => currentDestinations.get(destination.id) ?? destination) } : item) }));
     } catch (error) {
       if (!active(signal) || handleUnauthenticatedApiError(error)) return;
-      const feedback = captureErrorFeedback(error, "SaveSource");
-      update(next => ({ ...next, intakeFeedback: feedback }));
+      const feedback = captureErrorLine(error, "SaveSource");
+      update(next => ({ ...next, intakeFeedback: { fact: feedback.fact, reason: feedback.reason } }));
     } finally {
       if (active(signal)) update(next => ({ ...next, mutation: { kind: "Idle" } }));
     }
@@ -637,32 +643,44 @@ export function useAddContentSession(): AddContentSessionController {
     return true;
   }
 
-  /** Sends one frozen intent; an unknown outcome keeps it for exact replay. */
+  /** Replays an unknown intent exactly; a known receipt needs only observation reads. */
   async function accept(
-    row: Extract<AddItem, { kind: "Queued" | "AcceptanceUnresolved" }>,
+    row: Extract<AddItem, { kind: "Queued" | "AcceptanceUnresolved" | "AcceptedUnobserved" }>,
     signal: AbortSignal,
   ) {
     if (!active(signal)) return;
     const { id, intent } = row;
     let importRef = row.kind === "AcceptanceUnresolved" ? row.importRef : null;
+    let accepted: Extract<AddItem, { kind: "AcceptedUnobserved" }> | null = row.kind === "AcceptedUnobserved" ? row : null;
 
     try {
       let result: AcceptedIngest;
       const source = intent.source;
-      if (source.kind === "Url") {
+      if (accepted !== null) {
+        const current = await fetchAcceptedSource(accepted.receipt.sourceAttemptId, signal);
+        if (!active(signal)) return;
+        const available = await mediaAcquisitionAvailable(current.media_id, signal);
+        result = { ...accepted.receipt, mediaId: current.media_id, importRef: current.import_ref,
+          href: `/media/${current.media_id}?source_attempt_id=${encodeURIComponent(accepted.receipt.sourceAttemptId)}`, available };
+      } else if (source.kind === "Url") {
         const phase =
           row.kind === "AcceptanceUnresolved" ? "Checking" : "Saving";
-        item({ kind: "Submitting", id, intent: { ...intent, source }, phase, importRef });
+        if (row.kind !== "AcceptanceUnresolved") item({ kind: "Submitting", id, intent: { ...intent, source }, phase, importRef });
         result = await addMediaFromUrl({
           url: source.url,
           guard: intent.guard,
           id: intent.id,
           signal,
+          onAccepted: receipt => {
+            if (!active(signal)) return;
+            accepted = { kind: "AcceptedUnobserved", id, intent: { ...intent, source }, receipt, feedback: null };
+            item(accepted);
+          },
         });
       } else {
         const fileIntent: FileIntent = { ...intent, source };
         const onPhaseChange = (phase: UploadPhase) => {
-          if (active(signal))
+          if (active(signal) && row.kind !== "AcceptanceUnresolved")
             item({ kind: "Submitting", id, intent: fileIntent, phase, importRef });
         };
         onPhaseChange("Preparing");
@@ -697,7 +715,15 @@ export function useAddContentSession(): AddContentSessionController {
       });
     } catch (error) {
       if (!active(signal)) return;
-      const frozen: AddItem =
+      if (accepted !== null) {
+        item(accepted);
+        if (isAbortError(error)) return;
+        const feedback = savedSourceReadLine(error);
+        item({ ...accepted, feedback: { fact: feedback.fact, reason: feedback.reason } });
+        handleUnauthenticatedApiError(error);
+        return;
+      }
+      const frozen: Extract<AddItem, { kind: "AcceptanceUnresolved" }> =
         row.kind === "AcceptanceUnresolved"
           ? { ...row, importRef }
           : {
@@ -706,18 +732,18 @@ export function useAddContentSession(): AddContentSessionController {
               intent,
               importRef,
               reason: "StatusUnknown",
-              feedback: UNCONFIRMED,
+              attempt: 0,
+              feedback: { fact: UNCONFIRMED_LINE.fact, reason: UNCONFIRMED_LINE.reason },
             };
-      if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
-        item(frozen);
+      item(frozen);
+      if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
+      const failure = acceptanceFailureLine(error);
+      const publicationFenced = error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+        || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected");
+      if (row.kind === "AcceptanceUnresolved" && row.reason === "StatusUnknown" && !publicationFenced) {
+        item({ ...frozen, attempt: row.attempt + 1 });
+        if (failure.kind === "Rejected") outcome.say({ fact: intent.source.kind === "Url" ? "couldn’t retry saving this link." : "couldn’t retry saving this file." });
         return;
-      }
-      let failure: AcceptanceFailure;
-      try {
-        failure = acceptanceFailure(error);
-      } catch (defect) {
-        item(frozen);
-        throw defect;
       }
       if (failure.kind === "Superseded") {
         update((snapshot) => ({
@@ -725,8 +751,8 @@ export function useAddContentSession(): AddContentSessionController {
           items: snapshot.items.filter((next) => next.id !== id),
         }));
       } else {
-        item({ id, intent, importRef, ...failure, ...(failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
-          ? { feedback: { ...failure.feedback, title: "save needs review. review your choices and save again.", message: "your upload is still available." } } : {}) });
+        item({ id, intent, importRef, ...(failure.kind === "AcceptanceUnresolved" ? { kind: failure.kind, reason: failure.reason, attempt: row.kind === "AcceptanceUnresolved" ? row.attempt + 1 : 0 } : { kind: failure.kind }), feedback: failure.kind === "Rejected" && intent.upload?.review_required && intent.upload.session !== null && Date.parse(intent.upload.session.expires_at) > Date.now()
+          ? { fact: "save needs review. review your choices and save again.", reason: "your upload is still available." } : { fact: failure.line.fact, reason: failure.line.reason } });
       }
     }
   }
@@ -740,7 +766,8 @@ export function useAddContentSession(): AddContentSessionController {
     catch (error) {
       if (!active(signal)) return;
       if (handleUnauthenticatedApiError(error)) { update(next => ({ ...next, mutation: { kind: "Idle" } })); return; }
-      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: captureErrorFeedback(error, "SaveSource") }));
+      const feedback = captureErrorLine(error, "SaveSource");
+      update(next => ({ ...next, mutation: { kind: "Idle" }, intakeFeedback: { fact: feedback.fact, reason: feedback.reason } }));
       return;
     }
     if (!active(signal)) return;
@@ -782,7 +809,7 @@ export function useAddContentSession(): AddContentSessionController {
   async function reconcileAcceptance(itemId: string) {
     if (current.current.mutation.kind !== "Idle") return;
     const row = current.current.items.find((next) => next.id === itemId);
-    if (row?.kind !== "AcceptanceUnresolved") return;
+    if (row?.kind !== "AcceptanceUnresolved" && row?.kind !== "AcceptedUnobserved") return;
     const signal = abort.current.signal;
     running({ kind: "ReconcileAcceptance", itemId });
     await batch([row], signal, (next) => accept(next, signal));

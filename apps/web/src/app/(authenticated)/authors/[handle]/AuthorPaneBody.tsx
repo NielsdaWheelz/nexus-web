@@ -5,27 +5,20 @@
 // validates it; the text filter stays local. The filter and count cover the
 // complete finite index; the local filter sees every visible kind.
 
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import MediaSummaryNotice from "@/components/collections/MediaSummaryNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import {
-  FeedbackNotice, FeedbackFailure, useFeedbackOccurrence,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import PaneSurface from "@/components/ui/PaneSurface";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import {
-  apiTransportFeedback,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
 import { useAuthorIndexReads } from "@/lib/panes/indexPaneEntry";
@@ -76,21 +69,6 @@ const SORTS = [
   { id: "sort=title&direction=asc", label: "Title A–Z" },
   { id: "sort=title&direction=desc", label: "Title Z–A" },
 ] as const;
-
-function authorError(error: unknown, title: string): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  const { requestId } = error;
-  if (error.code === "E_NOT_FOUND") {
-    return {
-      tone: "Danger",
-      title: "This author is no longer available",
-      requestId,
-    };
-  }
-  const transport = apiTransportFeedback(error, title);
-  if (transport === null) throw error;
-  return transport;
-}
 
 function presentWork(work: ContributorWork): CollectionRowView {
   if (work.kind === "Media") {
@@ -171,9 +149,6 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const works = useServerValue({ ...descriptors.works, visit: WORKS });
   const loaded = works.status === "ready" ? works.data.items : [];
   const worksFailure = works.status === "loading" ? null : works.error;
-  const worksOccurrence = useFeedbackOccurrence(worksFailure !== null, handle);
-  const detailOccurrence = useFeedbackOccurrence(detail.status === "failed" || detail.status === "ready" && detail.error !== null, handle);
-  const detailFailure = detail.status === "ready" ? detail.error : null;
   const worksBusy = indexReading(works);
   const retryWorks = () => { void works.refetch().catch(() => {}); };
   const summaries = useMediaSummaries(
@@ -243,20 +218,11 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const invalidView =
     works.status === "failed" && works.error.code === "E_INVALID_REQUEST";
   const visible = matches(text);
-  const emptyTitle = text
-    ? "no works match this filter." : "no works yet.";
-  const readFeedback = useIndexReadFeedback({
-    value: works, requestedKey: descriptors.works.key, active, unit: { singular: "work", plural: "works" },
-    waiting: !invalidView && works.status === "loading",
-    outcome: visible.length > 0 ? "results updated." : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: works, requestedKey: descriptors.works.key, active, waiting: !invalidView && works.status === "loading", outcome: null });
   const canReset = view.length > 0;
-  const headerMeta: PaneHeaderMeta = invalidView
-    ? { kind: "None" }
-    : complete
-      ? { kind: "Count", value: rows.length, unit: "work" }
-      : { kind: "Pending" };
+  const headerMeta: PaneHeaderMeta = complete && !invalidView
+    ? { kind: "Count", value: rows.length, unit: "work" }
+    : { kind: "None" };
   const queryControls = invalidView ? undefined : {
     kind: "Controls" as const,
     focusInput,
@@ -296,10 +262,14 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const { refetch: refetchDetail } = detail;
   const { refetch: refetchWorks } = works;
   const refresh = useCallback(async () => {
-    try {
-      await Promise.all([refetchDetail(), refetchWorks()]);
-      return { kind: "Complete" as const, announcement: "author refreshed" };
-    } catch { return { kind: "Failed" as const, announcement: "couldn’t refresh author" }; }
+    const results = await Promise.allSettled([refetchDetail(), refetchWorks()]);
+    for (const result of results) {
+      if (result.status === "fulfilled") continue;
+      const error: unknown = result.reason;
+      if (isAbortError(error) || !isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      // justify-ignore-error: each displayed read owns its failure and demand-driven repair.
+    }
+    return null;
   }, [refetchDetail, refetchWorks]);
   usePaneChrome({
     query: queryControls,
@@ -320,37 +290,23 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     return (
       <>
       {readFeedback.announcement}
-      <FeedbackNotice
-        content={{ tone: "Danger", title: "Invalid works view" }}
-        announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: resetView }]}
-      />
+      <Fact line={{ fact: "this sort doesn’t exist." }} verbs={[{ label: "reset view", commandKey: "reset view", run: resetView }]} />
       </>
     );
   }
-  const failure =
-    detail.status === "failed"
-      ? detail.error
-      : works.status === "failed"
-        ? (worksFailure ?? null)
-        : null;
-  if (failure !== null) {
-    const retry = () => {
-      if (detail.status === "failed") detail.refetch();
-      if (works.status === "failed") retryWorks();
-    };
+  if (detail.status === "failed" && detail.error.code === "E_NOT_FOUND" || works.status === "failed" && works.error.code === "E_NOT_FOUND") {
     return (
       <>
       {readFeedback.announcement}
-      <FeedbackFailure scope="Local" occurrence={detail.status === "failed" ? detailOccurrence : worksOccurrence}
-        content={authorError(failure, "couldn’t load author")}
-        announcement="Polite"
-        actions={
-          failure.code === "E_NOT_FOUND"
-            ? undefined
-            : [{ label: "retry", onClick: retry, busy: (detail.status === "failed" && detail.retrying) || worksBusy }]
-        }
-      />
+      <Fact line={{ fact: "this author isn’t available." }} />
+      </>
+    );
+  }
+  if (detail.status === "failed") {
+    return (
+      <>
+      {readFeedback.announcement}
+      <Failed error={detail.error} noun="author details" retry={{ run: () => { void detail.refetch().catch(() => {}); }, busy: detail.retrying }} />
       </>
     );
   }
@@ -358,11 +314,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     return (
       <>
       {readFeedback.announcement}
-      <PaneSurface
-        state={
-          <PaneLoadingState />
-        }
-      />
+      <PaneSurface state={<Ruling />} />
       </>
     );
   }
@@ -371,10 +323,7 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   return (
     <>
       {readFeedback.announcement}
-      <PaneSurface state={detailFailure === null ? undefined : <FeedbackFailure scope="Local" occurrence={detailOccurrence}
-        content={authorError(detailFailure, "couldn’t refresh author")}
-        announcement="None" actions={[{ label: "try again", onClick: detail.refetch, busy: indexReading(detail) }]}
-        returnFocus={() => inputRef.current} />}>
+      <PaneSurface>
         <div className={styles.detail}>
           {otherNames.length > 0 ? (
             <section className={styles.otherNames}>
@@ -398,36 +347,9 @@ function AuthorPane({ handle }: { readonly handle: string }) {
               anchorKey={text}
               collectionBusy={worksBusy}
               surface={false}
-              notice={<>
-                {works.status === "ready" &&
-                worksFailure !== null ? (
-                  <FeedbackFailure scope="Local" occurrence={worksOccurrence}
-                    content={authorError(worksFailure, "couldn’t refresh works")}
-                    announcement="None"
-                    actions={[{ label: "try again", onClick: retryWorks, busy: worksBusy }]}
-                    returnFocus={() => inputRef.current}
-                  />
-                ) : (
-                  <MediaSummaryNotice
-                    error={summaries.error}
-                    retry={summaries.retry}
-                    busy={summaries.retrying}
-                  />
-                )}
-              </>}
-              empty={
-                text ? (
-                  <FeedbackNotice
-                    content={{
-                      tone: "Neutral",
-                      title: emptyTitle,
-                    }}
-                    announcement="None"
-                  />
-                ) : (
-                  <p className={styles.empty}>{emptyTitle}</p>
-                )
-              }
+              empty={works.status === "failed"
+                ? <Failed error={works.error} noun="works" retry={{ run: retryWorks, busy: worksBusy }} />
+                : <Fact line={{ fact: text ? "no works match this filter." : "no works to show." }} />}
             />
           </section>
         </div>

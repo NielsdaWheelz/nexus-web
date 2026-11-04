@@ -10,7 +10,9 @@ import { flushSync } from "react-dom";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { firstVisibleRow, useEvidenceWindow, type Anchor, type Memory } from "./useEvidenceWindow";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
-import { FeedbackFailure, useFeedbackOccurrence, FeedbackNotice, FeedbackState } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import ChoiceField from "@/components/ui/ChoiceField";
 import chrome from "@/components/ui/CompactChrome.module.css";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -18,7 +20,6 @@ import { useCompanionPresentation } from "@/components/workspace/companionPresen
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError } from "@/lib/notes/runtime";
 import { deleteLink } from "@/lib/resourceGraph/links";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import { getOverlayOpeners, useInteractionOwner } from "@/lib/ui/overlay";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
@@ -79,7 +80,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   readonly onRetry: () => void;
   readonly sourceAbsent: boolean;
 }) {
-  const paneActive = usePaneIsActive();
+  const speak = useActiveRegion();
   const capture = useRef<ConnectionsView | null>(null);
   const saved = usePaneVisitData(CONNECTIONS_VIEW, () => capture.current);
   const writeView = usePaneVisitDataWriter(CONNECTIONS_VIEW);
@@ -117,7 +118,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const [preparedRequest, setPreparedRequest] = useState<EvidenceOpenRequest | null>(null);
   const writing = useWritingRuntime();
   // the pane outlives the unlinked row: it holds the frozen commit's retry and moves focus on.
-  const [unlinkFailure, setUnlinkFailure] = useState<{ readonly retry: (() => void) | null } | null>(null);
+  const { say } = useOutcome();
   const document = useReaderState(reader, (s) => s.document);
   // re-measure when an overlay opens or closes: its row holds the trigger in place.
   const interactionOwner = useInteractionOwner();
@@ -232,20 +233,20 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     if (!writing) return;
     const before = logicalOrder.current;
     const index = before.findIndex(entry => entry.key === row?.dataset.group);
-    let serial = interaction.current;
+    const serial = interaction.current;
     const isCurrent = () => interaction.current === serial;
     const settled = () => {
-      setUnlinkFailure(null);
       if (!isCurrent() || !(row?.contains(window.document.activeElement) || window.document.activeElement === window.document.body)) return;
       const remaining = new Set(logicalOrder.current.map(entry => entry.key));
       const neighbour = [...before.slice(index + 1), ...before.slice(0, index).reverse()].find(entry => remaining.has(entry.key));
       if (neighbour) requestFocus(neighbour.key, null, false, isCurrent); else list.current?.focus({preventScroll: true});
     };
-    setUnlinkFailure(null);
     void deleteLink(writing, {linkId}).then(settled, (error: unknown) => {
-      setUnlinkFailure(error instanceof LocalCommitError ? {retry: () => {serial = interaction.current; void error.retry().then(settled, () => {});}} : {retry: null});
+      // an uncommitted frame is the writing runtime's to retry; this settles when it lands.
+      if (error instanceof LocalCommitError) { void error.completion.then(settled, () => {}); return; }
+      say({ fact: "couldn’t unlink this connection." }, [{ label: "retry", commandKey: `retry unlink:${linkId}`, run: () => unlink(linkId, row) }]);
     });
-  }, [writing, requestFocus]);
+  }, [writing, requestFocus, say]);
 
   // the margin (contract M): the stack is pure, and only the text moves its base. rows render at their
   // offsets; the base is one transform on the outline scope, so a frame that only moves the stack commits nothing.
@@ -485,31 +486,22 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     if (key) release(key);
   }, [release]);
 
-  const localOccurrence = useFeedbackOccurrence(state.local.status === "failed");
-  const linksOccurrence = useFeedbackOccurrence(state.links.status === "failed");
-  const remoteOccurrence = useFeedbackOccurrence(state.remote.status === "failed");
+  const retry = { label: "retry", commandKey: "RetryConnections", run: onRetry };
   const failures = <>
-    {unlinkFailure && unlinkFailure.retry === null ? <FeedbackFailure scope="Local" occurrence={unlinkFailure} content={{ tone: "Danger", title: "couldn’t save on this device",
-      message: unlinkFailure.retry ? "keep this page open. retry saving." : "nothing was unlinked. try again." }} announcement="Assertive"
-      actions={unlinkFailure.retry ? [{ label: "retry", onClick: unlinkFailure.retry }] : undefined} onDismiss={unlinkFailure.retry ? undefined : () => setUnlinkFailure(null)}
-      returnFocus={() => list.current} /> : null}
-    {state.local.status === "failed" ? <FeedbackFailure scope="Local" occurrence={localOccurrence} content={{ tone: "Danger", title: "couldn’t read highlights on this device" }} announcement={paneActive ? "Polite" : "None"}
-      actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
-    {state.links.status === "failed" ? <FeedbackFailure scope="Local" occurrence={linksOccurrence} content={{ tone: "Danger", title: "couldn’t read links on this device" }} announcement={paneActive ? "Polite" : "None"}
-      actions={[{ label: "retry", onClick: onRetry }]} returnFocus={() => list.current} /> : null}
-    {state.remote.status === "failed" ? <FeedbackFailure scope="Local" occurrence={remoteOccurrence} content={{ tone: "Warning", title: "additional connections aren’t available right now" }} announcement={paneActive ? "Polite" : "None"}
-      actions={[{ label: "retry", onClick: onRetry, busy: state.remote.retrying }]} returnFocus={() => list.current} /> : null}
-    {remote?.status === "partial" ? <FeedbackNotice content={{ tone: "Warning", title: "some reader items are unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
+    {state.local.status === "failed" ? <Fact line={{ fact: "couldn’t load your highlights on this device." }} verbs={[retry]} speak={speak} /> : null}
+    {state.links.status === "failed" ? <Fact line={{ fact: "couldn’t load your links on this device." }} verbs={[retry]} speak={speak} /> : null}
+    {state.remote.status === "failed" ? <Failed error={state.remote.error} noun="other connections" retry={{ run: onRetry, busy: state.remote.retrying }} /> : null}
+    {remote?.status === "partial" ? <Fact line={{ fact: "some connections couldn’t be loaded." }} /> : null}
   </>;
   const totals: Record<Filter, number> = { highlights: 0, citations: 0, links: 0, machine_links: 0 };
   for (const entry of aligned ? placed : entries) for (const facet of entryFacets(entry)) totals[facet]++;
   const remoteComplete = remote?.status === "ready" || remote?.status === "empty";
   const complete = state.local.status === "ready" && state.links.status === "ready" && remoteComplete;
   const allOff = FILTERS.every(filter => hidden.has(filter));
-  const showAllTypes = () => {
+  const showAll = { label: "show all types", commandKey: "ShowAllTypes", run: () => {
     firstType.current?.focus({ preventScroll: true });
     setHidden(new Set());
-  };
+  } };
   const row = (entry: EvidenceEntry) => {
     const place = aligned ? placements.find((item) => item.key === entry.key) : undefined;
     const presence = !visible.has(entry.key) || aligned && !place ? "hidden" : place?.kind === "measuring" ? "measuring" : "shown";
@@ -596,16 +588,14 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
         lastFocused.current = group;
         pinned.current = { element: control, y: control.getBoundingClientRect().top, scrollTop: event.currentTarget.scrollTop };
       }} onBlurCapture={() => { queueMicrotask(() => { if (!list.current?.contains(window.document.activeElement)) { pinned.current = null; setFocused(null); } }); }}>
-        {allOff ? <FeedbackState content={{ tone: "Neutral", title: "no types selected" }} announcement="None"
-          actions={[{ label: "show all types", onClick: showAllTypes }]} />
+        {allOff ? <Fact line={{ fact: "no types selected." }} verbs={[showAll]} />
           : order.length || !terminal ? null
-          : aligned && entries.length && !placed.length ? <FeedbackState content={{ tone: "Neutral",
-            title: complete ? "nothing in the margin" : "no available connections in the margin" }}
-            announcement="None" actions={[{ label: "show all connections", onClick: () => { list.current?.focus({ preventScroll: true }); chooseView(false); } }]} />
-          : <FeedbackState content={{ tone: "Neutral", title: !complete
-            ? hidden.size ? "no available connections match the selected types" : "no available connections"
-            : !entries.length ? "no connections in this document yet" : "no connections match the selected types" }}
-            announcement="None" actions={hidden.size ? [{ label: "show all types", onClick: showAllTypes }] : undefined} />}
+          : aligned && entries.length && !placed.length ? <Fact line={{ fact: complete ? "nothing in the margin." : "nothing loaded in the margin." }}
+            verbs={[{ label: "show all", commandKey: "ShowAllConnections", run: () => { list.current?.focus({ preventScroll: true }); chooseView(false); } }]} />
+          : <Fact line={{ fact: !complete
+            ? hidden.size ? "no loaded connections match these types." : "no connections loaded."
+            : !entries.length ? "no connections in this document." : "no connections match these types." }}
+            verbs={hidden.size ? [showAll] : undefined} />}
         <div ref={windowRoot}>
           <ResourceOutlineList scope="reader-connections" ariaLabel="connections" onRevealOccurrence={revealOccurrence}>
             {[...rowWindow.rendered.flatMap(slot => {

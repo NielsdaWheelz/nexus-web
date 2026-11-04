@@ -2,8 +2,9 @@
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import FeedbackSurface from "@/components/feedback/FeedbackSurface";
-import { Session } from "@/components/feedback/scope";
+import { StageContext } from "@/components/feedback/stage";
+import { StageAnchor } from "@/components/feedback/Slips";
+import { cx } from "@/lib/ui/cx";
 import {
   OverlayContext,
   focusableElements,
@@ -13,12 +14,15 @@ import {
   type ReturnFocusTarget,
   type Layer,
 } from "@/lib/ui/overlay";
+import styles from "./ModalFrame.module.css";
 
 /** Why a dismissal is asked: the kernel's reason, or `control` for the frame's own close controls and gestures. */
 export type DismissRequestReason = DismissReason | "control";
 
 export interface ModalProps {
   readonly open: boolean;
+  /** Scrollable content the slip may cover only when no backdrop rectangle fits. Excludes fixed controls. */
+  readonly slipContent?: RefObject<HTMLElement | null>;
   readonly scope?: string;
   /** Runs only after a dismissal is accepted. */
   readonly onDismiss: () => void;
@@ -36,7 +40,7 @@ export interface ModalProps {
 }
 
 /**
- * The one modal frame: a scrim holding a role="dialog" panel, portaled to the
+ * The one modal frame: a semantic dialog room holding a visual panel, portaled to the
  * body and stacked by activation order. Only the topmost frame is aria-modal
  * and interactive; a covered frame is inert and its scrim clear. Mount-gated
  * or driven by `open`: either way a close leaves the stack.
@@ -52,6 +56,8 @@ export default function ModalFrame({
   skipReturnFocus,
   interactionLayer,
   label,
+  slipContent,
+  motionElement,
   scope,
   id,
   keepMounted = false,
@@ -61,6 +67,9 @@ export default function ModalFrame({
   children,
 }: ModalProps & {
   readonly label: string;
+  readonly slipContent: RefObject<HTMLElement | null>;
+  /** The family's one finite CSS entrance owner; defaults to the visual panel. */
+  readonly motionElement?: RefObject<HTMLElement | null>;
   readonly id?: string;
   /** After the first open, keep the content mounted (hidden) while closed. */
   readonly keepMounted?: boolean;
@@ -70,7 +79,7 @@ export default function ModalFrame({
   readonly children: ReactNode | ((requestDismiss: () => void) => ReactNode);
 }) {
   const [panel, setPanel] = useState<HTMLElement | null>(null);
-  const feedback = useContext(Session);
+  const feedback = useContext(StageContext);
   const requestDismiss = (reason: DismissRequestReason) => {
     if (onDismissRequest?.(reason) !== "blocked") onDismiss();
   };
@@ -83,7 +92,7 @@ export default function ModalFrame({
     returnFocusFallback,
     skipReturnFocus,
   });
-  const bindPanel = useCallback((element: HTMLElement | null) => { layer.element = element; setPanel(element); }, [layer]);
+  const bindRoom = useCallback((element: HTMLElement | null) => { layer.element = element; }, [layer]);
   useLayoutEffect(() => {
     if (!interactionLayer) return;
     interactionLayer.current = layer;
@@ -97,7 +106,6 @@ export default function ModalFrame({
   select.current = initialFocus;
   const focused = useRef<{ readonly key: unknown } | null>(null);
   useEffect(() => {
-    const panel = layer.element;
     if (!open) focused.current = null;
     if (!open || !topmost || !panel) return;
     if (focused.current && Object.is(focused.current.key, focusKey)) return;
@@ -106,12 +114,12 @@ export default function ModalFrame({
     const frame = requestAnimationFrame(() => {
       focused.current = { key: focusKey };
       const active = document.activeElement;
-      if (!changingKey && active instanceof HTMLElement && panel.contains(active)
+      if (!changingKey && active instanceof HTMLElement && layer.element?.contains(active)
         && !active.closest("[hidden], [inert]") && active.getClientRects().length > 0) return;
       (select.current?.(panel) ?? focusableElements(panel)[0] ?? panel).focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [layer, open, topmost, focusKey]);
+  }, [layer, panel, open, topmost, focusKey]);
 
   const opened = useRef(false);
   opened.current ||= open;
@@ -120,9 +128,14 @@ export default function ModalFrame({
   return createPortal(
     <OverlayContext value={layer}>
       <div
+        ref={bindRoom}
         className={backdropClassName}
         style={{ ...backdropStyle, zIndex: `calc(var(--z-modal) + ${depth})` }}
-        role="presentation"
+        role="dialog"
+        aria-label={label}
+        aria-modal={topmost || undefined}
+        inert={!topmost}
+        tabIndex={-1}
         hidden={!open}
         data-modal-backdrop="true"
         data-suspended={topmost ? undefined : "true"}
@@ -132,21 +145,15 @@ export default function ModalFrame({
         onClick={(event) => event.stopPropagation()}
       >
         <section
-          ref={bindPanel}
+          ref={setPanel}
+          data-modal-panel="true"
           id={id}
-          className={className}
-          role="dialog"
-          aria-label={label}
-          aria-modal={topmost || undefined}
-          inert={!topmost}
+          className={cx(styles.panel, className)}
           tabIndex={-1}
         >
-          {feedback ? <FeedbackSurface bounds={panel} interaction={layer} modal={layer} active={open}
-            protectedTargets={() => panel ? [...panel.querySelectorAll<HTMLElement>("header, [data-feedback-controls]")] : []}
-            returnFocus={() => panel}>
-            {typeof children === "function" ? children(dismissByControl) : children}
-          </FeedbackSurface> : typeof children === "function" ? children(dismissByControl) : children}
+          {typeof children === "function" ? children(dismissByControl) : children}
         </section>
+        {feedback ? <StageAnchor kind="Modal" panel={panel} content={slipContent} motionElement={motionElement} /> : null}
       </div>
     </OverlayContext>,
     document.body,

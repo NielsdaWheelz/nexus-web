@@ -31,7 +31,6 @@ import {
 import { cx } from "@/lib/ui/cx";
 import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import Button from "./Button";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
 import ButtonLink from "./ButtonLink";
 import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
@@ -202,7 +201,6 @@ export default function SurfaceHeader({
             />
           </div>
           <div className={styles.trailing}>
-            <FeedbackRecoveryControl className={styles.headerButton} />
             {resourceActions ? <ResourceActions subject={resourceActions} density="Header"
               returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
             {!narrow && primaryAction && primary && primaryState ? (
@@ -216,7 +214,7 @@ export default function SurfaceHeader({
                     className={styles.headerButton}
                     aria-label={primary.label}
                     aria-describedby={primary.disabledReason ? reasonId : undefined}
-                    tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
+                    tooltip={{ text: primary.disabledReason && !primary.waiting ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
                     data-action-id={primary.id}
                     data-workspace-rich-target="true"
                     onClick={primaryAction.onActivate}
@@ -234,7 +232,7 @@ export default function SurfaceHeader({
                     aria-pressed={primaryState.barPressed}
                     aria-expanded={primaryState.barExpanded}
                     aria-controls={primaryState.barControls}
-                    tooltip={{ text: primary.disabledReason ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
+                    tooltip={{ text: primary.disabledReason && !primary.waiting ? `${primary.label}: ${primary.disabledReason}` : primary.label }}
                     data-action-id={primary.id}
                     onClick={primaryAction.onActivate}
                     onKeyDown={primaryAction.onActivate}
@@ -247,23 +245,20 @@ export default function SurfaceHeader({
               <MediaHeaderMenu subject={resourceActions} title={header.title} subjectKey={identityId}
                 sections={sections} resourceRef={resourceRef} actionFocus={actionFocus}
                 triggerRef={setMore} triggerAttributes={{ "data-pane-chrome-focus": "true" }}
-                renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={styles.mobileOverflow} /></span>} />
+                renderTrigger={props => <OverflowMenuButton {...props} className={styles.mobileOverflow} />} />
             ) : resourceActions?.kind === "Podcast" && resourceRef === undefined ? (
               <PodcastMenu subject={resourceActions.subject} metadataSubject={podcastMetadata} actionFocus={actionFocus}
                 subjectKey={identityId} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections} omitResourceActions={narrow ? [...seen] : undefined}
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
-                renderTrigger={props => <span className={styles.overflow}><OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} /></span>} />
+                renderTrigger={props => <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />} />
             ) : projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
               <ContextualActionMenu navigation={null} title={header.title} subjectKey={identityId}
                 label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections}
                 resourceRef={resourceRef} actionFocus={actionFocus} omitResourceActions={narrow ? [...seen] : undefined} triggerRef={setMore}
                 triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
-                renderTrigger={props => <span className={styles.overflow}>
-                  <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />
-                  {actions.some(action => action.indicator?.kind === "Status") ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
-                </span>} />
+                renderTrigger={props => <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />} />
             ) : null}
             {companion && companionState ? (
               <Button
@@ -305,7 +300,7 @@ function MediaHeaderMenu({ subject, actionFocus, sections, ...props }: Omit<Comp
   const present = new Set(sections.flatMap(section => section.actions.map(action => action.id)));
   const actions: ActionDescriptor[] = shortcuts.filter(action => !present.has(action.id)).map(action => ({
     kind: "command", id: action.id, label: action.menuLabel, icon: action.icon,
-    disabled: action.disabled, disabledReason: action.disabledReason ?? undefined, busy: action.busy, hasPopup: action.hasPopup ?? undefined,
+    disabled: action.disabled, disabledReason: action.disabledReason ?? undefined, waiting: action.waiting || undefined, busy: action.busy, hasPopup: action.hasPopup ?? undefined,
     restoreFocusOnClose: action.hasPopup === null,
     onSelect: ({ triggerEl }) => action.invoke({ ...actionFocus, trigger: triggerEl }),
   }));

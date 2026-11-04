@@ -7,7 +7,7 @@ import { useEffect, useId, useMemo, useRef } from "react";
 import { pageTitle } from "@nexus/authored/queries";
 import CollectionView from "@/components/collections/CollectionView";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
@@ -82,19 +82,19 @@ export default function NotesPaneBody() {
     if (activation.kind === "Consume") event.preventDefault();
     else if (activation.kind === "Open" && activation.intent === "new_pane") { event.preventDefault(); submit(true); }
   };
-  const failure = <AuthoredReadFailure {...read} title="couldn’t open pages on this device"/>;
+  const failure = <AuthoredReadFailure {...read} noun="pages"/>;
   const emptyTitle = filter.query.trim()
-    ? complete ? "no pages match this filter." : "no matching page found so far."
-    : complete ? "no pages yet." : "no pages loaded so far.";
+    ? complete ? "no pages match this filter." : "no loaded page matches this filter."
+    : complete ? "no pages yet." : "no pages loaded yet.";
   return <CollectionView
     returnScope="Notes.Pages" rows={visible} ariaLabel="Notes"
     status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
     collectionBusy={read.data === null && read.error === null}
     anchorKey={filter.query.trim()}
-    notice={<>{read.data === null ? null : failure}{filter.query.trim() && !complete ? <p>filter applies to loaded pages.</p> : null}</>}
+    notice={filter.query.trim() && !complete ? <p>filter applies to loaded pages.</p> : undefined}
     error={read.data === null ? failure : undefined}
-    empty={<FeedbackNotice content={{ tone: "Neutral", title: emptyTitle }} announcement="None" />}
-    footer={!complete && read.data !== null ? <Button reserveIcon aria-busy={read.pending} busyKey="Notes.Pages" onClick={read.more}>show more pages</Button> : undefined}
+    empty={<Fact line={{ fact: emptyTitle }} />}
+    footer={!complete && read.data !== null ? <Button aria-busy={read.pending} onClick={read.more}>show more pages</Button> : undefined}
     toolbar={<>
       <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); submit(false); }} onKeyDown={submitGesture}>
         <Input ref={titleInput} value={title.value} onChange={event => title.set(event.currentTarget.value)} onInput={event => title.set(event.currentTarget.value)} placeholder="New page" aria-label="New page title" style={{ flex: 1 }} />

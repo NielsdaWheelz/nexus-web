@@ -1,12 +1,3 @@
-.choices {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.choices p {
-  margin: 0 0 var(--space-1);
-}
-
 .mark {
   position: relative;
   display: inline-flex;
@@ -19,7 +10,8 @@
   block-size: 20px;
 }
 
-/* Hidden attention keeps the trigger's geometry and focus stable. */
+/* The dot keeps the trigger's geometry and focus stable; its weight fades in and out. `data-mark`
+   shows it; `data-shape` outlives it, so a fading mark keeps the shape it had. */
 .attention {
   position: absolute;
   inset-block-start: 0;
@@ -31,10 +23,17 @@
   border-radius: var(--radius-full);
   background: var(--warning);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-deliberate) var(--ease-glide);
 }
 
-.attention[data-visible="false"] {
-  visibility: hidden;
+.attention[data-mark] {
+  opacity: 1;
+}
+
+.attention[data-shape="Hollow"] {
+  border: 1.5px solid var(--warning);
+  background: var(--surface-2);
 }
 
 @media (forced-colors: active) {
@@ -43,52 +42,22 @@
     border-color: Canvas;
     forced-color-adjust: none;
   }
+  .attention[data-shape="Hollow"] {
+    background: Canvas;
+    border-color: CanvasText;
+  }
 }
 
 .status {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  min-inline-size: 0;
-  padding: var(--space-1) var(--space-2);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.statusIcon {
-  flex: 0 0 16px;
-  margin-block-start: 2px;
-}
-
-.status[data-failed] .statusIcon {
-  color: var(--warning);
-}
-
-.statusText {
-  display: grid;
+  margin: 0;
   inline-size: 28ch;
   max-inline-size: 100%;
-  min-inline-size: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
-.statusText > :first-child {
-  color: var(--ink);
-}
-
-.statusDetail {
-  font-size: var(--text-xs);
-}
-
-/* Live counts must not move the account menu's published action targets. */
-.statusDetail[data-progress] {
-  block-size: 4lh;
-  overflow: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-@media (forced-colors: active) {
-  .status[data-failed] .statusIcon {
-    color: CanvasText;
-  }
+.reason {
+  color: var(--ink-muted);
 }

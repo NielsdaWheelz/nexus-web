@@ -2,20 +2,19 @@
 
 /** One reviewed destination. The primary subscribe action fixes follow mode;
  * library organization chooses podcast or once-only episodes before admission. */
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useId, useCallback, useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import RadioGroup from "@/components/ui/RadioGroup";
-import { FeedbackFailure, FeedbackNotice, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import { PodcastCommandFailure } from "@/lib/podcasts/commands";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import CommandRefusal from "./CommandRefusal";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import { getLibrary } from "@/lib/libraries/api";
 import { getDefaultPodcastLibrary, getLibraryPodcast, getLibraryPodcasts, type PodcastTarget } from "@/lib/podcasts/api";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import PodcastImportProgress from "./PodcastImportProgress";
 import styles from "./PodcastCommands.module.css";
@@ -60,9 +59,9 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
 }) {
   const { ctx } = useActionRuntime();
   const [sending, setSending] = useState(false);
+  const waitingId = useId();
   const live = useRef(false);
   useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-  const [refused, setRefused] = useState(false);
   const [dispatched, setDispatched] = useState(false);
   const stamp = useChangeStamp("Podcasts", "Entries", "Libraries");
   const source = usePaneFreeServerValue({ key: `podcast-admission:${JSON.stringify([libraryId, target, mode])}`, stale: stamp,
@@ -75,10 +74,8 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
       return { id, library, facts };
     },
   });
-  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
   if (source.status !== "ready") return <>
-    {source.status === "loading" ? <PaneLoadingState />
-      : <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t load the destination.")} announcement="Polite" actions={[{ label: "retry loading", onClick: source.refetch }]} />}
+    {source.status === "loading" ? <Ruling /> : <Failed error={source.error} noun="library details" retry={{ run: source.refetch }} />}
     <div className={styles.actions}>
       <Button onClick={onClose}>cancel</Button>
     </div>
@@ -87,41 +84,40 @@ function AcquisitionReview({ target, title, mode, libraryId, onAccepted, created
   const destination = library.is_default ? "all" : libraryDisplayName(library);
   const subject = `admission:${JSON.stringify([id, target.kind, target.kind === "Canonical" ? target.podcast_id : target.target])}`;
   const pending = ctx.podcasts.pending(subject);
-  const commandFailure = <PodcastCommandFailure subject={subject} />;
   const following = "subscription" in facts && facts.subscription !== null;
   const operation = "import" in facts ? facts.import : null;
   const unfinished = operation !== null && (operation.state === "pending" || operation.state === "running" || operation.state === "failed");
   const blocked = !facts.can_add_content || unfinished || following;
   const submit = async () => {
-    if (source.error !== null || source.refreshing || blocked || pending !== null || sending || refused) return;
+    if (source.error !== null || source.refreshing || blocked || pending !== null || sending) return;
     const guards = { target, expected_removal_revision: facts.removal_revision };
     setDispatched(true);
     setSending(true);
-    const accepted = await ctx.podcasts.submit({ subject, title: `${title} · ${destination}`, onAccepted: () => {
+    await ctx.podcasts.submit({ subject, title, library: library.is_default ? null : destination, shown: () => live.current, onAccepted: () => {
       if (mode === "follow") onAccepted?.();
       if (live.current) onClose();
     }, command: mode === "follow"
       ? { kind: "Admission", libraryId: id, mode, body: { ...guards, id: crypto.randomUUID(), import_id: crypto.randomUUID() } }
       : { kind: "Admission", libraryId: id, mode, body: { ...guards, id: crypto.randomUUID() } } });
     setSending(false);
-    if (!accepted && live.current) setRefused(true);
   };
   return <>
-    {commandFailure}
-    {createdLibrary && (!dispatched || pending?.phase === "Refused") ? <p>library created; addition not started</p> : null}
+    {createdLibrary && (!dispatched || pending?.phase === "Refused") ? <Fact line={{ fact: `created ${destination}. nothing is added yet.` }} /> : null}
     <p>destination: {destination}</p>
     {onModeChange !== null ? <RadioGroup label="add" value={mode} choices={[
       { value: "follow", label: "podcast" }, { value: "current_episodes", label: "episodes", disabled: following },
     ]} disabled={pending !== null || sending || source.refreshing || source.error !== null} onChange={onModeChange} /> : null}
     <p>{mode === "follow" ? "add available history and new episodes automatically." : "add available history once. subscriptions stay unchanged."}</p>
     <p className={styles.note}>history is limited to what the publisher makes available. this does not download audio or request transcripts.</p>
-    {!facts.can_add_content ? <FeedbackNotice content={{ tone: "Warning", title: following ? "a library admin must change this subscription." : "only a library admin can add this podcast." }} announcement="Polite" /> : null}
-    {following ? <FeedbackNotice content={{ tone: "Neutral", title: `already subscribed in ${destination}.` }} announcement="Polite" /> : null}
+    {!facts.can_add_content ? <Fact line={{ fact: following ? "only a library admin can change this subscription." : "only a library admin can add podcasts here." }} /> : null}
+    {following ? <Fact line={{ fact: `already subscribed in ${destination}.` }} /> : null}
     {operation !== null ? <PodcastImportProgress operation={operation} title={title} /> : null}
-    {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t refresh the destination.")} announcement="Polite" /> : null}
-    {refused || pending?.phase === "Refused" ? <FeedbackNotice content={{ tone: "Warning", title: "review the current destination before choosing again.", message: "this confirmation is disarmed." }} announcement="Polite" actions={pending?.phase === "Refused" ? [{ label: "review destination", onClick: () => { ctx.podcasts.review(pending.key); source.refetch(); setRefused(false); } }] : undefined} /> : null}
+    {source.error !== null ? <Fact line={{ fact: "couldn’t refresh library details.", reason: "they may be out of date." }}
+      verbs={[{ label: "retry", commandKey: "retry library details", run: source.refetch }]} /> : null}
+    {source.refreshing ? <span id={waitingId} className="sr-only">checking library details</span> : null}
+    <CommandRefusal subject={subject} reread={source.refetch} />
     <div className={styles.actions}>
-      <Button reserveIcon emphasis="strong" aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || refused || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "add episodes"}</Button>
+      <Button emphasis="strong" aria-describedby={source.refreshing ? waitingId : undefined} aria-busy={sending || pending?.phase === "Sending" || undefined} disabled={sending || pending !== null || source.error !== null || source.refreshing || blocked} onClick={() => void submit()}>{mode === "follow" ? "subscribe" : "add episodes"}</Button>
       {following && onUnsubscribe ? <Button disabled={sending || pending !== null || source.error !== null || source.refreshing || !facts.can_add_content} onClick={onUnsubscribe}>unsubscribe…</Button> : null}
       <Button onClick={onClose}>cancel</Button>
     </div>

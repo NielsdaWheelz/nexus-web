@@ -39,6 +39,20 @@
   letter-spacing: normal;
 }
 
+.absent {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+/* the pane's status lanes, and a saved-only pane's fact: in flow, at the transcript's measure */
+.lanes {
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-3) 0;
+}
+
 .spacer {
   flex: 0 0 auto;
   pointer-events: none;
@@ -54,6 +68,13 @@
 }
 
 .latest > button { pointer-events: auto; }
+
+/* The composer's stage anchor: a line at its top edge, so a slip stands above the composer. */
+.composerAnchor {
+  position: relative;
+  flex: none;
+  height: 0;
+}
 
 .composerSlot {
   flex: 0 1 auto;

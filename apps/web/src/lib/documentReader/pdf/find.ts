@@ -134,8 +134,7 @@ export function createPdfFind(
       if (narrow && anchorPage === null)
         return {
           kind: "Failed",
-          message:
-            "Selected page is unavailable. Clear the search to capture a new page, or turn off the scope option.",
+          message: "couldn’t search this page.",
         };
       const frozen = { ...next };
       const { starts, lengths } = await matches(frozen, narrow && anchorPage !== null ? anchorPage - 1 : null, signal);
@@ -144,8 +143,7 @@ export function createPdfFind(
       if (!controller.sawText && !narrow)
         return {
           kind: "Failed",
-          message:
-            "Searchable text could not be extracted from this PDF. Retry does not perform OCR.",
+          message: "this pdf has no searchable text.",
         };
       const rows: FindRow<PdfHit>[] = [];
       for (const [pageIndex, pageMatches] of starts.entries()) {
@@ -183,9 +181,7 @@ export function createPdfFind(
       if (outcome.kind !== "Unavailable") return { kind: "Shown" };
       return {
         kind: "Failed",
-        message: outcome.reason === "CaptureUnavailable"
-          ? "Your reading position could not be captured."
-          : "PDF find is unavailable. Try again.",
+        message: outcome.reason === "CaptureUnavailable" ? "couldn’t hold your current place." : "couldn’t show that match.",
       };
     },
     href: (hit) => reader.navigation?.href(hit.destination) ?? null,

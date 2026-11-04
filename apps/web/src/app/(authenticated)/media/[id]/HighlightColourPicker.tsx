@@ -55,7 +55,7 @@ export function HighlightButton({ selected, persisted, disabledReason, busy, onC
 }) {
   const id = useId();
   const label = persisted ? `Highlighted ${selected}` : "Highlight yellow";
-  const reason = disabledReason ?? (persisted ? "this colour is already applied. choose another colour to change it." : null);
+  const reason = disabledReason ?? (persisted ? "this colour is already applied." : null);
   return <>
     <Button iconOnly className={styles.selectionIcon} aria-busy={busy || undefined}
       aria-label={label} aria-disabled={reason !== null || undefined}

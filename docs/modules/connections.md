@@ -300,6 +300,14 @@ pdf highlight creation, media-unit readiness and note reindexing enqueue scans.
 the ui refreshes after settlement and announces success only for outcome `ok`;
 an idle queue alone proves no successful generation.
 
+scan starts belong to the existing visit resource draft. dispatch and an unanswered
+start retain their exact source and work guard across inspector retirement; the
+held recovery is visible again when the surface reopens. current shared admission
+gates both start and retry. check and wake read status only. passive idle or terminal
+status cannot answer an earlier request; an acknowledged retry answers that retry.
+without a replay identity it cannot fence a separate still-running original. null
+outcome says no result is available, never that a scan completed.
+
 - only discovery writes `origin=discovery`: source is media, page, note or an
   owned highlight; target is media, note or evidence span; snapshot rationale is
   the stored rationale.
@@ -319,6 +327,13 @@ relation of its media. removing a discovered connection deletes only its exact
 edge, preserving siblings and both resources. discovery has no suppression
 preferences; future scans, including one already running, may publish a new edge.
 retrying removal of the old uuid never removes that replacement.
+
+`useFactRemovals` retains server-fact removal in the existing visit draft above
+filtered rows. dispatch and uncertainty carry the work guard; the held command
+keeps its exact edge or context version. initial row removal stays disabled while
+that command is unresolved, and only its held recovery may replay it. read
+freshness alone is not settlement. authored unlink keeps its own local command
+owner; generic outline presentation supplies no removal authority.
 
 | api | result |
 | --- | --- |

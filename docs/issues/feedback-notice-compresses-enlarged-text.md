@@ -10,12 +10,14 @@ falls below the visible body. the toolbar's selected `Unsupported order` stays
 readable. #628 committed a screenshot of it.
 
 reproduce: open `/podcasts?sort=unsupported`, reduce the pane to 320px, and use
-firefox's actual text-only zoom at 200%. inspect the failure notice and recovery
-action. `components/feedback/Feedback.module.css:54,78,97` retains three grid
-tracks, rem padding and a 3rem tone marker; the copy column has little space.
-paths are under `apps/web/src/`; this owner is unchanged by the toolbar cutover.
+firefox's actual text-only zoom at 200%. inspect the failure fact and recovery
+action. the cited three-track `Feedback.module.css` composition is retired;
+current in-flow facts belong to `components/feedback/Fact.tsx` and
+`Fact.module.css`. this historical screenshot does not establish the same fault
+in that composition. paths are under `apps/web/src/`.
 
-prerequisite: agree the shared notice's narrow/enlarged composition. reflow the
-notice at its owner, preserving its announcement and action contracts.
+prerequisite: repeat the original actual text-zoom check against the current
+fact; a narrow viewport alone does not exercise enlarged text. if it fails,
+repair the owning composition while preserving speech and action contracts.
 acceptance: failure copy remains readable without mid-word fragmentation, and
 recovery actions remain reachable at the same pane/text settings.

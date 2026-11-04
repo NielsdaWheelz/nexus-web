@@ -1,25 +1,31 @@
 "use client";
 
-/** The capture and its writing survive independently of source availability. */
+/** The capture and its writing survive independently of source availability. Once the capture
+ * has shown, a reread that fails in storage says nothing, while a defect still throws; an arrival
+ * that can't land says so once. */
 import {useEffect, useMemo, useRef, useState} from "react";
 import ReaderExcerpt from "@/components/resources/ReaderExcerpt";
 import type {ExcerptView} from "@nexus/authored/excerpt";
 import {normalizeQuote} from "@nexus/authored/identity";
 import {bodyPassageRange} from "@/lib/notes/inspection";
 import {matchScopeQuote, normalizeScopeText} from "@nexus/authored/scope";
-import {FeedbackBusy, FeedbackFailure, useFeedbackOccurrence} from "@/components/feedback/Feedback";
+import {Fact} from "@/components/feedback/Fact";
+import {useOutcome} from "@/components/feedback/Feedback";
+import {Ruling} from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import type {NoteInspection} from "@/components/notes/NoteEditor";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import {useResourceInspector} from "@/components/resource-inspector/useResourceInspector";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
+import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {usePaneChrome} from "@/lib/panes/paneChrome";
 import {usePaneEntryDelivery, usePaneParam} from "@/lib/panes/paneRuntime";
 import {useSourceArrival, type SourceArrivalContext} from "@/lib/reader/sourceArrival";
 import {highlightSourceHref} from "@/lib/resources/localResource";
 import {canonicalResourceRef} from "@/lib/sharing/targets";
 import {usePaneReturnReady} from "@/lib/workspace/paneReturnMemento";
+import styles from "./HighlightPaneBody.module.css";
 
 export default function HighlightPaneBody() {
   const id = usePaneParam("id");
@@ -90,15 +96,20 @@ export default function HighlightPaneBody() {
   const resourceRef = resource ? canonicalResourceRef({scheme: "highlight", id}) : undefined;
   usePaneChrome(useMemo(() => ({resourceRef}), [resourceRef]));
   const source = resource ? highlightSourceHref(resource) : null;
-  const arrivalOccurrence = useFeedbackOccurrence(arrival.failure !== null, ref);
-  return <article>
-    {capture.current ? <ReaderExcerpt excerpt={capture.current} color={resource?.color ?? null} full /> : null}
-    {!resource && read.data ? <p>this highlight is no longer available.</p> : null}
-    <FeedbackBusy subject={ref} pending={read.pending}/>
-    <AuthoredReadFailure {...read} title="couldn’t open this highlight on this device"/>
+  const {say, fail} = useOutcome();
+  useEffect(() => {
+    const failure = arrival.failure;
+    if (failure === null) return;
+    return failure.error === null ? say({fact: failure.title}) : fail(failure.error, failure.title);
+  }, [arrival.failure, say, fail]);
+  if (read.error !== null && !isAuthoredStorageFailure(read.error)) throw read.error;
+  return <article className={styles.body}>
+    {capture.current ? <ReaderExcerpt excerpt={capture.current} color={resource?.color ?? null} full />
+      : read.data === null && read.error === null ? <Ruling/> : null}
+    {!resource && read.data?.scope_available ? <Fact line={{fact: "this highlight isn’t on this device."}}/> : null}
+    {capture.current ? null : <AuthoredReadFailure {...read} noun="this highlight"/>}
     {source ? <a href={source}>view in source</a> : null}
     {unresolved ? <blockquote aria-label="captured annotation passage">{unresolved}</blockquote> : null}
-    {arrival.failure ? <FeedbackFailure scope="Local" occurrence={arrivalOccurrence} content={{tone: "Warning", title: arrival.failure.title}} announcement="Polite"/> : null}
     {read.data ? <HighlightAnnotation highlightRef={ref} resource={resource ?? null} occurrenceKey={`detail:${ref}`} focusRequest={focus} inspection={inspection} onFocused={() => {pending.current = null;}} mayFocus={() => pending.current?.mayFocus() ?? true}/> : null}
     {connections}
   </article>;
