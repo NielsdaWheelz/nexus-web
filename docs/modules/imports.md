@@ -141,6 +141,8 @@ every attempted source or metadata admission wakes imports, including an unknown
 from enter until it is readable, behind every door. `lib/imports/lineView.ts` words a line
 for every surface and for the intake's slips. nothing survives a reload.
 
+a distinct admission of a remote pdf or epub url may create another media item even when that address was imported before.
+
 - **provider.** `ImportIntakeProvider`, above the workspace boundary and keyed on the
   account (share mounts it alone), owns the store, the send queue and one account work
   owner. it publishes a defect and throws nothing.
