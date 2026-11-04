@@ -1,20 +1,7 @@
-# the link parser drops a url's own terminal punctuation
+# terminal url punctuation is a parser fidelity trade-off
 
-status: open
-origin: 2026-10-13 add/import editor design review; restated 2026-11-02 when the add
-editor and its `addInput.ts` were deleted (import build, slice 2)
-area: web / nexus query, the import page and share capture
+the shared `apps/web/src/lib/extractLinks.ts:48–57` removes trailing punctuation. a legal address such as `https://example.test/?q=why?` becomes `https://example.test/?q=why`; the removed character also disappears from `rest`. root, import and share can therefore send a different address.
 
-`apps/web/src/lib/extractLinks.ts` is now the one parser for root, the import field and
-share. it splits glued urls and keeps balanced brackets
-(`https://en.wikipedia.org/wiki/Function_(mathematics)` survives), but `trimProse` still
-strips every trailing `.,;:!?'"`: `https://example.test/?q=why?` sends as
-`https://example.test/?q=why`. the add editor, which kept such urls verbatim, is gone, so
-no surface sends one as written.
+the import specification explicitly requires trailing-punctuation trimming. the old add editor is gone, but that requirement does not settle this recorded fidelity concern. this is a contract trade-off, not authorization to change the parser.
 
-impact: a url whose last character is its own punctuation imports a different address;
-the stripped character is silently dropped from `rest` too.
-
-resolved when: the parser tells prose punctuation from a url's own (for example, keep a
-terminal `?` or `!` inside a query or fragment), and root, the import field and share
-send such urls as written.
+resolve when the owner chooses and records the parser rule, then actual root, import and share inputs qualify its treatment of prose and legal terminal query/fragment punctuation. ordinary parser passes do not resolve this boundary.

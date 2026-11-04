@@ -283,7 +283,8 @@ technical busy replies and unanswered confirmations retain the exact command; an
 in-call abort lacks a dispatch fact and conservatively preserves uncertainty.
 callers read the shared upload attempt's `confirmation_unsettled` fact. a published
 receipt or authoritative terminal confirmation clears it; local expiry before a
-new dispatch cannot settle an earlier unanswered confirmation.
+new dispatch cannot settle an earlier unanswered confirmation. when bytes
+can no longer be resent, retry still replays that confirmation for its actual outcome.
 losing the owner requires file reselection; replay state does not survive browser
 restart. imports exposes its existing retry-upload action, not a second live
 confirmation or placement owner.

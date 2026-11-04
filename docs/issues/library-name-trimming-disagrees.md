@@ -1,11 +1,5 @@
-# library name trimming disagrees
+# library name normalization disagrees across the boundary
 
-the chooser can offer a name that the server trims into a reserved or empty name.
-`apps/web/src/lib/libraries/views.tsx:13` uses javascript `trim()`; the server's
-`python/nexus/services/libraries.py:166` uses python `strip()`. for example,
-`\u0085All\u0085` retains its boundary characters in javascript but becomes `All`
-in python, so the client offers creation and the server refuses it.
+`apps/web/src/lib/libraries/views.tsx:12–16` uses javascript `trim()`; `python/nexus/services/libraries.py:164–171` uses python `strip()` and `casefold()`. a name such as `U+0085 + All + U+0085` can be offered by the chooser but rejected by the server as reserved.
 
-this is a source finding at `f47dee6c2`; the ui journey has not been run. align the
-boundary-character contract in both owners and verify a real chooser submission
-at the boundary. no import-specific normalization or validation branch is needed.
+choose one normalization contract at the shared library boundary, then qualify that actual chooser/create request and reserved-name refusal. do not add an import-specific normalizer. ordinary ASCII creation and retry passes do not close this discrepancy.

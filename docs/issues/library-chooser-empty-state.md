@@ -1,17 +1,5 @@
-# the library chooser says "no libraries yet" to a member who admins none
+# the destination catalog can falsely say no libraries exist
 
-status: open · origin: 2026-11-02 import content sheet (slice 2), open point 9 · area: libraries / copy
+`DestinationChooser.tsx:80` says `no libraries yet.`, but `python/nexus/services/libraries.py:506–526` returns only named admin destinations. a member can have libraries while having none writable through this chooser.
 
-`DestinationChooser`'s empty state reads `no libraries yet`
-(`apps/web/src/components/libraries/DestinationChooser.tsx:90`). its catalog,
-`GET /libraries/destinations`, is only the libraries the viewer admins, beside
-non-default and non-system (`python/nexus/services/libraries.py:506-528`). a
-reader who belongs to libraries but admins none sees a false sentence. the
-import page's `into` picker and placement both show it; the extension popup
-keeps its own true `no libraries you can file to`.
-
-impact: a member reads that they have no libraries, and may create one they
-did not need.
-
-resolved when: the chooser's empty state is true for a member who admins none,
-in one spelling across the import page, placement and the popup.
+use one truthful empty-state sentence at the shared chooser. resolve with a real member who has a non-admin library and no writable named destination, across import and placement, preserving popup consistency. an empty fresh account or the fixed All explanation does not exercise this distinction.

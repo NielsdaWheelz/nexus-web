@@ -1,14 +1,5 @@
-# the android sharesheet promises an import for a shared quote
+# the sharesheet label also covers plain text notes
 
-status: open · origin: 2026-11-02 import content sheet (slice 2), open point 8 · area: android / copy
+the required sharesheet label `Import to Nexus` covers links and plain text, while plain text becomes a note. the naming rule and the recorded quote-versus-note concern leave this meaning decision unresolved.
 
-the spec labels `ShareActivity`'s sharesheet target `Import to Nexus`. links and
-prose both arrive as `text/plain` `EXTRA_TEXT`
-(`apps/android/app/src/main/java/app/nexus/android/ShareActivity.kt:57-59`), under
-one intent filter (`apps/android/app/src/main/AndroidManifest.xml:65-71`), so one
-label carries both. plain text with no link lands in today as a note.
-
-impact: sharing a quote promises an import and makes a note.
-
-resolved when: the owner accepts `Import to Nexus` for both paths, or names a
-label true for both.
+resolve when the owner explicitly accepts that label for both paths or changes the naming contract, with the actual sharesheet label and resulting plain-text action observed on the selected native path. successful note creation alone does not settle the wording; a package-targeted send does not prove sharesheet presentation.

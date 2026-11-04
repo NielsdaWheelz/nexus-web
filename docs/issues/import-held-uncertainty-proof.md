@@ -1,19 +1,9 @@
-# intake uncertainty under admission holds lacks behavior proof
+# preserve uncertainty across each admission boundary
 
-at `1b63b5706`, intake `didNotRun` preserves an unanswered replay as unknown, and
-its confirmation path distinguishes an unsent admission hold from an answered
-refusal (`apps/web/src/lib/imports/intake.tsx`). the retained browser cases do not
-qualify 401/426 after uncertainty or confirm-held after uncertainty. extension
-native22 exercises another owner and cannot establish this contract.
+a lost answer must retain the same line, immutable command/guard and dismissal protection until an authoritative answer settles it. bounded managed-browser evidence covers lost confirmation with an offline hold, reviewed refusal, technical busy and pre-route `E_AUTH_UNAVAILABLE`; these have different owners.
 
-misclassification could claim refusal for an import that already committed.
-qualify the intake through actual lost answers and actual admission boundaries,
-with stable identity/bytes and independent publication checks. hosted 401/426
-may retire the document, but this is not globally unreachable:
-`UnauthenticatedApiBoundary.tsx:25-42` retains installed/android and confirmed
-local-root documents; share’s handler outside that boundary is a no-op.
-`api/client.ts:201-211,286` reloads hosted426 only when reload is not held and
-once per build. assess the native main/share and local-root ingress before
-claiming an exact state unreachable. no controller injection,
-synthetic response or borrowed extension result counts as resolution. source-only
-limits require the spec's precise unreachable-state explanation in the pr.
+both managed browsers now retain the unknown line and dismissal protection through real held authentication after lost acceptance. those journeys do not establish sign-in recovery. firefox records the exact target/guard request census; chromium records the guard response, not a complete guard-request census. neither proves global request closure.
+
+installed recovery remains unqualified here. the [missing-bytes/local-expiry branch](upload-confirmation-local-expiry.md) has a source repair, but its exact runtime qualification and owner decision remain pending. natural-expiry intake suffixes are supported; their whole cases remain setup-unqualified while the lectern request-accounting decision is pending.
+
+resolve the remaining selected boundaries with actual original requests and retained identities. keep the separate [426 release gate](release-import-update-uncertainty.md); no narrower acceptance or fabricated response is implied.
