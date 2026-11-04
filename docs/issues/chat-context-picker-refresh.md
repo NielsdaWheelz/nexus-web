@@ -1,25 +1,5 @@
-# chat context picker refresh
+# committed context can stay absent until reload
 
-selecting an existing item can leave future context unchanged until a new read.
-the local link commits, but the composer’s immediate server read can precede
-upload. the selected item then lacks visible confirmation.
+an already-open chat context can omit a locally committed attachment or link until reload. `ChatContext.tsx:54,127` reads server context and refetches on composer completion; `ResourceComposer.tsx:99,137,155` completes the local command, while `useConnectionAttachments.tsx:162` links without that refresh. a local commit need not yet appear in the server projection.
 
-`ResourceComposer.tsx:78–88,115–124` finishes after local `createLink` and calls
-`onSaved`; `ChatContext.tsx:40–44,67` refetches server membership immediately and
-subscribes only to `Notes`, `NoteBodies`, `Metadata` stamps. this sequence also
-exists on base `9c809765c`; the row change does not alter it.
-
-observed in the disposable picker journey: after image-note selection, the row
-was absent for 10 seconds. the trace’s pre/post-selection context reads returned
-identical five-item bodies. a separate qualification observed both selected refs
-in authenticated server context and both rows after reload. upload/refetch timing
-is the suspected cause, not a fully isolated concurrency proof.
-
-resolve at the boundary between local link completion and server-owned context
-refresh, preserving immediate durable local writes and offline behavior. do not
-substitute local graph membership for the server admission owner. admission/sync
-changes are excluded from the chat-context-row specification.
-
-resolved when a real picker selection reaches server admission and appears in
-the already-open context without reload, including delayed upload. exercise the
-existing-item link and newly composed note paths.
+own refresh at the actual admission boundary without weakening local durability. resolve with ordinary existing-item, composed-note and file attachment paths, including delayed upload: the same open context must show the admitted item without reload. exact membership and reload identity checks do not prove live refresh.

@@ -110,6 +110,11 @@ export function topModal(): Layer | null {
 export function onOverlayStack(layer: Layer): boolean {
   return layers.includes(layer);
 }
+/** A hosted surface inherits its stable opener's modal, including while covered. */
+export function getModalForTarget(target: ReturnType<ReturnFocusTarget>): Layer | null {
+  const element = target instanceof HTMLElement ? target : target?.element;
+  return element ? layers.findLast(layer => isModal(layer) && layer.element?.contains(element)) ?? null : null;
+}
 function topmost(layer: Layer): boolean {
   if (topModal() !== (isModal(layer) ? layer : layer.parent)) return false;
   const options = layer.options.current;
@@ -620,7 +625,10 @@ export function useOverlay(
         modal || (current.returnFocus === true && layer.reason !== "outside" && layer.reason !== "tab" && layer.reason !== "navigation");
       layers.splice(layers.indexOf(layer), 1);
       if (exposed && wanted && !current.skipReturnFocus?.()) {
-        restoreFocus(layer);
+        // A modal's close can expose a sibling trigger later in this commit.
+        // Menus return synchronously, before their chosen command takes focus.
+        if (modal) queueMicrotask(() => { if (unfocused()) restoreFocus(layer); });
+        else restoreFocus(layer);
         // The last modal's close traverses history; restore once it lands.
         if (modal && topModal() === null) {
           settlements.push(() => restoreFocus(layer));

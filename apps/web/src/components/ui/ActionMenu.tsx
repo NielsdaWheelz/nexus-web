@@ -245,7 +245,8 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     dismissOnNavigation: true,
     onDismiss: (reason) => closeRef.current(reason !== "outside" && reason !== "tab" && reason !== "navigation"),
     inside: () => [menu.ref.current, root.current],
-    returnFocus: true,
+    // The preparation layer yields to its own sheet without ending the invocation.
+    returnFocus: !sheet,
     returnFocusTo: () => returnFocusTo?.() ?? trigger.current,
     skipReturnFocus: () => skipReturn.current,
   });

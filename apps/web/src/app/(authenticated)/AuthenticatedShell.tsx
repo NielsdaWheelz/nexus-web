@@ -32,6 +32,7 @@ import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
+import { ImportIntakeHost, ImportIntakeProvider } from "@/lib/imports/intake";
 import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
@@ -40,6 +41,7 @@ import { ChatSelectionProvider } from "@/lib/chat/selectionMemory";
 import { useChatWorkOwners } from "@/lib/chat/drafts";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import { connectLocalContent } from "@/lib/offline/localContent";
 import { connectListening } from "@/lib/consumption/listening";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
@@ -91,6 +93,7 @@ export default function AuthenticatedShell(props: {
                 <UnauthenticatedApiBoundary>
                 <DeviceSettingsProvider>
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
+                  <ImportIntakeProvider accountId={props.account.accountId}>
                     <ActivityCapture />
                     <ServerArrivalsProvider>
                       <ReaderProvider initialProfile={props.readerProfile}>
@@ -98,6 +101,7 @@ export default function AuthenticatedShell(props: {
                           initialPresentations={props.initialPresentations} locationLinkFailure={props.locationLinkFailure} bindSignIn={bindSignIn} />
                       </ReaderProvider>
                     </ServerArrivalsProvider>
+                  </ImportIntakeProvider>
                   </MediaAdmissionsProvider>
                 </DeviceSettingsProvider>
                 </UnauthenticatedApiBoundary>
@@ -174,19 +178,21 @@ function Workspace(props: {
                               <ResourceActionPresentation />
                               <MediaAdmissionsHost />
                               <ImportsProvider>
-                                <MediaContinuationHost />
-                                <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
-                                  <WorkspaceNavigation>
-                                    <Nexus />
-                                    <div className={styles.layout}>
-                                      <AppNav />
-                                      <main className={styles.main} data-reader-composition={readerComposition || undefined}>
-                                        <WorkspaceHost />
-                                        {player}
-                                      </main>
-                                    </div>
-                                  </WorkspaceNavigation>
-                                </WorkspacePresentationsProvider>
+                                <ImportIntakeHost openPage={openImportPage}>
+                                  <MediaContinuationHost />
+                                  <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
+                                    <WorkspaceNavigation>
+                                      <Nexus />
+                                      <div className={styles.layout}>
+                                        <AppNav />
+                                        <main className={styles.main} data-reader-composition={readerComposition || undefined}>
+                                          <WorkspaceHost />
+                                          {player}
+                                        </main>
+                                      </div>
+                                    </WorkspaceNavigation>
+                                  </WorkspacePresentationsProvider>
+                                </ImportIntakeHost>
                               </ImportsProvider>
                             </ChatSelectionProvider>
                           </AuthenticatedWorkspaceErrorBoundary>}</WorkspaceCanvas>
@@ -203,6 +209,9 @@ function Workspace(props: {
     </PlayerPresentationProvider>
   );
 }
+
+/** A settled batch's `see`: the palette's import command, whichever page it opens. */
+const openImportPage = () => requestNexusOpen({ kind: "QuickAction", actionId: "Nexus.Quick.Import" });
 
 function WorkspacePlayer({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { show } = usePlayerPresentation();

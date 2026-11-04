@@ -70,6 +70,10 @@ press `rgb(0 0 0 / 0.5)`, study `rgb(60 50 30 / 0.22)`, solar
 `--overlay-scrim-soft` retains its shared default. text on an 18% tint of its own tone (`Pill`) reads
 the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
+the pane header's pointer role uses mono and machine ink in every room. the pending
+source body publishes the role; the shell applies it only to a retained visit hint.
+it changes neither the one heading nor the stored resource's canonical title.
+
 ## glyphs
 
 `lib/ui/icons.tsx` is the lexicon and lucide's one importer. each export is one

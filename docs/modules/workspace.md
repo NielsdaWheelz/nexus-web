@@ -299,6 +299,11 @@ clears it. fork/history/reopen carry only settled evidence. a preview uses its
 exact sealed target and publishes only after its active provider read resolves;
 cold inactive previews use hints without contacting providers.
 
+an accepted-source media visit retains its admitted pointer hint while its attempt is
+read or waits for settlement. canonical title reconciliation still supplies navigation
+labels, but does not replace that visit's hint. replacing the handoff with the ordinary
+media route resumes settled-title publication; no second hint is stored.
+
 ## Pane Canvas
 
 `usePaneCanvas` owns desktop horizontal canvas measurement, wheel-to-horizontal

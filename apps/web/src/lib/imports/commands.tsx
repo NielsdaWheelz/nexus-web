@@ -1,8 +1,8 @@
 "use client";
 
-/** one imports visit owns its active and unanswered commands, independently of list rows and
- * inspector mounts. retries retain the original upload bytes, generation and confirmation.
- * only a successful command clears uncertainty; reads and remounts never send. */
+/** one imports visit owns its commands, independently of list rows and inspector mounts.
+ * retries retain the original upload bytes, generation and confirmation. acceptance or an
+ * authoritative upload filing refusal resolves uncertainty; reads and remounts never send. */
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -14,7 +14,7 @@ import { readAcquisitionGuard } from "@/lib/libraries/api";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { UploadSessionError, type ImportItem } from "./api";
 import { retryUploadRefusal, UPLOAD_COMMAND_FACT } from "./copy";
-import { createUploadAttempt, removeUploadSession, uploadIngestFile, type UploadAttempt } from "./ingest";
+import { createUploadAttempt, removeUploadSession, reviewUploadAttempt, uploadIngestFile, type UploadAttempt } from "./ingest";
 
 type Subject = { readonly sessionId: string; readonly title: string };
 type Command = Subject & (
@@ -46,7 +46,7 @@ export function useImportCommandOwner() {
   const outcome = useOutcome();
   const resendFeedback = useResendFeedback();
   const draft = useResourceDraft<readonly Pending[]>("Imports.Commands", () => [], value => ({
-    changed: false, unconfirmed: value.length > 0, stopsBrowserWork: false,
+    changed: false, unconfirmed: value.some(entry => entry.sending || entry.unknown > 0), stopsBrowserWork: false,
   }));
   const { read, set } = draft;
   const live = useRef(false);
@@ -63,7 +63,7 @@ export function useImportCommandOwner() {
     if (current?.id !== pane.visitId || resolvePaneRouteModel(current.href).id !== "imports") return;
     const key = keyOf(requested);
     const retained = read().find(entry => keyOf(entry.command) === key);
-    const command = retained?.unknown ? retained.command : requested;
+    const command = retained?.command ?? requested;
     if (read().some(entry => entry.command.sessionId === command.sessionId && entry.sending)) return;
     const id = command.kind === "RetryUpload" ? "RetryUpload" : "RemoveUpload";
     const fact = command.kind === "DiscardCapture" ? "couldn’t discard this capture." : UPLOAD_COMMAND_FACT[command.kind];
@@ -76,30 +76,34 @@ export function useImportCommandOwner() {
         const clear = () => set(entries => entries.filter(entry => entry.command !== command));
         try {
           if (command.kind === "RetryUpload") {
-            let guard = command.upload.guard;
+            let guard = command.upload.review_required ? null : command.upload.guard;
             if (guard === null) {
               try { guard = await readAcquisitionGuard([], ctx.sessionSignal()); }
               catch (error) {
-                if (!prior?.unknown) clear();
+                if (!prior?.unknown && !command.upload.review_required) clear();
                 outcome.fail(error, fact, retry);
                 return;
               }
             }
+            reviewUploadAttempt(command.upload);
             await uploadIngestFile({ file: command.file, attempt: command.upload, guard, signal: ctx.sessionSignal() });
           }
           else await removeUploadSession(command.sessionId);
           clear();
         } catch (error) {
           if (!ctx.isActive()) return;
-          if (outcomeUnknown(error)) {
+          if (outcomeUnknown(error) || error instanceof UploadSessionError && command.kind === "RetryUpload"
+            && command.upload.confirmation_unsettled) {
             set(entries => entries.map(entry => entry.command === command ? { ...entry, unknown: entry.unknown + 1 } : entry));
           } else {
-            if (!prior?.unknown || error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+            const review = command.kind === "RetryUpload" && command.upload.review_required;
+            if (review) set(entries => entries.map(entry => entry.command === command ? { ...entry, unknown: 0 } : entry));
+            else if (!prior?.unknown || error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
               || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected")) clear();
             if (error instanceof UploadSessionError && command.kind === "RetryUpload") {
               const refusal = retryUploadRefusal(error);
-              if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [{ ...retry, run: () => prior?.unknown ? send(command) : choose(command) }] : undefined);
-            } else outcome.fail(error, fact, command.kind === "RetryUpload" && !prior?.unknown
+              if (refusal !== null) outcome.say(refusal.line, refusal.retry ? [{ ...retry, run: () => prior?.unknown || review ? send(command) : choose(command) }] : undefined);
+            } else outcome.fail(error, fact, command.kind === "RetryUpload" && !prior?.unknown && !review
               ? { ...retry, run: () => choose(command) } : retry);
           }
         } finally {

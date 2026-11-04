@@ -22,7 +22,7 @@ import { setDestination } from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import { captureApiAccount, isCurrentApiAccount, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
-import { extractUrls } from "@/lib/extractUrls";
+import { extractLinks } from "@/lib/extractLinks";
 import { captureErrorLine, captureStatusLine } from "@/lib/imports/copy";
 import { addMediaFromUrl, fetchAcceptedSource, mediaAcquisitionAvailable, type MediaAcceptance, type AcceptedIngest } from "@/lib/imports/ingest";
 import { acquisitionGuard, libraryDestinations, type AcquisitionGuard, type LibraryDestination } from "@/lib/libraries/api";
@@ -85,7 +85,7 @@ export default function ShareCapture(props: { text: string; isShell: boolean }) 
 const NOT_OPENED = "couldn’t open your notes on this device.";
 function ShareCaptureAdmission(props: { text: string; isShell: boolean }) {
   const transportVerbs = useTransportVerbs();
-  const plain = props.text.trim() !== "" && extractUrls(props.text).length === 0;
+  const plain = props.text.trim() !== "" && extractLinks(props.text, "Urls").links.length === 0;
   const [account, setAccount] = useState<ShareAccount | null>(null);
   const [failure, setFailure] = useState<unknown | null>(null);
   const [admissionDefect, setAdmissionDefect] = useState<{ error: unknown } | null>(null);
@@ -136,7 +136,7 @@ function ShareCaptureContent({
   account: ShareAccount | null;
 }) {
   const trimmed = text.trim();
-  const urls = useMemo(() => extractUrls(trimmed), [trimmed]);
+  const urls = useMemo(() => extractLinks(trimmed, "Urls").links, [trimmed]);
   const [results, setResults] = useState<Result[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [destinationCreation] = useState(createDestinationCreation);

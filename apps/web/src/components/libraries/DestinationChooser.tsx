@@ -3,10 +3,11 @@ import * as Icon from "@/lib/ui/icons";
 
 import { forwardRef, type MouseEventHandler, type RefObject } from "react";
 import { Failed } from "@/components/feedback/Fact";
-import LibraryChooser, { compareLibraryNames, type ChooserCreation, type ChooserRow } from "@/components/libraries/LibraryChooser";
+import LibraryChooser, { type ChooserCreation, type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { libraryDestinations, type LibraryDestination } from "@/lib/libraries/api";
+import { compareLibraryNames, libraryNames } from "@/lib/libraries/views";
 import styles from "./DestinationChooser.module.css";
 
 export type DestinationChange = { destination: LibraryDestination; included: boolean };
@@ -14,10 +15,6 @@ export function setDestination(current: readonly LibraryDestination[], { destina
   return included ? current.some(item => item.id === destination.id) ? current : [...current, destination]
     : current.filter(item => item.id !== destination.id);
 }
-export type DestinationSelection =
-  | { readonly kind: "Item"; readonly chosen: readonly LibraryDestination[] }
-  | { readonly kind: "Bulk"; readonly total: number; readonly entries: readonly { destination: LibraryDestination; included: number }[] };
-
 export const DestinationTrigger = forwardRef<HTMLButtonElement, {
   readonly label: string;
   readonly accessibleLabel?: string;
@@ -29,7 +26,7 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
   readonly controls: { readonly kind: "dialog" } | { readonly kind: "region"; readonly id: string };
 }>(function DestinationTrigger(props, ref) {
   const names = props.chosen.toSorted(compareLibraryNames).map(library => library.name);
-  const summary = names.length === 0 ? props.emptyLabel : names.length <= 2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
+  const summary = names.length === 0 ? props.emptyLabel : libraryNames(props.chosen);
   return <button ref={ref} type="button" className={styles.trigger} aria-expanded={props.expanded}
     aria-haspopup={props.controls.kind === "dialog" ? "dialog" : undefined}
     aria-controls={props.controls.kind === "region" ? props.controls.id : undefined}
@@ -42,47 +39,43 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
 
 /** Local draft selection over one complete writable catalog. Reads belong to serverState; a cold
  * read waits and fails in the list region, a refresh does both nowhere, though creation, which
- * needs the current catalog, waits on it and says so. `error` is only for callers outside
- * this lane until they stop passing it. */
-export default function DestinationChooser({ context, selection, onSet, disabled, create, scrollRef }: {
+ * needs the current catalog, waits on it and says so. */
+export default function DestinationChooser({ context, chosen, alwaysIncludesAll = false, onSet, disabled, create, scrollRef }: {
   readonly context: string;
   readonly scrollRef?: RefObject<HTMLDivElement | null>;
-  readonly selection: DestinationSelection;
+  readonly chosen: readonly LibraryDestination[];
+  readonly alwaysIncludesAll?: boolean;
   readonly onSet: (change: DestinationChange) => boolean;
   readonly disabled: boolean;
   readonly create: ChooserCreation | null;
 }) {
   const stamp = useChangeStamp("Libraries");
   const catalog = usePaneFreeServerValue({ key: "/libraries/destinations", stale: stamp, load: libraryDestinations });
-  const total = selection.kind === "Item" ? 1 : selection.total;
-  const entries = selection.kind === "Item"
-    ? selection.chosen.map(destination => ({ destination, included: 1 })) : selection.entries;
-  const byId = new Map(entries.map(entry => [entry.destination.id, entry]));
+  const chosenIds = new Set(chosen.map(destination => destination.id));
   const available = new Map(catalog.status === "ready" ? catalog.data.destinations.map(destination => [destination.id, destination]) : []);
   const all = new Map(available);
-  for (const entry of entries) if (!all.has(entry.destination.id)) all.set(entry.destination.id, entry.destination);
+  for (const destination of chosen) if (!all.has(destination.id)) all.set(destination.id, destination);
   const rows: ChooserRow[] = [...all.values()].map(destination => {
-    const included = byId.get(destination.id)?.included ?? 0;
+    const included = chosenIds.has(destination.id);
     const missing = !available.has(destination.id);
-    const desired = !missing && included < total;
-    const count = { included, total };
+    const desired = !missing && !included;
+    const count = { included: included ? 1 : 0, total: 1 };
     return {
       id: destination.id, name: destination.name, confirmed: count, intended: count, progress: "Settled",
       note: missing && catalog.status === "ready" ? "unavailable" : undefined,
-      action: disabled || total === 0 ? { kind: "Blocked", reason: "can’t change these right now." }
-        : { kind: "Set", included: desired, label: total === 1 ? desired ? "choose destination" : "remove destination" : desired ? "choose for all" : "remove from all" },
+      action: disabled ? { kind: "Blocked", reason: "can’t change these right now." }
+        : { kind: "Set", included: desired, label: desired ? "choose destination" : "remove destination" },
     };
   });
-  const names = entries.filter(entry => entry.included > 0).map(entry => entry.destination).toSorted(compareLibraryNames).map(destination => destination.name);
-  return <LibraryChooser scrollRef={scrollRef} context={context} membershipKind="Chosen" rows={rows}
+  return <LibraryChooser scrollRef={scrollRef} context={context} membershipKind="Chosen" rows={rows} alwaysIncludesAll={alwaysIncludesAll}
     onToggle={({ id, included }) => {
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });
     }}
     loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying}
-    summary={selection.kind === "Bulk" ? `applies to ${total} editable items · selected libraries: ${names.join(", ") || "none"}` : null}
+    summary={null}
     failure={catalog.status === "failed" ? <Failed error={catalog.error} noun="libraries" retry={{ run: catalog.refetch, busy: catalog.retrying }} /> : null}
-    create={create === null ? null : { ...create, available: create.available && !disabled && total > 0 && catalog.status === "ready" && !catalog.refreshing && catalog.error === null,
+    create={create === null ? null : { ...create, available: create.available && !disabled && catalog.status === "ready" && !catalog.refreshing && catalog.error === null,
       gate: catalog.status === "ready" && catalog.error !== null ? "the libraries couldn’t refresh." : undefined }}
     empty="no libraries yet." />;
 }

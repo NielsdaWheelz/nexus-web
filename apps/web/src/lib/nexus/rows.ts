@@ -3,6 +3,8 @@
 import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
 import type { PanePresentation } from "@/lib/workspace/presentations";
 import { authoredItem } from "@/lib/notes/presentation";
+import { linkPointer } from "@/lib/imports/lineView";
+import { ADMIT_LIMIT } from "@/lib/imports/intake";
 import * as Icon from "@/lib/ui/icons";
 import type { Schema } from "@/lib/api/wire";
 import { creditName } from "@/lib/contributors/credits";
@@ -216,9 +218,13 @@ export function syncRows(input: Reference & {
   const { intent, text } = query;
   switch (intent.kind) {
     case "Resource": return [referenceRow(intent.ref, input, panes, usage)];
-    case "ImportUrl": return [{
-      key: `ImportUrl:${intent.url}`, localMatch: null, label: "import", icon: Icon.Upload, detail: intent.url,
-      action: NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url), ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
+    case "ImportLinks": return [{
+      key: `Import:${JSON.stringify(intent.links)}`, localMatch: null, icon: Icon.Upload,
+      ...(intent.links.length === 1 ? { label: "import", detail: linkPointer(intent.links[0]!), name: `import ${linkPointer(intent.links[0]!)}` } : { label: `import ${intent.links.length} links` }),
+      action: intent.links.length > ADMIT_LIMIT
+        ? { kind: "Unavailable", reason: `100 at a time. this has ${intent.links.length}.` }
+        : { kind: "Available", target: { kind: "ImportLinks", links: intent.links } },
+      ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
     case "Command": return [commandRow(intent.id, "ExplicitIntent", intent.argument, usage)];
     // Registry order through recency: nothing else distinguishes the six, so no usage.

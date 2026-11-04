@@ -269,27 +269,24 @@ function LibraryPane({ id }: { readonly id: string }) {
     },
     [id, refetchEntries, refreshSuggestionFeed],
   );
-  const addContent: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
+  const importHere: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
     ? {
       kind: "command",
-      id: "ViewAction.Library.AddContent",
-      label: "Add content",
-      icon: <Icon.Add aria-hidden="true" />,
+      id: "ViewAction.Library.Import",
+      label: "Import here",
+      icon: <Icon.Upload aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: ({ triggerEl }) =>
-        requestNexusOpen({
-          kind: "Add",
-          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name }] },
-        }, triggerEl),
+        requestNexusOpen({ kind: "Import", into: library.is_default ? [] : [{ id, name: library.name }] }, triggerEl),
     }
     : undefined;
   const emptyState = emptyEntries({ params, isAll, change: recover });
   const emptyLine = text ? { fact: "no entries match this filter." } : emptyState.line;
   const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: !invalidView && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
-  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
+  const menuActions: ActionDescriptor[] = importHere ? [importHere] : [];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
-    primaryAction: addContent,
+    primaryAction: importHere,
     query: invalidView || library === null ? undefined : {
       kind: "Controls",
       focusInput,
