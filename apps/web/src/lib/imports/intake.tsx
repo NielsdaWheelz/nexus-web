@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The intake (docs/modules/imports.md): one account's lines, each one thing coming in, from
+ * The intake (docs/modules/imports.md): one document's lines, each one thing coming in, from
  * enter until it is readable, behind every door. The provider owns the store, the send
  * queue and the work guard, above the workspace's boundary, so work outlives every surface;
  * it publishes a defect and throws nothing. The host, inside the workspace, throws that
@@ -38,8 +38,8 @@ export const ADMIT_LIMIT = 100;
 export type IntakeSource =
   | { readonly kind: "Link"; readonly url: string }
   /** `file` is null once accepted, since nothing sends it again, or when a share could
-   * not stream it. */
-  | { readonly kind: "File"; readonly name: string; readonly sizeBytes: number; readonly file: File | null };
+   * not stream it. An unreadable share can also have unknown size. */
+  | { readonly kind: "File"; readonly name: string; readonly sizeBytes: number | null; readonly file: File | null };
 
 /** What the server says of an accepted line. Readable, Failed and Removed are settled. */
 export type Truth =
@@ -113,7 +113,7 @@ export interface Admission {
   readonly links: readonly string[];
   readonly files: readonly File[];
   /** Shared files the device named but could not stream. */
-  readonly unreadable?: readonly { readonly name: string; readonly sizeBytes: number }[];
+  readonly unreadable?: readonly { readonly name: string; readonly sizeBytes: number | null }[];
   /** Default: the intake's `into`, with any library being created for it. */
   readonly into?: readonly LibraryDestination[];
   /** Opens the first line once it is accepted. */
@@ -174,7 +174,7 @@ class ConfirmHeld extends Error {
   constructor(readonly transport: Transport) { super("confirm held unsent"); }
 }
 
-function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<typeof createDestinationCreation>) {
+function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestinationCreation>) {
   const listeners = new Set<() => void>();
   let state = EMPTY;
   let entries: readonly Entry[] = [];
@@ -675,7 +675,7 @@ function createIntake(accountId: string, guard: WorkGuard, creation: ReturnType<
       const scope = new AbortController();
       lifetime = scope;
       const release = guard.register({
-        id: `import-intake:${accountId}`, scope: { kind: "account" },
+        id: "import-intake", scope: { kind: "account" },
         subscribe(listener) {
           listeners.add(listener);
           const unsubscribe = creation.subscribe(listener);
@@ -815,10 +815,14 @@ type ImportCreation = Omit<ReturnType<typeof useDestinationCreation>, "admit"> &
 const CreationContext = createContext<ImportCreation | null>(null);
 
 /** Above the workspace's boundary, keyed on the account: share mounts it alone. */
-export function ImportIntakeProvider({ accountId, children }: { accountId: string; children: ReactNode }) {
+export function ImportIntakeProvider({ accountId, children }: { accountId: string | null; children: ReactNode }) {
+  return <IntakeProvider key={accountId}>{children}</IntakeProvider>;
+}
+
+function IntakeProvider({ children }: { children: ReactNode }) {
   const guard = useWorkGuard();
   const [creation] = useState(createDestinationCreation);
-  const intake = useMemo(() => createIntake(accountId, guard, creation), [accountId, guard, creation]);
+  const intake = useMemo(() => createIntake(guard, creation), [guard, creation]);
   const outcome = useOutcome();
   useLayoutEffect(() => intake.setOutcome(outcome), [intake, outcome]);
   useLayoutEffect(() => intake.start(), [intake]);

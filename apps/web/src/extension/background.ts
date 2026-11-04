@@ -61,14 +61,15 @@ declare const __NEXUS_STORAGE_ORIGIN__: string;
 
 const MENU_ID = "nexus-capture-link";
 const CREDENTIAL_KEY = "nexusCaptureCredential";
-/** Codes after which the same request can never succeed: no Retry. A stale extension cannot
-    capture again either, until it updates. */
+/** These confirm refusals are recorded on the session. */
+const VERIFICATION_REJECTIONS = new Set([
+  "E_SOURCE_INTEGRITY", "E_INVALID_FILE_TYPE", "E_FILE_TOO_LARGE", "E_CAPTURE_TOO_LARGE",
+]);
+/** Codes after which the same request can never succeed: no retry. A stale extension cannot
+    import again either, until it updates. */
 const TERMINAL = new Set([
   "E_WIRE_MISMATCH",
-  "E_SOURCE_INTEGRITY",
-  "E_INVALID_FILE_TYPE",
-  "E_FILE_TOO_LARGE",
-  "E_CAPTURE_TOO_LARGE",
+  ...VERIFICATION_REJECTIONS,
   "E_INVALID_REQUEST",
   "E_UPLOAD_INTENT_MISMATCH",
   "E_RESOURCE_CONFLICT",
@@ -79,7 +80,7 @@ const TERMINAL = new Set([
 
 const INTERRUPTED: CaptureFailure = {
   code: "E_CAPTURE_INTERRUPTED",
-  message: "this capture was interrupted.",
+  message: "stopped partway.",
   requestId: null, status: null, offline: false,
 };
 
@@ -155,7 +156,7 @@ let pushing = Promise.resolve();
 // a persistent background page's menu items are not persisted: create on load
 browser.menus.create({
   id: MENU_ID,
-  title: "Add link to Nexus…",
+  title: "Import to Nexus…",
   contexts: ["link"],
   targetUrlPatterns: ["http://*/*", "https://*/*"],
 });
@@ -191,18 +192,18 @@ browser.runtime.onConnect.addListener((port) => {
       if (draft?.id !== sent.draftId || session?.user_id !== sent.accountId ||
           (draft.target.kind === "article" && draft.captureTarget?.accountEpoch !== accountEpoch) ||
           (draft.submission !== null && draft.submission.accountEpoch !== accountEpoch)) {
-        pushState(port, failure("E_CAPTURE_CHANGED", "this capture or account changed. open libraries again.").failure);
+        pushState(port, failure("E_CAPTURE_CHANGED", "this page or account changed since it was read.").failure);
         return;
       }
       if (sent.kind === "set_destination") {
         if (draft.locked || active !== null) {
-          pushState(port, failure("E_CAPTURE_LOCKED", "libraries can’t change while this capture saves.").failure);
+          pushState(port, failure("E_CAPTURE_LOCKED", "libraries can’t change while this sends.").failure);
           return;
         }
         setDraft({ ...draft, destinations: setDestination(draft.destinations, sent) });
       } else if (sent.kind === "set_recovery_target") {
         if (draft.locked || active !== null || draft.view.kind !== "article" || !draft.view.webChoice || draft.captureTarget === null || draft.captureTarget.accountId !== sent.accountId || draft.captureTarget.accountEpoch !== accountEpoch) {
-          pushState(port, failure("E_CAPTURE_LOCKED", "this capture can’t change now.").failure);
+          pushState(port, failure("E_CAPTURE_LOCKED", "this can’t change while it sends.").failure);
           return;
         }
         const candidate = sent.candidate;
@@ -211,7 +212,7 @@ browser.runtime.onConnect.addListener((port) => {
       } else {
         // exclusive claims its slot synchronously: every earlier delta is now
         // applied, and every later one is refused before save's first await.
-        void exclusive(save, true).catch(async error => pushState(port, await describe(error)));
+        void exclusive(sent.kind === "review" ? review : save, true).catch(async error => pushState(port, await describe(error)));
         pushState();
       }
     });
@@ -249,9 +250,9 @@ async function handle(sent: Command): Promise<CommandResult> {
         const current = requireDraft();
         const account = requireSession();
         if (current.id !== sent.draftId || account.user_id !== sent.accountId || current.captureTarget?.accountId !== sent.accountId || current.captureTarget.accountEpoch !== accountEpoch)
-          throw failure("E_CAPTURE_CHANGED", "this capture or account changed.");
+          throw failure("E_CAPTURE_CHANGED", "this page or account changed since it was read.");
         const page = await account.client.recoveryTargets(current.target.url, sent.q, sent.cursor);
-        if (draft?.id !== sent.draftId || session !== account) throw failure("E_CAPTURE_CHANGED", "this capture or account changed.");
+        if (draft?.id !== sent.draftId || session !== account) throw failure("E_CAPTURE_CHANGED", "this page or account changed since it was read.");
         return { kind: "recovery_targets", page };
       }
       case "retry_checking":
@@ -263,12 +264,6 @@ async function handle(sent: Command): Promise<CommandResult> {
         break;
       case "login":
         await login();
-        break;
-      case "retry":
-        await exclusive(save, true);
-        break;
-      case "review":
-        await exclusive(review, true);
         break;
       case "discard":
         await interrupt();
@@ -297,14 +292,22 @@ async function exclusive(
   takesOverGrantWait = false,
 ): Promise<void> {
   if (stopped !== null) throw new CaptureFailureError(stopped);
-  if (active !== null && awaitingGrant && takesOverGrantWait) await interrupt();
-  if (stopped !== null) throw new CaptureFailureError(stopped);
-  // Another takeover may have claimed the slot while this one awaited release.
-  if (active !== null) {
-    throw failure("E_CAPTURE_BUSY", "nexus is still working on this capture.");
+  const previous = active;
+  if (previous !== null && !(awaitingGrant && takesOverGrantWait)) {
+    throw failure("E_CAPTURE_BUSY", "nexus is still working on this.");
   }
   const controller = new AbortController();
-  const done = Promise.resolve().then(() => run(controller.signal)).catch((error: unknown) => {
+  // claim the replacement before its predecessor finishes: every view sees an
+  // active owner throughout a permission-wait takeover.
+  const done = Promise.resolve().then(async () => {
+    if (previous !== null) {
+      previous.controller.abort();
+      await previous.done.catch(() => undefined);
+      markInterrupted();
+    }
+    if (stopped !== null) throw new CaptureFailureError(stopped);
+    await run(controller.signal);
+  }).catch((error: unknown) => {
     if (!isAbortError(error)) throw error;
   });
   active = { controller, done };
@@ -327,6 +330,11 @@ async function interrupt(): Promise<void> {
   await current.done.catch(() => undefined);
   if (active === current) active = null;
   if (active !== null) return;
+  markInterrupted();
+}
+
+/** the interrupted owner has settled; preserve any unanswered publication. */
+function markInterrupted(): void {
   const phase = draft?.phase.kind;
   if (
     phase === "acquiring" ||
@@ -348,7 +356,8 @@ async function viewState(): Promise<ViewState> {
     draft.submission !== null && (draft.submission.accountId !== session?.user_id || draft.submission.accountEpoch !== accountEpoch) ||
     draft.target.kind === "article" && (draft.captureTarget === null || draft.captureTarget.accountId !== session?.user_id || draft.captureTarget.accountEpoch !== accountEpoch)
   );
-  const state = {
+  const state: Omit<ViewState, "requiredOrigins"> = {
+    activity: active === null ? "idle" : awaitingGrant ? "awaiting_origins" : "running",
     account:
       session === null
         ? null
@@ -450,9 +459,11 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
     try {
       if ((await requiredOrigins()).length === 0) return;
       awaitingGrant = true;
+      pushState();
       await granted;
     } finally {
       awaitingGrant = false;
+      pushState();
       browser.permissions.onAdded.removeListener(wake);
       signal.removeEventListener("abort", wake);
     }
@@ -465,7 +476,7 @@ async function awaitOrigins(signal: AbortSignal): Promise<void> {
 async function describe(error: unknown, credential = token): Promise<CaptureFailure> {
   if (error instanceof CaptureFailureError) {
     if (isCaptureDefect(error.failure.code)) {
-      const shown = { ...error.failure, message: "nexus capture stopped unexpectedly." };
+      const shown = { ...error.failure, message: "the extension stopped unexpectedly." };
       stopped ??= shown;
       pushState();
       return shown;
@@ -476,7 +487,7 @@ async function describe(error: unknown, credential = token): Promise<CaptureFail
   console.error("capture failed:", error);
   const shown: CaptureFailure = {
     code: "E_CAPTURE_DEFECT",
-    message: "nexus capture stopped unexpectedly.",
+    message: "the extension stopped unexpectedly.",
     requestId: null, status: null, offline: false,
   };
   stopped ??= shown;
@@ -487,18 +498,18 @@ async function describe(error: unknown, credential = token): Promise<CaptureFail
 /** The page script answered outside its contract: a defect, whose detail goes to the console. */
 function outsideContract(detail: string): CaptureFailureError {
   console.error(`capture page script ${detail}`);
-  return failure("E_CAPTURE_CONTENT", "nexus capture stopped unexpectedly.");
+  return failure("E_CAPTURE_CONTENT", "the extension stopped unexpectedly.");
 }
 
 function requireSession(): NonNullable<typeof session> {
   if (session === null)
-    throw failure("E_UNAUTHENTICATED", "sign in to nexus first.");
+    throw failure("E_UNAUTHENTICATED", "sign in to continue.");
   return session;
 }
 
 function requireDraft(): Draft {
   if (draft === null)
-    throw failure("E_CAPTURE_PHASE", "there’s nothing to save.");
+    throw failure("E_CAPTURE_PHASE", "nothing to import.");
   return draft;
 }
 
@@ -533,7 +544,7 @@ async function login(): Promise<void> {
   if (revocationFailure !== null) {
     throw failure(
       "E_CAPTURE_REVOCATION_PENDING",
-      "finish disconnecting before signing in.",
+      "the last disconnect didn’t finish.",
     );
   }
   if (token !== null) {
@@ -580,7 +591,7 @@ async function login(): Promise<void> {
         console.error("capture sign-in failed:", reply.get("error") ?? "no token");
         throw failure(
           "E_CAPTURE_LOGIN",
-          "couldn’t sign in to nexus.",
+          "sign-in didn’t finish.",
           reply.get("request_id"),
         );
       }
@@ -608,7 +619,7 @@ async function reopenPopup(windowId: number): Promise<void> {
     token it still honours); a failure is shown with Retry. */
 async function disconnect(signal: AbortSignal): Promise<void> {
   if (token === null)
-    throw failure("E_CAPTURE_SIGNED_OUT", "not signed in to nexus.");
+    throw failure("E_CAPTURE_SIGNED_OUT", "not signed in.");
   const credential = token;
   await awaitOrigins(signal);
   try {
@@ -647,7 +658,7 @@ async function activate(): Promise<void> {
       return setDraft(draft, "nexus can’t read this tab.");
     }
     if (!/^https?:$/.test(new URL(tab.url).protocol)) {
-      return setDraft(draft, "only http and https pages can be saved.");
+      return setDraft(draft, "nexus imports web pages only.");
     }
     // the receipt stays until the user leaves its page
     if (draft !== null && pageOf(draft) === tab.url) return;
@@ -681,12 +692,12 @@ async function activate(): Promise<void> {
         captureTarget = account === null ? null : {
           ...await account.client.captureTarget(url, signal), accountId: account.user_id, accountEpoch: epoch,
         };
-        if (session !== account || accountEpoch !== epoch) throw failure("E_CAPTURE_TARGET_CHANGED", "the account changed since this capture. capture the page again.");
+        if (session !== account || accountEpoch !== epoch) throw failure("E_CAPTURE_TARGET_CHANGED", "the account changed since this page was read.");
       } catch (error) {
         if (isAbortError(error)) throw error;
         await describe(error, credential);
         if (stopped !== null) return;
-        return setDraft(null, "retry checking before saving.", true);
+        return setDraft(null, "nothing was sent.", true);
       }
       reply = await injection.request({ kind: "extract", source_url: url,
         x_article: captureTarget !== null && captureTarget.capture_binding?.kind === "XArticle" });
@@ -694,6 +705,10 @@ async function activate(): Promise<void> {
       injection.close();
     }
     if (reply.kind === "unreadable") return setDraft(null, reply.message);
+    if (reply.kind === "failed") {
+      if (isCaptureDefect(reply.failure.code)) throw new CaptureFailureError(reply.failure);
+      return setDraft(null, reply.failure.message);
+    }
     if (reply.kind !== "article") throw outsideContract(`answered ${reply.kind}`);
     const bytes = serializePacket(reply.packet);
     // a url may carry signed access parameters: the host stands in for a title
@@ -791,7 +806,7 @@ async function menuClick(
         ) {
           throw failure(
             "E_CAPTURE_LINK",
-            "couldn’t read that link. right-click it again.",
+            "couldn’t tell which link was clicked. right-click it again.",
           );
         }
         const injection = await inject(
@@ -807,7 +822,7 @@ async function menuClick(
         if (reply.kind !== "bound") {
           return setDraft(
             null,
-            "that link is gone. right-click it again.",
+            "that link is no longer on the page. right-click it again.",
           );
         }
         const source: DocumentSource = {
@@ -888,7 +903,7 @@ async function inject(
           reject(
             failure(
               "E_CAPTURE_PAGE_GONE",
-              "couldn’t finish reading this page.",
+              "the page changed while nexus read it.",
             ),
           ),
         );
@@ -912,11 +927,11 @@ async function inject(
 async function review(signal: AbortSignal): Promise<void> {
   const current = requireDraft();
   if (current.phase.kind !== "failed" || current.phase.recovery !== "Review" || current.submission === null) {
-    throw failure("E_CAPTURE_PHASE", "there’s no save to review.");
+    throw failure("E_CAPTURE_PHASE", "nothing to review.");
   }
   const account = requireSession();
   if (current.submission.accountId !== account.user_id || current.submission.accountEpoch !== accountEpoch) {
-    throw failure("E_CAPTURE_TARGET_CHANGED", "the account changed since this capture. capture the page again.");
+    throw failure("E_CAPTURE_TARGET_CHANGED", "the account changed since this page was read.");
   }
   await awaitOrigins(signal);
   const snapshot = await account.client.destinations(signal);
@@ -935,10 +950,10 @@ async function review(signal: AbortSignal): Promise<void> {
     reuse; expiry or loss of this owner requires recapture. */
 async function save(signal: AbortSignal): Promise<void> {
   if (draft === null || draft.phase.kind === "saved") {
-    throw failure("E_CAPTURE_PHASE", "there’s nothing to save.");
+    throw failure("E_CAPTURE_PHASE", "nothing to import.");
   }
   if (draft.phase.kind === "failed" && draft.phase.recovery !== "Retry" && draft.phase.recovery !== "Check") {
-    throw failure("E_CAPTURE_PHASE", "review this save or capture the page again.");
+    throw failure("E_CAPTURE_PHASE", "review or start over first.");
   }
   const { client, limits, user_id: accountId } = requireSession();
   await awaitOrigins(signal);
@@ -948,12 +963,12 @@ async function save(signal: AbortSignal): Promise<void> {
     if ((current.submission !== null && (current.submission.accountId !== accountId || current.submission.accountEpoch !== accountEpoch)) ||
         (current.target.kind === "article" &&
         (current.captureTarget === null || current.captureTarget.accountId !== accountId || current.captureTarget.accountEpoch !== accountEpoch))) {
-      throw failure("E_CAPTURE_TARGET_CHANGED", "the account changed since this capture. capture the page again.");
+      throw failure("E_CAPTURE_TARGET_CHANGED", "the account changed since this page was read.");
     }
     if (current.submission === null) {
       const binding = current.captureTarget?.capture_binding ?? null;
       if (current.view.kind === "article" && current.view.webMatch === "Ambiguous" && binding === null)
-        throw failure("E_CAPTURE_TARGET_CHANGED", "choose the import to finish first.");
+        throw failure("E_CAPTURE_TARGET_CHANGED", "choose the import to finish.");
       setDraft({ ...current, submission: {
         accountId,
         accountEpoch,
@@ -1010,11 +1025,8 @@ async function save(signal: AbortSignal): Promise<void> {
           ? limits.max_epub_bytes
           : limits.max_article_packet_bytes;
     if (bytes.sizeBytes > limit) {
-      const megabytes = Math.round(limit / 2 ** 20);
-      throw failure(
-        "E_FILE_TOO_LARGE",
-        `this ${bytes.kind} is over ${megabytes} megabytes.`,
-      );
+      throw failure("E_FILE_TOO_LARGE", bytes.kind === "web_article" ? "this page is too large to import."
+        : `too big · ${bytes.kind}s up to ${Math.round(limit / 2 ** 20)} mb`);
     }
     const { id, target, destinations, submission } = requireDraft();
     if (submission === null) throw new Error("Capture submission was not frozen.");
@@ -1057,12 +1069,7 @@ async function save(signal: AbortSignal): Promise<void> {
       setPhase({ kind: "confirming" });
       answer = await client.confirm(id, submission.confirmation, signal);
     }
-    if (answer.kind === "Rejected") {
-      throw failure(
-        answer.code,
-        "nexus refused this capture.",
-      );
-    }
+    if (answer.kind === "Rejected") throw failure(answer.code, "nexus refused what arrived.");
     const openUrl = answer.current_placements === null ? null
       : submission.binding?.kind === "WebRecovery"
         ? `${__NEXUS_ORIGIN__}/imports?selected=${encodeURIComponent(`media:${answer.media_id}`)}`
@@ -1080,33 +1087,39 @@ async function save(signal: AbortSignal): Promise<void> {
     if (isAbortError(error)) throw error;
     // a 401 forgets the credential; Retry returns with the account
     const shown = await describe(error);
-    const current = requireDraft();
-    const confirming = (current.submission?.confirmation ?? null) !== null;
+    const submission = requireDraft().submission;
+    const confirming = (submission?.confirmation ?? null) !== null;
+    const creating = submission?.createUncertain === true;
+    if (submission !== null) submission.createUncertain = false;
     let recovery: Extract<CapturePhase, { kind: "failed" }>["recovery"];
-    if (current.submission?.confirmationUncertain || current.submission?.createOutcomeUnknown) {
+    // these refusals hold the publication lock and fence an earlier confirmation.
+    if (submission !== null && confirming && error instanceof CaptureFailureError && error.status !== null &&
+        (VERIFICATION_REJECTIONS.has(shown.code) || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_UPLOAD_CAPABILITY_EXPIRED")) {
+      submission.confirmationUncertain = false;
+      submission.createOutcomeUnknown = false;
+      recovery = VERIFICATION_REJECTIONS.has(shown.code) ? "Discard" : "Recapture";
+    } else if (submission?.confirmationUncertain || submission?.createOutcomeUnknown) {
       recovery = "Check";
+    } else if (error instanceof CaptureFailureError && (error.status === 401 ||
+               shown.code === "E_SIGN_UPLOAD_FAILED" || shown.code === "E_STORAGE_ERROR")) {
+      recovery = "Retry";
     } else if (shown.code === "E_RESOURCE_CONFLICT" && confirming) {
-      if (current.submission === null) throw new Error("Refused confirmation has no owner.");
-      current.submission.confirmation = null;
+      if (submission === null) throw new Error("Refused confirmation has no owner.");
+      submission.confirmation = null;
       recovery = "Review";
     } else if (shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" || shown.code === "E_UPLOAD_GENERATION_STALE" || shown.code === "E_STORAGE_MISSING" ||
                shown.code === "E_UPLOAD_SESSION_NOT_FOUND" || shown.code === "E_CAPTURE_TARGET_CHANGED") {
       recovery = "Recapture";
-    } else if ((confirming || current.submission?.createUncertain === true) && (!(error instanceof CaptureFailureError) || !writeRefused({ sent: true, status: error.status, code: error.failure.code }))) {
+    } else if ((confirming || creating) && (!(error instanceof CaptureFailureError) || !writeRefused({ sent: true, status: error.status, code: error.failure.code }))) {
       recovery = "Check";
     } else {
       recovery = TERMINAL.has(shown.code) ? "Discard" : "Retry";
     }
-    if (recovery === "Check" && current.submission !== null) {
-      if (confirming) current.submission.confirmationUncertain = true;
-      if (current.submission.createUncertain) current.submission.createOutcomeUnknown = true;
+    if (recovery === "Check" && submission !== null) {
+      if (confirming) submission.confirmationUncertain = true;
+      if (creating) submission.createOutcomeUnknown = true;
     }
-    setPhase({
-      kind: "failed",
-      failure: shown.code === "E_CAPTURE_TARGET_CHANGED" ? { ...shown, message: "this import changed. capture the page again." } : recovery === "Review" ? { ...shown, message: "save needs review. review your choices and save again." }
-        : shown.code === "E_UPLOAD_CAPABILITY_EXPIRED" ? { ...shown, message: "upload expired. capture the page again." } : shown,
-      recovery,
-    });
+    setPhase({ kind: "failed", failure: shown, recovery });
   }
 }
 
@@ -1130,7 +1143,7 @@ async function acquireDocument(
       if (isAbortError(error)) throw error;
       throw failure(
         "E_CAPTURE_FETCH",
-        "couldn’t download this link.",
+        "couldn’t download the link.",
       );
     }
     return readDocument(response, limits);
@@ -1151,7 +1164,7 @@ async function acquireDocument(
     }
     throw failure(
       "E_CAPTURE_PAGE_GONE",
-      "couldn’t read this link’s page. right-click the link again.",
+      "the page with this link is gone. right-click the link again.",
     );
   }
   const reply = await injection.request({

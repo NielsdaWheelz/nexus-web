@@ -9,6 +9,7 @@ import type { Line } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
 import { updateRemedy } from "@/lib/native/admission";
 import { CAPTURE_REFUSAL, FAILURE_COPY } from "@/lib/imports/copy";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import type { IntakeLine, LineRefusal, LineStage, Truth } from "@/lib/imports/intake";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import { libraryNames } from "@/lib/libraries/views";
@@ -107,10 +108,10 @@ function refusalView(line: IntakeLine, refusal: LineRefusal): Said {
     case "Empty": return { two: "this file is empty", tone: "Danger", verb: null };
     case "Nameless": return { two: "this file has no name", tone: "Danger", verb: null };
     case "NameTooLong": return { two: "this file’s name is too long", tone: "Danger", verb: null };
-    case "BytesLost": return { two: "upload stopped", tone: "Warning", verb: RETRY };
-    case "NotPrepared": return { two: "couldn’t start the upload", tone: "Warning", verb: RETRY };
-    case "NotChecked": return { two: "couldn’t check the file", tone: "Warning", verb: RETRY };
-    case "Expired": return { two: "upload timed out", tone: "Warning",
+    case "BytesLost": return { two: IMPORT_WORDS.stopped, tone: "Warning", verb: RETRY };
+    case "NotPrepared": return { two: IMPORT_WORDS.notPrepared, tone: "Warning", verb: RETRY };
+    case "NotChecked": return { two: IMPORT_WORDS.notChecked, tone: "Warning", verb: RETRY };
+    case "Expired": return { two: IMPORT_WORDS.timedOut, tone: "Warning",
       verb: line.source.kind === "File" && line.source.file === null ? { kind: "ChooseAgain", label: "choose it again" } : RETRY };
     case "Superseded": return { two: "removed since", tone: "Neutral", verb: null };
     case "Unreadable": return { two: "couldn’t open this file", tone: "Danger", verb: null };
@@ -155,7 +156,7 @@ export function lineView(line: IntakeLine): LineView {
     case "Sending": return running("sending…", null);
     case "Verifying": return running("checking the file…", null);
     case "Uploading": {
-      const fraction = line.source.kind === "File" && line.source.sizeBytes > 0 ? stage.sentBytes / line.source.sizeBytes : 0;
+      const fraction = line.source.kind === "File" && line.source.sizeBytes !== null && line.source.sizeBytes > 0 ? stage.sentBytes / line.source.sizeBytes : 0;
       const percent = Math.floor(fraction * 100);
       return { one, two: armed ? `uploading · ${percent}% · opens when sent` : `uploading · ${percent}%`,
         tone: "Neutral", verb: { kind: "Arm" }, rule: fraction, dismiss: "Stop", menu: null };

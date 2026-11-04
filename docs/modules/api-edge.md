@@ -249,7 +249,7 @@ read from `wire.gen.ts` by gradle) send it on every request. It moves at most
 once between releases: the first change merged after a release that breaks that
 release's clients bumps it; later breaking changes before the next release ride
 that bump. The apk treats 426 as retryable and keeps its queues until it is
-updated; the extension shows "Update the Nexus extension to keep capturing."
+updated; the extension shows "update the nexus extension to keep importing."
 
 ## invariants
 

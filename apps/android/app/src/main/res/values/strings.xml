@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Nexus</string>
+    <string name="share_label">Import to Nexus</string>
     <string name="downloads_channel_name">Downloads</string>
     <string name="downloads_notification_title">Downloading for offline</string>
     <string name="player_source_failure">Audio could not be played.</string>

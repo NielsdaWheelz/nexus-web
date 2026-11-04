@@ -71,6 +71,7 @@ import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
+import { offerLine } from "@/lib/imports/copy";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -142,8 +143,8 @@ function FailedSource({ mediaId, code, line }: { mediaId: string; code: string |
   if (offer?.kind !== "BrowserCapture") return <Fact line={line} speak={speak} />;
   const fact = code === "E_SOURCE_ACCESS_DENIED" ? "this page blocked the import."
     : code === "E_SOURCE_NOT_READABLE" ? "nexus found no readable article." : line.fact;
-  return <Fact line={{ fact, reason: "nexus capture can save it from your browser." }} speak={speak}
-    verbs={[{ label: "open source", href: offer.source_url, target: "_blank" }]} />;
+  return <Fact line={{ fact, reason: offerLine(offer) }} speak={speak}
+    verbs={[{ label: "open original", href: offer.source_url, target: "_blank" }]} />;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */

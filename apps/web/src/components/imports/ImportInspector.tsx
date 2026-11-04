@@ -259,7 +259,6 @@ export default function ImportInspector({
             <h3>{key === "source" ? "Source" : "Search"}</h3>
             <p>{title}</p>
             {detailLine ? <p>{detailLine}</p> : null}
-            {slot.recovery?.kind === "BrowserCapture" ? <p>when the article is visible, use nexus capture to finish this import.</p> : null}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
             </div>
