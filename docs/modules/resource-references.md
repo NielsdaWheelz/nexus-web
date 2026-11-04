@@ -89,7 +89,8 @@ and search rows retain consumption facts and resource quick actions; context
 shows literal target content, source provenance and minus/overflow controls. indexes
 never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
-command primary. only shows have index artwork; episodes never do.
+command primary. only shows have resource-index artwork; episode index rows
+have none. playback bar, mini, sheet and up next display the episode’s show art.
 
 full excerpt recovery is one current outcome. a remote conflict offers retry of
 the frozen capture and a separate choice to read the current excerpt; it does not

@@ -833,8 +833,7 @@ rules:
 
 1. a menu offers verbs on its own subject. adjacent pages are not the pane
    menu's subject.
-2. no menu or trigger exists only to carry a fork; the player chapter menu is
-   the one recorded violation ([issue](../issues/chapter-shift-changes-verb.md)).
+2. no menu or trigger exists only to carry a fork.
 3. a menu inside a pane never offers to open the pane's own subject:
    `ContextualActionMenu` omits `Open` and `OpenInNewPane` when its resource is
    the subject the pane's body publishes (`PaneChrome.resourceRef`, read through

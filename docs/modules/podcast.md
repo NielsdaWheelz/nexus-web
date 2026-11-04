@@ -325,6 +325,8 @@ rows never fetch show details or provider metadata for artwork.
 `components/ui/Artwork.tsx` owns presentation for every show tile (rows, overview,
 metadata overlay, downloaded episode) through `MediaImage`: publisher urls through
 the authenticated image proxy, a downloaded episode's saved image as a local blob.
+[the app csp still blocks saved blob artwork](../issues/downloaded-artwork-blocked-by-csp.md);
+initials preserve presentation without claiming that image delivery works.
 absent, pending and failed sources show initials in one box: the
 first grapheme of each of the first two uppercased words; an empty title paints
 an empty tile. success hides initials even for transparent images. image and
@@ -341,6 +343,14 @@ show's own page omits it. `mediaByline` decides that byline once: rows draw it,
 list filters (`mediaListFilterFields`) match it, and the live queue capture behind
 their play (`playback_snapshot.py`) matches the same names: the show's, never an
 episode's authors.
+
+saved defaults belong to the viewer/show independently of subscriptions. new
+speed choices use `0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3`. player and podcast
+form share `PlaybackRateEditor`; retained off-ladder values keep their actual
+value at shared display precision until an explicit choice. the range rests at
+the nearest stop without marking a choice. the server still accepts 0.5–3.
+nullable defaults, skip-silence capability and frozen-pair save/review are owned
+by [player](player.md). opening a form never applies or snaps its saved rate.
 
 ## Android Offline Downloads
 

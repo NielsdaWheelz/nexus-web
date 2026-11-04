@@ -56,3 +56,9 @@ root traced that listener to l4's recorded orphaned
 normal admission and cleanup then succeeded for reader run
 `20261102-203346-4f6ba6330105`. this restores qualification capacity; it does not
 prove or repair the supervisor-loss cause.
+
+playback runs `20261102-202453-e6d5b609aa16` and
+`20261102-202602-27b23ed79f25` independently hit the same slot4/31030 refusal
+before their drivers. read-only inspection named that same orphaned postgres
+container; neither observer touched the foreign runtime. this adds recurrence,
+not a second cause or recovery owner.
