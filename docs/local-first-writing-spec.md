@@ -519,24 +519,36 @@ feature. use existing feedback, button, menu, dialog and announcement primitives
 | editor and graph | preserve words/marks/refs; distinct `unlink`, `delete note`, `join notes`; no injected conflict prose; previews derive from canonical content |
 | reading | verbatim quote and truthful source label; `source isn’t available on this device` or `passage couldn’t be located in this version`; retained note stays editable |
 | discovery | canonical label, literal excerpt, exact target; local authored results remain available beside separately unavailable remote sections |
-| shell and sync | one status control in account chrome/menu, never pane headers; current state and durable preparation counts, no event history |
+| shell and sync | account mark and rows, never pane headers; preparation counts are snapshotted when the menu opens; no event history |
 
-status is a closed local model: `preparing`, `saving`, `offline`, `syncing`,
-`current`, `sign_in_required`, `update_required`, `local_error`, `sync_error`.
-copy respectively: `preparing your notes`, `saving on this device…`, `offline`,
-`syncing`, `up to date`, `sign in to sync`, `update nexus to sync`,
-`couldn’t save on this device`, `couldn’t sync`. offline detail is
-`changes are saved on this device.` current means exchanged through a known
-server watermark, not knowledge of disconnected replicas. local error appears
-beside affected writing with `keep this page open. retry saving.` and retry/copy.
-remote errors retain local saved status and explain the current actionable cause.
-status precedence: local error, uncommitted save, provisioning, format/auth failure,
-sync failure, offline, syncing, current. current requires no pending changes and
-`server_cursor` through the latest observed head. disconnection is not sync failure.
-no routine success toast or announcement; real failures announce once. color is
-never the sole signal. preserve keyboard focus and 200% text-zoom access.
-indeterminate preparation, saving and syncing icons animate unless reduced motion
-is requested; the text remains the authoritative state and progress.
+storage status and visible account conditions are separate contracts.
+`lib/account/condition.ts` orders the visible conditions: stopped store,
+sync-local failure, required update, sign-in, refused sync, sync lagging for
+sixty seconds, waiting shell update, then offline. its closed copy/mark records
+own the wording. saving, syncing and current have no ambient mark, row or
+announcement; healthy state remains available through the account tooltip.
+preparation has a count row while running, without a spinner or reserved area.
+
+a failed local commit belongs to the affected writing's risk hold:
+`this note isn’t saved yet.`, retry and copy when uncommitted text exists.
+a stopped authored store instead offers `restart nexus`, plus copy for retained
+words. a commit failure never enters sync's local error. sync-local failure is
+owned by a synchronization turn, remains visible while saving, and cannot be
+cleared by an unrelated successful local commit. committed pending changes never
+acquire an exit warning.
+
+attention conditions raise one plain slip per onset and keep their account row.
+lagging and offline are hollow marks without slips. a dropped response is not
+offline: offline is the browser's current connectivity fact, and a retrying sync
+turn is quiet for sixty seconds. current means no pending changes and
+`server_cursor` through the latest observed head, not knowledge of disconnected
+replicas. a waiting worker requires closing all nexus tabs and reopening; a
+document-only mismatch offers reload only when it can replace the old build.
+installed clients name the apk update instead.
+
+the menu freezes its already-rendered rows on open, including preparation counts.
+phones expose the same conditions in the switchboard without an ambient mark.
+color is never the sole signal. preserve keyboard focus and 200% text-zoom access.
 
 delete activity mounts, commands, undo offers and registry machinery. migrate
 each remaining non-writing condition to its actual owning surface; a discrete

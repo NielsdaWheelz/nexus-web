@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useContext, useEffect, useRef, useState, type ComponentProps } from "react";
 import type { ApiJson } from "@/lib/api/wire";
-import { apiFetch, apiTransportFeedback, isApiError, isStaleBuild, type ApiError } from "@/lib/api/client";
-import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
-import { FeedbackBusy, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
+import { modeledApiError, useFailedReadRepair, useThrowLater } from "@/lib/api/serverState";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
+import { isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { authoredItem } from "@/lib/notes/presentation";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
+import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import ResourceBody from "./ResourceBody";
 import ResourceQuotation from "./ResourceQuotation";
 
@@ -20,7 +22,10 @@ function replaceExcerptBody(subject: ResourceItem, projected: ResourceItem): Res
   return { ...subject, label: projected.label, preview: { ...subject.preview, body: projected.preview.body } };
 }
 
-/** Retry keeps the admitted capture; only explicit reload accepts a newer one. */
+type ExcerptRecovery = { kind: "CaptureRefused" } | { kind: "Failed"; error: ApiError };
+
+/** Retry keeps the admitted capture; only explicit reload accepts a newer one. A settled read
+ * replaces its recovery outcome; choosing current evidence clears any prior failure. */
 function useFullExcerpt(observed: ResourceItem) {
   const [subject, setSubject] = useState(observed);
   const local = subject.authored_by_viewer && /^(highlight|passage_anchor):/u.test(subject.ref);
@@ -28,7 +33,7 @@ function useFullExcerpt(observed: ResourceItem) {
   const readingRef = observed.preview.body.kind === "passage" ? observed.preview.body.reading_ref : null;
   const query = useAuthoredQuery(local && body.kind === "passage" ? { kind: "excerpt", ref: subject.ref, reading_ref: readingRef } : null);
   const [request, setRequest] = useState<{ mode: "Capture" | "Reload"; attempt: number }>({ mode: "Capture", attempt: 0 });
-  const [remote, setRemote] = useState<{ item: ResourceItem | null; conflict: boolean; error: ApiError | null; pending: boolean }>({ item: null, conflict: false, error: null, pending: !local });
+  const [remote, setRemote] = useState<{ item: ResourceItem | null; recovery: ExcerptRecovery | null; pending: boolean }>({ item: null, recovery: null, pending: !local });
   const fail = useThrowLater();
   useEffect(() => {
     if (local || body.kind !== "passage" || body.capture_revision === null) return;
@@ -47,22 +52,22 @@ function useFullExcerpt(observed: ResourceItem) {
       if (request.mode === "Reload" && !replacement.missing && replacement.preview.body.kind === "passage" && replacement.preview.body.capture_revision !== null) {
         setSubject(replacement);
         setRequest(previous => ({ mode: "Capture", attempt: previous.attempt + 1 }));
-        setRemote(previous => ({ ...previous, item: replacement, conflict: false, pending: true }));
-      } else setRemote({ item: replacement, conflict: false, error: null, pending: false });
+        setRemote({ item: replacement, recovery: null, pending: true });
+      } else setRemote({ item: replacement, recovery: null, pending: false });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       if (request.mode === "Capture" && isApiError(error) && error.code === "E_RESOURCE_CONFLICT") {
-        setRemote(previous => ({ ...previous, conflict: true, error: null, pending: false }));
+        setRemote(previous => ({ ...previous, recovery: { kind: "CaptureRefused" }, pending: false }));
         return;
       }
       const failure = modeledApiError(error, fail);
-      if (failure) setRemote(previous => ({ ...previous, error: failure, pending: false }));
+      if (failure) setRemote(previous => ({ ...previous, recovery: { kind: "Failed", error: failure }, pending: false }));
     });
     return () => controller.abort();
   }, [subject, local, body, readingRef, request, fail]);
   const resource = query.data?.rows[0]?.resource;
-  const conflict = local ? resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision : remote.conflict;
-  const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef)) : null : remote.item;
+  const conflict = local && resource !== undefined && body.kind === "passage" && resource.capture_revision !== body.capture_revision;
+  const full = local ? !conflict && resource?.excerpt ? replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)) : null : remote.item;
   const retry = () => {
     if (local) query.retry();
     else {
@@ -72,37 +77,57 @@ function useFullExcerpt(observed: ResourceItem) {
   };
   const reload = () => {
     if (local) {
-      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef)));
+      if (resource) setSubject(replaceExcerptBody(subject, authoredItem(resource, readingRef, subject.activation.href)));
       query.retry();
     } else {
       setRemote(previous => ({ ...previous, pending: true }));
       setRequest(previous => ({ mode: "Reload", attempt: previous.attempt + 1 }));
     }
   };
-  return { item: full ?? subject, conflict, unavailable: local && query.data !== null && (query.data.scope_available === false || resource === undefined || resource.excerpt === null),
-    query, error: remote.error, pending: local ? query.pending : remote.pending, retry, reload };
+  useFailedReadRepair(remote.recovery !== null, remote.pending, retry);
+  // Before the reading's scope hydrates, absent and not yet read look alike: the preview stands, silent.
+  return { item: full ?? subject, conflict, recovery: local ? null : remote.recovery, absent: local && query.data?.scope_available === true && (resource === undefined || resource.excerpt === null),
+    query, pending: local ? query.pending : remote.pending, retry, reload };
 }
 
 function LoadedExcerpt({ item, quotation }: { item: ResourceItem; quotation: boolean }) {
   const loaded = useFullExcerpt(item);
-  const occurrence = useFeedbackOccurrence(loaded.error !== null, item.ref);
+  // A storage failure speaks only while nothing full has shown; a defect throws whenever it comes.
+  if (loaded.query.error !== null && !isAuthoredStorageFailure(loaded.query.error)) throw loaded.query.error;
   return <>
-    <FeedbackBusy pending={loaded.pending} subject={item.ref} />
-    <AuthoredReadFailure error={loaded.query.error} occurrence={loaded.query.occurrence} pending={loaded.query.pending} retry={loaded.query.retry} title="couldn’t load this excerpt" />
-    {loaded.error ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={loaded.error} content={apiTransportFeedback(loaded.error, "couldn’t load this excerpt") ?? { tone: "Warning", title: "couldn’t load this excerpt", requestId: loaded.error.requestId }} announcement="Polite"
-      actions={isStaleBuild(loaded.error) ? undefined : [{ label: "retry", onClick: loaded.retry, busy: loaded.pending }]} /> : null}
-    {loaded.conflict ? <p>this excerpt changed. <Button type="button" reserveIcon aria-disabled={loaded.pending || undefined} aria-busy={loaded.pending} onClick={loaded.reload}>reload excerpt</Button></p>
-      : loaded.unavailable ? <p>excerpt unavailable in this reading.</p>
+    {loaded.query.data === null ? <AuthoredReadFailure error={loaded.query.error} pending={loaded.query.pending} retry={loaded.query.retry} noun="the full excerpt" /> : null}
+    {loaded.recovery?.kind === "CaptureRefused" ? <Fact line={{ fact: "couldn’t load the full excerpt." }} verbs={[
+      { label: "retry", commandKey: `Excerpt.retry:${item.ref}`, run: loaded.retry, busy: loaded.pending },
+      { label: "show current excerpt", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending },
+    ]} /> : <>
+      {loaded.recovery?.kind === "Failed" ? <Failed error={loaded.recovery.error} noun="full excerpts" retry={{ run: loaded.retry, busy: loaded.pending }} /> : null}
+      {loaded.conflict ? <Fact line={{ fact: "this excerpt has changed." }} verbs={[{ label: "show new version", commandKey: `Excerpt.reload:${item.ref}`, run: loaded.reload, busy: loaded.pending }]} />
+      : loaded.absent ? <Fact line={{ fact: "no excerpt here for this reading." }} />
         : quotation ? <ResourceQuotation item={loaded.item} /> : <ResourceBody body={loaded.item.preview.body} full />}
+    </>}
   </>;
 }
 
 /** Full ordinary bodies query frozen authored evidence; historical bodies stay supplied. */
 export function FullResourceBody({ item, historical = false }: { item: ResourceItem; historical?: boolean }) {
   const body = item.preview.body;
+  const resources = useContext(PreparedResourcesContext);
+  if (body.kind === "passage" && body.reading_ref === null && !historical) {
+    const full = resources?.get(item.ref)?.full;
+    if (full && full.captureRevision === body.capture_revision) return full.excerpt === null ? <p>excerpt unavailable in this reading.</p>
+      : <ResourceBody body={{...body, excerpt: full.excerpt}} full/>;
+  }
   return body.kind === "passage" && !historical && body.capture_revision !== null
     ? <LoadedExcerpt key={`${item.ref}:${body.capture_revision}:${body.reading_ref}`} item={item} quotation={false} />
     : <ResourceBody body={body} full />;
+}
+
+/** The one excerpt reader: the disclosure's dialog, also opened by the palette's `show excerpt` verb. */
+export function ExcerptDialog({ item, onClose, returnFocusTo }: { item: ResourceItem; onClose: () => void; returnFocusTo: () => HTMLElement | null }) {
+  return <Dialog open title="excerpt" onClose={onClose} returnFocusTo={returnFocusTo}>
+    <LoadedExcerpt item={item} quotation />
+    <Button type="button" onClick={onClose}>hide excerpt</Button>
+  </Dialog>;
 }
 
 /** A sibling action, never a listbox option or part of resource activation. */
@@ -115,9 +140,6 @@ export default function ExcerptDisclosure({ item, returnFocus, triggerAttributes
     <Button {...triggerAttributes} ref={trigger} type="button" aria-expanded={opened !== null} onKeyDown={event => { if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault(); }} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setOpened(value => value ? null : candidate); }}>
       {opened ? "hide excerpt" : "show excerpt"}
     </Button>
-    {opened ? <Dialog open title="excerpt" onClose={() => setOpened(null)} returnFocusTo={returnFocus ?? (() => trigger.current)}>
-      <LoadedExcerpt item={opened} quotation />
-      <Button type="button" onClick={() => setOpened(null)}>hide excerpt</Button>
-    </Dialog> : null}
+    {opened ? <ExcerptDialog item={opened} onClose={() => setOpened(null)} returnFocusTo={returnFocus ?? (() => trigger.current)} /> : null}
   </span>;
 }

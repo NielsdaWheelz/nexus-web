@@ -1,16 +1,17 @@
 "use client";
+import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 
 // Transcript admission, publisher notes, and the thin hosted playback binding.
 // Only the small bindings observe the engine clock; the shared reader sees cue changes.
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
-import { Captions } from "lucide-react";
-import { FeedbackFailure, FeedbackNotice, FeedbackStatus, useFeedbackOccurrence, type FeedbackAnnouncement, type FeedbackContent } from "@/components/feedback/Feedback";
+import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { Fact } from "@/components/feedback/Fact";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import YouTubeEmbedFrame, { isAllowedYoutubeEmbedUrl } from "@/components/media/YouTubeEmbedFrame";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, outcomeUnknown, type ApiError } from "@/lib/api/client";
-import { useThrowLater } from "@/lib/api/serverState";
+import { apiFetch, isApiError, isRefusal, outcomeUnknown } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { registerActivityObserver } from "@/lib/consumption/capture";
@@ -22,75 +23,60 @@ import type { MediaDetail } from "@/lib/media/mediaDetail";
 import { usePlayerSession, usePlayerTimeline } from "@/lib/player/playerRuntime";
 import styles from "./media.module.css";
 
-function requestFailure(error: ApiError): FeedbackContent {
-  const reason: Record<string, string> = {
-    E_NETWORK: "check your connection and retry.",
-    E_RATE_LIMITED: "wait a moment, then retry.",
-    E_TRANSCRIPT_UNAVAILABLE: "no transcript is available from this source.",
-    E_MEDIA_NOT_READY: "this episode is still preparing. wait for it to settle, then retry.",
-  };
-  return {
-    tone: "Danger",
-    title: outcomeUnknown(error) || !isRefusal(error) ? "transcript request not confirmed"
-      : error.code === "E_TRANSCRIPT_UNAVAILABLE" ? "transcript unavailable" : "couldn’t request transcript",
-    message: reason[error.code] ?? "check this episode’s current transcript status.",
-    requestId: error.requestId,
-  };
-}
-
-/** Admission requests work; the mounted processing stream owns its subsequent state. */
-export function TranscriptState({ media, announcement, returnFocus, holdFocus }: {
+/** Admission requests work; the mounted processing stream owns its subsequent state. A request
+ * is idempotent (queued or running work answers as accepted), so an unknown outcome is held and
+ * retried with the same press until the stream moves the state on. */
+export function TranscriptState({ media, holdFocus }: {
   readonly media: MediaDetail;
-  readonly announcement: FeedbackAnnouncement;
-  readonly returnFocus: () => HTMLElement | null;
   readonly holdFocus: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<ApiError | null>(null);
-  const occurrence = useFeedbackOccurrence(failure !== null || busy, media.id);
-  const throwLater = useThrowLater();
+  const [unknown, setUnknown] = useState<number | null>(null);
+  const [noCaptions, setNoCaptions] = useState(false);
+  const { fail } = useOutcome();
+  const speak = useActiveRegion();
+  const resendFeedback = useResendFeedback();
   const owner = useRef<HTMLDivElement>(null);
-  const active = useRef(announcement !== "None");
-  active.current = announcement !== "None";
+  const active = useRef(speak);
+  active.current = speak;
   useLayoutEffect(() => {
     const element = owner.current;
     return () => {
       if (active.current && element?.contains(document.activeElement)) holdFocus();
     };
   }, [holdFocus]);
-  async function request(control: HTMLButtonElement) {
+  async function request() {
     if (busy) return;
-    // The button becomes disabled, then disappears at queued. The pane root survives both.
-    if (active.current && document.activeElement === control) holdFocus();
+    // The control becomes busy, then disappears at queued. The pane root survives both.
+    if (active.current && owner.current?.contains(document.activeElement)) holdFocus();
     setBusy(true);
     try {
       await apiFetch<ApiJson<"/media/{media_id}/transcript/request", "post">>(
         `/api/media/${media.id}/transcript/request`,
         { method: "POST", body: JSON.stringify({ reason: "episode_open" }) },
       );
-      setFailure(null);
+      setUnknown(null);
     } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) {
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throwLater({ error });
-        else setFailure(error);
-      }
+      if (handleUnauthenticatedApiError(error)) return;
+      if (isApiError(error) && error.code === "E_TRANSCRIPT_UNAVAILABLE") setNoCaptions(true);
+      else if (isRefusal(error)) { fail(error, "couldn’t start transcription.", retry); }
+      else if (outcomeUnknown(error)) setUnknown(attempt => (attempt ?? -1) + 1);
+      else fail(error, "couldn’t start transcription.", retry);
     } finally {
       setBusy(false);
     }
   }
+  const retry = { label: "retry", commandKey: "RetryTranscription", run: () => void request(), busy };
   const state = media.transcript_state;
-  const sourceUnavailable = (state === "not_requested" || state === "failed_provider") && failure?.code === "E_TRANSCRIPT_UNAVAILABLE";
-  const requestable = !sourceUnavailable && (state === "not_requested" || state === "failed_provider");
+  const requestable = !noCaptions && (state === "not_requested" || state === "failed_provider");
   return <div ref={owner}>
-    {requestable ? <>
-      {state === "failed_provider" ? <FeedbackStatus content={{ tone: "Danger", title: "transcription failed" }} announcement={announcement} /> : null}
-      <Button icon={<Captions />} aria-busy={busy} aria-disabled={busy} onClick={(event) => void request(event.currentTarget)}>
-        {state === "failed_provider" || failure ? "retry transcription" : "transcribe"}
-      </Button>
-    </> : <FeedbackStatus content={sourceUnavailable && failure ? requestFailure(failure) : { tone: "Neutral", title: state === "queued" ? "transcript queued"
-      : state === "running" ? "transcribing" : state === "unavailable" ? "transcript unavailable" : "preparing transcript" }}
-      announcement={announcement} returnFocus={returnFocus} />}
-    {failure && requestable ? <FeedbackFailure scope="Local" occurrence={occurrence} content={requestFailure(failure)} announcement={announcement} /> : null}
+    {state === "not_requested" && requestable
+      ? <Button aria-busy={busy} aria-disabled={busy} onClick={() => void request()}>transcribe</Button>
+      : state === "failed_provider" && requestable ? <Fact line={{ fact: "couldn’t transcribe this episode." }} speak={speak} verbs={[retry]} />
+      : <Fact speak={speak} line={{ fact: noCaptions ? "this video has no captions." : state === "queued" ? "transcript queued."
+        : state === "running" ? "transcribing." : state === "unavailable" ? "no transcript is available for this episode." : "preparing the transcript." }} />}
+    {unknown !== null && requestable ? <Hold id={`transcription:${media.id}`} attempt={unknown}
+      {...resendFeedback({ line: { fact: "not sure transcription started.", reason: UNKNOWN_OUTCOME_REASON }, resend: retry })} /> : null}
   </div>;
 }
 
@@ -100,7 +86,7 @@ function useTranscriptPlayback(mediaId: string, reader: Reader, expectedKey: str
   const { positionMs } = usePlayerTimeline();
   const doc = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc : null);
   const loaded = state.kind === "Loaded" && state.source.kind === "Episode" && state.source.descriptor.media_id === mediaId;
-  const unit = loaded && state.error === null && doc?.kind === "text" && doc.format === "transcript"
+  const unit = loaded && !state.playbackFailed && doc?.kind === "text" && doc.format === "transcript"
     && (expectedKey === null || doc.transcriptNavigation?.key === expectedKey)
     ? transcriptUnitAtTime(doc.units, positionMs) : null;
   const identity = unit !== null && doc !== null ? doc.identity : null;
@@ -135,7 +121,7 @@ function PlaybackPosition({ mediaId, reader, transcriptReaderKey }: {
       }}>
       show playback position
     </Button>
-    {playback === null ? <span id={reasonId} className={styles.menuStatus}>no transcript at this time</span> : null}
+    {playback === null ? <span id={reasonId} className={styles.menuStatus}>no transcript at this time.</span> : null}
   </div>;
 }
 
@@ -213,7 +199,8 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
   readonly transcriptReaderKey: string | null;
 }) {
   const identity = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc.identity : null);
-  const [locationUnavailable, setLocationUnavailable] = useState(false);
+  const { say } = useOutcome();
+  const speak = useActiveRegion();
   const openTime = (event: TargetActivationEvent, ms: number) => {
     const play = () => {
       const document = reader.getState().document;
@@ -231,7 +218,7 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
     if (activation.kind === "Unowned") return;
     event.preventDefault();
     if (activation.kind === "Consume") return;
-    if (activation.intent === "new_pane") setLocationUnavailable(true);
+    if (activation.intent === "new_pane") say({ fact: "this timestamp can’t open in a new pane." });
     else play();
   };
   const [videoFailed, setVideoFailed] = useState(false);
@@ -268,10 +255,9 @@ export function TranscriptChrome({ media, paneActive, videoAt, onSeek, reader, t
   }, [embed, media.id, paneActive, videoFailed]);
 
   return <div className={styles.transcriptChrome}>
-    {locationUnavailable ? <FeedbackNotice content={{ tone: "Warning", title: "timed reader location unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
     {media.kind === "video" ? embed && !videoFailed
       ? <YouTubeEmbedFrame ref={frame} embedUrl={embed} seekTargetMs={videoAt} className={styles.video} onError={() => setVideoFailed(true)} />
-      : <FeedbackStatus content={{ tone: "Neutral", title: "in-app video playback is unavailable" }} announcement={paneActive ? "Polite" : "None"} /> : null}
+      : <Fact line={{ fact: "this video can’t play here." }} speak={speak} /> : null}
     {(media.kind === "video" || !media.playerDescriptor) && (source?.source_url || media.canonical_source_url) ?
       <a href={source?.source_url || media.canonical_source_url!} target="_blank" rel="noopener noreferrer" className={styles.textButton}>open in source</a> : null}
     {media.kind === "podcast_episode" && identity !== null ? <PlaybackPosition mediaId={media.id} reader={reader} transcriptReaderKey={transcriptReaderKey} /> : null}

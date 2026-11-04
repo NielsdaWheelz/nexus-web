@@ -1,14 +1,12 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
-import { forwardRef, type MouseEventHandler } from "react";
-import { ChevronDown } from "lucide-react";
-import LibraryChooser, { type ChooserCreation, type ChooserError, type ChooserRow } from "@/components/libraries/LibraryChooser";
-import {useFeedbackOccurrence} from "@/components/feedback/Feedback";
+import { forwardRef, type MouseEventHandler, type RefObject } from "react";
+import { Failed } from "@/components/feedback/Fact";
+import LibraryChooser, { type ChooserCreation, type ChooserRow } from "@/components/libraries/LibraryChooser";
 import { useChangeStamp } from "@/lib/api/changes";
-import { usePaneFreeServerValue, useThrowLater } from "@/lib/api/serverState";
-import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { libraryDestinations, type LibraryDestination } from "@/lib/libraries/api";
-import { libraryErrorFeedback } from "@/lib/libraries/errors";
 import { compareLibraryNames, libraryNames } from "@/lib/libraries/views";
 import styles from "./DestinationChooser.module.css";
 
@@ -35,24 +33,24 @@ export const DestinationTrigger = forwardRef<HTMLButtonElement, {
     aria-label={`${props.accessibleLabel ?? props.label}: ${names.length === 0 ? props.emptyLabel : names.join(", ")}`}
     disabled={props.disabled} onClick={props.onToggle}>
     <span className={styles.label}>{props.label}</span><span className={styles.summary}>{summary}</span>
-    <ChevronDown size={15} aria-hidden="true" data-open={props.expanded || undefined} />
+    <Icon.Choose size={16} aria-hidden="true" />
   </button>;
 });
 
-/** Local draft selection over one complete writable catalog. Reads belong to serverState. */
-export default function DestinationChooser({ context, chosen, alwaysIncludesAll = false, onSet, disabled, create, error }: {
+/** Local draft selection over one complete writable catalog. Reads belong to serverState; a cold
+ * read waits and fails in the list region, a refresh does both nowhere, though creation, which
+ * needs the current catalog, waits on it and says so. */
+export default function DestinationChooser({ context, chosen, alwaysIncludesAll = false, onSet, disabled, create, scrollRef }: {
   readonly context: string;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly chosen: readonly LibraryDestination[];
   readonly alwaysIncludesAll?: boolean;
   readonly onSet: (change: DestinationChange) => boolean;
   readonly disabled: boolean;
   readonly create: ChooserCreation | null;
-  readonly error?: ChooserError | null;
 }) {
   const stamp = useChangeStamp("Libraries");
   const catalog = usePaneFreeServerValue({ key: "/libraries/destinations", stale: stamp, load: libraryDestinations });
-  const fail = useThrowLater();
-  const signIn = useUnauthenticatedApiHandler();
   const chosenIds = new Set(chosen.map(destination => destination.id));
   const available = new Map(catalog.status === "ready" ? catalog.data.destinations.map(destination => [destination.id, destination]) : []);
   const all = new Map(available);
@@ -65,21 +63,19 @@ export default function DestinationChooser({ context, chosen, alwaysIncludesAll 
     return {
       id: destination.id, name: destination.name, confirmed: count, intended: count, progress: "Settled",
       note: missing && catalog.status === "ready" ? "unavailable" : undefined,
-      action: disabled ? { kind: "Blocked", reason: "these items cannot be changed now" }
+      action: disabled ? { kind: "Blocked", reason: "can’t change these right now." }
         : { kind: "Set", included: desired, label: desired ? "choose destination" : "remove destination" },
     };
   });
-  const readError = catalog.status === "failed" ? catalog.error : catalog.status === "ready" ? catalog.error : null;
-  const occurrence = useFeedbackOccurrence(readError !== null, "library-destinations");
-  const feedback = readError ? libraryErrorFeedback(readError, "libraries couldn’t be loaded", fail, signIn) : null;
-  return <LibraryChooser context={context} membershipKind="Chosen" rows={rows} alwaysIncludesAll={alwaysIncludesAll}
+  return <LibraryChooser scrollRef={scrollRef} context={context} membershipKind="Chosen" rows={rows} alwaysIncludesAll={alwaysIncludesAll}
     onToggle={({ id, included }) => {
       const destination = all.get(id);
       return destination !== undefined && !disabled && onSet({ destination, included });
     }}
-    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying || catalog.status === "ready" && catalog.refreshing}
+    loading={catalog.status === "loading" || catalog.status === "failed" && catalog.retrying}
     summary={null}
-    error={error ?? (feedback ? { occurrence, content: feedback, retry: readError?.code === "E_UNAUTHENTICATED" ? null : catalog.refetch, commandKey: "library-destinations", busy: catalog.status === "failed" ? catalog.retrying : catalog.status === "ready" && catalog.refreshing } : null)}
-    create={create === null ? null : { ...create, available: create.available && !disabled && catalog.status === "ready" && !catalog.refreshing && catalog.error === null }}
-    empty="no libraries yet" />;
+    failure={catalog.status === "failed" ? <Failed error={catalog.error} noun="libraries" retry={{ run: catalog.refetch, busy: catalog.retrying }} /> : null}
+    create={create === null ? null : { ...create, available: create.available && !disabled && catalog.status === "ready" && !catalog.refreshing && catalog.error === null,
+      gate: catalog.status === "ready" && catalog.error !== null ? "the libraries couldn’t refresh." : undefined }}
+    empty="no libraries yet." />;
 }

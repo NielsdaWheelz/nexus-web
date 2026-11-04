@@ -51,6 +51,11 @@ export interface Visit<T> {
   readonly source: ReadSource;
   readonly acceptedStale: string | null;
 }
+/** One completed bootstrap read for the initial key. Failure remains retryable in place. */
+export type ServerReadSeed<T> =
+  | { readonly status: "success"; readonly data: T; readonly acceptedStale: string | null }
+  | { readonly status: "failure"; readonly error: ApiError };
+
 export interface ReadPolicy {
   readonly retry?: "manual" | "capacity";
   readonly timeoutMs?: number;
@@ -352,7 +357,7 @@ export function modeledApiError(
   return null;
 }
 
-// A bounded, one-use handoff from bootstrap/accepted entry to its mounted reader.
+// A bounded, one-use handoff from route entry to its mounted reader.
 // Claims retain a record across strict effect replay; unused work dies at body
 // commit or destination retirement. It never owns completed browsing snapshots.
 export type ArrivalOutcome<T> =
@@ -376,14 +381,10 @@ interface ArrivalRecord {
   claims: number;
   claimed: boolean;
 }
-interface SeedOwner {
-  readonly bootstrap: Map<string, Record<string, unknown>>;
-  readonly arrivals: Map<string, Map<string, ArrivalRecord>>;
-}
-const Seeds = createContext<SeedOwner | null>(null);
+type ArrivalRecords = Map<string, Map<string, ArrivalRecord>>;
+const Arrivals = createContext<ArrivalRecords | null>(null);
 interface ArrivalScope {
   readonly id: string;
-  readonly paneId: string;
   readonly accountId: string | null;
   readonly reads: readonly ReadDescriptor<unknown>[];
   spent: boolean;
@@ -402,10 +403,10 @@ function retireArrival(record: ArrivalRecord): void {
   record.controller.abort(new DOMException("arrival retired", "AbortError"));
 }
 
-function ensureArrival(seeds: SeedOwner, scope: ArrivalScope, descriptor: ReadDescriptor<unknown>): ArrivalRecord | null {
+function ensureArrival(arrivals: ArrivalRecords, scope: ArrivalScope, descriptor: ReadDescriptor<unknown>): ArrivalRecord | null {
   if (descriptor.key === null) return null;
-  let records = seeds.arrivals.get(scope.id);
-  if (!records) { records = new Map(); seeds.arrivals.set(scope.id, records); }
+  let records = arrivals.get(scope.id);
+  if (!records) { records = new Map(); arrivals.set(scope.id, records); }
   const key = arrivalKey(descriptor);
   const existing = records.get(key);
   if (existing && existing.descriptor.stale === descriptor.stale && existing.generation === existing.owner.generation && !existing.controller.signal.aborted) { existing.scope = scope; return existing; }
@@ -416,30 +417,24 @@ function ensureArrival(seeds: SeedOwner, scope: ArrivalScope, descriptor: ReadDe
   owner.readers += 1;
   owner.invalidate(descriptor.stale);
   const controller = new AbortController();
-  const bootstrap = seeds.bootstrap.get(scope.paneId);
-  const seeded = bootstrap !== undefined && Object.hasOwn(bootstrap, descriptor.key);
-  const seededData = seeded ? bootstrap[descriptor.key] : null;
-  if (seeded) delete bootstrap[descriptor.key];
   const record: ArrivalRecord = {
     scope, descriptor, owner, generation: owner.generation, controller, retired: false,
     releaseOwner: () => { owner.readers -= 1; releaseReadOwner(identity, owner); },
     claims: 0, claimed: false,
-    outcome: seeded ? { status: "success", data: seededData } : { status: "pending" },
-    promise: seeded ? Promise.resolve(seededData)
-      : remoteAttemptAllowed() ? owner.read("value", signal => requestWithRetry(descriptor.load, signal, descriptor), controller.signal)
+    outcome: { status: "pending" },
+    promise: remoteAttemptAllowed() ? owner.read("value", signal => requestWithRetry(descriptor.load, signal, descriptor), controller.signal)
         : Promise.reject(admissionRefusal()),
   };
   records.set(key, record);
-  // Both outcomes are held. A failed arrival is not a seed miss or a retry.
+  // Both outcomes are held. A failed arrival remains the same read, not a retry.
   void record.promise.then(data => { record.outcome = { status: "success", data }; }, error => { record.outcome = { status: "failure", error }; });
   return record;
 }
 
-export function ServerSeedsProvider(props: {
-  readonly seeds: Record<string, Record<string, unknown>>;
+export function ServerArrivalsProvider(props: {
   readonly children: ReactNode;
 }) {
-  const [seeds] = useState<SeedOwner>(() => ({ bootstrap: new Map(Object.entries(props.seeds)), arrivals: new Map() }));
+  const [arrivals] = useState<ArrivalRecords>(() => new Map());
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -448,46 +443,46 @@ export function ServerSeedsProvider(props: {
       // Defer so strict replay may reclaim the same records.
       queueMicrotask(() => {
         if (mounted.current) return;
-        for (const records of seeds.arrivals.values()) for (const record of records.values())
+        for (const records of arrivals.values()) for (const record of records.values())
           if (record.claims === 0) retireArrival(record);
       });
     };
-  }, [seeds]);
-  return <Seeds.Provider value={seeds}>{props.children}</Seeds.Provider>;
+  }, [arrivals]);
+  return <Arrivals.Provider value={arrivals}>{props.children}</Arrivals.Provider>;
 }
 
 /** Outside the lazy body: entry alone starts only the declared GETs. */
 export function PaneEntryReads(props: { readonly reads: readonly ReadDescriptor<unknown>[]; readonly children: ReactNode }) {
-  const seeds = useContext(Seeds);
+  const arrivals = useContext(Arrivals);
   const runtime = usePaneRuntime();
   const account = useOptionalAuthenticatedAccount();
   if (runtime === null) throw new Error("arrival requires a pane runtime");
   const id = JSON.stringify([account?.accountId ?? null, runtime.paneId, runtime.visitId, runtime.routeId, runtime.pathname]);
-  const scope = useMemo<ArrivalScope>(() => ({ id, paneId: runtime.paneId, accountId: account?.accountId ?? null, reads: props.reads, spent: false, active: false }), [id, runtime.paneId, account?.accountId, props.reads]);
+  const scope = useMemo<ArrivalScope>(() => ({ id, accountId: account?.accountId ?? null, reads: props.reads, spent: false, active: false }), [id, account?.accountId, props.reads]);
   const first = useRef(scope);
   useLayoutEffect(() => {
-    if (seeds === null) return;
+    if (arrivals === null) return;
     const entering = first.current;
     entering.active = true;
-    if (!entering.spent) for (const descriptor of first.current.reads) ensureArrival(seeds, first.current, descriptor);
+    if (!entering.spent) for (const descriptor of first.current.reads) ensureArrival(arrivals, first.current, descriptor);
     return () => {
       const retired = entering;
       retired.active = false;
       queueMicrotask(() => {
         if (retired.active) return;
-        const records = seeds.arrivals.get(retired.id);
+        const records = arrivals.get(retired.id);
         if (!records) return;
         for (const [key, record] of records) if (record.scope === retired && record.claims === 0) { retireArrival(record); records.delete(key); }
-        if (records.size === 0) seeds.arrivals.delete(retired.id);
+        if (records.size === 0) arrivals.delete(retired.id);
       });
     };
-  }, [seeds]);
+  }, [arrivals]);
   return <ArrivalContext.Provider value={first.current}>{props.children}</ArrivalContext.Provider>;
 }
 
 /** Render peeks; only the first read effect claims and transfers ownership. */
 export function useServerArrival<T>(descriptor: ReadDescriptor<T> | null): { readonly peek: ArrivalOutcome<T> | null; readonly claim: () => ArrivalClaim<T> | null } {
-  const seeds = useContext(Seeds);
+  const arrivals = useContext(Arrivals);
   const scope = useContext(ArrivalContext);
   const claimed = useRef<ArrivalRecord | null>(null);
   const localClaims = useRef(0);
@@ -496,22 +491,19 @@ export function useServerArrival<T>(descriptor: ReadDescriptor<T> | null): { rea
   if (descriptor?.key !== initialKey.current) leftEntry.current = true;
   const offered = !leftEntry.current && descriptor !== null && scope?.reads.some(read => read.key === descriptor.key && read.stale === descriptor.stale && policyIdentity(read) === policyIdentity(descriptor)) === true;
   const lookup = () => {
-    if (!seeds || !scope || !descriptor || !offered) return null;
-    const record = claimed.current ?? seeds.arrivals.get(scope.id)?.get(arrivalKey(descriptor)) ?? null;
+    if (!arrivals || !scope || !descriptor || !offered) return null;
+    const record = claimed.current ?? arrivals.get(scope.id)?.get(arrivalKey(descriptor)) ?? null;
     return record !== null && record.descriptor.key === descriptor.key && policyIdentity(record.descriptor) === policyIdentity(descriptor) && record.descriptor.stale === descriptor.stale && record.generation === record.owner.generation && !record.controller.signal.aborted ? record : null;
   };
-  const candidate = () => claimed.current ?? (seeds && scope && descriptor ? seeds.arrivals.get(scope.id)?.get(arrivalKey(descriptor)) ?? null : null);
+  const candidate = () => claimed.current ?? (arrivals && scope && descriptor ? arrivals.get(scope.id)?.get(arrivalKey(descriptor)) ?? null : null);
   const record = lookup();
-  const bootstrap = seeds && scope ? seeds.bootstrap.get(scope.paneId) : undefined;
-  const bootstrapPeek = offered && !scope?.spent && candidate() === null && descriptor?.key != null && bootstrap !== undefined && Object.hasOwn(bootstrap, descriptor.key)
-    ? { status: "success" as const, data: bootstrap[descriptor.key] } : null;
   // justify-type-assertion: an account/representation/policy key owns exactly one result type.
-  const peek = (record?.outcome ?? bootstrapPeek) as ArrivalOutcome<T> | null;
+  const peek = (record?.outcome ?? null) as ArrivalOutcome<T> | null;
   const claim = () => {
-    if (!seeds || !scope || !descriptor || !offered || scope.spent && claimed.current === null) return null;
+    if (!arrivals || !scope || !descriptor || !offered || scope.spent && claimed.current === null) return null;
     const available = lookup();
     if (available === null && candidate() !== null) return null;
-    const record = available ?? ensureArrival(seeds, scope, descriptor);
+    const record = available ?? ensureArrival(arrivals, scope, descriptor);
     if (record === null) return null;
     claimed.current = record;
     record.claimed = true;
@@ -537,34 +529,21 @@ export function useServerArrival<T>(descriptor: ReadDescriptor<T> | null): { rea
 }
 
 /** Body effects claim first; unused preparation is then retired. */
-export function ServerSeedsSpent() {
-  const seeds = useContext(Seeds);
+export function ServerArrivalsSpent() {
+  const arrivals = useContext(Arrivals);
   const scope = useContext(ArrivalContext);
-  const paneId = usePaneRuntime()?.paneId;
   useEffect(() => {
-    if (paneId !== undefined) seeds?.bootstrap.delete(paneId);
-    if (!seeds || !scope) return;
+    if (!arrivals || !scope) return;
     scope.spent = true;
     queueMicrotask(() => {
-      const records = seeds.arrivals.get(scope.id);
+      const records = arrivals.get(scope.id);
       if (!records) return;
       for (const [key, record] of records) if (!record.claimed) { retireArrival(record); records.delete(key); }
       // Claimed work belongs to hooks; retained refs support strict replay.
-      seeds.arrivals.delete(scope.id);
+      arrivals.delete(scope.id);
     });
-  }, [seeds, paneId, scope]);
+  }, [arrivals, scope]);
   return null;
-}
-
-/** Synchronous bootstrap projection for the unchanged paged readers. */
-export function useServerSeed<T>(key: string | null): Visit<T> | null {
-  const seeds = useContext(Seeds);
-  const paneId = usePaneRuntime()?.paneId;
-  const pane = paneId === undefined ? undefined : seeds?.bootstrap.get(paneId);
-  const [seed] = useState(() => key !== null && pane !== undefined && Object.hasOwn(pane, key)
-    // justify-type-assertion: bootstrap registry and caller share the representation key.
-    ? { key, data: pane[key] as T, source: LIVE_SOURCE, acceptedStale: null } : null);
-  return seed;
 }
 
 /**
@@ -601,6 +580,7 @@ function useServerState<D>(
   policy: ReadPolicy,
   catalog?: CatalogRead<D>,
   onDefect?: (defect: Defect) => void,
+  initialRead?: ServerReadSeed<D>,
 ) {
   const admissionGeneration = useRemoteGeneration();
   const account = useOptionalAuthenticatedAccount();
@@ -616,15 +596,16 @@ function useServerState<D>(
   const fail = onDefect ?? throwHere;
   const signIn = useUnauthenticatedApiHandler();
   const { peek: preparedOutcome, claim: claimArrival } = useServerArrival({ key, stale, load, readPolicy, ...policy });
-  const arrivalScope = useContext(ArrivalContext);
-  const bootstrap = useServerSeed<D>(arrivalScope === null ? key : null);
-  const seedHere = arrivalScope === null && stateKey !== null && bootstrap !== null && bootstrap.key === key && accountId === firstAccount
-    ? { ...bootstrap, key: stateKey, acceptedStale: stale } : null;
   const initial = preparedOutcome?.status === "success" && stateKey !== null
     ? { key: stateKey, data: preparedOutcome.data, source: LIVE_SOURCE, acceptedStale: stale }
-    : seedHere ?? restoredHere;
+    : initialRead?.status === "success" && stateKey !== null
+      ? { key: stateKey, data: initialRead.data, source: LIVE_SOURCE, acceptedStale: initialRead.acceptedStale } : restoredHere;
   const heldRef = useRef<Held<D> | null>(null);
-  const [state, setState] = useState(() => ({ ...arrive(stateKey, initial), running: initial === null || initial === restoredHere }));
+  const [state, setState] = useState(() => ({ ...arrive(stateKey, initial),
+    error: initialRead?.status === "failure" ? initialRead.error : null,
+    running: initialRead === undefined ? initial === null || initial === restoredHere
+      : initialRead.status === "success" && initialRead.acceptedStale !== stale,
+  }));
   const held = state.key === stateKey ? state : arrive(stateKey, restoredHere);
   heldRef.current = held;
   const loadRef = useRef(load);
@@ -730,20 +711,19 @@ function useServerState<D>(
   }, [fail, signIn, owner, accountId, stateKey]);
   start.current = () => { void run(); };
 
-  const seeded = useRef(seedHere !== null ? key : null);
-  const claimedArrival = useRef(false);
+  const completedBootstrap = useRef(initialRead !== undefined && (initialRead.status === "failure" || initialRead.acceptedStale === stale) ? stateKey : null);
   useEffect(() => {
     mounted.current = true;
     lane.active = true;
     const next = heldRef.current;
+    if (completedBootstrap.current !== stateKey) completedBootstrap.current = null;
     if (next?.key !== stateKey) update(() => arrive(stateKey, restoredHere));
     if (key !== null) {
       const prepared = claimArrival();
       if (prepared !== null) {
-        claimedArrival.current = true;
         void run(prepared);
-      } else if (seeded.current === key && !claimedArrival.current) {
-        seeded.current = null;
+      } else if (completedBootstrap.current === stateKey && owner.generation === 0 && next?.generation === 0) {
+        // A settled bootstrap result survives strict effect replay; invalidations still run normally.
         update(h => ({ ...h, running: false }));
       } else void run();
     }
@@ -838,10 +818,11 @@ export function usePaneFreeServerValue<T>(input: ReadPolicy & {
   readonly load: Load<T>;
   readonly readPolicy?: string;
   readonly catalog?: CatalogRead<T>;
+  readonly initialRead?: ServerReadSeed<T>;
   /** An account owner relays defects below its retained command state. */
   readonly onDefect?: (defect: Defect) => void;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, input.onDefect);
+  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, input.onDefect, input.initialRead);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

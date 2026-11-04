@@ -112,7 +112,7 @@ export function useReferenceInput(
     const current = referenceContext(host);
     const frozen = value.context;
     if (JSON.stringify(current) !== JSON.stringify(frozen)) {
-      set({ ...value, message: "the outline changed. your query is kept; review its destination before linking." });
+      set({ ...value, message: "the link destination changed." });
       return;
     }
     const owner = host;

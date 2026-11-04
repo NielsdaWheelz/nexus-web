@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  FileText,
-  GitBranch,
-  ListTree,
-  Network,
-  PanelRight,
-  TextSearch,
-  Users,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import {
   useCallback,
   useContext,
@@ -22,6 +12,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { RulingRegion } from "@/components/feedback/Ruling";
+import { paneSourceKey, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { FindResults } from "@/components/find/FindBar";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
@@ -63,13 +55,13 @@ import type { SecondaryPanePatch } from "@/lib/workspace/store";
 import styles from "./Companion.module.css";
 
 type TabId = WorkspaceSecondarySurfaceId | "find-results";
-const ICONS: Record<TabId, LucideIcon> = {
-  "resource-contents": ListTree,
-  "resource-members": Users,
-  "resource-connections": Network,
-  "resource-forks": GitBranch,
-  "import-detail": FileText,
-  "find-results": TextSearch,
+const ICONS: Record<TabId, Icon.Glyph> = {
+  "resource-contents": Icon.Contents,
+  "resource-members": Icon.Members,
+  "resource-connections": Icon.Link,
+  "resource-forks": Icon.Forks,
+  "import-detail": Icon.Upload,
+  "find-results": Icon.Search,
 };
 const title = (id: TabId) =>
   id === "find-results" ? "Search results" : SECONDARY_SURFACES[id].title;
@@ -257,7 +249,7 @@ export function companionAction(
     kind: "command",
     id: "resource-inspector-companion",
     label: "Inspector",
-    icon: <PanelRight size={20} aria-hidden="true" />,
+    icon: <Icon.Inspector aria-hidden="true" />,
     // the controller owns focus return.
     restoreFocusOnClose: false,
     state: expanded
@@ -337,6 +329,9 @@ export default function Companion(props: {
     element.className = styles.host;
     return element;
   });
+  const slipContent = useRef(host);
+  const runtime = usePaneRuntime();
+  const source = runtime ? paneSourceKey(runtime) : paneId;
   const [portalParent, setPortalParent] = useState<Layer | null>(null);
   const focusAfterMove = useRef<HTMLElement | null>(null);
   const [admitted, setAdmitted] = useState(false);
@@ -349,6 +344,7 @@ export default function Companion(props: {
     : durable && secondary
       ? shownSurface(durable, secondary)
       : null;
+  const rulingRegion = JSON.stringify([source, activeId, props.resourceRef ?? null, companion?.groupId ?? null]);
   const open = resultsShown
     ? results.expanded
     : durable !== null && secondary?.visibility === "visible";
@@ -489,13 +485,13 @@ export default function Companion(props: {
       className={styles.tabs}
       onSelect={select}
       items={tabs.map(({ id }) => {
-        const Icon = ICONS[id];
+        const Glyph = ICONS[id];
         return {
           value: id,
           id: `${baseId}-${id}-tab`,
           panelId: `${baseId}-${id}-panel`,
           label: title(id),
-          icon: <Icon size={16} aria-hidden="true" />,
+          icon: <Glyph size={16} aria-hidden="true" />,
           ref: (element: HTMLButtonElement | null) => {
             if (element) tabRefs.current.set(id, element);
             else tabRefs.current.delete(id);
@@ -520,7 +516,7 @@ export default function Companion(props: {
         aria-label={companion ? "close inspector" : "close search results"}
         data-companion-close="true"
         onClick={requestDismiss}
-        icon={<X size={15} aria-hidden="true" />} />
+        icon={<Icon.Dismiss aria-hidden="true" />} />
     );
     return presentation === "FullScreen" ? (
       <header ref={headerRef} className={`${styles.fullScreenHeader} ${compact.compact}`}>
@@ -573,7 +569,7 @@ export default function Companion(props: {
       className={styles.body}
       hidden={id !== activeId}
     >
-      {id === activeId ? body : null}
+      {id === activeId ? <RulingRegion value={rulingRegion}>{body}</RulingRegion> : null}
     </div>
   ));
 
@@ -617,6 +613,7 @@ export default function Companion(props: {
         </MobileSheet>
       ) : presentation === "FullScreen" ? (
         <MobileFullScreenTask
+          slipContent={slipContent}
           active={coveringActive}
           panelId={regionId}
           onDismiss={close}
@@ -636,7 +633,7 @@ export default function Companion(props: {
       {host && open && activeId !== null ? createPortal(
         <CompanionPresentationContext value={presentation}>
           <OverlayContext value={portalParent}>
-            <div className={styles.contents} onKeyDown={columnKeyDown}>
+            <div className={styles.contents} data-presentation={presentation} onKeyDown={columnKeyDown}>
               {presentation === "Column" ? header(close) : null}
               {panels}
             </div>

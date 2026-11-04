@@ -1,5 +1,7 @@
 # historical caret stress qualification limit
 
+priority: historical probe, not an active blocker. leave alone unless current use reproduces it; no extreme-load campaign is planned.
+
 the pre-flat editor intermittently restored a click's old caret after immediate
 native caret movement under extreme renderer load. its proposed cause was never
 established; the current flat host and focus ownership replace that integration.

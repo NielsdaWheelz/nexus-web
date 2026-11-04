@@ -22,10 +22,11 @@ import type {
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
-import { Check, Copy } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "./Button";
 import { useCopyFeedback } from "./useCopyFeedback";
-import { Announcement, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Announcement } from "@/components/feedback/Announcement";
 import styles from "./MarkdownMessage.module.css";
 
 type Components = ComponentProps<typeof ReactMarkdown>["components"];
@@ -106,35 +107,29 @@ function CodeBlock({
   children: ReactNode;
 }) {
   const text = codeText(children);
-  const [failure, setFailure] = useState<{ target: string; occurrence: object } | null>(null);
-  const failed = failure?.target === text;
   const copy = useCopyFeedback(text);
-  const occurrence = useFeedbackOccurrence(failed, text);
+  const { say } = useOutcome();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const content = useRef<HTMLDivElement>(null);
   if (defect) throw defect.error;
-  const onCopy = () => {
-    setFailure(null);
-    return copy.copy(text).catch((error: unknown) => {
-      if (error instanceof ClipboardWriteUnavailableError) setFailure({ target: text, occurrence: {} });
-      else setDefect({ error });
-    });
-  };
   const select = () => {
     if (!content.current) return;
     const range = document.createRange(); range.selectNodeContents(content.current);
     const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
     content.current.focus({ preventScroll: true });
   };
+  const onCopy = () => copy.copy(text).catch((error: unknown) => {
+    if (error instanceof ClipboardWriteUnavailableError)
+      say({ fact: "couldn’t copy the code.", reason: "copying isn’t available here." }, [{ label: "select code", commandKey: "select code", run: select }]);
+    else setDefect({ error });
+  });
   return (
     <div className={styles.codeBlock}>
       <div className={styles.codeHeader} data-pane-find-exclude="true">
         <span>{language}</span>
-        <Button iconOnly icon={copy.copied ? <Check /> : <Copy />} aria-label="copy code"
+        <Button iconOnly icon={copy.copied ? <Icon.Check /> : <Icon.Copy />} aria-label="copy code"
           className={styles.copy} onClick={() => void onCopy()} />
         {copy.occurrence ? <Announcement text="copied" level="Polite" occurrence={copy.occurrence} /> : null}
-        {failed ? <FeedbackFailure scope="Local" occurrence={occurrence} announcementOccurrence={failure?.occurrence} content={{ tone: "Warning", title: "couldn’t copy code" }}
-          announcement="Polite" actions={[{ label: "select code", onClick: select }]} /> : null}
       </div>
       <div
         ref={content}

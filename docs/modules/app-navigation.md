@@ -7,8 +7,8 @@ App navigation has two projections with distinct jobs:
 
 - the desktop rail is a small, fixed projection of Nexus's highest-frequency
   destinations;
-- mobile has one Nexus entrance. Its opaque full-screen `SwitchboardTask`
-  renders the mobile projection of the shared Nexus intent router.
+- mobile has one nexus entrance. `SwitchboardTask` renders the shared intent
+  router in a bottom-anchored `MobileSheet`.
 
 Neither is a directory of every feature.
 
@@ -30,26 +30,26 @@ the incoming command once. restored data never dispatches commands.
   but do not displace discovery, listening, and conversation tasks.
 - **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes, Atlas, Oracle.
-- **Mobile Places order is exact:** Lectern, Libraries, Browse, Podcasts,
-  Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Nexus.
+- **mobile places order is exact:** today, lectern, libraries, browse,
+  podcasts, chats, notes, atlas, oracle. the sheet presents one horizontal
+  chip row; stats remains in account and retrievable through nexus.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
 
-on desktop, imports belongs under account; it has no standalone rail action.
+on desktop, all imports belongs under account; it has no standalone destination
+in the rail. the footer's `Import` action opens the intake page. its unsettled
+count (`Import · {n}`) is distinct from the account's needs-attention count.
 the shared account menu is exactly stats, imports, downloads when available,
 settings, a separator, and danger-last sign out. imports retains its canonical
 `/imports` link, query/deep links, inspector and contextual acquisition entrances.
 the mobile nexus account projection renders that same component and order;
 mobile attention remains inside nexus, without a closed-launcher badge.
 
-`AccountMenu` owns one decorative person-in-circle mark and its passive attention
-dot, shared by the rail and mobile root header. mobile shows quiet icon-only
-`account` and `close nexus` controls, in that order, with 20px glyphs and 48px
-minimum targets. the root heading may wrap with enlarged text; controls never
-shrink. close invokes the existing guarded full dismissal; search back/escape
-returns to overview. account retains its trigger state, status description and
-focus/navigation owners. the expanded desktop rail retains its visible label.
+`AccountMenu` owns its decorative person-in-circle mark and passive attention
+dot. the desktop rail retains its expanded label. the mobile sheet places the
+same account menu behind its farthest `account` row; the root has no header.
+account retains its trigger state, status description and focus/navigation owners.
 
 `AccountMenu` reads the existing `ImportsProvider` summary once. a known positive
 `needs_attention_count` paints a passive warning dot inside account and a warning
@@ -73,44 +73,31 @@ membership, order, and caps, while each renderer owns platform geometry.
 Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
-Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
-opens the keyboard-down overview with heading focus; explicitly entering search
-focuses its query. choose create, choose browse and add replace root inside one
-opaque viewport-fixed dialog. pane expansion and
-recently-closed recovery are inline disclosures, not pages.
-mobile's `new pane…` beside the open-pane heading enters `NewPane` in the same
-root, retaining and selecting the query. its heading and dialog name are
-`open in new pane`; `cancel` replaces account/close. entry and cancellation
-allocate nothing. cancellation retains the query and returns focus to its
-entrance, or the ordinary combobox after desktop handoff. the content-creation
-entrance is `create…`. desktop adds no entrance or ordinary fork menu action,
-but completes an already-active picker after resize.
+mobile nexus opens keyboard-down in a bottom sheet, with the armed row focused.
+tapping the field raises the keyboard. the field is the last child outside the
+scrollport and follows the keyboard inset; rank one touches it, with subsequent
+ranks above and continuations farthest away. blank order, nearest the field
+first, is here, previous pane, other tabs, recent picks, actions, places chips,
+then account. the sheet has a 44px handle strip, scrim dismissal and a guarded
+96px downward drag. back clears root text before closing. nested overlays,
+child pages and active pane moves retain their own dismissal precedence; see
+[overlays](overlays.md#surfaces).
 
-the picker projects eligible destinations before composition caps, with unchanged
-retrieval budgets. blank order is recent, places, then create and open: quick
-note, page, chat, library. pane candidates become exact current-href destinations;
-management, acquisition and playback commands are excluded. explicit excluded
-input reports `this action isn’t available in this picker` and retains the query.
-row and submission admission share one target contract. accepted picker actions
-request `Fork`; choice/library/capture pages retain that opening intent and their
-root origin. query edits, refresh, shortcut focus and responsive handoff preserve
-purpose. accepted landing/dismissal or fresh programmatic opening retires it.
+import, create library, use text, choices and capture today stay in the same sheet
+with their own back/title headers and initial focus. pane expansion and
+recently-closed recovery remain inline disclosures. `new pane` is a row verb,
+with the workspace's `Fork` disposition; there is no new-pane picker mode.
+ordinary row activation retains `Follow`. phone tab rows keep the independent
+× and have no rail; fork an open pane through its resource row.
 
-ordinary mobile destination rows have sibling `more actions for {label}` controls
-with `open in new pane`; primary activation retains `Follow`. only pane-instance
-rows have direct close controls. matching-place close actions belong inside the
-destination menu. picker options contain only factual alternate destinations,
-such as the exact matching passage, which also fork. guarded menu links retain
-the menu on refused navigation. the workspace remains the sole placement,
-writing-loss admission and focus owner.
-There is no separate Find page, scope state, outside-click, or drag dismissal.
 the nexus control opens through native button activation: pointer click,
 keyboard and assistive technology. primary button-0 presses are captured so
 input blur restoring the player band cannot retarget their release. mouse, pen
 and touch share the 8 css px movement threshold: reaching it cancels activation,
 even if the pointer returns inside. only a primary-touch horizontal swipe can
-invoke the adjacent-pane workspace command; it adds no second nexus ingress,
-navigation event or full-screen-task gesture. admitted touch presses suppress
+invoke the adjacent-pane workspace command and show the destination title for
+600ms, or `first pane` / `last pane` at the clamp; it adds no second nexus ingress,
+navigation event or additional sheet gesture. admitted touch presses suppress
 compatibility mouse focus so it cannot move nexus between release and click.
 without a committed swipe, a cancelled touch preserves the existing input focus;
 an accepted click transfers focus into nexus, and a committed swipe uses normal
@@ -136,7 +123,7 @@ breakpoint, which unmounts the rail, keeps the reader's latest choice.
 
 ## desktop launcher and collapsed help
 
-the desktop entrance is a native `Search` button: a 20px magnifier, the same
+the desktop entrance is a native `Nexus` button: the asterism, the same
 row geometry/type as destinations, and the existing platform shortcut. its
 transparent rest state has no field border or destination-selection marker.
 activation opens the existing nexus root; its `Find anything…` query owns input
@@ -150,164 +137,169 @@ close it. footer controls and mobile keep their existing entrances. the passive
 overlay contract is documented in
 [overlays](overlays.md#passive-navigation-help).
 
-## Nexus content grammar
+## nexus content grammar
 
-nexus is one typed intent router with platform-native renderers. its input is
-labelled and placeholdered **find anything…**. blank desktop shows `tabs · {total}`,
-up to eight resource rows under `recent picks`, then `actions`: quick note, new chat, import, and
-resume only for paused playback. recent retains deliberately accepted resource
-use on this device, including open panes. unknown history is not empty; failure
-exposes retry while usable rows remain visible.
+nexus is one intent router with platform-native renderers. dialog and rail entry
+are named `Nexus`; the input is labelled and placeholdered `find anything…`.
+blank opens on `here`, the current pane's resource, followed by other panes
+under `tabs · {total}`, up to eight `recent picks` excluding the current
+resource, and `actions`: quick note, new chat, import, plus resume only while
+playback is paused. recent history is device-local; unknown history is not empty.
+`loading recent…` and `resources you open will appear here.` retain their
+recent-read meanings. failure exposes retry while usable rows remain visible.
 
-the tabs heading discloses the complete ordered pane list. complete lists allow
-drag or one-shot numbered placement, with only close as a row accessory.
-recently closed uses native buttons outside query candidates. see
-[panes](panes.md#mobile-contract) for disclosure and interaction lifetimes.
+blank arms the most recently active other pane; with one pane nothing is armed
+and enter is a silent no-op. session-local activation order and the reorder
+transaction are owned by [panes](panes.md#mobile-contract).
 
-ordinary search shows at most eight principal results in one list. two rows sit
-outside that cap: `search all results` and `use this text…`. the latter snapshots
-its text and opening disposition, focuses a heading, and offers ask nexus, add
-to today, browse and create. entering it performs no write or provider call.
-browse/create return to that page; library returns through create; root return
-restores query, selection and scroll. both platforms use this choice owner.
+a nonempty dom selection surviving at open pre-arms `use this text…`, carrying
+that literal and performing no write. page/note selections can survive this way.
+reader pointer drag commits the selection into the highlight composer and clears
+the dom selection; that path does not pre-arm nexus from the composer.
+
+typed find has at most eight principal rows, followed by `search all results`
+and `use this text…`. with no principals, search-all is armed with the detail
+`nothing matched here`; no separate empty notice is inserted. the two
+continuations are a fixed footer outside the desktop result scrollport; the
+typed desktop card holds 70dvh so arrivals do not move them. both query inputs,
+including mobile go, fire the armed row under the same
+[arming contract](search.md#launcher). shift-enter requests a fresh pane.
+repeat and composition never activate. retired selection consumes enter and
+announces `selection no longer available` until a new query; unavailable
+targets explain refusal without falling through.
 
 the command registry owns exact case-insensitive slash tokens followed by end of
-input or whitespace. `/n`, `/p`, `/c` or `/a`, `/l`, `/i` and `/b` select note,
-page, chat, library, import and browse. recognized commands show their prepared action without generic continuations.
-`/` and unknown heads retain a literal-search escape and show all six commands,
-without a default; selecting one starts it empty. unknown text is never attached
-to a guessed command or automatically sent to corpus search. unavailable preparation retains
-the input and reason. a query that is wholly links reads `import {pointer}` or
-`import {n} links`, at most 100: the only root row that writes (see the import page).
+input or whitespace. `/n`, `/p`, `/c` or `/a`, `/l`, `/i` and `/b`
+select note, page, chat, library, import and browse. recognized commands show their
+prepared action without generic continuations. `/` and unknown heads show all
+six commands in registry order with their first alias as a trailing kbd, no
+default, literal search and lookup guidance. enter without a choice announces
+that guidance. choosing a command starts it empty; unknown text never becomes
+a guessed command or an implicit corpus request.
 
-nonempty quick-note activation says `save note to today` and commits locally;
-empty quick note opens insertion. page/chat/library/import/browse open their
-existing draft or chooser and never submit it implicitly. natural-language
-recognition is unchanged: `import policy` searches; `/i policy` opens the import
-page with `policy` in its field and sends nothing. literal search uses outer-trimmed input without interpreting filters.
+nonempty quick note says `save note to today` and commits locally; empty quick
+note opens insertion. page/chat/library/import/browse open their existing draft
+or chooser without submitting. `import policy` searches; `/i policy` opens an
+import draft. literal search retains outer-trimmed text without filter parsing.
+commands participate in latching. use-text's ask/browse/create choices do not.
+the today place does not learn: its date-free identity would collide with quick
+note; name matching still reaches it.
 
-navigation action labels describe their outcome: `open libraries`, `search
-people`. the latter opens the existing empty people search and describes its
-scope as `authors and contributors`; it remains distinct from any resource named
-authors. match visible action labels and canonical names/keywords. resource
-labels and exact activations remain authoritative. generic place/command badges
-are omitted; meaningful hints and argument previews remain on both surfaces.
+a whole query of links has one explicit `import {pointer}` or `import {n} links`
+row. activating it sends the links and shows their lines. more than 100 is a
+refusal with no send. the slash-command import row only opens the field, even
+when its argument is links. a multi-line paste flattens breaks to spaces in both
+root and the import field, preserving link boundaries.
 
-a result has one dominant canonical title or prose body. include only already
-projected distinguishing facts: source, author, location, current/minimized state
-or literal evidence. suppress generic pane/place/command/recent badges and ordinary open state; never
-fetch metadata to decorate a row. preserve source paragraph boundaries, omission
-marks and literal match ranges. essential identity and refusal reasons may wrap;
-secondary evidence stays bounded, without selection-driven expansion.
+use-text snapshots text and opening disposition, focuses a heading, and offers
+ask nexus, add to today, browse and create. entering it writes nothing and calls
+no provider. browse/create return there; library returns through create; root
+return restores query, selection and scroll. shifted confirmation upgrades the
+opening disposition; ordinary confirmation cannot downgrade it. delayed work
+retains its existing attention and workspace placement owners.
 
-captured highlights and passages use the admitted frozen excerpt and reading.
-their primary is the selected literal; identical match evidence highlights there,
-while distinct context uses the evidence line. `show excerpt` opens the existing
-full-excerpt dialog explicitly. it is a separate native control after options,
-outside the primary action's disabled state, with the row identity in its name.
-opening it does not navigate or enrich the held row.
+rows have a canonical title and at most one supplement: literal match evidence
+outside the title, otherwise already-projected distinguishing facts. facts carry
+contributors, source, location, related-match state or refusal reason; no kind
+words or `current`. the current resource carries `here`; minimized is a
+distinct state. no metadata is fetched to decorate a row. note titles are their
+first line, with a separate matched window. passage titles are the work, with
+the matched window below. highlights retain the quoted selected literal.
+identical title evidence underlines in the title; matches never change weight.
+the palette renderer clips long evidence to its first native match, rebases the
+codepoint ranges and marks omitted context honestly. the full source excerpt,
+its frozen identity and its activation remain unchanged.
 
-desktop is at most 640px wide with a 48px query and 36px ordinary rows; coarse
-pointer targets remain 44px and mobile targets 48px. one scrollport owns results
-and following lookup/scope guidance. a reserved query slot shows delayed busy or explicit recovery
-access. no visible tutorial or empty status band. one polite owner announces
-operational feedback through the shared scoped presenter; failure recovery remains
-outside the result flow and never automatically steals focus or scroll.
-external retrieval uses existing typed browse/preview owners without implicit ingest.
+right at the query's end with no selection, or tab, opens the armed row's verb
+rail. the row's `…` opens the same disclosure. the rail projects existing action
+descriptors, not another registry or executor. it presents `open ↵` and
+`new pane ⇧↵` (`run ↵` for commands; no new-pane chip where disposition is
+ignored), then preferred descriptors from `RAIL_VERBS` up to four chips, then
+`more` when a contextual menu exists. danger-tone actions remain in that menu.
+`show excerpt` is a rail verb opening the existing full-excerpt dialog.
 
-desktop uses a combobox with a one-column grid popup. each candidate cell
-contains its primary region and a native options or close control. the controller
-owns initial selection: an available explicit intent first, otherwise the first available
-principal result, then visible search-all when none exists. command lookup has no
-default. deliberate interaction holds the whole displayed list and exact target.
-raw query/scope/account changes invalidate preceding actions immediately.
+initial rail focus is the first chip after the fixed pair. descriptor arrivals
+retain focus by id. typing filters read verbs without running them; the pair
+and more remain. letter hints appear only when that letter singles out a verb.
+enter runs the focused verb once through the existing descriptor activation
+owner. unavailable verbs retain their slots and reasons. left/escape closes the
+rail and restores query text, caret and selection. more opens the existing
+contextual menu, which prepares its own read: a server-backed rail followed by
+more intentionally makes two action GETs. only the row's primary operation
+learns; contextual descriptor actions do not.
 
-both query inputs invoke the controller's submit capability. desktop accepts its
-admitted selected row. a retired
-same-context selection consumes enter and announces `selection no longer available`
-until navigation or query change. disabled targets explain their refusal without
-fallthrough. mobile input submits parsed intent/full search regardless of prior
-row selection; native row buttons activate their exact row. lookup without a
-selection only gives guidance. shift preserves the operation and requests its
-existing fresh-pane disposition. repeat and composition never activate.
+desktop uses a combobox with a one-column grid; `aria-activedescendant` names
+the mounted armed candidate while the query has focus. plain up/down browses
+clamped result order and reveals only its scrollport. space edits the query;
+home/end and modified editing retain native meaning. menus retain query and
+selection. accepted close repairs only lost focus, yields to surviving controls
+and overlays, and uses the committed displayed successor. renderers forward
+gestures; the controller owns arming, dispatch, guards and announcements.
 
-plain up/down browses the clamped result order and reveals only its scrollport.
-space always edits the input; home/end and modified editing retain native meaning.
-there is no editing/browsing mode or space-release command. only the selected
-secondary is a result tab stop; tab followed by native enter/space operates it.
-secondary focus selects its row. hover selects only while the query owns focus.
-direct close retains its native initiator until the controller selects the
-committed displayed successor; query is the missing-target fallback. live removal
-repairs only lost focus and yields to surviving controls/overlays. menus retain query and selection.
-`aria-activedescendant` names the mounted candidate whenever the query has focus.
-
-lookup guidance follows the grid/list inside its scrollport and uses the same
-polite status owner. lookup retains its literal-search recovery row. mobile keeps
-sibling action buttons and 48px targets. desktop root escape closes empty,
-whitespace and typed queries; child workflows and active pane moves retain their
-guarded back/cancel precedence. enabled secondary menus never inherit primary
-unavailability from an aria-disabled ancestor.
-renderers project prepared content and forward gestures; they do not interpret
-commands, choose defaults or repair navigation.
-
-browse and create choices retain their initiating opening intent until landing;
-shifted confirmation upgrades it, and ordinary confirmation cannot downgrade it.
-delayed creation/lookup uses the shared attention owner and canonical placement,
-then the controller preserves destination or entry focus. later explicit add
-result controls capture a fresh gesture rather than replaying add's opener.
+desktop root escape closes with or without text. mobile root back/escape clears
+text, then closes; an open rail, nested overlay, child page or pane move wins
+first. enabled secondary actions remain usable when the primary is unavailable.
 
 ## the import page
 
-the import page is a nexus page, one tree for both shells through `NexusPages`, in the
-palette's frame. a bare combobox field (`links to import`) over one grid (`import options`);
-focus stays in the field and the selection is its active descendant. root has a faint search
-glyph in a leading slot; the page's arrow takes that slot, so typed text and line pointers
-keep one edge. on a phone the header holds the arrow and `import`, and `into` stacks under
-the field. the field and `into` are the intake's, for one visit: palette open to close, on
-every close path (the controller's close edge). the arrow does not end a visit.
+the import page is one nexus page through `NexusPages`, inside the shared desktop
+frame or phone sheet. its back arrow occupies the desktop query's leading
+gutter, keeping the field and line pointers on the root query's edge. on a phone
+the child header holds the arrow and `import`, with `into` below the field.
+the combobox (`links to import`) owns focus and names the selected cell in the
+`import options` grid. its field and destinations belong to the intake visit:
+palette open to close, including navigation closes. arrow back keeps the visit.
 
-rows, in order: what enter would send (`import {pointer}`, `import {n} links`) while the
-field holds links; the lines, newest batch first and each batch in paste order, a settled
-batch of two or more closed by its colophon; `choose a file…`; with no lines, the `recent`
-shelf (the viewer's five newest own imports, `view=Recent`, reread on each imports
-observation while it shows, retaining the observer); `all imports`, with its attention
-count. with no lines and an empty field, `choose a file…` is selected. a line renders
-`lineView` through `ImportLine`; a settled line's menu is the resource menu for its media.
+rows, in order: the field's send row while it holds links; lines, newest batch
+first and each batch in paste order; each settled batch of two or more closed
+by its colophon; `choose a file…`; with no lines, the viewer's five newest own
+imports (`view=Recent`), retained and reread on imports observations while shown;
+then `all imports` with its attention count. with no lines and an empty field,
+`choose a file…` is selected. `ImportLine` paints `lineView`; a settled line's
+menu is its media's existing resource menu.
 
-| key | effect |
+| action | effect |
 | --- | --- |
-| ⏎ in root on a query of links | sends them, opens the page with the line selected; ⏎ again opens it, armed until accepted |
-| ⇧⏎ | sends, arms the first new line to open beside on acceptance |
-| ⏎ on the page | the field while it holds text and no arrow was pressed since the last edit, else the selected row's verb; a clamped arrow still hands enter to the row |
-| the field's ⏎ | takes the links, leaves the rest with `not a link`; over 100, `100 at a time. this has {n}.` and nothing sent |
-| a link already listed | adds no line; the selection moves to it |
-| ⏎ on an unaccepted line | arms its open; failure, a moved selection, input and leaving the page disarm |
-| ⏎ on `choose a file…` | opens the picker inside that gesture |
-| ↑↓, tab | select; tab reaches `into`, then the selected row's controls |
-| paste | a multi-line paste flattens to one line, in root and in the field |
+| root enter on a whole query of links | sends, opens the page, selects the first line; another enter opens it, armed until accepted |
+| root shift-enter | sends and arms the first new line to open in a fresh pane |
+| page enter | submits field text until an arrow is pressed after the last edit; thereafter invokes the selected row, even after a clamped arrow |
+| field send | takes links, leaves other text with `not a link`; over 100 says `100 at a time. this has {n}.` and sends nothing |
+| a link already listed | adds no line; selects its existing line |
+| enter on an unaccepted line | arms its open; failure, selection movement, input and leaving the page disarm |
+| enter on `choose a file…` | opens the native picker inside that gesture |
+| arrows, tab | arrows select; tab reaches `into`, then the selected row's controls |
 
-both `escape()` and `guardClose()` (phones, android back) branch on one table. nothing on
-it prompts: sent work belongs to the intake, which leaving never loses.
+the arrow and dismissals use one table. sent work stays in the intake, so these
+transitions do not prompt. a covering picker takes escape first, then field
+feedback regardless of the focused descendant, then the page transition.
 
-the intake owns the visit's admission fact and field feedback. arrow back preserves both;
-explicit text replacement or consumed dismissal clears the feedback, and closing ends the visit. deferred
-admission keeps its filing work but cannot revive an open intent after input, selection
-or exit disarms it.
-
-| | arrow | esc, scrim, android back |
+| origin and visit | arrow | escape, scrim, android back |
 | --- | --- | --- |
-| from the palette, nothing sent this visit | root, origin restored | same |
-| from the palette, something sent this visit | root, query cleared | close |
-| from outside (rail, library) | root, overview | close to the opener |
+| palette, nothing admitted | restore origin | restore origin |
+| palette, an admission | clear root query | close |
+| outside, such as rail or library | blank root | close to opener |
 
-the origin is the palette's mode, control and query. restored means the query, the mode,
-the `import` row selected and focus in the combobox; a phone has no row selection, so from
-search focus lands in the search input and from the overview on the `import` row. a query
-is never restored after a send, or ⏎ would send it again. a field's parse or cap message
-and an open picker each take esc before the page's back table. the picker takes precedence;
-field feedback is consumed by the page owner regardless of which descendant has focus.
-root's `import` row reads `import · {n} importing` (`import · {n}` on a phone) while the
-intake has unsettled lines.
+the origin retains query, root mode and invoking control. desktop returns to the
+combobox with that control armed when it survives; phone returns to the typed
+query or blank root's invoking control. after admission the query is cleared
+and import is the return control. explicit field replacement clears feedback;
+arrow back preserves it. closing retires the visit. deferred admissions retain
+filing work but cannot revive an open intent after input, selection or exit.
+the root action reads `import · {n} importing` (`import · {n}` on a phone) while
+the intake has unsettled lines; its complete spoken name retains the count.
+
+document ingress yields to existing editable, attachment and overlay owners.
+an unclaimed file drop opens the page and admits up to 100 files; the same cap
+refuses the whole oversized batch. unclaimed all-link paste opens a filled root
+without sending. the drop veil names the same bounded destinations as `into`.
+the doors stay mounted across both shells and hydration; they own no acquisition
+lifecycle. library creation uses the shared creation hold and refusal owner.
+
+the controller publishes import start and settlement speech through one polite
+region. pending sentences retain occurrence order and repetitions until their
+committed publication. intake settlement order, rather than React observation
+order, determines which batch speaks first. unseen outcomes keep the shared
+feedback owner; reopening does not replay old settled history.
 
 ## keyboard shortcuts
 
@@ -331,6 +323,11 @@ the keyboard layout's `event.key` rather than a physical key position.
   once per press, and shift-m maximizes or restores the named pane. tab leaves
   its single roving stop. these keys never become global letter bindings.
 
+the note editor's link command is `Mod-Shift-k`; nexus owns `Mod-k` even
+with the caret in a note. firefox on linux/windows can reserve control+shift+k
+for its web console, so that link chord is not guaranteed there; the formatting
+menu remains the keyboard route to the command.
+
 the same table supplies the read-only `/settings/keybindings` reference, linked
 from settings and searchable in nexus. there is no shortcut preference,
 capture, reassignment, provider, or persistence. old browser-local assignments
@@ -348,8 +345,13 @@ actions remain accessible through nexus and ordinary controls.
 | Shared account membership, summary projection, attention and description | `apps/web/src/components/appnav/AccountMenu.tsx` |
 | Passive imports menu label/count and complete status copy          | `apps/web/src/components/imports/ImportsBadge.tsx` and `lib/imports/copy.ts` |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/query.ts`                                                                                  |
-| Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
-| Nexus retrieval, latency gate, and selection ranking                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
+| nexus candidates, duplicate ownership, groups, places and caps | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
+| nexus retrieval, per-open usage map and selection records | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
+| nexus name tiers, canonical href, latch and comparator | `apps/web/src/lib/nexus/rank.ts` |
+| nexus held/arriving bands, arming and fire target | `apps/web/src/lib/nexus/list.ts` |
+| nexus timing and rail preference constants | `apps/web/src/lib/nexus/policy.ts` |
+| nexus verb presentation | `apps/web/src/components/nexus/NexusVerbRail.tsx` |
+| contextual action source and shared descriptor activation | `apps/web/src/lib/actions/useContextualActions.ts` and `apps/web/src/lib/ui/actionDescriptor.ts` |
 | device-local recent resource history                              | `apps/web/src/lib/recent/store.tsx`                                                                                |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | The rail itself: activation, collapse, indicator, commands | `apps/web/src/components/appnav/AppNav.tsx`                                                                     |
@@ -362,7 +364,8 @@ actions remain accessible through nexus and ordinary controls.
 | Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/DesktopNexus.tsx`                                                           |
 | Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and `NexusButton.tsx`                                   |
 | Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
-| The import page and its lines (both surfaces)                    | `apps/web/src/components/nexus/ImportPage.tsx` and `ImportLine.tsx`, over the intake (`lib/imports/intake.tsx`)    |
+| import page, lines and visit presentation | `apps/web/src/components/nexus/ImportPage.tsx`, `ImportLine.tsx` and `lib/imports/intake.tsx` |
+| unclaimed document file and link ingress | `apps/web/src/components/imports/ImportDoors.tsx` |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Daily Page location and note entries                             | `/daily/{date}` (`dailyDateFor` in `lib/notes/api.ts`) with `AppendNote` / `FocusNote`; the store delivers the entry to the visit the target lands on |
 | fixed shortcut definitions and projections                      | `apps/web/src/lib/shortcuts.ts`                                                                                   |
@@ -480,7 +483,7 @@ When adding or changing a destination:
    change account membership/order in `AccountMenu.tsx`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
-4. Add a destination to mobile Places only through the closed projection in
+4. add a destination to mobile places only through the closed projection in
    `lib/nexus/rows.ts`; do not duplicate its identity outside the registry.
    resource recall requires an explicit route projection in
    `lib/panes/paneRouteModel.ts`; utility destinations do not enter recent.

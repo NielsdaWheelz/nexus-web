@@ -54,10 +54,10 @@ export async function callFastAPI<T>(
   const transport = (error: unknown): never => {
     if (controller.signal.aborted && isAbortError(error)) {
       const message = "Backend service timed out";
-      throw new ApiError(504, "E_UPSTREAM_TIMEOUT", message, answerId);
+      throw new ApiError(504, "E_UPSTREAM_TIMEOUT", message, { requestId: answerId });
     }
     if (error instanceof TypeError) {
-      throw new ApiError(0, "E_NETWORK", "Network request failed", answerId);
+      throw new ApiError(0, "E_NETWORK", "Network request failed", { requestId: answerId });
     }
     throw error;
   };
@@ -76,8 +76,8 @@ export async function callFastAPI<T>(
     if ([502, 503, 504].includes(response.status) && !json) {
       controller.abort();
       throw response.status === 504
-        ? new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out", answerId)
-        : new ApiError(response.status, "E_UPSTREAM", "Backend service unavailable", answerId);
+        ? new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out", { requestId: answerId })
+        : new ApiError(response.status, "E_UPSTREAM", "Backend service unavailable", { requestId: answerId });
     }
     return await readResponse<T>(response).catch(transport);
   } finally {

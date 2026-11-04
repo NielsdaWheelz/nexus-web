@@ -20,7 +20,7 @@ from nexus.services.reader_locations import (
     locator_json,
     timed_fragment_offset,
 )
-from nexus.services.resource_items.items import preview_text
+from nexus.services.resource_items.items import preview_texts
 
 _ITEM_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
     "Highlight": "Highlight",
@@ -89,6 +89,7 @@ def build_markers(
                 preview=embed.display.description or None,
             )
         )
+    placed: list[tuple[ReaderEvidenceRootOut, dict[str, object] | None, float]] = []
     for root in roots:
         if not isinstance(root.resolution, ReaderEvidenceResolvedOut):
             continue
@@ -96,13 +97,24 @@ def build_markers(
         position = fraction(locator)
         if position is None:
             continue
+        placed.append((root, locator, position))
+    previews = iter(
+        preview_texts(
+            [
+                root.content.item
+                for root, _, _ in placed
+                if not isinstance(root.content, ReaderEvidenceSourceReferenceOut)
+            ]
+        )
+    )
+    for root, locator, position in placed:
         content = root.content
         if isinstance(content, ReaderEvidenceSourceReferenceOut):
             label = content.label
             preview = content.excerpt.text
         else:
             label = content.item.label
-            preview = preview_text(content.item)
+            preview = next(previews)
         kind: ReaderDocumentMapMarkerKind
         if isinstance(content, ReaderEvidenceHighlightOut):
             kind = "Highlight"

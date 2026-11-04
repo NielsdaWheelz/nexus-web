@@ -1,12 +1,13 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { Plus } from "lucide-react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useCallback, useId, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import { catalogErrorFeedback } from "@/lib/catalog/copy";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogRead } from "@/lib/catalog/provider";
 import { catalogChats } from "@/lib/catalog/selectors";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
@@ -62,7 +63,7 @@ const NEW_CHAT: PanePrimaryAction = {
   kind: "link",
   id: "Conversations.New",
   label: "New chat",
-  icon: <Plus size={20} aria-hidden="true" />,
+  icon: <Icon.Add aria-hidden="true" />,
   href: "/conversations/new",
 };
 // The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
@@ -88,10 +89,7 @@ export default function ConversationsPaneBody() {
   const descriptor = useChatsIndexRead();
   const list = useServerValue({ ...descriptor, catalog, visit: VISIT });
   const indexItems = list.status === "ready" ? list.data.items : [];
-  const failure = list.status === "loading" ? null : list.error;
-  const readOccurrence = useFeedbackOccurrence(failure !== null, "Conversations.Index");
   const busy = indexReading(list);
-  const retry = () => { void list.refetch().catch(() => {}); };
   const nowMs = useChatAgeClock({ initialInstant: environment.currentInstant, items: indexItems, visible: usePaneIsVisible() });
   usePaneReturnReady(list.status !== "loading" || invalid);
   const captureScroll = usePaneScrollRetention(indexItems);
@@ -126,11 +124,7 @@ export default function ConversationsPaneBody() {
   const emptyTitle = filtering
     ? "no chats match this filter."
     : "no chats yet.";
-  const readFeedback = useIndexReadFeedback({
-    value: list, requestedKey: descriptor.key, active: usePaneIsActive(), unit: UNIT, waiting: list.status === "loading" && !invalid,
-    outcome: visible.length > 0 ? "results updated." : emptyTitle,
-    returnFocus: () => inputRef.current,
-  });
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: usePaneIsActive(), waiting: list.status === "loading" && !invalid, outcome: visible.length > 0 ? null : emptyTitle });
   const canReset = view.kind !== "Canonical";
   const headerMeta: PaneHeaderMeta = invalid
     ? { kind: "None" }
@@ -148,14 +142,11 @@ export default function ConversationsPaneBody() {
   const execute = useCallback<PaneRefreshExecute>(async () => {
     try {
       await refetch();
-      return { kind: "Complete", announcement: "Conversations refreshed" };
     } catch (error) {
-      if (isAbortError(error)) throw error;
-      return {
-        kind: "Failed",
-        announcement: "Conversations failed to refresh",
-      };
+      if (isAbortError(error) || !isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      // justify-ignore-error: the displayed read retains its failure and heals on demand.
     }
+    return null;
   }, [refetch]);
   usePaneChrome({
     query: invalid ? undefined : {
@@ -178,7 +169,7 @@ export default function ConversationsPaneBody() {
             placement: "Inline",
             id: queryStatusId,
             visible: false,
-            content: <PaneFilterRowsStatus announceQueryChanges={(list.status === "ready") && failure === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
+            content: <PaneFilterRowsStatus announceQueryChanges={list.status === "ready" && list.error === null} id={queryStatusId} status={filterRows.rowStatus} query={query} />,
           }}
           onReset={canReset ? reset : undefined}
         />
@@ -194,27 +185,12 @@ export default function ConversationsPaneBody() {
     return (
       <div>
         {readFeedback.announcement}
-        <FeedbackNotice
-          content={{ tone: "Danger", title: "Invalid chats view" }}
-          announcement="Assertive"
-          actions={[{ label: "Reset view", onClick: reset }]}
-        />
+        <Fact speak line={{ fact: "this view’s link has an unknown sort." }} verbs={[{ label: "reset view", commandKey: "reset view", run: reset }]} />
       </div>
     );
   }
-  const failed = failure;
-  const failureNotice = failed ? (
-    <FeedbackFailure scope="Local" occurrence={readOccurrence}
-      content={catalogErrorFeedback(failed) ?? {
-        tone: "Danger",
-        title: list.status === "ready" ? "couldn’t refresh chats" : "couldn’t load chats",
-        requestId: failed.requestId,
-      }}
-      announcement={list.status === "ready" ? "None" : "Polite"}
-      actions={[{ label: "try again", onClick: retry, busy }]}
-      returnFocus={() => inputRef.current}
-    />
-  ) : undefined;
+  // a cold read's failure stands where the list would; a failed refresh over shown rows says nothing
+  const saved = list.status === "failed" ? catalogLine(list.error) : null;
   return (
     <div>
       {readFeedback.announcement}
@@ -225,28 +201,13 @@ export default function ConversationsPaneBody() {
         ariaLabel="Conversations"
         anchorKey={query.trim()}
         collectionBusy={busy}
-        notice={list.status === "ready" ? failureNotice : null}
-        error={list.status === "ready" ? undefined : failureNotice}
-        empty={
-          <FeedbackNotice
-            content={{
-              tone: "Neutral",
-              title: emptyTitle,
-            }}
-            announcement="None"
-            actions={
-              filtering
-                ? undefined
-                : [
-                    {
-                      label: "New chat",
-                      href: "/conversations/new",
-                      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/conversations/new" } }),
-                    },
-                  ]
-            }
-          />
-        }
+        error={list.status !== "failed" ? undefined : saved !== null ? <Fact line={saved} />
+          : <Failed error={list.error} noun="chats" retry={{ run: () => void list.refetch(), busy: list.retrying }} />}
+        empty={<Fact line={{ fact: emptyTitle }} verbs={filtering ? undefined : [{
+          label: "new chat",
+          href: "/conversations/new",
+          onActivate: event => activateTargetLink({ event, runtime, target: { href: "/conversations/new" } }),
+        }]} />}
       />
     </div>
   );

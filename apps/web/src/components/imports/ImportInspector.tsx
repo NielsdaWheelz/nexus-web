@@ -1,18 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, FeedbackState, FeedbackStatus } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import MetadataResearchActions, {
   MetadataReviewButton,
 } from "@/components/media/MetadataResearchActions";
 import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Button from "@/components/ui/Button";
-import { removeUploadSession } from "@/lib/imports/ingest";
+import { useImportCommands } from "@/lib/imports/commands";
+import { useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import Pill from "@/components/ui/Pill";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import type { ApiError } from "@/lib/api/client";
+import { type ApiError } from "@/lib/api/client";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
@@ -28,10 +29,10 @@ import {
   MATCHED_ANNOUNCEMENT,
   MATCHED_LABEL,
   UNAVAILABLE_LINE,
+  UPLOAD_REJECTED_LABEL,
   consequenceLine,
   eventLine,
   importFailureCopy,
-  loadFailure,
   matchLine,
   momentText,
   obligationStatusLine,
@@ -164,23 +165,11 @@ export default function ImportInspector({
   // A direct match admits the initial history; later observations never reopen it.
   const [historyOpen, setHistoryOpen] = useState(matched !== null);
   const historySummary = useRef<HTMLElement>(null);
-  const readOccurrence = useFeedbackOccurrence(detail.status !== "loading" && detail.error !== null, importRef);
-  if (detail.status === "loading") {
-    return (
-      <PaneLoadingState />
-    );
-  }
-  if (gone(detail.error)) {
-    return <FeedbackState content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
-  }
+  const active = usePaneIsActive();
+  if (detail.status === "loading") return <Ruling />;
+  if (gone(detail.error)) return <Fact line={{ fact: UNAVAILABLE_LINE }} speak={active} />;
   if (detail.status === "failed") {
-    return (
-      <FeedbackFailure scope="Local" occurrence={readOccurrence}
-        content={loadFailure(detail.error)}
-        announcement="Assertive"
-        actions={[{ label: "try again", onClick: detail.refetch, busy: detail.retrying }]}
-      />
-    );
+    return <Failed error={detail.error} noun="import details" retry={{ run: () => { void detail.refetch().catch(() => {}); }, busy: detail.retrying }} />;
   }
   const { item, source_issues: issues, related_imports: related, pending_captures: captures, original_source: original } = detail.data;
   const mediaId = item.media_id;
@@ -193,24 +182,9 @@ export default function ImportInspector({
   const showOriginal = original !== null && !(sourceOffer?.kind === "BrowserCapture" && sourceOffer.source_url === original.source_url);
   return (
     <div className={styles.inspector}>
-      {detail.error === null ? null : (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={{
-            ...loadFailure(detail.error),
-            tone: "Warning",
-            title: "couldn’t refresh this import",
-            message: "showing the last update",
-          }}
-          announcement="Polite"
-          actions={[{ label: "try again", onClick: detail.refetch, busy: detail.refreshing }]}
-        />
-      )}
       <header className={styles.inspectorHeading}>
         <h2>{item.title}</h2>
-        <FeedbackStatus content={{
-          tone: item.classification === "NeedsAttention" ? "Warning" : "Neutral",
-          title: consequenceLine(item, at),
-        }} announcement="None" />
+        <p>{consequenceLine(item, at)}</p>
         <p className={styles.provenance}>
           <span>{KIND_LABEL[item.media_kind]}</span>
           {item.source_label !== null ? <span>{item.source_label}</span> : null}
@@ -232,7 +206,7 @@ export default function ImportInspector({
       {showOriginal && original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
       {captures.length > 0 ? <section className={styles.inspectorSection}>
         <h3>pending captures</h3>
-        {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} refresh={detail.refetch} />)}
+        {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} />)}
       </section> : null}
       {related.map((relatedImport) => {
         const { relation, item: sibling } = relatedImport;
@@ -246,10 +220,7 @@ export default function ImportInspector({
             <h3>related {relation}</h3>
             <p>{sibling.title}</p>
             {sourceOutcome !== null ? <p>{sourceOutcome}</p> : null}
-            <FeedbackStatus content={{
-              tone: sibling.classification === "NeedsAttention" ? "Warning" : "Neutral",
-              title: consequenceLine(sibling, at),
-            }} announcement="None" />
+            <p>{consequenceLine(sibling, at)}</p>
             <div className={styles.inspectorActions}>
               <ImportOpenAction item={sibling} />
               <ButtonLink href={target.href} data-workspace-rich-target="true"
@@ -264,13 +235,19 @@ export default function ImportInspector({
       {issues.length > 0 ? (
         <section className={styles.inspectorSection}>
           <h3>Source quality</h3>
-          <SourceIssuesNotice issues={issues} readable={item.can_read} />
+          <SourceIssuesNotice issues={issues} />
         </section>
       ) : null}
       {(["source", "search"] as const).map((key) => {
         const slot = item.obligations[key];
         if (slot === null) return null;
-        const recovery = recoveryLine(slot);
+        const detailLine = [
+          slot.recovery?.kind !== "BrowserCapture" && slot.classification === "NeedsAttention" && slot.failure_code !== null
+            ? [`${importFailureCopy(slot.failure_code).reason}.`, importFailureCopy(slot.failure_code).explanation].filter(part => part !== null).join(" ") : null,
+          recoveryLine(slot),
+          slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
+            ? `choose the original file: ${item.original_filename}` : null,
+        ].filter(Boolean).join(" ");
         let title = (key === "source" ? sourceFailureLine(item) : null)
           ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null);
         if (slot.recovery?.kind === "BrowserCapture") {
@@ -280,17 +257,8 @@ export default function ImportInspector({
         return (
           <section key={key} className={styles.inspectorSection}>
             <h3>{key === "source" ? "Source" : "Search"}</h3>
-            <FeedbackStatus content={{
-              tone: slot.classification === "NeedsAttention" ? "Warning" : "Neutral",
-              title,
-              message: [
-                slot.recovery?.kind !== "BrowserCapture" && slot.classification === "NeedsAttention" && slot.failure_code !== null
-                  ? `${importFailureCopy(slot.failure_code).reason}. ${importFailureCopy(slot.failure_code).explanation}` : null,
-                recovery,
-                slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
-                  ? `choose the original file: ${item.original_filename}` : null,
-              ].filter(Boolean).join(" ") || undefined,
-            }} announcement="None" />
+            <p>{title}</p>
+            {detailLine ? <p>{detailLine}</p> : null}
             {slot.recovery?.kind === "BrowserCapture" ? <p>when the article is visible, use nexus capture to finish this import.</p> : null}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
@@ -305,15 +273,12 @@ export default function ImportInspector({
               operation?.purpose ?? metadata.retry.purpose,
             )}
           </h3>
-          <FeedbackStatus content={{
-            tone: operation?.status === "failed" ? "Warning" : "Neutral",
-            title: operation === null
-              ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
-              : metadataOperationSummary(operation, at),
-            message: operation?.status === "failed" ? METADATA_FAILURE_COPY[operation.code]
-              : operation?.status === "no_findings" && operation.reviewed_at === null ? METADATA_REVIEW_HELP
-                : undefined,
-          }} announcement="None" />
+          <p>{operation === null
+            ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
+            : metadataOperationSummary(operation, at)}</p>
+          {operation?.status === "failed" ? <p>{METADATA_FAILURE_COPY[operation.code]}</p>
+            : operation?.status === "no_findings" && operation.reviewed_at === null ? <p>{METADATA_REVIEW_HELP}</p>
+            : null}
           <MetadataResearchResult operation={operation} />
           {earlierRuns > 0 ? (
             <p>
@@ -331,7 +296,7 @@ export default function ImportInspector({
           {metadata.retry.status === "blocked" &&
           !(metadata.retry.reason === "active" &&
             metadata.unfinished_operation !== null) ? (
-            <FeedbackStatus content={{ tone: "Neutral", title: metadataRetryBlockedCopy(metadata.retry) }} announcement="None" />
+            <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
           ) : null}
           <div className={styles.inspectorActions}>
             <MetadataResearchActions mediaId={mediaId} view={metadata} />
@@ -348,7 +313,7 @@ export default function ImportInspector({
       >
         <summary ref={historySummary}>History</summary>
         {historyOpen ? (
-          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} returnFocus={() => historySummary.current} />
+          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
         ) : null}
       </details>
       <details className={styles.diagnostics}>
@@ -379,31 +344,17 @@ export default function ImportInspector({
 }
 
 
-function PendingCapture({ capture, refresh }: {
+function PendingCapture({ capture }: {
   capture: import("@/lib/api/wire").Schema<"PendingCapture">;
-  refresh: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  let label = `verification failed · ${capture.failure_code}`;
-  if (capture.state === "AwaitingBytes") label = "awaiting upload confirmation";
-  if (capture.state === "CapabilityExpired") label = "upload expired · E_UPLOAD_CAPABILITY_EXPIRED";
-  const discard = async () => {
-    setBusy(true);
-    try {
-      await removeUploadSession(capture.session_id);
-      setFailed(false);
-      refresh();
-    } catch {
-      setFailed(true);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const commands = useImportCommands();
+  const busy = useBusyActionIds(`upload:${capture.session_id}`).has("RemoveUpload");
+  const label = capture.state === "AwaitingBytes" ? "waiting for the upload."
+    : capture.state === "CapabilityExpired" ? "upload expired."
+    : capture.failure_code === null ? UPLOAD_REJECTED_LABEL : importFailureCopy(capture.failure_code).reason;
   return <div>
     <p>{label} · <Moment value={capture.accepted_at} /></p>
-    <Button disabled={busy} onClick={() => void discard()}>discard capture</Button>
-    {failed ? <p>couldn’t discard capture. try again.</p> : null}
+    <Button aria-busy={busy || undefined} onClick={() => commands.discardCapture(capture.session_id)}>discard capture</Button>
   </div>;
 }
 
@@ -444,12 +395,10 @@ function Attempts({
   importRef,
   mediaId,
   matched,
-  returnFocus,
 }: {
   readonly importRef: string;
   readonly mediaId: string | null;
   readonly matched: ImportItem["matched_event"];
-  readonly returnFocus: () => HTMLElement | null;
 }) {
   const { observation, revision } = useImports();
   const history = useServerList<HistoryEntry>({
@@ -470,11 +419,8 @@ function Attempts({
     if (observation !== "" && (previous.restored || previous.value !== observation)) revalidate();
   }, [observation, revalidate]);
   const error = history.failure?.error ?? null;
-  const readOccurrence = useFeedbackOccurrence(error !== null, importRef);
   const entries = history.items;
-  const feedback = useCollectionReadFeedback({
-    list: history, unit: HISTORY_UNIT, waiting: false, outcome: null, returnFocus,
-  });
+  const feedback = useCollectionReadFeedback({ list: history, unit: HISTORY_UNIT, waiting: false, outcome: null });
   const outside =
     matched !== null && !entries.some((entry) => entry.id === matched.id);
   const event = (entry: HistoryEntry) => (
@@ -487,31 +433,13 @@ function Attempts({
   );
   let content: ReactNode;
   if (history.status === "loading") {
-    content = <PaneLoadingState />;
+    content = <Ruling />;
   } else if (gone(error)) {
-    content = <FeedbackStatus content={{ tone: "Neutral", title: UNAVAILABLE_LINE }} announcement="Polite" />;
+    content = <Fact line={{ fact: UNAVAILABLE_LINE }} />;
   } else if (history.status === "failed") {
-    content = <FeedbackFailure scope="Local" occurrence={readOccurrence}
-      content={loadFailure(error)}
-      announcement="Polite"
-      actions={[{ label: "try again", onClick: history.retry, busy: history.running !== null }]}
-      returnFocus={returnFocus}
-    />;
+    content = <Failed error={error} noun="events" retry={{ run: history.retry, busy: history.running !== null }} />;
   } else {
     content = <>
-      {error === null || history.failure?.op === "More" ? null : (
-        <FeedbackFailure scope="Local" occurrence={readOccurrence}
-          content={{
-            ...loadFailure(error),
-            tone: "Warning",
-            title: "couldn’t refresh history",
-            message: "showing the events already loaded",
-          }}
-          announcement="Polite"
-          actions={[{ label: "try again", onClick: history.retry, busy: history.running !== null }]}
-          returnFocus={returnFocus}
-        />
-      )}
       {outside ? (
         <section className={styles.attempt}>
           <h3 className={styles.attemptTitle}>Matched event</h3>
@@ -519,7 +447,7 @@ function Attempts({
         </section>
       ) : null}
       {history.complete && entries.length === 0 && !outside ? (
-        <FeedbackStatus content={{ tone: "Neutral", title: "no recorded events" }} announcement="None" />
+        <Fact line={{ fact: "no events recorded." }} />
       ) : null}
       {attempts(entries).map(([id, group]) => (
         <section key={id} className={styles.attempt}>

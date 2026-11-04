@@ -291,9 +291,9 @@ read before cursor binding. the action and focus remain present through both rea
 the renderer never infers the recovery from a pending flag. document and pdf
 load failures use the same retained-action rule; successful recovery returns focus
 to the reader only if the removed feedback owned it.
-an ordinary publication reread retains the readable document and projects its
-`refreshFailure` beside it. retry retains that failure until a successful read;
-it does not remount the reader or change the cursor's existing fences.
+an ordinary publication reread retains the readable document. its failure stays
+owned and unrendered; focus or reconnect can request the failed generation again.
+read repair does not remount the reader or change the cursor's existing fences.
 same-identity metadata refresh also preserves navigation feedback when position
 loading has failed. only explicit position recovery restarts that restoration;
 a new publication still rebinds source and cursor.
@@ -303,7 +303,19 @@ saves after 500 ms idle or 5 s after the first unsaved move, one request in
 flight, latest locator only, keepalive on hide. a save that fails while the page
 is leaving (or a keepalive one) is not an error and is not retried: the locator
 stays unsaved for the next movement or flush (the cursor is re-read next time).
-any other failed save shows *progress not synced · retry*.
+a failed save gets the existing single resend before its failure is presented.
+the host maps a settled refusal or uncertain outcome to its truthful line and
+transport remedy. a save failure remains until a save lands, a read settles it
+or the binding retires; movement alone does not clear it.
+
+acceptance and observation are separate in `ReaderProgressPort`. a native save
+may have a durable receipt while its resulting index cannot be read. the shelf
+translates that into `ProgressUnobserved`; the reader does not depend on the
+native bridge's error type. known acceptance never triggers another send. it
+retires only the submitted locator, preserving later genuine movement, and
+requires a read before further writes. the prior actual view remains available;
+no optimistic `ProgressView` is invented. the shelf's load must actively obtain
+an index covering the retained receipt before claiming a current position.
 
 **other devices.** focus, visibility, `pageshow`, `online` and pane activation
 revalidate. a newer revision adopts silently only when the reader was away and
@@ -533,7 +545,7 @@ writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
 
-pdf navigation exposes direct minus, scale/fit-width reset and plus controls.
+pdf navigation exposes direct zoom out, scale/fit-width reset and zoom in controls.
 `Reader.setZoom` and its surface capability accept `number | null`: numbers
 use the existing bounds, null selects responsive `page-width` fitting. chosen
 mode participates in equality and restore even when fixed and fitted scales
@@ -543,18 +555,17 @@ before that movement may restore the previously saved mode.
 
 ## feedback and capability
 
-reader feedback uses the provider-free shared `FeedbackStatus`, `FeedbackNotice`,
-`FeedbackState` and `FieldFeedback` primitives. reader wrappers map their existing
-ink, accent and surface tokens locally; portaled details use the application theme.
-the hosted pane supplies announcement permission; inactive panes are silent. public
-and shelf hosts supply their own recovery focus targets and geometry provider.
+reader feedback shares `Ruling`, `Fact`, `Failed`, `Field` and the session's
+slips. cold objects rule until ready or a settled read failure; shown content
+survives a failed refresh without a new failure row. inactive panes do not
+speak. public and shelf hosts supply their stage, recovery focus and geometry.
 
-one operation-aware navigation notice lives in the measured feedback stack,
-independently of progress capability. it is a warning with one factual title and
-an explicit close control; it has no timer or retained retry command. dismissal
-preserves mode, held origin, inspection, viewport and cursor. progress, conflict
-and document recovery keep their independent actions. public shares use this same
-notice and never attribute a later navigation failure to the shared highlight.
+an operation-aware navigation miss raises a plain slip, independently of
+progress capability. a new attempt or owner retirement retracts it. dismissal
+preserves mode, held origin, inspection, viewport and cursor. durable position,
+conflict and document-recovery facts retain their status-lane actions; that lane
+re-anchors the reader when its height changes. public shares use the same
+navigation line and never attribute a later miss to the shared highlight.
 
 readability, document-local find and indexed search/ai availability are separate.
 the reader body does not warn about indexing beside local find. the media inspector's
@@ -705,10 +716,13 @@ the existing permission fence.
 
 filter identity uses the document-map count keys: `highlights`, `citations`,
 `links`, `machine_links`, in that order. `evidence/model.ts` owns the typed labels
-`highlights`, `citations`, `links`, `librarian links`; controls read each count
-directly by its key. hidden filters, exact-fact reveals and marker classification
-share those keys; presentation labels never determine membership. each filter is
-a shared native `ChoiceField` checkbox named by its label alone. its count
+`highlights`, `citations`, `links`, `librarian links`. the first three draw
+`Icon.Highlight`, `Icon.SourceReference` and `Icon.Link`; librarian links has no
+sign and keeps its visible word. controls read each count directly by its key.
+hidden filters, exact-fact reveals and marker classification share those keys;
+presentation labels and glyphs never determine membership. signed filters are
+`ChoiceField` facets named by their visually hidden labels; librarian links is an
+inline checkbox named by its visible label. its count
 describes the current view; an exact count, zero included, shows as an aria-hidden
 numeral and is described separately (`1 item`, `{n} items`). zero never disables
 a filter.
@@ -810,11 +824,11 @@ give their rail position and order.
   tokens on `.frame[data-theme]` in `documentReader.module.css`. pdf pages keep
   their source colours; the theme paints the frame around them.
 - **view menu.** for every readable item, pdfs included, the view section opens
-  with the `Reader theme` [menu choice](overlays.md#surfaces), "Light" (`Sun`) or
-  "Dark" (`Moon`), which sets the profile theme absolutely; without `editable` it
+  with the `Reader theme` [menu choice](overlays.md#surfaces), the words "Light" or
+  "Dark", which sets the profile theme absolutely; without `editable` it
   is disabled with "requires a connection". an unreadable item has no theme row.
   the "Reader settings" link to `/settings/reader` follows, carrying that route's
-  icon (`ALargeSmall`), the destination's one glyph.
+  sign (`ReaderSettings`), the destination's one glyph.
 
 ## verification
 

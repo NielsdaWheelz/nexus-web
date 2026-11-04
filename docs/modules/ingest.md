@@ -113,6 +113,26 @@ uploads and captures (`Data{data}`; the web under `/api`, the extension under `/
 
 the extension (Firefox ≥ 153, manifest v2) is one build of three bundles (`bun run build:extension` -> `apps/extension/dist`: the popup page, the persistent background page, the injected content script), pinned to `NEXUS_EXTENSION_NEXUS_ORIGIN` and `NEXUS_EXTENSION_STORAGE_ORIGIN` (bare http(s) origins, also its optional host permissions). sign-in is `identity.launchWebAuthFlow` against `/extension/connect/start?redirect_uri&state`, which answers `#token=…` or `#error=session_failed&request_id=…` at the one redirect origin `NEXUS_EXTENSION_REDIRECT_ORIGINS` names; a command that needs an origin waits for Firefox's grant (`permissions.onAdded`) before its first network call.
 
+canonical `E_INTERNAL`, `E_UNKNOWN` and `E_INVALID_RESPONSE`, and local
+`E_CAPTURE_DEFECT` and `E_CAPTURE_CONTENT`, stop the persistent capture host.
+its first defect remains visible across popup reopen and blocks new commands.
+admitted work still settles; its frozen submission, bytes and uncertainty remain
+owned behind the stopped presentation. original codes and request ids remain
+diagnostic data. restarting the background, extension or browser clears this
+state and loses its memory-only draft and bytes; the durable credential remains
+unless an authoritative response invalidates it. restarting never replays work.
+
+extension revocation retains the exact credential until its accepted response or
+a nondefect 401 settles it. an unanswered revoke stays unknown through a later refusal;
+retaining a local credential does not establish remote sign-in. each classified
+failed retry advances the existing held fact’s speech attempt once. status reads
+do not repeat it, and retired credentials cannot settle a replacement.
+
+url capture records acceptance before reading current media or placement details.
+a later read failure retains the saved fact; its retry observes those details
+without another submission. document and command fences reject retired results;
+an absent API account binding makes no account-identity assertion.
+
 the article packet is one utf-8 json object in a fixed key order (`url, base_url, title, content_html, source_html, byline, excerpt, site_name, published_time`), at most 4 MiB, `content_html` within the web-article limit, `source_html` at most 64 KiB; `decode_article_packet` is its one decoder. the live add/share owner retains the session id, generation, frozen confirmation and byte-upload fact in memory. endpoint refusals map onto `UploadSessionOutcome`; a failed PUT requires upload again, an unknown confirmation retries its exact frozen command, and a known guard conflict permits reviewed confirmation against the same staged bytes. expiry or owner loss requires file reselection/recapture. no browser-persisted command state or server reconfiguration endpoint exists.
 
 the web carries the returned `source_attempt_id` in an accepted url's media route. it resolves that acceptance before mounting a reader, then replaces the route with the settled canonical media. identity settles when the latest source is terminal or its exact job is dead: no admitted execution can still move it. this says nothing about content usability. explicit repair, retry or refresh can reopen identity work. waiting and failed reads retain a route to Imports. post-save placement resolves current settled identities, including stopped work; an active source's view-import action opens the in-progress list rather than selecting a provisional media.

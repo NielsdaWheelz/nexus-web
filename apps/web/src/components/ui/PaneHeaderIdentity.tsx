@@ -48,15 +48,7 @@ export default function PaneHeaderIdentity({
   } else {
     const { resource } = model;
     pending = resource.status === "Pending";
-    if (resource.status !== "Ready") {
-      const text =
-        resource.status === "Pending"
-          ? resource.accessibleLabel
-          : resource.status === "Unavailable"
-            ? "Unavailable"
-            : "Failed to load";
-      support = <span className={styles.supportText}>{text}</span>;
-    } else if (resource.creditGroups.length > 0) {
+    if (resource.status === "Ready" && resource.creditGroups.length > 0) {
       support = (
         <Credits
           groups={resource.creditGroups}

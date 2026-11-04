@@ -21,6 +21,10 @@ export function retireAuthoredAccount(accountId: string): void {
   window.dispatchEvent(new Event("nexus:authored-retired"));
 }
 const accounts = new Map<string, { promise: Promise<AuthoredStore>; users: number; closing: Promise<void> | null }>();
+const stoppedAccounts = new Set<string>();
+/** Whether the account's store in this document has stopped: nothing it holds can commit until
+ * nexus restarts. Read it beside the `sync_status` change that announces the stop. */
+export const authoredStoreStopped = (accountId: string) => stoppedAccounts.has(accountId);
 export async function openAuthoredStore(accountId: string): Promise<AuthoredStore> {
   if (retiredAccounts.has(accountId)) throw new Error("authored account has been retired on this device");
   let owner = accounts.get(accountId);
@@ -52,6 +56,7 @@ function observeSyncUpdate(status: SyncStatus) { if (status === "update_required
 let shellObserved = false;
 async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
+  stoppedAccounts.delete(accountId);
   if (!navigator.storage?.persist || !await navigator.storage.persist()) throw new AuthoredSetupError("Persistence");
   await prepareShell();
   if (!shellObserved) { shellObserved = true; observeShellUpdate(observeShellWaiting); }
@@ -74,6 +79,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
   function failPort(message: string) {
     terminalFailure = Object.assign(new Error(message), { code: "E_AUTHORED_WORKER_STOPPED" });
+    stoppedAccounts.add(accountId);
     detail = terminalFailure.message; status = "local_error";
     for (const listener of statuses) listener(status, detail, failure);
     for (const pending of waiting.values()) pending.reject(terminalFailure);

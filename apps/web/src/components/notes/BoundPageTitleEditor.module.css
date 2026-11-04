@@ -1,0 +1,5 @@
+/* a title is content, not a control: it takes the content tokens in place of the field's size. */
+.title {
+  font-size: var(--content-font-size, var(--text-base));
+  line-height: var(--content-line-height, var(--leading-normal));
+}

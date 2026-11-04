@@ -7,7 +7,7 @@
  * settled line's menu as `children`, since only the workspace has resource actions.
  */
 import { useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import type { IntakeLine } from "@/lib/imports/intake";
@@ -56,7 +56,7 @@ export default function ImportLine({ line, view, tabbable, onVerb, onDismiss, ch
             onClick={() => onVerb(verb)}>{verb.label}</Button>}
       {children}
       {view.dismiss === null ? null
-        : <Button iconOnly icon={<X size={16} aria-hidden="true" />} tabIndex={tabIndex} className={styles.dismiss}
+        : <Button iconOnly icon={<Icon.Dismiss size={16} aria-hidden="true" />} tabIndex={tabIndex} className={styles.dismiss}
           aria-label={`${view.dismiss.toLowerCase()} ${view.one.text}`} onClick={onDismiss} />}
     </div>
     {view.rule === null ? null

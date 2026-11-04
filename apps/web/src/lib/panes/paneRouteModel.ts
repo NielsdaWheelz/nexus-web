@@ -1,28 +1,7 @@
 // The pane router: href -> pane kind. One table of routes, a few trait sets,
 // and one resolver that derives every identity (routeKey, resource, mount key).
 // Isomorphic: the server bootstrap and the client resolve alike.
-import {
-  ALargeSmall,
-  ChartColumn,
-  Compass,
-  Download,
-  FileText,
-  Globe,
-  Keyboard,
-  Library,
-  Link2,
-  ListMusic,
-  ListTodo,
-  Map,
-  MessageSquare,
-  Mic,
-  Palette,
-  Search,
-  Settings,
-  Sparkles,
-  UserCog,
-  type LucideIcon,
-} from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import type { Schema } from "@/lib/api/wire";
 import { conversationEndpoint } from "@/lib/chat/view";
@@ -43,39 +22,39 @@ import type { RecentValue } from "@/lib/recent/model";
 
 // path, default label, icon. The first match wins.
 const ROUTES = {
-  downloads: ["downloads", "Downloads", Download],
-  lectern: ["lectern", "Lectern", ListMusic],
-  libraries: ["libraries", "Libraries", Library],
+  downloads: ["downloads", "Downloads", Icon.Download],
+  lectern: ["lectern", "Lectern", Icon.Lectern],
+  libraries: ["libraries", "Libraries", Icon.Library],
   library: ["libraries/:id", "Library", resourceIconForScheme("library")],
-  browse: ["browse", "Browse", Compass],
-  browsePreview: ["browse/preview", "Preview", Compass],
-  media: ["media/:id", "Media", resourceIconForScheme("media")],
-  xCapture: ["x/captures/:id", "Post", FileText],
-  conversations: ["conversations", "Chats", MessageSquare],
-  conversationNew: ["conversations/new", "New chat", MessageSquare],
+  browse: ["browse", "Browse", Icon.Browse],
+  browsePreview: ["browse/preview", "Preview", Icon.Browse],
+  media: ["media/:id", "Source", resourceIconForScheme("media")],
+  xCapture: ["x/captures/:id", "Post", Icon.WebText],
+  conversations: ["conversations", "Chats", Icon.Chat],
+  conversationNew: ["conversations/new", "New chat", Icon.NewChat],
   conversation: ["conversations/:id", "Chat", resourceIconForScheme("conversation")],
-  podcasts: ["podcasts", "Podcasts", Mic],
+  podcasts: ["podcasts", "Podcasts", Icon.Podcast],
   podcastDetail: ["podcasts/:podcastId", "Podcast", resourceIconForScheme("podcast")],
-  search: ["search", "Search", Search],
+  search: ["search", "Search", Icon.Search],
   author: ["authors/:handle", "Author", resourceIconForScheme("contributor")],
-  notes: ["notes", "Notes", FileText],
-  pageNew: ["pages/new", "New page", FileText],
+  notes: ["notes", "Notes", Icon.Note],
+  pageNew: ["pages/new", "New page", Icon.Page],
   page: ["pages/:pageId", "Page", resourceIconForScheme("page")],
   dailyDate: ["daily/:localDate", "Daily Page", resourceIconForScheme("page")],
   highlight: ["highlights/:id", "Highlight", resourceIconForScheme("highlight")],
   note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
-  imports: ["imports", "Imports", ListTodo],
-  stats: ["stats", "Stats", ChartColumn],
-  settings: ["settings", "Settings", Settings],
-  settingsAccount: ["settings/account", "Account", UserCog],
-  settingsReader: ["settings/reader", "Reader settings", ALargeSmall],
-  settingsAppearance: ["settings/appearance", "Appearance", Palette],
-  settingsIdentities: ["settings/identities", "Linked identities", Link2],
-  settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Keyboard],
-  atlas: ["atlas", "The Atlas", Map],
-  oracle: ["oracle", "Oracle", Sparkles],
+  imports: ["imports", "Imports", Icon.Upload],
+  stats: ["stats", "Stats", Icon.Stats],
+  settings: ["settings", "Settings", Icon.Settings],
+  settingsAccount: ["settings/account", "Account", Icon.Account],
+  settingsReader: ["settings/reader", "Reader settings", Icon.ReaderSettings],
+  settingsAppearance: ["settings/appearance", "Appearance", Icon.Appearance],
+  settingsIdentities: ["settings/identities", "Linked identities", Icon.Link],
+  settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Icon.Keyboard],
+  atlas: ["atlas", "The Atlas", Icon.Atlas],
+  oracle: ["oracle", "Oracle", Icon.Oracle],
   oracleReading: ["oracle/:readingId", "Reading", resourceIconForScheme("oracle_reading")],
-} as const satisfies Record<string, readonly [string, string, LucideIcon]>;
+} as const satisfies Record<string, readonly [string, string, Icon.Glyph]>;
 
 export type PaneRouteId = keyof typeof ROUTES;
 type Traits<T> = Partial<Record<PaneRouteId, T>>;
@@ -120,11 +99,8 @@ const SECTION: Traits<DestinationId> = {
   page: "notes",
   dailyDate: "notes",
 };
-// Resource support lines show this until the body publishes its metadata.
-const PENDING_LABEL: Traits<string> = {
-  browsePreview: "Loading preview…",
-  media: "Loading media…",
-};
+// These routes publish resource credits once their bodies have read them.
+const RESOURCE_HEADER: ReadonlySet<PaneRouteId> = new Set(["browsePreview", "media"]);
 export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
 const RETURN_KIND: Traits<PaneReturnKind> = {
   media: "Reader",
@@ -151,7 +127,7 @@ export type PaneRouteHeaderContract =
       readonly context: "Destination";
       readonly destinationId: DestinationId;
     }
-  | { readonly kind: "Resource"; readonly pendingLabel: string };
+  | { readonly kind: "Resource" };
 export interface PaneWidthContract {
   maxWidthPx: number;
   allowsIntrinsicPrimaryWidth: boolean;
@@ -166,7 +142,7 @@ export type PaneRouteShareIdentity = Extract<ShareTarget, { kind: "Route" }>;
 interface PaneRouteTraits {
   defaultLabel: string;
   labelMode: "static" | "dynamic";
-  icon: LucideIcon;
+  icon: Icon.Glyph;
   section: DestinationId | null;
   header: PaneRouteHeaderContract;
   returnKind: PaneReturnKind;
@@ -196,7 +172,6 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const [path, defaultLabel, icon] = ROUTES[id];
   const pattern = path.split("/");
   const section = id === "downloads" || id === "xCapture" || id === "highlight" ? null : SECTION[id] ?? (pattern[0] as DestinationId);
-  const pendingLabel = PENDING_LABEL[id];
   const returnKind = RETURN_KIND[id] ?? "ShellScroll";
   const traits: PaneRouteTraits = {
     defaultLabel,
@@ -206,8 +181,8 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
         : "static",
     icon,
     section,
-    header: pendingLabel
-      ? { kind: "Resource", pendingLabel }
+    header: RESOURCE_HEADER.has(id)
+      ? { kind: "Resource" }
       : pattern.length === 1 || id === "xCapture" || id === "highlight"
         ? { kind: "Section", context: "None" }
         : { kind: "Section", context: "Destination", destinationId: section! },
@@ -231,7 +206,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
 const UNSUPPORTED: PaneRouteTraits = {
   defaultLabel: "Unavailable destination",
   labelMode: "static",
-  icon: Globe,
+  icon: Icon.Warning,
   section: null,
   // A pane on a path no route renders still has its header, so Back works.
   header: { kind: "Section", context: "None" },
@@ -307,13 +282,10 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     // A reading id must be a resource ref, so retired literal paths stay
     // unsupported.
     if (id === "oracleReading" && !locator) continue;
-    let viewSearch = search;
-    if (id === "conversation") {
-      const query = new URLSearchParams(search);
-      query.delete("leaf");
-      query.delete("loc");
-      viewSearch = query.size ? `?${query}` : "";
-    }
+    // `via` names the link a bullet opened the route through: an arrival on every route, never a view.
+    const query = new URLSearchParams(search);
+    for (const key of id === "conversation" ? ["via", "leaf", "loc"] : ["via"]) query.delete(key);
+    const viewSearch = query.size ? `?${query}` : "";
     const routeKey = `${id}:${pathname}${viewSearch}`;
     const resourceKey = paneResourceLocatorKey(locator);
     const titleLocator: PanePresentationLocator | null =
@@ -348,7 +320,7 @@ export function sectionDestinationIdForHref(
   return resolvePaneRouteModel(href).section;
 }
 
-export function getPaneRouteIcon(href: string): LucideIcon {
+export function getPaneRouteIcon(href: string): Icon.Glyph {
   return resolvePaneRouteModel(href).icon;
 }
 
@@ -359,7 +331,7 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   const arrival = route.id === "media" || route.id === "xCapture"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post"]
     : route.id === "conversation" ? ["message", "loc"] : [];
-  for (const key of arrival) query.delete(key);
+  for (const key of [...arrival, "via"]) query.delete(key);
   query.sort();
   return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
 }

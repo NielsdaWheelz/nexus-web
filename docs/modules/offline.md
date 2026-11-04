@@ -147,6 +147,16 @@ index or document. mutations run on io and receipt follows durable intent/state,
 not completed network transfer; push precedes its causal receipt. account/document
 retirement clears subscriptions, cached indexes and causal waits.
 
+`localMutation` distinguishes operation refusal from observation after sending.
+`LocalMutationObservationError` carries a receipt for a failed index read or
+retirement after acceptance; a null receipt means retirement before the sent
+call's reply. a non-null receipt proves the durable operation succeeded even
+when the new index is unavailable. consumers must not say it failed or resend
+it. the index's own read failure keeps its usual home, silent over shown data.
+`readLocalContent(receipt)` actively obtains an index covering that receipt;
+it never repeats the mutation. the shelf translates these outcomes through
+the reader progress port, preserving actual device/canonical/conflict state.
+
 commands are:
 
 - `enqueue {subject: Episode{media_id,title}|ReadingCopy{media_id,media_kind,title}}`;

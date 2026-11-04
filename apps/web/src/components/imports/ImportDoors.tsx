@@ -5,13 +5,14 @@ import { extractLinks } from "@/lib/extractLinks";
 import { ADMIT_LIMIT, useImportIntake, type Admission } from "@/lib/imports/intake";
 import { libraryNames } from "@/lib/libraries/views";
 import { requestNexusOpen } from "@/lib/nexus/events";
-import { getInteractionOwner } from "@/lib/ui/overlay";
+import { getInteractionOwner, OverlayContext, useInteractionOwner, type Layer } from "@/lib/ui/overlay";
 import ImportVeil from "./ImportVeil";
 
 /** Document ingress yields to the actual input or overlay owner before admitting. */
 export default function ImportDoors({ admit }: { readonly admit: (input: Admission) => void }) {
   const { into, disarmExcept, setFieldLine } = useImportIntake();
-  const [label, setLabel] = useState<string | null>(null);
+  const [veil, setVeil] = useState<{ readonly label: string; readonly owner: Layer | null } | null>(null);
+  const owner = useInteractionOwner();
   const internal = useRef(false);
   const latest = useRef({ into, admit });
   useLayoutEffect(() => { latest.current = { into, admit }; });
@@ -25,22 +26,22 @@ export default function ImportDoors({ admit }: { readonly admit: (input: Admissi
     }
     function hover(event: DragEvent) {
       const target = event.dataTransfer?.types.includes("Files") ? destination(event) : null;
-      if (target === null) return setLabel(null);
+      if (target === null) return setVeil(null);
       event.preventDefault();
       const { into } = latest.current;
-      setLabel(target === "Page" && into.length > 0 ? `drop into ${libraryNames(into)}` : "drop to import");
+      setVeil({ label: target === "Page" && into.length > 0 ? `drop into ${libraryNames(into)}` : "drop to import", owner: getInteractionOwner() });
     }
     function leave(event: DragEvent) {
       if (event.relatedTarget === null && (event.target === document.body || event.target === document.documentElement
-        || event.clientX <= 0 || event.clientY <= 0 || event.clientX >= innerWidth || event.clientY >= innerHeight)) setLabel(null);
+        || event.clientX <= 0 || event.clientY <= 0 || event.clientX >= innerWidth || event.clientY >= innerHeight)) setVeil(null);
     }
     function start(event: DragEvent) {
       if (!event.defaultPrevented) internal.current = true;
-      setLabel(null);
+      setVeil(null);
     }
     function end() {
       internal.current = false;
-      setLabel(null);
+      setVeil(null);
     }
     function drop(event: DragEvent) {
       const target = destination(event);
@@ -84,5 +85,6 @@ export default function ImportDoors({ admit }: { readonly admit: (input: Admissi
     };
   }, [disarmExcept, setFieldLine]);
 
-  return label === null ? null : <ImportVeil label={label} />;
+  if (veil !== null && veil.owner !== owner) { setVeil(null); return null; }
+  return veil === null ? null : <OverlayContext value={owner}><ImportVeil label={veil.label} /></OverlayContext>;
 }

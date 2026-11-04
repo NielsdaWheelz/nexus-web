@@ -13,7 +13,7 @@ import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import ContributorFilter, {
   useContributorFilterLabels,
 } from "@/components/contributors/ContributorFilter";
-import Button from "@/components/ui/Button";
+import { Fact } from "@/components/feedback/Fact";
 import ChoiceField from "@/components/ui/ChoiceField";
 import choices from "@/components/ui/ChoiceField.module.css";
 import RadioGroup from "@/components/ui/RadioGroup";
@@ -41,15 +41,16 @@ const SETTLE_MS = 200;
  * What to find: the box, the inline filter options and the applied chips. The
  * url owns the query; the box is a draft whose text and completed operators
  * become the query 200 ms after typing stops (the operator at the caret waits),
- * or at once on Enter. `commit` replaces the pane url.
+ * or at once on Enter. `commit` replaces the pane url. `show` is offered while results with
+ * related matches wait unadopted; it adopts them and reads nothing.
  */
 export default function SearchControls(props: {
   readonly query: SearchQuery;
   readonly commit: (next: SearchQuery) => void;
   readonly inputRef: RefObject<HTMLInputElement | null>;
-  readonly status: { readonly text: string; readonly detail?: string; readonly speech: string | null; readonly action?: { label: string; onClick: () => void; busy: boolean } };
+  readonly show: (() => void) | null;
 }) {
-  const { query, commit, inputRef, status } = props;
+  const { query, commit, inputRef, show } = props;
   const [draft, setDraft] = useState(query.text);
   const [composing, setComposing] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -253,18 +254,11 @@ export default function SearchControls(props: {
       status={{
         placement: "Details",
         id: statusId,
-        visible: true,
-        content: (
-          <>
-            <span
-              id={statusId}
-            >
-              <span>{status.text}</span>{status.detail ? ` ${status.detail}` : null}
-              <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{status.speech}</span>
-            </span>
-            {status.action ? <Button reserveIcon busyKey={query.text} onClick={status.action.onClick} aria-busy={status.action.busy || undefined}>{status.action.label}</Button> : null}
-          </>
-        ),
+        visible: show !== null,
+        content: <div id={statusId}>
+          {show === null ? null : <Fact line={{ fact: "results with related matches are ready." }}
+            verbs={[{ label: "show", commandKey: "show related matches", run: show }]} speak={paneActive} />}
+        </div>,
       }}
       onReset={
         draft || query.text || chips.length > 0 || query.view !== "resources"

@@ -134,12 +134,10 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       try {
         const result = await persistence.commit(input.frame as unknown as CommitFrame);
         if (result.kind === "committed") changed(true);
-        sync!.localFailure(false);
         sync!.facts.pending = (await persistence.pending()).length > 0;
         setTimeout(() => sync?.wake(), 0);
         return result;
-      } catch (error) { sync!.localFailure(true); throw error; }
-      finally { sync!.facts.saving = false; changed(); }
+      } finally { sync!.facts.saving = false; changed(); }
     }
     case "wake": sync!.facts.online = input.online !== false; sync!.wake(); hints?.start(); return null;
     case "close": ports.delete(port); port.close(); return null;

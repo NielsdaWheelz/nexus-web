@@ -1,19 +1,21 @@
 "use client";
 
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 
 // Opening a daily page resolves its permanent identity but writes nothing. Its
 // first title edit or item commits the latent page and that edit/item together.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import type { Intent } from "@nexus/authored/commands";
 import type { ResourceProjection } from "@nexus/authored/types";
 import { pageTitle } from "@nexus/authored/queries";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { FeedbackNotice, FeedbackState, FeedbackFailure, FeedbackBusy, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Fact } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useLocalOutlineRoot, type LocalOutlineHandle } from "@/components/notes/LocalOutline";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { shiftLocalDate } from "@/lib/localDate";
@@ -35,7 +37,7 @@ export default function PagePaneBody() {
   const accountId = useAuthoredAccountId();
   const page = usePaneParam("pageId");
   const date = usePaneParam("localDate");
-  if (writing === null) return <PaneLoadingState />;
+  if (writing === null) return <Ruling />;
   return <PageAccount key={accountId} writing={writing} pageId={page} localDate={date} />;
 }
 
@@ -85,16 +87,15 @@ function PageContent({ writing, createdId, pageId, localDate }: { writing: Writi
   usePaneReturnReady(ready || read.error !== null || (currentDaily !== null && currentDaily.error !== null));
   usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
   const dailyError = currentDaily?.error ?? null;
-  const dailyOccurrence = useFeedbackOccurrence(dailyError !== null, localDate);
   const error = dailyError ?? read.error;
-  const failure = <AuthoredReadFailure error={error} occurrence={dailyError !== null ? dailyOccurrence : read.occurrence}
-    pending={dailyError !== null ? dailyRetrying : read.pending}
-    retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
-    title="couldn’t open this page on this device"/>;
-  return <>{failure}{!ready || ref === null || id === null
-    ? <FeedbackBusy subject={localDate ?? pageId ?? createdId} pending={error === null}/>
-    : gone ? <FeedbackState content={{ tone: "Neutral", title: "this page is no longer available" }} announcement="Polite" />
-    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />}</>;
+  // A read that fails over a shown page says nothing: the page is the proof.
+  return !ready || ref === null || id === null
+    ? error === null ? <Ruling /> : <AuthoredReadFailure error={error}
+      pending={dailyError !== null ? dailyRetrying : read.pending}
+      retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
+      noun="this page"/>
+    : gone ? <Fact line={{ fact: "this page is no longer available." }} speak />
+    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />;
 }
 
 function PageEditing({rootRef, id, page, date, newPage, prelude}: {
@@ -105,17 +106,23 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const params = usePaneSearchParams();
   const { delivery, claim } = usePaneEntryDelivery();
   const [initialTitle, setInitialTitle] = useState(() => newPage ? params.get("title") ?? "" : "");
-  const [entryMessage, setEntryMessage] = useState<string | null>(null);
+  const { say } = useOutcome();
   const [filter, setFilter] = useState("");
-  const [entryError, setEntryError] = useState<unknown | null>(null);
+  const [entryDefect, setEntryDefect] = useState<{ error: unknown } | null>(null);
+  // A storage failure is the entry's outcome; a failed commit is the account's words at risk; the rest is a defect.
+  const entryFailed = useCallback((fact: string) => (error: unknown) => {
+    if (isAuthoredStorageFailure(error)) say({ fact });
+    else if (!(error instanceof LocalCommitError)) setEntryDefect({ error });
+  }, [say]);
   const outline = useRef<LocalOutlineHandle | null>(null);
   const rootField = useMemo(() => ({label: "page title", initialTitle, placeholder: pageTitle("", date)}), [date, initialTitle]);
-  const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField});
+  const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField, entering: params.get("via") ?? undefined});
+  usePaneReturnReady(root.ready || root.error !== null);
   const { inputRef, focusInput } = usePaneQueryInput();
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   const menuActions = useMemo<ActionDescriptor[]>(() => date === null ? [] : ([-1, 1] as const).map(days => ({
     kind: "link", id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
-    label: days < 0 ? "Open yesterday" : "Open tomorrow", icon: days < 0 ? <ArrowLeft size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />, href: `/daily/${shiftLocalDate(date, days)}`,
+    label: days < 0 ? "Open yesterday" : "Open tomorrow", icon: days < 0 ? <Icon.Left aria-hidden="true" /> : <Icon.Right aria-hidden="true" />, href: `/daily/${shiftLocalDate(date, days)}`,
   })), [date]);
   usePaneChrome({
     displayTitle, menuActions, editor: root.rootEditor ?? undefined,
@@ -139,11 +146,11 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
       const handle = outline.current;
       if (!handle) return;
       if (!claim(delivery)) return;
-      if (entry.pageId !== id) { setEntryMessage("this page is no longer available."); return; }
-      void handle.focusRoot(document => ({anchor: 1, head: document.doc.getText("title").length + 1})).catch(setEntryError);
+      if (entry.pageId !== id) { say({ fact: "this page is no longer available." }); return; }
+      void handle.focusRoot(document => ({anchor: 1, head: document.doc.getText("title").length + 1})).catch(entryFailed("couldn’t open this page’s title."));
     } else if (entry.kind === "AppendNote") {
       setFilter("");
-      if (outline.current && claim(delivery)) void outline.current.append().catch(setEntryError);
+      if (outline.current && claim(delivery)) void outline.current.append().catch(entryFailed("couldn’t add a note to this page."));
     } else if (entry.kind === "FocusNote") {
       setFilter("");
       const controller = new AbortController();
@@ -151,16 +158,14 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
       if (handle === null) return;
       void handle.focusNote(`note_block:${entry.noteBlockId}`, controller.signal).then(found => {
         if (controller.signal.aborted || !claim(delivery)) return;
-        if (!found) { setEntryMessage("this note is no longer on this page."); return; }
-      }).catch(error => { if (!controller.signal.aborted) setEntryError(error); });
+        if (!found) { say({ fact: "this note is no longer on this page." }); return; }
+      }).catch(error => { if (!controller.signal.aborted) entryFailed("couldn’t open that note in this page.")(error); });
       return () => controller.abort();
     }
-  }, [claim, delivery, id, newPage, root.rootReady]);
-  const entryOccurrence = useFeedbackOccurrence(entryError !== null, rootRef);
+  }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say]);
+  if (entryDefect !== null) throw entryDefect.error;
   return <div>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
-    {entryError !== null ? <FeedbackFailure scope="Local" occurrence={entryOccurrence} content={{ tone: "Warning", title: "couldn’t complete this page action" }} announcement="Polite" /> : null}
-    {entryMessage !== null ? <FeedbackNotice content={{ tone: "Neutral", title: entryMessage }} announcement="Polite" /> : null}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}
 

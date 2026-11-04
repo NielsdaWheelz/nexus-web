@@ -24,6 +24,11 @@
     color var(--duration-fast) var(--ease-glide);
 }
 
+/* The control is its own one hit target. Its icon, label and spinner come and go under a still
+   pointer, and a node removed from under the pointer takes the pointer's `mouseout` with it, so
+   the control would never hear the pointer leave. */
+.control > * { pointer-events: none; }
+
 .comfortable {
   min-inline-size: max(var(--size-xl), var(--control-min-size, var(--size-md)));
   min-block-size: max(var(--size-xl), var(--control-min-size, var(--size-md)));

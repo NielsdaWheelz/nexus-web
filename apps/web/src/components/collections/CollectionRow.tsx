@@ -6,7 +6,7 @@ import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import PodcastMenu from "@/components/podcasts/PodcastMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
-import MediaIdentity, { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
+import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -23,7 +23,9 @@ import { assertNever } from "@/lib/assertNever";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
+import { mediaSubjectKind } from "@/lib/media/mediaSummary";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resourceType, resourceTypeName } from "@/lib/resources/type";
 import styles from "./CollectionRow.module.css";
 
 function renderContext(context: CollectionContext): ReactNode {
@@ -59,8 +61,11 @@ export default function CollectionRow({
   const parsed = row.resourceRef === null ? null : parseResourceRef(row.resourceRef);
   // justify-defect: a nonnull collection ref identifies the displayed canonical resource.
   if (row.resourceRef !== null && parsed === null) throw new Error(`Invalid canonical collection resource ref: ${row.resourceRef}`);
-  const typeLabel = parsed === null ? null : resourceTypeLabel(parsed.scheme).toLowerCase();
   const media = row.resourceActions?.kind === "Media" ? row.resourceActions : null;
+  const type = media !== null ? resourceType("media", mediaSubjectKind(media.subject))
+    : parsed !== null ? resourceType(parsed.scheme, null)
+    : row.kind === "podcast" ? resourceType("podcast", null) : null;
+  const typeLabel = type === null ? null : resourceTypeName(type);
   const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
   const pane = usePaneRuntime();
   const paneId = pane?.paneId;
@@ -75,13 +80,13 @@ export default function CollectionRow({
     get afterRemoval() { return suppliedActionFocus?.afterRemoval ?? successFocus; },
   };
   useActionFocusRecovery(primaryControlRef, returnFocus);
-  const title = media !== null && parsed === null ? <MediaTitle subject={media.subject} /> : row.title.segments
+  const title = row.title.segments
     ? <EmphasisSegments segments={row.title.segments} emphasisClassName={styles.mark} /> : row.title.text;
   const primary = typeLabel !== null && row.primary.kind !== "static"
     ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;
   const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
-    ? "processing failed; open metadata for details and recovery"
-    : row.exceptionalStatus !== null ? "last episode check incomplete; open show details to check again"
+    ? "couldn’t process this. see its metadata."
+    : row.exceptionalStatus !== null ? "last episode check didn’t finish; check again from show details"
     : row.activity !== null ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
   const sections: readonly ContextActionSection[] = [
     { id: "Occurrence", actions: rowActionsAvailable ? (occurrenceActions ?? []) : [] },
@@ -132,8 +137,8 @@ export default function CollectionRow({
       "aria-posinset": listPosition ? listPosition.index + 1 : undefined,
       "aria-setsize": listPosition?.count,
       "data-collection-row-id": row.id, "data-collection-item-kind": row.kind }}
-    title={parsed === null ? title : <ResourceIndexTitle
-      scheme={parsed.scheme} hasArtwork={row.artwork !== undefined}
+    title={type === null ? title : <ResourceIndexTitle
+      type={type} hasArtwork={row.artwork !== undefined}
     >
       {row.primary.kind === "static" ? <span className={`sr-only ${styles.accessibleContext}`} dir="ltr">{typeLabel}: </span> : null}
       {title}

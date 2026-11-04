@@ -11,7 +11,7 @@
 
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
-import { transportVerbs, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
+import { verbsForTransport, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
 import { publishChange } from "@/lib/api/changes";
 import { admissionRefusal, apiFetch, isApiError, isRefusal, isSameSystemApiDefect, requestWithDeadline, type ApiError } from "@/lib/api/client";
@@ -906,7 +906,7 @@ export function ImportIntakeHost({ openPage, children }: { openPage: () => void;
         for (const line of lines) if (lines.length === 1 || line.stage.kind === "Unknown") intake.retry(line.id);
       } }];
       case "RetryWithout": return [{ label: verb.label, commandKey: `${key}:without`, run: () => intake.retryWithout(lines[0]!.id) }];
-      case "Reload": return transportVerbs("Update", { signIn: null });
+      case "Reload": return verbsForTransport("Update", { signIn: null });
       case "See": case "Arm": case "ChooseAgain": case "SignIn": return [see];
     }
   }
@@ -926,6 +926,7 @@ export function ImportIntakeHost({ openPage, children }: { openPage: () => void;
 
   return <CreationContext value={creation}>
     {children}
+    {destinations.holds}
     {state.held.map(batch => {
       const lines = state.lines.filter(line => line.batch === batch);
       const slip = batchSlip(lines)!;

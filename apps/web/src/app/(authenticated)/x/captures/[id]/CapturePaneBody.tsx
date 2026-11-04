@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import { useOutcome } from "@/components/feedback/Feedback";
 import { useRecent } from "@/lib/recent/store";
 import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -134,9 +135,12 @@ function CaptureReader({ id }: { readonly id: string }) {
     const result = await reader.inspect({ target: destination, signal: context.signal });
     return result.kind === "Cancelled" ? "Cancelled" : result.kind === "Unavailable" ? "Unavailable" : "Applied";
   } });
+  const { say } = useOutcome();
   arrivalRef.current = arrival;
+  // An arrival's failure is its command's outcome: one slip, retracted when it clears.
+  const arrivalFailure = arrival.failure?.title ?? null;
+  useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
   return <>
-    {arrival.failure ? <p role="status">{arrival.failure.title}</p> : null}
     <DocumentReaderView reader={reader} profile={profile} isMobile={mobile} playback={null}
       decorations={annotations.decorations} onSelection={annotations.onSelection} onMarks={annotations.onMarks}
       renderPostActions={unit => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null} />

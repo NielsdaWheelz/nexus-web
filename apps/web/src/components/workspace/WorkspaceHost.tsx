@@ -14,10 +14,13 @@ import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneCanvas from "@/components/workspace/WorkspacePaneCanvas";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { usePaneCanvas } from "@/components/workspace/usePaneCanvas";
-import { FeedbackState } from "@/components/feedback/Feedback";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import { StageAnchor } from "@/components/feedback/Slips";
 import { useStageWorkspace } from "@/components/feedback/stage";
-import { checkSession } from "@/lib/native/admission";
+import { RetainedActionFeedback } from "@/lib/actions/ResourceActionsProvider";
+import { admissionError } from "@/lib/api/client";
+import { checkSession, installedApp, remoteAdmission, remoteAttemptAllowed } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { IndexPaneEntry } from "@/lib/panes/indexPaneEntry";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -36,12 +39,16 @@ import { useWorkspacePresentations } from "@/lib/workspace/presentations";
 import {
   useLatestWorkspace,
   useWorkspaceStore,
+  WorkspaceSessionNotice,
   type WorkspaceSelection,
 } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
 
 /** cold bodies wait for presentation; admitted bodies retain their mounted work.
- * the existing body key owns replacement, and primitive props avoid unrelated renders. */
+ * the existing body key owns replacement, and primitive props avoid unrelated renders.
+ * a browser admits while unavailable, so the body's own read probes; a refusal names what
+ * admission waits on, and only an installed client can ask its shell to check again. a check
+ * still pending is nothing to show yet, so the body rules until admission decides. */
 const PaneContent = memo(function PaneContent(props: {
   readonly routeId: PaneRouteId | "unsupported";
   readonly pathname: string;
@@ -55,13 +62,15 @@ const PaneContent = memo(function PaneContent(props: {
   // capability. Other cold server panes still require credential admission.
   const catalog = ["libraries", "library", "podcasts", "podcastDetail", "lectern",
     "notes", "conversations", "media", "page", "conversation", "note"].includes(props.routeId);
-  const canAdmit = local || catalog || admission === "Ready";
+  const canAdmit = local || catalog || remoteAttemptAllowed();
   const [admitted, setAdmitted] = useState(props.isPresented && canAdmit);
   if (!admitted && props.isPresented && canAdmit) setAdmitted(true);
   if (!admitted && !props.isPresented) return null;
-  if (!admitted && !canAdmit) return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "this view needs a connection" }} announcement="Polite" actions={[{ label: "try again", onClick: checkSession }]} /></div>;
+  if (!admitted && !canAdmit) return admission === "Checking" ? <Ruling /> : <div className={styles.paneFailure}>
+    <Failed error={admissionError(remoteAdmission())} noun="this pane’s contents" retry={installedApp ? { run: checkSession } : undefined} />
+  </div>;
   if (props.routeId !== "unsupported") return <IndexPaneEntry routeId={props.routeId} params={runtime.pathParams} query={runtime.searchParams}>{renderPane(props.routeId)}</IndexPaneEntry>;
-  return <div className={styles.paneFailure}><FeedbackState content={{ tone: "Neutral", title: "nexus has no view for this address" }} announcement="Polite" /></div>;
+  return <div className={styles.paneFailure}><Fact line={{ fact: "nexus has no view for this address." }} speak /></div>;
 });
 
 /**
@@ -80,11 +89,15 @@ export default function WorkspaceHost() {
   const maximized = store.desktopMaximized && !isMobile;
   const panes = useMemo(
     () =>
-      state.panes.map((pane) => ({
-        pane,
-        route: resolvePaneRouteModel(pane.current_visit.href),
-        label: presentations.forVisit(pane.current_visit).title,
-      })),
+      state.panes.map((pane) => {
+        const presentation = presentations.forVisit(pane.current_visit);
+        return {
+          pane,
+          route: resolvePaneRouteModel(pane.current_visit.href),
+          label: presentation.title,
+          mediaKind: presentation.mediaKind,
+        };
+      }),
     [state.panes, presentations],
   );
   const active = panes.find(({ pane }) => pane.id === activeId)!;
@@ -252,10 +265,11 @@ export default function WorkspaceHost() {
         <WorkspacePaneStrip
           state={state}
           isMaximized={store.desktopMaximized}
-          items={panes.map(({ pane, label }) => ({
+          items={panes.map(({ pane, label, mediaKind }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
+            mediaKind,
             isActive: pane.id === activeId,
             isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
@@ -354,6 +368,8 @@ export default function WorkspaceHost() {
           <div className={styles.edgeFade} data-side="end" />
         ) : null}
         <StageAnchor kind="Root" />
+          <RetainedActionFeedback />
+          <WorkspaceSessionNotice />
       </div>
     </section>
   );

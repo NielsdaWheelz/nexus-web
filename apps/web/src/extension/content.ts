@@ -85,13 +85,13 @@ async function serve(request: ContentRequest): Promise<void> {
           : await download(request.url, request.limits);
   } catch (error) {
     if (aborter.signal.aborted) return;
-    const message = `Nexus could not read this page: ${error instanceof Error ? error.message : String(error)}`;
+    if (!(error instanceof CaptureFailureError)) console.error("capture page script failed:", error);
     reply = {
       kind: "failed",
       failure:
         error instanceof CaptureFailureError
           ? error.failure
-          : { code: "E_CAPTURE_CONTENT", message, requestId: null },
+          : { code: "E_CAPTURE_CONTENT", message: "nexus couldn’t read this page.", requestId: null, status: null, offline: false },
     };
   }
   // a document's blob is copied by the background on receipt
@@ -103,18 +103,18 @@ async function serve(request: ContentRequest): Promise<void> {
 
 function extract(request: Extract<ContentRequest, { kind: "extract" }>): ContentReply {
   if (location.href !== request.source_url)
-    return { kind: "unreadable", message: "The page changed. Capture it again." };
+    return { kind: "unreadable", message: "the page changed. capture it again." };
   const clone = document.cloneNode(true) as Document;
   const baseUri = document.baseURI;
   const xArticle = request.x_article ? extractXArticle(clone, request.source_url) : null;
   if (request.x_article && xArticle === null)
-    return { kind: "unreadable", message: "Open the article’s reading view, wait for it to load, then capture again. Nexus could not verify this article layout." };
+    return { kind: "unreadable", message: "open its reading view, then capture again." };
   const sourceHtml = sourceEvidence(clone, baseUri, xArticle?.sourceRoot ?? clone); // first: Readability mutates the clone
   const article = xArticle ?? extractArticle(clone);
   if (!article?.content) {
     return {
       kind: "unreadable",
-      message: "This page has no readable article.",
+      message: "this page has no readable article.",
     };
   }
   const body = new DOMParser().parseFromString(
@@ -124,11 +124,11 @@ function extract(request: Extract<ContentRequest, { kind: "extract" }>): Content
   reduce(body, baseUri);
   const text = collapse(body.textContent ?? "");
   if (text === "")
-    return { kind: "unreadable", message: "This page has no readable text." };
+    return { kind: "unreadable", message: "this page has no readable text." };
   if (utf8Length(body.innerHTML) > ARTICLE_CONTENT_MAX_BYTES) {
     return {
       kind: "unreadable",
-      message: "The article is too large to capture.",
+      message: "this article is too large to capture.",
     };
   }
   return {
@@ -313,11 +313,9 @@ async function download(
     });
   } catch (error) {
     if (aborter.signal.aborted) throw error;
-    const message =
-      "The link could not be downloaded. Check the connection and retry.";
     return {
       kind: "failed",
-      failure: { code: "E_CAPTURE_FETCH", message, requestId: null },
+      failure: { code: "E_CAPTURE_FETCH", message: "couldn’t download this link.", requestId: null, status: null, offline: false },
     };
   }
   return readDocument(response, limits);

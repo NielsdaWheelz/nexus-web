@@ -18,3 +18,17 @@ repair their history contract without an imports-specific router workaround.
 acceptance: browser back restores the preceding imports route/pane and its query,
 or the explicit product/browser history contract is documented and independently
 verified. retain a physical-device receipt and delete this ticket when resolved.
+
+## 2026-11-01: 390px headless chromium, reader connections
+
+the same failure from a second route. connections-scroll lab, `61562d112`, playwright chromium at
+390x844 with touch: open a book (generated stress epub, and standard ebooks' meditations), `all`
+connections, scroll, click a linked note row's `/notes/<id>` link. the note opens in the single
+mobile pane (`panes 0`, no `Go back in this pane` button), and after `page.goBack()` the page is
+still `/notes/<id>` 12s later in all 4 cells (two books, two speeds). no cell returned to the media,
+so the return case (connections-scroll a6) runs
+on desktop lanes only and the phone return is proved by hand. evidence: lab traces
+`a6-chromium390.json` and `chromium390-return-*-noback.png` from the red phase.
+
+reproduce without hardware: `./scripts/lab` driver at 390x844 chromium, open media, open a linked
+note from the connections list, `page.goBack()`; expect `/media/<id>` with the pane restored.

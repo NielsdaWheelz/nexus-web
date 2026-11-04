@@ -31,7 +31,6 @@ import { useOverlayContainer } from "@/lib/ui/overlay";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { suppressDragReleaseClick, TOUCH_DRAG_CLAIMED } from "@/lib/ui/dragGesture";
 import styles from "./SortableList.module.css";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { MeasuredIndexWindow } from "@/lib/collections/measuredIndexWindow";
 
 // The list owns truthful announcements, including the asynchronous acknowledgement.
@@ -513,7 +512,6 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
       }}
     >
       <GestureSurface rootRef={root} begin={begin} canActivate={canActivate}>
-        {indexWindow.plan.kind === "Measure" ? <PaneLoadingState /> : null}
         <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={busy || indexWindow.plan.kind === "Measure"} windowed={indexWindow.plan.kind !== "Intrinsic"} measuring={indexWindow.plan.kind === "Measure"}>
           {(indexWindow.plan.kind === "Measure" ? [{ id: indexWindow.plan.sampleId, index: 0, gapBeforePx: 0 }] : indexWindow.plan.slots).map(slot => {
             const item = items[slot.index];

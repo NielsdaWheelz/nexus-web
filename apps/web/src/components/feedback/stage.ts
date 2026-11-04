@@ -10,12 +10,13 @@
  * late row lifts nothing. Only a row's first showing replaces, and only the plain row directly
  * beneath it, once that row has stood there. Rows that land together stack. A line
  * is heard once: a region keeps what it carried, and the next room takes only what none has. */
-import { createContext, useContext, useLayoutEffect } from "react";
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { TRANSPORT_LINES, type Transport } from "@/lib/api/failure";
-import { updateRemedy } from "@/lib/native/admission";
+import { subscribeAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import type { TargetLinkActivationResult } from "@/lib/panes/targetLinkActivation";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
-import { onOverlayStack, subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
+import { OverlayContext, onOverlayStack, subscribeOverlayStack, topModal, type Layer } from "@/lib/ui/overlay";
 import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
 
 export type Address = { kind: "Pane"; paneId: string } | { kind: "Workspace" };
@@ -27,7 +28,9 @@ export type Verb = CommandVerb | LinkVerb;
 export type Verbs = readonly [Verb] | readonly [Verb, Verb];
 export type Weight = "Plain" | "Held" | "Risk";
 export type Row = {
-  key: object; address: Address; modal: Layer | null;
+  /** A held row's is its owner's `id`, so a new owner of that id takes the row over; a said
+   * row's is its own. */
+  key: object | string; address: Address; modal: Layer | null;
   weight: Weight; line: Line; verbs: Verbs | null;
   /** Keys speech. */
   attempt: number;
@@ -47,7 +50,9 @@ export type World = {
   single: boolean;
 };
 export type Retract = () => void;
-export type Shell = { signIn: Verb | null };
+export type Shell = { signIn: Verb | null; signInBusy?: boolean };
+/** A mounted holder of an id, where it renders now. */
+export type Owner = { address: Address };
 export type HoldKind = "Pointer" | "Focus" | "Press";
 export type Leaving = "Expired" | "Dismissed" | "Tucking";
 
@@ -61,14 +66,15 @@ export function anchorOf(row: Row, world: World): Anchor | null {
 
 const RELOAD: Verb = { label: "reload", commandKey: "Reload", run: () => window.location.reload() };
 
-/** A transport's verb. `retry` is the owner's; `Update` reloads only where reload can work. */
-export function transportVerbs(transport: Transport, { retry, signIn }: { retry?: Verb; signIn: Verb | null }): Verbs | null {
+/** A transport's verb. `retry` is the owner's; `Update` reloads only where reload can work, by
+ * `remedy`, the update remedy as it stands unless given. */
+export function verbsForTransport(transport: Transport, { retry, signIn, remedy = updateRemedy() }: { retry?: Verb; signIn: Verb | null; remedy?: UpdateRemedy }): Verbs | null {
   const kind = TRANSPORT_LINES[transport].verb;
   switch (kind) {
     case null: return null;
     case "Retry": return retry ? [retry] : null;
     case "SignIn": return signIn ? [signIn] : null;
-    case "Update": return updateRemedy() === "Reload" ? [RELOAD] : null;
+    case "Update": return remedy === "Reload" ? [RELOAD] : null;
   }
 }
 
@@ -77,6 +83,8 @@ const VERB_MS = 8000;
 const HELD_MS = 8000;
 const TYPING_PAUSE_MS = 1200;
 const TYPING_WAIT_MS = 8000;
+/** An owner of an id that mounts this soon after its last owner left takes the row as it stands. */
+const HANDOFF_MS = 100;
 
 type Clock = { remaining: number; running: { since: number; timer: ReturnType<typeof setTimeout> } | null };
 type Room = { id: number; anchor: Anchor; element: HTMLElement; holds: Set<HoldKind> };
@@ -141,6 +149,9 @@ export function createStage() {
   const unsaid: Record<keyof Speech, Set<string>> = { Polite: new Set(), Assertive: new Set() };
   let speaker: Room | null = null;
   let view: StageView = { rooms: [], typing: false, speech };
+  /** Mounted owners per held id, earliest first, and, once none is left, the last of them and the
+   * dismissal that waits out a handoff. */
+  const owners = new Map<string, { mounted: Owner[]; leaving: { owner: Owner; timer: ReturnType<typeof setTimeout> } | null }>();
 
   const roomOf = (anchor: Anchor) => rooms.findLast(room => sameAnchor(room.anchor, anchor)) ?? null;
   const renewClock = (slip: Slip) => {
@@ -247,7 +258,13 @@ export function createStage() {
     if (slip.row.tucked) conclude(slip);
     settle();
   }
-  const slipOf = (key: object) => slips.find(slip => slip.row.key === key);
+  const slipOf = (key: object | string) => slips.find(slip => slip.row.key === key);
+  /** No owner holds `id` any longer. */
+  const resolve = (id: string) => {
+    owners.delete(id);
+    const slip = slipOf(id);
+    if (slip) leave(slip, "Dismissed");
+  };
   const pause = () => {
     if (typing === null) return;
     clearTimeout(typing);
@@ -288,29 +305,65 @@ export function createStage() {
       settle();
       return () => { if (slips.includes(slip) && slip.row.attempt === attempt) leave(slip, "Dismissed"); };
     },
-    /** A mounted owner's row. Its key outlives re-renders, so tucking survives a new attempt. It
-     * belongs to the topmost modal at raise, unless `frame`, the modal the owner renders inside, is
-     * mounting in the same commit and does not yet stand on the stack. Turning to risk presents and
-     * speaks whatever the row had settled into. */
-    hold({ key, address, frame, risk, line, verbs, attempt }: Pick<Row, "key" | "address" | "line" | "verbs" | "attempt"> & { frame: Layer | null; risk: boolean }): void {
+    /** A mounted owner's row, keyed by its id, so tucking survives a new attempt and a new owner.
+     * It stands at its earliest mounted owner's address, so owners of one id in two panes never
+     * trade it. It belongs to the topmost modal at raise, unless `frame`, the modal the owner
+     * renders inside, is mounting in the same commit and does not yet stand on the stack. An owner
+     * that mounts with no other mounted places the row as a raise does, so a holder that moves
+     * into a dialog takes its row there. Turning to risk presents and speaks whatever the row had
+     * settled into. */
+    hold({ key, owner, frame, risk, line, verbs, attempt }: Pick<Row, "line" | "verbs" | "attempt"> & { key: string; owner: Owner; frame: Layer | null; risk: boolean }): void {
+      const earliest = owners.get(key)?.mounted[0];
+      const existing = slipOf(key);
+      const { address } = earliest ?? owner;
+      const modal = earliest && existing ? existing.row.modal : frame === null || onOverlayStack(frame) ? topModal() : frame;
       const weight = risk ? "Risk" : "Held";
-      const slip = slipOf(key) ?? raise({ key, address, modal: frame === null || onOverlayStack(frame) ? topModal() : frame, weight, line, verbs, attempt });
+      const slip = existing ?? raise({ key, address, modal, weight, line, verbs, attempt });
       const renewed = slip.row.attempt !== attempt || slip.row.weight !== weight;
       const atRisk = risk && slip.row.weight !== "Risk";
       if (atRisk && slip.row.tucked) land(slip);
-      slip.row = { ...slip.row, address, weight, line, verbs, attempt, tucked: slip.row.tucked && !atRisk };
+      slip.row = { ...slip.row, address, modal, weight, line, verbs, attempt, tucked: slip.row.tucked && !atRisk };
       if (renewed) renewClock(slip);
       if (atRisk) slip.spoken = null;
-      // Effect replay dismisses a mounted owner's key and holds it again; the owner stands.
+      // An owner that comes back while its row is still leaving takes it back.
       if (slip.leaving === "Dismissed" || atRisk) slip.leaving = null;
       settle();
     },
-    /** A close, or a mounted owner's resolution. */
-    dismiss(key: object): void {
+    /** A close. */
+    dismiss(key: object | string): void {
       const slip = slipOf(key);
       if (slip) leave(slip, "Dismissed");
     },
-    tuck(key: object): void {
+    /** A mounted owner of `id`. Its row passes to the next owner when the earliest leaves, keeping
+     * its modal, and resolves once its last owner leaves and no other mounts within the handoff,
+     * so a holder moving between parents, or to the pane its owner's store picks next, keeps its
+     * row, tuck and speech. An owner that turns to a new id resolves its old one at once. */
+    own(id: string, owner: Owner): Retract {
+      for (const [other, { leaving }] of owners)
+        if (other !== id && leaving?.owner === owner) {
+          clearTimeout(leaving.timer);
+          resolve(other);
+        }
+      const entry = owners.get(id) ?? { mounted: [], leaving: null };
+      owners.set(id, entry);
+      if (entry.leaving !== null) clearTimeout(entry.leaving.timer);
+      entry.leaving = null;
+      entry.mounted.push(owner);
+      return () => {
+        entry.mounted.splice(entry.mounted.indexOf(owner), 1);
+        const [next] = entry.mounted;
+        if (next !== undefined) {
+          const slip = slipOf(id);
+          if (slip && !sameAddress(slip.row.address, next.address)) {
+            slip.row = { ...slip.row, address: next.address };
+            settle();
+          }
+          return;
+        }
+        entry.leaving = { owner, timer: setTimeout(() => resolve(id), HANDOFF_MS) };
+      };
+    },
+    tuck(key: object | string): void {
       const slip = slipOf(key);
       if (slip) leave(slip, "Tucking");
     },
@@ -329,7 +382,7 @@ export function createStage() {
       settle();
     },
     /** The row's exit has played. */
-    gone(key: object): void {
+    gone(key: object | string): void {
       const slip = slipOf(key);
       if (!slip?.leaving) return;
       conclude(slip);
@@ -404,7 +457,7 @@ export function createStage() {
 export type Stage = ReturnType<typeof createStage>;
 
 export const StageContext = createContext<Stage | null>(null);
-export const ShellContext = createContext<Shell>({ signIn: null });
+export const ShellContext = createContext<Shell | null>(null);
 
 export function useStage(): Stage {
   const stage = useContext(StageContext);
@@ -416,4 +469,35 @@ export function useStage(): Stage {
 export function useStageWorkspace({ inView, active, single }: { inView: ReadonlySet<string>; active: string; single: boolean }): void {
   const stage = useStage();
   useLayoutEffect(() => stage.workspace({ inView, active, single }), [stage, inView, active, single]);
+}
+
+/** A transport consumer always belongs to an explicitly configured host. */
+export function useShell(): Shell {
+  const shell = useContext(ShellContext);
+  if (shell === null) throw new Error("feedback requires its host shell");
+  return shell;
+}
+
+/** Whether this region may speak now: a modal's while it is topmost; under none, the active pane's,
+ * or any region of a host without panes. In-flow feedback is storeless, so it may sit outside a stage. */
+export function useActiveRegion(): boolean {
+  const stage = useContext(StageContext);
+  const overlay = useContext(OverlayContext);
+  const paneId = usePaneRuntime()?.paneId ?? null;
+  const active = () => {
+    const modal = topModal();
+    return overlay ? overlay === modal : modal === null && (paneId === null || stage?.activePane() === paneId);
+  };
+  return useSyncExternalStore(stage?.subscribe ?? subscribeOverlayStack, active, active);
+}
+
+/** A transport's verbs, for a lane that builds a line itself: the owner's `retry`, the shell's
+ * sign-in, or reload where reload can work. Its owner renders again as the update remedy moves,
+ * and the function changes whenever its output would, with the shell or the remedy, so a
+ * callback, a list or a memo may hold it. */
+export function useTransportVerbs(): (transport: Transport, options?: { retry?: Verb }) => Verbs | null {
+  const { signIn, signInBusy } = useShell();
+  const verb = useMemo(() => signIn !== null && signInBusy ? { ...signIn, busy: true } : signIn, [signIn, signInBusy]);
+  const remedy = useSyncExternalStore(subscribeAdmission, updateRemedy, updateRemedy);
+  return useCallback((transport: Transport, { retry }: { retry?: Verb } = {}) => verbsForTransport(transport, { retry, signIn: verb, remedy }), [verb, remedy]);
 }

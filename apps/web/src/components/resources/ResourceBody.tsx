@@ -1,4 +1,5 @@
 import { excerptTextParts } from "@nexus/authored/excerpt";
+import {embedDisplayLabel} from "@/lib/resources/localResource";
 import ReaderExcerpt from "./ReaderExcerpt";
 import { Fragment } from "react";
 import { MediaTitle } from "@/components/media/MediaIdentity";
@@ -91,11 +92,6 @@ export function ResourceIndexBody({ body }: { body: Body }) {
       const alt = body.alts.find(value => value !== null && hasExcerpt(value));
       return alt ? <ExcerptText excerpt={alt} /> : body.count === 1 ? "image" : `${body.count} images`;
     }
-    case "reference": return body.label && hasExcerpt(body.label) ? <ExcerptText excerpt={body.label} /> : body.target_ref;
+    case "reference": return body.label !== null ? <ExcerptText excerpt={body.label} /> : embedDisplayLabel(body.target_ref, body.field, null);
   }
-}
-
-/** Distinct literal evidence keeps its own omission marks and codepoint ranges. */
-export function ResourceMatchEvidence({ match }: { match: ResourceMatch }) {
-  return <div className={styles.matchEvidence}><ExcerptText excerpt={match.excerpt} match={match} /></div>;
 }

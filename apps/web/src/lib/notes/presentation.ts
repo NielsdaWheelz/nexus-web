@@ -4,7 +4,7 @@ import { parseBody } from "@nexus/authored/body";
 import { excerptTextParts } from "@nexus/authored/excerpt";
 import type { ResourceProjection } from "@nexus/authored/types";
 import type { ResourceItem } from "@/lib/resources/items";
-import { localResourceHref } from "@/lib/resources/localResource";
+import { embedDisplayLabel, localResourceLabel } from "@/lib/resources/localResource";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 function excerpt(value: string, limit = 600) {
@@ -28,7 +28,7 @@ export function authoredPreview(resource: ResourceProjection, readingRef: string
     return { label, body: { kind: "passage", excerpt: resource.excerpt, capture_revision: resource.capture_revision, reading_ref: readingRef, color: resource.color } };
   }
   if (resource.kind === "page" || resource.kind === "source") {
-    const title = resource.kind === "page" ? pageTitle(resource.title ?? "", resource.local_date) : resource.title ?? resource.ref;
+    const title = resource.kind === "page" ? pageTitle(resource.title ?? "", resource.local_date) : localResourceLabel(resource);
     return { label: title, body: { kind: "named", title, image_url: null, media_kind: null, contributors: null } };
   }
   const parsed = parseBody(resource.body_pm_json);
@@ -36,11 +36,11 @@ export function authoredPreview(resource: ResourceProjection, readingRef: string
   if (nodes.length === 1 && nodes[0]!.type === "resource_embed") {
     const attrs = nodes[0]!.attrs!;
     const target_ref = String(attrs.resource_ref);
-    const label = typeof attrs.label === "string" && attrs.label ? excerpt(attrs.label) : null;
-    return { label: label?.text || target_ref, body: { kind: "reference", target_ref, field: attrs.field === "annotation" ? "annotation" : null, label } };
+    const label = typeof attrs.label === "string" ? excerpt(attrs.label) : null;
+    return { label: label?.text ?? embedDisplayLabel(target_ref, attrs.field, attrs.label), body: { kind: "reference", target_ref, field: attrs.field === "annotation" ? "annotation" : null, label } };
   }
   const images = nodes.filter(node => node.type === "image");
-  const prose = nodes.map(node => node.type === "text" ? node.text! : node.type === "hard_break" ? "\n" : node.type === "resource_embed" ? String(node.attrs?.label ?? node.attrs?.resource_ref) : "").join("");
+  const prose = nodes.map(node => node.type === "text" ? node.text! : node.type === "hard_break" ? "\n" : node.type === "resource_embed" ? embedDisplayLabel(String(node.attrs!.resource_ref), node.attrs!.field, node.attrs!.label) : "").join("");
   if (!prose && images.length) {
     let budget = 600;
     const alts = images.slice(0, 3).map(node => {
@@ -55,8 +55,8 @@ export function authoredPreview(resource: ResourceProjection, readingRef: string
   return { label: value.text || "empty note", body: { kind: "prose", excerpt: value, role: null, format: parsed.body_pm_json.attrs?.presentation === "code" ? "code" : "plain", image_count: images.length } };
 }
 
-export function authoredItem(resource: ResourceProjection, readingRef: string | null = null): ResourceItem {
+/** The caller supplies its admitted destination; projecting a preview never invents a route. */
+export function authoredItem(resource: ResourceProjection, readingRef: string | null, href: string | null): ResourceItem {
   const { label, body } = authoredPreview(resource, readingRef);
-  const href = localResourceHref(resource, { activationRef: readingRef });
-  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label, preview: { body, source: null }, activation: { resource_ref: resource.ref, field: null, kind: href === null ? "none" : "route", href, unavailable_reason: null }, missing: !resource.visible };
+  return { authored_by_viewer: resource.authored_by_viewer, ref: resource.ref, action_ref: resource.ref, label, preview: { body, source: null }, activation: { resource_ref: resource.ref, field: null, kind: href === null ? "none" : "route", href, unavailable_reason: href === null ? "source_unavailable" : null }, missing: !resource.visible };
 }

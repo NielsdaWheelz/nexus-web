@@ -3,18 +3,18 @@
 import Button from "@/components/ui/Button";
 
 // The pane shell owns placement; this accessory renders the published commands.
-import { ArrowDown, ArrowUp, IndentDecrease, IndentIncrease, Redo2, Undo2, type LucideIcon } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import type { PaneOutlineCommands } from "@/lib/panes/paneChrome";
 import type { OutlineCommand } from "@/lib/notes/editorTypes";
 import styles from "./OutlineCommands.module.css";
 
-const commands: readonly [OutlineCommand, string, LucideIcon][] = [
-  ["outdent", "Outdent", IndentDecrease],
-  ["indent", "Indent", IndentIncrease],
-  ["move_up", "Move item up", ArrowUp],
-  ["move_down", "Move item down", ArrowDown],
-  ["undo", "Undo", Undo2],
-  ["redo", "Redo", Redo2],
+const commands: readonly [OutlineCommand, string, Icon.Glyph][] = [
+  ["outdent", "Outdent", Icon.Outdent],
+  ["indent", "Indent", Icon.Indent],
+  ["move_up", "Move item up", Icon.MoveUp],
+  ["move_down", "Move item down", Icon.MoveDown],
+  ["undo", "Undo", Icon.Undo],
+  ["redo", "Redo", Icon.Redo],
 ];
 
 export default function OutlineCommands({
@@ -32,13 +32,13 @@ export default function OutlineCommands({
       className={styles.bar}
       onPointerDown={(event) => event.preventDefault()}
     >
-      {commands.map(([command, label, Icon]) => {
+      {commands.map(([command, label, Glyph]) => {
         const state = publication.commandState(command);
         return (
           <Button
             key={command}
             iconOnly
-            icon={<Icon size={18} aria-hidden="true" />}
+            icon={<Glyph aria-hidden="true" />}
             className={styles.command}
             size="comfortable"
             disabled={!state.enabled}

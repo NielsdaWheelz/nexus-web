@@ -62,22 +62,6 @@
   gap: var(--space-2);
 }
 
-.overflow {
-  position: relative;
-  display: inline-flex;
-}
-
-.statusMarker {
-  position: absolute;
-  inset-block-start: var(--space-1);
-  inset-inline-end: var(--space-1);
-  inline-size: 5px;
-  block-size: 5px;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  pointer-events: none;
-}
-
 .headerButton {
   --control-min-size: var(--size-md);
   flex: 0 0 auto;
@@ -226,14 +210,6 @@
   --control-min-size: 48px;
 }
 
-.mobile .statusMarker {
-  inset-block-start: calc(var(--space-3) - var(--stroke-hairline));
-  inset-inline-end: calc(var(--space-3) - var(--stroke-hairline));
-  inline-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
-  block-size: calc(var(--space-1) + 2 * var(--stroke-hairline));
-  border: var(--stroke-hairline) solid var(--surface-2);
-}
-
 /* The shared button is relative; hidden recovery must stay outside pane flow. */
 .readerChromeToggle:not(:focus-visible) {
   position: absolute;
@@ -258,20 +234,11 @@
 }
 
 @media (forced-colors: active) {
-  .statusMarker {
-    background: currentColor;
-    forced-color-adjust: none;
-  }
-
   .header,
   .mobile,
   :global([data-theme="elvish"] [data-pane-shell]:focus-within) .header {
     border-block-end-color: CanvasText;
     background: Canvas;
-  }
-
-  .mobile .statusMarker {
-    border-color: Canvas;
   }
 }
 

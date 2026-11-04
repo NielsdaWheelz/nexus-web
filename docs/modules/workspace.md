@@ -85,10 +85,25 @@ the body is the absolute state and the prune is idempotent. the device is `X-Nex
 client cannot name one; without it the api answers 400.
 
 [`BrowserWorkspace.tsx`](../../apps/web/src/lib/authored/BrowserWorkspace.tsx)
-opens a confirmed local account binding without a credential read. first
-provisioning reads the verified account, reader profile and workspace session
-concurrently, then saves the binding before mounting the shell. a failed read
-mounts no store. [`DeviceWorkspace.tsx`](../../apps/web/src/lib/native/DeviceWorkspace.tsx)
+opens a confirmed local account binding without requiring a credential read.
+first provisioning reads the verified account, reader profile and workspace
+session concurrently, then saves the binding. failure in those required reads
+mounts no store.
+
+for both saved and fresh bindings, browser entry resolves the incoming url and
+workspace layout before reading their distinct remote presentation locators.
+`INITIAL_FACTS_TIMEOUT_MS` in `BrowserWorkspace` gives that complete operation
+one five-second `requestWithDeadline` allowance, including response bodies and
+sequential batches. each request asserts `X-Nexus-Account`. the desktop shell
+is published after that read settles: success seeds its presentation owner;
+modeled network/auth failure still admits local writing and seeds the existing
+title failure/retry state. defects retain startup failure containment.
+this trades up to five seconds of desktop admission latency for resolved remote
+facts on the workspace's first frame; remote metadata is not a credential or
+local-writing prerequisite. the result is mount-scoped, never a persisted
+metadata cache, and changes no native or wire contract.
+
+[`DeviceWorkspace.tsx`](../../apps/web/src/lib/native/DeviceWorkspace.tsx)
 opens the installed binding from the device; later account refresh cannot replace
 live navigation. `enterWorkspace` picks own-if-nontrivial, else
 elsewhere-if-nontrivial, else one lectern pane. it merges a deep link: `/` and
@@ -111,7 +126,8 @@ the ready body's render so module arrival does not incur suspense's fallback
 retry delay. import failure keeps its stage and requires document reload. this
 registry holds code, never account data.
 
-first-provisioning transport failure mounts no store and offers retry. only a
+failure in required first-provisioning reads mounts no store and offers retry.
+only a
 missing stored row is null; invalid state returns `500 E_INTERNAL` without
 modifying its row or timestamp. after mounting, the shell retains its local
 binding and live store across remote admission changes. account retirement
@@ -221,10 +237,29 @@ for deleted media shows the body's own not-found. editors that open a typed link
 
 [`presentations.tsx`](../../apps/web/src/lib/workspace/presentations.tsx) owns one
 account-scoped projection for nexus, pane chrome and the document title.
-`useWorkspacePresentations().forVisit(visit)` returns its title, name, detail and
-status; `name` is the real name the title shows, or null while the title is a
-placeholder (kind noun, loading, unavailable, untitled). `retryTitles()`
-refreshes the shared read. readers never publish canonical titles.
+`useWorkspacePresentations().forVisit(visit)` returns its title, name, detail,
+status and, where the media's kind is known, that kind; `name` is the real name the
+title shows, or null while the title is a placeholder (kind noun, loading,
+unavailable, untitled). `retryTitles()` revalidates the shared read in place. readers never
+publish canonical titles. a media kind, once a canonical read returns it for a
+locator, stays in memory until a page reload or account change, because
+`media.kind` never changes; a later read that blanks the facts never reverts it.
+
+`presentationRead.ts` owns remote-locator admission, account-asserted batched
+reads and the resulting facts map. authored locators remain local; captures
+retain their authored upload barrier. browser admission supplies its completed
+success or modeled failure through `initialPresentations`. success seeds the
+pane-free owner immediately; its token is fresh only when every current remote
+locator is covered, otherwise the owner retains those facts while revalidating.
+a completed failure starts at the existing title error/retry state. the
+[completed read seed](api-edge.md) is consumed only for initial admission,
+not cached for later mounts.
+
+the remote read key is stable for the account. locators, revisions and freshness
+signals change its stale token, so refresh and nexus open retain loaded facts
+until the new read settles. catalog projections supply their existing titles
+and media contributor bylines when remote facts are not present; they are not
+a second metadata writer.
 
 current authored locators retain singular resource and semantic daily subscriptions.
 each locator has a keyed subscription lifetime; sibling pane changes do not restart
@@ -462,9 +497,10 @@ and a held return origin. publication replacement retains text/preferences,
 retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
-by icon-only results, optional return and mobile close. applied-option chips
-remain visible. options uses sliders; the results trigger and companion tab use
-the same text-search glyph. results opens its existing companion presentation and never
+by the word `results` (named and tooltipped "Show search results"), the optional
+icon-only return and mobile close. applied-option chips remain visible. options
+draws `Filter`, return `Locate`; the companion's search-results tab draws
+`Search`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
 remain transient. current capability and
@@ -502,9 +538,9 @@ neither retries the delete nor reads a commit witness.
 `primaryAction` is one link or command descriptor with a required decorative
 icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
 ghost button or native anchor, accessible name, tooltip, projected state and
-disabled explanation. chats publish `new chat`, libraries `new library`, an
-individual library `add content`, and podcasts `browse podcasts`, each with a
-20px plus. existing menu entries reuse those descriptors; `Libraries.Create`
+disabled explanation. chats publish `new chat`, libraries `new library` and an
+individual library `add content`, drawn `Add`; podcasts `browse podcasts`, drawn
+`Browse`. existing menu entries reuse those descriptors; `Libraries.Create`
 exists only as the primary action, independent of list loading, filtering and
 invalid views. native anchors retain modified-click behavior; commands receive
 their actual invoking button. query controls contain no primary action.
@@ -558,7 +594,7 @@ does not change layout.
 
 the typed companion action remains separate. `PaneShell` derives it
 (`companionAction` in `Companion.tsx`) iff the body publishes a Companion, and
-it is the only source of its name (`Inspector`), `PanelRight` icon and disclosure
+it is the only source of its name and sign (both `Inspector`) and disclosure
 state. both headers render its decorative 20px glyph with the stable accessible
 name `Inspector`. both projections use the shared icon-only ghost `Button` and
 header density. its open state is visually distinct and

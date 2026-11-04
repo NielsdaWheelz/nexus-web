@@ -19,7 +19,7 @@ server components: callFastAPI ────────────────�
 
 - `client.ts`: `apiFetch(path: "/api/…", init)` answers the parsed json (an
   empty 2xx is `undefined`) or throws `ApiError {status, code, message,
-  requestId?, details?, retryAfterMs?}`; status 0 `E_NETWORK` is a transport failure. Every
+  requestId?, details?, retryAfterMs?, sent, offline}`; status 0 `E_NETWORK` is a transport failure. Every
   call carries `X-Nexus-Wire`; a supplied sealed revision must match this build
   and is never rewritten; `keepalive: true` lets a write outlive the page. `readResponse` is the one envelope reader (the
   request id comes from the body, else the `x-request-id` header). decoding is
@@ -37,10 +37,12 @@ server components: callFastAPI ────────────────�
   the tab once per (tab, build), unless uncommitted writing or incompatible/sealed
   submitted work holds reload: a `sessionStorage` marker holds the bundle's
   own revision, the reload passes the page's `beforeunload` guard, and after it
-  every 426 reads "Nexus was updated. Reload this page to continue."
-  (`STALE_BUILD_FEEDBACK`: the notice's title, whatever failed, with reload as
-  its only action, never the caller's retry): a caller that models the failure
-  shows it through `apiTransportFeedback`; one that throws it (`isStaleBuild`)
+  a document-only mismatch reads `nexus updated.` with reload alone where reload
+  can replace the build. a waiting shell/shared worker instead requires closing
+  all nexus tabs and reopening; installed clients require the current apk.
+  `failure.ts` owns `transportOf`, its exhaustive `Record<Transport>` and
+  `staleBuild`. modeled reads use `Failed`; command refusals use `useOutcome.fail`.
+  a caller that throws the mismatch (`isStaleBuild`)
   reaches the pane or workspace boundary, which shows it and reports no client
   defect. The workspace save keeps the workspace up.
   the existing work provider binds this automatic-reload decision to its current
@@ -51,10 +53,24 @@ server components: callFastAPI ────────────────�
   id and enforce `cache: "no-store"`. independent application read owners are not
   coordinated by the browser http cache. search manual reads have one aggregate
   operation deadline; an owned expiry remains distinct from caller cancellation.
-  `E_DATABASE_BUSY` is an uncertain write outcome: an earlier transaction may
-  have committed. `outcomeUnknown` preserves the owner's sealed intent and its
-  existing retry policy; sharing rereads before another mutation. transport
-  feedback says “nexus is busy. wait a moment, then retry.”
+  `ApiError.sent` records whether the operation left this client;
+  `offline` records connectivity when the failure occurred. reconnecting cannot
+  relabel an already-observed offline failure. for writes only, `isRefusal` and
+  `outcomeUnknown` partition modeled non-defect errors: an unsent request, answered
+  4xx (including 401/426), or pre-handler `E_AUTH_UNAVAILABLE` is refused;
+  every other sent failure is unknown. `E_DATABASE_BUSY` is unknown because a
+  transaction may have committed before a later refresh fails. this applies to the
+  coded response: the edge still maps `DatabaseBusyError` to generic
+  `409 E_RESOURCE_CONFLICT`, whose ambiguous causes remain a
+  [separate protocol limit](../issues/capture-conflicts-share-one-code.md). unknown outcomes
+  keep the owner's sealed intent and explicit retry policy; their shared reason
+  is `UNKNOWN_OUTCOME_REASON`. these predicates never decide a read's fallback.
+  `transportOf` is total over modeled errors; domain codes are translated ahead
+  of it and same-system defects throw. no caller adds a transport fallback.
+  `admissionError` is the pure unsent-error mapping; `admissionRefusal` also
+  requests an installed session recheck. installed unsafe-method calls attempted
+  during `Checking` wait for the check, bounded by their deadline or 30 seconds.
+  this includes post requests that only read.
 
 - `serverState.tsx`: the one owner of keyed async reads.
   `useServerValue({key, stale, visit, load, catalog?})` and `usePaneFreeServerValue` (no
@@ -72,18 +88,29 @@ server components: callFastAPI ────────────────�
   `requestWithRetry` retries transport failures and non-defect 5xx
   three times (I5); a modeled `ApiError` is a failure, a defect throws in
   render (I4), a 401 goes to sign-in (outside the shell it is a failure, which
-  share capture shows). A pane return paints the visit's snapshot, then
-  refetches. `ServerSeedsProvider` holds the bootstrap's first-paint reads
-  (`lib/panes/paneResourceLoaders.ts`) for the entry's active pane (no other
-  pane is seeded), under the key of the hook that reads them, the api path. A hook in the pane body's first commit paints
-  its first key's seed without a fetch; that commit spends the pane's seeds
-  (`ServerSeedsSpent`, beside the body), so every later mount reads and a seed
-  no hook took is dropped unread. accepted route entry also starts declared reads
+  share capture shows). `failed` means the bounded attempt has settled, not that
+  its first response dropped. browser demand reads remain admissible while
+  reachability is unavailable; native reads keep native admission.
+  `useFailedReadRepair` observes focus, online and admission recovery only while
+  a failed read stands; it coalesces repair generations, skips in-flight work and
+  bounds repair caused by success elsewhere. writes never subscribe to this wake.
+  refresh failure over shown data stays unrendered and owned for a later repair.
+  a pane return paints the visit's snapshot, then refetches.
+  `ServerArrivalsProvider` starts accepted route entry's declared reads
   while lazy code loads; the same one-use account/visit/route owner holds pending,
   successful or failed outcomes until effect-time claims. mounted hooks own the
-  result thereafter. retirement cancels unused work; no completed-read cache
-  remains. bootstrap consumption observations reach the existing native owner
+  result thereafter. `ServerArrivalsSpent` closes that entry offer and retires
+  unclaimed work. retirement cancels unused work; no completed-read cache remains. bootstrap consumption observations reach the existing native owner
   once its account facts and transport are ready.
+  `initialRead: ServerReadSeed<T>` supplies one completed read for a hook's
+  initial key: success carries data and its accepted-stale token; modeled failure
+  carries its `ApiError`. matching success paints immediately without repeating
+  the bootstrap fetch, including effect replay. a mismatched success remains
+  shown but stale while the normal owner revalidates. failure starts in the
+  existing failed/retry state without an automatic duplicate bootstrap attempt.
+  key changes, invalidation and explicit retry retain the normal read lifecycle;
+  a later mount has no completed-read cache. the admission caller owns the seed's
+  account/key association; the mounted hook owns subsequent reads.
   concurrent identical reads share only a flight,
   keyed by account, representation/query, policy and prefix demand. subscribers
   cancel independently; the last departure aborts. completed responses never

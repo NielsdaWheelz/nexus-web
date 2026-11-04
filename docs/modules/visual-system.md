@@ -11,14 +11,17 @@ how nexus says something happened. owners, under `apps/web/src/`:
 - `lib/theme/room.ts` (room type, cookie name, browser-chrome colours,
   `parseRoom`), `cookie.ts` (server read), `elvishInscriptions.ts`;
   `components/theme/SolarEffects.tsx`; the appearance pane owns the browser write.
-- `components/feedback/Feedback.tsx`: shared status, notice, surface and field
-  presentation; `scope.ts` composes mounted contributions and `FeedbackLayer.tsx`
-  owns passive placement.
+- `components/feedback/Feedback.tsx`: host provider, outcomes and mounted holds;
+  `stage.ts` owns addressing and visible-time clocks, `Slips.tsx` owns placement,
+  `Fact.tsx` and `Ruling.tsx` own in-flow facts and empty-region waits, and
+  `Announcement.tsx` owns the short live region.
 - `components/ui/*` except the overlay kernel's files ([overlays](overlays.md));
   `Field.module.css` is the one appearance of `Input`, `Textarea`, `Select` and
   `SelectField`.
 - `lib/ui/{eventTarget,actionDescriptor,copyText,rovingIndex}.ts`.
-- `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`).
+- `lib/ui/icons.tsx`, the glyph lexicon.
+- `scripts/check-css-tokens.mjs` (`bun run lint:css-tokens`) and
+  `scripts/check-icons.ts` (`bun run lint:icons`).
 
 ## design intent
 
@@ -56,17 +59,70 @@ a module names `--danger`, never a colour. colour literals live only in
 `globals.css`, `brand.css`, the reader theme (`documentReader.module.css`:
 `::highlight` ignores `var()` on chromium and android webview ≤ 113) and the
 oracle and atlas routes. shared defaults for scales, sans and mono faces,
-spacing, motion, dimensions, focus metrics, scrims, highlights and shell geometry
+spacing, motion, dimensions, focus metrics, highlights and shell geometry
 live in a `:root`-only block before reduced-motion overrides. nested rooms inherit
 them from the nearest ancestor, including overrides supplied by context owners.
 the press block (`:root, [data-theme="dark"]`) declares only tokens another room
 overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
-the section-title font role. text on an 18% tint of its own tone (`Pill`) reads
+the section-title font role and modal scrim. `--overlay-scrim` is room-owned:
+press `rgb(0 0 0 / 0.5)`, study `rgb(60 50 30 / 0.22)`, solar
+`rgb(5 15 10 / 0.45)`. dialog, sheet, hover preview, share and nexus consume it;
+`--overlay-scrim-soft` retains its shared default. text on an 18% tint of its own tone (`Pill`) reads
 the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
 the pane header's pointer role uses mono and machine ink in every room. the pending
 source body publishes the role; the shell applies it only to a retained visit hint.
 it changes neither the one heading nor the stored resource's canonical title.
+
+## glyphs
+
+`lib/ui/icons.tsx` is the lexicon and lucide's one importer. each export is one
+sign: its name says the gloss, its trailing comment states it, and its drawing
+changes there in one line. consumers write `import * as Icon from
+"@/lib/ui/icons"` and name a sign: no named, computed or dynamic access. a new
+export is paid for by a bare use. every sign is decorative, paints
+`currentColor` and takes `className` and `size`; the slot owns size
+(`--control-icon-size`, `.menuItemIcon`) and `control.tsx` owns waiting. a glyph
+outside a slot sets `size` on the scale 12, 14, 16, 20, 24. domain
+tables (the action catalog, `SCHEMES`, media kinds, `ROUTES`, destinations, nexus
+rows, pane controls) choose a sign or `null`; presenters size and paint it.
+
+1. a sign is a drawing plus one gloss. each determines the other.
+2. a gloss reads true at every use, with the object taken from the label or the
+   place. if it needs "or", the drawing is two signs.
+3. a noun on a control means open or start that noun with this subject.
+4. words are the default. a menu row paints a glyph only if that sign is read
+   bare somewhere: alone on a control, as a type, or as a place.
+5. no sign, no glyph. the slot stays and paints nothing. the label column never
+   moves.
+6. signs differ by silhouette at 16px. mirror images are for true inverses at one
+   place.
+
+a removal draws what survives it:
+
+| paint | what survives | covers |
+| --- | --- | --- |
+| `Dismiss` | anything saved | close, clear a field, drop a draft, cancel a download |
+| `Remove` | the thing; it leaves this place | remove from context or library, unlink, remove member, minimize a pane |
+| `RemoveFromLectern` | the item; it leaves the Lectern | remove from Lectern |
+| `Stop` | what is already done | stop response, stop playback |
+| a word | not the thing itself | delete, remove from Nexus, remove download, remove import |
+
+running anything again draws `Again`; replaying audio draws `Play`, because
+pressing it plays. disclosure is `Disclose`; a select or picker draws `Choose`,
+which does not turn. tucking collapses a notice in place, so its control draws
+`Disclose` with its open state. declared exceptions: the library chooser's indeterminate
+cell draws `Remove`'s minus; `EffortPicker`'s gauge stays raw svg until playback
+draws `Effort`.
+
+every glyph keeps a 1.5px line (`--icon-stroke`) in screen pixels at any size:
+`globals.css` sets the stroke width on `.lucide` and `vector-effect:
+non-scaling-stroke` on its children, inside `:where()`, so the default weighs
+specificity 0 and a glyph's own rule wins in any css chunk order. an exception
+sets its weight in its own css and sets `vector-effect: none` on its paths, so
+the weight stays in viewbox units, as the podcast subscription badge does. raw
+`svg` and `strokeWidth` belong only to brand and data marks, in the owners
+`eslint.config.mjs` lists.
 
 ## the solar's ornament
 
@@ -88,55 +144,110 @@ uses the same restrained anatomy in every room.
 
 ## signals
 
-ordinary selection, autosave, synchronization and successful refresh are silent.
-foreground waiting occupies an existing fixed control slot, with immediate
-`aria-busy` and a spinner after 200 ms. settlement removes the spinner immediately;
-subject changes cancel its timer. root reads use pane chrome, without skeletons or
-status paragraphs. otherwise invisible success uses a 1.2-second checkmark in the
-same slot; copy also announces `copied` once. `useCopyFeedback` owns that timing,
-never the caller's command or clipboard recovery.
+feedback reserves no idle slot. a fact has one home, determined by its kind:
 
-`FeedbackStatus`, `FeedbackNotice`, `FeedbackState` and `FieldFeedback` retain real
-task facts, empty/unavailable content, fatal entry failure and field validation.
-recoverable operational failures use `FeedbackFailure`: content, at most two real
-actions and an owner-supplied incident identity. retry preserves the incident and
-its mounted controls. dismissal acknowledges presentation only; it never discards
-a command, draft, uncertainty or loss guard.
+| fact | home |
+| --- | --- |
+| a press is running | its control's icon or kept-width label slot |
+| no content yet | `Ruling` in the empty body |
+| absent, empty, failed or gated object | `Fact`, or transport-aware `Failed`, where the object belongs |
+| a durable fact over shown content | the object's existing status lane |
+| refused input | `Field` beneath its input; send is the retry |
+| refused command or ready result | plain slip; recovery also exists on the subject |
+| unknown write outcome | mounted `Hold`; its owner retains the command |
+| uncommitted words at risk | risk `Hold`, with the affected editor's danger caret |
+| account condition | account mark and row; attention conditions speak once per onset |
 
-`FeedbackScope` composes mounted local contributors, with token-checked cleanup
-and occurrence deduplication. the provider has one authored-account projection;
-domain commands remain in their existing owners. weak acknowledgement and
-last-published speech metadata survive host relocation without retaining command
-payloads or failure history. a deliberate retry outcome may announce once with a
-new speech token. rerenders, background retries and relocation remain silent.
+selection, autosave, synchronization, successful refresh and refresh failure over
+shown data are silent. failed reads heal through their read owner; a deliberate
+press alone retries a write. copy keeps `useCopyFeedback`'s 1.2-second check and
+one `copied` announcement. long jobs keep their domain surfaces.
 
-one passive `FeedbackLayer` belongs to each real pane, modal, picker or standalone
-surface. modal portals inherit the actual overlay context. only the existing
-topmost interaction owner is eligible; without one, the active pane or standalone
-surface is eligible. inactive scopes retain contributions without displaying or
-speaking. source-owned feedback disclosures retain their source's eligibility;
-a newer unrelated interaction wins.
+control busy is immediate in `aria-busy`, delayed 200ms in paint, then ramps for
+200ms. settlement unmounts the spinner; a new subject remounts its control.
+an iconless control hides its label at kept width. the control is one pointer
+target, including its icon, label and spinner.
 
-cards stack in that single layer, bounded by the host and visual viewport. the
-preferred placement protects whole focused editables, controls and modal control
-regions. inability to fit minimizes to a permanently reserved recovery slot;
-there is no corner search, forced scroll, chrome reveal or caret tracking. explicit
-recovery opens the existing anchored surface. feedback's own controls and
-disclosures do not obstruct themselves; an engaged card stays bounded and
-scrollable as space shrinks. appearance never takes focus. withdrawal may restore
-only removed owned focus, when no surviving control has acquired it and the host
-remains eligible.
+`Ruling` paints six static hairlines after 200ms, ramps for 600ms and shows
+`still opening` at eight seconds. its active region says `opening` once at two
+seconds. content replaces it immediately; headers show no waiting sign.
+sequential empty reads of the same region carry their wait across a handoff;
+a different source begins a new wait. old rows for a new query are inert at once
+and dim to .6 only after the waiting delay.
 
-`receipt(content, action?)` remains disposable, never the sole recovery path. it
-uses the same host layer. one current outcome and at most one waiting outcome
-retain the existing five/eight visible-second expiry, hold, suppression and
-retraction rules. a returning receipt does not announce again. action
-`commandKey` prevents a held control silently changing its command.
+`Line` is a fact and optional reason, visible together with at most two verbs.
+copy is lowercase except user titles/names, at most fourteen words before title
+interpolation, and states only what its owner can establish. interpolated product
+labels remain fixed copy; shared transport reasons count toward the same limit.
+`check` only reads;
+a resend says `retry`. transport and account wording come from closed records.
+request ids stay in the request log. there is no disclosure for a slip's reason
+or verbs. desktop menus contain verbs, options and their own row marks. a picker's
+empty list region may show its own fact, outside listbox markup; account conditions
+belong only to the account menu.
 
-`Signal` shares content, tone, diagnostics and actions across these presentations.
-controls never enter live regions. details and diagnostics open on demand;
-recovery stays outside document and list flow. all rooms, forced colours, reduced
-motion and coarse targets retain the same contracts.
+`FeedbackProvider` requires the host's real `Shell`; a missing stage or shell
+is a contract error. the authenticated workspace, share capture and shelf own
+their respective sign-in operations. browser startup's modeled failure branch
+mounts its own provider with its existing render environment and startup sign-in;
+opening the authenticated workspace replaces that branch with the account's stage.
+`stage.ts` defines addresses, `Line`, verbs and transport projection. `useOutcome`
+and mounted `Hold` are the command owners' presentation interface. in-flow facts
+and the standalone `Announcement` need no command stage.
+
+`useResendFeedback` gives a retained remote write its current line and verbs.
+the owner supplies the fact, exact resend and any secondary command. a stale
+build keeps that fact, supplies the shared update reason, and offers reload
+alone where it works; otherwise it offers no verb. sign-in keeps the shell's
+link or command and its busy state. the hook presents admission; the domain
+owner retains the intent and decides when it is resolved.
+
+account-condition onset and local writing failure have separate owners. if a
+local commit fails while a refused-sync notice remains visible, its old safety
+claim withdraws without creating another condition onset; the writing-risk hold
+and current account row retain their own facts.
+
+one stage sits above command owners. a row addresses its invoking pane or the
+workspace. fully visible panes have anchors; other pane addresses fall to the
+root. phones and maximized layouts use the active pane. composers anchor above
+their inputs; reader strips and shown mobile chrome contribute clearance.
+root, pane and modal rooms place their notice frame and restore tab in disjoint
+slots of one centered overlay group. the tab slot stays fixed through tuck and
+restore, so the frame sits slightly off center but keeps its width and reachable
+controls. the slots reserve no document space. root clearance measures actual
+pane frames and tabs; standalone capture anchors to the page, outside its card.
+a row raised under a modal belongs to that modal; unrelated rows wait.
+risk always follows the topmost modal. modal geometry and its constrained-content
+exception belong to [overlays](overlays.md#feedback-placement).
+
+plain slips last five visible unheld seconds, eight with a verb. a new plain
+line replaces the standing plain line unless a pointer, focus or press holds it;
+then it stacks. newest lands above older rows without moving them. at rest the
+frame shows three rows before internal scrolling. a held frame may grow above
+that cap to preserve the controls under the hand.
+
+`Hold.id` identifies a fact across component holders; `attempt` identifies a
+failed retry for speech. the earliest mounted holder supplies its pane. a 100ms
+handoff preserves a row while its holder moves between commits. an unmounted
+last holder resolves it; changing an existing holder's id resolves the old id
+immediately. tucking changes presentation only. the tab retains no command,
+draft, history or loss guard and disappears when its owners resolve.
+
+typing ghosts a standing slip and stops its clock; new ordinary slips wait for
+the pause, at most eight seconds. risk does not wait. eligible shown slips speak
+through the root announcement pair, or the topmost modal's pair while it is open;
+a fully visible inactive pane's slip remains eligible. in-flow facts and fields
+speak only in the topmost modal, else the active pane or standalone host. short
+facts and reasons enter the live region, never controls; risk is assertive and
+other lines polite.
+appearance takes no focus. a withdrawing verb restores only focus it owns.
+a changed command keeps the former control disabled while pointer or keyboard
+focus holds it. its replacement appears in that position only after both leave.
+`mod+.` reaches the first slip control; escape closes or tucks and returns focus.
+coarse-pointer downward swipe dismisses plain rows and tucks held rows when
+the frame fits. an overflowing frame uses native scrolling; its visible close
+and tuck controls remain available.
+reduced motion removes movement; forced colours retain borders and ticks.
 
 ## ownership
 
@@ -161,6 +272,14 @@ content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
 independent. non-pane field defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
 native intrinsic value width; the whole control wraps before its label stacks.
 `Stacked` forms keep their layout.
+
+content in a companion beside a text is a third type role. a `Column` or `Sheet`
+companion sets `--content-font-size` 13px, `--content-meta-font-size` 12px and
+`--content-line-height` `--leading-snug` on its contents, and `--excerpt-scale`
+`.875` and `--excerpt-max-size` `--text-md` for quotes ([highlight](highlight.md)). a `FullScreen`
+companion replaces the text, so it is a page and sets none. resource outline rows,
+ordinary note bodies and page titles read the tokens with their own sizes as fallback. notes
+outside a companion use one 14px/1.5 type; chrome and targets never read these tokens.
 
 `PaneQueryToolbar` groups controls by pane width. its boxed input always reserves
 the clear slot, so typing/clearing preserves the input's bounds and node.
@@ -194,6 +313,10 @@ containing width; control targets remain owned by their controls.
 adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
+the armed `Collection` row is `--surface-2` plus a 2px leading inset
+`--accent` bar, app-wide. forced colours replace that shadow with a `Highlight`
+outline. arming has no transition. literal `ResourceContent` matches underline
+in the accent at the room's hairline thickness, without changing font weight.
 
 search/catalog results use `compactViewport`'s six-row preferred budget (32px
 fine, 44px coarse), not a result-count limit. actions and standalone chapters use
@@ -219,6 +342,35 @@ and retry controls remain outside listboxes. editor suggestions stay inline;
 the editor retains focus and its insertion transaction. native selects and the
 launcher's specialized grid keyboard controller retain their own semantics.
 
+## nexus palette
+
+`Nexus.module.css` owns desktop arrangement; `Switchboard.module.css` owns
+the sheet, mobile page frames and disc. selection paint remains in `Collection`,
+match paint in `ResourceContent`, scrims in the room blocks.
+
+both surfaces use one 40px gutter; caret and titles share its x. palette glyphs
+are 16px with the registry’s shared 1.5px stroke. titles are sans 15px/400 in press and study, serif 18px/500 in
+solar. heads, facts and hints use `--ink-muted`. rows have square corners and
+one title plus at most one supplement; the resource identity never changes
+weight when matched or armed.
+
+the desktop card is at most 640px wide, on `--surface-canvas`, with a 48px
+query and 36px ordinary rows (44px for coarse pointers). typed holds 70dvh with
+a fixed continuation footer; arrivals consume the result scrollport above it.
+blank remains content-sized within that cap. the sheet has 48px row/control
+targets and a horizontally scrolling inline rail, with no key hints. rank one
+touches the bottom field; dom order is rank order, painted bottom-up. group heads
+are last in their reversed groups and retain accessible group labels.
+
+desktop open uses 120ms bloom: opacity .7→1, scale .985→1 and y −4→0;
+scrim fades over the same interval. close is instant. arriving rows use a 200ms
+opacity onset; held rows do not animate. rail open uses 100ms glide and 4px
+travel; rail focus paints immediately. `MobileSheet` owns its 220ms transform.
+reduced motion removes these animations; forced colours retain boundaries and
+the armed outline. disc swipes show a destination/clamp chip for 600ms without
+animation. the [release record](../issues/release-palette.md) owns glyph and
+feedback handoff debt.
+
 ## choice controls
 
 `ChoicePicker` renders one controlled exclusive choice: the current value and a
@@ -229,9 +381,9 @@ and refresh content sits outside the listbox. it has no search field or visible
 category heading. command menus and library membership retain their own content
 and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
 
-choice triggers and segments have a 32px minimum height; triggers, option rows
-and segments have at least 44px with any coarse pointer. text can increase those
-heights. engagement uses existing colour and motion tokens; reduced motion
+choice triggers, segments and facets have a 32px minimum height; triggers, option
+rows, segments and facets have at least 44px with any coarse pointer. text can
+increase those heights. engagement uses existing colour and motion tokens; reduced motion
 removes transitions. chat's three-control composition, native effort gauge/range
 and whole-control wrapping belong to [chat](chat.md#generation-selection), not
 this primitive.
@@ -244,12 +396,20 @@ role. inside `role=menu` the same choice is `menuitemradio`
 `Segmented` sets each option as a `ChoiceField` segment in one track of equal
 columns whose labels wrap; its visible legend takes the form-label type, and a
 `Hidden` legend names the group to assistive technology only. a choice label may
-be a node, such as a font named in its own face, beside a decorative icon.
+be a node, such as a font named in its own face.
 
 `ChoiceField.module.css` owns native label/input geometry and the public group,
 choices and group-description layouts. names reference label-only spans;
 help and caller descriptions remain separate. refs address the actual inputs.
 inline choices use native checked marks without selected backplates.
+
+`ChoiceField`'s `Facet` presentation is a set member shown as a glyph and a short
+visible label over a covering native checkbox, with the segment's surface and
+target and no selected marker. checked is the rest state and stays quiet;
+unchecked dims the glyph and slashes it from top left to bottom right while the
+label stays legible and unchanged. disabled paint overrides both. forced colours
+keep only the slash. `help` composes a `Tooltip` on the input without replacing
+the native input when help changes.
 
 `Selection.module.css` owns surface, target and selected appearance for native
 segments, menu radios, companion tabs and pane activation. selected is a neutral
@@ -282,8 +442,9 @@ ordinary prose links and specialized widgets retain their own semantics.
 quiet is the default. `emphasis="strong"` marks a principal commitment;
 `tone="danger"` marks destruction independently. `size="comfortable"` has a 44px
 minimum; compact controls use their host minimum or 32px. any coarse pointer
-enforces at least 44px in both axes. the existing dense outline exception is
-24px with fine input; mobile headers remain 48px. geometry hooks are
+enforces at least 44px in both axes, except for controls inside authored outline
+rows, which follow the row geometry below. the existing dense outline exception
+is 24px with fine input; mobile headers remain 48px. geometry hooks are
 `--control-min-size`, `--control-icon-size`, `--control-font-size` and
 `--control-radius`. callers own layout and adornments, never internal selectors
 or competing interaction paint. fields retain their separate density tokens.
@@ -303,7 +464,9 @@ a description only when none is provided. visual tooltip text stays independent.
 disabled paint overrides every tone/selection state; focus stays visible.
 forced colors use system colors; reduced motion stops color transitions and busy
 rotation. colors, type and spacing use existing tokens; no layout animation; a
-state glyph may animate its own stroke weight.
+state glyph may animate its own stroke weight. a turn is glyph-internal:
+`Disclose` turns its own chevron by state; no owner rotates a glyph or swaps one
+to show open state.
 
 ## overflow buttons
 
@@ -313,15 +476,14 @@ names: Nexus, Lectern, All and Today. source titles, personal names and quoted
 queries retain their literal spelling. shared action copy also names the same
 inline controls; renderers never capitalize it.
 
-command/link descriptors explicitly supply an icon. ordinary actions use their
-semantic owner's glyph; only chapter and map destination lists use `null`.
-the menu retains its 16px decorative slot and text label. custom content owns its
-anatomy: swatches and status prose need no action glyph, while nested actions do.
+command/link descriptors carry a sign or `null`, as their domain table chooses
+under [the glyph laws](#glyphs). the menu retains its 16px decorative slot and
+text label; a `null` row leaves the slot blank, so labels share one x. custom
+content owns its anatomy: swatches and status prose need no action glyph.
 empty and domain-state prose retain their own presentation. operational waiting
-uses fixed controls; failures use the host recovery layer. icon-only button
-contracts remain non-null. lucide owns standard
-drawings; use existing semantic presentations or direct named glyph imports,
-without a second registry, inferred glyphs or placeholders.
+uses its existing controls; command failures speak at the invoking pane. icon-only button
+contracts remain non-null. lucide is reached only through `lib/ui/icons.tsx`;
+no inferred glyphs or placeholders.
 
 `OverflowMenuButton` is the named 16px/1.5-stroke ellipsis adapter over `Button`;
 shared controls own its paint and busy glyph. it forwards native attributes,
@@ -329,7 +491,7 @@ handlers and refs without owning interaction state. `ActionMenu` supplies behavi
 aria bindings, not a visual class. semantic custom triggers own their appearance.
 resource outlines compose relationship and resource verbs in this same menu;
 their compact fine-pointer trigger is 24px and their coarse trigger 44×44px,
-inside a reserved action column that never shifts content.
+at the top of the row's right column; the trigger never shifts content.
 
 ### index rows
 
@@ -358,18 +520,28 @@ and intrinsic search, details and outline presentations keep their own layout.
 the existing [pane memento](workspace.md#pane-history) owns scroll restoration.
 
 outline styles own control minima: 24px with a fine pointer, 44px with any coarse
-pointer. each control basis is the maximum of that minimum and one `--text-md`
-glyph plus two `--space-1` gaps. leading/trailing slots, disclosure and spacers
-share the basis in both dimensions; enlarged type can widen existing columns.
-default geometry and nesting increments are unchanged. note-pane margins follow containing width,
+pointer. each resource-outline control basis is the maximum of that minimum and
+one `--text-md` glyph plus two `--space-1` gaps; enlarged type can widen existing
+columns. `ResourceOutlineRow`'s control column and text measure belong to its
+[anatomy](resource-references.md#controls-and-composition).
+authored outline rows instead size their controls to the line, in 25px rows with
+a fine pointer and 32px rows with any coarse pointer, where the 28px bullet spans
+its row and no disclose slot is drawn. their type remains 14px fine / 16px coarse
+at 1.5 line height, including inside a companion. an embedded resource row keeps
+its controls inline at the far end of the authored row. its existing control
+minima may make that row taller than a plain authored row; usable controls take
+precedence over equal row heights.
+note-pane margins follow containing width,
 bounded from 8px to 24px. reference carets reserve one control width at the text's
 end for focus placement. nested search passages begin in the branch tail, without
 also inheriting the parent body column's leading and trailing control gutters.
 `OverflowMenuButton` declares sizing tokens; consumers do not
 reach through its internal button markup.
 
-`ResourceType` renders decorative, unfocusable, current-color lucide glyphs at
-`--text-md` square with stroke 2. outline markers use muted ink at rest and retain
+`ResourceType` renders the sign `lib/resources/type.ts` chooses for its type (a
+held media kind's medium, else its scheme's; see the
+[presentation contract](resource-references.md#presentation-contract)),
+decorative, unfocusable and current-color, at `--text-md` square. outline markers use muted ink at rest and retain
 control hover/focus treatment; disabled opening markers remain readable in muted
 ink. index prefixes use muted ink with a
 `--space-1` gap; the glyph does not shrink, while the existing title fragment
@@ -398,7 +570,8 @@ within 52px when any pointer is coarse. active fill,
 in-view tick and minimized treatment remain distinct. keyboard focus reveals
 only this strip. reduced motion removes displacement transitions; forced colors
 retain selection and focus. controls use shared `Button` paint, tooltips and
-decorative lucide icons: minus, square, overlapping windows and x. close is neutral.
+decorative signs: minimize `Remove`, maximize `Maximize`, close `Dismiss`; restore
+draws `Add` on a minimized pane and `Restore` on a maximized one. close is neutral.
 `lib/workspace/paneControls.ts` owns desktop strip control content. the inline
 nexus pane list keeps wrapping mobile titles and independent 48px close targets.
 reorder completion uses one polite position
@@ -413,3 +586,12 @@ runtime (next/font variables, `--moon`, `--grain-seed`, measured geometry) and
 without a fallback. the android shelf and the firefox popup load no hosted
 stylesheet, so each built bundle is checked against its own declarations, where
 next/font variables do not count (their packaged stacks must be declared).
+
+`lint:icons` runs beside it and fails when two registry exports are one drawing,
+compared by value, since lucide exports each drawing under several names (`X`,
+`XIcon`). eslint fails on a lucide import outside the registry (`lucide-react` or
+any subpath), a registry import other than `* as Icon`, computed `Icon[name]`, a
+dynamic glyph import, raw `svg` or `strokeWidth` outside their owners, and a
+capitalised literal as a `fail` title or `say` fact, sparing only a compound PascalCase `fail` kind tag
+(`"SourceChanged"`). flat config replaces a rule's options per block, so a block
+that restricts imports or syntax for its own files spreads the shared lists.

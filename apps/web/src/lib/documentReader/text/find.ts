@@ -53,7 +53,7 @@ export function createTextFind(
     key: doc.identity,
     label: transcript ? "find in transcript" : "find in text",
     narrowLabel: narrowLabel(),
-    scopeChangeMessage: transcript ? "chapters changed; search cleared" : "sections changed; search cleared",
+    scopeChangeMessage: transcript ? "chapters changed. search cleared." : "sections changed. search cleared.",
     scopeInvalidated,
     capturedScopeLabel: chapter?.label ?? null,
     prepare() {
@@ -74,7 +74,7 @@ export function createTextFind(
     },
     search(options, narrow) {
       const scope = narrow ? extent : null;
-      if (narrow && scope === null) return { kind: "Failed", message: "Selected scope is unavailable. Clear the search to capture a new scope, or turn off the scope option." };
+      if (narrow && scope === null) return { kind: "Failed", message: "couldn’t search this section." };
       const units = doc.ranges.flatMap((range) => {
         const unit = structure.unit(range.unit)!;
         const from = scope === null ? range.start : Math.max(range.start, range.start + scope[0] - range.position);
@@ -91,7 +91,7 @@ export function createTextFind(
       const outcome = await reader.inspect({ target: { kind: "range", ...hit }, signal });
       if (outcome.kind === "Cancelled") return { kind: "Cancelled" };
       if (outcome.kind !== "Unavailable") return { kind: "Shown" };
-      return { kind: "Failed", message: outcome.reason === "CaptureUnavailable" ? "Reading position is unavailable." : "Find request unavailable. Retry." };
+      return { kind: "Failed", message: outcome.reason === "CaptureUnavailable" ? "couldn’t hold your current place." : "couldn’t show that match." };
     },
     href(hit) {
       return reader.navigation?.href({ source_identity: doc.identity, target: { kind: "range", ...hit } }) ?? null;

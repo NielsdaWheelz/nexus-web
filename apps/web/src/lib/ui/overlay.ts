@@ -28,6 +28,9 @@ import {
   useSyncExternalStore,
 } from "react";
 
+/** A modal family dispatches this on its panel immediately after moving it imperatively. */
+export const MODAL_GEOMETRY_CHANGE = "nexus-modal-geometry-change";
+
 export type DismissDecision = "accepted" | "blocked";
 export type DismissReason = "escape" | "back" | "outside" | "tab" | "navigation";
 export type ReturnFocusTarget = () =>
@@ -84,7 +87,7 @@ export interface Layer {
   /** The modal this layer renders inside (React context), or null on the page. */
   parent: Layer | null;
   readonly options: { readonly current: OverlayOptions };
-  /** A modal's role="dialog" panel: the Tab trap root and its transients' container. */
+  /** A modal's semantic role="dialog" room: the Tab trap root and its transients' container. */
   element: HTMLElement | null;
   /** The interactive layer's trigger, captured at open; tooltips keep null. */
   opener: ReturnType<ReturnFocusTarget>;
@@ -154,6 +157,9 @@ export function useModalActive(): boolean {
   return useSyncExternalStore(subscribeOverlayStack, hasActiveModal, () => false);
 }
 
+const openerElement = (layer: Layer) =>
+  layer.opener instanceof HTMLElement ? layer.opener : layer.opener?.element ?? null;
+
 /** Portaled controls keep the editing interaction of their real opener. */
 export function ownsOverlayFocus(root: Element, target: Element | null): boolean {
   if (!target) return false;
@@ -161,12 +167,28 @@ export function ownsOverlayFocus(root: Element, target: Element | null): boolean
   for (const layer of layers) {
     const options = layer.options.current;
     if (options.kind === "tooltip") continue;
-    const opener = layer.opener instanceof HTMLElement ? layer.opener : layer.opener?.element;
+    const opener = openerElement(layer);
     if (!opener || !owned.some(element => element.contains(opener))) continue;
     if (layer.element) owned.push(layer.element);
     for (const element of options.inside?.() ?? []) if (element) owned.push(element);
   }
   return owned.some(element => element.contains(target));
+}
+
+/** A layer that does not contain `element` owns interaction; with no element, any owner. */
+export function interactionOwnedElsewhere(element: Element | null): boolean {
+  const current = owner();
+  if (!current) return false;
+  if (!element) return true;
+  return !current.element?.contains(element) && !current.options.current.inside?.().some((box) => box?.contains(element));
+}
+
+/** Every open interactive layer's opener, focused or not; tooltips have none. */
+export function getOverlayOpeners(): readonly HTMLElement[] {
+  return layers.flatMap((layer) => {
+    const opener = openerElement(layer);
+    return opener ? [opener] : [];
+  });
 }
 
 export function hasActiveInteractionOwner(): boolean {
@@ -427,18 +449,18 @@ function onKeyDown(event: KeyboardEvent): void {
 export function handleModalTab(
   event: Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
 ): void {
-  const panel = topModal()?.element;
-  if (event.key !== "Tab" || !panel) return;
-  // The Tab trap: focus wraps inside the top modal's panel.
-  const items = focusableElements(panel);
+  const room = topModal()?.element;
+  if (event.key !== "Tab" || !room) return;
+  // The Tab trap: focus wraps inside the top modal's room.
+  const items = focusableElements(room);
   const first = items[0];
   const last = items.at(-1);
   const active = document.activeElement as HTMLElement;
   if (!first || !last) {
     event.preventDefault();
-    panel.focus();
+    room.focus();
   } else if (
-    !panel.contains(active) ||
+    !room.contains(active) ||
     active === (event.shiftKey ? first : last) ||
     // A programmatic trigger may have tabindex=-1. Let native Tab continue
     // from its position unless no tabbable remains in that direction.
@@ -477,7 +499,7 @@ function onPointerDown(event: PointerEvent): void {
       if (kind === "transient") closed = true;
     }
   }
-  if (!closed && modal && target === modal.element?.parentElement) {
+  if (!closed && modal && target === modal.element) {
     scrimPress = modal;
   }
 }
@@ -490,7 +512,7 @@ function onClick(event: MouseEvent): void {
   if (
     modal &&
     modal === topModal() &&
-    event.target === modal.element?.parentElement
+    event.target === modal.element
   ) {
     dispatch(modal, "outside");
   }
@@ -543,7 +565,7 @@ export function subscribeOverlayStack(listener: () => void): () => void {
 /** Provided by ModalFrame: the modal its children render inside. */
 export const OverlayContext = createContext<Layer | null>(null);
 
-/** Where a transient or tooltip renders: its containing modal's panel, else the body. */
+/** Where a transient or tooltip renders: its containing modal's semantic room, else the body. */
 export function useOverlayContainer(): HTMLElement | null {
   const parent = useContext(OverlayContext);
   if (typeof document === "undefined") return null;

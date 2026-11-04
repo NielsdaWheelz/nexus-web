@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Headphones, Import, Search } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
@@ -106,12 +106,12 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           onClick={(event) => navigate(event, home)}
           onKeyDown={(event) => navigate(event, home)}
         >
-          <AsterismMark size={20} className={styles.brandMark} />
+          <AsterismMark className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
         </a>
         <Button
           iconOnly
-          icon={collapsed ? <ChevronRight /> : <ChevronLeft />}
+          icon={collapsed ? <Icon.Right /> : <Icon.Left />}
           className={styles.collapseButton}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
           onClick={onToggle}
@@ -119,7 +119,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
 
       <Tooltip
-        text={`Search (${hint})`}
+        text={`Nexus (${hint})`}
         placement="right"
         openDelayMs={0}
         disabled={!collapsed}
@@ -130,11 +130,11 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
             className={cx(buttonClassName({}), styles.command)}
             aria-haspopup="dialog"
             aria-keyshortcuts={shortcutAriaKeys(shortcut, platform)}
-            aria-label="Search"
+            aria-label="Nexus"
             onClick={() => requestNexusOpen({ kind: "Root" })}
           >
-            <Search className={styles.icon} size={20} aria-hidden="true" />
-            <span className={styles.commandText}>Search</span>
+            <AsterismMark className={styles.brandMark} />
+            <span className={styles.commandText}>Nexus</span>
             <kbd className={styles.commandKbd}>{hint}</kbd>
           </button>
         )}
@@ -150,7 +150,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         ) : null}
         <ul ref={listRef} className={styles.list}>
           {NAV_RAIL.map((item) => {
-            const Icon = item.icon;
+            const Glyph = item.icon;
             const active = item.id === section;
             return (
               <li key={item.id}>
@@ -169,7 +169,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                       onClick={(event) => navigate(event, item)}
                       onKeyDown={(event) => navigate(event, item)}
                     >
-                      <Icon className={styles.icon} size={20} aria-hidden="true" />
+                      <Glyph className={styles.icon} size={20} aria-hidden="true" />
                       <span className={styles.label}>{item.label}</span>
                     </a>
                   )}
@@ -196,7 +196,7 @@ function NavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
               aria-label={unsettled === 0 ? "Import" : `Import, ${unsettled} importing`}
               onClick={event => requestNexusOpen({ kind: "Import", into: [] }, event.currentTarget)}
             >
-              <Import className={styles.icon} size={20} aria-hidden="true" />
+              <Icon.Upload className={styles.icon} size={20} aria-hidden="true" />
               <span className={styles.label}>{unsettled === 0 ? "Import" : `Import · ${unsettled}`}</span>
             </button>
           )}
@@ -247,7 +247,7 @@ function PlayerDisclosure({ collapsed }: { collapsed: boolean }) {
         aria-describedby={cx(help["aria-describedby"], description !== null && statusId) || undefined}
         onClick={() => visible ? hide() : show({ focus: true })}>
         <span className={styles.playerIcon}>
-          <Headphones className={styles.icon} size={20} aria-hidden="true" />
+          <Icon.Player className={styles.icon} size={20} aria-hidden="true" />
           {failed || active ? <span className={cx(styles.playerMarker, failed && styles.playerFailure)} aria-hidden="true">{failed ? "!" : null}</span> : null}
         </span>
         <span className={styles.label}>player</span>

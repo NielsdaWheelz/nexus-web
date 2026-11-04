@@ -1,8 +1,8 @@
 "use client";
+import * as Icon from "@/lib/ui/icons";
 
 import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
-import { FeedbackRecoveryControl } from "@/components/feedback/Feedback";
-import { X } from "lucide-react";
+import { MODAL_GEOMETRY_CHANGE } from "@/lib/ui/overlay";
 import { useCollectionLayout } from "@/lib/ui/collection";
 import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import ModalFrame, { type ModalProps } from "./ModalFrame";
@@ -26,6 +26,7 @@ export default function MobileSheet({
   scrim = "default",
   panelId,
   heightLimit,
+  flushBottom = false,
   children,
   handleLabel,
   renderHeader,
@@ -41,11 +42,13 @@ export default function MobileSheet({
   readonly panelId?: string;
   /** Fit natural content within the unobscured viewport, without a preferred cap. */
   readonly heightLimit?: "available";
+  /** A bottom field supplies its own touch padding and sits against the safe-area edge. */
+  readonly flushBottom?: boolean;
   readonly children: ReactNode;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const handle = useRef<HTMLButtonElement>(null);
-  useCollectionLayout(content, active);
+  const wholeBodyScrolls = useCollectionLayout(content, active);
   const dragStart = useRef<{
     readonly pointerId: number;
     readonly x: number;
@@ -63,24 +66,28 @@ export default function MobileSheet({
   }, [active]);
   const drag = (event: PointerEvent<HTMLElement>, offset: number | null) => {
     const panel = event.currentTarget.parentElement;
-    if (panel) panel.style.transform = offset === null ? "" : `translateY(${offset}px)`;
+    if (panel) {
+      panel.style.transform = offset === null ? "" : `translateY(${offset}px)`;
+      panel.dispatchEvent(new Event(MODAL_GEOMETRY_CHANGE));
+    }
   };
 
   return (
     <ModalFrame
       {...modal}
+      slipContent={wholeBodyScrolls ? content : modal.slipContent ?? content}
       open={active}
       label={ariaLabel}
       id={panelId}
       scope={panelId}
       backdropClassName={[scrim === "soft" ? styles.softBackdrop : styles.backdrop, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
-      backdropStyle={heightLimit === "available" ? { top: visualViewportTopPx, bottom: keyboardBottomInsetPx } : undefined}
-      className={[styles.panel, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
+      backdropStyle={{ top: visualViewportTopPx, bottom: keyboardBottomInsetPx }}
+      className={[styles.panel, heightLimit === "available" && styles.available, flushBottom && styles.flushBottom].filter(Boolean).join(" ")}
     >
       {(requestDismiss) => (
         <>
           <div
-            data-feedback-controls="true"
+
             className={handleLabel === undefined ? styles.header : `${styles.header} ${styles.handleHeader}`}
             onPointerDown={(event) => {
               if (!event.isPrimary || event.button !== 0 || dragStart.current) return;
@@ -129,7 +136,6 @@ export default function MobileSheet({
               }
             }}
           >
-            <FeedbackRecoveryControl className={styles.recovery} />
             {handleLabel === undefined ? <div className={styles.grabber} aria-hidden="true" /> : null}
             {handleLabel !== undefined ? (
               <button ref={handle} type="button" className={styles.handle} aria-label={handleLabel} onClick={requestDismiss}>
@@ -140,7 +146,7 @@ export default function MobileSheet({
               <div className={styles.titleRow}>
                 <h2 className={styles.title}>{ariaLabel}</h2>
                 <button type="button" className={styles.close} aria-label={`close ${ariaLabel}`} onClick={requestDismiss}>
-                  <X size={16} aria-hidden="true" />
+                  <Icon.Dismiss size={16} aria-hidden="true" />
                 </button>
               </div>
             ) : null}

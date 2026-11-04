@@ -4,6 +4,14 @@
   padding: clamp(1rem, 3vw, 2.5rem);
   color: var(--ink);
 }
+/* The last view's figures while another view's read runs. */
+.stale {
+  animation: stale-in var(--duration-fast) var(--ease-glide) 200ms forwards;
+}
+
+@keyframes stale-in {
+  to { opacity: 0.6; }
+}
 .header {
   display: flex;
   align-items: flex-start;

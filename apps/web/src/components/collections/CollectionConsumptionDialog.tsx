@@ -1,18 +1,24 @@
 "use client";
 
+import { useId, useSyncExternalStore } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
-import { FeedbackNotice, FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { Fact, Failed } from "@/components/feedback/Fact";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { isApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { prepareCollectionConsumption, type CollectionSelection } from "@/lib/consumption/api";
-import { installedApp } from "@/lib/native/admission";
-import { podcastErrorMessage } from "@/lib/podcasts/paneState";
+import { remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import styles from "@/components/podcasts/PodcastCommands.module.css";
 
-/** Review freezes the complete selection. Only the account owner sends its bytes. */
+/** Review freezes the complete selection. Only the account owner sends its bytes. The confirm
+ * waits busy on the review's read and on admission's check; one the review or admission cannot
+ * vouch for stays disabled and says why.
+ * An unknown outcome holds inside this dialog, in its own frame, while the dialog is open. */
 export default function CollectionConsumptionDialog({ selection, desiredState, title, returnFocusTo, returnFocusFallback, onClose }: {
   readonly selection: CollectionSelection;
   readonly desiredState: "finished" | "unread";
@@ -22,46 +28,58 @@ export default function CollectionConsumptionDialog({ selection, desiredState, t
   readonly onClose: () => void;
 }) {
   const { ctx } = useActionRuntime();
+  const resendFeedback = useResendFeedback();
   const source = usePaneFreeServerValue({ key: `collection-state-review:${ctx.accountId}:${JSON.stringify(selection)}`, stale: "", load: signal => prepareCollectionConsumption(selection, signal) });
   const podcast = selection.kind === "Podcast";
   const verb = podcast ? desiredState === "finished" ? "played" : "unplayed" : desiredState === "finished" ? "finished" : "unread";
   const target = selection.kind === "Podcast" ? { kind: "Podcast" as const, podcast_id: selection.podcast_id } : selection;
   const pending = ctx.consumption.pendingCollection(target);
-  const connectionRequired = installedApp && !ctx.online;
-  const sourceOccurrence = useFeedbackOccurrence(source.status !== "loading" && source.error !== null);
-  const connectionOccurrence = useFeedbackOccurrence(connectionRequired);
+  // The owner sends only while admission is ready, in either host. Subscribed, so the reasons
+  // below read admission as it stands.
+  const admission = useSyncExternalStore(subscribeAdmission, remoteAdmission, remoteAdmission);
+  const admitted = admission === "Ready";
+  const checking = admission === "Checking";
+  const gateId = useId();
+  const gate = !admitted ? admissionReason()
+    : source.status === "ready" && source.error !== null ? "the selection couldn’t refresh." : null;
   const scopeLabel = selection.kind === "Podcast" && selection.state !== "all"
     ? `all ${selection.state === "in_progress" ? "in-progress" : selection.state} episodes`
     : podcast ? "the whole podcast" : "the whole library";
+  const armed = admitted && source.status === "ready" && !source.refreshing && source.error === null && source.data.items.length > 0 && pending === null;
+  const reviewing = source.status === "loading" || (source.status === "ready" ? source.refreshing : source.retrying);
   const submit = () => {
-    if (connectionRequired || source.status !== "ready" || source.refreshing || source.error !== null || source.data.items.length === 0 || pending !== null) return;
+    if (!armed || source.status !== "ready") return;
     const outcome = ctx.consumption.submitCollection({ title: source.data.label, scopeLabel,
       request: { target, desired_state: desiredState, items: source.data.items } });
     if (outcome === "Started") onClose();
   };
   return <Dialog open title={`mark ${verb}`} onClose={onClose} returnFocusTo={returnFocusTo} returnFocusFallback={returnFocusFallback}>
     <div className={styles.form}>
-      {source.status === "loading" ? <PaneLoadingState /> : source.status === "failed"
-        ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "retry", onClick: source.refetch, busy: source.retrying }]} />
+      {source.status === "loading" ? <Ruling /> : source.status === "failed"
+        ? isApiError(source.error) && source.error.status === 404
+          ? <Fact line={{ fact: podcast ? "this podcast is no longer available." : "this library is no longer available." }} />
+          : <Failed error={source.error} noun="selected items" retry={{ run: source.refetch, busy: source.retrying }} />
         : <>
           <p>{source.data.label}</p>
           <p>{source.data.items.length} {podcast ? "episode" : "item"}{source.data.items.length === 1 ? "" : "s"} selected · {scopeLabel}.</p>
           <p>{podcast ? "includes known episodes beyond this page. new episodes found later are unchanged." : "this includes accessible items beyond the loaded page. sort, text and view filters do not narrow it."}</p>
           {selection.kind === "Podcast" && selection.state !== "all" ? <p>this state selection ignores text filters and sort.</p> : null}
           <p>positions, observed history and lectern membership stay. progress is saved before changing state.</p>
-          <p>undo restores the explicit states changed by the acknowledged request. it remains available in this account session; reload or sign-out clears it.</p>
-          {source.data.items.length === 0 ? <FeedbackNotice content={{ tone: "Neutral", title: "no items in this selection." }} announcement="Polite" /> : null}
-          {source.error !== null ? <FeedbackFailure scope="Local" occurrence={sourceOccurrence} content={podcastErrorMessage(source.error, "couldn’t check selected items.")} announcement="Polite" actions={[{ label: "review selection again", onClick: source.refetch }]} /> : null}
+          <p>undo is available until items change, you reload, or sign out.</p>
+          {source.data.items.length === 0 ? <Fact line={{ fact: `no items to mark ${verb}.` }} /> : null}
         </>}
-      {pending !== null && pending.failed ? <FeedbackFailure scope="Local" occurrence={pending.occurrence} content={{ tone: "Warning", title: "change not confirmed", message: "the request may have succeeded. retry sends the same request." }} announcement="Polite"
-        actions={[
-          { label: "retry same request", busy: pending.phase === "Sending", disabledReason: connectionRequired ? "requires a connection" : undefined, onClick: () => ctx.consumption.retry(pending.commandKey) },
-          { label: "stop tracking", busy: pending.phase === "Sending", onClick: () => ctx.consumption.forget(pending.commandKey) },
-        ]} /> : null}
-      {connectionRequired ? <FeedbackFailure scope="Local" occurrence={connectionOccurrence} content={{ tone: "Neutral", title: "requires a connection" }} announcement="Polite" /> : null}
+      {pending?.failed ? <Hold id={pending.commandKey} attempt={pending.attempt}
+        {...resendFeedback({ line: { fact: "not sure that saved.", reason: UNKNOWN_OUTCOME_REASON },
+          resend: { label: "retry", commandKey: `retry ${pending.commandKey}`, busy: pending.phase === "Sending",
+            run: () => ctx.consumption.retry(pending.commandKey) }, sends: remoteReady,
+          secondary: { label: "forget", commandKey: `forget ${pending.commandKey}`, busy: pending.phase === "Sending",
+            run: () => ctx.consumption.forget(pending.commandKey) },
+        })} /> : null}
       <div className={styles.actions}>
-        <Button reserveIcon emphasis="strong" aria-busy={pending?.phase === "Sending"} disabled={connectionRequired || source.status !== "ready" || source.error !== null || source.refreshing || source.data.items.length === 0 || pending !== null} onClick={submit}>mark {verb}</Button>
+        <Button emphasis="strong" aria-busy={pending?.phase === "Sending" || reviewing || checking || undefined} aria-describedby={gate === null ? undefined : gateId}
+          disabled={!armed} onClick={submit}>mark {verb}</Button>
         <Button onClick={onClose}>cancel</Button>
+        {gate === null ? null : <span id={gateId} className={styles.note}>{gate}</span>}
       </div>
       {source.status === "loading" ? <span className="sr-only">{title}</span> : null}
     </div>

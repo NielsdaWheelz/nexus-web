@@ -220,8 +220,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const states = await changeStates([frame.change]);
         await validateBindings(accountId, states, [frame.change]);
         frame = { ...frame, states: mergeChanges(states, [frame.change]) };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.localFailure(false); sync.facts.pending = true; if (result.kind === "committed") changed(true); sync.wake(); return result; }
-      catch (error) { sync.localFailure(true); throw error; }
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.facts.pending = true; if (result.kind === "committed") changed(true); sync.wake(); return result; }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {

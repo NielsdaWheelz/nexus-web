@@ -10,6 +10,7 @@ export default function SelectField({
   size,
   value,
   disabled,
+  "aria-describedby": describedBy,
   onChange,
   ref,
   children,
@@ -20,6 +21,7 @@ export default function SelectField({
   readonly size?: SelectSize;
   readonly value: string;
   readonly disabled?: boolean;
+  readonly "aria-describedby"?: string;
   readonly onChange: ChangeEventHandler<HTMLSelectElement>;
   readonly ref?: Ref<HTMLSelectElement>;
   readonly children: ReactNode;
@@ -36,6 +38,7 @@ export default function SelectField({
         size={size}
         value={value}
         disabled={disabled}
+        aria-describedby={describedBy}
         onChange={onChange}
       >
         {children}

@@ -1,6 +1,9 @@
 // the response owner for fixed account operations. email sends are never
 // retried; unlink is idempotent. publish renewal first even if the operation
 // fails, and retain provider session/pkce writes on the same response.
+// E_AUTH_UNAVAILABLE means nothing ran (lib/api/client.ts refuses it): an
+// operation throws AuthUnavailable only before its write, and answers a provider
+// that went silent after one as an outcome.
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { ended, finish, liveSession } from '@/lib/auth/session';

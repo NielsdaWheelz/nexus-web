@@ -1,5 +1,6 @@
 // Remote reader roots: identity, facets and canonical source context. Local authored
 // annotations and links never pass through these helpers.
+import * as Icon from "@/lib/ui/icons";
 import type { Schema } from "@/lib/api/wire";
 import type { MarkAnchor, TextRange } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
@@ -18,6 +19,9 @@ export type Filter = keyof Schema<"ReaderEvidenceCountsOut">;
 export const FILTERS: readonly Filter[] = ["highlights", "citations", "links", "machine_links"];
 export const FILTER_LABELS: Record<Filter, string> = {
   highlights: "highlights", citations: "citations", links: "links", machine_links: "librarian links",
+};
+export const FILTER_ICONS: Record<Filter, Icon.Glyph | null> = {
+  highlights: Icon.Highlight, citations: Icon.SourceReference, links: Icon.Link, machine_links: null,
 };
 
 export function factFacet(fact: Schema<"ReaderDirectFactOut">): Filter {

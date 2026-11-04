@@ -7,13 +7,16 @@
   width: 100%;
 }
 
+/* placed beside the selection by the editor; it wraps rather than leave the shell. */
 .toolbar {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + var(--space-1));
   z-index: 35;
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-1);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 100%;
   padding: var(--space-1);
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-lg);
@@ -64,8 +67,8 @@
   position: relative;
   max-width: 76ch;
   color: var(--ink);
-  font-size: var(--text-md);
-  line-height: var(--leading-normal);
+  font-size: var(--content-font-size, calc((var(--text-sm) + var(--text-base)) / 2));
+  line-height: var(--content-line-height, var(--leading-normal));
   outline: none;
   white-space: pre-wrap;
 }
@@ -92,7 +95,6 @@
 }
 
 .view :global(p) {
-  min-height: 24px;
   margin: 0;
 }
 
@@ -113,13 +115,32 @@
   -webkit-box-decoration-break: clone;
 }
 
-.compact {
+/* the outline's one editing host. its geometry tokens are the contract the rows and the drag read. */
+.outline {
+  --outline-indent: 20px;
+  --outline-text-start: 36px;
   font-size: calc((var(--text-sm) + var(--text-base)) / 2);
   line-height: var(--leading-normal);
 }
 
-.compact :global(p) {
-  min-height: 0;
+/* a selected row is the wash; a selected atom inside a row keeps prosemirror's outline. */
+.outline > :global(.ProseMirror-selectednode) {
+  outline: none;
+}
+
+/* a standalone embed is its row's one line: inline, so prosemirror's trailing break opens no blank line under it. */
+.outline :global(div.note-object-embed) {
+  display: inline-block;
+  width: 100%;
+  vertical-align: top;
+}
+
+@media (any-pointer: coarse) {
+  .outline {
+    --outline-indent: 16px;
+    --outline-text-start: 28px;
+    font-size: var(--text-md);
+  }
 }
 
 .view pre :is(strong, em, u, s, a, code) {
@@ -130,6 +151,10 @@
 
 /* Header prose scrolls independently; its owned controls remain outside the
    scrolling host and inside the shell's usable header space. */
+.shell[data-words-at-risk] {
+  caret-color: var(--danger);
+}
+
 .shell[data-header-editor="true"] {
   display: flex;
   flex-direction: column;
@@ -153,10 +178,6 @@
 
 .shell[data-header-editor="true"] .toolbar {
   position: relative;
-  inset: auto;
-  width: fit-content;
-  max-width: 100%;
-  flex-wrap: wrap;
   margin-top: var(--space-1);
 }
 

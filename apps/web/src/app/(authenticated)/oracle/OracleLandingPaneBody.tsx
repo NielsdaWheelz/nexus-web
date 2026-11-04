@@ -1,23 +1,24 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import {
-  FeedbackFailure, useFeedbackOccurrence,
-  FieldFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { Failed, Field } from "@/components/feedback/Fact";
+import { Hold, useResendFeedback } from "@/components/feedback/Feedback";
+import { useTransportVerbs } from "@/components/feedback/stage";
+import type { Line, Verbs } from "@/components/feedback/stage";
+import { ControlContents } from "@/components/ui/control";
 import MediaImage from "@/components/ui/MediaImage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { apiFetch, isRefusal } from "@/lib/api/client";
+import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { admissionReason, TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+
 import {
   QUESTION_MAX,
   createReading,
-  failureCopy,
   platePath,
   questionLength,
 } from "@/lib/oracle/oracle";
@@ -29,26 +30,36 @@ import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { OracleTheme } from "./ornaments";
 import styles from "./oracle.module.css";
 
+const UNSTARTED = "couldn’t start the reading.";
+type Attempt = { id: string; question: string; openIntent: OpenIntent };
+
+/** Ask and list. A refused question is said beneath the input, where consult is the retry; one
+ * whose answer never came is held, and its retry resends the frozen attempt: first creation wins. */
 export default function OracleLandingPaneBody() {
   const pane = requirePaneRuntime(
     usePaneRuntime(),
     "OracleLandingPaneBody",
   );
   const { ctx } = useActionRuntime();
+  const transportVerbs = useTransportVerbs();
+  const resendFeedback = useResendFeedback();
   const live = useRef(false);
   const draft = useResourceDraft<{
-    question: string; attempt: { id: string; question: string; openIntent: OpenIntent } | null;
-    submitting: boolean; error: FeedbackContent | null;
-  }>("Oracle.Question", () => ({ question: "", attempt: null, submitting: false, error: null }),
+    question: string; attempt: Attempt | null;
+    submitting: boolean;
+    /** The last refusal, said beneath the input until the question changes. */
+    refused: ApiError | null;
+    /** Attempts of `attempt` whose answer never came. */
+    unknown: number;
+  }>("Oracle.Question", () => ({ question: "", attempt: null, submitting: false, refused: null, unknown: 0 }),
     value => ({ changed: value.question !== "", unconfirmed: value.attempt !== null, stopsBrowserWork: false }));
   const guard = useWorkGuard();
-  const { question, submitting, error: submitError } = draft.value;
-  const setQuestion = (question: string) => draft.set(value => ({ ...value, question }));
+  const { question, submitting, refused, unknown } = draft.value;
+  const setQuestion = (question: string) => draft.set(value => ({ ...value, question, refused: null }));
   const setSubmitting = (submitting: boolean) => draft.set(value => ({ ...value, submitting }));
-  const setSubmitError = (error: FeedbackContent | null) => draft.set(value => ({ ...value, error }));
   usePaneReturnReady(true);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const errorId = useId();
+  const fieldId = useId();
   // Pane bodies are lazy chunks that remount at hydration: keep the textarea inert
   // until this instance is mounted, so a typed value cannot land on a discarded one.
   const [mounted, setMounted] = useState(false);
@@ -62,49 +73,74 @@ export default function OracleLandingPaneBody() {
       }),
   });
 
-  const readOccurrence = useFeedbackOccurrence(readings.status !== "loading" && readings.error !== null);
   const length = questionLength(question);
-  const submit = async (intent: OpenIntent) => {
-    if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
-    const prior = draft.read().attempt;
-    if (prior && prior.question !== question && !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return;
-    const frozen = prior?.question === question
-      ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
-      : { id: crypto.randomUUID(), question, openIntent: intent };
-    draft.set(value => ({ ...value, attempt: frozen }));
+  /** One send of an attempt, whose id stays frozen until a send lands. A refusal changed nothing: it
+   * drops an attempt none of whose sends went unanswered, and leaves one that may have landed held.
+   * Anything else a send meets leaves its outcome unknown. */
+  const send = async (frozen: Attempt) => {
+    // a new attempt starts with no unknown answer of its own
+    draft.set(value => ({ ...value, attempt: frozen, refused: null, unknown: frozen.id === value.attempt?.id ? value.unknown : 0 }));
     setSubmitting(true);
-    setSubmitError(null);
     try {
       await openAsyncResult({
         ctx, originPaneId: pane.paneId, intent: frozen.openIntent, subject: frozen.question,
         create: async () => {
           const readingId = await createReading({ id: frozen.id, question: frozen.question });
-          if (!ctx.sessionSignal().aborted) draft.set(value => value.attempt !== frozen ? value : ({
-            ...value, attempt: null, question: value.question === frozen.question ? "" : value.question,
+          if (!ctx.sessionSignal().aborted) draft.set(value => value.attempt?.id !== frozen.id ? value : ({
+            ...value, attempt: null, unknown: 0, question: value.question === frozen.question ? "" : value.question,
           }));
           return { target: { href: `/oracle/${readingId}` }, title: "reading started", openLabel: "open reading" };
         },
       });
     } catch (error) {
-      if (ctx.sessionSignal().aborted) return;
-      if (isRefusal(error) && prior === null) draft.set(value => value.attempt === frozen ? { ...value, attempt: null } : value);
-      if (handleUnauthenticatedApiError(error)) return;
-      try {
-        setSubmitError(failureCopy(error, "The reading couldn’t begin"));
-      } catch (caught) {
-        setDefect({ error: caught });
+      if (ctx.sessionSignal().aborted || handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) {
+        setDefect({ error });
+        return;
       }
+      draft.set(value => value.attempt?.id !== frozen.id ? value
+        : isRefusal(error) ? value.unknown === 0 ? { ...value, refused: error, attempt: null } : { ...value, unknown: value.unknown + 1 }
+        : { ...value, unknown: value.unknown + 1 });
     } finally { if (!ctx.sessionSignal().aborted) setSubmitting(false); }
+  };
+  /** Consult asks what the field holds: the held attempt again if it asks the same, else a new one. */
+  const submit = (intent: OpenIntent) => {
+    if (submitting || length === 0 || length > QUESTION_MAX || !live.current) return;
+    const prior = draft.read().attempt;
+    if (prior && prior.question !== question && !guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return;
+    void send(prior?.question === question
+      ? { ...prior, openIntent: intent === "new_pane" ? intent : prior.openIntent }
+      : { id: crypto.randomUUID(), question, openIntent: intent });
+  };
+  /** The held slip's retry resends its frozen attempt, whatever the field holds now. */
+  const resend = (intent: OpenIntent) => {
+    const held = draft.read().attempt;
+    if (submitting || held === null || !live.current) return;
+    void send({ ...held, openIntent: intent === "new_pane" ? intent : held.openIntent });
   };
   const submitGesture = (event: TargetActivationEvent) => {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Consume") event.preventDefault();
     else if (activation.kind === "Open" && activation.intent === "new_pane") {
       event.preventDefault();
-      void submit(activation.intent);
+      submit(activation.intent);
     }
   };
   if (defect) throw defect.error;
+  const transport = refused && transportOf(refused);
+  const field: { line: Line; verbs?: Verbs } | null = length > QUESTION_MAX ? { line: { fact: `${length - QUESTION_MAX} characters too long.` } }
+    : transport ? { line: TRANSPORT_LINES[transport].command(UNSTARTED), verbs: transportVerbs(transport) ?? undefined }
+    : null;
+  const held = draft.value.attempt;
+  const retryKey = held ? `ask ${held.id}` : "";
+  const recovery = held && unknown > 0 ? resendFeedback({
+    line: { fact: "not sure the reading started.", reason: UNKNOWN_OUTCOME_REASON },
+    resend: { label: "retry", commandKey: retryKey, busy: submitting, run: resend },
+  }) : null;
+  const primary = recovery?.verbs?.[0];
+  const replay = primary && "commandKey" in primary && primary.commandKey === retryKey ? primary : null;
+  const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
+  const waitReason = recovery !== null ? replay?.disabledReason ?? admissionReason() ?? recovery.line.reason : undefined;
 
   return (
     <OracleTheme>
@@ -115,7 +151,7 @@ export default function OracleLandingPaneBody() {
             Ask one question. The oracle will arrange a plate, three passages,
             and a reading drawn from public-domain literature and your library.
           </p>
-          <form className={styles.askForm} onSubmit={event => { event.preventDefault(); void submit("default"); }}>
+          <form className={styles.askForm} onSubmit={event => { event.preventDefault(); submit("default"); }}>
             <textarea
               className={styles.askInput}
               placeholder="What am I afraid of? What lies on the other side of this threshold?"
@@ -124,12 +160,12 @@ export default function OracleLandingPaneBody() {
               rows={3}
               disabled={submitting || !mounted}
               aria-label="Oracle question"
-              aria-invalid={submitError !== null || undefined}
-              aria-describedby={submitError === null ? undefined : errorId}
+              aria-invalid={field !== null || undefined}
+              aria-describedby={field === null ? undefined : fieldId}
             />
             <div className={styles.askMeta}>
-              <span className={styles.askCount} aria-live="polite">
-                {QUESTION_MAX - length} remaining
+              <span className={styles.askCount}>
+                {length > QUESTION_MAX ? null : `${QUESTION_MAX - length} left`}
               </span>
               <button
                 type="submit"
@@ -138,26 +174,23 @@ export default function OracleLandingPaneBody() {
                 onKeyDown={submitGesture}
                 disabled={
                   submitting ||
+                  waits ||
                   !mounted ||
                   length === 0 ||
                   length > QUESTION_MAX
                 }
+                aria-describedby={waits ? fieldId : undefined}
+                aria-busy={submitting || replay?.busy || undefined}
               >
-                {submitting ? "Consulting…" : "Consult the oracle"}
+                <ControlContents busy={submitting}>Consult the oracle</ControlContents>
               </button>
             </div>
-            <FieldFeedback id={errorId} content={submitError} />
+            {field ? <Field id={fieldId} line={field.line} verbs={field.verbs} /> : waits ? <span id={fieldId} className="sr-only">{waitReason}</span> : null}
           </form>
+          {held && recovery ? <Hold id={held.id} attempt={unknown} {...recovery} /> : null}
 
-          {readings.status !== "loading" && readings.error !== null ? (
-            <FeedbackFailure scope="Local" occurrence={readOccurrence}
-              content={failureCopy(
-                readings.error,
-                "The Aleph couldn’t be loaded",
-              )}
-              announcement="Assertive"
-              actions={[{ label: "retry", onClick: readings.refetch, busy: readings.status === "failed" ? readings.retrying : readings.refreshing }]}
-            />
+          {readings.status === "failed" ? (
+            <Failed error={readings.error} noun="readings" retry={{ run: () => void readings.refetch(), busy: readings.retrying }} />
           ) : null}
           {readings.status === "ready" &&
             readings.data.data.length > 0 && (
@@ -172,7 +205,7 @@ export default function OracleLandingPaneBody() {
                       data-status={reading.status}
                       aria-label={
                         reading.status === "failed"
-                          ? `${folio} — failed`
+                          ? `${folio}, unfinished`
                           : `${folio}: ${reading.folio_motto ?? "……"}`
                       }
                     >

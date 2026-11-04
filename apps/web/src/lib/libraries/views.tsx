@@ -3,7 +3,7 @@
 // validates every value and every combination composes; these are only the options
 // offered.
 
-import type { FeedbackProps } from "@/components/feedback/Feedback";
+import type { Line, Verbs } from "@/components/feedback/stage";
 import type { ViewChanges } from "@/lib/collections/view";
 
 type Options = readonly { readonly value: string; readonly label: string }[];
@@ -11,9 +11,9 @@ type Options = readonly { readonly value: string; readonly label: string }[];
 /** The server's name rule (1–100 characters once trimmed, never All), as copy. */
 export function libraryNameError(text: string): string | null {
   const name = text.trim();
-  if (name === "") return "enter a library name.";
-  if ([...name].length > 100) return "use 100 characters or fewer.";
-  return name.toLowerCase() === "all" ? "All is reserved for the All view." : null;
+  if (name === "") return "a name can’t be blank.";
+  if ([...name].length > 100) return "100 characters at most.";
+  return name.toLowerCase() === "all" ? "that name belongs to the all view." : null;
 }
 
 /** Library names as every chooser lists them: case-blind, then exact, then by id. */
@@ -76,8 +76,13 @@ export function offered(options: Options, value: string): Options {
   return [...options, { value, label }];
 }
 
+/** What each type is called where a view of it is empty. */
+const TYPE_PLURALS: Readonly<Record<string, string>> = {
+  web_article: "web articles", epub: "epubs", pdf: "pdfs", video: "videos", podcast_episode: "podcast episodes",
+};
+
 /** A complete view's empty state: what it lacks, and the way back. */
-export function emptyEntriesFeedback({
+export function emptyEntries({
   params,
   isAll,
   change,
@@ -85,31 +90,18 @@ export function emptyEntriesFeedback({
   readonly params: URLSearchParams;
   readonly isAll: boolean;
   readonly change: (changes: ViewChanges) => void;
-}): Pick<FeedbackProps, "content" | "actions"> {
+}): { readonly line: Line; readonly verbs?: Verbs } {
   const type = params.get("entry_type");
   const projection = params.get("projection");
   const unfinished = params.get("completion") === "unfinished";
-  const clear = {
-    label: "Clear filters",
-    onClick: () =>
-      change({ entry_type: null, projection: null, completion: null }),
-  };
-  const typeLabel = ENTRY_TYPES.find((option) => option.value === type)?.label;
-  const [title, action] =
-    type !== null
-      ? [`No matches for “${typeLabel ?? type}” in this view.`, clear]
-      : projection === "in_progress"
-        ? [
-            "Nothing in progress.",
-            { label: "Show all items", onClick: () => change({ projection: null }) },
-          ]
-        : projection === "unfiled"
-          ? [unfinished ? "No unfinished unfiled items." : "no unfiled items", clear]
-          : unfinished
-            ? [
-                "No unfinished items.",
-                { label: "Show finished", onClick: () => change({ completion: null }) },
-              ]
-            : [isAll ? "No media yet." : "No media in this library yet.", null];
-  return { content: { tone: "Neutral", title }, actions: action ? [action] : undefined };
+  const verb = (label: string, changes: ViewChanges): Verbs => [{ label, commandKey: `library-view:${label}`, run: () => change(changes) }];
+  const clear = verb("clear filters", { entry_type: null, projection: null, completion: null });
+  if (type !== null) {
+    const plural = TYPE_PLURALS[type];
+    return { line: { fact: plural === undefined ? "nothing of this type here." : `no ${plural} in this view.` }, verbs: clear };
+  }
+  if (projection === "in_progress") return { line: { fact: "nothing in progress." }, verbs: verb("show all items", { projection: null }) };
+  if (projection === "unfiled") return { line: { fact: unfinished ? "no unfinished unfiled items." : "no unfiled items." }, verbs: clear };
+  if (unfinished) return { line: { fact: "no unfinished items." }, verbs: verb("show finished", { completion: null }) };
+  return { line: { fact: isAll ? "nothing saved yet." : "nothing in this library yet." } };
 }

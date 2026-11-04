@@ -325,7 +325,9 @@ finish, undo, unread, reset and settle publish `Consumption`.
   narrow broadcast channel. passive tabs mirror state and forward non-play
   commands. explicit play resolves its source, requests cooperative release,
   pauses old audio and drains writes before acquiring/reading paused state.
-  transfer never steals a lock; a five-second timeout prevents late autoplay.
+  transfer never steals a lock; the five-second timeout bounds the other tab's
+  answer. a transfer that wins the lock proceeds within its descriptor-read
+  deadline, so a slow successful handover can start later than the answer budget.
   uncertain persistence prevents release. opening/observing a tab never
   acquires ownership merely because another tab is playing.
 - `lib/player/browserEngine.ts` owns the audio element, listening writes,
@@ -342,8 +344,11 @@ finish, undo, unread, reset and settle publish `Consumption`.
   `window.nexusPlayer` (below). frames are decoded strictly at this boundary and
   snake snapshots map onto the engine state; `source.package_id` identifies a
   downloaded recording (`packageId`). an unanswered bounded request or the
-  service's `{unavailable: true}` frame shows "Player unavailable", never an empty
-  player, until the next frame arrives. `listening_revision` invalidates the
+  service's `{unavailable: true}` frame preserves an explicit unavailable state,
+  never an invented empty player. an unanswered change stays unknown until a
+  deliberate check; focus and reconnect do not reconcile it. a queue revision
+  cannot prove whether a resume, restart or concurrently overtaken command
+  landed. `listening_revision` invalidates the
   listening facts below; observations and explicit delivery retry use its
   `observe_consumption`/`retry_listening` operations. preference commands resolve
   after application and snapshot publication. expired replies are ignored; live
@@ -412,11 +417,17 @@ finish, undo, unread, reset and settle publish `Consumption`.
   estimate, with no episode, precise or cross-device claim. episode up-next
   lives inside playback; chapter context lives in chapters.
   preview exposes rate only, with no queue advancement, chapters or default save.
-  numbered skips show 15 seconds back and 30 seconds forward. ordinary pending
+  the skips draw their numerals, `SeekBack15` and `SeekForward30`, at 28px in
+  44px controls; transport draws `Previous`, `Play`/`Pause` and `Next`. up next
+  draws `UpNext`, chapters `Chapters`, stop `Stop`, hide `Dismiss`; the idle
+  player draws `Player` and its lectern link `Lectern`. the artwork badge draws
+  `Warning` only for a failure; buffering and paused sync have no sign and stay
+  in the identity's description. a failed queue row's
+  retry and an ended row's `Replay` draw `Play`: both play. ordinary pending
   work uses control markers and shared app feedback. preparing and saving mark
   up next busy; other pending activation marks transport busy independently of
-  loaded buffering. routine work adds no footer row. failures expose details and
-  recovery through the same feedback owner. up next is the complete compact
+  loaded buffering. routine work adds no footer row. failures expose their reason
+  and recovery directly through the same feedback owner. up next is the complete compact
   occurrence index; its opening/focus, revision-bound commands and shared replacement
   undo follow [playback sessions](playback-sessions.md). mobile queue/player
   invocation chooses one initial target inside the same sheet; automatic advance

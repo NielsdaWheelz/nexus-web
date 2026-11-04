@@ -1,14 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackFailure, useFeedbackOccurrence } from "@/components/feedback/Feedback";
+import { Failed } from "@/components/feedback/Fact";
+import { Ruling } from "@/components/feedback/Ruling";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsList, {
   type MatchedImportEvidence,
 } from "@/components/imports/ImportsList";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { ImportsView } from "@/lib/imports/api";
-import { loadFailure } from "@/lib/imports/copy";
+import { ImportCommandsProvider, useImportCommandOwner } from "@/lib/imports/commands";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import {
   apiQuery,
@@ -39,6 +39,7 @@ const CODEC = {
  */
 export default function ImportsPaneBody() {
   const { state, setState } = usePaneUrlState(CODEC);
+  const { commands, feedback } = useImportCommandOwner();
   const { summary, retainObserver, refresh } = useImports();
   const { displayTimeZone } = useRenderEnvironment();
   const { requestSecondarySurface } = requirePaneRuntime(
@@ -87,17 +88,17 @@ export default function ImportsPaneBody() {
                 {
                   id: "import-detail",
                   body: (
-                    <ImportInspector
+                    <ImportCommandsProvider commands={commands}><ImportInspector
                       key={selected}
                       importRef={selected}
                       matched={matched}
-                    />
+                    /></ImportCommandsProvider>
                   ),
                 },
               ],
               defaultSurfaceId: "import-detail",
             },
-      [matched, selected],
+      [commands, matched, selected],
     ),
   );
   // The companion publishes in a layout effect: consume an explicit
@@ -126,27 +127,13 @@ export default function ImportsPaneBody() {
   const [listSettled, setListSettled] = useState(false);
   usePaneReturnReady(view === null ? summary.status === "failed" : listSettled);
 
-  const summaryOccurrence = useFeedbackOccurrence(summary.status === "failed");
-  // Before the counts choose a view there is none to publish controls for.
-  if (view === null)
-    return summary.status === "failed" ? (
-      <FeedbackFailure scope="Local" occurrence={summaryOccurrence}
-        content={loadFailure(summary.error)}
-        announcement="Assertive"
-        actions={[{ label: "try again", onClick: refresh, busy: summary.retrying }]}
-      />
-    ) : (
-      <PaneLoadingState />
-    );
-  return (
-    <ImportsList
-      view={view}
-      state={state}
-      setState={setState}
-      today={today}
-      onMatched={setEvidence}
-      onSelect={onSelect}
-      onSettled={setListSettled}
-    />
-  );
+  // Before the counts choose a view there are no list controls; held commands still stand.
+  return <ImportCommandsProvider commands={commands}>
+    {feedback}
+    {view === null ? summary.status === "failed"
+      ? <Failed error={summary.error} noun="imports" retry={{ run: refresh, busy: summary.retrying }} />
+      : <Ruling />
+      : <ImportsList view={view} state={state} setState={setState} today={today}
+        onMatched={setEvidence} onSelect={onSelect} onSettled={setListSettled} />}
+  </ImportCommandsProvider>;
 }

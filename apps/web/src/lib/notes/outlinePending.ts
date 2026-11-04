@@ -4,11 +4,12 @@
 import * as Y from "yjs";
 import {readBody} from "@nexus/authored/documents";
 import {bodyText, emptyBody, type NoteBody} from "@nexus/authored/body";
+import {isVisible} from "@nexus/authored/merge";
 import type {LinkState, ResourceProjection} from "@nexus/authored/types";
 import type {NoteEdit, FocusSelection} from "./editorTypes";
-import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineHistory, OutlineOccurrence, OutlinePlacement, RangePublication} from "./structure";
+import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineBirthChange, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
-import {LocalCommitError, type LocalCommit, type WritingDocument} from "./runtime";
+import type {LocalCommit, WritingDocument} from "./runtime";
 import {clipboardPlainText} from "./clipboard";
 import {noteBodySchema} from "@nexus/authored/body";
 import {planRange, type InputBookmark, type Placement, type RangePlan, type RangeReason, type RangeSnapshot} from "./outlineSelection";
@@ -21,6 +22,7 @@ export interface PendingOutlineField {
   receiptOwner?: object; revision?: number;
 }
 interface RangeState {placement: Placement | null; link: LinkState | null}
+interface BirthLocation {placement: Omit<Placement, "row_id" | "ref">; source: RangeState}
 interface BoundField {
   document: WritingDocument | null; link: LinkState | Promise<LinkState> | null;
   release(): void; settled: boolean; captureBytes: number; reservations?: number; next?: {state: Promise<RangeState>; link: Promise<LinkState>};
@@ -45,15 +47,21 @@ export class OutlinePendingInput {
   private owner: InputOwner | null = null;
   private notify = () => {};
   private inflight = 0;
-  private finishing = false;
+  private finishing: Promise<void> | null = null;
   private resumeAgain = false;
+  /** The latest failure. It stands through a retry, which clears it only if nothing fails meanwhile. */
   error: unknown | null = null;
+  /** Failures so far; each is an onset its owner speaks. */
+  failures = 0;
+  /** From a retry's press until the resume it started settles. */
+  retrying = false;
   connect(owner: InputOwner): () => void {
     if (this.owner?.history !== owner.history)
       for (const [id, field] of this.fields) this.fields.set(id, {...field, origin: owner.history.typingOrigin()});
     this.owner = owner; this.notify = owner.notify; this.resume();
     return () => {if (this.owner === owner) this.owner = null;};
   }
+  private fail(error: unknown): void {this.error = error; this.failures++; this.notify();}
   private current(): InputOwner {if (!this.owner) throw new Error("outline input is not mounted"); return this.owner;}
   risk() {return {changed: [...this.fields.values()].some(field => field.pending), unconfirmed: this.inflight > 0, stopsBrowserWork: false};}
   retainedRefs(): ReadonlySet<string> {return new Set([...this.fields.values()].filter(field => (field.pending || field.relocating || this.rangeHeld(field.row_id)) && field.ref !== null).map(field => field.ref!));}
@@ -98,16 +106,11 @@ export class OutlinePendingInput {
     void Promise.resolve(link).then(value => {
       const field = this.fields.get(row_id);
       if (this.bound.get(row_id) !== retained || retained.link !== link || !field ||
-        field.ref !== row.ref || field.parent_ref !== row.parent_ref || field.parent_id !== row.parent_id) return;
+        field.ref !== row.ref || !(value.endpoint_a === field.ref && value.endpoint_b === field.parent_ref ||
+          value.endpoint_b === field.ref && value.endpoint_a === field.parent_ref)) return;
       retained.link = value;
       const current = {...field, link: value}; this.fields.set(row_id, current); this.owner?.identity(current);
-    }).catch(error => {this.error = error; this.notify();});
-  }
-  private occurrence(id: string): OutlineOccurrence {
-    const row = this.row(id), bound = this.bound.get(id), link = bound?.link ?? row.link;
-    if (!row.ref || !link) throw new Error("the occurrence has no admitted relationship");
-    return {ref: row.ref, parent_ref: row.parent_ref, document: bound?.document ?? this.current().document(row.ref),
-      parent: this.current().document(row.parent_ref), link};
+    }).catch(error => this.fail(error));
   }
   bookmark(row: PendingOutlineField, selection: FocusSelection | null): InputBookmark {
     if (row.ref === null) return null;
@@ -142,7 +145,7 @@ export class OutlinePendingInput {
     }
     for (const [id, link] of links) this.restoreRelationship(id, link);
     this.inflight++; this.notify();
-    void admission.result.catch(error => {this.error = error; this.notify();});
+    void admission.result.catch(error => this.fail(error));
     void admission.committed.then(async receipt => {
       await Promise.all(links.values());
       for (const id of ids) {
@@ -156,7 +159,7 @@ export class OutlinePendingInput {
           if (graphOnly && !bound.captureBytes && !bound.reservations && !bound.next) {bound.release(); this.bound.delete(id);}
         } else this.owner?.identity(this.fields.get(id)!);
       }
-    }).catch(error => {this.error = error;}).finally(() => {
+    }).catch(error => this.fail(error)).finally(() => {
       this.inflight--; this.notify(); this.resume();
     });
     return token;
@@ -168,13 +171,57 @@ export class OutlinePendingInput {
     owner.history.editor(document, row.origin).record(edit, undefined, this.bookmark(row, edit.selectionAfter) ?? undefined);
     owner.notify(); this.resume();
   }
-  create(row: PendingOutlineField): void {
+  /** Pin the neighbour's preceding gesture now, never a later command on that occurrence. */
+  private birthLocation(row: PendingOutlineField, beside?: string): Promise<BirthLocation> | null {
+    const predecessor = beside ? this.bound.get(beside)?.next?.state : null;
+    if (!predecessor) return null;
+    return predecessor.then(source => {
+      if (!source.placement) throw new Error("the new item's neighbour was removed");
+      return {source, placement: {parent_id: source.placement.parent_id, parent_ref: source.placement.parent_ref,
+        after_id: row.after_id, before_id: row.before_id ?? null}};
+    });
+  }
+  private resolveBirth(row: PendingOutlineField, beside: PendingOutlineField, location: Promise<BirthLocation>, split: boolean): NonNullable<OutlineBirthChange["resolvePlacement"]> {
+    return async document => {
+      const {placement, source} = await location;
+      const after: OccurrenceBookmark = {row_id: row.row_id, ref: document.ref, placement: {...placement, row_id: row.row_id, ref: document.ref}, link: null};
+      const before: OccurrenceBookmark = {row_id: beside.row_id, ref: beside.ref!, placement: source.placement, link: source.link};
+      // Early undo may already have hidden the newborn or restored source text. Only its location follows the preceding gesture.
+      for (const target of split ? [before, after] : [after]) {
+        const current = this.fields.get(target.row_id), at = target.placement;
+        if (current && at) this.fields.set(target.row_id, {...current, parent_id: at.parent_id, parent_ref: at.parent_ref,
+          after_id: at.after_id, before_id: at.before_id ?? undefined});
+      }
+      this.owner?.notify();
+      return {placement: {parent_ref: placement.parent_ref, parent: null,
+        after_ref: row.after_id === beside.row_id ? beside.ref : null,
+        before_ref: row.before_id === beside.row_id ? beside.ref : null},
+        placements_before: split ? [before] : [], placements_after: [after]};
+    };
+  }
+  private followBirth(row: PendingOutlineField, admitted: AdmittedLink, location: Promise<BirthLocation> | null): void {
+    if (!location) return;
+    const bound = this.bound.get(row.row_id)!;
+    const state = Promise.all([location, admitted.link]).then(([settled, link]) => ({placement: {...settled.placement, row_id: row.row_id, ref: row.ref!}, link}));
+    const next = {state, link: admitted.link}; bound.next = next;
+    void state.then(() => {
+      if (bound.next === next) bound.next = undefined;
+      this.resume(); this.notify();
+    }).catch(error => this.fail(error));
+  }
+  /** A birth binds its canonical document immediately; only the graph placement may await a preceding arrangement. */
+  create(row: PendingOutlineField, options: {before?: InputBookmark; stays?: boolean; beside?: string} = {}): void {
     const owner = this.current();
+    const before = options.before ?? null, location = this.birthLocation(row, options.beside);
     const placement = this.placement(row.parent_id, row.parent_ref, row.after_id, row.before_id);
-    const admitted = owner.history.create({placement, body: row.body, change: {before: null, after: document => this.bookmark({...row, ref: document.ref}, "end"), placements_after: document => [this.placementBookmark({...row, ref: document.ref})!]}});
+    const admitted = owner.history.create({placement, body: row.body, change: {before, after: document => options.stays ? before : this.bookmark({...row, ref: document.ref}, "end"),
+      placements_after: document => [this.placementBookmark({...row, ref: document.ref})!],
+      resolvePlacement: location ? this.resolveBirth(row, {...this.row(options.beside!)}, location, false) : undefined}});
     const field = {...row, ref: admitted.document.ref, pending: true};
     this.fields.set(row.row_id, field);
+    this.place(row.row_id, row.after_id, row.before_id ?? null);
     this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.followBirth(field, admitted, location);
     owner.prepared(field, admitted.document); owner.publish([], admitted.committed);
     this.watch([row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
   }
@@ -185,12 +232,15 @@ export class OutlinePendingInput {
     const target: PendingOutlineField = {...row, row_id: successor, after_id: row_id, before_id: undefined,
       ref: null, link: null, resource: null, kind: "body", body: right, hidden: false, pending: true, origin: owner.history.typingOrigin(),
       relocating: undefined, previousParent: undefined, previousParentRef: undefined, settledRevision: undefined, receiptOwner: undefined};
+    const location = this.birthLocation(target, row_id);
     const admitted = owner.history.split({source: bound.document, displayed: {body_state: displayed.body_state, from, to},
       placement: this.placement(target.parent_id, target.parent_ref, target.after_id),
-      change: {before: this.bookmark(row, {anchor: from + 1, head: to + 1}), placements_before: [this.placementBookmark(row)!], after: document => this.bookmark({...target, ref: document.ref}, {anchor: 1, head: 1}), placements_after: document => [this.placementBookmark({...target, ref: document.ref}, true)!]}});
+      change: {before: this.bookmark(row, {anchor: from + 1, head: to + 1}), placements_before: [this.placementBookmark(row)!], after: document => this.bookmark({...target, ref: document.ref}, {anchor: 1, head: 1}),
+        placements_after: document => [this.placementBookmark({...target, ref: document.ref}, true)!], resolvePlacement: location ? this.resolveBirth(target, {...row}, location, true) : undefined}});
     this.fields.set(row_id, {...row, body: left});
     const field = {...target, ref: admitted.document.ref}; this.fields.set(successor, field);
     this.bound.set(successor, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    this.followBirth(field, admitted, location);
     const at = this.order.indexOf(row_id); this.order = [...this.order.slice(0, at + 1), successor, ...this.order.slice(at + 1)];
     owner.prepared(field, admitted.document); owner.publish([bound.document], admitted.committed);
     this.watch([row_id, successor], admitted, new Map([[successor, admitted.link]])); return successor;
@@ -209,9 +259,13 @@ export class OutlinePendingInput {
     if (result.kind === "refusal") refused(result.reason); else this.range(result.plan, {refused});
   }
   rangeHeld(row_id: string): boolean {return (this.bound.get(row_id)?.reservations ?? 0) > 0;}
+  /** A range gesture is still held or unsettled: the shown order may trail it. */
+  busy(): boolean {return [...this.bound.values()].some(bound => (bound.reservations ?? 0) > 0 || bound.next !== undefined);}
   range(plan: RangePlan, callbacks: {refused(reason: RangeReason): void}): void {
     const owner = this.current(), snapshot = owner.rangeSnapshot();
-    const selected = plan.selection_before?.kind === "blocks" ? plan.selection_before.row_ids : plan.selection_before ? [plan.selection_before.row_id] : [];
+    // The selection charges the gesture; every row the plan changes (an adopted sibling too) is captured and bound.
+    const selected = [...new Set([...(plan.selection_before?.kind === "blocks" ? plan.selection_before.row_ids : plan.selection_before ? [plan.selection_before.row_id] : []),
+      ...plan.changes.map(change => change.before.row_id)])];
     const selectedIds = new Set(selected), captured = new Map<string, PendingOutlineField>();
     for (const id of selected) {
       const row = this.fields.get(id) ?? owner.occurrence(id);
@@ -251,6 +305,10 @@ export class OutlinePendingInput {
       return {states: pinned, bytes};
     };
     const initial = pin(true);
+    // A plan's null anchors mean last among the siblings it saw; rows born beside them since stay after, so the last
+    // sibling the gesture's snapshot knew (else the parent) anchors the row in the displayed order.
+    const anchor = (row_id: string, after: Placement): string | null => after.after_id ?? (after.before_id !== null ? null
+      : snapshot.rows.filter(peer => peer.parent_id === after.parent_id && peer.selectable && peer.row_id !== row_id).at(-1)?.row_id ?? (after.parent_id === this.root_id ? null : after.parent_id));
     const reserve = (pinned: {states: ReadonlyMap<string, Promise<RangeState>>; bytes: number}, displayed: RangeSnapshot, action: "undo" | "redo" | null): RangePublication => {
       const charged = this.bound.get(selected[0]!);
       const bytes = pinned.bytes + (displayed === snapshot ? 0 : new TextEncoder().encode(JSON.stringify(displayed)).byteLength);
@@ -291,7 +349,7 @@ export class OutlinePendingInput {
             bound.next = undefined; bound.link = value.link;
             if (!bound.captureBytes && !bound.reservations && !this.fields.get(id)?.pending) {bound.release(); this.bound.delete(id);}
           }
-        }).catch(error => {this.error = error; this.notify();});
+        }).catch(error => this.fail(error));
       };
       return {
         snapshot: displayed,
@@ -305,7 +363,9 @@ export class OutlinePendingInput {
             const row = this.fields.get(change.before.row_id) ?? captured.get(change.before.row_id);
             if (!row) continue;
             const after = change.after;
+            // A reparented row's relationship is unknown until the receipt; a stale link would seed its branch request with the wrong edge.
             const field: PendingOutlineField = after ? {...row, parent_id: after.parent_id, parent_ref: after.parent_ref, after_id: after.after_id,
+              link: after.parent_id === row.parent_id && after.parent_ref === row.parent_ref ? row.link : null,
               before_id: after.before_id ?? undefined, hidden: false, pending: changed.has(row.row_id) || row.pending, relocating: crypto.randomUUID(),
               previousParent: row.relocating ? row.previousParent : row.parent_id, previousParentRef: row.relocating ? row.previousParentRef : row.parent_ref, settledRevision: undefined}
               : {...row, hidden: true, pending: changed.has(row.row_id) || row.pending, settledRevision: undefined};
@@ -315,7 +375,7 @@ export class OutlinePendingInput {
               const prepared = {...field, body: field.kind === "title" ? bodyText(document.doc.getText("title").toString()) : readBody(document.doc)};
               if (changed.has(row.row_id)) this.freeze(prepared, document); else this.fields.set(row.row_id, prepared);
             }
-            if (after) this.place(row.row_id, after.after_id, after.before_id);
+            if (after) this.place(row.row_id, anchor(row.row_id, after), after.before_id);
           }
           for (const [id, successor] of successors) {
             const link = links.get(id);
@@ -340,17 +400,17 @@ export class OutlinePendingInput {
               const hidden = after === null;
               if (row.hidden !== hidden || after && (row.parent_id !== after.parent_id || row.parent_ref !== after.parent_ref || row.after_id !== after.after_id || (row.before_id ?? null) !== after.before_id)) repaired = true;
               this.fields.set(row.row_id, {...row, ...(after ? {parent_id: after.parent_id, parent_ref: after.parent_ref, after_id: after.after_id, before_id: after.before_id ?? undefined} : {}), hidden, settledRevision: receipt.store_revision});
-              if (after) this.place(row.row_id, after.after_id, after.before_id);
+              if (after) this.place(row.row_id, anchor(row.row_id, after), after.before_id);
             }
             if (repaired || JSON.stringify(final.plan.selection_after) !== JSON.stringify(accepted.selection_after)) this.owner?.installRange(final.plan, mayFocus, action);
             this.resume(); this.notify();
-          }).catch(error => {this.error = error; this.notify();}).finally(finish);
+          }).catch(error => this.fail(error)).finally(finish);
           release(); this.owner?.installRange(accepted, mayFocus, action);
         },
       };
     };
     const publication = reserve(initial, snapshot, null);
-    const prepare = async () => {
+    const prepare = async (readLinks: (link_ids: readonly string[]) => Promise<readonly LinkState[]>) => {
       const predecessors = new Map<string, RangeState>();
       try {for (const [id, future] of initial.states) predecessors.set(id, await future);}
       finally {initial.states.clear();}
@@ -360,14 +420,28 @@ export class OutlinePendingInput {
       });
       const byId = new Map(rows.map(row => [row.row_id, row])), children = new Map<string | null, typeof rows>();
       for (const row of rows) {const siblings = children.get(row.parent_id) ?? []; siblings.push(row); children.set(row.parent_id, siblings);}
-      for (const [id, state] of predecessors) {
-        const row = byId.get(id), placement = state.placement, original = originalPlacement(id);
-        if (!row || !placement || original && placement.parent_id === original.parent_id && placement.parent_ref === original.parent_ref &&
-          placement.after_id === original.after_id && placement.before_id === original.before_id) continue;
-        const siblings = children.get(row.parent_id)!; siblings.splice(siblings.indexOf(row), 1);
-        const before = placement.before_id ? siblings.findIndex(peer => peer.row_id === placement.before_id) : -1;
-        const after = placement.after_id ? siblings.findIndex(peer => peer.row_id === placement.after_id) : -1;
-        siblings.splice(before >= 0 ? before : after >= 0 ? after + 1 : siblings.length, 0, row);
+      const reparented = new Set(rows.flatMap((row, index) => row.parent_id === snapshot.rows[index]!.parent_id && row.parent_ref === snapshot.rows[index]!.parent_ref
+        ? [] : [row.parent_id, snapshot.rows[index]!.parent_id]));
+      if ([...children].some(([parent, siblings]) => reparented.has(parent) && siblings.some(row => row.gap)))
+        return {kind: "refusal" as const, reason: "gap" as const};
+      const items = rows.filter(row => row.selectable && (!predecessors.has(row.row_id) || predecessors.get(row.row_id)!.placement !== null));
+      const links = new Map((await readLinks([...new Set(items.flatMap(row => row.link_id ? [row.link_id] : []))])).map(link => [link.link_id, link]));
+      const positions = new Map<string, string>();
+      for (const row of items) {
+        const link = row.link_id ? links.get(row.link_id) : null;
+        const position = link?.endpoint_a === row.parent_ref && link.endpoint_b === row.ref ? link.position_a
+          : link?.endpoint_b === row.parent_ref && link.endpoint_a === row.ref ? link.position_b : null;
+        if (!link || !isVisible(link.add_vv, link.remove_vv) || !position) return {kind: "refusal" as const, reason: "changed" as const};
+        positions.set(row.row_id, position.value);
+      }
+      // One leased graph head owns order. Captured links below still own observed membership; a fresh position read does not extend it.
+      for (const [parent, siblings] of children) {
+        const sorted = siblings.filter(row => positions.has(row.row_id)).sort((a, b) => {
+          const x = positions.get(a.row_id)!, y = positions.get(b.row_id)!;
+          return x < y ? -1 : x > y ? 1 : a.link_id! < b.link_id! ? -1 : a.link_id! > b.link_id! ? 1 : 0;
+        });
+        let at = 0;
+        children.set(parent, siblings.map(row => positions.has(row.row_id) ? sorted[at++]! : row));
       }
       const ordered: typeof rows = [], visited = new Set<string>();
       const append = (row: typeof rows[number]) => {
@@ -377,7 +451,7 @@ export class OutlinePendingInput {
       for (const row of rows) if (row.parent_id === null || !byId.has(row.parent_id)) append(row);
       const occurrences: OccurrenceBookmark[] = ordered.flatMap(row => row.ref === null ? [] : [{row_id: row.row_id, ref: row.ref,
         placement: predecessors.get(row.row_id)?.placement ?? null, link: predecessors.get(row.row_id)?.link ?? null}]);
-      const result = planRange(plan.command, {rows: ordered}, plan.selection_before);
+      const result = planRange(plan.command, {rows: ordered}, plan.selection_before, plan.destination);
       return result.kind === "refusal" ? result : {...result, snapshot: {rows: ordered}, occurrences, plan: plan.command === "remove" && plan.selection_before?.kind === "text"
         ? {...result.plan, selection_after: plan.selection_after} : result.plan};
     };
@@ -385,26 +459,11 @@ export class OutlinePendingInput {
     owner.history.range({plan, documents, snapshot, metadata: () => [...captured.values()], canRetain: () => this.owner?.canRetain() ?? false, prepare, publication, reserve: action => reserve(pin(false), this.owner?.rangeSnapshot() ?? snapshot, action), active: () => this.owner === owner,
       refused: callbacks.refused});
   }
-  move(row_id: string, peer: {row_id: string; link: LinkState | null}, direction: "up" | "down", selection: FocusSelection | null): void {
-    const owner = this.current(), row = this.row(row_id), token = crypto.randomUUID();
-    const captured = owner.capture(), resolve = selection !== null && captured?.kind === "text" && captured.row_id === row_id && captured.ref === row.ref ? captured.resolve : null;
-    const placement = this.placement(row.parent_id, row.parent_ref, direction === "down" ? peer.row_id : null, direction === "up" ? peer.row_id : undefined);
-    const target = {...row, after_id: direction === "down" ? peer.row_id : null, before_id: direction === "up" ? peer.row_id : undefined};
-    const before = this.bookmark(row, selection), after = this.bookmark(target, selection);
-    const admitted = owner.history.move({occurrence: this.occurrence(row_id), placement, change: {
-      before: before?.kind === "text" ? {...before, resolve} : before, after: after?.kind === "text" ? {...after, resolve} : after,
-      placements_before: [this.placementBookmark(row)!], placements_after: [this.placementBookmark(target, true)!]}});
-    this.fields.set(row_id, {...row, after_id: direction === "down" ? peer.row_id : null, before_id: direction === "up" ? peer.row_id : undefined,
-      relocating: token, previousParent: row.relocating ? row.previousParent : row.parent_id, previousParentRef: row.relocating ? row.previousParentRef : row.parent_ref, settledRevision: undefined});
-    this.place(row_id, direction === "down" ? peer.row_id : null, direction === "up" ? peer.row_id : null);
-    owner.publish([], admitted.committed); this.watch([row_id], admitted, new Map([[row_id, admitted.link]]));
-  }
   resume(): void {
     if (this.finishing) {this.resumeAgain = true; return;}
     if (![...this.bound].some(([id, bound]) => bound.settled && this.fields.get(id)?.pending)) return;
-    this.finishing = true;
     let changed = false;
-    void (async () => {
+    this.finishing = (async () => {
       for (const [id, bound] of this.bound) {
         const row = this.fields.get(id);
         if (!row?.pending || !bound.settled) continue;
@@ -424,8 +483,8 @@ export class OutlinePendingInput {
         if (!bound.captureBytes && !bound.reservations && !bound.next) {bound.release(); this.bound.delete(id);}
         this.owner?.identity(this.fields.get(id)!);
       }
-    })().catch(error => {this.error = error; this.resumeAgain = false; changed = true;}).finally(() => {
-      const again = this.resumeAgain; this.resumeAgain = false; this.finishing = false;
+    })().catch(error => {this.resumeAgain = false; this.fail(error);}).finally(() => {
+      const again = this.resumeAgain; this.resumeAgain = false; this.finishing = null;
       if (changed) this.notify();
       if (again) this.resume();
     });
@@ -441,16 +500,23 @@ export class OutlinePendingInput {
     void committed.then(async receipt => {
       await link;
       const field = this.fields.get(row_id);
-      if (field?.receiptOwner !== owner || this.bound.get(row_id) !== retained || field.ref !== row.ref || field.parent_id !== row.parent_id || field.parent_ref !== row.parent_ref) return;
+      if (field?.receiptOwner !== owner || this.bound.get(row_id) !== retained || field.ref !== row.ref) return;
       this.fields.set(row_id, {...field, settledRevision: receipt.store_revision});
       const bound = this.bound.get(row_id); if (bound) bound.settled = true;
       else this.fields.set(row_id, {...this.fields.get(row_id)!, pending: false});
       this.resume(); this.notify();
-    }).catch(error => {this.error = error; this.notify();});
+    }).catch(error => this.fail(error));
   }
+  /** Finishes what settled writing still owes; a failed commit is the runtime's to resend. */
   retry(): void {
-    const error = this.error; this.error = null;
-    if (error instanceof LocalCommitError) void error.retry().catch(next => {this.error = next; this.notify();});
+    if (this.retrying) return;
+    const failures = this.failures;
+    this.retrying = true; this.notify();
     this.resume();
+    void (async () => {while (this.finishing) await this.finishing;})().then(() => {
+      this.retrying = false;
+      if (this.failures === failures) this.error = null;
+      this.notify();
+    });
   }
 }

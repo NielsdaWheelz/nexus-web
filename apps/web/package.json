@@ -8,6 +8,7 @@
     "build": "bun run build:next && node scripts/package-standalone.mjs",
     "start": "node .next/standalone/serve.mjs",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
+    "lint:icons": "bun scripts/check-icons.ts",
     "lint": "eslint src/ scripts/lab/ scripts/package-standalone.mjs scripts/serve.mjs scripts/probe-web.mjs --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit && tsc -p src/extension/tsconfig.json --noEmit",
     "build:shelf": "vite build --config vite.shelf.config.ts",

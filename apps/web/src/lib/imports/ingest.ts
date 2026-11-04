@@ -10,7 +10,7 @@
 import { publishChange } from "@/lib/api/changes";
 import { ApiError, apiFetch, isApiError, isRefusal, requestWithDeadline, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { placements, readAcquisitionGuard, type AcquisitionGuard } from "@/lib/libraries/api";
+import { placements, type AcquisitionGuard } from "@/lib/libraries/api";
 import type { BrowsePreview } from "@/lib/browse/api";
 import { resolvePodcastEpisode } from "@/lib/podcasts/api";
 import {
@@ -148,18 +148,19 @@ export interface UploadAttempt {
   guard: AcquisitionGuard | null;
   session: Schema<"UploadRequired"> | null;
   confirmation: Schema<"ConfirmUploadRequest"> | null;
+  confirmation_unsettled: boolean;
   bytes_uploaded: boolean;
   review_required: boolean;
   expired: boolean;
 }
 
 export function createUploadAttempt(id = crypto.randomUUID()): UploadAttempt {
-  return { id, guard: null, session: null, confirmation: null, bytes_uploaded: false, review_required: false, expired: false };
+  return { id, guard: null, session: null, confirmation: null, confirmation_unsettled: false, bytes_uploaded: false, review_required: false, expired: false };
 }
 
 /** Explicit review after a known refusal. An unknown confirmation cannot be edited. */
 export function reviewUploadAttempt(attempt: UploadAttempt): void {
-  if (!attempt.review_required) return;
+  if (!attempt.review_required || attempt.confirmation_unsettled) return;
   attempt.guard = null;
   attempt.confirmation = null;
   attempt.review_required = false;
@@ -174,7 +175,7 @@ export function reviewUploadAttempt(attempt: UploadAttempt): void {
 export async function uploadIngestFile({ file, attempt, guard, signal = new AbortController().signal, exclusive = run => run(), onPhaseChange, onProgress }: {
   file: File;
   attempt: UploadAttempt;
-  guard?: AcquisitionGuard;
+  guard: AcquisitionGuard;
   signal?: AbortSignal;
   exclusive?: <T>(run: () => Promise<T>) => Promise<T>;
   onPhaseChange?: (phase: UploadPhase) => void;
@@ -185,7 +186,7 @@ export async function uploadIngestFile({ file, attempt, guard, signal = new Abor
   if (kind === null || getFileUploadError(file) !== null) throw outcome({ kind: "UnsupportedFileType" });
   if (attempt.expired) throw outcome({ kind: "Expired" });
   if (attempt.review_required) throw new ApiError(409, "E_RESOURCE_CONFLICT", "save needs review");
-  attempt.guard ??= guard ?? await readAcquisitionGuard([], signal);
+  attempt.guard ??= guard;
   onPhaseChange?.("Preparing");
   let published: Schema<"Published">;
   if (attempt.session === null) {
@@ -228,19 +229,30 @@ export async function uploadIngestFile({ file, attempt, guard, signal = new Abor
     }
     attempt.confirmation ??= { generation: upload.generation, ...attempt.guard! };
     const confirmation = attempt.confirmation;
+    const unsettled = attempt.confirmation_unsettled;
     try {
       return await exclusive(async () => {
         signal.throwIfAborted();
         onPhaseChange?.("Verifying");
-        return (await call("Confirm", () => requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal =>
+        attempt.confirmation_unsettled = true;
+        const published = (await call("Confirm", () => requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal =>
           apiFetch<ApiJson<"/media/uploads/{session_id}/confirm", "post">>(
             `/api/media/uploads/${encodeURIComponent(upload.session_id)}/confirm`,
             { method: "POST", body: JSON.stringify(confirmation), signal },
           ) }))).data;
+        attempt.confirmation_unsettled = false;
+        return published;
       });
     } catch (error) {
+      if (isRefusal(error) || error instanceof UploadSessionError) attempt.confirmation_unsettled = unsettled;
+      if (error instanceof UploadSessionError && (error.outcome.kind === "Superseded"
+        || error.outcome.kind === "Expired" || error.outcome.kind === "VerificationRejected")) attempt.confirmation_unsettled = false;
       if (isApiError(error) && ["E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_LIBRARY_NOT_FOUND"].includes(error.code)
-        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden") attempt.review_required = true;
+        || error instanceof UploadSessionError && error.outcome.kind === "LibraryForbidden") {
+        // Confirmation and auth bootstrap report technical contention as busy, not a filing refusal.
+        attempt.confirmation_unsettled = false;
+        attempt.review_required = true;
+      }
       if (error instanceof UploadSessionError && error.outcome.kind === "Expired") attempt.expired = true;
       if (error instanceof UploadSessionError && error.outcome.kind === "BytesMissing") attempt.bytes_uploaded = false;
       throw error;

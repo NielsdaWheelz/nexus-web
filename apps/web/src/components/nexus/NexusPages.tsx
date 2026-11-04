@@ -1,21 +1,25 @@
 "use client";
-
-// Every Nexus page but Root, one tree for both surfaces.
-import { ArrowLeft } from "lucide-react";
-import type { ReactNode } from "react";
-import { Announcement, FeedbackBusy, FeedbackRecoveryControl } from "@/components/feedback/Feedback";
+import * as Icon from "@/lib/ui/icons";
+import type { ReactNode, RefObject } from "react";
+import { Announcement } from "@/components/feedback/Announcement";
+import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
+import { useThrowLater } from "@/lib/api/serverState";
+import type { NexusPage } from "@/lib/nexus/model";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import ImportPage from "./ImportPage";
 import type { NexusController } from "./useNexusController";
-import styles from "./Nexus.module.css";
+import styles from "@/components/switchboard/Switchboard.module.css";
 
-function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNode; onBack?: () => void }) {
+/** A page's header: back and title. */
+function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNode; onBack?: () => void; mobile: boolean }) {
   return (
     <header className={styles.header}>
       {onBack ? (
-        <Button iconOnly icon={<ArrowLeft />} className={styles.iconButton} aria-label="back" onClick={onBack} />
+        <Button iconOnly icon={<Icon.Left />} className={styles.iconButton} aria-label="back" onClick={onBack} />
       ) : null}
       <div className={styles.heading}>
         <h2 tabIndex={-1} data-switchboard-heading>
@@ -23,12 +27,11 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
         </h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
-      <FeedbackRecoveryControl />
     </header>
   );
 }
 
-function Page({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
+function Page({ controller, mobile, scrollRef }: { controller: NexusController; mobile: boolean; scrollRef?: RefObject<HTMLElement | null> }) {
   const { page } = controller;
   switch (page.kind) {
     case "Root":
@@ -41,6 +44,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
           <Header
             title={page.kind === "UseText" ? "use this text" : page.kind === "ChooseCreate" ? "create" : "browse"}
             onBack={controller.back}
+            mobile={mobile}
           />
           {(page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query) ? <p className={styles.textPreview}>{page.kind === "UseText" ? page.text : page.kind === "ChooseCreate" ? page.draft : page.query}</p> : null}
           <div className={styles.choices}>
@@ -58,7 +62,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
                 onClick={activate}
                 onKeyDown={activate}
               >
-                <row.icon size={18} aria-hidden="true" />
+                <row.icon size={20} aria-hidden="true" />
                 <span>
                   {row.label}
                   {row.action.kind === "Unavailable" ? <small>{row.action.reason}</small> : null}
@@ -69,15 +73,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
         </section>
       );
     case "CaptureToday":
-      return (
-        <section className={styles.page}>
-          <Header title="add to today" onBack={controller.back} />
-          <p>{page.text}</p>
-          <FeedbackBusy pending={page.submit.kind === "Running"} />
-          <Button reserveIcon aria-busy={page.submit.kind === "Running" || undefined}
-            aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={() => controller.retryCapture("default")}>retry saving</Button>
-        </section>
-      );
+      return <CaptureToday page={page} controller={controller} mobile={mobile} />;
     case "CreateLibrary":
       return (
         <CreateLibraryPanel
@@ -90,17 +86,41 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
         />
       );
     case "Import":
-      // the phone task stays mounted while closed: a closed page must not count as showing lines
-      return controller.open ? <ImportPage controller={controller} page={page} mobile={mobile} /> : null;
+      // The phone task stays mounted while closed: it must not count as showing lines.
+      return controller.open ? <ImportPage controller={controller} page={page} mobile={mobile} scrollRef={scrollRef} /> : null;
   }
 }
 
-export default function NexusPages({ controller, mobile }: { controller: NexusController; mobile: boolean }) {
+export default function NexusPages({ controller, mobile, scrollRef }: { controller: NexusController; mobile: boolean; scrollRef?: RefObject<HTMLElement | null> }) {
+  return <>
+    <Page controller={controller} mobile={mobile} scrollRef={scrollRef} />
+    <Announcement text={controller.announcement} level={controller.open ? "Polite" : "None"}
+      label="Nexus status" occurrence={controller.announcementOccurrence} onPublish={controller.publishedAnnouncement} />
+  </>;
+}
+
+/** A note whose words are not saved on this device yet: the one interrupt, until it commits. */
+function CaptureToday({ page, controller, mobile }: { mobile: boolean; page: Extract<NexusPage, { kind: "CaptureToday" }>; controller: NexusController }) {
+  const copy = useCopyFeedback(page.text);
+  const { say } = useOutcome();
+  const throwLater = useThrowLater();
+  const running = page.submit.kind === "Running";
+  const failed = page.submit.kind === "Running" || page.submit.kind === "Retryable" ? page.submit : null;
+  const atRisk = failed?.failure?.kind === "AtRisk";
+  const retry = () => controller.retryCapture("default");
+  const copyText = () => void copy.copy(page.text).catch((error: unknown) => {
+    if (error instanceof ClipboardWriteUnavailableError) say({ fact: "copying isn’t available here.", reason: "select the text and copy it." });
+    else throwLater({ error });
+  });
   return (
-    <>
-      <Page controller={controller} mobile={mobile} />
-      <Announcement text={controller.announcement} level={controller.open ? "Polite" : "None"}
-        label="Nexus status" occurrence={controller.announcementOccurrence} onPublish={controller.publishedAnnouncement} />
-    </>
+    <section className={styles.page}>
+      <Header title="add to today" onBack={controller.back} mobile={mobile} />
+      <p>{page.text}</p>
+      <Button aria-busy={running || undefined} aria-disabled={page.submit.kind !== "Retryable" || undefined} onClick={retry}>retry</Button>
+      {atRisk ? <Hold id={page.noteId} attempt={failed?.failures} risk line={{ fact: "this note isn’t saved yet." }} verbs={[
+        { label: "retry", commandKey: `retry capture ${page.noteId}`, run: retry, busy: running },
+        { label: "copy text", commandKey: `copy capture ${page.noteId}`, run: copyText, copied: copy.occurrence ?? undefined },
+      ]} /> : null}
+    </section>
   );
 }

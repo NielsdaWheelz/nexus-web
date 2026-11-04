@@ -7,12 +7,13 @@
  * Focus stays in the field and the grid's selection is its active descendant. The intake
  * owns every line and its words; the page admits, selects and runs a row's verb.
  */
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { ArrowLeft, Import } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
+import * as Icon from "@/lib/ui/icons";
 import { Failed, Field } from "@/components/feedback/Fact";
-import { ShellContext } from "@/components/feedback/stage";
+import { useShell } from "@/components/feedback/stage";
 import DestinationChooser, { DestinationTrigger, setDestination } from "@/components/libraries/DestinationChooser";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
+import switchboard from "@/components/switchboard/Switchboard.module.css";
 import Button from "@/components/ui/Button";
 import collection from "@/components/ui/Collection.module.css";
 import Input from "@/components/ui/Input";
@@ -49,7 +50,6 @@ import styles from "./ImportPage.module.css";
 const GRID_ID = "import-options";
 const HELP_ID = "import-help";
 const FIELD_ID = "import-field-line";
-const CREATE_ID = "import-create-line";
 const cellId = (key: string) => `import-row-${encodeURIComponent(key)}`;
 const lineKey = (line: IntakeLine) => `Line:${line.id}`;
 const AllImports = getPaneRouteIcon("/imports");
@@ -67,10 +67,11 @@ type Row = Selectable
   | { readonly kind: "Heading"; readonly key: string; readonly text: string }
   | { readonly kind: "ShelfFailed"; readonly key: string; readonly error: ApiError };
 
-export default function ImportPage({ controller, page, mobile }: {
+export default function ImportPage({ controller, page, mobile, scrollRef: importBody }: {
   readonly controller: NexusController;
   readonly page: Extract<NexusPage, { kind: "Import" }>;
   readonly mobile: boolean;
+  readonly scrollRef?: RefObject<HTMLElement | null>;
 }) {
   const intake = useImportIntake();
   const creation = useImportCreation();
@@ -78,7 +79,7 @@ export default function ImportPage({ controller, page, mobile }: {
   const { displayTimeZone } = useRenderEnvironment();
   const coarse = useTouchCapable();
   const { summary, observation, revision, retainObserver } = useImports();
-  const { signIn } = useContext(ShellContext);
+  const { signIn } = useShell();
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -140,7 +141,7 @@ export default function ImportPage({ controller, page, mobile }: {
     if (scrollRef.current && cell) revealCollectionItem(scrollRef.current, cell);
   }, [active]);
 
-  const { announce } = controller;
+  const { announceImport } = controller;
 
   function select(key: string) {
     intake.disarmExcept(intake.lines.find(line => lineKey(line) === key)?.id ?? null);
@@ -157,7 +158,7 @@ export default function ImportPage({ controller, page, mobile }: {
     const urls = sending.map(link => new URL(link).href);
     const listed = intake.lines.find(line => line.source.kind === "Link" && urls.includes(line.source.url)) ?? null;
     controller.admitImport({ links: sending, files: [], ...(disposition === "Fork" ? { open: "Fork" } as const : {}) });
-    if (listed !== null) announce(`“${pointer(listed)}” is already listed.`);
+    if (listed !== null) announceImport(`“${pointer(listed)}” is already listed.`);
     setSelection({ key: listed === null ? null : lineKey(listed), moved: false });
   }
   /** The sieve: enter takes the links and leaves the rest, which says it is not a link. */
@@ -231,17 +232,17 @@ export default function ImportPage({ controller, page, mobile }: {
   const placeholder = coarse ? intake.lines.length > 0 ? "another link" : "paste a link"
     : intake.lines.length > 0 ? "another link, or a file" : "paste a link, or drop a file";
   const attention = summary.status === "ready" ? summary.data.needs_attention_count : 0;
-  const back = <Button iconOnly icon={<ArrowLeft />} className={mobile ? nexus.iconButton : undefined}
+  const back = <Button iconOnly icon={<Icon.Left />} className={mobile ? switchboard.iconButton : undefined}
     aria-label="back" tooltip={{ text: "back to palette" }} onClick={controller.back} />;
 
   return (
     <section className={styles.page} data-import-page="" data-mobile={mobile || undefined} style={readerSurfaceStyle(profile)}>
       {mobile
-        ? <header className={nexus.header}>{back}<h2 tabIndex={-1} data-switchboard-heading>import</h2></header>
+        ? <header className={switchboard.header}>{back}<h2 tabIndex={-1} data-switchboard-heading>import</h2></header>
         : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>import</h2>}
       <div className={styles.fieldRow} data-feedback-controls="true">
         <div className={styles.fieldBox}>
-          {mobile ? null : back}
+          {mobile ? null : <span className={nexus.gutter}>{back}</span>}
           <Input
             ref={inputRef}
             bare
@@ -251,7 +252,7 @@ export default function ImportPage({ controller, page, mobile }: {
             aria-controls={GRID_ID}
             aria-expanded="true"
             aria-activedescendant={focused && active !== null ? cellId(active) : undefined}
-            aria-describedby={[HELP_ID, fieldLine ? FIELD_ID : null, creation.error ? CREATE_ID : null].filter(Boolean).join(" ")}
+            aria-describedby={[HELP_ID, fieldLine ? FIELD_ID : null].filter(Boolean).join(" ")}
             className={styles.field}
             value={intake.field}
             placeholder={placeholder}
@@ -300,18 +301,14 @@ export default function ImportPage({ controller, page, mobile }: {
         </div>
       </div>
       <span id={HELP_ID} className="sr-only">with links here, enter imports them.</span>
-      {fieldLine || creation.error ? <div className={styles.fieldLines}>
-        {fieldLine ? <Field id={FIELD_ID} line={fieldLine} /> : null}
-        {creation.error ? <Field id={CREATE_ID} line={{ fact: creation.error.content.title, reason: creation.error.content.message }}
-          verbs={creation.error.retry ? [{ label: "retry", commandKey: creation.error.commandKey ?? "import-into-create", busy: creation.error.busy, run: creation.error.retry }] : undefined} /> : null}
-      </div> : null}
+      {fieldLine ? <div className={styles.fieldLines}><Field id={FIELD_ID} line={fieldLine} /></div> : null}
       <PickerSurface active={choosing} onClose={() => setChoosing(false)} anchor={() => intoRef.current} title="libraries" align="end">
         <DestinationChooser context="import-into" chosen={intake.into} alwaysIncludesAll disabled={false}
           onSet={change => { intake.setInto(setDestination(intake.into, change)); return true; }}
-          create={{ available: true, pendingNames: creation.pendingNames, onCreate: name => creation.admit({ name, scope: "import-into" }) }}
-          error={creation.error} />
+          create={{ available: true, pendingNames: creation.pendingNames, onCreate: name => creation.admit({ name, scope: "import-into" }) }} />
       </PickerSurface>
-      <div ref={scrollRef} className={`${collection.fillViewport} ${styles.scroll}`} data-collection-viewport="">
+      <div ref={element => { scrollRef.current = element; if (importBody) importBody.current = element; }}
+        className={`${collection.fillViewport} ${styles.scroll}`} data-collection-viewport="">
         <div id={GRID_ID} role="grid" aria-label="import options" aria-colcount={1} className={styles.grid}>
           {rows.map(row => {
             switch (row.kind) {
@@ -333,8 +330,8 @@ export default function ImportPage({ controller, page, mobile }: {
               case "Commit": {
                 const [only, ...more] = row.links;
                 return more.length === 0
-                  ? cell(`import ${linkPointer(only!)}`, <><Import size={18} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>import <span className={styles.mono}>{linkPointer(only!)}</span></span></>)
-                  : cell(`import ${row.links.length} links`, <><Import size={18} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>import {row.links.length} links</span></>);
+                  ? cell(`import ${linkPointer(only!)}`, <><Icon.Upload size={20} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>import <span className={styles.mono}>{linkPointer(only!)}</span></span></>)
+                  : cell(`import ${row.links.length} links`, <><Icon.Upload size={20} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>import {row.links.length} links</span></>);
               }
               case "Line": {
                 const view = viewOf(row.line);
@@ -348,7 +345,7 @@ export default function ImportPage({ controller, page, mobile }: {
                     renderTrigger={trigger => <OverflowMenuButton {...trigger} className={styles.menu} />} />}
                 </ImportLine>);
               }
-              case "Choose": return cell("choose a file…", <><Import size={18} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>choose a file…</span></>);
+              case "Choose": return cell("choose a file…", <><Icon.Upload size={20} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>choose a file…</span></>);
               case "Shelf": {
                 const readable = row.item.can_read || row.item.can_play;
                 const one = readable ? row.item.title : row.item.source_label ?? row.item.original_filename ?? row.item.title;
@@ -359,7 +356,7 @@ export default function ImportPage({ controller, page, mobile }: {
                 </div>);
               }
               case "All": return cell(attention > 0 ? `all imports, ${attentionPhrase(attention)}` : "all imports", <>
-                <AllImports size={18} aria-hidden="true" className={styles.glyph} />
+                <AllImports size={20} aria-hidden="true" className={styles.glyph} />
                 <span className={styles.label}>all imports</span>
                 {attention > 0 ? <span className={styles.end}>{attentionPhrase(attention)}</span> : null}
               </>);

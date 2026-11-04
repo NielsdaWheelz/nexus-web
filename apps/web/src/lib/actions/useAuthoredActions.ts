@@ -66,11 +66,11 @@ export function useAuthoredActions(ref: string | null): {
       const disabledReason = busy.has(actionId) ? BLOCKED_COPY.Busy : options.blocked;
       return {
         kind: "command", id: actionId, label,
-        icon: createElement(entry.icon, { size: 16, "aria-hidden": true }),
+        icon: entry.icon && createElement(entry.icon, { "aria-hidden": true }),
         tone: entry.group === "Danger" ? "danger" : "default",
         separatorBefore: entry.group === "Danger" || undefined,
-        disabled: disabledReason !== undefined || undefined, disabledReason,
-        onSelect: detail => run({ ref: owned, id: actionId, label, title, confirmation: options.confirmation,
+        disabled: disabledReason !== undefined || undefined, disabledReason, waiting: busy.has(actionId) || undefined,
+        onSelect: detail => run({ ref: owned, id: actionId, label, feedbackLabel: label.toLowerCase(), title, confirmation: options.confirmation,
           tracked: options.tracked, execute: () => execute(detail) }),
       };
     };
@@ -83,7 +83,7 @@ export function useAuthoredActions(ref: string | null): {
         originPaneId: pane?.paneId ?? workspace.state.active_primary_pane_id });
     }, { tracked: false, confirmation: null });
     // A failed commit for this resource blocks later commands until its own retry lands.
-    const pending = saving.error !== null && saving.error_refs.includes(owned) ? "couldn’t save on this device. retry saving first." : undefined;
+    const pending = saving.error !== null && saving.error_refs.includes(owned) ? "an earlier change isn’t saved yet." : undefined;
     const settle = () => { if (ctx.isActive()) settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: owned, fallbackHref: "/notes" }); };
     const remove = (actionId: "DeleteNote" | "DeletePage" | "DeleteHighlight") => command(actionId, async () => {
       try {
@@ -92,12 +92,12 @@ export function useAuthoredActions(ref: string | null): {
         if (error instanceof LocalCommitError) {
           // the runtime keeps the frozen delete and its retry beside the affected writing; panes settle whenever it lands.
           void error.completion.then(settle, () => undefined);
-          throw new ResourceActionFailure({ tone: "Warning", title: "couldn’t save on this device", message: "keep this page open. retry saving." });
+          throw new ResourceActionFailure({ fact: "couldn’t delete it yet.", reason: "the change isn’t saved on this device." });
         }
         // deleted elsewhere between choosing and confirming is a refusal; anything else is a defect.
         const current = await (await writing.store).query({ kind: "resource", ref: owned });
         if (current.rows.length > 0) throw error;
-        throw new ResourceActionFailure({ tone: "Neutral", title: "this item is no longer on this device" });
+        throw new ResourceActionFailure({ fact: "it was already deleted." });
       }
       settle();
     }, { tracked: true, confirmation: ACTION_CATALOG[actionId].confirmation, blocked: pending });

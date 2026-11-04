@@ -33,7 +33,8 @@ export type PaneFilterRowsStatus =
       readonly unit: PaneFilterRowsUnit;
     };
 
-/** The spoken status: full sentences. */
+/** The filter's own description, in full sentences. A failed load is the list's to tell, never
+ * the filter's: it counts what loaded, and says nothing when nothing did. */
 export function paneFilterRowsStatusMessage(
   status: PaneFilterRowsStatus,
   query: string,
@@ -44,15 +45,13 @@ export function paneFilterRowsStatusMessage(
   const matches = `${status.visibleCount} ${status.visibleCount === 1 ? "match" : "matches"}`;
   switch (status.kind) {
     case "Partial":
-      return status.loadedCount === 0
-        ? `No ${status.unit.plural} loaded yet; results are incomplete.`
-        : `${textActive ? `${matches} among ` : ""}${status.loadedCount} loaded ${status.loadedCount === 1 ? status.unit.singular : status.unit.plural}; results are incomplete.`;
+    case "Failed": {
+      if (status.loadedCount === 0) return status.kind === "Partial" ? `no ${status.unit.plural} loaded yet.` : "";
+      const units = status.loadedCount === 1 ? status.unit.singular : status.unit.plural;
+      return textActive ? `${matches} among ${status.loadedCount} loaded ${units}.` : `${status.loadedCount} ${units} loaded so far.`;
+    }
     case "Complete":
-      return `${status.visibleCount}${textActive ? " matching" : ""} ${unit} of ${status.totalCount} total.`;
-    case "Failed":
-      return status.loadedCount === 0
-        ? "Results unavailable."
-        : `Loading failed; ${textActive ? `${matches} among ` : ""}${status.loadedCount} loaded ${status.loadedCount === 1 ? status.unit.singular : status.unit.plural}.`;
+      return `${status.visibleCount}${textActive ? " matching" : ""} ${unit} of ${status.totalCount}.`;
   }
 }
 

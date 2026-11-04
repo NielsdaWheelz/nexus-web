@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { FeedbackFailure, useFeedbackOccurrence, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useCallback, useRef, type RefObject } from "react";
+import { useOutcome } from "@/components/feedback/Feedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -9,9 +9,8 @@ import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { ACTION_CATALOG, BLOCKED_COPY } from "@/lib/actions/catalog";
 import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
-import { UploadSessionError, recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
-import { uploadCommandFeedback } from "@/lib/imports/copy";
-import { createUploadAttempt, removeUploadSession, uploadIngestFile } from "@/lib/imports/ingest";
+import { recoverMedia, type ImportItem, type MediaRecoveryOffer } from "@/lib/imports/api";
+import { useImportCommands } from "@/lib/imports/commands";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
@@ -26,38 +25,31 @@ import styles from "./Imports.module.css";
 type Command = Extract<ActionDescriptor, { kind: "command" }>;
 
 /** Readiness offers Open; its fresh activation still authorizes the navigation. */
-function useOpenAction(item: ImportItem) {
+function useOpenAction(item: ImportItem): Command | null {
   const { ctx, run } = useActionRuntime();
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
+  const outcome = useOutcome();
   const mediaRef = item.media_id === null ? null : `media:${item.media_id}`;
   const busy = useBusyActionIds(mediaRef).has("Open");
   const runtime = requirePaneRuntime(usePaneRuntime(), "ImportOpenAction");
-  const mounted = useRef(false);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const open = (ref: string, intent: OpenIntent) => openAsyncResult({
     ctx, originPaneId: runtime.paneId, intent, subject: item.title,
     create: async () => {
       const current = await resolveResourceItem(ref);
       if (current.missing || current.activation.kind !== "route" || current.activation.href === null) {
-        if (mounted.current) setFailure({
-          tone: "Warning", title: "couldn’t open this item", message: BLOCKED_COPY.TemporarilyUnavailable,
-        });
+        outcome.say({ fact: `couldn’t open "${item.title}".`, reason: "it isn’t available." });
         return null;
       }
-      if (mounted.current) setFailure(null);
-      return { target: { href: current.activation.href, labelHint: item.title }, title: "item available", openLabel: "open item" };
+      return { target: { href: current.activation.href, labelHint: item.title }, title: "ready to open", openLabel: "open" };
     },
   });
-  const action: Command | null = mediaRef !== null && (item.can_read || item.can_play) ? {
-    kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: <ACTION_CATALOG.Open.icon size={16} aria-hidden="true" />, disabled: busy,
+  return mediaRef !== null && (item.can_read || item.can_play) ? {
+    kind: "command", id: "Open", label: ACTION_CATALOG.Open.label, icon: null, disabled: busy,
     disabledReason: busy ? BLOCKED_COPY.Busy : undefined,
     onSelect: ({ openIntent }) => run({
-      ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, title: item.title,
+      ref: mediaRef, id: "Open", label: ACTION_CATALOG.Open.label, feedbackLabel: ACTION_CATALOG.Open.label.toLowerCase(), title: item.title,
       confirmation: null, tracked: true, execute: () => open(mediaRef, openIntent),
     }),
   } : null;
-  return { action, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
 }
 
 function OpenControl({ item, action }: { readonly item: ImportItem; readonly action: Command }) {
@@ -65,7 +57,7 @@ function OpenControl({ item, action }: { readonly item: ImportItem; readonly act
     const detail = prepareActionSelect(event, null);
     if (detail && !action.disabled) action.onSelect(detail);
   };
-  return <ButtonLink reserveIcon busyKey={item.ref} href={`/media/${item.media_id}`}
+  return <ButtonLink href={`/media/${item.media_id}`}
     aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     data-workspace-rich-target="true" onClick={activate} onKeyDown={activate}
   >{action.label}</ButtonLink>;
@@ -73,8 +65,8 @@ function OpenControl({ item, action }: { readonly item: ImportItem; readonly act
 
 /** The row and inspector share the same Open command, including modifier intent. */
 export function ImportOpenAction({ item }: { readonly item: ImportItem }) {
-  const { action, feedback } = useOpenAction(item);
-  return <>{action ? <OpenControl item={item} action={action} /> : null}{feedback}</>;
+  const action = useOpenAction(item);
+  return action ? <OpenControl item={item} action={action} /> : null;
 }
 
 /** Exact offered attempt/job/revision, shared busy identity and catalog wording. */
@@ -83,77 +75,41 @@ function useRecoveryAction(mediaId: string | null, offer: MediaRecoveryOffer | n
   const ref = mediaId === null ? null : `media:${mediaId}`;
   const busy = useBusyActionIds(ref);
   if (mediaId === null || ref === null || offer === null) return null;
-  const { label, icon: Icon } = ACTION_CATALOG[offer.kind];
+  const { label, icon: Glyph } = ACTION_CATALOG[offer.kind];
   return {
-    kind: "command", id: offer.kind, label, icon: <Icon size={16} aria-hidden="true" />, disabled: busy.has(offer.kind),
+    kind: "command", id: offer.kind, label, icon: <Glyph aria-hidden="true" />, disabled: busy.has(offer.kind),
     disabledReason: busy.has(offer.kind) ? BLOCKED_COPY.Busy : undefined,
     onSelect: () => run({
-      ref, id: offer.kind, label, title: "", confirmation: null, tracked: true,
+      ref, id: offer.kind, label, feedbackLabel: label.toLowerCase(), title: "", confirmation: null, tracked: true,
       execute: () => recoverMedia(mediaId, offer),
     }),
   };
 }
 
 function RecoveryControl({ action }: { readonly action: Command }) {
-  return <Button reserveIcon busyKey={action.id} aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
+  return <Button aria-disabled={action.disabled || undefined} aria-busy={action.disabled || undefined}
     onClick={event => { if (!action.disabled) action.onSelect({ triggerEl: event.currentTarget, openIntent: "default" }); }}
   >{action.label}</Button>;
 }
 
-/**
- * Upload retries retain the session's id and selected file; removal is idempotent.
- * File selection is synchronous with activation. Cancellation submits nothing.
- */
+/** The visit owns commands; rows supply the subject and the explicit chooser/confirmation. */
 function useUploadActions(item: ImportItem) {
-  const { run } = useActionRuntime();
-  const [failure, setFailure] = useState<FeedbackContent | null>(null);
-  const occurrence = useFeedbackOccurrence(failure !== null, item.ref);
+  const commands = useImportCommands();
   const busy = useBusyActionIds(item.ref);
-  const inputRef = useRef<HTMLInputElement>(null);
-  if (item.media_id !== null) return { input: null, retry: null, remove: null, feedback: null };
-  const sessionId = item.ref.slice("upload:".length);
+  if (item.media_id !== null) return { retry: null, remove: null };
   const retrying = busy.has("RetryUpload");
   const removing = busy.has("RemoveUpload");
-  const send = (id: "RetryUpload" | "RemoveUpload", command: () => Promise<unknown>) => run({
-    ref: item.ref, id, label: ACTION_CATALOG[id].label, title: item.title,
-    confirmation: null, tracked: true,
-    execute: async () => {
-      try {
-        await command();
-        setFailure(null);
-      } catch (error) {
-        if (error instanceof UploadSessionError && error.outcome.kind === "Superseded") {
-          setFailure(null);
-          return;
-        }
-        setFailure(uploadCommandFeedback(id, error));
-      }
-    },
-  });
   const retry: Command | null = item.obligations.source?.recovery?.kind === "RetryUpload" ? {
-    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon size={16} aria-hidden="true" />,
+    kind: "command", id: "RetryUpload", label: ACTION_CATALOG.RetryUpload.label, icon: <ACTION_CATALOG.RetryUpload.icon aria-hidden="true" />,
     disabled: retrying, disabledReason: retrying ? BLOCKED_COPY.Busy : undefined,
-    onSelect: () => { if (!retrying) inputRef.current?.click(); },
+    onSelect: () => commands.retryUpload(item),
   } : null;
   const remove: Command = {
-    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: <ACTION_CATALOG.RemoveUpload.icon size={16} aria-hidden="true" />,
-    tone: "danger", disabled: removing, disabledReason: removing ? "Removal is in progress." : undefined,
-    onSelect: () => {
-      if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`))
-        send("RemoveUpload", () => removeUploadSession(sessionId));
-    },
+    kind: "command", id: "RemoveUpload", label: ACTION_CATALOG.RemoveUpload.label, icon: null,
+    tone: "danger", disabled: removing, disabledReason: removing ? "removing." : undefined,
+    onSelect: () => { if (!removing && window.confirm(`Remove the unfinished import “${item.title}”?`)) commands.removeUpload(item); },
   };
-  const input = retry === null ? null : <input ref={inputRef} className="sr-only" type="file" tabIndex={-1}
-    aria-label={item.original_filename !== null ? `Choose ${item.original_filename} to retry the upload` : "choose the file again to continue"}
-    accept=".pdf,.epub,application/pdf,application/epub+zip"
-    onChange={event => {
-      const file = event.currentTarget.files?.[0];
-      event.currentTarget.value = "";
-      if (file !== undefined && !retrying)
-        send("RetryUpload", () => uploadIngestFile({ file, attempt: createUploadAttempt(sessionId) }));
-    }}
-  />;
-  return { input, retry, remove, feedback: failure === null ? null : <FeedbackFailure scope="Local" occurrence={occurrence} content={failure} announcement="Polite" /> };
+  return { retry, remove };
 }
 
 /** Commands and feedback survive CSS promotion; the row owns its overflow ref. */
@@ -176,14 +132,13 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   const upload = useUploadActions(item);
   const recovery = item.primary === "search" ? search : source;
   const metadata = item.obligations.metadata;
-  const commands = [open.action, source, search].filter((action): action is Command => action !== null);
+  const commands = [open, source, search].filter((action): action is Command => action !== null);
   const shortcuts = <div ref={shortcutsRef} className={styles.rowActions} data-import-shortcuts="">
-    {upload.input}
     {item.primary === "metadata" && item.media_id !== null && metadata !== null
       ? <MetadataResearchActions mediaId={item.media_id} view={metadata} primaryOnly />
       : browserOffer && item.primary === "source" ? <span data-import-shortcut=""><ButtonLink href={browserOffer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink></span>
       : recovery ? <span data-import-shortcut=""><RecoveryControl action={recovery} /></span> : null}
-    {open.action ? <span data-import-shortcut=""><OpenControl item={item} action={open.action} /></span> : null}
+    {open ? <span data-import-shortcut=""><OpenControl item={item} action={open} /></span> : null}
     {upload.retry ? <span data-import-shortcut=""><RecoveryControl action={upload.retry} /></span> : null}
   </div>;
   const menu = item.media_id === null ? <ActionMenu
@@ -205,7 +160,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
     }}
     resourceRef={assumeCanonicalResourceRef(`media:${item.media_id}`)} label={`more actions for ${item.title}`}
   />;
-  return { shortcuts, menu, feedback: open.feedback || upload.feedback ? <>{open.feedback}{upload.feedback}</> : null };
+  return { shortcuts, menu };
 }
 
 /** Each inspector section invokes only its owner's offered recovery. */
@@ -215,17 +170,17 @@ export function ImportObligationActions({ item, obligation }: {
 }) {
   const offer = item.obligations[obligation]?.recovery ?? null;
   const action = useRecoveryAction(item.media_id, offer?.kind === "RetryUpload" || offer?.kind === "BrowserCapture" ? null : offer);
-  if (offer?.kind === "BrowserCapture") return <ButtonLink reserveIcon busyKey={item.ref} href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
+  if (offer?.kind === "BrowserCapture") return <ButtonLink href={offer.source_url} target="_blank" rel="noopener noreferrer">open source in new tab</ButtonLink>;
   if (item.media_id === null) return obligation === "source" ? <UploadActions item={item} /> : null;
   return action ? <RecoveryControl action={action} /> : null;
 }
 
 function UploadActions({ item }: { readonly item: ImportItem }) {
-  const { input, retry, remove, feedback } = useUploadActions(item);
-  return <>{input}{retry ? <RecoveryControl action={retry} /> : null}
+  const { retry, remove } = useUploadActions(item);
+  return <>{retry ? <RecoveryControl action={retry} /> : null}
     <ActionMenu label={`more actions for ${item.title}`}
       source={{ kind: "Immediate", subjectKey: `import:${item.ref}`, title: item.title,
         content: { sections: [{ id: "Import", label: null, options: remove ? [remove] : [] }] },
       }}
-    />{feedback}</>;
+    /></>;
 }

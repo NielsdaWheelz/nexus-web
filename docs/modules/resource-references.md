@@ -22,7 +22,7 @@ conversation messages retain their message layout.
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
-| `lib/resourceGraph/resourceRef.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
+| `lib/resourceGraph/resourceRef.ts` / `lib/resources/type.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
 | `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
 | `components/media/MediaIdentity.tsx` | shared index bibliography and provenance; `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
@@ -34,7 +34,7 @@ conversation messages retain their message layout.
 | `OutlineCommands.tsx` | accessible icon accessory for the session command interface; the pane shell renders it only on touch-capable devices |
 | `CanonicalNoteEditor.tsx` | canonical body binding shared by outlines, root notes and annotations |
 | `lib/resources/metadata.ts` / `ResourceMetadata.tsx` | one factual metadata projection for visible and spoken labels; keyed fields, separators and source activation |
-| `lib/media/kind.ts` | shared human media names; unknown structured kinds are defects |
+| `lib/media/kind.ts` | the medium and noun of each kind |
 | `lib/resources/sourceTarget.ts` | canonical href to target identity |
 | `lib/workspace/targetActivation.ts` / `store.tsx` | destination selection and visit-bound delivery |
 | `lib/reader/sourceArrival.ts` | cancellation, source checks and focus authority at the destination |
@@ -90,18 +90,28 @@ never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
 command primary. only shows have index artwork; episodes never do.
 
-type derives from the displayed canonical ref, never its body grammar, action
-subject or source. non-note index titles have one passive type prefix inside
+full excerpt recovery is one current outcome. a remote conflict offers retry of
+the frozen capture and a separate choice to read the current excerpt; it does not
+prove changed text. a local revision comparison does. a later modeled failure
+replaces that recovery with the current transport remedy. successful replacement
+clears prior failure before reading the new full capture.
+
+type is the displayed identity's scheme, narrowed for `media` by that media's own
+kind where the surface already holds it; never its body grammar or another
+resource's source. a collection row's media subject is that row's displayed
+identity. non-note index titles have one passive type prefix inside
 their existing activation; notes reserve no prefix space. rendered podcast
 artwork, including its initials tile, substitutes for that prefix. canonical
 collection `resourceRef` names the displayed resource and its menu subject;
-null-ref external/command rows retain their presentation. generated `identity`
+null-ref command rows retain their presentation. null-ref external media and
+shows draw their type and share the title edge of stored rows. generated `identity`
 metadata is omitted only when the glyph/artwork supplies type. provenance, role,
 location and status remain. accessible title composition names type once among
 generated fragments; literal titles are unchanged, including a title `page`.
 
-`resourceRef.ts` owns an exhaustive scheme-to-glyph/label map. all passage schemes
-use `TextQuote`; media retains its generic glyph even when subtype is known.
+`resourceRef.ts` owns an exhaustive scheme-to-sign/label map; `kind.ts` owns the
+medium and noun of each kind; `lib/resources/type.ts` composes them. all passage
+schemes draw `Passage`. media of unheld kind draws `Page` and the noun `source`.
 resource-specific pane icons consume this vocabulary; a passage's source pane
 still describes its source. invalid canonical refs are defects. availability,
 loading and terminal occurrences do not change type. markers fetch nothing and
@@ -290,10 +300,19 @@ depth; the command accessory lives outside it.
 disclosure tests the complete projected child graph with exact occurrence exclusions,
 independently of loaded adjacency pages. canonical authored children are read from
 local indexed state; server-owned facts have separate bounded, batched availability.
-saved passage-owner adjacency counts too. empty or unconfirmed rows reserve inert
-control slots; confirmed nonempty rows alone have expand/collapse buttons. terminal
-return controls remain navigation. availability never closes a branch or unmounts
-writing. removing a focused chevron returns focus to the same occurrence's bullet.
+saved passage-owner adjacency counts too. confirmed nonempty rows alone have
+expand/collapse buttons, and no row reserves a slot for one: a disclosure or terminal
+return sits under the row's `⋯`, in a right column the content's first lines wrap
+around, so late proof can rewrap those lines once. the content floats a hole one
+control width and one gap wide: one control's height less its two `--space-1`
+insets, or down to the disclosure's foot. later lines take the full measure; a
+textarea instead takes the column's width as end padding.
+terminal return controls remain navigation. a mounted earlier occurrence receives
+focus on its bullet, or on its named row when that bullet is disabled. an unmounted
+occurrence delegates reveal to the host, which owns window admission and focus.
+return to the host root uses its root callback, or the root list when none is supplied.
+availability never closes a branch or unmounts writing. removing a focused chevron
+uses the same bullet-or-row focus target on its occurrence.
 ordinary insertion and nesting keep their existing local command owners.
 
 highlight rows render one captured quotation and their owned annotation editor.
@@ -303,8 +322,9 @@ annotation links and insertions belong to the highlight.
 reader roots and source-owned membership never invent an incoming graph mutation.
 
 arranged adjacency keeps endpoint-owned rank/version/capabilities. indexes retain
-their own order. embeds share canonical body and batched `embedded_item`, while the
-containing note retains its own identity. only the exact directed nonordinal
+their own order. embeds retain canonical body and target identity; authored targets
+resolve through the local replica, server-owned targets through their item reader.
+the containing note retains its own identity. only the exact directed nonordinal
 `note_body`/`context` embed edge is suppressed. empty states require settled,
 exhausted reads without visible children or failure. index snippets, inline
 citations, picker options and document matches retain their existing semantics.

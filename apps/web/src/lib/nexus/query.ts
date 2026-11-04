@@ -1,16 +1,15 @@
 // The Nexus input grammar: raw text becomes one typed intent plus the owned-search query.
 import type { ClipboardEvent } from "react";
-import { FilePlus2, FileText, Globe, Import, Library, MessageSquarePlus } from "lucide-react";
+import * as Icon from "@/lib/ui/icons";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { extractLinks } from "@/lib/extractLinks";
-import { ADMIT_LIMIT } from "@/lib/imports/intake";
 import { browseHref } from "@/lib/browse/query";
-import { DESTINATIONS, getDestination, type DestinationId } from "@/lib/navigation/destinations";
+import { DESTINATIONS, type DestinationId } from "@/lib/navigation/destinations";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { parseSearchInput } from "@/lib/search/parseSearchInput";
 import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { searchHref } from "@/lib/search/searchParams";
-import type { NexusAction, NexusCommandId, NexusIcon } from "./model";
+import type { NexusAction, NexusCommandId } from "./model";
 
 export type BrowseKind = "WebArticle" | "Podcast" | "Video" | "Epub";
 
@@ -21,22 +20,25 @@ export const NEXUS_COMMANDS: Record<
     readonly aliases: readonly [string, ...string[]];
     readonly argumentLabel: string;
     readonly keywords: readonly string[];
-    readonly icon: NexusIcon;
+    readonly icon: Icon.Glyph;
     action(argument: string): NexusAction;
   }
 > = {
   "Nexus.Quick.Note": {
-    label: "quick note", aliases: ["/n"], argumentLabel: "text", icon: FileText,
+    label: "quick note", aliases: ["/n"], argumentLabel: "text", icon: Icon.Today,
     keywords: ["note", "new note", "create note", "jot", "capture"],
     action: (argument) => ({ kind: "Available", target: { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "AppendNote", initialText: argument } } }),
   },
   "Nexus.Quick.Page": {
-    label: "new page", aliases: ["/p"], argumentLabel: "title", icon: FilePlus2,
+    label: "new page", aliases: ["/p"], argumentLabel: "title", icon: Icon.Page,
     keywords: ["page", "new page", "create page", "document"],
-    action: (argument) => ({ kind: "Available", target: { kind: "CreatePage", titleDraft: argument } }),
+    action: (argument) => ({ kind: "Available", target: {
+      kind: "InternalHref", href: "/pages/new",
+      ...(argument ? { entry: { kind: "ComposePage", title: argument } as const } : {}),
+    } }),
   },
   "Nexus.Quick.Chat": {
-    label: "new chat", aliases: ["/c", "/a"], argumentLabel: "message", icon: MessageSquarePlus,
+    label: "new chat", aliases: ["/c", "/a"], argumentLabel: "message", icon: Icon.NewChat,
     keywords: ["chat", "new chat", "start chat", "conversation"],
     action: (argument) => ({ kind: "Available", target: {
       kind: "InternalHref", href: "/conversations/new", labelHint: "new chat",
@@ -44,17 +46,17 @@ export const NEXUS_COMMANDS: Record<
     } }),
   },
   "Nexus.Quick.Library": {
-    label: "new library", aliases: ["/l"], argumentLabel: "name", icon: Library,
+    label: "new library", aliases: ["/l"], argumentLabel: "name", icon: Icon.Library,
     keywords: ["library", "new library", "create library", "collection"],
     action: (argument) => ({ kind: "Available", target: { kind: "CreateLibrary", nameDraft: argument } }),
   },
   "Nexus.Quick.Import": {
-    label: "import", aliases: ["/i"], argumentLabel: "links", icon: Import,
+    label: "import", aliases: ["/i"], argumentLabel: "links", icon: Icon.Upload,
     keywords: ["add", "import", "url", "file"],
     action: (argument) => ({ kind: "Available", target: { kind: "OpenImport", text: argument } }),
   },
   "Nexus.Quick.Browse": {
-    label: "browse…", aliases: ["/b"], argumentLabel: "query", icon: Globe,
+    label: "browse…", aliases: ["/b"], argumentLabel: "query", icon: Icon.Browse,
     keywords: ["browse", "find"],
     action: (argument) => ({ kind: "Available", target: { kind: "ChooseBrowse", query: argument } }),
   },
@@ -68,7 +70,7 @@ export type NexusIntent =
   | { readonly kind: "ChooseCreate" }
   | { readonly kind: "Destination"; readonly id: DestinationId }
   | { readonly kind: "Resource"; readonly ref: string }
-  /** The whole input is links: the only intent that writes. */
+  /** The whole input is links, ready for an explicit send. */
   | { readonly kind: "ImportLinks"; readonly links: readonly string[] };
 
 export interface NexusQuery {
@@ -155,41 +157,6 @@ export function nexusSearchAction(query: SearchQuery): NexusAction {
   return href === null
     ? { kind: "Unavailable", reason: "this input is too long for a search address" }
     : { kind: "Available", target: { kind: "InternalHref", href, labelHint: "search" } };
-}
-
-/** Prepare the parsed intent without choosing a discovered result. */
-export function nexusQueryAction(query: NexusQuery): NexusAction | null {
-  if (!query.text) return null;
-  const { intent } = query;
-  switch (intent.kind) {
-    case "Search":
-      return nexusSearchAction(query.searchQuery);
-    case "Command":
-      return NEXUS_COMMANDS[intent.id].action(intent.argument);
-    case "CommandLookup":
-      return null;
-    case "Browse":
-      return nexusBrowseAction(intent.query, intent.browseKind);
-    case "ChooseCreate":
-      return { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } };
-    case "Destination": {
-      const place = getDestination(intent.id);
-      return { kind: "Available", target: place.id === "today"
-        ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
-        : { kind: "InternalHref", href: place.href, labelHint: place.label } };
-    }
-    case "Resource":
-      return null; // The controller waits for the canonical item's exact activation.
-    case "ImportLinks":
-      return importLinksAction(intent.links);
-  }
-}
-
-/** Sends a whole query of links, at most ADMIT_LIMIT of them. */
-export function importLinksAction(links: readonly string[]): NexusAction {
-  return links.length > ADMIT_LIMIT
-    ? { kind: "Unavailable", reason: `100 at a time. this has ${links.length}.` }
-    : { kind: "Available", target: { kind: "ImportLinks", links } };
 }
 
 /** A multi-line paste lands on one line, its breaks as spaces, since a single-line input

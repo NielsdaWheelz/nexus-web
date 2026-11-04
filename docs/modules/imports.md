@@ -45,7 +45,12 @@ text remains explicit in copy rather than claiming searchable content.
 
 `related_imports` is a required array of `{relation: "article" | "thread", item: ImportItem}`. native x carrier inspections supply distinct visible one-hop relationships even when thread publication failed. each item uses its own current attempt and source/search state; no parent status aggregates or controls its child. deleted or invisible resources are omitted, and reading never retries or reacquires anything.
 
-imports sends no write of its own. its commands go to their owners with their retry rules: `POST /media/{id}/retry` and `/repair` (`recoverMedia`, the offer's exact expectation; a stale one is 409 and reads "This import changed"), `POST /media/uploads` with the session's own id and the original file, and `DELETE /media/uploads/{id}` (a session that published meanwhile is done), metadata research and review through `lib/media`.
+imports commands use their domain endpoints and retry rules:
+`POST /media/{id}/retry` and `/repair` carry the offer's exact expectation;
+`POST /media/uploads` carries the session's id and original file;
+`DELETE /media/uploads/{id}` also settles a session published meanwhile.
+metadata research and review use `lib/media`. a generic409 alone proves no
+changed-import cause.
 
 row shortcuts and overflow share the same open, offered recovery and upload
 commands. at row content widths up to 520px only more remains beside identity;
@@ -54,8 +59,9 @@ when ready, independently of title selection, which opens the import inspector.
 overflow open is a command with plain/shift intent: close precedes asynchronous
 validation. wide/title anchors retain native browser gestures.
 unpublished upload menus are immediate; media menus retain canonical preparation.
-retry upload synchronously opens the existing file input, then file selection
-uses the session's existing attempt owner. cancellation creates no command.
+an initial upload retry synchronously opens the visit's file input. selection
+creates its retained attempt; cancellation creates no command. an uncertain
+upload retries its original file, guard, generation and confirmation.
 metadata retains its canonical menu projectors and direct recovery owner, including
 the existing eager source-remedy read and visible feedback. responsive hosts use
 owner-defined control markers; they do not interpret metadata workflow internals.
@@ -67,6 +73,13 @@ in process: `append_upload_event` and `append_processing_event` (caller's transa
 url: `/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&before&selected`, by wire name in one order; decoding is tolerant and keeps what the reader wrote; dates are UTC days, `[from, before)`; `selected` is admitted only as one `upload:` or `media:` path segment. no browser storage.
 
 web-recovery sessions are relevant while unpublished, viewer-owned, eligible, and bound to the latest source attempt. the newest session narrates the source obligation: awaiting bytes is active at upload; verification failure and capability expiry need attention at validate and upload respectively. every awaiting sibling counts as unfinished work. `pending_captures` lists all relevant siblings newest first with their state, acceptance, expiry and failure code. advancing the source attempt removes them from this projection. history combines the media events, its original upload session if any, and all viewer-owned web-recovery session events. `original_source` supplies the original ordinary-web url and a query-free label; current attribution follows the published capture.
+
+`FAILURE_COPY` has two distinct consumers: `reason` labels ordinary rows and
+history; `title` and nullable `explanation` compose the media failure fact.
+that complete fact stays within fourteen lowercase designed words. explanations
+state only facts supported by the code’s producers; actual recovery offers own
+actions. saved-copy claims require the item’s `can_read` predicate and never
+follow from a failure code alone. the inspector omits an absent explanation.
 
 ## invariants
 
@@ -83,7 +96,10 @@ web-recovery sessions are relevant while unpublished, viewer-owned, eligible, an
 
 ## feedback and uncertain admission
 
-shared `FeedbackStatus`, `FeedbackNotice` and `FeedbackState` present operation facts, retained-data failures and absent content. retry retains the error and control while busy. recorded history stays domain content.
+`Fact` presents durable operation facts and absent content; `Failed` owns a
+settled read failure where the object would stand. shown content survives a
+failed refresh quietly. retry retains its error and control while busy.
+recorded history stays domain content.
 
 `lib/media/admissions.tsx` owns live source-refresh and metadata-research
 submissions. its account-keyed shell provider outlives panes and registers
@@ -95,17 +111,25 @@ current qualifying job, rather than prove receipt of the original click.
 
 entries are sending or unconfirmed. acknowledgement or a definitive first-attempt
 refusal retires the exact entry; a later refusal after uncertainty leaves it
-unconfirmed and refreshes canonical reads. feedback offers `retry same request`
-and `dismiss`. dismissal confirms the loss of uncertainty before forgetting; it
-does not cancel accepted server work. only explicit dismissal permits a new
-action with a newly read expectation. a captured entry object fences late replies
-from clearing or modifying a replacement. account teardown removes its entries.
+unconfirmed and refreshes canonical reads. a mounted `Hold` offers `retry`,
+which sends the retained request. tucking it changes presentation only. no
+discard command is exposed: settlement or an approved account/document
+departure ends the retained uncertainty. a captured entry object fences late
+replies from clearing or modifying a replacement. account teardown removes its entries.
 the entry retains its actual last api error. a wire mismatch after uncertainty
 keeps the request and its loss risk, while the shared stale-build notice and
 local controls offer only reload. the retry capability also refuses that stale
 entry, including calls from previously retained controls.
 there is no storage, startup restore, replay or browser-restart recovery. other
 commands keep their existing owners and retry rules.
+
+`lib/imports/commands.tsx` owns upload and capture-removal commands for one
+imports visit. list rows and the companion use that same owner. pending and
+uncertain commands retain their own controls across filtering, selection and
+inspector closure; those presentation changes prove no outcome. the common
+work guard protects their in-flight and uncertain lifetime. removal and discard
+name the same session deletion, so acceptance settles that one intent.
+neither a read nor a restored view sends a command.
 
 every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
 
@@ -245,8 +269,12 @@ destination through the same navigation intent.
 and current-reference supersession; [libraries](library.md) owns retention and
 placement revisions. import views never infer current saving from a past receipt.
 
-the intake owns live upload recovery (`replay` above). an authoritative guard refusal permits
-review against the same staged generation before expiry; an unknown confirmation
-retains its exact command. losing that owner requires file reselection/recapture.
-imports exposes its existing retry-upload action rather than durable confirmation
-recovery or a second placement command owner.
+the intake retains live upload attempts. callers prepare acquisition guards separately
+from sending, so a failed guard read cannot become an unknown write. an authoritative
+filing refusal permits review against the same staged generation before expiry.
+technical busy replies and unanswered confirmations retain the exact command; an
+in-call abort lacks a dispatch fact and conservatively preserves uncertainty.
+a published receipt or a typed terminal upload result settles that confirmation.
+losing the owner requires file reselection; replay state does not survive browser
+restart. imports exposes its existing retry-upload action, not a second live
+confirmation or placement owner.

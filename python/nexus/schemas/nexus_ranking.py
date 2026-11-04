@@ -1,4 +1,4 @@
-"""Nexus selection learning and ranking wire models."""
+"""Nexus selection learning and usage map wire models."""
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,5 +10,13 @@ class NexusSelectionRecordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class NexusRankingOut(BaseModel):
-    frecency_by_href: dict[str, float]
+class NexusUsageOut(BaseModel):
+    use_count: int
+    points: float
+    last_used: str
+
+
+class NexusUsageMapOut(BaseModel):
+    """`usages[query_normalized][canonical_href]`; the untyped aggregate is query ``""``."""
+
+    usages: dict[str, dict[str, NexusUsageOut]]

@@ -118,6 +118,28 @@ modal retires the ui session and its retarget handle; temporary coverage does
 not. accepted placement commands and destination creation keep their account
 lifetime. page openers have no parent modal.
 
+library settings retains one unanswered rename or delete in its existing overlay
+draft. an unavailable read may mean lost membership and cannot settle that command;
+its exact retry and loss guard remain reachable. opposite writes wait, while words
+remain editable and copyable between attempts. rename retries retain the original
+name and expected name; delete retains its absolute id. an actual delete reply
+acknowledges the idempotent operation, including invisible absence, and does not
+prove physical deletion. accepted guarded close abandons that entry's local draft.
+
+member commands and invitation answers retain one immutable command in their
+pane visit's resource draft. original controls cannot replace it while running or
+unanswered; the held retry uses the same ids, body and expected role. inspector
+closure, filtering and loss of the management body preserve that owner. local
+confirmation dismissal changes presentation only; running alone paints busy.
+
+fresh opposite lists do not settle uncertainty. invitation answers settle on an
+acknowledgement or typed terminal invitation result. member desired-state proof
+requires fresh complete authorized lists and the exact subject; remove/revoke
+absence alone is insufficient. a receipt proves that request accepted, and a
+desired-state read proves the current postcondition. neither permanently fences
+a separate still-running role or transfer command: those writers compare mutable
+values, not monotone revisions.
+
 canonical media/show relations feed search scopes, atlas and suggestions.
 `library_listing` owns complete media lenses and their atomic pane aggregate. `library_members` owns invitations,
 leaving/transfer; passive membership changes acquire nothing. resource grants,

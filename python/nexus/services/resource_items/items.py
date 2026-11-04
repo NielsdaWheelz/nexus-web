@@ -29,7 +29,12 @@ from nexus.auth.permissions import highlight_readability_sql, requested_media_id
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.reader_excerpts import ExcerptMode, ExcerptPreview, ExcerptProjection
+from nexus.schemas.reader_excerpts import (
+    ExcerptBody,
+    ExcerptMode,
+    ExcerptPreview,
+    ExcerptProjection,
+)
 from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
@@ -712,25 +717,29 @@ for _scheme, _table, _body_column in (
               AND h.annotation_body_pm_json IS NOT NULL AND cis.lexical_revision=cis.revision))"""
 
 
-def preview_text(item: ResourceItemOut) -> str:
-    """Plain text for narrow consumers such as marker tooltips and tool summaries."""
-    body = item.preview.body
-    match body.kind:
-        case "media":
-            return body.media_summary.title
-        case "passage":
-            return (
-                "table excerpt"
-                if body.excerpt.kind == "table_summary"
-                else text_parts([body.excerpt.body])[0].exact
-            )
-        case "prose":
-            return body.excerpt.text
-        case "named":
-            return body.title
-        case "reference":
-            return body.label.text if body.label else ""
-        case "images":
-            return " ".join(alt.text for alt in body.alts if alt is not None)
-        case _ as unreachable:
-            assert_never(unreachable)
+def preview_texts(items: Sequence[ResourceItemOut]) -> list[str]:
+    """Plain text for many items; passage bodies share one helper call."""
+    previews: list[str | ExcerptBody] = []
+    for item in items:
+        body = item.preview.body
+        match body.kind:
+            case "media":
+                previews.append(body.media_summary.title)
+            case "passage":
+                previews.append(
+                    "table excerpt" if body.excerpt.kind == "table_summary" else body.excerpt.body
+                )
+            case "prose":
+                previews.append(body.excerpt.text)
+            case "named":
+                previews.append(body.title)
+            case "reference":
+                previews.append(body.label.text if body.label else "")
+            case "images":
+                previews.append(" ".join(alt.text for alt in body.alts if alt is not None))
+            case _ as unreachable:
+                assert_never(unreachable)
+    parts = iter(text_parts([preview for preview in previews if isinstance(preview, ExcerptBody)]))
+    return [
+        next(parts).exact if isinstance(preview, ExcerptBody) else preview for preview in previews
+    ]

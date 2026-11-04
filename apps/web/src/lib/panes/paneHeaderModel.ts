@@ -52,7 +52,7 @@ export type PaneHeaderModel =
       readonly title: string;
       readonly titleRole: "Title" | "Pointer";
       readonly resource:
-        | { readonly status: "Pending"; readonly accessibleLabel: string }
+        | { readonly status: "Pending" }
         | PaneResourceHeaderPublication;
     };
 
@@ -90,7 +90,7 @@ export function resolvePaneHeaderModel(input: {
         resource:
           publication?.kind === "Resource"
             ? publication.resource
-            : { status: "Pending", accessibleLabel: route.pendingLabel },
+            : { status: "Pending" },
       };
   }
 }

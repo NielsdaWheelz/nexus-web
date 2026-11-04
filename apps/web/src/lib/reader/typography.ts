@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import type { Schema } from "@/lib/api/wire";
 
-/** Current reader typography, shared by mounted sources and frozen evidence. */
+/** Current reader typography, shared by mounted sources and frozen evidence; a companion shrinks evidence's size and sets its leading. */
 export const READER_FONT_STACKS: Record<Schema<"ReaderProfileOut">["font_family"], string> = {
   serif: "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif",
   sans: "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",

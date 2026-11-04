@@ -9,7 +9,7 @@ import {type Intent} from "@nexus/authored/commands";
 import {linkId} from "@nexus/authored/identity";
 import {advanceCoverage, isVisible, mergeVector} from "@nexus/authored/merge";
 import type {LinkState, MergeResult, Vector} from "@nexus/authored/types";
-import {preparePosition, preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/links";
+import {preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/links";
 import {lowerGraph, LocalCommitError, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
 import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
 import type {InputBookmark, Placement, RangePlan, RangeReason, RangeSnapshot} from "./outlineSelection";
@@ -29,13 +29,17 @@ export interface OutlinePlacement {
   parent_ref: string; parent: WritingDocument | null;
   after_ref: string | null; before_ref: string | null;
 }
-export interface OutlineOccurrence {
-  ref: string; parent_ref: string; document: WritingDocument | null; parent: WritingDocument | null;
-  link: LinkState | Promise<LinkState>;
-}
 export interface OutlineChange {before: InputBookmark; after: InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?: readonly OccurrenceBookmark[]}
 export interface OutlineVisibility {show: readonly OccurrenceBookmark[]; hide: readonly OccurrenceBookmark[]}
-export interface OutlineBirthChange {before: InputBookmark; after(document: WritingDocument): InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?(document: WritingDocument): readonly OccurrenceBookmark[]}
+export interface OutlineBirthChange {
+  before: InputBookmark; after(document: WritingDocument): InputBookmark;
+  placements_before?: readonly OccurrenceBookmark[]; placements_after?(document: WritingDocument): readonly OccurrenceBookmark[];
+  resolvePlacement?(document: WritingDocument): Promise<{placement: OutlinePlacement; placements_before: readonly OccurrenceBookmark[]; placements_after: readonly OccurrenceBookmark[]}>;
+}
+export interface OutlineBirthsChange {before: InputBookmark; after(documents: readonly WritingDocument[]): InputBookmark; placements_before?: readonly OccurrenceBookmark[]; placements_after?(documents: readonly WritingDocument[], links: readonly Promise<LinkState>[]): readonly OccurrenceBookmark[]}
+/** A birth is a newborn note (`body`) or an existing resource linked again (`ref`); it names its parent
+ * and anchors by ref, or by the index of an earlier birth in the same call. */
+export type Birth = ({body: NoteBody} | {ref: string}) & {parent: string | number; after: string | number | null; before: string | number | null};
 export interface DisplayedWriting {body_state: string; observed: Promise<Vector>}
 export interface RangeRestoration {plan: RangePlan; members: readonly Placement[]}
 export interface RangePublication {
@@ -46,6 +50,8 @@ export interface RangePublication {
 export interface AdmittedStructure {result: Promise<LocalCommit>; committed: Promise<LocalCommit>}
 export interface AdmittedLink extends AdmittedStructure {link: Promise<LinkState>}
 export interface AdmittedNote extends AdmittedLink {document: WritingDocument}
+/** `documents` are the newborns in birth order; `links` align with the births. */
+export interface AdmittedNotes extends AdmittedStructure {documents: readonly WritingDocument[]; links: readonly Promise<LinkState>[]}
 export interface AdmittedJoin extends AdmittedStructure {selection: (document: WritingDocument) => FocusSelection}
 /** Extend only the membership this occurrence already observed. A command may
  * carry several patches for one pair; every extension uses its actual prestate. */
@@ -58,6 +64,11 @@ export function advanceRelationship(link: LinkState, receipt: LocalCommit): Link
 }
 interface Coverage {resources: Map<string, Vector>; links: Map<string, Vector>}
 interface Settlement {store_revision: string; links: readonly LinkState[]}
+/** One planned relationship change. relink: unlink the source, add the destination.
+ * move: the source link itself takes the destination position. merge: the source
+ * retires for the destination's existing link, which takes the position. mirror:
+ * the destination is added beside the untouched source, keyed by its own id. */
+interface PhysicalLink {kind: "relink" | "move" | "merge" | "mirror"; before: Placement; after: Placement | null; source: LinkState; destination: LinkState | null; stays?: true}
 interface Group {
   refs: string[]; documents: WritingDocument[]; metadata(): unknown;
   before: InputBookmark; after: InputBookmark; placements_before: readonly OccurrenceBookmark[]; placements_after: readonly OccurrenceBookmark[]; coverage: Coverage;
@@ -75,7 +86,7 @@ interface FocusOwner {
   capture(): InputBookmark;
   lease(): () => boolean;
   prepare?(target: readonly OccurrenceBookmark[], source: readonly OccurrenceBookmark[], mayFocus: () => boolean, visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void;
-  publish(documents: readonly WritingDocument[], target: InputBookmark, source: InputBookmark, mayFocus: () => boolean, committed: Promise<LocalCommit>): void;
+  publish(documents: readonly WritingDocument[], target: InputBookmark, source: InputBookmark, mayFocus: () => boolean, committed: Promise<LocalCommit>, action: "undo" | "redo"): void;
 }
 
 export class OutlineHistory {
@@ -206,7 +217,7 @@ export class OutlineHistory {
       const admission = group.apply(redo, lower);
       from.splice(from.indexOf(group), 1); to.push(group);
       acknowledge?.(admission.committed);
-      owner?.publish(group.documents, target, source, mayFocus, admission.committed);
+      owner?.publish(group.documents, target, source, mayFocus, admission.committed, redo ? "redo" : "undo");
       void admission.result.catch(() => {});
     } catch (error) {this.failure(error);}
   }
@@ -341,8 +352,17 @@ export class OutlineHistory {
     const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [{body, origin}],
       mutate: () => {if (source) Y.applyUpdate(source.document.doc, source.update, origin);},
       prepare: async refs => {
-        const position = await this.placement(placement);
-        const prepared = await prepareLink(this.runtime, {source_ref: placement.parent_ref, target_ref: refs[0]!, source_label: null, target_label: null, ...position});
+        const settled = await resolved;
+        const at = settled?.placement ?? placement;
+        if (settled) {
+          this.hold(group, [at.parent]);
+          if (!group.refs.includes(at.parent_ref)) group.refs.push(at.parent_ref);
+          group.placements_before = settled.placements_before;
+          group.placements_after = this.relationship(settled.placements_after, link);
+          group.added = group.placements_after;
+        }
+        const position = await this.placement(at);
+        const prepared = await prepareLink(this.runtime, {source_ref: at.parent_ref, target_ref: refs[0]!, source_label: null, target_label: null, ...position});
         relationship = prepared.link_id; group.coverage.links.set(relationship, {});
         return prepared.intents;
       }});
@@ -364,7 +384,88 @@ export class OutlineHistory {
     const completion = this.track(group, admitted.result, eligible), link = this.createdLink(completion, () => relationship);
     group.placements_after = this.relationship(group.placements_after, link);
     group.added = group.placements_after;
+    const resolved = change.resolvePlacement?.(document);
+    void resolved?.catch(() => {});
     return {document, result: admitted.result, committed: completion, link};
+  }
+  /** Several births in one command, for paste: one admission, one batch of positions
+   * per endpoint, one add_link each; `fill` writes an empty note's first line in the
+   * same command. The inverse unlinks each link this command added, puts a revived
+   * link back where it stood, and deletes each newborn as a single birth's does. */
+  createMany(args: {births: readonly Birth[]; parents: readonly (WritingDocument | null)[]; fill?: {document: WritingDocument; body: NoteBody}; change: OutlineBirthsChange}): AdmittedNotes {
+    this.boundary();
+    const group = this.reserve({before: args.change.before, after: null, placements_before: args.change.placements_before}), origin = Symbol("outline births");
+    const fill = args.fill, manager = fill ? new Y.UndoManager(scope(fill.document), {trackedOrigins: new Set([origin]), captureTimeout: 0}) : null;
+    group.cleanup = () => {manager?.clear(); manager?.destroy();};
+    this.hold(group, [...args.parents, fill?.document ?? null]);
+    // a ref born again may revive a link that had a place (a cut pair pasted back): `prior` holds that state, `written` this command's.
+    const refs: string[] = [], ids: string[] = [], prior = new Map<string, LinkState>(), written = new Map<string, LinkState>();
+    const eligible = this.groups();
+    const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: args.births.flatMap(birth => "body" in birth ? [{body: birth.body, origin}] : []),
+      mutate: () => {if (fill) applyBodyEdits(fill.document.doc, [{kind: "replace", from: 0, to: 0, content: fill.body.body_pm_json.content ?? []}], origin);},
+      prepare: async created => {
+        let born = 0;
+        for (const birth of args.births) refs.push("body" in birth ? created[born++]! : birth.ref);
+        const named = (anchor: string | number) => typeof anchor === "number" ? refs[anchor]! : anchor;
+        const insertions = new Map<string, {link_id: string; after: string | null; before: string | null}[]>();
+        const links: LinkState[] = [];
+        for (const [index, birth] of args.births.entries()) {
+          const ref = refs[index]!, parent_ref = named(birth.parent), id = await this.identity(parent_ref, ref);
+          const anchor = async (value: string | number | null) => value === null ? null : this.identity(parent_ref, named(value));
+          for (const [endpoint, insertion] of [[parent_ref, {link_id: id, after: await anchor(birth.after), before: await anchor(birth.before)}], [ref, {link_id: id, after: null, before: null}]] as const)
+            insertions.set(endpoint, [...insertions.get(endpoint) ?? [], insertion]);
+          const [a, b] = parent_ref < ref ? [parent_ref, ref] : [ref, parent_ref];
+          links.push({link_id: id, endpoint_a: a, endpoint_b: b, add_vv: {}, remove_vv: {}, position_a: null, position_b: null});
+          ids.push(id); group.coverage.links.set(id, {});
+          const known = "body" in birth ? undefined : (await (await this.runtime.store).readStates({refs: [], link_ids: [id], anchor_ids: [], source_refs: []})).links[0];
+          if (known) prior.set(id, known);
+        }
+        const intents: Intent[] = [], positions = new Map<string, ReadonlyMap<string, string>>();
+        for (const [endpoint, items] of insertions) {
+          const prepared = await preparePositions(this.runtime, endpoint, items);
+          if (prepared.kind === "refusal") throw new Error(prepared.reason === "capacity" ? "The pasted items exceed this editing window" : "The selected insertion position is no longer available");
+          positions.set(endpoint, prepared.values); intents.push(...prepared.moves);
+        }
+        for (const link of links) intents.push({kind: "add_link", link_id: link.link_id, endpoint_a: link.endpoint_a, endpoint_b: link.endpoint_b,
+          position_a: positions.get(link.endpoint_a)!.get(link.link_id)!, position_b: positions.get(link.endpoint_b)!.get(link.link_id)!});
+        return intents;
+      }});
+    const documents = admitted.created;
+    this.hold(group, documents);
+    for (const document of documents) group.coverage.resources.set(document.ref, {});
+    group.apply = (redo, lower) => {
+      const eligible = this.groups();
+      const inverse = this.runtime.admitWriting({existing: this.participants(group.documents, manager ?? origin), notes: [],
+        mutate: () => {if (redo) manager?.redo(); else manager?.undo();},
+        prepare: async () => {
+          await lower;
+          const live = prior.size ? (await (await this.runtime.store).readStates({refs: [], link_ids: [...prior.keys()], anchor_ids: [], source_refs: []})).links : [];
+          return args.births.flatMap((birth, index): Intent[] => {
+            const ref = refs[index]!, id = ids[index]!;
+            if (!group.coverage.links.has(id)) return [];
+            const link: Intent = redo ? {kind: "restore_link", link_id: id} : {kind: "unlink", link_id: id, observed_add: {...group.coverage.links.get(id)!}};
+            if ("body" in birth) return [redo ? {kind: "restore_resource", ref} : {kind: "delete_resource", ref, observed_touch: {...group.coverage.resources.get(ref)!}}, link];
+            // the revived link's place goes back with it, unless another move has written it since.
+            const before = prior.get(id), after = written.get(id), now = live.find(state => state.link_id === id);
+            return [link, ...before && after && now ? [before.endpoint_a, before.endpoint_b].flatMap((endpoint): Intent[] => {
+              const from = positionAt(redo ? before : after, endpoint), to = positionAt(redo ? after : before, endpoint), stamped = positionAt(now, endpoint);
+              return from && to && stamped && stamped.value === from.value ? [{kind: "restore_position", link_id: id, endpoint_ref: endpoint, expected: stamped.stamp, position: to.value}] : [];
+            }) : []];
+          });
+        }});
+      return {result: inverse.result, committed: this.track(group, inverse.result, eligible)};
+    };
+    // A pair already visible at admission lowers no add_link; its live link is not this command's to unlink.
+    const committed = this.track(group, admitted.result, eligible, receipt => {
+      for (const id of ids) {
+        const patch = receipt.change.links.find(link => link.link_id === id && Object.keys(link.add_vv).length > 0);
+        if (patch) written.set(id, patch); else group.coverage.links.delete(id);
+      }
+    });
+    const links = args.births.map((_, index) => this.createdLink(committed, () => ids[index]!));
+    group.after = args.change.after(documents); group.placements_after = args.change.placements_after?.(documents, links) ?? [];
+    group.added = group.placements_after;
+    return {documents, result: admitted.result, committed, links};
   }
   join(args: {source: WritingDocument; destination: WritingDocument; displayed: {source: DisplayedWriting; destination: DisplayedWriting}; sourceOccurrence: OccurrenceBookmark; change: OutlineChange}): AdmittedJoin {
     const {source: sourceDocument, destination: destinationDocument, change, sourceOccurrence} = args;
@@ -415,7 +516,7 @@ export class OutlineHistory {
   }
   range(args: {
     plan: RangePlan; documents: readonly WritingDocument[]; snapshot: RangeSnapshot; metadata(): unknown; canRetain(): boolean;
-    prepare(): Promise<{kind: "plan"; plan: RangePlan; snapshot: RangeSnapshot; occurrences: readonly OccurrenceBookmark[]} | {kind: "refusal"; reason: RangeReason}>;
+    prepare(readLinks: (link_ids: readonly string[]) => Promise<readonly LinkState[]>): Promise<{kind: "plan"; plan: RangePlan; snapshot: RangeSnapshot; occurrences: readonly OccurrenceBookmark[]} | {kind: "refusal"; reason: RangeReason}>;
     active(): boolean;
     publication: RangePublication; reserve(action: "undo" | "redo"): RangePublication;
     refused(reason: RangeReason): void;
@@ -427,7 +528,7 @@ export class OutlineHistory {
     this.hold(group, args.documents);
     let refused = false, accepted = false;
     let plan = args.plan, sourceSnapshot = args.snapshot;
-    const physical = new Map<string, {before: Placement; after: Placement | null; source: LinkState; destination: LinkState | null}>();
+    const physical = new Map<string, PhysicalLink>();
     const byOccurrence = new Map<string, LinkState>();
     const previous = new Map<string, {link: LinkState; endpoint: string}>();
     group.metadata = () => ({snapshot: args.snapshot, source_snapshot: sourceSnapshot === args.snapshot ? null : sourceSnapshot, pending: args.metadata(), plan, physical: [...physical], occurrences: [...byOccurrence], previous: [...previous]});
@@ -473,21 +574,26 @@ export class OutlineHistory {
           const current = await lower;
           if (refused || !accepted || !current) return {kind: "refusal", reason: "retired"};
           const value: RangePlan = redo ? plan : {...plan,
-            changes: plan.changes.map(change => ({before: change.after ?? change.before, after: change.before})),
+            changes: plan.changes.map(change => ({...change, before: change.after ?? change.before, after: change.before})),
             selection_before: plan.selection_after, selection_after: plan.selection_before};
           const intents: GraphIntent[] = [];
           for (const item of physical.values()) {
-            intents.push(redo ? {kind: "unlink", link_id: item.source.link_id, observed_add: {...group.coverage.links.get(item.source.link_id)!}}
+            if (item.kind === "relink" || item.kind === "merge") intents.push(redo ? {kind: "unlink", link_id: item.source.link_id, observed_add: {...group.coverage.links.get(item.source.link_id)!}}
               : {kind: "restore_link", link_id: item.source.link_id});
-            if (item.destination) intents.push(redo ? {kind: "restore_link", link_id: item.destination.link_id}
+            if ((item.kind === "relink" || item.kind === "mirror") && item.destination) intents.push(redo ? {kind: "restore_link", link_id: item.destination.link_id}
               : {kind: "unlink", link_id: item.destination.link_id, observed_add: {...group.coverage.links.get(item.destination.link_id)!}});
           }
           const first = await forward;
+          const live = (await (await this.runtime.store).readStates({refs: [], link_ids: [...new Set([...previous.values()].map(item => item.link.link_id))], anchor_ids: [], source_refs: []})).links;
           for (const {link, endpoint} of previous.values()) {
-            const actual = current.links.findLast(item => item.link_id === link.link_id && positionAt(item, endpoint) !== null);
+            const settled = current.links.findLast(item => item.link_id === link.link_id && positionAt(item, endpoint) !== null);
             const desired = redo ? first.findLast(item => item.link_id === link.link_id && positionAt(item, endpoint) !== null) : link;
-            const expected = actual ? positionAt(actual, endpoint) : null, position = desired ? positionAt(desired, endpoint) : null;
-            if (expected && position) intents.push({kind: "restore_position", link_id: link.link_id, endpoint_ref: endpoint, expected: expected.stamp, position: position.value});
+            const written = settled ? positionAt(settled, endpoint) : null, position = desired ? positionAt(desired, endpoint) : null;
+            const now = live.find(item => item.link_id === link.link_id), stamped = now ? positionAt(now, endpoint) : null;
+            // The guard names the link's live stamp: a later move of ours and its undo re-stamp the position, so the value
+            // this group last wrote is the proof that its placement still stands. A foreign move changes the value; no-op.
+            if (written && stamped && position && stamped.value === written.value)
+              intents.push({kind: "restore_position", link_id: link.link_id, endpoint_ref: endpoint, expected: stamped.stamp, position: position.value});
           }
           return {kind: "ready", intents, preflight_revision: null, selection: {
             refs: [...new Set([...sourceSnapshot.rows, ...publication.snapshot.rows].flatMap(row => row.ref ? [row.ref] : []))],
@@ -503,7 +609,8 @@ export class OutlineHistory {
     const mayFocus = this.focus?.lease() ?? (() => false), eligible = this.groups();
     const admission = this.runtime.admitGraph<RangeReason>({active: () => !this.closed && args.active(), retired: "retired", changed: "changed", capacity: "capacity",
       prepare: async () => {
-        const prepared = await args.prepare();
+        const store = await this.runtime.store, replica = await store.readReplica();
+        const prepared = await args.prepare(async link_ids => (await store.readStates({refs: [], link_ids: [...link_ids], anchor_ids: [], source_refs: []})).links);
         if (prepared.kind === "refusal") return prepared;
         plan = prepared.plan; sourceSnapshot = prepared.snapshot; group.before = plan.selection_before; group.after = plan.selection_after;
         const rows = new Map(prepared.occurrences.map(row => [row.row_id, row]));
@@ -512,21 +619,20 @@ export class OutlineHistory {
           if (link) byOccurrence.set(id, link);
         }
         const intents: GraphIntent[] = [], destinations = new Set<string>();
-        const store = await this.runtime.store, replica = await store.readReplica();
         for (const change of plan.changes) {
           const occurrence = rows.get(change.before.row_id), source = await occurrence?.link;
           if (!source || occurrence?.ref !== change.before.ref || (source.endpoint_a === change.before.ref ? source.endpoint_b : source.endpoint_a) !== change.before.parent_ref)
             return {kind: "refusal", reason: "changed"};
           const resourceRefs = [change.before.ref, change.before.parent_ref, ...(change.after ? [change.after.parent_ref] : [])];
           const current = await store.readStates({refs: resourceRefs, link_ids: [source.link_id], anchor_ids: [], source_refs: []});
-          const known = current.links[0];
-          if (!known || !isVisible(known.add_vv, known.remove_vv) || resourceRefs.some(ref => {
+          const live = current.links[0];
+          if (!live || !isVisible(live.add_vv, live.remove_vv) || resourceRefs.some(ref => {
             if (!/^(note_block|page|highlight):/u.test(ref)) return false;
             const resource = current.resources.find(resource => resource.ref === ref);
             return !resource || !isVisible(resource.touch_vv, resource.delete_vv);
           })) return {kind: "refusal", reason: "changed"};
           byOccurrence.set(change.before.row_id, source);
-          const existing = physical.get(source.link_id);
+          const existing = change.mirror ? undefined : physical.get(source.link_id);
           if (existing) {
             const anchorRef = (id: string | null | undefined) => id ? rows.get(id)?.ref : null;
             if ((existing.after !== null || change.after !== null) && (existing.before.ref !== change.before.ref || existing.before.parent_ref !== change.before.parent_ref ||
@@ -536,33 +642,57 @@ export class OutlineHistory {
             group.coverage.links.set(source.link_id, existing.source.add_vv);
             continue;
           }
-          let destination: LinkState | null = null;
-          if (change.after) {
-            const id = await this.identity(change.after.parent_ref, change.after.ref);
-            if (destinations.has(id)) return {kind: "refusal", reason: "collision"};
-            destinations.add(id);
-            const known = (await store.readStates({refs: [], link_ids: [id], anchor_ids: [], source_refs: []})).links[0];
-            if (known && isVisible(known.add_vv, known.remove_vv)) return {kind: "refusal", reason: "collision"};
-            const [a, b] = change.after.parent_ref < change.after.ref ? [change.after.parent_ref, change.after.ref] : [change.after.ref, change.after.parent_ref];
-            destination = {link_id: id, endpoint_a: a, endpoint_b: b, add_vv: {}, remove_vv: {}, position_a: null, position_b: null};
+          if (!change.after) {
+            physical.set(source.link_id, {kind: "relink", before: change.before, after: null, source, destination: null});
+            group.coverage.links.set(source.link_id, source.add_vv);
+            continue;
           }
-          physical.set(source.link_id, {before: change.before, after: change.after, source, destination});
-          group.coverage.links.set(source.link_id, source.add_vv);
-          if (destination) group.coverage.links.set(destination.link_id, {});
+          const id = await this.identity(change.after.parent_ref, change.after.ref);
+          if (destinations.has(id)) return {kind: "refusal", reason: "collision"};
+          destinations.add(id);
+          const [a, b] = change.after.parent_ref < change.after.ref ? [change.after.parent_ref, change.after.ref] : [change.after.ref, change.after.parent_ref];
+          const target = (await store.readStates({refs: [], link_ids: [id], anchor_ids: [], source_refs: []})).links[0];
+          const linked = target !== undefined && isVisible(target.add_vv, target.remove_vv);
+          // Reviving a removed pair writes both endpoint positions; undo must restore them before an older removal is undone.
+          if (target && !linked) for (const endpoint of [target.endpoint_a, target.endpoint_b])
+            if (positionAt(target, endpoint)) previous.set(endpoint + "/" + id, {link: target, endpoint});
+          const fresh = {link_id: id, endpoint_a: a, endpoint_b: b, add_vv: {}, remove_vv: {}, position_a: null, position_b: null};
+          // Same pair, same link: the destination's existing visible link is repositioned, never re-added.
+          if (change.mirror) {
+            if (linked) return {kind: "refusal", reason: "collision"};
+            physical.set(id, {kind: "mirror", before: change.before, after: change.after, source, destination: fresh});
+            group.coverage.links.set(id, {});
+          } else if (id === source.link_id) {
+            physical.set(id, {kind: "move", before: change.before, after: change.after, source, destination: null});
+            previous.set(change.after.parent_ref + "/" + id, {link: live, endpoint: change.after.parent_ref});
+          } else if (linked) {
+            physical.set(source.link_id, {kind: "merge", before: change.before, after: change.after, source, destination: target});
+            group.coverage.links.set(source.link_id, source.add_vv);
+            previous.set(change.after.parent_ref + "/" + id, {link: target, endpoint: change.after.parent_ref});
+          } else {
+            physical.set(source.link_id, {kind: "relink", before: change.before, after: change.after, source, destination: fresh});
+            group.coverage.links.set(source.link_id, source.add_vv);
+            group.coverage.links.set(id, {});
+          }
         }
         const endpointInsertions = new Map<string, {link_id: string; after: string | null; before: string | null}[]>();
         const addInsertion = (endpoint: string, insertion: {link_id: string; after: string | null; before: string | null}) => {
           const items = endpointInsertions.get(endpoint) ?? []; items.push(insertion); endpointInsertions.set(endpoint, items);
         };
-        for (const item of physical.values()) if (item.after && item.destination) {
+        // The link that takes the destination position; a planned anchor resolves to its own placed link.
+        const placed = (item: PhysicalLink) => item.destination ?? item.source;
+        for (const item of physical.values()) if (item.after) {
           const anchor = async (id: string | null): Promise<string | null> => {
             if (id === null) return null;
             const planned = [...physical.values()].find(planned => planned.after?.row_id === id && planned.after.parent_ref === item.after!.parent_ref);
-            if (planned?.destination) return planned.destination.link_id;
+            if (planned) return placed(planned).link_id;
             const row = rows.get(id); return row ? this.identity(item.after!.parent_ref, row.ref) : null;
           };
-          addInsertion(item.after.parent_ref, {link_id: item.destination.link_id, after: await anchor(item.after.after_id), before: await anchor(item.after.before_id)});
-          addInsertion(item.after.ref, {link_id: item.destination.link_id, after: null, before: null});
+          const link = placed(item), after = await anchor(item.after.after_id), before = await anchor(item.after.before_id);
+          // A merge anchored on the existing link's own occurrence keeps that occurrence where it is: the source unlinks, nothing moves.
+          if (item.kind === "merge" && (after === link.link_id || before === link.link_id)) {item.stays = true; previous.delete(item.after.parent_ref + "/" + link.link_id); continue;}
+          addInsertion(item.after.parent_ref, {link_id: link.link_id, after, before});
+          if (item.kind === "relink" || item.kind === "mirror") addInsertion(item.after.ref, {link_id: link.link_id, after: null, before: null});
         }
         const positions = new Map<string, ReadonlyMap<string, string>>();
         for (const [endpoint, insertions] of endpointInsertions) {
@@ -575,12 +705,13 @@ export class OutlineHistory {
           }
         }
         for (const item of physical.values()) {
-          intents.push({kind: "unlink", link_id: item.source.link_id, observed_add: item.source.add_vv});
-          if (item.destination) {
-            const link = item.destination;
+          const link = placed(item);
+          if (item.kind === "relink" || item.kind === "merge") intents.push({kind: "unlink", link_id: item.source.link_id, observed_add: item.source.add_vv});
+          if ((item.kind === "relink" || item.kind === "mirror") && item.destination)
             intents.push({kind: "add_link", link_id: link.link_id, endpoint_a: link.endpoint_a, endpoint_b: link.endpoint_b,
               position_a: positions.get(link.endpoint_a)!.get(link.link_id)!, position_b: positions.get(link.endpoint_b)!.get(link.link_id)!});
-          }
+          if ((item.kind === "move" || item.kind === "merge") && !item.stays)
+            intents.push({kind: "move_link", link_id: link.link_id, endpoint_ref: item.after!.parent_ref, position: positions.get(item.after!.parent_ref)!.get(link.link_id)!});
         }
         // A history group is admitted only when both replay directions fit,
         // including the one lane owned receipts can extend and longer old keys.
@@ -601,9 +732,11 @@ export class OutlineHistory {
         if (!forward) return {kind: "refusal", reason: "capacity"};
         const inverse: GraphIntent[] = [], replay: GraphIntent[] = [];
         for (const item of physical.values()) {
-          inverse.push({kind: "restore_link", link_id: item.source.link_id});
-          replay.push({kind: "unlink", link_id: item.source.link_id, observed_add: membership(item.source.add_vv)});
-          if (item.destination) {
+          if (item.kind === "relink" || item.kind === "merge") {
+            inverse.push({kind: "restore_link", link_id: item.source.link_id});
+            replay.push({kind: "unlink", link_id: item.source.link_id, observed_add: membership(item.source.add_vv)});
+          }
+          if ((item.kind === "relink" || item.kind === "mirror") && item.destination) {
             inverse.push({kind: "unlink", link_id: item.destination.link_id, observed_add: {[replica.replica_id]: maximum}});
             replay.push({kind: "restore_link", link_id: item.destination.link_id});
           }
@@ -616,7 +749,8 @@ export class OutlineHistory {
         const backward = lowerGraph(backwardContext, inverse, forward.states);
         if (!backward || !lowerGraph(replayContext, replay, backward.states)) return {kind: "refusal", reason: "capacity"};
         group.placements_before = [...physical.values()].map(item => ({row_id: item.before.row_id, ref: item.before.ref, placement: item.before, link: item.source}));
-        group.placements_after = [...physical.values()].flatMap(item => item.after ? [{row_id: item.after.row_id, ref: item.after.ref, placement: item.after, link: item.destination}] : []);
+        group.placements_after = [...physical.values()].flatMap(item => item.after ? [{row_id: item.after.row_id, ref: item.after.ref,
+          placement: item.kind === "mirror" ? item.before : item.after, link: item.kind === "move" || item.kind === "mirror" ? item.source : item.destination}] : []);
         group.refs = [...new Set([...group.refs, ...plan.changes.flatMap(change => [change.before.ref, change.before.parent_ref, ...(change.after ? [change.after.parent_ref] : [])])])];
         if (!args.canRetain())
           return {kind: "refusal", reason: "capacity"};
@@ -636,45 +770,6 @@ export class OutlineHistory {
       if (!accepted) {refused = true; releaseRedo(false); this.release(group); args.publication.refused();}
     });
   }
-  move(args: {occurrence: OutlineOccurrence; placement: OutlinePlacement; change: OutlineChange}): AdmittedLink {
-    this.boundary();
-    const group = this.reserve(args.change), origin = Symbol("outline move");
-    this.hold(group, [args.occurrence.document, args.occurrence.parent, args.placement.parent]);
-    if (!group.refs.includes(args.placement.parent_ref)) group.refs.push(args.placement.parent_ref);
-    const previous = new Map<string, LinkState>(), source = Promise.resolve(args.occurrence.link), endpoint = args.placement.parent_ref;
-    group.placements_before = this.relationship(group.placements_before, args.occurrence.link);
-    group.metadata = () => [...previous];
-    const eligible = this.groups();
-    const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [], mutate: () => {},
-      prepare: async () => {
-        const link = await source, position = await this.placement(args.placement);
-        const prepared = await preparePosition(this.runtime, endpoint, link.link_id, position.after, position.before);
-        const current = (await (await this.runtime.store).readStates({refs: [], link_ids: [link.link_id], anchor_ids: [], source_refs: []})).links[0];
-        if (!current) throw new Error("the moved relationship is unavailable");
-        for (const state of [...prepared.previous, current]) previous.set(state.link_id, state);
-        return [...prepared.moves, {kind: "move_link", link_id: link.link_id, endpoint_ref: endpoint, position: prepared.value}];
-      }});
-    const completion = this.track(group, admitted.result, eligible), forward = completion.then(receipt => receipt.change.links);
-    void forward.catch(() => {});
-    group.apply = (redo, lower) => {
-      const eligible = this.groups();
-      const inverse = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [], mutate: () => {},
-        prepare: async () => {
-          const [current, first] = await Promise.all([lower, forward]);
-          if (!current) throw new Error("move inverse has no predecessor receipt");
-          return restorePositions(current, redo ? new Map(first.map(link => [link.link_id, link])) : previous, endpoint);
-        }});
-      return {result: inverse.result, committed: this.track(group, inverse.result, eligible)};
-    };
-    const link = completion.then(async receipt => {
-      const observed = await source, moved = receipt.change.links.find(link => link.link_id === observed.link_id);
-      if (!moved) throw new Error("move receipt has no relationship");
-      return {...observed, position_a: moved.position_a ?? observed.position_a, position_b: moved.position_b ?? observed.position_b};
-    });
-    group.placements_after = this.relationship(group.placements_after, link);
-    void link.catch(() => {}); return {result: admitted.result, committed: completion, link};
-  }
-
   insertReference(args: {placement: OutlinePlacement; target: import("@/lib/resourceGraph/links").LinkTarget; label: string; change: OutlineChange}): AdmittedStructure {
     this.boundary();
     const group = this.reserve(args.change), origin = Symbol("outline reference");
@@ -712,19 +807,13 @@ export class OutlineHistory {
 }
 function scope(document: WritingDocument) {return document.ref.startsWith("page:") ? document.doc.getText("title") : [document.doc.getXmlFragment("body"), bodyInline(document.doc)];}
 function positionAt(link: LinkState, endpoint: string) {return link.endpoint_a === endpoint ? link.position_a : link.position_b;}
-function restorePositions(current: Settlement, desired: ReadonlyMap<string, LinkState>, endpoint: string): Intent[] {
-  return current.links.flatMap(link => {
-    const expected = positionAt(link, endpoint), previous = desired.get(link.link_id), position = previous ? positionAt(previous, endpoint) : null;
-    return expected && position ? [{kind: "restore_position" as const, link_id: link.link_id, endpoint_ref: endpoint, expected: expected.stamp, position: position.value}] : [];
-  });
-}
 
 function inputRows(bookmark: InputBookmark): readonly string[] {return bookmark?.kind === "blocks" ? bookmark.row_ids : bookmark?.kind === "text" ? [bookmark.row_id] : [];}
 
 /** Reconcile presentation from the already lowered canonical graph. Receipt
  * coverage still belongs to the frozen per-occurrence proofs above. */
 function reconcileRange(plan: RangePlan, original: RangeSnapshot, displayed: RangeSnapshot, states: MergeResult,
-  observed: ReadonlyMap<string, LinkState>, physical: ReadonlyMap<string, {source: LinkState; destination: LinkState | null}>,
+  observed: ReadonlyMap<string, LinkState>, physical: ReadonlyMap<string, PhysicalLink>,
 ): RangeRestoration {
   const links = new Map(states.links.map(link => [link.link_id, link])), resources = new Map(states.projections.map(resource => [resource.ref, resource]));
   const rows = new Map(original.rows.map(row => [row.row_id, {...row}]));
@@ -733,8 +822,11 @@ function reconcileRange(plan: RangePlan, original: RangeSnapshot, displayed: Ran
     if (!rows.has(row.row_id) || !row.selectable || link && isVisible(link.add_vv, link.remove_vv)) rows.set(row.row_id, {...row});
   }
   const live = (ref: string | null) => ref === null || !/^(note_block|page|highlight):/u.test(ref) || resources.get(ref)?.visible === true;
+  const merged = new Map<string, string | null>();
   for (const change of plan.changes) {
     const row = rows.get(change.before.row_id); if (!row) continue;
+    // A mirror leaves its source occurrence where it is; the new link paints from its window.
+    if (change.mirror) continue;
     if (!change.after) {
       const source = observed.get(row.row_id), link = source ? links.get(source.link_id) : null;
       if (!link || !isVisible(link.add_vv, link.remove_vv)) rows.delete(row.row_id);
@@ -744,6 +836,8 @@ function reconcileRange(plan: RangePlan, original: RangeSnapshot, displayed: Ran
     }
     const source = observed.get(row.row_id)!, item = physical.get(source.link_id)!, destination = item.destination;
     const target = destination && (destination.endpoint_a === change.after.ref ? destination.endpoint_b : destination.endpoint_a) === change.after.parent_ref ? destination : source;
+    // A merge hands the existing link to the placed row; its former row retires at rebuild and must not anchor anything.
+    if (item.kind === "merge") {merged.set(row.row_id, null); for (const [id, other] of rows) if (id !== row.row_id && other.link_id === target.link_id) {rows.delete(id); merged.set(row.row_id, id);}}
     rows.set(row.row_id, {...row, ref: change.after.ref, parent_id: change.after.parent_id, parent_ref: change.after.parent_ref, link_id: target.link_id});
   }
   const visible = (id: string): boolean => {
@@ -768,7 +862,7 @@ function reconcileRange(plan: RangePlan, original: RangeSnapshot, displayed: Ran
     const at = siblings.findIndex(peer => peer.row_id === row_id);
     return {row_id, ref: row.ref, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: siblings[at - 1]?.row_id ?? null, before_id: siblings[at + 1]?.row_id ?? null};
   };
-  const changes = plan.changes.map(change => ({...change, after: placement(change.before.row_id)}));
+  const changes = plan.changes.map(change => ({...change, after: placement(change.before.row_id), ...(merged.has(change.before.row_id) ? {merged: {former: merged.get(change.before.row_id)!}} : {})}));
   let selection_after = plan.selection_after;
   if (selection_after?.kind === "blocks") {
     const row_ids = selection_after.row_ids.filter(visible);

@@ -5,26 +5,79 @@
   pointer-events: none;
   /* A composer's anchor is a zero-height line, so only the viewport bounds its frame. */
   --stage-ceiling: 100dvb;
+  --stage-tab-width: 44px;
   /* Pane clearance is written on a root anchor alone: see Slips. */
   --stage-floor: calc(var(--stage-bottom-clearance, 0px) + var(--stage-pane-clearance, 0px) + var(--reader-feedback-occlusion-bottom, 0px));
 }
 
-/* A modal anchor is portaled clear of every projection: it uses its floor alone, and its panel clips. */
-.modalAnchor { --stage-ceiling: 100%; }
+/* Modal placement owns this rectangle; clipping keeps travel clear of the visual panel. Safe
+   padding is measured as resolved pixels; absolute children use the rectangle's border box. */
+.modalAnchor {
+  inset: auto;
+  box-sizing: border-box;
+  overflow: clip;
+  padding: var(--viewport-safe-top, 0px) var(--viewport-safe-right, 0px) var(--viewport-safe-bottom, 0px) var(--viewport-safe-left, 0px);
+  --stage-ceiling: 100%;
+  --stage-floor: 0px;
+}
 
-/* Above the tab: a press on a standing slip belongs to the slip. */
+/* A room shares one centred overlay group. Its frame slot never changes with a tuck. */
+.group {
+  position: absolute;
+  inset-block: 0;
+  inset-inline: 12px;
+  inline-size: min(100% - 24px, 22rem + var(--stage-tab-width) + 12px);
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+.group > .frame {
+  inset-inline: 0 calc(var(--stage-tab-width) + 12px);
+  max-inline-size: calc(100% - var(--stage-tab-width) - 12px);
+}
+
+.group > .tab {
+  inset-inline: auto 0;
+  margin-inline: 0;
+}
+
+/* A constrained body spends no height on decoration; its edge is paint, not layout. */
+.modalAnchor[data-constrained] { --stage-gap: 0px; }
+
+.modalAnchor[data-constrained] > .group {
+  inset-inline: 0;
+  inline-size: min(100%, 22rem + var(--stage-tab-width));
+}
+
+.modalAnchor[data-constrained] .frame {
+  inset-inline: 0 var(--stage-tab-width);
+  max-inline-size: calc(100% - var(--stage-tab-width));
+  border: 0;
+  outline: 1px solid var(--edge);
+  outline-offset: -1px;
+}
+
+.modalAnchor[data-constrained] .row {
+  align-items: flex-start;
+  min-block-size: 0;
+  padding-block: 0;
+}
+
+.modalAnchor[data-constrained] .line { align-self: center; }
+
 .frame {
   position: absolute;
   z-index: 1;
   inset-inline: 12px;
-  inset-block-end: calc(12px + var(--stage-floor));
+  inset-block-end: calc(var(--stage-gap, 12px) + var(--stage-floor));
   box-sizing: border-box;
   inline-size: fit-content;
   max-inline-size: min(22rem, 100% - 24px);
-  max-block-size: calc(var(--stage-ceiling) - 24px);
+  max-block-size: calc(var(--stage-ceiling) - 2 * var(--stage-gap, 12px));
   margin-inline: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: none;
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
@@ -38,6 +91,9 @@
     opacity var(--duration-fast) var(--ease-glide),
     transform var(--duration-fast) var(--ease-glide);
 }
+
+.frame[data-many],
+.frame[data-scrolls] { touch-action: pan-y; }
 
 .frame[data-dragging] { transition: none; }
 
@@ -57,7 +113,8 @@
   padding: 6px 6px 6px 12px;
 }
 
-.row + .row { border-block-start: 1px solid var(--edge-subtle); }
+/* Newest on top, so a landing row brings its own rule and a standing row's box never changes. */
+.row:not(:last-child) { border-block-end: 1px solid var(--edge-subtle); }
 
 .row[data-weight="Held"],
 .row[data-weight="Risk"] {
@@ -85,10 +142,12 @@
   font-weight: var(--weight-regular);
 }
 
+/* Never a pointer's target: it leaves under a still pointer, and would take the frame's leave with it. */
 .outgoing {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  pointer-events: none;
   animation: fade-out var(--duration-base) var(--ease-glide) forwards;
 }
 
@@ -188,9 +247,7 @@
 }
 
 @media (any-pointer: coarse) {
-  .frame { touch-action: none; }
-
-  .frame[data-many] { touch-action: pan-y; }
+  .anchor { --stage-tab-width: 48px; }
 
   .row { min-block-size: 52px; }
 
@@ -211,6 +268,8 @@
 }
 
 @media (forced-colors: active) {
+  .modalAnchor[data-constrained] .frame { outline-color: CanvasText; }
+
   .frame {
     border-color: CanvasText;
     background: Canvas;

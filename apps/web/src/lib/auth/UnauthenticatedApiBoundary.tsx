@@ -11,16 +11,6 @@ import { loginPath, parseReturnTarget } from "@/lib/auth/urls";
 let redirectStarted = false;
 // set across assign: the browser asks its unload guards inside that call.
 let tearingDown = false;
-let beforeTeardown: (() => void) | null = null;
-
-/** The document ends writing ownership before the login navigation. One holder;
- * the returned function releases it. */
-export function beforeSecurityTeardown(stop: () => void): () => void {
-  beforeTeardown = stop;
-  return () => {
-    if (beforeTeardown === stop) beforeTeardown = null;
-  };
-}
 
 export function handleUnauthenticatedApiError(error: unknown): boolean {
   if (!isUnauthenticatedApiError(error)) return false;
@@ -29,12 +19,6 @@ export function handleUnauthenticatedApiError(error: unknown): boolean {
   if (redirectStarted) return true;
   if (typeof window === "undefined" || window.location.pathname === "/login") {
     return false;
-  }
-  try {
-    beforeTeardown?.();
-  } catch (failure) {
-    // justify-ignore-error: a failed stop never vetoes the security teardown.
-    reportError(failure);
   }
   const { pathname, search } = window.location;
   tearingDown = true;
