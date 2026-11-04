@@ -388,13 +388,16 @@ finish, undo, unread, reset and settle publish `Consumption`.
 `components/player/` owns one persistent player root, desktop bar, mobile mini
 and now-playing sheet. `GlobalPlayerSurfaces` composes session state, one summary
 named by `barSubjectId`, settings, origin, picker refs, focus and announcements;
-it never subscribes to the timeline. the root, `PlayerKeys` and `PlayerOutcomes`
-remain above workspace error containment whenever the player provider is mounted.
+it never subscribes to the timeline. the root, `PlayerKeys`, `PlayerOriginObserver`
+and `PlayerOutcomes` remain above workspace error containment whenever the player
+provider is mounted.
 the required render slot places visual surfaces inside the workspace boundary:
 a workspace fallback can replace that subtree while command, origin, settings
 and outcome ownership survives. hiding the desktop slot retires no owner.
-`PlayerRule`, `PlayerFolio` and reckoning/saved-time leaves own clock reads;
-identity and chapters use the chapter selector. `savedSilenceMs` is timeline data.
+`PlayerOriginObserver` owns the position effect for landing and retirement; visual
+rules do not own origin validity. `PlayerRule`, `PlayerFolio` and reckoning/saved-time
+leaves own their display clock reads. identity and chapters use the chapter selector.
+`savedSilenceMs` is timeline data.
 
 `lib/player/barModel.ts` is the total clock-free projection. first match wins:
 unavailable; loaded without a confirmed subject or while starting another media;
@@ -472,7 +475,9 @@ chapters and keys. a seek of at least 60 seconds publishes the origin only after
 the observed clock lands within two seconds of the target within ten seconds.
 a ten-second seek burst keeps its first origin. return seeks and swaps only after
 landing. crossing the mark, moving five media minutes from the target or changing
-load retires it. position reads subscribe to nothing.
+load retires it. command-time position reads subscribe to nothing; the isolated
+observer keeps landing, return settlement and retirement active even when workspace
+containment removes every visual rule.
 
 `PlayerKeys` owns global playback keys, retaining edit, composition, modifier and
 interaction-owner guards. `k` toggles; left/right skip −15/+30; shift-left/right

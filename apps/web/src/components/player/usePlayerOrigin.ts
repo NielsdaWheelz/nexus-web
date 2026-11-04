@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Player from "@/lib/player/playerRuntime";
 
 const MARKS_AT_MS = 60_000;
@@ -18,7 +18,7 @@ interface Mark { readonly subject: string; readonly atMs: number; readonly targe
  * origin. Returning seeks back and, once it lands, swaps the ends; the mark stands until then. A
  * mark retires when the clock crosses it, strays five minutes of media from its target, or the
  * subject changes. Position is read without subscribing, so the owner stays off the clock; the
- * rule reports each tick to `retire`.
+ * persistent observer reports each tick to `retire`.
  */
 export function usePlayerOrigin(subject: string | null) {
   const commands = Player.usePlayerCommands();
@@ -79,3 +79,11 @@ export function usePlayerOrigin(subject: string | null) {
 }
 
 export type PlayerOrigin = ReturnType<typeof usePlayerOrigin>;
+
+/** Origin validity follows the provider clock even when workspace visuals unmount. */
+export function PlayerOriginObserver({ origin }: { readonly origin: PlayerOrigin }) {
+  const { positionMs } = Player.usePlayerTimeline();
+  const { retire } = origin;
+  useEffect(() => { retire(positionMs); }, [retire, positionMs]);
+  return null;
+}

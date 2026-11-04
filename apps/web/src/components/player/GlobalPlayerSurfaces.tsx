@@ -34,7 +34,7 @@ import PlayerSheet, { MobileDisclosure } from "./PlayerSheet";
 import PlayerKeys from "./PlayerKeys";
 import PlayerMore from "./PlayerMore";
 import { usePlayerAnnouncement } from "./usePlayerAnnouncement";
-import { usePlayerOrigin } from "./usePlayerOrigin";
+import { PlayerOriginObserver, usePlayerOrigin } from "./usePlayerOrigin";
 import styles from "./GlobalPlayerSurfaces.module.css";
 
 const PICKER_DIALOGS = '[role="dialog"][aria-label="playback"], [role="dialog"][aria-label="chapters"]';
@@ -222,7 +222,7 @@ export default function GlobalPlayerSurfaces({ readerComposition, children }: {
     : <PlayerChapters loaded={loaded} presentation={surface} onSeek={origin.seek} onOpened={opened} />;
   const mini = miniKeys(mode);
   const contents = isMobile ? <>
-    <PlayerRule variant="Mini" clock={clock} origin={origin} />
+    <PlayerRule variant="Mini" clock={clock} />
     <div className={styles.miniRow}>
       <PlayerIdentity variant="Mini" mode={mode} open={open} buttonRef={openerRef}
         onOpenSheet={() => { sourceOpened.current = false; setSheetTarget("Player"); setSheetOpen(true); }} />
@@ -241,6 +241,7 @@ export default function GlobalPlayerSurfaces({ readerComposition, children }: {
 
   return <>
     <PlayerKeys origin={origin} />
+    <PlayerOriginObserver origin={origin} />
     <Announcement text={announcement?.text ?? ""} occurrence={announcement?.occurrence} level="Polite" />
     <PlayerOutcomes />
     {children(<div ref={slotRef} className={styles.slot} data-reader-composition={readerComposition || undefined} hidden={suppressed} inert={suppressed || undefined}
