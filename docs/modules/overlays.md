@@ -202,7 +202,10 @@ frames render in `document.body` and stack at `calc(var(--z-modal) + depth)`,
 depth being the frame's index among open modals: activation order alone decides
 which is on top. transients and tooltips render in their containing modal room
 (`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
-chrome (`--z-overlay`), below every modal. slips portal into their registered
+chrome (`--z-overlay`), below every modal. the room owns `role="dialog"` and
+contains the visual panel marked `data-modal-panel="true"`. sheet menu sizing
+and trailing-room measurement use that panel; the semantic room is not a
+geometry substitute. slips portal into their registered
 root, pane or modal anchors and own no overlay layer. desktop menus, pickers and
 previews neither clear nor gate them; modal addressing controls their eligibility.
 a page's own fixed shell (the `/share` card)
