@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FocusEventHandler, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
@@ -70,10 +70,11 @@ type SelectionActionPresentation =
     } };
 
 /** Primary commands share the overflow's descriptors and the common button contract. */
-function SelectionAction({ action, unavailable, help, busy, buttonRef, describedBy }: SelectionActionPresentation & {
+function SelectionAction({ action, unavailable, help, busy, buttonRef, describedBy, onBlur }: SelectionActionPresentation & {
   readonly help: string;
   readonly busy: boolean;
   readonly buttonRef?: RefObject<HTMLButtonElement | null>;
+  readonly onBlur?: FocusEventHandler<HTMLButtonElement>;
   /** A field this action retries. */
   readonly describedBy?: string;
 }) {
@@ -91,15 +92,16 @@ function SelectionAction({ action, unavailable, help, busy, buttonRef, described
       tooltip={{ text: reason ? `${help}. ${reason}` : help }} aria-label={presentation.label}
       aria-describedby={[describedBy, reason ? reasonId : null].filter(Boolean).join(" ") || undefined} data-action-id={presentation.id} aria-busy={busy || action?.busy || undefined}
       aria-haspopup={presentation.hasPopup}
-      onClick={activate} onKeyDown={activate} />
+      onClick={activate} onKeyDown={activate} onBlur={onBlur} />
     {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
   </>;
 }
 
-/** The native invoker survives ensure; only capability absence removes it. */
-function SelectionShare({ returnFocus, ...props }: SelectionActionPresentation & {
+/** a removed native invoker returns focus without replacing a newer destination. */
+function RecoverableSelectionAction({ returnFocus, ...props }: SelectionActionPresentation & {
   readonly help: string;
   readonly busy: boolean;
+  readonly onBlur?: FocusEventHandler<HTMLButtonElement>;
   readonly returnFocus: () => HTMLElement | null;
 }) {
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -307,6 +309,10 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
   const destinationTrigger = useRef<HTMLButtonElement | null>(null);
+  const annotationSerial = useRef(0);
+  const [annotationRequest, setAnnotationRequest] = useState<{
+    openingId: string; highlightId: string; serial: number; trigger: HTMLElement;
+  } | null>(null);
   const pickerId = useId();
   const pickerAnchor = useCallback(() => isMobile ? moreTrigger.current : destinationTrigger.current, [isMobile]);
   const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
@@ -324,6 +330,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   }, [menu, reader]);
   const renderComposer = (placed: boolean, unavailable: boolean, headerOnly = false) => {
     if (!draft || !opening) return null;
+    const annotationId = draft.bodyRole === "question" && store.getState().local.status !== "loading" && (!annotation || annotation.display) ? draft.highlightId : null;
+    const annotationResource = annotation?.display?.projection ?? null;
     const hasNote = bodyHasContent(draft.body);
     const failed = draft.issue?.kind === "Failed" ? draft.issue : null;
     const refused = draft.issue?.kind === "Capture" || draft.issue?.kind === "Capacity" ? draft.issue : null;
@@ -354,6 +362,14 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const command = (id: string, label: string, icon: ReactElement, onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
     });
+    const annotateAction = annotationId && annotationResource?.kind === "highlight" && annotationResource.authored_by_viewer
+      ? command("EditHighlightAnnotation", annotationResource.body_pm_json === null ? "annotate" : "edit annotation",
+        <ACTION_CATALOG.EditHighlightAnnotation.icon size={16} aria-hidden="true" />, ({ triggerEl }) => {
+          if (!triggerEl) return;
+          triggerEl.focus({ preventScroll: true });
+          setAnnotationRequest({ openingId: opening.id, highlightId: annotationId, serial: ++annotationSerial.current, trigger: triggerEl });
+        }, null) : null;
+    const matchingRequest = annotateAction && annotationRequest?.openingId === opening.id && annotationRequest.highlightId === annotationId ? annotationRequest : null;
     // a failed local commit is retried as the same frozen command, never saved again.
     const saveAction = failed ? command("RetryPassageSave", "retry saving", <Icon.Again size={16} aria-hidden="true" />, failed.retry, saving ? "saving." : null)
       : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save annotation",
@@ -408,6 +424,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
       {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
         : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
+      {annotateAction ? <RecoverableSelectionAction action={annotateAction} help={annotateAction.label} busy={false}
+        returnFocus={() => copyTrigger.current ?? moreTrigger.current ?? returnFocus()} onBlur={event => {
+          const trigger = event.currentTarget;
+          setAnnotationRequest(current => current?.openingId === opening.id && current.highlightId === annotationId && current.trigger === trigger ? null : current);
+        }} /> : null}
       {draft.bodyRole === "annotation_or_question" || failed ? <SelectionAction action={saveAction} help={failed ? "retry saving" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} describedBy={passageField ? fieldId : undefined} /> : null}
       {canQuote ? <>
         <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} describedBy={chatField ? chatFieldId : undefined} />
@@ -421,7 +442,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       </> : null}
       {!isMobile ? <>
         <SelectionAction action={copyAction} help={copyAction.label} busy={false} buttonRef={copyTrigger} />
-        <SelectionShare action={shareAction} help={shareAction.label} busy={sharePiece === null && draft.operation?.kind === "Ensure"}
+        <RecoverableSelectionAction action={shareAction} help={shareAction.label} busy={sharePiece === null && draft.operation?.kind === "Ensure"}
           returnFocus={() => copyTrigger.current ?? returnFocus()} />
       </> : null}
       {options.length > 0 ? <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} /> : null}
@@ -432,8 +453,11 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
         {!isMobile ? toolbar : null}
         {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
         {/* null means gone only once the store has read; until then the annotation waits */}
-        {draft.highlightId && draft.bodyRole === "question" && store.getState().local.status !== "loading" && (!annotation || annotation.display) ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
-          <HighlightAnnotation highlightRef={`highlight:${draft.highlightId}`} resource={annotation?.display?.projection ?? null} occurrenceKey={`selection:highlight:${draft.highlightId}`} onWorkOwners={composer.protectOwners} />
+        {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
+          <HighlightAnnotation highlightRef={`highlight:${annotationId}`} resource={annotationResource} occurrenceKey={`selection:highlight:${annotationId}`} onWorkOwners={composer.protectOwners}
+            offerBlank={false} focusRequest={matchingRequest?.serial ?? null}
+            onFocused={() => setAnnotationRequest(current => current === matchingRequest ? null : current)}
+            mayFocus={() => matchingRequest === null || document.hasFocus() && document.activeElement === matchingRequest.trigger} />
         </PreparedResourcesContext> : null}
         <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
           onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
