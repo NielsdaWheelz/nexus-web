@@ -74,7 +74,8 @@ upload-session lifecycle and referenced only by the attempt's
 decodes that packet with the same strict model, composes
 `prepare_web_article_fragment` with the packet's base url and evidence, and
 persists title, byline, excerpt, site name and published time from the packet at
-publication. retries reuse the immutable packet while successor admission stamps
+publication. an untitled packet uses its verified source hostname, never the old
+publication's title. retries reuse the immutable packet while successor admission stamps
 the current reader generation as its new publication base. Sanitization, no-readable-text, and metadata failures update the
 media row and latest source attempt instead of dropping the capture. fetched pages and emails publish through `web_article.publish_article`. all browser
 articles use `PreparedBrowserArticle`; native api articles use `PreparedNativeArticle`.

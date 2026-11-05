@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Literal, cast
+from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -433,7 +434,9 @@ def publish_prepared_browser_article(
     )
     metadata = prepared.article.metadata
     assert metadata is not None
-    media.title = metadata.title.strip()[:255] or media.title
+    media.title = (
+        metadata.title.strip() or urlparse(prepared.article.document_url).hostname or "Untitled article"
+    )[:255]
     media.description = metadata.excerpt.strip()[:2000] or None
     media.publisher = metadata.site_name.strip()[:255] or None
     media.edition_published_date = normalize_source_publication_date(metadata.published_time)
