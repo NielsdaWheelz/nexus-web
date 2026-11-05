@@ -5,11 +5,20 @@ qualification for `c6c90343c4324942b310fe7d9b9fadc4f6e5e944` and confirmed the
 no-use window. the journey remains unverified; retain it as a follow-up. this
 waiver does not authorize stopped qualification actions.
 
-owner-accepted source review qualifies this exact extension repair for the rebuild, with the existing22 extension journeys still required. the real lost-answer, identical stale-filing409 replay, explicit review and same-session publication journey remains a release gate.
+2026-11-05 status for `191ae44612d22626251a0d17950d3077d89650da`: `NOT_RUN`;
+the stopped action remains prohibited. the current installed-client waivers do
+not waive this journey or authorize retrying or rerouting the stopped action.
+the earlier qualification waiver names `c6c90343c4324942b310fe7d9b9fadc4f6e5e944` only.
 
-`apps/web/src/extension/background.ts` settles the actual confirming `E_RESOURCE_CONFLICT` before prior uncertainty, retiring only the frozen confirmation and its uncertainty. session, generation and uploaded bytes remain; only ordinary explicit review obtains a fresh filing guard. the server checks an already-published receipt before that fence; confirmation contention is503. extension authentication and missing/forbidden-library recovery remain separate owners and limits.
+historical c6 record, 2026-11-04, subject to the checkout audit below. the following
+repair claim and pre-release requirement describe the retired manual-review
+interface; they are not current one-click commands:
 
-the new regression oracle task was stopped by automatic review for possible cybersecurity risk before handback. its partial bytes remain unreviewed, unstaged and unrun; do not retry or reroute that action. source qualification is not a runtime red/green or release waiver. resolve before release with the real original-answer loss, exact replay, authoritative refusal, ordinary review and retained publication identity, with exact owned cleanup.
+> owner-accepted source review qualifies this exact extension repair for the rebuild, with the existing22 extension journeys still required. the real lost-answer, identical stale-filing409 replay, explicit review and same-session publication journey remains a release gate.
+>
+> `apps/web/src/extension/background.ts` settles the actual confirming `E_RESOURCE_CONFLICT` before prior uncertainty, retiring only the frozen confirmation and its uncertainty. session, generation and uploaded bytes remain; only ordinary explicit review obtains a fresh filing guard. the server checks an already-published receipt before that fence; confirmation contention is503. extension authentication and missing/forbidden-library recovery remain separate owners and limits.
+>
+> the new regression oracle task was stopped by automatic review for possible cybersecurity risk before handback. its partial bytes remain unreviewed, unstaged and unrun; do not retry or reroute that action. source qualification is not a runtime red/green or release waiver. resolve before release with the real original-answer loss, exact replay, authoritative refusal, ordinary review and retained publication identity, with exact owned cleanup.
 
 2026-11-04 checkout audit: the repair described above is not present in the
 surveyed checkout `b115cbce76abbb3a28cca373a53cbf1f45e9dd5b`.
