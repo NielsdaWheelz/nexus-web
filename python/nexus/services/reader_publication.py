@@ -354,12 +354,21 @@ def repair_reader_html(
     import hashlib
 
     from nexus.services import locator_resolver, media_locks
-    from nexus.services.canonicalize import canonicalize_structure
+    from nexus.services.canonicalize import CanonicalStructure, canonicalize_structure
     from nexus.services.content_indexing import reconcile_media_section_bounds
     from nexus.services.fragment_tables import insert_fragment_tables
     from nexus.services.html_tree import inner_html, normalize_html5_shape
     from nexus.services.media_parts import require_unpinned_source
     from nexus.services.text_quote import normalize_for_match
+
+    def named_bounds(
+        structure: CanonicalStructure, names: dict[str, int]
+    ) -> dict[str, tuple[int, int]]:
+        # Named targets contain element indices, which change when wrappers are added.
+        return {
+            name: (structure.elements[index].start_offset, structure.elements[index].end_offset)
+            for name, index in names.items()
+        }
 
     media_locks.lock_media_rows_in_order(db, [media_id])
     require_unpinned_source(db, media_id=media_id)
@@ -402,8 +411,9 @@ def repair_reader_html(
         if (
             before.text != fragment.canonical_text
             or after.text != before.text
-            or after.anchors != before.anchors
-            or after.apparatus_items != before.apparatus_items
+            or named_bounds(after, after.anchors) != named_bounds(before, before.anchors)
+            or named_bounds(after, after.apparatus_items)
+            != named_bounds(before, before.apparatus_items)
             or after.x_embed_slots != before.x_embed_slots
         ):
             raise ValueError(f"HTML repair changed source coordinates: {fragment.id}")
