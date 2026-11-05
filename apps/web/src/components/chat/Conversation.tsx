@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
+import { useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource";
 import { useFailedReadRepair, useServerValue, type Visit } from "@/lib/api/serverState";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { catalogLine } from "@/lib/catalog/copy";
@@ -15,8 +14,8 @@ import { remoteReady } from "@/lib/native/admission";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
-import { changedLine, commandKey, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
-import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
+import { changedLine, commandKey, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
+import { launchChatDraft, parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
 import type { Catalog } from "@/lib/chat/wire";
@@ -42,8 +41,11 @@ import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { CommandVerb } from "@/components/feedback/stage";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { copyText } from "@/lib/ui/copyText";
+import { useWorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { definePaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import ChatOperationBoundary from "./ChatOperationBoundary";
 import ChatComposer from "./ChatComposer";
 import ChatSurface from "./ChatSurface";
 import ChatContext from "./ChatContext";
@@ -86,6 +88,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const latestRuntime = useRef(runtime);
   latestRuntime.current = runtime;
   const { ctx } = useActionRuntime();
+  const guard = useWorkGuard();
   const router = usePaneRouter();
   const isPaneActive = usePaneIsActive();
   const params = usePaneSearchParams();
@@ -96,6 +99,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   );
   const [branch, setBranch] = useState<BranchDraft | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const transferringDraft = useRef(false);
   const [invalidatedInspection, setInvalidatedInspection] = useState(false);
   const scroll = useRef<ChatScrollHandle | null>(null);
   const { messages, activeSendLeafId, history, contextVersion } = state;
@@ -264,12 +268,14 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     };
     return {
       ...store,
-      send: (request, selectionRoute, openIntent, onAcceptance) =>
-        land(() => store.send(request, selectionRoute, openIntent, onAcceptance), openIntent, truncateText(request.content, 220)),
+      send: (request, selectionRoute, openIntent, onAcceptance, preparation) => conversationId === null
+        ? store.send(request, selectionRoute, openIntent, onAcceptance, preparation)
+        : land(() => store.send(request, selectionRoute, openIntent, onAcceptance, preparation), openIntent, truncateText(request.content, 220)),
       repeat: (operation, assistantId, explicit, openIntent) =>
         land(() => store.repeat(operation, assistantId, explicit, openIntent), openIntent, null),
       // a retry may move a frozen landing to a new pane, never back
       retryCommand: (openIntent = "default") => {
+        if (conversationId === null) return store.retryCommand(openIntent);
         const pending = store.getState().command;
         const command = pending.kind === "Idle" ? null : pending.command;
         const frozen = command?.kind === "Send" || command?.kind === "Repeat" ? command.openIntent : "default";
@@ -282,7 +288,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   // Message edits are delivered to a mounted pane once their target is on its path.
   const { delivery, claim } = usePaneEntryDelivery();
   const { enter: enterMemory } = useChatSelection();
-  const { seed, draft } = useChatDraft(conversationId ?? "new", runtime.paneId);
+  const { seed, draft, spend, entry: draftOwner } = useChatDraft(conversationId ?? "new", runtime.paneId);
   useLayoutEffect(() => {
     if (delivery?.entry.kind !== "ComposeChat") return;
     enterMemory();
@@ -319,14 +325,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       });
     }
   }, [fork, clearArrival, claim, delivery, say, slips, messages, ready, runtime, store, view.path]);
+  const unresolvedDeletion = state.command.kind !== "Idle" && (state.command.standing?.kind === "Unknown" ||
+    state.command.standing?.kind === "Changed" && state.command.standing.uncertain ||
+    state.command.kind === "Busy" && state.command.phase === "Sending");
   useEffect(() => {
-    if (!state.gone || conversationId === null) return;
-    settleDeletedResourcePanes({
-      workspace: workspace(),
-      deletedRef: `conversation:${conversationId}`,
-      fallbackHref: "/conversations",
-    });
-  }, [state.gone, conversationId, workspace]);
+    if (!state.gone || conversationId === null || draft.text !== "" || draft.quote !== null || unresolvedDeletion) return;
+    workspace().navigatePane(runtime.paneId, "/conversations", { replace: true, activate: false });
+  }, [state.gone, conversationId, draft.text, draft.quote, unresolvedDeletion, runtime.paneId, workspace]);
   const ownerKey = paneSourceKey(runtime);
   const findSource = useConversationFindSource({
     ownerKey,
@@ -419,13 +424,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const arrivalFailure = arrival.failure?.title ?? (invalidatedInspection ? "the matched text changed." : null);
   useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
 
-  // Every pane that shows the chat shows a pending command's lane, but the pane whose composer sent
-  // it: that composer holds it beside its draft. One pane holds it as a slip, the command owner's
-  // `holder`, so two panes on one chat hold it once; while none shows the chat, the workspace holds
-  // what a menu or the reader raised (lib/chat/commandFeedback.tsx). An unknown outcome is a held
-  // slip whose verbs stand in the lane too; a changed chat, or the failed read after it, is the
-  // lane's alone, and the holder rereads that read on focus and reconnection. Only the active pane
-  // speaks a lane.
+  // A sending composer's recovery stays with its question. Other panes show the
+  // shared command lane; when none is viewed, a menu's mounted projection owns it.
   const pending = state.command.kind === "Idle" ? null : state.command;
   const composed = pending?.command.kind === "Send" && pending.command.viewId === runtime.paneId;
   const holds = state.holder === runtime.paneId;
@@ -453,15 +453,13 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const unknownRetry: CommandVerb = { label: "retry", commandKey: `retry ${pendingKey}`, busy: pending?.kind === "Busy", run: again };
   const unknown = pending !== null && unknownStanding !== null ? resendFeedback({
     line: { fact: unsureFact(pending.command), reason: UNKNOWN_OUTCOME_REASON }, resend: unknownRetry,
-    ...(pending.command.kind === "Send" ? { secondary: { label: "discard send", commandKey: `discard ${pendingKey}`, run: () => store.discardCommand() } } : {}),
   }) : null;
-  const lane = pending?.standing?.kind === "Changed"
-    ? <Fact speak={isPaneActive} line={changedLine(pending.command)}
+  const lane = state.gone ? null : pending?.standing?.kind === "Changed"
+    ? <Fact speak={isPaneActive} line={{ ...changedLine(pending.command), ...(pending.standing.uncertain ? { reason: unsureFact(pending.command) } : {}) }}
       verbs={[{ label: "check", commandKey: `check ${pendingKey}`, busy: pending.kind === "Busy", run: again }]} />
     : pending?.standing?.kind === "Unread"
       ? <Failed error={pending.standing.error} noun="messages" retry={{ run: again, busy: pending.kind === "Busy" }} />
-      // the slip speaks the unknown outcome; the lane says why the pane waits, and carries its verbs
-      : unknown !== null ? <Fact line={{ fact: PENDING_CHANGE }} verbs={unknown.verbs ?? undefined} />
+      : unknown !== null ? <Fact speak={isPaneActive} line={unknown.line} verbs={unknown.verbs ?? undefined} />
       : null;
   return (
     <div className={styles.pane}>
@@ -471,7 +469,27 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         {intent.kind === "invalid" ? <Fact speak={isPaneActive} line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
         {lane}
       </div> : null}
-      {pending !== null && unknown !== null && holds ? <Hold id={pendingKey} attempt={pending.attempt} line={unknown.line} verbs={unknown.verbs ?? undefined} /> : null}
+      {state.gone ? <Fact line={{ fact: "this chat was deleted.", ...(unresolvedDeletion && pending ? { reason: unsureFact(pending.command) } : {}) }}
+        verbs={[{ label: "copy question", commandKey: "copy deleted chat question", run: () => {
+          const question = unresolvedDeletion && pending?.command.kind === "Send" ? pending.command.request.content : draft.text;
+          void copyText(question).catch(error => slips.fail(error, "couldn’t copy the question."));
+        } }, { label: "review in new chat", commandKey: "review deleted chat draft", run: () => {
+          if (transferringDraft.current || draftOwner.getSnapshot().draft !== draft) return;
+          transferringDraft.current = true;
+          try {
+            const result = launchChatDraft({ ctx, guard, originPaneId: runtime.paneId, draft, catalog: null, destination: { kind: "New" } });
+            if (result.kind === "Opened") spend(draft);
+          } finally { transferringDraft.current = false; }
+        } }]} /> : null}
+      {state.commandDefect ? <ChatOperationBoundary failure={state.commandDefect} paneId={runtime.paneId} visitId={runtime.visitId}
+        fallback={pending?.standing?.kind === "Unknown" ? null : <Fact line={state.acceptance ? { fact: "your question was sent. couldn’t load the chat." }
+          : { fact: "this send stopped unexpectedly.", reason: "your question is kept." }}
+          verbs={state.acceptance
+            ? [{ label: "retry loading", commandKey: "chat operation recovery", run: () => { store.clearCommandDefect(); void store.load(); } }]
+            : [{ label: "dismiss", commandKey: "chat operation recovery", run: () => store.clearCommandDefect() },
+              { label: "copy question", commandKey: "copy question", run: () => { void copyText(draft.text).catch(error => slips.fail(error, "couldn’t copy the question.")); } }]} />} /> : null}
+      {state.acceptance && state.acceptanceError && !state.commandDefect ? <Fact line={{ fact: "your question was sent. couldn’t load the chat." }}
+        verbs={[{ label: "retry loading", commandKey: "accepted chat read", busy: state.readingTree, run: () => void store.load() }]} /> : null}
       <ChatSurface
         ref={scroll}
         catalog={catalogRead}
@@ -480,8 +498,8 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         command={state.command}
         loading={loading}
         absent={loading ? <Ruling />
-          : state.gone ? <Fact line={{ fact: "this chat doesn’t exist." }} />
-          : history === "Unavailable" ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load(), busy: state.readingTree }} />
+          : state.gone ? null
+          : history === "Unavailable" && state.acceptance === null ? <Failed error={state.unread} noun="messages" retry={{ run: () => void store.load(), busy: state.readingTree }} />
           : null}
         store={paneStore}
         fork={fork}

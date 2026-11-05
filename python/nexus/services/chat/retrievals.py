@@ -31,6 +31,7 @@ from nexus.schemas.resource_evidence import (
     CapturedPassageTarget,
     CapturedQuote,
     CapturedSource,
+    CapturedUnavailableTarget,
     ResourceField,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
@@ -235,6 +236,72 @@ def reopen_search_result(
         passage_target=target,
         field=field,
         captured_evidence=captured_evidence,
+    )
+
+
+def citation_from_evidence(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, evidence: CapturedEvidence
+) -> RetrievalCitation | None:
+    """Already-selected evidence needs current disclosure proof, never discovery search."""
+    from nexus.services.reader_excerpts import quote_parts
+    from nexus.services.resource_items.capabilities import capability
+    from nexus.services.resource_items.evidence import admit_captured_evidence
+    from nexus.services.resource_items.routing import (
+        captured_passage_activation,
+        resource_activation_for_ref,
+    )
+
+    admitted = admit_captured_evidence(db, viewer_id=viewer_id, evidence=evidence)
+    kind = capability(ref.scheme).citable_result_type
+    if (
+        admitted is None
+        or kind is None
+        or admitted.quote is None
+        or isinstance(admitted.target, CapturedUnavailableTarget)
+    ):
+        return None
+    target = admitted.target
+    if isinstance(target, CapturedPassageTarget):
+        activation = captured_passage_activation(target)
+    else:
+        activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref, missing=False)
+    if activation.href is None:
+        return None
+    parts = quote_parts(admitted.quote)
+    locator = (
+        target.locator.model_dump(mode="json")
+        if isinstance(target, CapturedPassageTarget)
+        else None
+    )
+    media_id = (
+        target.owner_ref.removeprefix("media:")
+        if target.owner_ref and target.owner_ref.startswith("media:")
+        else None
+    )
+    return RetrievalCitation(
+        captured_evidence=admitted,
+        result_type=kind,
+        source_id=str(ref.id),
+        title=admitted.source.title or "selected passage",
+        source_label=None,
+        snippet=parts.exact,
+        deep_link=activation.href,
+        citation_target=ref.uri,
+        citation_label=admitted.source.location_label,
+        locator=locator,
+        context_ref={
+            "type": kind,
+            "id": str(ref.id),
+            "field": target.field,
+            "passage_target": target.model_dump(mode="json")
+            if isinstance(target, CapturedPassageTarget)
+            else None,
+        },
+        evidence_span_id=str(ref.id) if ref.scheme == "evidence_span" else None,
+        media_id=media_id,
+        media_kind=admitted.source.media_kind.value if admitted.source.media_kind else None,
+        score=None,
+        selected=True,
     )
 
 

@@ -5,7 +5,7 @@
 // The workspace delivers arrivals; this module never watches a hash or a bus.
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/serverState";
+import { requestWithRetry } from "@/lib/api/retry";
 import { useTransportVerbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import type { Line, CommandVerb, Verbs } from "@/components/feedback/stage";

@@ -10,7 +10,8 @@ import { excerptTextParts } from "@nexus/authored/excerpt";
 // Restored admission retries mounted remote evidence under its original account binding.
 // A failed re-read over a shown section says nothing: the section stands until a read lands.
 import { apiFetch, captureApiAccount, isCurrentApiAccount } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/serverState";
+import { changeStamp } from "@/lib/api/changes";
+import { requestWithRetry } from "@/lib/api/retry";
 import { remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -130,6 +131,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   let remote: MediaAnnotationsState["remote"] = { status: "loading" };
   let remoteFailed = false;
   let remoteReading = false;
+  let chatStamp = changeStamp("Chats");
   let state: MediaAnnotationsState = { remoteRead: { failed: false, running: true }, local: local.getState(), links, remote, decorations: { identity: "", marks: [], noteRefs: [] }, markers: [] };
   let controller = new AbortController();
   let stops: (() => void)[] = [];
@@ -178,9 +180,9 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         }
         const item = rootItem(root), body = item.preview.body, facet = markerFacet(root);
         markers.push({ id: root.ref, position: structure.fraction(extent.start), end: structure.fraction(extent.end),
-          kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" ? root.content.kind
+          kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" || root.content.kind === "ReaderQuote" ? root.content.kind
             : facet === "citations" ? "GeneratedCitation" : facet === "links" ? "Link" : "MachineLink",
-          tone: facet === "highlights" ? "Highlight" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
+          tone: facet === "highlights" ? "Highlight" : facet === "quotes" ? "Neutral" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
           preview: body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.kind === "prose" ? body.excerpt.text : null });
       }
       if (wire && wire.identity === doc.identity) markers.push(...wire.markers.filter(marker => marker.item_id.startsWith("embed:")).map(marker => ({
@@ -265,6 +267,11 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
       project();
     },
     getState: () => state,
+    invalidateChats(stamp: string) {
+      const changed = chatStamp !== stamp;
+      chatStamp = stamp;
+      if (changed && doc !== null && listeners.size) void readRemote();
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       if (listeners.size === 1) {

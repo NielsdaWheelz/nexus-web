@@ -35,7 +35,8 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.evidence import admit_captured_evidence
+from nexus.services.resource_items.items import ref_visible
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,25 +203,22 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
         and run.admitted_context_version
         == context_version(db, viewer_id=run.owner_user_id, conversation_id=run.conversation_id)
     )
-    visible = (
-        {
-            item.ref
-            for item in resource_items_out(
-                db,
-                viewer_id=run.owner_user_id,
-                refs=[edge.target for edge in edges if edge.target.scheme != "external_snapshot"],
-            )
-            if not item.missing
-        }
-        if admit_context
-        else set()
-    )
     for n, edge in zip(final, edges, strict=True):
         db.execute(
             text("UPDATE message_retrievals SET cited_edge_id = :edge WHERE id = :id"),
             {"edge": edge.id, "id": by_n[n].id},
         )
-        if edge.target.uri not in visible:
+        if (
+            not admit_context
+            or edge.target.scheme == "external_snapshot"
+            or not ref_visible(db, viewer_id=run.owner_user_id, ref=edge.target)
+            or admit_captured_evidence(
+                db,
+                viewer_id=run.owner_user_id,
+                evidence=CapturedEvidence.model_validate(by_n[n].captured_evidence),
+            )
+            is None
+        ):
             continue
         try:
             added = add_context_ref_without_commit(

@@ -131,6 +131,35 @@ def text_scope_rows_sql(reading_ids_sql: str) -> str:
     """
 
 
+def incomplete_table_rows_sql(reading_ids_sql: str) -> str:
+    """Negative rich-containment facts from publication metadata, never source bodies.
+
+    A cut is inside a table exactly when its element path descends from that table.
+    Before/after the table itself are complete boundaries; descendant cuts include
+    zero-text rows and cells that scalar coordinates cannot distinguish.
+    """
+    return f"""
+        SELECT DISTINCT p.media_id AS reading_media_id,f.id AS fragment_id,
+            GREATEST(t.start_offset,CASE WHEN f.idx=p.start_fragment_idx
+                THEN p.start_offset ELSE t.start_offset END) AS start_offset,
+            LEAST(t.end_offset,CASE WHEN f.idx=p.end_fragment_idx
+                THEN p.end_offset ELSE t.end_offset END) AS end_offset
+        FROM ({reading_ids_sql}) requested
+        JOIN media_parts p ON p.media_id=requested.media_id
+        JOIN reader_publications publication ON publication.media_id=p.source_media_id
+            AND publication.generation=p.source_generation
+        JOIN fragments f ON f.media_id=p.source_media_id
+            AND f.idx IN (p.start_fragment_idx,p.end_fragment_idx)
+        JOIN fragment_tables t ON t.fragment_id=f.id
+        WHERE (f.idx=p.start_fragment_idx
+            AND cardinality(t.dom_path)<cardinality(p.start_dom_path)
+            AND p.start_dom_path[1:cardinality(t.dom_path)]=t.dom_path)
+           OR (f.idx=p.end_fragment_idx
+            AND cardinality(t.dom_path)<cardinality(p.end_dom_path)
+            AND p.end_dom_path[1:cardinality(t.dom_path)]=t.dom_path)
+    """
+
+
 def apparatus_scope_rows_sql(reading_ids_sql: str) -> str:
     """setwise (reading_media_id,apparatus_item_id), including direct required notes.
 
@@ -171,6 +200,32 @@ def apparatus_scope_rows_sql(reading_ids_sql: str) -> str:
             OR (edge.relation='points_to_sidenote' AND target.kind='sidenote')
             OR (edge.relation='points_to_margin_note' AND target.kind='margin_note')
             OR (edge.relation='cites_bibliography_entry' AND target.kind='bibliography_entry'))
+    """
+
+
+def passage_scope_rows_sql(reading_ids_sql: str) -> str:
+    """Body intervals and each exact permitted note; gaps never become authority.
+
+    A piece may disclose the whole note reached by a retained reference, even
+    outside its body. Only note kinds contribute these additional intervals.
+    Callers establish audience and current publication before using this relation.
+    """
+    return f"""
+        {text_scope_rows_sql(reading_ids_sql)}
+        UNION
+        SELECT admitted.reading_media_id,part.source_media_id,f.id,f.idx,
+               (item.locator->>'start_offset')::integer,
+               (item.locator->>'end_offset')::integer
+        FROM ({apparatus_scope_rows_sql(reading_ids_sql)}) admitted
+        JOIN media_parts part ON part.media_id=admitted.reading_media_id
+        JOIN reader_apparatus_items item ON item.id=admitted.apparatus_item_id
+        JOIN fragments f ON f.id=(item.locator->>'fragment_id')::uuid
+            AND f.media_id=part.source_media_id
+        WHERE item.kind IN ('footnote','endnote','sidenote','margin_note','bibliography_entry')
+          AND item.locator_status='exact'
+          AND item.locator->>'type' IN ('web_text_offsets','epub_fragment_offsets')
+          AND item.locator->>'media_id'=part.source_media_id::text
+          AND (item.locator->>'start_offset')::integer<(item.locator->>'end_offset')::integer
     """
 
 

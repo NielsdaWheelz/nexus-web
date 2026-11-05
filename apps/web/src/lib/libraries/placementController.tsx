@@ -25,7 +25,8 @@ import { createDestinationCreation, useDestinationCreation } from "@/components/
 import type { LibraryDestination } from "@/lib/libraries/api";
 import { useChangeStamp } from "@/lib/api/changes";
 import { isApiError, outcomeUnknown, isSameSystemApiDefect, requestWithDeadline } from "@/lib/api/client";
-import { requestWithRetry, useFailedReadRepair } from "@/lib/api/serverState";
+import { useFailedReadRepair } from "@/lib/api/serverState";
+import { requestWithRetry } from "@/lib/api/retry";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { placements, setPlacement, type LibraryPlacement, type LibraryPlacementTarget } from "@/lib/libraries/api";

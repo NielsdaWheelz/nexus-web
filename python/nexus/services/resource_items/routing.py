@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from typing import Any, assert_never
+from typing import Any, Literal, assert_never
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
@@ -20,9 +20,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
+from nexus.schemas.resource_evidence import CapturedPassageTarget, ResourceField
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import locator_resolver
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.locations import (
     ScopedMediaPassage,
     media_passages,
@@ -43,6 +44,67 @@ _PASSAGE_ANCHORS = {
     "content_chunk": "chunk",
     "oracle_passage_anchor": "oracle-passage",
 }
+
+
+def captured_passage_activation(target: CapturedPassageTarget) -> ResourceActivationOut:
+    """An already admitted passage's source route, without rereading its body.
+
+    The occurrence's source-target key separately proves its exact current location.
+    Callers supply evidence accepted by the evidence owner's disclosure gate.
+    """
+    owner = assert_resource_ref(target.owner_ref)
+    if owner.scheme == "external_snapshot" and target.locator.type == "external_url":
+        return ResourceActivationOut(
+            field=target.field, resource_ref=owner.uri, kind="external", href=target.locator.url
+        )
+    if owner.scheme == "media":
+        href = f"/media/{owner.id}"
+    elif owner.scheme == "fragment" and target.locator.type == "x_capture_offsets":
+        href = f"/x/captures/{target.locator.capture_id}"
+    elif owner.scheme == "note_block":
+        href = f"/notes/{owner.id}"
+    elif owner.scheme == "highlight" and target.field == "annotation":
+        href = f"/highlights/{owner.id}#annotation"
+    elif owner.scheme == "conversation" and target.locator.type == "message_offsets":
+        href = f"/conversations/{owner.id}?{urlencode({'message': str(target.locator.message_id)})}"
+    else:
+        # justify-defect: captured passage owners have one explicit source route.
+        raise AssertionError("captured passage has no source route")
+    return ResourceActivationOut(
+        field=target.field, resource_ref=owner.uri, kind="route", href=href
+    )
+
+
+def source_activation_for_ref(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, field: ResourceField
+) -> ResourceActivationOut:
+    """Open an already authorized source identity without projecting its passages."""
+    href = None
+    kind: Literal["route", "external"] = "route"
+    if ref.scheme in _STATIC_PREFIXES:
+        href = f"{_STATIC_PREFIXES[ref.scheme]}/{ref.id}"
+    elif ref.scheme == "fragment":
+        capture_id = db.scalar(
+            text("SELECT x_post_capture_id FROM fragments WHERE id=:id"), {"id": ref.id}
+        )
+        if capture_id is not None:
+            href = f"/x/captures/{capture_id}"
+    elif ref.scheme == "highlight" and field == "annotation":
+        href = f"/highlights/{ref.id}#annotation"
+    elif ref.scheme == "external_snapshot":
+        href = _external_urls(db, viewer_id=viewer_id, refs=[ref]).get(ref.uri)
+        kind = "external"
+    elif ref.scheme == "contributor":
+        handle = db.scalar(text("SELECT handle FROM contributors WHERE id=:id"), {"id": ref.id})
+        if handle is not None:
+            href = f"/authors/{quote(str(handle), safe='')}"
+    return ResourceActivationOut(
+        field=field,
+        resource_ref=ref.uri,
+        kind=kind if href is not None else "none",
+        href=href,
+        unavailable_reason=None if href is not None else "location_unavailable",
+    )
 
 
 def route_for_visible_apparatus_item(

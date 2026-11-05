@@ -299,7 +299,12 @@ def bind_epub_source_structure(
         element.roles = body_roles
         element.in_navigation = bool(element.roles & {"toc", "doc-toc", "landmarks", "page-list"})
     return CanonicalStructure(
-        structure.text, tuple(elements), anchors, structure.apparatus_items, structure.x_embed_slots
+        structure.text,
+        tuple(elements),
+        anchors,
+        structure.apparatus_items,
+        structure.x_embed_slots,
+        structure.tables,
     )
 
 

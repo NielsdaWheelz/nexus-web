@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiFetch, isApiError, type ApiError } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/serverState";
+import { requestWithRetry } from "@/lib/api/retry";
+import { getChatDraft, type AcceptedDraft } from "@/lib/chat/drafts";
+import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { useLatestWorkspace, type WorkspaceStoreValue } from "@/lib/workspace/store";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   confirmChatDeletion,
@@ -13,6 +17,8 @@ import {
   refusedFact,
   repeatMessage,
   type CommandKind,
+  type CommandDefect,
+  type SendPreparation,
   type CommandOutcome,
   type CommandState,
   type ConversationTree,
@@ -31,6 +37,7 @@ import {
 import type { Route } from "@/lib/chat/selection";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
+import { conversationViewHref } from "@/lib/chat/view";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 
 // A pane's copy of a conversation: the server's messages and its last-send default
@@ -57,6 +64,9 @@ export type ChatState = Readonly<{
   holder: string | null;
   /** Rethrown by the pane during render. */
   defect: { error: unknown } | null;
+  commandDefect: CommandDefect | null;
+  acceptance: AcceptedDraft | null;
+  acceptanceError: ApiError | null;
   /** Bumps whenever a read settles a pending answer (its context refs commit with it). */
   contextVersion: number;
 }>;
@@ -66,8 +76,14 @@ export type ChatStore = ReturnType<typeof createChatStore>;
 const unloaded = (command: CommandKind): Promise<CommandOutcome> =>
   Promise.resolve(failed({ line: { fact: refusedFact(command), reason: "this chat hasn’t loaded." }, error: null }));
 
-export function createChatStore(accountId: string, conversationId: string | null, viewId: string) {
+export function createChatStore(accountId: string, conversationId: string | null, viewId: string, visitId: string, guard: WorkGuard, workspace: () => WorkspaceStoreValue) {
   const commands = conversationId ? getConversationCommands(accountId, conversationId) : getNewChatCommands(accountId, viewId);
+  const draft = getChatDraft(accountId, viewId, conversationId ?? "new", guard);
+  const currentVisit = () => {
+    const visit = workspace().state.panes.find(pane => pane.id === viewId)?.current_visit;
+    return visit?.id === visitId && new URL(visit.href, "https://nexus.invalid").pathname === `/conversations/${conversationId ?? "new"}`;
+  };
+  const operationDefect = () => draft.getSnapshot().defect ?? (commands.holder() === viewId ? commands.getDefect() : null);
   let state: ChatState = {
     conversation: null,
     messages: new Map(),
@@ -80,6 +96,9 @@ export function createChatStore(accountId: string, conversationId: string | null
     readingTree: false,
     holder: null,
     defect: null,
+    commandDefect: operationDefect(),
+    acceptance: draft.getSnapshot().accepted,
+    acceptanceError: null,
     contextVersion: 0,
   };
   const listeners = new Set<() => void>();
@@ -88,6 +107,7 @@ export function createChatStore(accountId: string, conversationId: string | null
   let frame = 0;
   let active = false;
   let loading: AbortController | null = null;
+  let loadingAcceptance: AcceptedDraft | null = null;
   const cleanups: (() => void)[] = [];
 
   const set = (patch: Partial<ChatState>) => {
@@ -198,12 +218,12 @@ export function createChatStore(accountId: string, conversationId: string | null
         : { kind: "Lost" });
     }
   };
-  /** A command throws only a defect, which the pane rethrows; its other outcomes are its caller's to tell. */
+  /** A synchronous command defect belongs to its operation boundary. */
   const command = async (run: () => Promise<CommandOutcome>): Promise<CommandOutcome> => {
     try {
       return await run();
     } catch (error) {
-      set({ defect: { error } });
+      commands.reportDefect(error);
       return { kind: "Handled" };
     }
   };
@@ -223,29 +243,47 @@ export function createChatStore(accountId: string, conversationId: string | null
           for (const [id, live] of Object.entries(state.live)) if (live.link.kind === "Lost") store.reconnect(id);
         };
         window.addEventListener("online", online);
-        const heard = () => set({ command: commands.getSnapshot(), holder: commands.holder() });
+        const heard = () => set({ command: commands.getSnapshot(), holder: commands.holder(), commandDefect: operationDefect() });
+        const draftChanged = () => {
+          const snapshot = draft.getSnapshot();
+          set({ acceptance: snapshot.accepted, commandDefect: operationDefect() });
+          if (snapshot.accepted !== null && snapshot.accepted !== loadingAcceptance) void store.load();
+        };
         cleanups.push(
           () => window.removeEventListener("online", online),
-          commands.subscribe(heard, { paneId: viewId, settled: applyTree }),
+          commands.subscribe(heard, { paneId: viewId, settled: applyTree, accepted: receipt => {
+            if (draft.getSnapshot().accepted?.receipt !== receipt) draft.accept(receipt, null, currentVisit(), visitId);
+          } }),
+          draft.subscribe(draftChanged),
         );
         heard();
       }
-      if (conversationId === null || state.gone) return;
+      if (conversationId === null || state.gone && draft.getSnapshot().accepted === null) return;
       loading?.abort();
       const controller = (loading = new AbortController());
-      set({ readingTree: true });
+      const accepted = draft.getSnapshot().accepted;
+      loadingAcceptance = accepted;
+      set({ readingTree: true, ...(accepted ? { gone: false, acceptanceError: null } : {}) });
       try {
         const { data } = await requestWithRetry(
           (signal) => apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(`/api/conversations/${conversationId}/tree`, { signal }),
           controller.signal,
         );
-        if (!controller.signal.aborted) applyTree(data);
+        if (!controller.signal.aborted) { applyTree(data); draft.accountFor(accepted); }
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
-        if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") return applyTree(null);
+        if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") { applyTree(null); draft.accountFor(accepted); return; }
         const failure = readFailureOf(error);
-        if (failure.kind === "Defect") set({ defect: { error: failure.error } });
-        else if (failure.kind !== "Handled" && state.history !== "Ready") set({ history: "Unavailable", unread: failure.error });
+        if (failure.kind === "Defect") {
+          if (accepted) {
+            if (state.history !== "Ready") set({ history: "Unavailable" });
+            draft.reportDefect({ error: failure.error, occurrence: 1 }, visitId);
+          }
+          else set({ defect: { error: failure.error } });
+        } else if (failure.kind !== "Handled") {
+          if (accepted) set({ acceptanceError: failure.error });
+          if (state.history !== "Ready") set({ history: "Unavailable", unread: failure.error });
+        }
       } finally {
         if (loading === controller) {
           loading = null;
@@ -259,13 +297,20 @@ export function createChatStore(accountId: string, conversationId: string | null
      * `onAcceptance` runs once when the server admits it, whoever retries; the Accepted
      * outcome is the awaiting surface's to land.
      */
-    send(request: DraftRequest, selectionRoute: Route | null, openIntent: OpenIntent, onAcceptance: () => void): Promise<CommandOutcome> {
+    send(request: DraftRequest, selectionRoute: Route | null, openIntent: OpenIntent, onAcceptance: () => void, preparation: SendPreparation | null = null): Promise<CommandOutcome> {
       const { destination } = request;
       const observed = revision();
       if (destination.kind === "Existing" && observed === null) return unloaded({ kind: "Send" });
       const exact = destination.kind === "New" ? destination : { ...destination, expected_revision: observed ?? 0 };
       const send = { kind: "Send", runId: createRandomId(), request: { ...request, destination: exact }, selectionRoute, viewId, openIntent } as const;
-      return command(() => commands.execute(send, onAcceptance));
+      draft.clearDefect();
+      return command(() => commands.execute(send, receipt => {
+        const current = currentVisit();
+        draft.accept(receipt, null, current, visitId);
+        onAcceptance();
+        if (current && conversationId === null) workspace().navigatePane(viewId,
+          conversationViewHref(receipt.outcome.conversation_id, receipt.outcome.assistant_message_id), { replace: true, activate: false });
+      }, preparation, failure => draft.reportDefect(failure, visitId)));
     },
 
     /** Reuse the exact source choice unless the user explicitly chooses another. */
@@ -273,12 +318,14 @@ export function createChatStore(accountId: string, conversationId: string | null
       const message = state.messages.get(assistantId);
       if (!state.conversation || state.gone || !message) return unloaded({ kind: "Repeat", operation });
       const conversation = state.conversation;
-      return command(() => repeatMessage(accountId, conversation, message, operation, explicit, openIntent));
+      return command(() => repeatMessage(accountId, conversation, message, operation, explicit, openIntent,
+        receipt => draft.accept(receipt, null, currentVisit(), visitId),
+        failure => draft.reportDefect(failure, visitId)));
     },
 
-    retryCommand: (openIntent: OpenIntent = "default") => command(() => commands.retry(openIntent)),
+    retryCommand: (openIntent: OpenIntent = "default") => { draft.clearDefect(); return command(() => commands.retry(openIntent)); },
+    clearCommandDefect() { draft.clearDefect(); commands.clearDefect(); },
     refreshCommand: () => command(() => commands.refresh()),
-    discardCommand: () => commands.discard(),
 
     /** Stop intent is idempotent, so a press after any failure is safe; null once the read lands. */
     cancel: async (runId: string): Promise<ChatFailure | null> => {
@@ -340,7 +387,10 @@ export function createChatStore(accountId: string, conversationId: string | null
 
 export function useChatStore(conversationId: string | null, viewId: string) {
   const { accountId } = useAuthenticatedAccount();
-  const store = useMemo(() => createChatStore(accountId, conversationId, viewId), [accountId, conversationId, viewId]);
+  const guard = useWorkGuard();
+  const workspace = useLatestWorkspace();
+  const { visitId } = requirePaneRuntime(usePaneRuntime(), "useChatStore");
+  const store = useMemo(() => createChatStore(accountId, conversationId, viewId, visitId, guard, workspace), [accountId, conversationId, viewId, visitId, guard, workspace]);
   useEffect(() => {
     void store.load();
     return store.dispose;

@@ -186,6 +186,7 @@ def create_conversation(
             viewer_id=viewer.user_id,
             conversation_id=body.id,
             initial_context_refs=body.initial_context_refs,
+            expected_deletion_revision=body.expected_deletion_revision,
         )
     )
 

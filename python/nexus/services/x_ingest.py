@@ -44,6 +44,7 @@ from nexus.schemas.x_source import (
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import source_attempts as sa
 from nexus.services.fragment_blocks import insert_fragment_blocks
+from nexus.services.fragment_tables import insert_fragment_tables
 from nexus.services.html_tree import parse_html_document, serialize_html
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.reader_publication import advance_reader_publications, ensure_reader_publication
@@ -425,6 +426,7 @@ def _publish_capture(
     db.add(row)
     db.flush()
     insert_fragment_blocks(db, row.id, fragment.fragment_blocks)
+    insert_fragment_tables(db, row.id, fragment.structure.tables)
     db.add_all(
         XPostCaptureContext(
             id=new_uuid7(),

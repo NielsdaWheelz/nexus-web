@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from nexus.schemas.collection_order import OrderRevision
+
 DISPLAY_NAME_MAX_LENGTH = 100
 
 
@@ -27,6 +29,7 @@ class UserProfileOut(BaseModel):
     email: str | None
     display_name: str | None
     calendar_time_zone: str
+    chat_deletion_revision: OrderRevision
     email_ingest_address: str | None = None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)

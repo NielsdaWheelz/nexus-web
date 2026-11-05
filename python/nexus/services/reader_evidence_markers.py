@@ -10,6 +10,7 @@ from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerOut,
     ReaderDocumentMapMarkerTone,
     ReaderEvidenceHighlightOut,
+    ReaderEvidenceQuoteOut,
     ReaderEvidenceResolvedOut,
     ReaderEvidenceRootOut,
     ReaderEvidenceSourceReferenceOut,
@@ -24,6 +25,7 @@ from nexus.services.resource_items.items import preview_texts
 
 _ITEM_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
     "Highlight": "Highlight",
+    "ReaderQuote": "Neutral",
     "SourceReference": "Citation",
     "GeneratedCitation": "Citation",
     "Link": "Link",
@@ -118,6 +120,8 @@ def build_markers(
         kind: ReaderDocumentMapMarkerKind
         if isinstance(content, ReaderEvidenceHighlightOut):
             kind = "Highlight"
+        elif isinstance(content, ReaderEvidenceQuoteOut):
+            kind = "ReaderQuote"
         elif isinstance(content, ReaderEvidenceSourceReferenceOut):
             kind = "SourceReference"
         elif any(

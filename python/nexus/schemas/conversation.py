@@ -14,7 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
+from nexus.schemas.authored import SelectionCapture
 from nexus.schemas.citation import CitationOut
+from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.llm import GenerationSelection, RunSelectionOut
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_items import ResourceItemOut
@@ -55,27 +57,44 @@ class ReaderSelectionKey(Wire):
 class ReaderSelectionSnapshot(Wire):
     """The immutable quote on a user turn; its revision is the sha256 of this JSON."""
 
-    key: ReaderSelectionKey
+    key: ReaderSelectionKey | None
     evidence: CapturedEvidence
 
 
 class ReaderSelectionOut(Out):
-    key: ReaderSelectionKey
+    key: ReaderSelectionKey | None
     item: ResourceItemOut
 
 
 Revision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
-class ReaderSelectionPreview(ReaderSelectionOut):
-    revision: Revision
-
-
-class ReaderSelectionInput(Wire):
-    """A send's quote: the durable key plus the compare-on-send revision, never text."""
-
+class ReaderSelectionPreview(Out):
     key: ReaderSelectionKey
     revision: Revision
+    item: ResourceItemOut
+
+
+class HighlightReaderSelectionInput(Wire):
+    """A saved highlight with the exact preview the sender observed."""
+
+    kind: Literal["highlight"]
+    key: ReaderSelectionKey
+    revision: Revision
+
+
+class PassageReaderSelectionInput(Wire):
+    """A reader capture; admission proves its source without authoring a highlight."""
+
+    kind: Literal["passage"]
+    reading_ref: str
+    source_ref: str
+    capture: SelectionCapture
+
+
+ReaderSelectionInput = Annotated[
+    HighlightReaderSelectionInput | PassageReaderSelectionInput, Field(discriminator="kind")
+]
 
 
 # Branch anchors: requests and stored rows share one closed shape.
@@ -129,6 +148,7 @@ class CreateConversationRequest(Wire):
 
     id: UUID
     initial_context_refs: list[str]
+    expected_deletion_revision: OrderRevision
 
 
 class ChatFailureOut(Out):
@@ -193,6 +213,7 @@ class NewChatDestination(Wire):
     """A fresh conversation created atomically with this send."""
 
     kind: Literal["New"] = "New"
+    expected_deletion_revision: OrderRevision
 
 
 class EmptyInsertion(Wire):
@@ -235,6 +256,7 @@ class ChatRunRepeatRequest(Wire):
 
 
 RejectionCode = Literal[
+    "E_CHAT_CREATION_STALE",
     "E_CONVERSATION_CHANGED",
     "E_MESSAGE_TOO_LONG",
     "E_INVALID_GENERATION_SELECTION",

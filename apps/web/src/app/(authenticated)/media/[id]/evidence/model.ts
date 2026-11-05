@@ -2,11 +2,12 @@
 // annotations and links never pass through these helpers.
 import * as Icon from "@/lib/ui/icons";
 import type { Schema } from "@/lib/api/wire";
+import { assertNever } from "@/lib/assertNever";
 import type { MarkAnchor, TextRange } from "@/lib/documentReader/DocumentReader";
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
 import { targetOfResolution } from "../hostedReader";
 
-/** A server-derived root (source reference, assistant evidence, a library member's highlight). */
+/** A server-derived root: source reference, chat quote, assistant evidence or shared highlight. */
 export type EvidenceRoot = Schema<"ReaderEvidenceRootOut"> & {
   readonly source: {
     readonly media_id: string;
@@ -16,12 +17,12 @@ export type EvidenceRoot = Schema<"ReaderEvidenceRootOut"> & {
 };
 
 export type Filter = keyof Schema<"ReaderEvidenceCountsOut">;
-export const FILTERS: readonly Filter[] = ["highlights", "citations", "links", "machine_links"];
+export const FILTERS: readonly Filter[] = ["highlights", "quotes", "citations", "links", "machine_links"];
 export const FILTER_LABELS: Record<Filter, string> = {
-  highlights: "highlights", citations: "citations", links: "links", machine_links: "librarian links",
+  highlights: "highlights", quotes: "chat quotes", citations: "citations", links: "links", machine_links: "librarian links",
 };
 export const FILTER_ICONS: Record<Filter, Icon.Glyph | null> = {
-  highlights: Icon.Highlight, citations: Icon.SourceReference, links: Icon.Link, machine_links: null,
+  highlights: Icon.Highlight, quotes: null, citations: Icon.SourceReference, links: Icon.Link, machine_links: null,
 };
 
 export function factFacet(fact: Schema<"ReaderDirectFactOut">): Filter {
@@ -31,16 +32,29 @@ export function factFacet(fact: Schema<"ReaderDirectFactOut">): Filter {
 
 export function facets(root: EvidenceRoot): ReadonlySet<Filter> {
   const result = new Set(root.direct_facts.map(factFacet));
-  if (root.content.kind === "Highlight") result.add("highlights");
-  if (root.content.kind === "SourceReference") result.add("citations");
+  const content = root.content;
+  switch (content.kind) {
+    case "Highlight": result.add("highlights"); break;
+    case "ReaderQuote": result.add("quotes"); break;
+    case "SourceReference": result.add("citations"); break;
+    case "Resource": break;
+    default: assertNever(content);
+  }
   return result;
 }
 
 export function markerFacet(root: EvidenceRoot): Filter {
-  if (root.content.kind === "Highlight") return "highlights";
-  if (root.content.kind === "SourceReference") return "citations";
-  const own = facets(root);
-  return own.has("citations") ? "citations" : own.has("links") ? "links" : "machine_links";
+  const content = root.content;
+  switch (content.kind) {
+    case "Highlight": return "highlights";
+    case "ReaderQuote": return "quotes";
+    case "SourceReference": return "citations";
+    case "Resource": {
+      const own = facets(root);
+      return own.has("citations") ? "citations" : own.has("links") ? "links" : "machine_links";
+    }
+    default: return assertNever(content);
+  }
 }
 
 export function matches(root: EvidenceRoot, id: string): boolean {
@@ -71,7 +85,7 @@ export function rootItem(root: EvidenceRoot): Schema<"ResourceItemOut"> {
 }
 
 export function rootCounts(roots: readonly EvidenceRoot[]): Schema<"ReaderEvidenceCountsOut"> {
-  const counts = { highlights: 0, citations: 0, links: 0, machine_links: 0 };
+  const counts = { highlights: 0, quotes: 0, citations: 0, links: 0, machine_links: 0 };
   for (const root of roots) for (const facet of facets(root)) counts[facet]++;
   return counts;
 }

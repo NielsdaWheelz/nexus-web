@@ -5,7 +5,7 @@
  * failure. Stderr is diagnostic only. The platform owns SQL publication. */
 import { readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { excerptSourceWindows, type ExcerptSourceEvent, ExcerptCaptureError, captureExcerpt, scopeExcerpt, captureRevision, excerptSourceSelection, excerptTextParts, excerptView, validateExcerpt, validateExcerptBody, type ExcerptCapture, type ExcerptScope } from "./src/excerpt.ts";
+import { excerptSourceWindows, type ExcerptSourceEvent, ExcerptCaptureError, captureExcerpt, scopeExcerpt, captureRevision, excerptCanonicalProof, excerptSourceSelection, excerptTextParts, excerptView, validateExcerpt, validateExcerptBody, type ExcerptCapture, type ExcerptScope } from "./src/excerpt.ts";
 import { mergeChanges, isVisible } from "./src/merge.ts";
 import * as Y from "yjs";
 import { applyBodyEdits, bodyInline, encodeBytes, hydrateNote, readBody } from "./src/documents.ts";
@@ -184,6 +184,14 @@ async function main(): Promise<void> {
       closed(request,"op items");
       if (!Array.isArray(request.items)) throw new TypeError("Expected excerpt text bodies");
       result = {items:request.items.map(body => {validateExcerptBody(body);return excerptTextParts(body);})}; break;
+    }
+    case "excerpt_capture_proofs": {
+      closed(request,"op items");
+      if (!Array.isArray(request.items)) throw new TypeError("Expected source capture proofs");
+      result={items:request.items.map(excerpt => {
+        validateExcerpt(excerpt);
+        return {...excerptCanonicalProof(excerpt),text_parts:excerptTextParts(excerpt)};
+      })}; break;
     }
     case "excerpt_source_selections": {
       closed(request,"op items");

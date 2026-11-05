@@ -2,19 +2,22 @@
 
 import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Hold, useResendFeedback, useOutcome, type Outcome } from "@/components/feedback/Feedback";
-import type { CommandVerb } from "@/components/feedback/stage";
-import { apiFetch, type ApiError } from "@/lib/api/client";
+import type { CommandVerb, Line, Verbs } from "@/components/feedback/stage";
+import ChatOperationBoundary from "@/components/chat/ChatOperationBoundary";
+import { apiFetch, isApiError, requestWithDeadline, type ApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { exactWrite } from "@/lib/api/retry";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { formatDisplayNumber } from "@/lib/display/format";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import { confirmChatDeletion } from "./commands";
+import { confirmChatDeletion, readChatDeletionRevision, type CommandDefect } from "./commands";
 import { createRandomId } from "@/lib/createRandomId";
 import { openAsyncResult } from "@/lib/panes/openResult";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
+import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { failureOf } from "./wire";
 
 // The complete chat index, latest source lookup and deletion. Writers publish "Chats".
@@ -48,29 +51,37 @@ export function deleteConversation(
 }
 
 export type ConversationCreationInput = {
-  ctx: Pick<ActionContext, "accountId" | "workspace" | "sessionSignal" | "feedback" | "reportDefect">;
+  ctx: Pick<ActionContext, "accountId" | "workspace" | "sessionSignal" | "feedback">;
   ref: string;
   originPaneId: string;
   intent: OpenIntent;
   subject?: string;
 };
+type CreationFailure =
+  | { readonly kind: "Unresolved"; readonly defect: CommandDefect | null }
+  | { readonly kind: "Stopped" | "Accepted"; readonly defect: CommandDefect }
+  | { readonly kind: "Fenced" };
 interface Creation {
   readonly key: string;
+  readonly id: string;
+  readonly visitId: string;
   readonly input: ConversationCreationInput;
   readonly signal: AbortSignal;
   readonly abort: () => void;
-  readonly body: string;
-  busy: boolean;
-  /** An unanswered creation stays held; each unsuccessful retry keys its speech again. */
-  held: { attempt: number } | null;
+  /** Sealed after preparation; every replay uses these exact bytes and deletion revision. */
+  body: string | null;
+  phase: "Preparing" | "Sending" | null;
+  uncertain: boolean;
+  failure: CreationFailure | null;
+  occurrence: number;
   intent: OpenIntent;
 }
 const NO_CREATIONS: readonly Creation[] = [];
 const REFUSED = "couldn’t create the chat.";
+const PREPARATION_MS = 30_000;
 
-/** The original context-create closure belongs to this account until its exact request settles. A
- * first refusal forgets the creation; an unknown outcome holds it, and its retry resends
- * the same id, which the server answers with the same chat. A refused retry keeps it held. */
+/** One context-create owns preparation and its sealed request until acceptance or a terminal
+ * fence. A later refusal cannot erase earlier delivery uncertainty. Opening is read recovery. */
 function creationOwner(accountId: string, refused: (error: ApiError, retry: CommandVerb) => void) {
   let retired = false;
   const entries = new Map<string, Creation>();
@@ -80,55 +91,114 @@ function creationOwner(accountId: string, refused: (error: ApiError, retry: Comm
   const current = (entry: Creation) => !retired && !entry.signal.aborted && entries.get(entry.key) === entry;
   const remove = (entry: Creation) => {entry.signal.removeEventListener("abort", entry.abort); if (entries.get(entry.key) === entry) {entries.delete(entry.key); emit();}};
   const submit = async (entry: Creation, intent: OpenIntent, originPaneId: string) => {
-    if (!current(entry) || entry.busy) return;
+    if (!current(entry) || entry.phase !== null) return;
     if (intent === "new_pane") entry.intent = intent;
-    entry.busy = true; emit();
+    entry.phase = entry.body === null ? "Preparing" : "Sending";
+    emit();
     const {ctx, subject} = entry.input;
+    let accepted = false;
     try {
       await openAsyncResult({ctx, originPaneId, intent: entry.intent, subject, create: async () => {
-        const response = await apiFetch<ApiJson<"/conversations", "post">>("/api/conversations", {method: "POST", body: entry.body, signal: entry.signal});
+        if (entry.body === null) {
+          const body: Schema<"CreateConversationRequest"> = {
+            id: entry.id,
+            initial_context_refs: [entry.input.ref],
+            expected_deletion_revision: await requestWithDeadline({
+              request: readChatDeletionRevision, signal: entry.signal, timeoutMs: PREPARATION_MS,
+            }),
+          };
+          if (!current(entry)) return null;
+          entry.body = JSON.stringify(body);
+          entry.phase = "Sending";
+          emit();
+        }
+        const body = entry.body;
+        const result = await exactWrite(signal => apiFetch<ApiJson<"/conversations", "post">>(
+          "/api/conversations", {method: "POST", body, signal},
+        ), entry.signal);
         if (!current(entry)) return null;
+        entry.uncertain ||= result.uncertain;
+        if (result.kind === "Failed") throw result.error;
+        // A broken success answer can follow a committed create. Verify its command
+        // identity before retiring exact recovery; this is not a wire decoder.
+        entry.uncertain = true;
+        const response = result.value.data;
+        if (response.id !== entry.id) throw new Error("chat creation answered with a different identity");
+        const resultToOpen = {target: {href: `/conversations/${response.id}`, labelHint: response.title}, title: "chat created", openLabel: "open chat"};
+        accepted = true;
+        entry.uncertain = false;
+        entry.phase = null;
+        entry.failure = null;
+        emit();
         publishChange("Chats");
-        return {target: {href: `/conversations/${response.data.id}`, labelHint: response.data.title}, title: "chat created", openLabel: "open chat"};
+        return resultToOpen;
       }});
       if (current(entry)) remove(entry);
     } catch (error) {
       if (!current(entry)) return;
+      entry.phase = null;
+      entry.occurrence += 1;
+      if (accepted) {
+        entry.failure = {kind: "Accepted", defect: {error, occurrence: entry.occurrence}};
+        return;
+      }
+      if (isApiError(error) && error.code === "E_CHAT_CREATION_STALE") {
+        entry.failure = {kind: "Fenced"};
+        return;
+      }
       const failure = failureOf(error);
-      if (failure.kind === "Handled") return;
-      if (failure.kind === "Defect") {ctx.reportDefect({error: failure.error}); return;}
-      if (failure.kind === "Unknown") {entry.held = {attempt: (entry.held?.attempt ?? 0) + 1}; return;}
-      if (entry.held !== null) {
-        entry.held = {attempt: entry.held.attempt + 1};
+      if (entry.uncertain) {
+        entry.failure = {kind: "Unresolved", defect: failure.kind === "Defect" ? {error: failure.error, occurrence: entry.occurrence} : null};
+        return;
+      }
+      if (failure.kind === "Defect") {
+        entry.failure = {kind: "Stopped", defect: {error: failure.error, occurrence: entry.occurrence}};
         return;
       }
       remove(entry);
-      refused(failure.error, {label: "retry", commandKey: `create ${entry.key}`, run: intent => void owner.create({...entry.input, intent})});
-    } finally {entry.busy = false; if (current(entry)) emit();}
+      if (failure.kind !== "Handled") refused(failure.error, {label: "retry", commandKey: `create ${entry.key}`,
+        run: intent => void owner.create({...entry.input, intent, originPaneId: ctx.workspace().state.active_primary_pane_id})});
+    } finally {entry.phase = null; if (current(entry)) emit();}
   };
   const owner = {
     subscribe(listener: () => void) {listeners.add(listener); return () => {listeners.delete(listener);};},
     snapshot: () => snapshot,
-    hasUnconfirmed: () => entries.size > 0,
+    hasUnconfirmed: () => [...entries.values()].some(entry => entry.phase === "Sending" || entry.failure?.kind === "Unresolved"),
     start() {retired = false; return () => {retired = true; for (const entry of entries.values()) entry.signal.removeEventListener("abort", entry.abort); entries.clear(); emit();};},
     async create(input: ConversationCreationInput) {
       if (retired || input.ctx.accountId !== accountId || input.ctx.sessionSignal().aborted) return;
       const key = `${accountId}:${input.ref}`;
       let entry = entries.get(key);
-      if (entry?.busy) return;
-      if (!entry || entry.held === null) {
+      if (entry?.phase != null) return;
+      if (!entry || entry.failure?.kind !== "Unresolved") {
         if (entry) remove(entry);
+        const visitId = input.ctx.workspace().state.panes.find(pane => pane.id === input.originPaneId)?.current_visit.id;
+        if (visitId === undefined) return;
         const id = createRandomId();
         const signal = input.ctx.sessionSignal();
         const abort = () => remove(admitted);
-        const admitted: Creation = {key, input, signal, abort, body: JSON.stringify({id, initial_context_refs: [input.ref]}), busy: false, held: null, intent: input.intent};
+        const admitted: Creation = {key, id, visitId, input, signal, abort, body: null, phase: null,
+          uncertain: false, failure: null, occurrence: 0, intent: input.intent};
         entry = admitted;
         entries.set(key, entry);
         signal.addEventListener("abort", abort, {once: true});
       }
       await submit(entry, input.intent, input.originPaneId);
     },
-    retry(entry: Creation, intent: OpenIntent) {return submit(entry, intent, entry.input.ctx.workspace().state.active_primary_pane_id);},
+    retry(entry: Creation, intent: OpenIntent) {
+      if (entry.failure?.kind !== "Unresolved") return;
+      return submit(entry, intent, entry.input.ctx.workspace().state.active_primary_pane_id);
+    },
+    open(entry: Creation, event: TargetActivationEvent) {
+      if (!current(entry)) {event.preventDefault(); return "consumed" as const;}
+      const workspace = entry.input.ctx.workspace();
+      const result = activateTargetLink({event,
+        runtime: {activateTarget: request => workspace.activateWorkspaceTarget({...request, originPaneId: workspace.state.active_primary_pane_id})},
+        target: {href: entry.failure?.kind === "Accepted" ? `/conversations/${entry.id}` : "/conversations"},
+      });
+      if (result === "handled-default" || result === "handled-new-pane") remove(entry);
+      return result;
+    },
   };
   return owner;
 }
@@ -147,10 +217,36 @@ export function useConversationCreationOwner(accountId: string) {
   }), [accountId, guard, owner]);
   const entries = useSyncExternalStore(owner.subscribe, owner.snapshot, () => NO_CREATIONS);
   return {create: owner.create, feedback: entries.map(entry => {
-    if (entry.held === null) return null;
-    const {line, verbs} = resendFeedback({ line: { fact: "not sure the chat was created.", reason: UNKNOWN_OUTCOME_REASON },
-      resend: {label: "retry", commandKey: `create ${entry.key}`, busy: entry.busy, run: intent => {void owner.retry(entry, intent);}} });
-    return <Hold key={entry.key} id={entry.key} attempt={entry.held.attempt} line={line} verbs={verbs} />;
+    const failure = entry.failure;
+    if (failure === null) return null;
+    let line: Line;
+    let verbs: Verbs | null;
+    let defect: CommandDefect | null = null;
+    switch (failure.kind) {
+      case "Unresolved":
+        ({line, verbs} = resendFeedback({line: {fact: "not sure the chat was created.", reason: UNKNOWN_OUTCOME_REASON},
+          resend: {label: "retry", commandKey: `create ${entry.key}`, busy: entry.phase !== null, run: intent => {void owner.retry(entry, intent);}}}));
+        defect = failure.defect;
+        break;
+      case "Stopped":
+        ({line, verbs} = resendFeedback({line: {fact: REFUSED},
+          resend: {label: "retry", commandKey: `create ${entry.key}`, run: intent => {void owner.create({...entry.input, intent,
+            originPaneId: entry.input.ctx.workspace().state.active_primary_pane_id});}}}));
+        defect = failure.defect;
+        break;
+      case "Fenced":
+        line = {fact: "this attempt can no longer be retried.", reason: entry.uncertain ? "not sure the chat was created." : "review your chats before starting again."};
+        verbs = [{label: "review chats", href: "/conversations", onActivate: event => owner.open(entry, event)}];
+        break;
+      case "Accepted":
+        line = {fact: "the chat was created. couldn’t open it."};
+        verbs = [{label: "open chat", href: `/conversations/${entry.id}`, onActivate: event => owner.open(entry, event)}];
+        defect = failure.defect;
+        break;
+    }
+    const presentation = <Hold key={entry.key} id={entry.key} attempt={entry.occurrence} line={line} verbs={verbs} />;
+    return defect === null ? presentation : <ChatOperationBoundary key={entry.key} failure={defect}
+      paneId={entry.input.originPaneId} visitId={entry.visitId} fallback={presentation} />;
   })};
 }
 

@@ -27,7 +27,7 @@ from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_l
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.items import ref_visible, resource_items_out
 
 Pair = tuple[str, UUID]
 CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -143,9 +143,16 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
     _pin_note_owners(db, [edge.source, edge.target])
     # External snapshots outlive what they captured; a citation's source is the
     # in-flight output minting it, not yet read-visible.
-    if edge.ordinal is None and edge.target.scheme != "external_snapshot":
+    if edge.origin in ("system", "citation") and edge.ordinal is None:
+        # Automatic source facts retain identity, not a projection of source words.
+        # Their reader quote or citation has already passed the evidence disclosure gate.
+        if any(
+            not ref_visible(db, viewer_id=viewer_id, ref=ref) for ref in (edge.source, edge.target)
+        ):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
+    elif edge.ordinal is None and edge.target.scheme != "external_snapshot":
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
-    if edge.ordinal is None:
+    if edge.ordinal is None and edge.origin not in ("system", "citation"):
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
 
 

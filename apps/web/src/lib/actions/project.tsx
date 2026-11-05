@@ -563,9 +563,7 @@ export function projectResourceActions(
     const owner = getConversationCommands(ctx.accountId, id);
     const present = (outcome: CommandOutcome) => {
       if (!ctx.isActive()) return;
-      if (outcome.kind === "Gone") {
-        settleDeletedResourcePanes({ workspace: ctx.workspace(), deletedRef: ref, fallbackHref: "/conversations" });
-      } else if (outcome.kind === "Failed") {
+      if (outcome.kind === "Failed") {
         sayRefusal(ctx.feedback, outcome);
       } else if (outcome.kind === "Pending") {
         ctx.observeChatCommand({ id, owner, present });

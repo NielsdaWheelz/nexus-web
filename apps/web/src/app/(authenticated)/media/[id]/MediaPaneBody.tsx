@@ -514,6 +514,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   // ---- annotations ----
   const authored = useAuthoredStore();
   const [store] = useState(() => createMediaAnnotations(authored, id));
+  const chatStamp = useChangeStamp("Chats");
+  useEffect(() => store.invalidateChats(chatStamp), [store, chatStamp]);
   const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
   const sourceAbsent = documentFailed || !readable;
   useEffect(() => { if (doc) store.bind(doc); else if (sourceAbsent) store.bind(null); }, [doc, sourceAbsent, store]);

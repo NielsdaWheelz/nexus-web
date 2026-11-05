@@ -81,6 +81,12 @@ def publish_source_transcript(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     old_ids = list(db.scalars(text("SELECT id FROM fragments WHERE media_id=:media_id"), params))
     db.execute(text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"), params)
+    db.execute(
+        text(
+            "DELETE FROM fragment_tables WHERE fragment_id IN (SELECT id FROM fragments WHERE media_id=:media_id)"
+        ),
+        params,
+    )
     db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), params)
     insert_transcript_fragments(db, media_id, transcript_segments, now=now)
     if transcript_segments:

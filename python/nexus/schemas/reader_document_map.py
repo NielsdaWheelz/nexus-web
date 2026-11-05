@@ -32,6 +32,7 @@ ReaderDocumentMapMarkerKind = Literal[
     "GeneratedCitation",
     "Link",
     "MachineLink",
+    "ReaderQuote",
 ]
 ReaderDocumentMapMarkerTone = Literal[
     "Neutral", "Highlight", "Citation", "Link", "MachineLink", "Warning"
@@ -151,8 +152,16 @@ class ReaderEvidenceResourceOut(_ReaderMapOut):
     item: ResourceItemOut
 
 
+class ReaderEvidenceQuoteOut(_ReaderMapOut):
+    kind: Literal["ReaderQuote"] = "ReaderQuote"
+    item: ResourceItemOut
+
+
 ReaderEvidenceContentOut = Annotated[
-    ReaderEvidenceHighlightOut | ReaderEvidenceSourceReferenceOut | ReaderEvidenceResourceOut,
+    ReaderEvidenceHighlightOut
+    | ReaderEvidenceSourceReferenceOut
+    | ReaderEvidenceResourceOut
+    | ReaderEvidenceQuoteOut,
     Field(discriminator="kind"),
 ]
 
@@ -211,6 +220,7 @@ class ReaderEvidenceCountsOut(_ReaderMapOut):
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
     machine_links: int = Field(ge=0)
+    quotes: int = Field(ge=0)
 
 
 class ReaderEvidenceOut(_ReaderMapOut):

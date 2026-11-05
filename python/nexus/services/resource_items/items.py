@@ -351,6 +351,54 @@ def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -
     return set(rows)
 
 
+def ref_visible(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> bool:
+    """Identity authority without presentation or body hydration.
+
+    Native passages additionally require the evidence owner's disclosure proof
+    before any of their words leave the system. A readable part does not authorize
+    its whole canonical source. The prompt owner composes both checks.
+    """
+    from nexus.auth.permissions import requested_media_ids_cte_sql
+    from nexus.services.media_text_scope import text_scope_rows_sql
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    parameters = {"ids": [ref.id], "id": ref.id, "viewer_id": viewer_id}
+    if ref.scheme not in ("fragment", "oracle_passage_anchor") and db.scalar(
+        text(f"SELECT EXISTS (SELECT 1 FROM ({_QUERIES[ref.scheme]}) visible)"), parameters
+    ):
+        return True
+    readings = requested_media_ids_cte_sql()
+    captured = readable_x_capture_ids_sql()
+    if ref.scheme == "fragment":
+        sql = f"""SELECT EXISTS (
+            SELECT 1 FROM fragments f WHERE f.id=:id AND (
+                f.x_post_capture_id IN (SELECT capture_id FROM ({captured}) captures)
+                OR EXISTS (SELECT 1 FROM ({text_scope_rows_sql(readings)}) scope
+                           WHERE scope.fragment_id=f.id AND scope.end_offset>scope.start_offset)))"""
+    elif ref.scheme in ("content_chunk", "evidence_span"):
+        table = "content_chunks" if ref.scheme == "content_chunk" else "evidence_spans"
+        sql = f"""SELECT EXISTS (
+            SELECT 1 FROM {table} t WHERE t.id=:id AND (
+                t.owner_kind='fragment' AND EXISTS (SELECT 1 FROM fragments f WHERE f.id=t.owner_id
+                    AND f.x_post_capture_id IN (SELECT capture_id FROM ({captured}) captures))
+                OR t.owner_kind='media' AND EXISTS (
+                    SELECT 1 FROM ({readings}) reading
+                    LEFT JOIN media_parts part ON part.media_id=reading.media_id
+                    WHERE COALESCE(part.source_media_id,reading.media_id)=t.owner_id)))"""
+    elif ref.scheme == "reader_apparatus_item":
+        from nexus.services.media_text_scope import apparatus_scope_rows_sql
+
+        sql = f"""SELECT EXISTS (SELECT 1 FROM ({apparatus_scope_rows_sql(readings)}) scope
+            WHERE scope.apparatus_item_id=:id)"""
+    elif ref.scheme == "oracle_passage_anchor":
+        sql = f"""SELECT EXISTS (SELECT 1 FROM oracle_passage_anchors a
+            JOIN oracle_corpus_sources s ON s.id=a.corpus_source_id
+            JOIN ({readings}) reading ON reading.media_id=s.media_id WHERE a.id=:id)"""
+    else:
+        return False
+    return bool(db.scalar(text(sql), parameters))
+
+
 def source_attributions(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> dict[str, SourceAttributionOut]:

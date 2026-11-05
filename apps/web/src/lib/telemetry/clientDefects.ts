@@ -1,4 +1,5 @@
 import { isApiError } from "@/lib/api/client";
+import { RetryExhaustedError } from "@/lib/api/retry";
 
 interface ClientDefectReport {
   pane_id: string;
@@ -24,13 +25,14 @@ export function reportClientDefect(
   reports += 1;
   const code =
     isApiError(error) && CODE.test(error.code) ? error.code : "E_CLIENT_DEFECT";
+  const origin = error instanceof RetryExhaustedError ? error.cause : error;
   const report: ClientDefectReport = {
     pane_id: view.paneId.slice(0, 128),
     visit_id: view.visitId.slice(0, 128),
     error_code: code,
     request_id:
-      isApiError(error) && error.requestId
-        ? error.requestId.slice(0, 200)
+      isApiError(origin) && origin.requestId
+        ? origin.requestId.slice(0, 200)
         : null,
     component_stack: view.componentStack.slice(0, 8000),
   };

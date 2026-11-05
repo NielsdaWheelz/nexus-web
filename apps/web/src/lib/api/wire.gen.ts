@@ -4125,7 +4125,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_RETRY_NOT_ALLOWED" | "E_REGENERATION_NOT_ALLOWED" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
+            code: "E_CHAT_CREATION_STALE" | "E_CONVERSATION_CHANGED" | "E_MESSAGE_TOO_LONG" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_RETRY_NOT_ALLOWED" | "E_REGENERATION_NOT_ALLOWED" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
         };
         /** ChatFailureOut */
         ChatFailureOut: {
@@ -4171,7 +4171,8 @@ export interface components {
             content: string;
             /** Destination */
             destination: components["schemas"]["NewChatDestination"] | components["schemas"]["ExistingChatDestination"];
-            reader_selection: components["schemas"]["ReaderSelectionInput"] | null;
+            /** Reader Selection */
+            reader_selection: (components["schemas"]["HighlightReaderSelectionInput"] | components["schemas"]["PassageReaderSelectionInput"]) | null;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
         };
@@ -4980,6 +4981,7 @@ export interface components {
          * @description A client-minted id: a resend answers the viewer's chat; another owner's id is 409.
          */
         CreateConversationRequest: {
+            expected_deletion_revision: components["schemas"]["OrderRevision"];
             /**
              * Id
              * Format: uuid
@@ -6878,6 +6880,20 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * HighlightReaderSelectionInput
+         * @description A saved highlight with the exact preview the sender observed.
+         */
+        HighlightReaderSelectionInput: {
+            key: components["schemas"]["ReaderSelectionKey"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "highlight";
+            /** Revision */
+            revision: string;
+        };
         /** HighlightState */
         HighlightState: {
             /** Body State */
@@ -8604,6 +8620,7 @@ export interface components {
          * @description A fresh conversation created atomically with this send.
          */
         NewChatDestination: {
+            expected_deletion_revision: components["schemas"]["OrderRevision"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9272,6 +9289,22 @@ export interface components {
             publication: (components["schemas"]["ReaderPublication"] | components["schemas"]["NotePublication"] | components["schemas"]["XCapturePublication"]) | null;
             /** Quote Exact */
             quote_exact: string;
+        };
+        /**
+         * PassageReaderSelectionInput
+         * @description A reader capture; admission proves its source without authoring a highlight.
+         */
+        PassageReaderSelectionInput: {
+            capture: components["schemas"]["SelectionCapture-Input"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "passage";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Source Ref */
+            source_ref: string;
         };
         /** PassageResourceBodyOut */
         PassageResourceBodyOut: {
@@ -10823,7 +10856,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "Embed" | "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "MachineLink";
+            kind: "Embed" | "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "MachineLink" | "ReaderQuote";
             /** Label */
             label: string;
             /** Position */
@@ -10895,6 +10928,8 @@ export interface components {
             links: number;
             /** Machine Links */
             machine_links: number;
+            /** Quotes */
+            quotes: number;
         };
         /** ReaderEvidenceHighlightOut */
         ReaderEvidenceHighlightOut: {
@@ -10945,6 +10980,15 @@ export interface components {
             /** Roots */
             roots: components["schemas"]["ReaderEvidenceRootOut"][];
         };
+        /** ReaderEvidenceQuoteOut */
+        ReaderEvidenceQuoteOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReaderQuote";
+        };
         /** ReaderEvidenceResolvedOut */
         ReaderEvidenceResolvedOut: {
             anchor: components["schemas"]["ReaderEvidenceAnchorOut"];
@@ -10972,7 +11016,7 @@ export interface components {
         ReaderEvidenceRootOut: {
             authored_placement: components["schemas"]["ReaderAuthoredPlacementOut"] | null;
             /** Content */
-            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"];
+            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"] | components["schemas"]["ReaderEvidenceQuoteOut"];
             /** Continuation */
             continuation: (components["schemas"]["ReaderChildContinuationOut"] | components["schemas"]["ReaderSiblingContinuationOut"]) | null;
             /** Direct Facts */
@@ -11338,15 +11382,6 @@ export interface components {
             /** Label */
             label: string;
         };
-        /**
-         * ReaderSelectionInput
-         * @description A send's quote: the durable key plus the compare-on-send revision, never text.
-         */
-        ReaderSelectionInput: {
-            key: components["schemas"]["ReaderSelectionKey"];
-            /** Revision */
-            revision: string;
-        };
         /** ReaderSelectionKey */
         ReaderSelectionKey: {
             /** Capture Id */
@@ -11362,7 +11397,7 @@ export interface components {
         /** ReaderSelectionOut */
         ReaderSelectionOut: {
             item: components["schemas"]["ResourceItemOut"];
-            key: components["schemas"]["ReaderSelectionKey"];
+            key: components["schemas"]["ReaderSelectionKey"] | null;
         };
         /** ReaderSelectionPreview */
         ReaderSelectionPreview: {
@@ -13836,6 +13871,7 @@ export interface components {
         UserProfileOut: {
             /** Calendar Time Zone */
             calendar_time_zone: string;
+            chat_deletion_revision: components["schemas"]["OrderRevision"];
             /**
              * Default Library Id
              * Format: uuid

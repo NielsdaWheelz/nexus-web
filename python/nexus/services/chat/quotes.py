@@ -1,4 +1,4 @@
-"""The reader quote: an immutable snapshot of a locked highlight, persisted on its user turn.
+"""The reader quote: immutable evidence persisted on its user turn.
 
 Every later read derives from the snapshot, never the live highlight. Its revision
 is the sha256 of its sorted compact JSON: the precondition a send compares.
@@ -10,24 +10,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from uuid import UUID
 from xml.sax.saxutils import escape
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight
-from nexus.db.models import Highlight
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     MAX_QUOTE_AFFIX,
     MAX_QUOTE_EXACT,
+    PassageReaderSelectionInput,
     ReaderSelectionKey,
     ReaderSelectionOut,
     ReaderSelectionPreview,
     ReaderSelectionSnapshot,
 )
+from nexus.services.generation.policy import policy
 from nexus.services.reader_excerpts import quote_parts
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
 
 
 def build_snapshot(
@@ -36,11 +39,21 @@ def build_snapshot(
     """Resolve the highlight (the sender holds its account head) into a snapshot."""
 
     missing = ApiErrorCode.E_READER_SELECTION_NOT_FOUND
-    highlight = db.get(Highlight, key.highlight_id)
-    if highlight is None or not highlight.authored_visible:
+    stored = db.execute(
+        text("""SELECT h.authored_visible,
+        octet_length((r.state #> '{selection,value}')::text) AS capture_size
+        FROM highlights h JOIN authored_resources r ON r.account_id=h.user_id AND r.ref='highlight:' || h.id::text
+        WHERE h.id=:id"""),
+        {"id": key.highlight_id},
+    ).first()
+    if stored is None or not stored.authored_visible:
         raise ApiError(missing, "Highlight not found")
     if not can_read_highlight(db, viewer_id, key.highlight_id):
         raise ApiError(ApiErrorCode.E_READER_SELECTION_FORBIDDEN, "Highlight not readable")
+    if stored.capture_size > policy("chat").input_max_bytes:
+        raise ApiError(
+            ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds the input budget"
+        )
     from nexus.services.resource_items.evidence import capture_evidence
 
     try:
@@ -78,6 +91,39 @@ def build_snapshot(
     return ReaderSelectionSnapshot(key=key, evidence=evidence)
 
 
+def capture_snapshot(
+    db: Session, *, viewer_id: UUID, selection: PassageReaderSelectionInput
+) -> ReaderSelectionSnapshot:
+    """An unsaved capture becomes message-owned evidence, never an authored resource."""
+    from nexus.services.resource_items.evidence import capture_reader_selection
+
+    capture = selection.capture
+    if (
+        len(capture.quote_exact) > MAX_QUOTE_EXACT
+        or max(len(capture.prefix or ""), len(capture.suffix or "")) > MAX_QUOTE_AFFIX
+        or len(capture.model_dump_json().encode()) > policy("chat").input_max_bytes
+    ):
+        raise ApiError(
+            ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
+        )
+    evidence = capture_reader_selection(
+        db,
+        viewer_id=viewer_id,
+        reading_ref=require_ref(selection.reading_ref),
+        source_ref=require_ref(selection.source_ref),
+        capture=capture,
+    )
+    parts = quote_parts(evidence.quote)
+    if (
+        len(parts.exact) > MAX_QUOTE_EXACT
+        or max(len(parts.prefix), len(parts.suffix)) > MAX_QUOTE_AFFIX
+    ):
+        raise ApiError(
+            ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
+        )
+    return ReaderSelectionSnapshot(key=None, evidence=evidence)
+
+
 def encode(snapshot: ReaderSelectionSnapshot) -> dict[str, object]:
     return snapshot.model_dump(mode="json")
 
@@ -101,24 +147,97 @@ def selection_out(
     from nexus.schemas.resource_items import ReaderQuoteSourceTargetKey, ResourceSourceTargetKey
     from nexus.services.resource_items.evidence import evidence_items
 
-    ref = ResourceRef("highlight", snapshot.key.highlight_id)
+    preview_key = snapshot.key
+    if message_id is None:
+        assert (
+            preview_key is not None
+        )  # justify-defect: only saved-highlight previews lack a message.
+        ref = ResourceRef("highlight", preview_key.highlight_id)
+    else:
+        ref = ResourceRef("message", message_id)
     key = (
         ReaderQuoteSourceTargetKey(message_id=message_id)
         if message_id
         else ResourceSourceTargetKey(field=None, resource_ref=ref.uri)
     )
     item = evidence_items(db, viewer_id=viewer_id, occurrences=[(ref, snapshot.evidence, key)])[0]
-    if message_id is None and item.activation.kind != "none":
-        from nexus.services.resource_items.items import resource_item_out
-
-        item = item.model_copy(
-            update={
-                "activation": resource_item_out(
-                    db, viewer_id=viewer_id, ref=ref, reading_media_id=snapshot.key.media_id
-                ).activation
-            }
-        )
     return ReaderSelectionOut(key=snapshot.key, item=item)
+
+
+def reader_quotes(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    reading_media_id: UUID | None = None,
+    fragment_ids: list[UUID] | None = None,
+) -> list[tuple[UUID, ReaderSelectionSnapshot]]:
+    """Indexed message-owned quotes; current reading authority bounds every result."""
+    from nexus.services.resource_items.evidence import admit_captured_evidence
+
+    if reading_media_id is not None:
+        owners = db.scalars(
+            text("""WITH source AS (
+            SELECT COALESCE(p.source_media_id,m.id) AS id FROM media m
+            LEFT JOIN media_parts p ON p.media_id=m.id WHERE m.id=:reading
+        ) SELECT 'media:' || id::text FROM source
+          UNION SELECT 'media:' || p.media_id::text FROM media_parts p JOIN source s ON s.id=p.source_media_id
+        """),
+            {"reading": reading_media_id},
+        ).all()
+    else:
+        owners = [f"fragment:{fragment}" for fragment in fragment_ids or []]
+    if not owners:
+        return []
+    rows = db.execute(
+        text("""SELECT m.id,m.reader_selection_snapshot FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id
+        WHERE c.owner_user_id=:viewer AND m.reader_selection_snapshot IS NOT NULL
+          AND m.reader_selection_snapshot #>> '{evidence,target,owner_ref}' = ANY(:owners)
+        ORDER BY m.created_at,m.id"""),
+        {"viewer": viewer_id, "owners": list(owners)},
+    )
+    result = []
+    for row in rows:
+        snapshot = decode(row.reader_selection_snapshot)
+        evidence = admit_captured_evidence(
+            db, viewer_id=viewer_id, evidence=snapshot.evidence, reading_media_id=reading_media_id
+        )
+        if evidence is not None:
+            result.append((row.id, snapshot.model_copy(update={"evidence": evidence})))
+    return result
+
+
+def changed(db: Session, *, viewer_id: UUID, message_ids: Sequence[UUID]) -> None:
+    """Invalidate native quote maps in the same transaction as insertion or deletion.
+
+    Media quotes can appear in their source and contained readings. Capture quotes
+    use their fragment's lane. The existing account writing hint reaches other devices.
+    """
+    from nexus.services.resource_items.versions import bump_version
+
+    owners = db.scalars(
+        text("""SELECT DISTINCT reader_selection_snapshot #>> '{evidence,target,owner_ref}'
+        FROM messages WHERE id=ANY(:ids) AND reader_selection_snapshot IS NOT NULL"""),
+        {"ids": message_ids},
+    ).all()
+    refs = {require_ref(owner) for owner in owners if owner is not None}
+    media_ids = [ref.id for ref in refs if ref.scheme == "media"]
+    if media_ids:
+        refs.update(
+            ResourceRef("media", media_id)
+            for media_id in db.scalars(
+                text("""WITH sources AS (
+            SELECT COALESCE(p.source_media_id,m.id) AS id FROM media m
+            LEFT JOIN media_parts p ON p.media_id=m.id WHERE m.id=ANY(:ids)
+        ) SELECT id FROM sources UNION SELECT p.media_id FROM media_parts p JOIN sources s ON s.id=p.source_media_id
+        """),
+                {"ids": media_ids},
+            )
+        )
+    for ref in sorted(refs, key=lambda ref: ref.uri):
+        bump_version(db, viewer_id=viewer_id, ref=ref, lane="annotations")
+    if refs:
+        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
 
 
 def preview(db: Session, *, viewer_id: UUID, key: ReaderSelectionKey) -> ReaderSelectionPreview:

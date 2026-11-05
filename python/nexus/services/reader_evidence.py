@@ -31,6 +31,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceCountsOut,
     ReaderEvidenceHighlightOut,
     ReaderEvidenceOut,
+    ReaderEvidenceQuoteOut,
     ReaderEvidenceResolutionOut,
     ReaderEvidenceResolvedOut,
     ReaderEvidenceResourceOut,
@@ -44,6 +45,7 @@ from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import LinkEndpoint, LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.schemas.resource_items import (
     LocatedSourceLocationOut,
+    ReaderQuoteSourceTargetKey,
     ResourceItemOut,
     ResourceSourceTargetKey,
     SourceTargetOut,
@@ -133,6 +135,49 @@ def build_reader_evidence(
         )
     }
     roots: dict[str, ReaderEvidenceRootOut] = {}
+    from nexus.services.chat import quotes
+
+    for message_id, snapshot in quotes.reader_quotes(
+        db, viewer_id=viewer_id, reading_media_id=media_id
+    ):
+        item = quotes.selection_out(
+            db, viewer_id=viewer_id, snapshot=snapshot, message_id=message_id
+        ).item
+        item = item.model_copy(
+            update={
+                "activation": resource_activations_for_refs(
+                    db, viewer_id=viewer_id, refs=[ResourceRef("message", message_id)]
+                )[item.ref]
+            }
+        )
+        target = resolve_source_target(
+            db,
+            viewer_id=viewer_id,
+            target=ReaderQuoteSourceTargetKey(message_id=message_id),
+            reading_media_id=media_id,
+        )
+        resolution = _resource_resolution(
+            target=target,
+            media_id=media_id,
+            canonical_media_id=canonical_media_id,
+            item=item,
+            fragment_indexes=fragment_indexes,
+            page_count=page_count,
+            fragment_ranges=fragment_ranges,
+            fragment_times=fragment_times,
+        ) or ReaderEvidenceUnavailableOut(reason="Unanchorable")
+        roots[item.ref] = ReaderEvidenceRootOut(
+            ref=item.ref,
+            content=ReaderEvidenceQuoteOut(item=item),
+            resolution=resolution,
+            continuation=_child_continuation(
+                ResourceRef("message", message_id),
+                media_id=media_id,
+                identity=reading_identity,
+                resolution=resolution,
+            ),
+            authored_placement=None,
+        )
     for highlight in highlights:
         ref = f"highlight:{highlight.id}"
         locator = highlight_locator(
@@ -305,11 +350,13 @@ def build_reader_evidence(
         roots.values(),
         key=lambda root: _root_sort_key(root, first_facts, owner_order),
     )
-    counts = {"highlights": 0, "citations": 0, "links": 0, "machine_links": 0}
+    counts = {"highlights": 0, "quotes": 0, "citations": 0, "links": 0, "machine_links": 0}
     for root in roots_out:
         facets: set[str] = set()
         if isinstance(root.content, ReaderEvidenceHighlightOut):
             facets.add("highlights")
+        elif isinstance(root.content, ReaderEvidenceQuoteOut):
+            facets.add("quotes")
         elif isinstance(root.content, ReaderEvidenceSourceReferenceOut):
             facets.add("citations")
         for fact in root.direct_facts:

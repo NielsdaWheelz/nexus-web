@@ -168,20 +168,21 @@ def _scope_words(
 def _partial_table_reads(
     db: Session, readings: Sequence[UUID], fragments: Sequence[UUID]
 ) -> dict[tuple[UUID, UUID], tuple[tuple[int, int], ...]]:
-    from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
-    from nexus.services.reader_text_slice import incomplete_table_intervals
+    from nexus.services.media_text_scope import incomplete_table_rows_sql
 
-    result = {}
-    if not fragments:
-        return result
-    for reading in readings:
-        scope = read_media_text_scope(db, reading)
-        for interval in scope.fragment_intervals:
-            if interval.fragment_id in fragments:
-                result[(reading, interval.fragment_id)] = incomplete_table_intervals(
-                    read_scope_fragment(db, scope, interval)
-                )
-    return result
+    result: dict[tuple[UUID, UUID], list[tuple[int, int]]] = {}
+    if not fragments or not readings:
+        return {}
+    for row in db.execute(
+        text(
+            f"SELECT * FROM ({incomplete_table_rows_sql('SELECT unnest(CAST(:readings AS uuid[])) AS media_id')}) cuts WHERE fragment_id=ANY(:fragments)"
+        ),
+        {"readings": list(readings), "fragments": list(fragments)},
+    ):
+        result.setdefault((row.reading_media_id, row.fragment_id), []).append(
+            (row.start_offset, row.end_offset)
+        )
+    return {key: tuple(intervals) for key, intervals in result.items()}
 
 
 def _scope_source_reads(

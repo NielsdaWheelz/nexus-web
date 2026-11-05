@@ -192,7 +192,7 @@ export function useAnnotationVerbs(input: {
     [outcome, showNotice],
   );
 
-  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, onError: fail, onFailure: showNotice });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
 

@@ -101,6 +101,7 @@ def call_items(
         "excerpt_source_selections",
         "capture_excerpts",
         "excerpt_text_parts",
+        "excerpt_capture_proofs",
     ],
     items: list[dict[str, Any]],
 ) -> list[Any]:

@@ -11,6 +11,7 @@ whether that frozen passage remains citable.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from math import ceil
 from uuid import UUID
@@ -21,19 +22,28 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Message
 from nexus.errors import ConflictError, NotFoundError
-from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
+from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.services.chat import quotes
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
-    citation_from_search_result,
-    reopen_search_result,
+    citation_from_evidence,
 )
 from nexus.services.generation.contract import GenerationIntent, TextOutput
 from nexus.services.generation.policy import policy
-from nexus.services.resource_graph.context import list_context_refs
+from nexus.services.resource_graph.context import iter_context_targets
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
-from nexus.services.resource_graph.resolve import ResolvedResource
+from nexus.services.resource_graph.resolve import (
+    PromptBodyTooLarge,
+    ResolvedQuote,
+    ResolvedResource,
+    resolve_prompt,
+)
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import (
+    PromptEvidenceTooLarge,
+    capture_evidence,
+    capture_prompt_evidence,
+)
 
 BLOCK_OVERHEAD_TOKENS = 4
 
@@ -157,19 +167,11 @@ def assemble(
     snapshot = (
         quotes.decode(user.reader_selection_snapshot) if user.reader_selection_snapshot else None
     )
-    subject_uri = None
+    subject_uri = snapshot.evidence.target.owner_ref if snapshot else None
     if snapshot is not None:
-        # A quote turn: <subject> is identity only, so the quote text appears once.
-        subject_uri = f"highlight:{snapshot.key.highlight_id}"
         context.append(
-            f'<subject kind="reader_highlight" source="{quotes.attribute(snapshot.evidence.source.title or "")}">\n'
-            f"<highlight_id>{snapshot.key.highlight_id}</highlight_id>\n"
-            + (
-                f"<media_id>{snapshot.key.media_id}</media_id>\n"
-                if snapshot.key.media_id
-                else f"<capture_id>{snapshot.key.capture_id}</capture_id>\n"
-            )
-            + "</subject>"
+            f'<subject uri="{quotes.attribute(subject_uri or "")}" '
+            f'source="{quotes.attribute(snapshot.evidence.source.title or "")}"/>'
         )
         context.append(quotes.snapshot_block(snapshot, "reader_selection"))
     if user.branch_anchor_kind == "assistant_selection":
@@ -185,42 +187,7 @@ def assemble(
             )
         )
     attached: list[RetrievalCitation] = []
-    refs = list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
-    if refs:
-        lines = ["<resources>"]
-        for ref in refs:
-            quoted_subject = snapshot is not None and ref.target.uri == subject_uri
-            if snapshot is not None and quoted_subject:
-                target = snapshot.evidence.target
-                citation = (
-                    _attached_citation(
-                        db,
-                        ref.resolved,
-                        viewer_id,
-                        passage_target=target,
-                        captured_evidence=snapshot.evidence,
-                    )
-                    if isinstance(target, CapturedPassageTarget)
-                    else None
-                )
-                if citation is not None:
-                    citation.captured_evidence = snapshot.evidence
-            else:
-                citation = _attached_citation(db, ref.resolved, viewer_id)
-            if citation is not None:
-                attached.append(citation)
-            lines.append(
-                _resource(
-                    ref.resolved,
-                    n=len(attached) if citation is not None else None,
-                    quoted_evidence=snapshot.evidence
-                    if snapshot is not None and quoted_subject
-                    else None,
-                    citation=citation,
-                )
-            )
-        lines.append("</resources>")
-        context.append("\n".join(lines))
+    scope_refs: list[str] = []
     current = f"<user>\n{user.content}"
     tokens_left = context_budget - sum(
         tokens(block) for block in (SYSTEM_PROMPT, *context, current)
@@ -228,12 +195,106 @@ def assemble(
     bytes_left = policy("chat").input_max_bytes - sum(_size(block) for block in (*context, current))
     if tokens_left < 0 or bytes_left < 0:
         raise ContextTooLarge("the turn's mandatory context exceeds the model or input budget")
+    resource_lines: list[str] = []
+    for target, identity_only in iter_context_targets(
+        db, viewer_id=viewer_id, conversation_id=conversation_id
+    ):
+        quoted = snapshot.evidence if snapshot is not None and target.uri == subject_uri else None
+        citation = None
+        if quoted is not None:
+            resource = ResolvedResource(target.uri, quoted.source.title or "selected passage", "")
+            citation = citation_from_evidence(db, viewer_id=viewer_id, ref=target, evidence=quoted)
+        else:
+            native = not identity_only and target.scheme in (
+                "highlight",
+                "passage_anchor",
+                "content_chunk",
+                "evidence_span",
+                "fragment",
+                "reader_apparatus_item",
+                "oracle_passage_anchor",
+            )
+            try:
+                if native:
+                    from nexus.services.reader_excerpts import quote_parts
+
+                    evidence = capture_prompt_evidence(
+                        db, viewer_id=viewer_id, ref=target, byte_limit=bytes_left
+                    )
+                    parts = quote_parts(evidence.quote) if evidence.quote else None
+                    resource = ResolvedResource(
+                        target.uri,
+                        evidence.source.title or "selected passage",
+                        "",
+                        quote=ResolvedQuote(
+                            parts.exact, parts.prefix, parts.suffix, evidence.source.title, None
+                        )
+                        if parts
+                        else None,
+                    )
+                    citation = citation_from_evidence(
+                        db, viewer_id=viewer_id, ref=target, evidence=evidence
+                    )
+                else:
+                    resource = resolve_prompt(
+                        db,
+                        viewer_id=viewer_id,
+                        ref=target,
+                        byte_limit=bytes_left,
+                        identity_only=identity_only,
+                    )
+            except (PromptBodyTooLarge, PromptEvidenceTooLarge) as error:
+                raise ContextTooLarge("a mandatory resource exceeds the input budget") from error
+            except NotFoundError:
+                resource = ResolvedResource(target.uri, "(resource unavailable)", "", missing=True)
+            if (
+                not native
+                and not identity_only
+                and not resource.missing
+                and capability(target.scheme).prompt_render in ("inline_body", "quote")
+                and (
+                    resource.body is not None
+                    or resource.inline_body is not None
+                    or resource.quote is not None
+                )
+            ):
+                try:
+                    evidence = capture_evidence(db, viewer_id=viewer_id, ref=target)
+                    citation = citation_from_evidence(
+                        db, viewer_id=viewer_id, ref=target, evidence=evidence
+                    )
+                except (ConflictError, NotFoundError):
+                    # A readable resource may have no currently locatable citation.
+                    # Its mandatory prompt text remains; never replace frozen words.
+                    citation = None
+        line = _resource(
+            resource,
+            n=len(attached) + 1 if citation else None,
+            quoted_evidence=quoted,
+            citation=citation,
+        )
+        cost, size = tokens(line), _size(line)
+        if cost > tokens_left or size > bytes_left:
+            raise ContextTooLarge("the turn's mandatory context exceeds the model or input budget")
+        tokens_left -= cost
+        bytes_left -= size
+        scope_refs.append(target.uri)
+        resource_lines.append(line)
+        if citation is not None:
+            attached.append(citation)
+    if resource_lines:
+        framing = "<resources>\n\n</resources>"
+        tokens_left -= tokens(framing)
+        bytes_left -= _size(framing)
+        context.append("<resources>\n" + "\n".join(resource_lines) + "\n</resources>")
+    if tokens_left < 0 or bytes_left < 0:
+        raise ContextTooLarge("the turn's mandatory context exceeds the model or input budget")
     history: list[str] = []
-    for unit in reversed(_history_units(db, user)):
+    for unit in _history_units(db, user, byte_limit=bytes_left):
         cost = sum(tokens(block) for block in unit)
         size = sum(_size(block) for block in unit)
         if cost > tokens_left or size > bytes_left:
-            break  # contiguous: never skip a turn to fit an older one
+            break
         history[:0] = unit
         tokens_left -= cost
         bytes_left -= size
@@ -244,7 +305,7 @@ def assemble(
     )
     return Assembly(
         intent=intent,
-        scope_refs=tuple(ref.target.uri for ref in refs),
+        scope_refs=tuple(scope_refs),
         attached=tuple(attached),
     )
 
@@ -259,75 +320,43 @@ def _text_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _history_units(db: Session, user: Message) -> list[list[str]]:
-    """The active path above this turn, oldest first, as user/answer pairs."""
-
-    rows = db.execute(
-        text(
-            """
-            WITH RECURSIVE path AS (
-                SELECT id, parent_message_id FROM messages WHERE id = :parent
-                UNION ALL
-                SELECT m.id, m.parent_message_id
-                FROM messages m JOIN path p ON m.id = p.parent_message_id
-            )
-            SELECT m.role, m.content, m.reader_selection_snapshot
-            FROM messages m JOIN path USING (id)
-            ORDER BY m.seq
-            """
-        ),
-        {"parent": user.parent_message_id},
-    ).all()
-    blocks: list[str] = []
-    for role, content, snapshot in rows:
-        if snapshot is not None:
-            quote = quotes.snapshot_block(quotes.decode(snapshot), "historical_reader_selection")
-            content = f"{quote}\n\n{content}"
-        blocks.append(f"<{role}>\n{content}")
-    # A reply's parent is a complete answer, so the path alternates user, answer.
-    return [blocks[index : index + 2] for index in range(0, len(blocks), 2)]
-
-
-def _attached_citation(
-    db: Session,
-    resource: ResolvedResource,
-    viewer_id: UUID,
-    *,
-    passage_target: CapturedPassageTarget | None = None,
-    captured_evidence: CapturedEvidence | None = None,
-) -> RetrievalCitation | None:
-    """Citable = rendered with a body or quote, and a retrieval row can materialize."""
-
-    if resource.missing:
-        return None
-    ref = parse_resource_ref(resource.uri)
-    if isinstance(ref, ResourceRefParseFailure):
-        return None
-    if (
-        resource.quote is None
-        and resource.inline_body is None
-        and capability(ref.scheme).prompt_render not in ("inline_body", "quote")
-    ):
-        return None
-    result_type = capability(ref.scheme).citable_result_type
-    if result_type is None:
-        return None
-    try:
-        result = reopen_search_result(
-            db,
-            viewer_id=viewer_id,
-            result_type=result_type,
-            source_id=str(ref.id),
-            passage_target=passage_target,
-            captured_evidence=captured_evidence,
-        )
-        citation = citation_from_search_result(result)
-    except (NotFoundError, ConflictError, ValueError):
-        # justify-ignore-error: no active content index, no resolvable anchor or a body
-        # that moved under capture: the resource stays in the prompt, uncitable.
-        return None
-    citation.selected = True
-    return citation
+def _history_units(db: Session, user: Message, *, byte_limit: int) -> Iterator[list[str]]:
+    """Newest complete pair first. Measure before loading bodies; stop contiguously."""
+    parent = user.parent_message_id
+    while parent is not None:
+        pair = db.execute(
+            text("""
+            SELECT answer.id AS answer_id, question.id AS question_id,
+                   question.parent_message_id AS parent_id,
+                   octet_length(answer.content)+octet_length(question.content)
+                   +COALESCE(octet_length(question.reader_selection_snapshot::text),0) AS size
+            FROM messages answer JOIN messages question ON question.id=answer.parent_message_id
+            WHERE answer.id=:id AND answer.conversation_id=:conversation
+              AND question.conversation_id=answer.conversation_id
+              AND answer.role='assistant' AND question.role='user'
+        """),
+            {"id": parent, "conversation": user.conversation_id},
+        ).one()
+        if pair.size > byte_limit:
+            return
+        rows = db.execute(
+            text("""
+            SELECT role,content,reader_selection_snapshot FROM messages
+            WHERE id IN (:question,:answer) ORDER BY seq
+        """),
+            {"question": pair.question_id, "answer": pair.answer_id},
+        ).all()
+        blocks: list[str] = []
+        for role, content, snapshot in rows:
+            if snapshot is not None:
+                quote = quotes.snapshot_block(
+                    quotes.decode(snapshot), "historical_reader_selection"
+                )
+                content = f"{quote}\n\n{content}"
+            blocks.append(f"<{role}>\n{content}")
+        yield blocks
+        byte_limit -= sum(_size(block) for block in blocks)
+        parent = pair.parent_id
 
 
 def _resource(
@@ -344,7 +373,7 @@ def _resource(
     label_only = not isinstance(ref, ResourceRefParseFailure) and capability(
         ref.scheme
     ).prompt_render in ("label", "none")
-    n_attr = f' n="{n}"' if n is not None and not label_only else ""
+    n_attr = f' n="{n}"' if n is not None else ""
     quoted_subject = quoted_evidence is not None
     quote_attr = ' quote="reader_selection"' if quoted_subject else ""
     label = (

@@ -36,6 +36,7 @@ from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
 from nexus.services import html_apparatus as apparatus
 from nexus.services.fragment_blocks import insert_fragment_blocks
+from nexus.services.fragment_tables import insert_fragment_tables
 from nexus.services.media_source_ingest import reusable_embedded_source_media_ids
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream, source_fetch_error
 from nexus.services.reader_apparatus import replace_media_apparatus
@@ -383,6 +384,12 @@ def replace_article_fragments(
     old_ids = list(db.scalars(select(Fragment.id).where(Fragment.media_id == media_id)))
     embeds.prepare_document_embed_artifacts_for_fragment_replacement(db, media_id=media_id)
     old = select(Fragment.id).where(Fragment.media_id == media_id).scalar_subquery()
+    db.execute(
+        text(
+            "DELETE FROM fragment_tables WHERE fragment_id IN (SELECT id FROM fragments WHERE media_id=:id)"
+        ),
+        {"id": media_id},
+    )
     db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(old)))
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
     now = datetime.now(UTC)
@@ -403,6 +410,7 @@ def replace_article_fragments(
     note_groups: list[apparatus.NotesGroup] = []
     for row, (prepared, html) in zip(rows, fragments, strict=True):
         insert_fragment_blocks(db, row.id, prepared.fragment_blocks)
+        insert_fragment_tables(db, row.id, prepared.structure.tables)
         spans = apparatus.accepted_apparatus_spans(prepared.structure, prepared.canonical_text)
         items += apparatus.attach_fragment_locators(
             media_id=media_id,

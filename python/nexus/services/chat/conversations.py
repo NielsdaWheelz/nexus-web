@@ -34,7 +34,7 @@ from nexus.schemas.conversation import (
     MessageDeleteOut,
 )
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
-from nexus.services.chat import quotes
+from nexus.services.chat import deletion, quotes
 from nexus.services.collection_keyset import (
     UPDATED_TITLE_PLANS,
     KeysetValueKind,
@@ -63,22 +63,31 @@ _ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.I
 
 
 def create(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID, initial_context_refs: Sequence[str]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    initial_context_refs: Sequence[str],
+    expected_deletion_revision: str,
 ) -> ConversationOut:
     """An empty chat with its initial context links under the client's id; any failure
     leaves nothing. A resend answers the viewer's chat as it is; another owner's is 409."""
 
     def attempt() -> ConversationOut:
-        created = db.scalar(
-            text(
-                """
-                INSERT INTO conversations (id, owner_user_id, title, next_seq)
-                VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
-                """
-            ),
-            {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
-        )
-        conversation = db.get_one(Conversation, conversation_id)
+        conversation = db.get(Conversation, conversation_id)
+        created = None
+        if conversation is None:
+            deletion.require_revision(db, viewer_id, expected_deletion_revision)
+            created = db.scalar(
+                text(
+                    """
+                    INSERT INTO conversations (id, owner_user_id, title, next_seq)
+                    VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
+                    """
+                ),
+                {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
+            )
+            conversation = db.get_one(Conversation, conversation_id)
         if conversation.owner_user_id != viewer_id:
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Conversation id belongs to another viewer"
@@ -243,10 +252,12 @@ def delete_conversation(
     db: Session, *, viewer_id: UUID, conversation_id: UUID, expected_revision: int
 ) -> None:
     def attempt() -> None:
+        deletion.lock_revision(db, viewer_id, deleting=True)
         conversation = _lock_owned(db, viewer_id, conversation_id)
         if conversation is not None:
             require_branch_revision(conversation, expected_revision)
             _delete(db, conversation, None)
+            deletion.advance(db, viewer_id)
 
     retry_serializable(db, "delete_conversation", attempt)
 
@@ -262,6 +273,7 @@ def delete_message(
     """The message and its subtree; the chat too when nothing remains."""
 
     def attempt() -> MessageDeleteOut:
+        deletion.lock_revision(db, viewer_id, deleting=True)
         conversation = _lock_owned(db, viewer_id, conversation_id)
         if conversation is None:
             return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=True)
@@ -274,6 +286,7 @@ def delete_message(
             return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=False)
         require_branch_revision(conversation, expected_revision)
         deleted = _delete(db, conversation, message_id)
+        deletion.advance(db, viewer_id)
         return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=deleted)
 
     return retry_serializable(db, "delete_message", attempt)
@@ -363,6 +376,7 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
     # The cascades take runs, events and retrievals; tool calls outlive their answer
     # (link set null) as the account's write history; ``llm_calls`` has no
     # FK and outlives the chat as the operational ledger.
+    quotes.changed(db, viewer_id=conversation.owner_user_id, message_ids=ids)
     db.execute(text("DELETE FROM messages WHERE id = ANY(:ids)"), {"ids": ids})
     for media_id in retained_media:
         claim_document_teardown_if_unreferenced_locked(db, media_id)

@@ -14,30 +14,26 @@ import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import type { Line, Verbs } from "@/components/feedback/stage";
+import type { Line } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration, getInteractionOwner, type Layer } from "@/lib/ui/overlay";
 import { conversationViewHref } from "@/lib/chat/view";
-import { isApiError } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
-import { getConversationCommands, getNewChatCommands, readConversationTree, recoveryOf, IDLE_COMMAND, type CommandOutcome, type ConversationTree } from "@/lib/chat/commands";
+import { readConversationTree, type ConversationTree } from "@/lib/chat/commands";
 import { fetchLatestSourceConversation, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
-import { isSelectable, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { chatView } from "@/lib/chat/tree";
-import { assertNever } from "@/lib/assertNever";
 import { readCatalog } from "@/lib/chat/catalog";
-import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
-import { readFailureOf, type Catalog } from "@/lib/chat/wire";
+import { launchReaderChat } from "@/lib/chat/readerIntent";
+import { type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { rejectedSelectionFact, useReaderState, type DraftAnchor, type Mark, type SelectionCapture, type SelectionEvent, type SelectionNotice } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
-import type { HighlightColor } from "@/lib/documentReader/model";
+import { sourceTarget, type HighlightColor } from "@/lib/documentReader/model";
 import { captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
 import { LocalCommitError, isAuthoredStorageFailure, type LocalCommit } from "@/lib/notes/runtime";
 import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
@@ -46,7 +42,7 @@ import { bodyHasContent, emptyBody } from "@nexus/authored/body";
 import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
 import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import type { MediaAnnotations } from "./annotations";
-import { emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue } from "./selectionDrafts";
+import { emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit } from "./selectionDrafts";
 
 const DEFAULT_VISIT = definePaneVisitDataKey<Visit<{ conversation: ConversationListItem | null }>>("Reader.ChatDefault");
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
@@ -72,11 +68,9 @@ export function useSelectionComposer(input: {
   isMobile: boolean;
   boundsActive: boolean;
   onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
-  onFailure: (line: Line, verbs: Verbs) => void;
 }) {
-  const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError, onFailure } = input;
+  const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError } = input;
   const memory = useChatSelection();
-  const { fresh: freshMemory, read: memoryRead } = memory;
   const guard = useWorkGuard();
   const visitId = usePaneVisitIdentity();
   const { ctx } = useActionRuntime();
@@ -482,148 +476,48 @@ export function useSelectionComposer(input: {
     if (!entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive) return;
     setPickerDraftId(entry.id);
   };
-  const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: SelectionEditor } | null = null) => {
+  const transferringChat = useRef(false);
+  const sendChat = (target: "New" | "Existing") => {
+    if (transferringChat.current || !prepareInteraction()) return;
     const opened = current.current;
     const entry = opened && get(opened.draftId);
-    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
-    const selected = entry.destination;
-    const owner = target === "New" ? newOwner : selected.kind === "Selected" ? getConversationCommands(ctx.accountId, selected.id) : null;
-    if (!owner) { chooseChat(); return; }
+    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null) return;
     const question = convertReaderQuestion(entry.body);
-    switch (question.kind) {
-      case "Unsupported":
-        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Failed", line: { fact: "images and embeds can’t be sent from here." } } })); return;
-      case "Text":
-        if ([...question.content].length > 20_000) {
-          store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Failed", line: { fact: "this question is too long." } } })); return;
-        }
-        break;
-      case "Blank": break;
-      default: return assertNever(question);
+    if (question.kind === "Unsupported") {
+      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "images and embeds can’t be sent from here."}}}));
+      return;
     }
-    if (question.kind === "Text" && recovery === null && (newOwner.getSnapshot().kind !== "Idle" || (selected.kind === "Selected" && getConversationCommands(ctx.accountId, selected.id).getSnapshot().kind !== "Idle"))) {
-      store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Pending", line: PENDING_ELSEWHERE } })); return;
+    const text = question.kind === "Blank" ? "" : question.content;
+    if ([...text].length > 20_000) {
+      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "this question is too long.", reason: "the limit is 20,000 characters."}}}));
+      return;
     }
-    let observed: ConversationTree | null = null;
-    let view: ReturnType<typeof chatView> | null = null;
-    if (target === "Existing") {
-      if (selected.kind !== "Selected") { chooseChat(); return; }
-      if (selected.snapshot.kind !== "Ready") return;
-      observed = selected.snapshot.tree;
-      view = chatView({ messages: new Map(observed.messages.map(message => [message.id, message])), leafId: observed.active_leaf_message_id, history: "Ready" }, selected.id, null);
-      if (question.kind === "Text" && recovery === null && view.target.kind === "Blocked") {
-        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Changed", line: { fact: view?.target.kind === "Blocked" && view.target.reason === "AssistantRunning"
-          ? "this chat is still responding." : "this chat can’t take a reply here." } } })); return;
-      }
-    }
-    const selection = recovery?.selection ?? (entry.chatSelection.kind === "Uninitialized" ? memory.fresh(catalog) : entry.chatSelection);
-    if (question.kind === "Text" && recovery === null) {
-      if (!selection) {
-        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Recall", state: memoryRead.status === "loading" || (memoryRead.status === "ready" && !memoryRead.error) ? "Pending" : "Failed", destination: target, selection: { kind: "Uninitialized" } } })); return;
-      }
-      store.update(entry.id, value => ({ ...value, chatSelection: selection }));
-      if (!catalog) {
-        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Catalog", line: { fact: "couldn’t load the model list." }, destination: target, selection } })); return;
-      }
-      if (selection.kind !== "Selected" || !isSelectable(catalog, selection.selection, selection.route)) {
-        store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Model", line: { fact: "this model isn’t available." }, destination: target, selection } })); return;
-      }
-    }
-    const runId = createRandomId();
-    store.update(entry.id, value => ({ ...value, chatAttempt: { kind: "Preparing", runId } }));
-    // The exact acceptance reset still belongs to this submitted input. Later
-    // edits and reference queries revoke its authority to move attention.
-    const submittedInput: { revision: number; consumedRevision: number | null } = { revision: entry.revision, consumedRevision: null };
-    const owns = () => {
-      const latest = get(entry.id);
-      return activeRef.current && current.current?.id === opened.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive && !latest.linkInputActive && !latest.attachmentActive &&
-        (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
-    };
-    const account = ctx.sessionSignal();
-    const execute = async (): Promise<OpenResult | null> => {
-      const ensured = entry.highlightId ? { id: entry.highlightId } : await submit({ command: { kind: "Ensure" }, opened });
-      if (!ensured || ctx.sessionSignal().aborted) return null;
-      store.update(entry.id, value => ({ ...value, operation: { id: runId, kind: "Chat" }, chatIssue: null }));
-      // The server derives the quote from its own copy of this highlight. Its creation, resize
-      // or recolour may be any committed local command, so wait for the local prefix committed
-      // now (uploads are prefix-ordered); later commits and downloads do not hold the question.
-      // A wait that ends unsent names what it waited on, once, in the field; the highlight stays
-      // saved here and send asks again. Only sign-in and update are transport; the rest is local.
-      try {
-        const committed = (await (await writing!.store).readReplica()).command_seq;
-        await writing!.whenUploaded(committed, account);
-      } catch (error) {
-        if (account.aborted) return null;
-        if (!isApiError(error) && !isAuthoredStorageFailure(error)) throw error;
-        const unsent = (reason: string): ReaderChatIssue => ({ kind: "Failed", line: { fact: "question not sent.", reason } });
-        const issue: ReaderChatIssue = !isApiError(error) ? unsent("local notes aren’t responding.")
-          : error.code === "E_SYNC_REFUSED" ? unsent("notes can’t sync.")
-          : error.code === "E_NETWORK" ? unsent(navigator.onLine === false ? "you’re offline." : "the highlight hasn’t synced yet.")
-          : { kind: "Transport", error, fact: "question not sent." };
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: issue }));
-        return null;
-      }
-      const key = assumeReaderSelectionKey({ mediaId: entry.sourceMediaId, highlightId: ensured.id });
-      let preview;
-      try { preview = await getReaderQuotePreview({ key, signal: account }); }
-      catch (error) {
-        if (isApiError(error) && error.status === 404) {
-          store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", line: { fact: "question not sent.", reason: "nexus can’t find the highlight." } } }));
-          return null;
-        }
-        throw error;
-      }
-      const quoteHref = readerHighlightChatIntentHref({ destination: observed ? { kind: "Existing", conversationId: observed.conversation.id } : { kind: "New" }, key });
-      const href = observed ? `${conversationViewHref(observed.conversation.id, observed.active_leaf_message_id)}${quoteHref.slice(quoteHref.indexOf("#"))}` : quoteHref;
-      if (question.kind === "Blank" || recovery !== null) {
-        store.update(entry.id, value => ({ ...value, operation: null }));
-        return { target: { href, labelHint: "chat" }, title: "chat ready", openLabel: "open chat",
-          ...(recovery !== null ? { entry: { kind: "ComposeReaderQuestion" as const, text: question.kind === "Text" ? question.content : "", selection: recovery.selection } } : {}) };
-      }
-      if (!selection || selection.kind !== "Selected") throw new Error("Reader send without an observed selection");
-      if (owner.getSnapshot().kind !== "Idle") {
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Pending", line: PENDING_ELSEWHERE } })); return null;
-      }
-      const insertion = view?.target;
-      if (target === "Existing" && insertion?.kind !== "Empty" && insertion?.kind !== "Reply") throw new Error("Reader send without a replyable snapshot");
-      store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: { kind: "Dispatched", runId, owner, selection, destination: target } }));
-      const request = { destination: observed && insertion && (insertion.kind === "Empty" || insertion.kind === "Reply")
-        ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
-          insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
-        : { kind: "New" as const }, content: question.content, selection: selection.selection, reader_selection: { key: preview.key, revision: preview.revision } };
-      const sendingResult = owner.execute({ kind: "Send", request, selectionRoute: selection.route, runId, viewId: pane.paneId, openIntent }, () => {
-        store.update(entry.id, value => {
-          if (value.chatAttempt?.runId !== runId) return value;
-          const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
-          if (consume) submittedInput.consumedRevision = value.revision + 1;
-          return { ...value, chatIssue: null,
-            ...(consume ? { chatSelection: { kind: "Uninitialized" as const }, body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}),
-            destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
-        });
-      });
-      ctx.observeChatCommand({id: `reader-send:${runId}`, owner,
-        present: outcome => {chatOutcome(entry, outcome, target, true);},
-        retry: async intent => {await openAsyncResult({ctx, intent, disposition: "Fork", create: async () => {
-          const outcome = await owner.retry(intent);
-          return account.aborted ? null : chatOutcome(entry, outcome, target, true);
-        }});},
-      });
-      const result = await sendingResult;
-      return chatOutcome(entry, result, target, true);
-    };
+    const selected = entry.destination;
+    if (target === "Existing" && selected.kind !== "Selected") { chooseChat(); return; }
+    const observed = selected.kind === "Selected" && selected.snapshot.kind === "Ready" ? selected.snapshot.tree : null;
+    const view = observed ? chatView({messages: new Map(observed.messages.map(message => [message.id,message])), leafId: observed.active_leaf_message_id, history: "Ready"}, observed.conversation.id, null) : null;
+    const selection = entry.chatSelection.kind === "Uninitialized" ? memory.fresh(catalog) ?? entry.chatSelection : entry.chatSelection;
+    const shown = reader.getState().document;
+    const anchor = entry.passage.anchor;
+    const portable = shown.status === "ready" && shown.doc.identity === entry.passage.identity
+      ? sourceTarget(shown.doc, anchor.kind === "text" ? {kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end} : {kind: "quads", page: anchor.page, quads: anchor.quads}) : null;
+    const href = portable && reader.navigation ? reader.navigation.href({source_identity: entry.passage.identity, target: portable}) : null;
+    const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
+    const sourceRef = entry.capture?.sourceRef ?? annotation?.sourceRef ?? `media:${mediaId}`;
+    const label = sourceLabel(sourceRef);
+    const revision = entry.revision;
+    transferringChat.current = true;
     try {
-      await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: openIntent, disposition: "Fork", mayOpen: owns,
-        onOpened: () => { if (owns()) { store.remove(entry.id); show(null); } }, create: execute });
-    } catch (error) {
-      if (ctx.sessionSignal().aborted) return;
-      store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", line: { fact: "couldn’t open the chat.", reason: "your question is kept." } } }));
-      const failure = readFailureOf(error);
-      if (failure.kind === "Defect") onError(failure.error, "couldn’t open the chat.");
-    }
-    finally {
-      store.update(entry.id, value => value.chatAttempt?.kind === "Preparing" && value.chatAttempt.runId === runId ? { ...value, chatAttempt: null } : value);
-    }
+      const result = launchReaderChat({ctx, guard, originPaneId: pane.paneId, question: text,
+        capture: entry.capture, sourceMediaId: mediaId, captureId: null, highlightId: entry.highlightId,
+        selection, catalog,
+        destination: target === "Existing" && selected.kind === "Selected" ? {kind: "Existing", conversationId: selected.id,
+          write: observed && view && (view.target.kind === "Empty" || view.target.kind === "Reply") ? {expected_revision: observed.conversation.branch_revision,
+            insertion: view.target.kind === "Empty" ? {kind: "Empty"} : {kind: "Reply", parent_message_id: view.target.parentId, branch_anchor: view.target.anchor}} : null} : {kind: "New"},
+        source: {ref: sourceRef, title: label?.label ?? null, media_kind: null, contributors: null, location_label: null}, href});
+      if (result.kind === "Opened" && get(entry.id)?.revision === revision) close(entry.id);
+      else if (result.kind === "Refused") store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: result.line}}));
+    } finally { transferringChat.current = false; }
   };
   const refreshChat = () => {
     const entry = read();
@@ -767,8 +661,8 @@ export function useSelectionComposer(input: {
       restoreHistoryFocus();
     },
     save() { if (draft) void submit({ command: { kind: "Save" }, opened: current.current }); },
-    newChat(openIntent: OpenIntent) { if (prepareInteraction()) void sendChat("New", openIntent); },
-    continueChat(openIntent: OpenIntent = "default") { if (prepareInteraction()) void sendChat("Existing", openIntent); },
+    newChat(_openIntent: OpenIntent) { sendChat("New"); },
+    continueChat(_openIntent: OpenIntent = "default") { sendChat("Existing"); },
     setColor(color: HighlightColor) {
       if (!prepareInteraction()) return;
       const entry = read();

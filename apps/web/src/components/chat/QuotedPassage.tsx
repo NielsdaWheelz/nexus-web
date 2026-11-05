@@ -5,7 +5,7 @@ import type { MouseEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import ResourceQuotation from "@/components/resources/ResourceQuotation";
+import ResourceQuotation, { type ResourceQuotationCapture } from "@/components/resources/ResourceQuotation";
 import type { ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
@@ -15,6 +15,7 @@ import styles from "./ChatComposer.module.css";
 
 type Snapshot = Schema<"ReaderSelectionOut">;
 export type QuoteState =
+  | { kind: "Captured"; presentation: ResourceQuotationCapture }
   | { kind: "Loading" }
   | { kind: "Ready"; selection: Schema<"ReaderSelectionPreview"> }
   | { kind: "Failed"; error: ApiError; retrying: boolean };
@@ -51,7 +52,8 @@ export default function QuotedPassage({ quote, onRemove, onRetry }: {
   const refused = quote.kind === "Failed" ? unquotable(quote.error) : null;
   return <div className={styles.quote} role="group" aria-label="Quoted passage">
     {onRemove ? <Button icon={<Icon.Dismiss />} onClick={onRemove} aria-label="Remove quoted passage">Remove</Button> : null}
-    {quote.kind === "Ready" || quote.kind === "Sent" ? <ResourceQuotation item={quote.selection.item} />
+    {quote.kind === "Captured" ? <ResourceQuotation {...quote.presentation} />
+      : quote.kind === "Ready" || quote.kind === "Sent" ? <ResourceQuotation item={quote.selection.item} />
       : quote.kind === "Loading" ? <Ruling />
       : refused !== null ? <Fact line={{ fact: refused }} />
       : <Failed error={quote.error} noun="quotes" retry={onRetry ? { run: onRetry, busy: quote.retrying } : undefined} />}
