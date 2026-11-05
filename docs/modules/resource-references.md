@@ -13,12 +13,14 @@ conversation messages retain their message layout.
 | `schemas/resource_items.py` | generated wire for bounded bodies, attribution, capabilities and source targets |
 | `services/resource_items/items.py` | the one visibility gate (`_rows`, `visible_refs`) and batched current previews |
 | `services/resource_items/routing.py` | activations: a route, an outside url or none; passage hrefs only where `locations` says the words land |
-| `services/resource_items/locations.py` | where words land now: the one location proof for capture, routing and resolution |
+| `services/resource_items/locations.py` | current resource location discovery, reading-owner choice and ordinary passage routing |
 | `schemas/resource_evidence.py` | frozen words, attribution and complete target |
-| `services/resource_items/evidence.py` | capture, historical projection and authoritative source resolution |
+| `services/resource_items/evidence.py` | bounded capture, historical disclosure and authoritative source resolution |
+| `services/media_text_scope.py` | admitted body and required-note intervals, plus incomplete-table facts from publication metadata |
+| `services/fragment_tables.py` / source publishers | atomic table boundary projection beside canonical fragments; publication replacement and teardown own cleanup |
 | `components/resources/ResourceBody.tsx` | literal content, colour, omissions and search emphasis |
 | `ResourceLink.tsx` | compact title/recorded-label links and availability through canonical activation; no fetching or graph controls |
-| `ResourceQuotation.tsx` | passive supplied evidence, attribution and source navigation for chat quotes and citation previews |
+| `ResourceQuotation.tsx` | one passive renderer for supplied resource evidence or local reader captures, attribution and source navigation |
 | `components/ui/ResourceRow.tsx` / `ResourceList.tsx` | bounded index/search geometry, wrapping operational details and native title links |
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
@@ -192,6 +194,17 @@ draft attachment controls and citation preview lifetimes remain with their calle
 historical outline items likewise retain supplied evidence before considering local
 authorship; ordinary authored rows keep their authoritative local reads.
 
+an unsent reader quote supplies its actual `SelectionCapture`, captured source
+attribution and nullable source href. it uses the shared excerpt projection without
+manufacturing a `ResourceItemOut`, fetching a highlight or owning a second renderer.
+after admission the user message owns the immutable evidence. the quote's `ref`
+and `action_ref` are that message; its title opens the source occurrence through
+`#quote-<message_id>`. a nullable highlight key records an explicitly selected saved
+highlight. asking about an unsaved passage creates no highlight, passage anchor or
+annotation. reader maps expose it as `ReaderQuote`, with a separate `quotes` count
+and neutral marker; its map action opens the owning chat. admission and deletion
+invalidate the existing reader projections; the message owns the quote's lifetime.
+
 outlines serve notes, pages and connections: a muted typed opening marker, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource
 ellipsis. immutable references show title, ordered authors and original publication
@@ -245,15 +258,12 @@ search match ranges address codepoints in a separate plain excerpt; no inserted
 emphasis markup enters saved evidence. geometry-only selections say `selected
 region`.
 
-annotations are independent notes attached by links. outlines initially disclose
-a highlight’s attached notes; folding hides those children. chat context shows
-every current attached-note preview immediately, in highlight-endpoint position
-then link-id order. each is an independent clipped native note link; the primary
-quote and source bibliography remain separate. no primary annotation lives
-in the preview payload. notes have no invented owning page. relationship
-rationale belongs to the occurrence. captured
-quotes never borrow today's colour, annotation or attribution; current annotations
-under a historical branch are labelled as current.
+an annotation is the highlight's owned authored body; related notes remain
+independent graph children. the annotation field and quotation keep distinct
+activations and previews. notes have no invented owning page, and relationship
+rationale belongs to the occurrence. captured quotes never borrow today's colour,
+annotation or attribution; current annotations under a historical branch are
+labelled as current.
 
 context’s `ResourceIndexBody` renders the six body variants as literal compact
 content, omitting highlight surroundings. local `authoredPreview` projects
@@ -348,14 +358,35 @@ desktop sheet and no-source layouts use ordinary flow.
 
 ## historical targets and arrival
 
-passage capture preserves owner, publication, quotation, surrounding context and
-extent proof. read-side identity lookup and durable materialization derive the
-same anchor identity from the proven owner and normalized quote/context;
+authored passage capture preserves owner, publication, quotation, surrounding
+context and extent proof. read-side identity lookup and durable materialization
+derive the same anchor identity from the proven owner and normalized quote/context;
 publication and locator evidence remain validation inputs, not identity fields.
 exact words alone cannot distinguish repeated occurrences.
 location resolution may prove where captured words land now; it never rewrites
 the historical words or treats stale offsets as present authority. genuine
 ambiguity stays explicit, even when that refuses an otherwise useful action.
+
+chat admission accepts either an existing highlight key and preview revision or
+an unsaved reader capture with explicit reading and canonical source refs. it
+validates the frozen excerpt, locator, selected words, surroundings and publication
+within its bounded input budget before committing the message snapshot. source
+text checks read only the claimed substrings; pdf quotation retains the reader's
+selected words and validates its publication and geometry. source tool access is a
+separate admitted context fact, so retaining source access never copies the whole
+source into the question's prompt.
+
+body and required-note authority are separate intervals belonging to one reading.
+outside a piece's body, only a genuine in-body reference admits its direct matching
+note kind; sibling readings, overlapping apparatus and gaps cannot widen that scope. historical
+disclosure applies the same current permission and interval proof to frozen
+excerpts. table completeness additionally uses publication-owned canonical bounds
+and element paths: removing an empty cell is still an incomplete table even when
+every text offset fits. nested and zero-text tables retain their own paths. this
+proof reads metadata at the part's endpoint fragments, without loading source html;
+publishers compute the projection once with canonical text and remove it with the
+fragments. navigation elements and their identities are independent of this table
+projection.
 
 the current [server materialization gap](../issues/passage-materialization-drops-captured-context.md)
 drops captured context between those owners; browser authored linking preserves it.
@@ -367,7 +398,8 @@ still needs separate qualification for generated graph facts and actual consumer
 `POST /resource-items/source-targets/resolve` accepts one key: current `resource`,
 saved `reader_quote` message, `citation` edge, or saved `retrieval` id. historical
 keys resolve their frozen facts; none reconstruct history from today's target.
-authorization is checked on both the occurrence and its current source.
+authorization is checked on both the occurrence and its current source in one
+repeatable-read snapshot.
 
 the answer is a state, never an error, for a resource key the viewer may open but
 cannot locate: an invisible ref is `unavailable{source_unavailable}`; a publication
@@ -376,14 +408,13 @@ activation. 404 is only for a quote, citation or retrieval key naming nothing th
 viewer can read; a malformed `resource_ref` is 400. a citation key reads for whoever
 can read what cites it, not only the edge's owner.
 
-a frozen location is current only while its offsets still name the same normalized
-words (`locations.current_locator`): notes also by body version, else a unique
-requote; messages whole only; an X post's text offsets by a unique requote; pdf
-boxes by publication identity, else a unique quote recovers the page; time ranges by
-identity or exact unit bounds and words. capture refuses a publication that changes
-under it (409). a span's, chunk's or oracle anchor's current extent is derived once
-(`locations.current_passages`): routing gives it an href exactly when capture would
-freeze a passage target for it now.
+a frozen location opens only while its stored locator proves the same normalized
+words in bounded current slices. pdf geometry also requires the captured
+publication; timed locations require exact unit bounds and words. failed proof
+leaves the location unavailable while preserving permitted whole-source access;
+opening frozen evidence never scans a whole source to requote it. ordinary current
+resource discovery retains `locations.current_passages` and its existing relocation
+rules. capture refuses a publication that changes under it (409).
 
 named resource panes consume whole historical arrivals through the shell's
 `useSourceArrival` adapter; media, notes and chats own their located adapters.
@@ -392,7 +423,11 @@ the exact owner and a bound source identity. external urls remain native.
 
 the reply has an independent whole-source activation and a `resource`, `located`
 or `unavailable` location. located targets carry the existing locator, precision
-and nullable source publication identity. previews never determine extents.
+and nullable current reading identity. captured target identity remains provenance:
+for a piece, the canonical source may be at generation 2 while its reader is at
+generation 1. the returned identity names the destination reader, not the captured
+source generation. an x capture retains its immutable capture identity. previews
+never determine extents.
 missing location disables the passage bullet while a readable source can remain
 openable. source access loss removes live enrichment, expansion and actions while
 preserving an authorized output's captured text.

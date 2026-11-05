@@ -40,7 +40,7 @@ import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { CommandVerb } from "@/components/feedback/stage";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
+import { workspaceTargetActivationIntent, type OpenIntent } from "@/lib/ui/targetActivation";
 import { copyText } from "@/lib/ui/copyText";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -473,12 +473,17 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         verbs={[{ label: "copy question", commandKey: "copy deleted chat question", run: () => {
           const question = unresolvedDeletion && pending?.command.kind === "Send" ? pending.command.request.content : draft.text;
           void copyText(question).catch(error => slips.fail(error, "couldn’t copy the question."));
-        } }, { label: "review in new chat", commandKey: "review deleted chat draft", run: () => {
-          if (transferringDraft.current || draftOwner.getSnapshot().draft !== draft) return;
+        } }, { label: "review in new chat", href: "/conversations/new", onActivate: event => {
+          const activation = workspaceTargetActivationIntent(event);
+          if (activation.kind === "Unowned") return "unhandled";
+          event.preventDefault();
+          if (activation.kind === "Consume" || transferringDraft.current || draftOwner.getSnapshot().draft !== draft) return "consumed";
           transferringDraft.current = true;
           try {
             const result = launchChatDraft({ ctx, guard, originPaneId: runtime.paneId, draft, catalog: null, destination: { kind: "New" } });
-            if (result.kind === "Opened") spend(draft);
+            if (result.kind !== "Opened") return "consumed";
+            spend(draft);
+            return "handled-new-pane";
           } finally { transferringDraft.current = false; }
         } }]} /> : null}
       {state.commandDefect ? <ChatOperationBoundary failure={state.commandDefect} paneId={runtime.paneId} visitId={runtime.visitId}

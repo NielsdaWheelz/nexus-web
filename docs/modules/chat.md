@@ -17,9 +17,10 @@ store and the views).
 |---|---|
 | `admit` | send, rerun/regenerate, cancel: the run-id envelope, destination, anchor, quote, message pair, run freeze, job |
 | `context` | the fixed system prompt, the turn's context blocks, two-budget history, the frozen intent |
-| `quotes` | the reader-quote snapshot: build from the locked highlight, encode/decode, revision, preview, renderer |
+| `quotes` | immutable reader captures, saved-highlight preview/revision, message-owned quote projection and invalidation |
+| `deletion` | the account creation fence shared by admission, explicit create and hard deletion |
 | `citations` | candidate numbering, attached evidence, publication, unpublished text |
-| `retrievals` | `RetrievalCitation`, `citation_from_search_result`, `web_citation`, the one `message_retrievals` writer |
+| `retrievals` | `RetrievalCitation`, `citation_from_search_result`, `citation_from_evidence`, `web_citation`, the one `message_retrievals` writer |
 | `events` | run lock, claim fence, append, tail read, stop flag, the one terminal writer |
 | `worker` | the `chat_run` job, its dead-letter hook, the attempt, the text coalescer |
 | `reads` | failure/rerun policy, owner gate, advisory, run response, tree, trust trails, event projection |
@@ -40,11 +41,12 @@ store and the views).
 - **live overlay**: a pending answer's streamed paint; never state.
 - **command**: one frozen chat write per account and chat (a new chat's: per pane) and
   tab, with the revision it observed and where its answer opens.
-- **draft**: immutable unsent text and captured selection intent, per tab and pane.
+- **draft**: immutable text, exact selection intent and optional frozen quotation, per tab and pane; caret is separate presentation state.
+- **acceptance**: a pane-owned immutable receipt and canonical-read obligation; independent from mutation reservation and later delivery failures.
 - **selection**: an exact catalog `route/model/reasoning`; never substituted.
 - **account selection**: the last accepted generation choice, ordered by committed
   admission. it seeds untouched ordinary composers across chats and devices.
-- **quote**: an immutable snapshot of a locked highlight on a user turn.
+- **quote**: immutable captured evidence on a user turn; a saved-highlight key or `null` for an unsaved passage.
 - **context**: the chat's scope refs (future prompt membership), frozen per run as
   `tool_scope`.
 - **citation**: a model-visible candidate ordinal, then a published edge with a dense
@@ -83,8 +85,9 @@ re-present existing data and never refetch, publish, reorder or move focus.
 | `POST /messages/{answer}/rerun`, `/regenerate` | `Idempotency-Key`; `{selection, expected_revision}` | the same receipt; a missing source, a changed chat, an ineligible answer and selection or context refusals are `Rejected` | as a send |
 | `POST /chat-runs/{id}/cancel` | none | `ChatRunResponse` | idempotent stop intent; finalizes a run whose job is dead |
 | `GET /chat-runs/{id}` | none | `ChatRunResponse{conversation, user_message, assistant_message}` | read |
-| `POST /conversations` | `{id: uuid, initial_context_refs: [uri]}` | 201 `ConversationOut` | client id: a resend answers the viewer's chat as it stands, relinking nothing; another owner's id is 409. one "Chat about this…" gesture is one id: an uncertain create offers "retry creation" with that id, its refs and its intent; another gesture is another chat |
+| `POST /conversations` | `{id: uuid, initial_context_refs: [uri], expected_deletion_revision}` | 201 `ConversationOut` | client id: a resend answers the viewer's chat as it stands, relinking nothing; another owner's id is 409. one "Chat about this…" gesture is one id: an uncertain create offers "retry creation" with that id, its refs and its intent; another gesture is another chat |
 | `GET /conversations` | `media_id`, `sort`, `direction`, `title_search`, `limit`, `cursor` | keyset page of `{id, title, message_count, updated_at}` | read |
+| `GET /conversations/latest?media_id` | none | last owned admitted quotation of this reading, or null | read; ordered by admission, not chat activity |
 | `GET /conversations/{id}/tree` | none | `{conversation, messages, active_leaf_message_id}` | read |
 | `PATCH /messages/{id}/fork-title` | `{title, expected_title}` | `ForkTitleOut{fork_title, updated_at}` | absolute title plus the title it replaces: already so named succeeds; named otherwise is 409 with `details.current_title` |
 | `DELETE /messages/{id}?conversation_id&expected_revision` | none | `{conversation_id, conversation_deleted}` | idempotent: an absent target is a no-op; a stale revision is 409 |
@@ -92,11 +95,16 @@ re-present existing data and never refetch, publish, reorder or move focus.
 | `GET /chat-reader-selections/highlights/{id}?media_id` | none | `ReaderSelectionPreview{key, item, revision}` | read |
 | `GET /stream/chat-runs/{id}/events?after=N` | none | sse `assistant_text_delta{text}`, `tool_call_start`, `tool_result`, `context_ref_added{id, resource_ref}`, `done{status}`; unsequenced `ExecutionAdvisory{phase, cancel_requested}` | resume from the last seen sequence |
 
-a send's `destination` is `{kind:"New"}` (the chat, its pair and its run commit together;
-a refused first send leaves nothing) or `{kind:"Existing", conversation_id,
-expected_revision, insertion: {kind:"Empty"} | {kind:"Reply", parent_message_id,
-branch_anchor}}`. `reader_selection` is `{key:{media_id, highlight_id}, revision} | null`:
-the key and a compare-on-send revision, never text. requests forbid extra keys.
+a send's `destination` is `{kind:"New", expected_deletion_revision}` or
+`{kind:"Existing", conversation_id, expected_revision, insertion:
+{kind:"Empty"} | {kind:"Reply", parent_message_id, branch_anchor}}`. creation,
+message pair, run, frozen prompt, job and remembered selection commit together.
+`reader_selection` is null, `{kind:"highlight", key, revision}`, or
+`{kind:"passage", reading_ref, source_ref, capture:SelectionCapture}`. the latter
+carries no authored passage binding. raw capture and saved-highlight preview share
+canonical evidence validation; neither ask creates authored links or highlights.
+requests forbid extra keys. `GET/PATCH /me` expose the read-only positive decimal
+`chat_deletion_revision` used by fresh creation preparation.
 
 an optional `media_id` scopes the owned index to current direct context whose endpoint
 or one-hop owner is that readable media; historical citations and transitive links do
@@ -131,13 +139,18 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   replaces it in the run/message/job transaction. first-insert races retry that
   transaction. rejection and existing-run replay do not write it; completion and
   chat deletion leave it intact. malformed memory fails without repair.
+- `chat_deletion_revisions`: one positive bigint per account. new identities hold its
+  shared lock and compare their frozen revision; actual chat/subtree deletion takes
+  it exclusively before chat locks and advances it. absent deletes do not advance.
+  an accepted resource answers before this fence; stale absent-resource creation is
+  `E_CHAT_CREATION_STALE`. no replay ledger.
 - `message_retrievals`: per (answer, call or attached, ordinal): result type, source id,
   media and span ids, context ref, `result_ref` (the model-visible `tool_citation` payload
   and search's web-snapshot source), `selected`, locator, captured evidence, candidate
   ordinal, cited edge.
 - browser memory: unsent text and explicit model selection belong to their
   account/pane/chat owner (`new` for an unpublished chat). mobile remounts retain
-  that owner; pane retirement and account teardown remove it. commands remain
+  that owner, its quote and acceptance/read recovery; pane retirement and account teardown remove it. commands remain
   account/chat-owned, or pane-owned for a new chat. reload restores neither
   drafts nor commands. a pane's endpoint remains its visit href.
 
@@ -158,8 +171,9 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   `openConversationAbout` (`lib/chat/conversationIndex.ts`), `useChatCommandFeedback`
   (`lib/chat/commandFeedback.tsx`), `conversationEndpoint`/`conversationViewHref`
   (`lib/chat/view.ts`), the quote-intent helpers (`lib/chat/readerIntent.ts`), the pane
-  entries `ForkMessage | DeleteMessage | ComposeReaderQuestion`.
-- `convertReaderQuestion` (`lib/chat/readerQuestion.ts`) converts the complete
+  entries `ForkMessage | DeleteMessage`. `launchChatDraft` and `launchReaderChat`
+  synchronously adopt into a fresh pane; staging never relies on a mount effect.
+- `convertReaderQuestion` (`@nexus/authored/markdown`) converts the complete
   `NoteBody` grammar to `Blank | Text{content} | Unsupported{reason: Images | Embeds}`.
   image and embed refusal is whole-body and precedes any reader chat write.
 
@@ -183,86 +197,62 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   without an exact `loc`, a deleted endpoint falls back to its nearest surviving ancestor ("this
   branch was deleted"); an invalid or missing one shows "this branch is no longer
   available" until the viewer chooses one.
-- **one command owner per account and chat, and per pane for a new chat** (`commands.ts`,
-  key `account:<id>` or `account:new:<pane>`) sends every write: send, repeat, delete
-  message, delete chat. a command freezes its body, run uuid, observed revision and, for
-  a send or repeat, its opening intent (a retry may upgrade it to a new pane, never back);
-  a send names its pane. its state is `Idle | Busy | Unconfirmed | RefreshRequired`; the
-  last feedback shown rides through a retry. the reserved command owns one incident
-  occurrence through landing changes, shared by pane, repeat-dialog and menu recovery;
-  its last feedback object identifies the deliberate outcome for speech.
-  `recoveryOf(state, owns)` tells a surface
-  whether the pending command is its own (a composer owns only its pane's sends); the pane
-  notice, the repeat dialog and the workspace condition of a menu deletion or repeat
-  render it. an accepted existing-chat write reads the canonical tree, checks that it
-  holds the accepted answer made by this run (another pane's send may move the stored
-  leaf), and hands it to every mounted store before the gate reopens. a send's acceptance
-  settles its source callback once, whichever surface retried it: ordinary chat spends
-  its submitted draft only if the same object is still current; any later edit,
-  including an edit away and back, preserves the whole draft,
-  while the reader keeps its annotation. the pane lands an accepted send, or
-  a repeat once a read shows its answer (a retried read too), through `openAsyncResult`:
-  while it still shows the path asked from, it selects the answer (a new chat's pane
-  routes to the chat), shift opens it in a new pane, otherwise an offer ("message
-  sent"/"response ready", "open response"); a menu's repeat lands the same way. the pane
-  notice can discard an unconfirmed send, as a reload does: admission reopens and the
-  draft keeps its text; the send may still land, fenced by the revision in an existing
-  chat, as a second chat for a new one. new-chat commands belong to the actual pane,
-  including reader sends that have no chat draft cell. hiding or evicting a reader
-  visit keeps that command; the same pane's ordinary new-chat composer exposes its
-  exact retry. closing the pane retires it after the common loss decision.
-- **the composer** (`ChatComposer.tsx`) holds the draft, the model controls and the one
-  button: Send, Sending, Stop response, Stop requested, Retry send, Retry refresh. an
-  untouched draft follows fresh account memory, or the product seed after confirmed
-  absence. the first text edit captures the displayed intent; typing while recall is
-  pending captures once fresh recall arrives. explicit choices bypass recall. bound
-  drafts survive read failures, refresh and deletion of all text. a new chat's unresolved first send
-  holds its text and model; an existing chat's draft stays editable. the field takes text
-  only once the app has hydrated. desktop Enter sends (a held key sends once), Shift+Enter
-  is a newline, every Enter is a newline on a phone, and composition owns Enter;
-  shift-click or Shift+Enter on the button opens the answer in a new pane. blankness
-  checks ignore whitespace; admission retains the submitted text's exact characters.
-- **reader continuation** (`useSelectionComposer.ts`) owns visit-local question and
-  destination intent. a fresh passage defaults to the newest owned chat related to its
-  canonical media; a later explicit choice wins over a pending lookup. a chosen chat's
-  canonical tree supplies its stored leaf, revision and insertion independently of
-  another pane's endpoint. ask captures fresh account selection before saving or
-  awaiting preparation; typing a note captures nothing. sends use the same new-chat or conversation
-  command owner as chat panes and freeze content, selection, quote revision, insertion
-  and run uuid once. ambiguous admission offers the exact retry; an observed branch or
-  quote change requires explicit refresh. acceptance invalidates the continuation
-  snapshot and keeps the annotation draft. blank opens stage only the quote, with no
-  model or replyability requirement. sends and explicit opens preserve the reader in a
-  fresh pane; departure leaves an offer to open the response.
-- **reader content** (`readerQuestion.ts`) retains literal prose and hard breaks,
-  code contents with collision-free delimiters, emphasis, strike and link destinations.
-  underline retains its text; contiguous code-marked text and breaks form a code run.
-  multiline runs become fenced blocks. enclosing inline decoration is omitted on that
-  block; each distinct link becomes an adjacent destination link with its original
-  target and title. single-line code retains its inline mark scopes. fenced source
-  retains the authored payload, with the line ending required by the closing fence;
-  newline-only code is substantive, though the existing renderer displays a lone blank
-  code line as empty. the
-  markdown serializer owns escaping. formatting moves only edge whitespace outside
-  its delimiters. internal hard breaks render as markdown; terminal paragraph line
-  endings remain literal newlines in the source because commonmark cannot render a
-  terminal hard break. conversion ignores `body_text`, never truncates
-  and never saves or spends the annotation. user bubbles and recovery show markdown
-  source through the existing literal chat views.
-- **reader recovery** uses `ComposeReaderQuestion{text, selection}` on a fresh `Fork`
-  pane. recovery actions belong to the reader composer's interaction scope;
-  independently edited attached notes do not. its href names the chat/observed
-  leaf and quote, never the question. after
-  registering the actual memory draft cell, the composer synchronously writes text and
-  the complete captured editor (including unresolved intent), then claims that
-  visit's entry before enabling input.
-  the workspace retains and guards an unclaimed question until this transfer; no draft
-  or launch payload enters browser storage. model
-  availability does not gate staging; retained catalog rows still describe the exact
-  captured intent. the quote preview and ordinary model picker
-  retain their owners. failed history reads keep the staged editor visible with
-  `retry chat`; sending remains blocked. other panes' drafts survive. this is fresh
-  composition for review, never a retry of uncertain admission.
+- **command ownership** (`commands.ts`): one mutation reservation per account/chat,
+  or per actual destination pane for a new chat. preparation freezes the authored
+  prefix, exact catalog choice, quote and destination preconditions once. existing
+  sends/repeats and saved highlights wait for their captured authored prefix; a new
+  raw ask does not wait on unrelated writing. an attempt-local preparation deadline
+  cannot poison the sealed command's signal. only active promises are busy.
+- **transport recovery** (`lib/api/retry.ts`): one shared finite loop. replay-safe
+  admission and context creation use at most three attempts within 30 seconds,
+  including backoff and response bodies. only network/upstream/timeout failures
+  retry automatically. every exit carries accumulated delivery uncertainty; a later
+  unsent or auth refusal cannot erase an earlier ambiguous dispatch. exhaustion and
+  internal errors remain instrumented defects. explicit retry preserves path, uuid,
+  body and preconditions; a branch/deletion fence ends execution without claiming
+  historical nonacceptance.
+- **acceptance and reads** (`drafts.ts`, `conversationStore.ts`): record acceptance
+  before callbacks, spend only the identical submitted draft, promote any successor
+  text/quote/model to the canonical chat scope before route publication, then release
+  the mutation reservation. the receipt stays with that pane, never another pane's
+  pending command. only a canonical read begun after acceptance can account for it.
+  read failure preserves certainty and offers `retry loading`; proven deletion ends
+  read recovery without resend. late completion cannot move a newer visit. hiding
+  or mobile unmount does not retire writing, attempts or accepted read obligations.
+- **failure containment**: retained facts settle before the operation boundary
+  reports a defect. that boundary sits beside the editable composer and valid
+  transcript; reset never sends. ordinary transcript corruption still reaches the
+  pane boundary. one failure has one home and occurrence. work-guard risk derives
+  from writing and actual uncertainty, not reservation presence or accepted reads.
+  a deleted chat retains successor writing and fenced uncertainty for copying or
+  explicit review in a fresh unsent pane; it never silently rebases a command.
+- **the composer** (`ChatComposer.tsx`) observes the retained draft. typing and
+  caret movement remain available while an older request is unresolved; only the
+  exact immutable submitted object can be spent. an untouched selection follows
+  fresh account memory; an explicit or captured choice is never substituted.
+  desktop enter sends, shift-enter inserts a newline, every enter is a newline on
+  mobile, and composition owns enter. ordinary shift-send adopts synchronously into
+  its fresh destination. blankness ignores whitespace; submitted characters stay
+  literal. an unresolved command's retry acts on its frozen question, not later text.
+- **reader transfer** (`useSelectionComposer.ts`): settle native editor input and
+  freeze the provisional range before reading its retained source version. serialize
+  the complete rich question; unsupported images/embeds refuse without truncation.
+  synchronously fork, install the destination draft and guard, and reserve before
+  eligible gesture-started preparation. only successful adoption retires the exact
+  source revision. blank, unavailable-model and blocked-existing requests stage
+  complete input; model arrival, remount and command settlement never autosend.
+  no reader-owned network attempt, implicit highlight, combined lock or copied pane
+  entry remains. independently saved annotations keep their own owner.
+- **reader destination**: the default is the last owned admission quoting the viewed
+  media/part, or a captured x fragment actually included there. context membership
+  and chat activity are not continuation history. an explicit choice wins over a
+  pending lookup. the chosen tree supplies revision and insertion from its stored
+  leaf, independently of other panes. choosing a destination never sends.
+- **reader content** (`@nexus/authored/markdown`) preserves prose, hard breaks,
+  code and links through the shared whole-body serializer. draft quotations use
+  their real frozen capture and known attribution, without inventing a resource or
+  fetching before transfer. saved-highlight drafts keep the existing destination-
+  owned preview preparation. raw text never enters a URL or browser storage.
 - **the tail** (`runTail.ts`) folds a pending answer's frames into its overlay; a stream
   end (done or lost) is followed by exactly one run read. reload replays from event 0.
 - **the scroll owner** (`useChatScroll.ts`) pins a new question to the top, follows the
@@ -363,9 +353,10 @@ and source arrival remain resource-owned.
    (`cancelled` when a stop was asked).
 8. `events.finalize` is the only terminal writer, writes `done{status}` once and settles
    open tool calls.
-9. lock order is conversation, run, job claim (publication, deletion); run, job
-   everywhere else. deletion also locks generation owners, generation rows and retained
-   x-post media in that order.
+9. admission locks its run-id advisory, creation fence when needed, chat, saved-
+   highlight authored head and media family. deletion locks its exclusive fence
+   before chat, generation owner/calls, runs, jobs and retained media. existing
+   generation/event owners keep their run/job order.
 10. candidate ordinals are dense from 1 per answer, attached context first, never
     renumbered; publication canonicalizes used markers by first appearance;
     unknown candidates or renumbering collisions degrade to marker-free prose with a support id.
@@ -373,16 +364,17 @@ and source arrival remain resource-owned.
     a stopped or failed answer stores its text without candidate markers.
 12. citation edges, back-pointers, context additions and `done` commit together;
     automatic context additions only while the admitted context version is current.
-13. a quote is written once from the locked highlight; every later read derives from the
-    snapshot; its revision is the sha256 of the canonical json.
-    schema conversion preserves its literal words and source attribution. an unknown
-    original `source_identity` stays null; a separately proved retained locator may
-    still support navigation. attribution is a fallback destination only when the
-    captured target has no owner. conversion never rewrites accepted run inputs to
-    match the snapshot's new derived revision.
-14. the frozen prompt: the fixed system prompt; then the quote, selection and resources
-    context, contiguous newest-first history within the token and 512 KiB budgets, and the
-    turn; mandatory context never drops (`E_GENERATION_CONTEXT_TOO_LARGE`).
+13. a quote freezes canonical evidence once. raw input proves current publication,
+    selected words and reading scope; saved input compares its preview revision.
+    historical words and credits never reread mutable content. saved keys remain
+    unchanged; raw snapshot keys are null. source opening proves current selected
+    coordinates in one read-only repeatable-read snapshot. transcript capture identity
+    is provenance, while opening returns the current viewed document identity.
+14. prompt preparation pages context metadata, measures stored bytes before bodies,
+    then checks rendered bytes and estimated tokens. history is complete, contiguous
+    and newest-first within both budgets. mandatory context never drops. automatic
+    quote source facts remain identity/tool-scope only, including x follow-ups; direct
+    citation construction consumes admitted evidence without discovery search.
 15. text frames: at most 512 chars, 2048 bytes or 33 ms each, in order, each its own
     commit; text before a tool call lands before its frames.
 16. a tool call writes one start frame and one result frame, identity only; projection
@@ -394,11 +386,10 @@ and source arrival remain resource-owned.
     that message loses. a pane's endpoint lives only in its visit href; another pane's
     write never moves it.
 19. the overlay only paints; a stream end is followed by exactly one run read.
-20. one command per account and chat (a new chat's per pane); only `Idle` admits; the canonical
-    tree reaches every mounted store before an existing chat's gate reopens; a later
-    refusal settles an earlier unconfirmed attempt only with accepted-run evidence or a
-    revision or absence fence (a new chat has neither, so it stays unconfirmed until the
-    viewer discards it or reloads).
+20. one mutation reservation per account/chat (new: pane). acceptance releases it;
+    pane-owned canonical read recovery does not hold it. a missing run alone proves
+    nothing about delivery. only accepted evidence or a monotonic destination/deletion
+    fence ends exact replay; historical uncertainty remains truthful.
 21. deliberate provider/model changes choose the catalog's model/mode/effort defaults
     together. a missing default preserves draft intent and permits explicit effort
     choice. only that unresolved intent can complete on a later catalog read; an exact
@@ -414,9 +405,9 @@ and source arrival remain resource-owned.
     the command's selection optimistically. local commands carry captured provider
     identity outside the serialized request; old repeats start from their saved run.
 
-passage questions consume only their submitted rich input on server acceptance,
-through `ConversationCommands.execute(command, onAcceptance)`. newer editor input
-and an existing saved annotation remain. a fresh question ensures a highlight
-without creating a note. highlight creation and chat admission can partially
-succeed; unknown admission retries the same command, while definitive refusal
-requires a reviewed new command. generation completion does not own input reset.
+reader maps project one native quote root per owned user turn, with a `quotes` count,
+`chat quotes` facet and neutral marker. no authored edge is fabricated. the quote
+connection opens its chat; source activation opens the authorized reading/capture.
+existing annotations revisions and `Chats` invalidation refresh mounted maps. raw
+asks retain source tool access without eagerly inserting the complete work into each
+prompt. drafts/attempts survive tab-local remounts, not browser closure or reload.
