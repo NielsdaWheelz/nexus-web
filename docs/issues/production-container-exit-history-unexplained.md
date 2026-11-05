@@ -2,6 +2,25 @@
 
 status: open · origin: 2026-09-18 deployment preflight · area: runtime availability
 
+on 2026-11-05 at 02:23:06 utc, the canonical release of
+`c6c90343c4324942b310fe7d9b9fadc4f6e5e944` refused before candidate mutation:
+the original e505 background container
+`7eddf14f247fb93e4b4e82a8a10b34dfe6351079004535ca83aff0061307b96f`
+stopped with `ExitCode=0`, `OOMKilled=true`, and no runtime error. it had run
+since 2026-10-31 at 02:18:13 utc. retained kernel logs identify two python-child
+kills in that exact cgroup on november 3 at 23:29:45 and 23:31:26 utc, with
+343072 and 342740 kb anonymous rss. the api cgroup also had oom events on
+november 4 at 19:05:56 and 20:10:40 utc. no later oom event appeared through
+november 5 at 02:25 utc. affected work is not yet attributed.
+
+the release guard correctly refused the retained flag. canonical
+`--restore-original` restored the exact original cohort; no schema, host input
+or current-pointer mutation had occurred. the background worker restarted at
+02:25:09 utc, healthy with `OOMKilled=false`. an ordinary retry must establish
+a new clean stop and empty census. do not clear a flag or weaken the shutdown
+guard to release. the historical memory defect remains open after a successful
+retry.
+
 read-only docker inspection at `2026-09-18T18:05:07Z`, before deploying
 `d598efe8dc`, found the following on the host serving release
 `7965f7cd88865dac03be672c2164ef58235840fd`:

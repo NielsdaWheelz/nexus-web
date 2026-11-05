@@ -1,5 +1,11 @@
 # release feedback homes
 
+owner disposition, 2026-11-04: for
+`c6c90343c4324942b310fe7d9b9fadc4f6e5e944`, the owner waived phone sign-in,
+persistent signed firefox update/capture, and offline-to-online reconnect
+qualification before publishing the paired clients. these observations remain
+unverified follow-ups; signing and an in-place apk upgrade do not establish them.
+
 the hosted interface, android packaged interface and firefox extension must
 ship together. the page also expects the authored worker's `SyncFailure`
 contract; navigation alone can leave an old shared worker running. the existing

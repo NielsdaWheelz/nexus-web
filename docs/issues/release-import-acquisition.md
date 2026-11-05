@@ -16,8 +16,8 @@ stored format, env or job payload changes.
 
 it rides the feedback-homes paired release (`release-feedback-homes.md`, written by
 that change): stage hosted from the merge sha, build the apk from the same sha so
-its packaged bundle carries wire 18, build the xpi from the same sha (manifest
-1.0.4), owner signs it, then promote hosted and release the apk and xpi together.
+its packaged bundle carries wire 18, build the xpi from the same sha at its current
+manifest version, owner signs it, then promote hosted and release the apk and xpi together.
 this lane deploys nothing. if feedback-homes ships first without this change, this
 release runs the same steps alone.
 

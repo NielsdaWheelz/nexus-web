@@ -1,5 +1,10 @@
 # native share rotation and leave proof
 
+owner disposition, 2026-11-04: the owner explicitly waived this pre-release
+qualification for `c6c90343c4324942b310fe7d9b9fadc4f6e5e944` and confirmed the
+no-use window. the journey remains unverified; retain it as a follow-up. this
+waiver does not authorize stopped qualification actions.
+
 status: owner-accepted source qualification for this build; actual native journeys remain release gates.
 
 the current source has not been qualified here for rotation during an incomplete native upload or actual native decline/accept of leaving. source inspection cannot establish the live activity, document, transfer or dialog outcome. a duplicate import, lost continuation or failed leave remains an unmeasured release risk.
