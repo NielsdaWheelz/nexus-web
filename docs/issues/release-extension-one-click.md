@@ -21,9 +21,6 @@ stored event ids remain. local upload imports keep their existing ownership.
 old incompatible verified x snapshots require deliberate live repair before a
 native carrier import can attach; migration does not merge/relabel them.
 
-native pointer/keyboard admission, auth/source pinning, library edits and reviewed
-removal passed before integrating main `2b0c01c36`; repeat their affected checks
-and the strict thread-input upgrade on the integrated build before qualification.
 [wheel delivery](extension-popup-pointer-qualification.md)
 remains open by owner decision. [authenticated x menus](extension-current-x-dom.md) require an
 owned-profile sign-in handoff; synthetic menus do not qualify them. owner targets:
