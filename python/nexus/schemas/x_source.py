@@ -188,6 +188,7 @@ class XSourceCoverage(_SourceModel):
 
 class XPriorPost(_SourceModel):
     post_id: UUID
+    capture_id: UUID
     post: XSourcePost
     revision_ids: tuple[RevisionId, ...]
 
@@ -199,6 +200,27 @@ class XPriorPost(_SourceModel):
         if not set(self.post.edit_history_ids or ()) <= aliases:
             raise ValueError("prior aliases must include proved lineage")
         return self
+
+
+class XCaptureInput(_SourceModel):
+    """Frozen worker authority; it grants neither reading nor personal placement."""
+
+    capture_id: UUID
+    authorized_capture_ids: tuple[UUID, ...]
+
+    @model_validator(mode="after")
+    def validate_manifest(self) -> XCaptureInput:
+        if (
+            self.capture_id not in self.authorized_capture_ids
+            or tuple(sorted(set(self.authorized_capture_ids))) != self.authorized_capture_ids
+        ):
+            raise ValueError("capture input requires a sorted unique manifest containing its root")
+        return self
+
+
+class XAuthorThreadPayload(_SourceModel):
+    capture_input: XCaptureInput | None
+    parent_source_attempt_id: UUID | None
 
 
 class XPriorSource(_SourceModel):

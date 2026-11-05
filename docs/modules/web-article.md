@@ -48,9 +48,10 @@ by provenance.
   reference sections before the normal Python source-normalization path.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
-not fall back to generic web article capture or oEmbed. X author-thread media
-uses provider identity `author-thread:<x_author_id>:<conversation_id>`;
-captured quote posts use `post:<post_id>`. Provider billing, auth, rate-limit,
+not fall back to generic web article capture or oEmbed. logical x post identity
+and revision aliases belong to `x_source`; thread identity is proved primary
+membership, not a provider-id string. captures own immutable quoted bodies.
+provider billing, auth, rate-limit,
 timeout, and post-unavailable failures surface as their mapped API error and a
 `x_provider_failure` warning log.
 

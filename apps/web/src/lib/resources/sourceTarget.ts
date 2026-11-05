@@ -27,6 +27,18 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
   if (!url) return null;
   const query = url.searchParams;
   const route = resolvePaneRouteModel(href);
+  if (query.has("post_revision")) {
+    const revision = query.get("post_revision");
+    const attempt = query.get("source_attempt_id");
+    if (`${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH)
+      return { kind: "invalid_destination", reason: "location_too_long" };
+    if (route.id !== "media" || url.hash || query.getAll("post_revision").length !== 1 ||
+        revision === null || !/^[0-9]+$/.test(revision) ||
+        [...query.keys()].some(key => key !== "post_revision" && key !== "source_attempt_id") ||
+        attempt !== null && (query.getAll("source_attempt_id").length !== 1 || !isCanonicalUuid(attempt)))
+      return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+    return { kind: "x_post", revision_id: revision };
+  }
   const locatedQuery = ["fragment", "apparatus", "apparatus_id", "x_post", "message"].some((key) => query.has(key));
   if (route.id === "media" && query.has("source_attempt_id") && (query.has("loc") || locatedQuery || url.hash))
     return { kind: "invalid_destination", reason: "invalid_reader_destination" };

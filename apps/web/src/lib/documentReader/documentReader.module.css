@@ -240,10 +240,15 @@
 .postActions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-3);
 }
 
-.postMeta :is(button, a) {
+.postActions > [data-post-feedback] {
+  flex-basis: 100%;
+}
+
+.postMeta > p a {
   color: var(--reader-accent);
   font: inherit;
   background: none;

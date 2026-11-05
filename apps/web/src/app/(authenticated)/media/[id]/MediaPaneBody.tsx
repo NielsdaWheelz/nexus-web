@@ -98,7 +98,8 @@ import { createReaderAnnotations, locatePassage, type ReaderAnnotation } from "@
 import { AnnotationList, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { useReaderChrome } from "./chrome";
-import EmbedCard, { PostActions } from "./Embeds";
+import EmbedCard, { PostActions, PostSaveReadFailure } from "./Embeds";
+import { usePostSaveStates } from "@/lib/media/xPostSaves";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
 import type { EvidenceOpenRequest } from "./evidence/EvidenceRow";
@@ -124,8 +125,9 @@ export default function MediaPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   if (!id) throw new Error("media route requires an id");
   const attemptId = runtime.searchParams.get("source_attempt_id");
-  if (attemptId !== null && sourceTargetFromHref(runtime.href)?.kind !== "invalid_destination")
-    return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
+  const target = sourceTargetFromHref(runtime.href);
+  if (attemptId !== null && target?.kind !== "invalid_destination")
+    return <AcceptedSourcePane key={attemptId} attemptId={attemptId} postRevision={target?.kind === "x_post" ? target.revision_id : null} />;
   return <MediaRoute key={id} id={id} />;
 }
 
@@ -148,7 +150,7 @@ function FailedSource({ mediaId, code, line }: { mediaId: string; code: string |
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
-function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
+function AcceptedSourcePane({ attemptId, postRevision }: { readonly attemptId: string; readonly postRevision: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
   const visible = usePaneIsVisible();
   const speak = useActiveRegion();
@@ -177,8 +179,8 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
     },
   });
   useEffect(() => {
-    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`, { activate: false });
-  }, [result, runtime.router, settled]);
+    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}${postRevision === null ? "" : `?post_revision=${postRevision}`}`, { activate: false });
+  }, [result, runtime.router, settled, postRevision]);
   if (error !== null) {
     if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
     if (error.code === "E_IMPORT_NOT_FOUND" || error.code === "E_INVALID_REQUEST")
@@ -424,6 +426,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const viewRestoration = useReaderState(reader, (s) => s.viewRestoration);
   const navigationMode = useReaderState(reader, (s) => s.navigation.mode);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
+  const postSaves = usePostSaveStates(doc);
   useEffect(() => { forkMiss(null); }, [doc?.identity, forkMiss, runtime.visitId]);
   const articleEmbeds = doc?.kind === "text"
     ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
@@ -724,6 +727,20 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }
         return "Applied";
       }
+      if (source.location.kind === "x_post") {
+        if (doc?.kind !== "text") return "Unavailable";
+        const captureId = source.location.capture_id;
+        const units = doc.units.filter(unit => unit.xPost?.relation === "primary" && unit.xPost.owner?.capture_id === captureId);
+        if (units.length !== 1) return "Unavailable";
+        if (!context.restored) {
+          const outcome = await reader.inspect({ target: { kind: "point", point: { kind: "text", unit: units[0].id, offset: 0 } }, signal: context.signal });
+          if (outcome.kind === "Cancelled") return "Cancelled";
+          if (outcome.kind === "Unavailable") return "FailureHandled";
+        }
+        if (context.signal.aborted) return "Cancelled";
+        if (context.mayFocus()) reader.focusSource();
+        return "Applied";
+      }
       if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity, apparatus_reference_id } = source.location;
       if (locator.type === "x_capture_offsets") {
@@ -958,13 +975,14 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }}
         apparatusDestination={apparatusDestination}
         onSeekTime={transcript ? seek : undefined}
-        renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null}
+        renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} hostMediaId={id} state={postSaves} /> : null}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
           return embed ? <EmbedCard embed={embed} reader={reader} /> : null;
         }}
         before={
           <>
+            <PostSaveReadFailure state={postSaves} />
             {documentFailed && annotations.local.annotations.length ? <>
               <Fact line={{ fact: PLACEMENT_COPY.unavailable }} />
               <AnnotationList annotations={annotations.local.annotations} />

@@ -245,7 +245,10 @@ approval before calibration or the 20-run repeats.
 
 core requires no model credentials and inherits no ambient provider configuration.
 `--live-config FILE` explicitly supplies allowed api/worker provider settings as a
-json object whose values are strings or null. `provider_endpoint_overrides` is a
+json object whose values are strings or null. `x_api_base_url` selects the existing
+x http endpoint for both api and workers; a controlled responder must be reachable
+from both. pair it with a synthetic `x_api_bearer_token` for controlled checks.
+`provider_endpoint_overrides` is a
 json-encoded provider-to-https-origin map STRING, validated by the same import-light
 `provider_runtime.endpoints.normalize_endpoint_overrides` used at dispatch.
 `provider_ca_pem` is the actual pem certificate STRING, not a path. additional

@@ -22,7 +22,8 @@ import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { destinationTarget, targetOfLocator, targetOfResolution, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
-import { PostActions } from "@/app/(authenticated)/media/[id]/Embeds";
+import { PostActions, PostSaveReadFailure } from "@/app/(authenticated)/media/[id]/Embeds";
+import { usePostSaveStates } from "@/lib/media/xPostSaves";
 
 export default function CapturePaneBody() {
   const id = usePaneParam("id");
@@ -93,6 +94,7 @@ function CaptureReader({ id }: { readonly id: string }) {
     return () => { controller.abort(); stop(); };
   }, [missing, reader, store]);
   const doc = state.document.status === "ready" ? state.document.doc : null;
+  const postSaves = usePostSaveStates(doc);
   useEffect(() => {
     if (!doc) return;
     const entry = recent.snapshot?.entries.find(value => value.target.kind === "x_capture" && value.target.capture_id === id);
@@ -141,9 +143,10 @@ function CaptureReader({ id }: { readonly id: string }) {
   const arrivalFailure = arrival.failure?.title ?? null;
   useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
   return <>
+    <PostSaveReadFailure state={postSaves} />
     <DocumentReaderView reader={reader} profile={profile} isMobile={mobile} playback={null}
       decorations={annotations.decorations} onSelection={annotations.onSelection} onMarks={annotations.onMarks}
-      renderPostActions={unit => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null} />
+      renderPostActions={unit => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} hostMediaId={null} state={postSaves} /> : null} />
     {annotations.panel}{annotations.list}
     {doc?.kind === "text" ? <ResourceOutlineList scope={`capture-sources:${id}`} ariaLabel="source connections">
       {[...new Set(doc.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.fragment_id] : []))].map(fragment =>

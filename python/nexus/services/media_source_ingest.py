@@ -13,8 +13,8 @@ finds its job no longer dead. A url accept of a deduped source takes its identit
 after the viewer lock and before media/library locks (I12). The frozen removal
 fence and destination authority apply to every fresh acquisition; an append compares
 no library order. An existing own receipt only answers identity; it never retains or
-files again. Receipts share their media's lifetime: after hard teardown an old
-submission must pass its original guards before doing anything. Automatic children
+files again. Capture-input receipts survive physical teardown as acceptance facts;
+other source receipts share their media's lifetime. Automatic children
 require current parent access and preserve child removal markers.
 """
 
@@ -40,11 +40,6 @@ from nexus.db.models import (
     MediaTeardownIntent,
     ProcessingStatus,
     XArticleInspection,
-    XPostAlias,
-    XPostCapture,
-    XPostMedia,
-    XThreadPost,
-    XThreadSource,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import (
@@ -62,11 +57,11 @@ from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media_sources import (
     FromUrlOut,
     FromXCaptureOut,
-    ReplaceXCaptureOut,
     SourceAdmission,
     SourceAttemptOut,
     SourceRepairAdmission,
 )
+from nexus.schemas.x_source import XAuthorThreadPayload, XCaptureInput
 from nexus.services import libraries, library_entries, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
@@ -86,7 +81,7 @@ from nexus.services.x_identity import (
     is_x_url,
     x_article_provider_id,
 )
-from nexus.services.x_source import x_article_child_media_ids
+from nexus.services.x_source import x_article_child_media_ids, x_thread_candidates
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url, placeholder_title
 from nexus.storage.paths import get_file_extension
 
@@ -203,46 +198,16 @@ def _reusable_media(
                 )
             )
         case st.X_AUTHOR_THREAD:
-            holders = list(
-                db.scalars(
-                    select(Media)
-                    .join(XThreadSource, XThreadSource.media_id == Media.id)
-                    .join(XThreadPost, XThreadPost.thread_media_id == Media.id)
-                    .join(XPostCapture, XPostCapture.id == XThreadPost.capture_id)
-                    .join(XPostAlias, XPostAlias.post_id == XPostCapture.post_id)
-                    .where(XPostAlias.revision_id == spec.provider_target_ref)
-                    .distinct()
-                    .order_by(Media.id)
-                )
-            )
-            holders = [
-                media
-                for media in holders
-                if viewer_id is not None and can_read_media(db, viewer_id, media.id)
-            ]
+            assert viewer_id is not None and spec.provider_target_ref is not None
+            holders = x_thread_candidates(
+                db, viewer_id=viewer_id, revision_ids=(spec.provider_target_ref,)
+            )[spec.provider_target_ref]
             if len(holders) > 1:
                 raise ConflictError(
                     ApiErrorCode.E_X_IDENTITY_CONFLICT,
                     "these saved threads overlap. both were kept; repair is required.",
                 )
-            if holders:
-                return holders[0]
-            # An unpublished admission may be joined; published identity is proved
-            # membership only, never the permalink used by an old attempt.
-            return db.scalars(
-                select(Media)
-                .join(MediaSourceAttempt, MediaSourceAttempt.media_id == Media.id)
-                .where(
-                    MediaSourceAttempt.source_type == st.X_AUTHOR_THREAD,
-                    MediaSourceAttempt.provider_target_ref == spec.provider_target_ref,
-                    MediaSourceAttempt.status.in_(st.IN_FLIGHT),
-                    Media.provider == "x",
-                    text(f"media.id IN ({visible_media_ids_cte_sql()})"),
-                )
-                .params(viewer_id=viewer_id)
-                .order_by(MediaSourceAttempt.created_at, MediaSourceAttempt.id)
-                .limit(1)
-            ).one_or_none()
+            return db.get(Media, holders[0]) if holders else None
         case st.GENERIC_WEB_URL:
             # the exact re-add of a page an article already holds as its final url. an
             # article in teardown is passed over: the new one's run supersedes onto it and
@@ -339,6 +304,10 @@ def accept_url_source(
         if (sent := db.get(MediaSourceAttempt, id, with_for_update={"read": True})) is not None:
             if sent.created_by_user_id != viewer_id:
                 raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
+            if _capture_receipt_id(sent) is not None:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "attempt id already saved a captured post"
+                )
         superseded = db.execute(
             text(
                 "SELECT media_id, created_by_user_id FROM media_source_supersessions"
@@ -353,10 +322,6 @@ def accept_url_source(
             assert latest is not None
             return _from_url_out(db, latest, id).model_copy(update={"source_attempt_id": id})
         if sent is not None:
-            if sent.source_type == st.X_POST and set(sent.source_payload) == {"capture_id"}:
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT, "attempt id already saved a captured post"
-                )
             return _from_url_out(db, sent, id)
         result = _accept_url(
             db,
@@ -457,9 +422,15 @@ def _accept_url(
     request_id: str | None,
     *,
     expected_removal_revision: int | None = None,
+    capture_input: XCaptureInput | None = None,
 ) -> FromUrlOut:
     validate_requested_url(url)
     spec = url_source_spec(url)
+    if spec.source_type == st.X_AUTHOR_THREAD:
+        assert not payload
+        payload = XAuthorThreadPayload(
+            capture_input=capture_input, parent_source_attempt_id=None
+        ).model_dump(mode="json")
     if (key := _identity_key(spec)) is not None:
         sa.lock_identity(db, key)
     owned_web = False
@@ -528,6 +499,19 @@ def _accept_url(
     )
     library_entries.lock_media_rows_in_order(db, [media.id, *article_ids])
     db.refresh(media)
+    latest = sa.latest_attempt(db, media.id, lock=False)
+    if spec.source_type == st.X_AUTHOR_THREAD:
+        assert latest is not None
+        if latest.status in st.IN_FLIGHT:
+            raise ConflictError(
+                ApiErrorCode.E_SOURCE_IMPORT_ACTIVE,
+                "this source is already importing. view its import.",
+            )
+        if latest.status != st.SUCCEEDED:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "this source needs attention. view its import.",
+            )
     if library_ids is not None:
         assert expected_removal_revision is not None
         library_entries.validate_acquisition_destinations(
@@ -546,17 +530,8 @@ def _accept_url(
         db.refresh(media)
     if spec.source_type == st.YOUTUBE_VIDEO:
         _adopt_video_identity(media, spec)
-    latest = sa.latest_attempt(db, media.id, lock=False)
     if latest is not None and latest.status in st.IN_FLIGHT:
-        if (
-            spec.source_type == st.X_AUTHOR_THREAD
-            and latest.provider_target_ref != spec.provider_target_ref
-        ):
-            raise ConflictError(
-                ApiErrorCode.E_SOURCE_IMPORT_ACTIVE,
-                "Another post in this thread is being imported.",
-            )
-        return _from_url_out(db, latest, id)  # I2: join the run in flight
+        return _from_url_out(db, latest, id)  # I2: other source families join the run in flight
     if spec.source_type == st.X_AUTHOR_THREAD:
         revision_id = spec.provider_target_ref
         inspection = db.get(XArticleInspection, (media.id, revision_id))
@@ -864,7 +839,10 @@ def _admit_successor(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "pieces have no source attempt")
     _require_unpublished_document(db, media)
     payload = dict(latest.source_payload or {})
-    payload.pop("parent_source_attempt_id", None)  # a successor runs on its own
+    if latest.source_type == st.X_AUTHOR_THREAD:
+        payload["parent_source_attempt_id"] = None
+    else:
+        payload.pop("parent_source_attempt_id", None)  # a successor runs on its own
     if latest.source_type == st.PODCAST_EPISODE_TRANSCRIPT:
         from nexus.services.podcasts.transcription import reset_podcast_transcription_job
 
@@ -1085,20 +1063,21 @@ def repair_source_for_system_media(
     _admit_successor(db, media, latest, actor_id=actor_user_id, request_id=request_id)
 
 
-def _from_x_capture_out(attempt: MediaSourceAttempt) -> FromXCaptureOut:
-    """A settled acceptance survives withdrawal and physical media teardown."""
-    assert attempt.source_type == st.X_POST and attempt.status == st.SUCCEEDED
-    assert set(attempt.source_payload) == {"capture_id"}
-    capture_id = attempt.source_payload["capture_id"]
-    assert isinstance(capture_id, str)
-    return FromXCaptureOut(
-        import_ref=format_import_ref(MediaImportRef(media_id=attempt.media_id)),
-        media_id=attempt.media_id,
-        source_attempt_id=attempt.id,
-        accepted_capture_id=UUID(capture_id),
-        created=attempt.attempt_no == 1,
-        processing_status=ProcessingStatus.ready_for_reading,
-    )
+def _capture_receipt_id(attempt: MediaSourceAttempt) -> UUID | None:
+    if attempt.source_type == st.X_AUTHOR_THREAD:
+        source = XAuthorThreadPayload.model_validate_json(json.dumps(attempt.source_payload))
+        return source.capture_input.capture_id if source.capture_input is not None else None
+    if (
+        attempt.source_type == st.X_POST
+        and attempt.status == st.SUCCEEDED
+        and attempt.job_id is None
+        and attempt.finished_at is not None
+        and set(attempt.source_payload) == {"capture_id"}
+    ):
+        capture_id = attempt.source_payload["capture_id"]
+        assert isinstance(capture_id, str)
+        return UUID(capture_id)
+    return None
 
 
 def accept_x_capture(
@@ -1109,204 +1088,48 @@ def accept_x_capture(
     capture_id: UUID,
     expected_removal_revision: int,
     destinations: list[UUID],
+    request_id: str | None,
 ) -> FromXCaptureOut:
-    """Save retained complete evidence with one settled attempt; replay never refiles."""
-    from nexus.schemas.x_source import XCompletePostCapture
-    from nexus.services.reader_publication import read_publication_generation
-    from nexus.services.resource_grants import media_audience_account_ids
+    """Admit thread acquisition with frozen evidence; replay never files or restarts work."""
     from nexus.services.x_ingest import capture_manifest, lock_x_capture_revisions
-    from nexus.services.x_source import (
-        admit_x_captures_for_accounts,
-        readable_x_capture_ids_sql,
-        require_readable_x_capture,
-    )
+    from nexus.services.x_source import readable_x_capture_ids_sql, require_readable_x_capture
 
     def admit() -> FromXCaptureOut:
         users.lock_viewer(db, viewer_id)
         sa.lock_identity(db, f"attempt:{id}")
-        sent = db.get(MediaSourceAttempt, id)
+        sent = db.get(MediaSourceAttempt, id, with_for_update={"read": True})
         if sent is not None:
-            if (
-                sent.created_by_user_id != viewer_id
-                or sent.source_type != st.X_POST
-                or sent.source_payload != {"capture_id": str(capture_id)}
-            ):
+            if sent.created_by_user_id != viewer_id or _capture_receipt_id(sent) != capture_id:
                 raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "attempt id is taken")
-            return _from_x_capture_out(sent)
+            return FromXCaptureOut(source_attempt_id=sent.id, media_id=sent.media_id)
+        if sa.superseding_media_id(db, source_attempt_id=id) is not None:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "attempt id is taken")
         capture = require_readable_x_capture(db, viewer_id=viewer_id, capture_id=capture_id)
-        if capture.payload["kind"] != "complete_post":
-            raise ConflictError(ApiErrorCode.E_X_CAPTURE_INCOMPLETE, "full post required to save")
-        payload = XCompletePostCapture.model_validate_json(json.dumps(capture.payload))
         lock_x_capture_revisions(db, revisions={capture.source_revision_id})
-        authorized_manifest = sorted(
-            set(db.scalars(text(readable_x_capture_ids_sql()), {"viewer_id": viewer_id}))
-            & capture_manifest(db, capture_ids=[capture_id])
-        )
-        binding = db.scalar(select(XPostMedia).where(XPostMedia.post_id == capture.post_id))
-        if binding is not None:
-            library_entries.lock_media_rows_in_order(db, [binding.media_id])
-            if binding.capture_id != capture_id:
-                if not can_read_media(db, viewer_id, binding.media_id):
-                    raise ConflictError(
-                        ApiErrorCode.E_RESOURCE_CONFLICT,
-                        "another captured version is already saved",
-                    )
-                raise ConflictError(
-                    ApiErrorCode.E_X_CAPTURE_DIFFERENT,
-                    "another captured version is already saved",
-                    details={
-                        "media_id": str(binding.media_id),
-                        "capture_id": str(binding.capture_id),
-                        "reader_generation": read_publication_generation(
-                            db, media_id=binding.media_id
-                        ),
-                    },
-                )
-            media = db.get(Media, binding.media_id)
-            assert media is not None
-        else:
-            media = Media(
-                id=new_uuid7(),
-                kind="web_article",
-                title=payload.content.text[:120] or "x post",
-                provider="x",
-                created_by_user_id=viewer_id,
-                canonical_url=None,
-                canonical_source_url=canonical_x_post_url(capture.source_revision_id),
-                processing_status=ProcessingStatus.ready_for_reading,
-            )
-            db.add(media)
-            db.flush()
-            db.add(
-                XPostMedia(
-                    id=new_uuid7(),
-                    media_id=media.id,
-                    post_id=capture.post_id,
-                    capture_id=capture.id,
-                )
-            )
-            ensure_reader_publication(db, media_id=media.id)
-        library_entries.validate_acquisition_destinations(
+        authorized = {capture_id}
+        if capture.payload["kind"] == "complete_post":
+            authorized = set(
+                db.scalars(text(readable_x_capture_ids_sql()), {"viewer_id": viewer_id})
+            ) & capture_manifest(db, capture_ids=[capture_id])
+        result = _accept_url(
             db,
-            viewer_id=viewer_id,
+            viewer_id,
+            id,
+            canonical_x_post_url(capture.source_revision_id),
+            destinations,
+            {},
+            request_id,
             expected_removal_revision=expected_removal_revision,
-            library_ids=destinations,
+            capture_input=XCaptureInput(
+                capture_id=capture_id, authorized_capture_ids=tuple(sorted(authorized))
+            ),
         )
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, destinations
-        )
-        attempt = sa.create_attempt(
-            db,
-            id=id,
-            media=media,
-            actor_id=viewer_id,
-            source_type=st.X_POST,
-            requested_url=None,
-            canonical_source_url=canonical_x_post_url(capture.source_revision_id),
-            provider="x",
-            provider_target_ref=capture.source_revision_id,
-            payload={"capture_id": str(capture_id)},
-            status="succeeded",
-        )
-        admit_x_captures_for_accounts(
-            db,
-            account_ids=media_audience_account_ids(db, media_ids=[media.id]),
-            capture_ids=authorized_manifest,
-        )
-        from nexus.services import contributor_taxonomy as taxonomy
-        from nexus.services.contributor_writes import MediaTarget
-        from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
+        shared_viewers = db.scalars(
+            text("SELECT DISTINCT user_id FROM memberships WHERE library_id=ANY(:ids)"),
+            {"ids": destinations},
+        ).all()
+        projection.refresh_viewer_contributors(db, [viewer_id, *shared_viewers])
+        record_input_change(db, owners=(f"media:{result.media_id}",))
+        return FromXCaptureOut(source_attempt_id=result.source_attempt_id, media_id=result.media_id)
 
-        author = payload.content.author
-        credits, _truncated = taxonomy.build_observation(
-            {
-                "author": [
-                    taxonomy.RawCreditEntry(
-                        credited_name=author.name,
-                        identity_claims=(taxonomy.RawIdentityClaim("x_user", author.id),),
-                    )
-                ]
-            }
-        )
-        apply_observed_role_slices_in_current_transaction(
-            db, target=MediaTarget(media.id), observation=credits, source="x_api_post"
-        )
-        projection.refresh(db, "media", [media.id])
-        return _from_x_capture_out(attempt)
-
-    return retry_serializable(db, "accept_x_capture", admit)
-
-
-def replace_x_capture(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    capture_id: UUID,
-    expected_reader_generation: int,
-) -> ReplaceXCaptureOut:
-    from nexus.schemas.x_source import XCompletePostCapture
-    from nexus.services.reader_publication import (
-        advance_reader_publications,
-        read_publication_generation,
-    )
-    from nexus.services.resource_grants import (
-        extend_public_media_capture_manifests,
-        media_audience_account_ids,
-    )
-    from nexus.services.x_ingest import capture_manifest, lock_x_capture_revisions
-    from nexus.services.x_source import (
-        admit_x_captures_for_accounts,
-        readable_x_capture_ids_sql,
-        require_readable_x_capture,
-    )
-
-    def replace() -> ReplaceXCaptureOut:
-        users.lock_viewer(db, viewer_id)
-        capture = require_readable_x_capture(db, viewer_id=viewer_id, capture_id=capture_id)
-        lock_x_capture_revisions(db, revisions={capture.source_revision_id})
-        authorized_manifest = sorted(
-            set(db.scalars(text(readable_x_capture_ids_sql()), {"viewer_id": viewer_id}))
-            & capture_manifest(db, capture_ids=[capture_id])
-        )
-        media = _owned_media(db, viewer_id, media_id)
-        binding = db.scalar(select(XPostMedia).where(XPostMedia.media_id == media_id))
-        if binding is None or binding.post_id != capture.post_id:
-            raise ConflictError(
-                ApiErrorCode.E_X_IDENTITY_CONFLICT, "capture belongs to a different post"
-            )
-        if capture.payload["kind"] != "complete_post":
-            raise ConflictError(ApiErrorCode.E_X_CAPTURE_INCOMPLETE, "full post required to save")
-        generation = read_publication_generation(db, media_id=media_id)
-        assert generation is not None
-        if binding.capture_id != capture_id:
-            if generation != expected_reader_generation:
-                raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "saved post changed")
-            from nexus.services.consumption.reader_cursor import (
-                capture_x_cursor_remap,
-                remap_x_cursors,
-            )
-
-            cursor_plan = capture_x_cursor_remap(db, media_ids=[media_id])
-            binding.capture_id = capture_id
-            payload = XCompletePostCapture.model_validate_json(json.dumps(capture.payload))
-            media.title = payload.content.text[:120] or "x post"
-            media.description = payload.content.text[:2000]
-            media.canonical_source_url = canonical_x_post_url(capture.source_revision_id)
-            db.flush()
-            remap_x_cursors(db, snapshots=cursor_plan)
-            advance_reader_publications(db, media_ids=[media_id])
-            generation += 1
-            admit_x_captures_for_accounts(
-                db,
-                account_ids=media_audience_account_ids(db, media_ids=[media_id]),
-                capture_ids=authorized_manifest,
-            )
-            extend_public_media_capture_manifests(
-                db, media_id=media_id, capture_ids=authorized_manifest
-            )
-        return ReplaceXCaptureOut(
-            media_id=media_id, capture_id=capture_id, reader_generation=generation
-        )
-
-    return retry_serializable(db, "replace_x_capture", replace)
+    return retry_serializable(db, "accept_x_capture", admit, retries=6)

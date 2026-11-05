@@ -657,19 +657,6 @@ def _capture_units(
                 else ("unavailable" if context.outcome == "unavailable" else "not_captured"),
             )
         )
-    saved_media_id = (
-        db.scalar(
-            text("SELECT media_id FROM x_post_media WHERE capture_id=:id"), {"id": capture_id}
-        )
-        if viewer_id is not None
-        else None
-    )
-    if (
-        saved_media_id is not None
-        and viewer_id is not None
-        and not can_read_media(db, viewer_id, saved_media_id)
-    ):
-        saved_media_id = None
     metadata = ReaderXPostOut(
         logical_post_id=row.logical_post_id,
         source_revision_id=row.source_revision_id,
@@ -685,7 +672,6 @@ def _capture_units(
         parent_source_url=parent_source_url,
         parent_title=parent_title,
         capture_kind=payload["kind"],
-        saved_media_id=saved_media_id,
         created_at=created_at,
         is_edited=row.edit_history_ids is not None and len(row.edit_history_ids) > 1,
         availability=row.availability,
