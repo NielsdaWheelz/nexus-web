@@ -85,13 +85,14 @@ function useTranscriptPlayback(mediaId: string, reader: Reader, expectedKey: str
   const { state } = usePlayerSession();
   const { positionMs } = usePlayerTimeline();
   const doc = useReaderState(reader, (view) => view.document.status === "ready" ? view.document.doc : null);
-  const loaded = state.kind === "Loaded" && state.source.kind === "Episode" && state.source.descriptor.media_id === mediaId;
+  const loaded = state.kind === "Loaded" && state.source.descriptor.media_id === mediaId;
   const unit = loaded && !state.playbackFailed && doc?.kind === "text" && doc.format === "transcript"
     && (expectedKey === null || doc.transcriptNavigation?.key === expectedKey)
     ? transcriptUnitAtTime(doc.units, positionMs) : null;
   const identity = unit !== null && doc !== null ? doc.identity : null;
   const unitId = unit?.id ?? null;
-  const playback = useMemo(() => identity !== null && unitId !== null ? { identity, unit: unitId } : null, [identity, unitId]);
+  const warm = loaded && !state.playbackFailed && (state.phase === "Playing" || state.phase === "Buffering");
+  const playback = useMemo(() => identity !== null && unitId !== null ? { identity, unit: unitId, warm } : null, [identity, unitId, warm]);
   return { loaded, playback };
 }
 

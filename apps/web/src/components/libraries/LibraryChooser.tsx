@@ -9,7 +9,7 @@ import { ControlContents } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
 import collection from "@/components/ui/Collection.module.css";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
-import { libraryNameError } from "@/lib/libraries/views";
+import { compareLibraryNames, libraryNameError } from "@/lib/libraries/views";
 import styles from "./LibraryChooser.module.css";
 
 type Membership = { readonly included: number; readonly total: number };
@@ -36,11 +36,6 @@ export interface ChooserCreation {
   readonly onCreate: (name: string) => boolean;
 }
 
-export function compareLibraryNames(a: { id: string; name: string }, b: { id: string; name: string }) {
-  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
-    || (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id.localeCompare(b.id));
-}
-
 function membership(value: Membership | null, kind: "Confirmed" | "Chosen"): string {
   if (value === null) return kind === "Confirmed" ? "membership unknown" : "destination unknown";
   if (value.total === 1) return kind === "Confirmed"
@@ -65,7 +60,7 @@ function progress(row: ChooserRow): string | null {
  * is the owner's read; a command's outcome speaks where its owner raises it. A create row its owner
  * gates stands disabled with the reason. */
 export default function LibraryChooser({
-  context, membershipKind, rows, onToggle, loading, summary, failure, create, empty, scrollRef,
+  context, membershipKind, rows, onToggle, loading, summary, failure, create, empty, scrollRef, alwaysIncludesAll = false,
   label = create === null ? "search libraries" : "search or create a library",
 }: {
   readonly context: string;
@@ -79,6 +74,7 @@ export default function LibraryChooser({
   readonly failure?: ReactNode;
   readonly create: ChooserCreation | null;
   readonly empty: string;
+  readonly alwaysIncludesAll?: boolean;
   readonly label?: string;
 }) {
   const base = useId();
@@ -162,6 +158,11 @@ export default function LibraryChooser({
       {shownFailure ? <div className={styles.region}>{shownFailure}</div> : null}
       {loading && rows.length === 0 && !shownFailure ? <div className={styles.ruling}><Ruling /></div> : null}
       <div ref={navigation.listRef} {...navigation.listProps} className={collection.compactViewport}>
+        {alwaysIncludesAll ? <div role="option" aria-disabled="true" aria-selected={false}
+          aria-label="All, always included" className={collection.row} data-selected>
+          <span className={collection.content}><span>All</span><span className={collection.detail} aria-hidden="true">always</span></span>
+          <Icon.Check className={collection.adornment} size={16} aria-hidden="true" />
+        </div> : null}
         {matching.map(row => {
           const binding = navigation.optionProps(row.id);
           const count = membershipKind === "Confirmed" ? row.confirmed : row.intended;

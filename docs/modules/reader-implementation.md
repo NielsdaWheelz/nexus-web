@@ -120,6 +120,18 @@ owner. the highlight module owns the capture and merge contract.
 
 ### source-backed pieces
 
+ordinary web articles expose one `opening` section when retained routine text
+precedes their first reading section. navigation derives its continuous prefix
+and rich cuts without changing source text or authored headings. heading-free
+articles keep their start command. contents, section navigation and find share
+the generated section; public contents follows a nonempty toc rather than format.
+
+section label provenance distinguishes source headings/publisher navigation from
+inferred/generated wording. only source-backed labels prefill a fresh manual work
+title or independently ground discovery's printed-title claim. literal selected
+text still grounds titles and incipits. discovery derives provenance from its
+fenced navigation proof; frozen job inputs and accepted work titles stay intact.
+
 piece commands choose a title and proved source sections. discovery supplies an
 independence verdict, source-grounded title, contributors, evidence and uncertainty;
 literary examples guide that judgment without becoming stored classifications.
@@ -200,10 +212,13 @@ chapter label refresh preserves captured scope; changed identity/interval/extent
 body replacement clears scoped search. whole find retains query, active result and
 placement across navigation-only refresh without reveal.
 
-hosts pass `playback: {identity, unit} | null`. the generic reader imports no player.
-the hosted binding observes the engine clock, sends only changed covered cues and
-marks the existing timestamp with `aria-current="time"` plus an inset gutter mark.
-pause/buffering retains confirmed time; errors, gaps or another source clear it.
+hosts pass `playback: {identity, unit, warm} | null`. the generic reader imports no
+player. the hosted binding sends only changed covered cues or warmth, never ticks,
+and marks the timestamp with `aria-current="time"` plus an inset gutter mark.
+playing/buffering uses `--reader-accent`; paused/ended withdraws to
+`--reader-text-secondary`, using the existing 80ms/600ms tokens. reduced motion
+removes transitions. the reader profile owns these colors independently of app
+room. failed sound, gaps or another source clear the cue; progress recovery does not.
 ticks never scroll, focus, change selection, write progress or reveal mobile chrome.
 `show playback position` inspects once with a return spot. reader navigation and
 deep links inspect only; explicit transcript timestamps adopt reading position and
@@ -535,8 +550,9 @@ through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;
 activation succeeds only for `Shown`. `FindSource.href(at)` projects immutable
 canonical targets through the host; standalone hosts return null. named-result
 activation validates the exact row and computation/source before local reveal or
-workspace dispatch. find matches and contents entries fork by shift alone; player
-chapter menus expose “open in new pane”.
+workspace dispatch. find matches and contents entries fork by shift alone. a
+player chapter row always seeks; its named `read from here` command opens the
+transcript, and shift forks that reading destination.
 `inspect({target, signal?})` links external
 abort to one navigation request. pdf match page arrival, canvas/text-layer
 readiness and match positioning form one request with the transient

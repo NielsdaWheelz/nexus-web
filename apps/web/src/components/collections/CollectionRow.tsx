@@ -15,7 +15,7 @@ import IndexBibliography from "@/components/resources/IndexBibliography";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceRow from "@/components/ui/ResourceRow";
-import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ContextualActionMenu, { type ContextActionSection } from "@/components/resources/ContextualActionMenu";
 import type { CollectionContext, CollectionRowView } from "@/lib/collections/types";
 import { collectionActivityText } from "./collectionRowFormatting";
@@ -45,7 +45,7 @@ function renderContext(context: CollectionContext): ReactNode {
 export default function CollectionRow({
   row, as = "li", primaryControl, occurrenceActions, actionFocus: suppliedActionFocus, afterRemoval,
   compactPrimaryControl = false, rowActionsAvailable = true, attention: suppliedAttention,
-  listPosition,
+  listPosition, containingPodcastId = null,
 }: {
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
@@ -57,6 +57,7 @@ export default function CollectionRow({
   readonly rowActionsAvailable?: boolean;
   readonly attention?: string;
   readonly listPosition?: { readonly index: number; readonly count: number };
+  readonly containingPodcastId?: string | null;
 }) {
   const parsed = row.resourceRef === null ? null : parseResourceRef(row.resourceRef);
   // justify-defect: a nonnull collection ref identifies the displayed canonical resource.
@@ -120,8 +121,8 @@ export default function CollectionRow({
     </>}
   /> : null;
   const metadata = <span className={styles.supportLine}>
-    {media ? <MediaIdentity subject={media.subject} returnFocus={returnFocus} /> : <IndexBibliography
-      contributors={row.contributors} originalPublishedDate={row.publicationDate} returnFocus={returnFocus}
+    {media ? <MediaIdentity subject={media.subject} returnFocus={returnFocus} containingPodcastId={containingPodcastId} /> : <IndexBibliography
+      show={null} contributors={row.contributors} originalPublishedDate={row.publicationDate} returnFocus={returnFocus}
     />}
     {row.context !== null ? <span className={styles.context}>{renderContext(row.context)}</span> : null}
   </span>;
@@ -144,7 +145,7 @@ export default function CollectionRow({
       {title}
     </ResourceIndexTitle>}
     content={content}
-    leadingVisual={row.artwork !== undefined ? <PodcastRowArtwork key={row.artwork.imageUrl} title={row.title.text} imageUrl={row.artwork.imageUrl} /> : undefined}
+    leadingVisual={row.artwork !== undefined ? <Artwork title={row.title.text} source={remoteArtwork(row.artwork.imageUrl)} size={44} /> : undefined}
     controls={<>
       {primaryControl ? <span ref={primaryControlRef} className={compactPrimaryControl ? styles.compactPrimaryControl : undefined}
         data-row-primary-control="" data-row-compact-primary-control={compactPrimaryControl ? "" : undefined}>{primaryControl}</span> : null}

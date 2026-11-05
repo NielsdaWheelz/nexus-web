@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** Only the short fact is live; controls and disclosure never enter the live region. */
-export function Announcement({ text, level, deferred = false, occurrence, onPublish }: {
-  text: string; level: "None" | "Polite" | "Assertive"; deferred?: boolean; occurrence?: object; onPublish?: () => void;
+export function Announcement({ text, level, deferred = false, occurrence, onPublish, label }: {
+  text: string; level: "None" | "Polite" | "Assertive"; deferred?: boolean; occurrence?: object;
+  onPublish?: (occurrence: object) => void; label?: string;
 }) {
   // A new local occurrence keeps the live region empty for a rendered frame.
   const [spoken, setSpoken] = useState<{ text: string; occurrence?: object }>({ text: "" });
@@ -29,17 +30,24 @@ export function Announcement({ text, level, deferred = false, occurrence, onPubl
     }
     let publication: number | null = null;
     const empty = requestAnimationFrame(() => {
-      publication = requestAnimationFrame(() => { delivered.current = occurrence ?? null; setSpoken(next); publish.current?.(); });
+      publication = requestAnimationFrame(() => { setSpoken(next); });
     });
     return () => {
       cancelAnimationFrame(empty);
       if (publication !== null) cancelAnimationFrame(publication);
     };
   }, [text, level, deferred, occurrence]);
+  useLayoutEffect(() => {
+    if (deferred || level === "None" || occurrence === undefined || spoken.occurrence !== occurrence ||
+      spoken.text !== text || delivered.current === occurrence) return;
+    delivered.current = occurrence;
+    publish.current?.(occurrence);
+  }, [spoken, text, level, deferred, occurrence]);
   if (level === "None") return null;
   return <span
     className="sr-only"
     role={level === "Assertive" ? "alert" : "status"}
+    aria-label={label}
     aria-live={deferred ? "off" : level === "Assertive" ? "assertive" : "polite"}
     aria-atomic="true"
   >{occurrence !== undefined && spoken.occurrence !== occurrence ? "" : spoken.text}</span>;

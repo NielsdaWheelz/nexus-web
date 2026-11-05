@@ -357,7 +357,8 @@ def read_source_attempt(
     Visibility belongs to the current media, not the attempt's original actor: a
     source admission may legitimately join another actor's active run. Reads neither
     file destinations nor restart work. Settlement follows the current destination's
-    latest source attempt: a retry or refresh may still find a different holder.
+    latest source attempt: terminal or stopped at its exact dead job. This says
+    nothing about usability; explicit repair, retry or refresh can reopen identity work.
     """
     media_id = db.scalar(
         text("SELECT media_id FROM media_source_supersessions WHERE source_attempt_id = :id"),
@@ -376,7 +377,13 @@ def read_source_attempt(
         import_ref=format_import_ref(MediaImportRef(media_id=media_id)),
         media_id=media_id,
         source_attempt_id=source_attempt_id,
-        settled=latest.status not in st.IN_FLIGHT,
+        settled=latest.status not in st.IN_FLIGHT
+        or bool(
+            db.scalar(
+                text(f"SELECT {sa.source_repairable_sql('m')} FROM media m WHERE m.id = :id"),
+                {"id": media_id},
+            )
+        ),
     )
 
 

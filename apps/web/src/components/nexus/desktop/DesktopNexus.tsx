@@ -13,6 +13,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import collection from "@/components/ui/Collection.module.css";
 import type { NexusGroup, NexusRow } from "@/lib/nexus/model";
 import { ARRIVAL_ONSET_MS } from "@/lib/nexus/policy";
+import { flattenedPaste } from "@/lib/nexus/query";
 import type { ResourceItem } from "@/lib/resources/items";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import { cx } from "@/lib/ui/cx";
@@ -43,7 +44,7 @@ function count(n: number, noun: string): string {
 export default function DesktopNexus({ controller }: { controller: NexusController }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const workflowRef = useRef<HTMLDivElement>(null);
-  const addBody = useRef<HTMLElement>(null);
+  const importBody = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   /** The query's text selection when the rail opened; the rail's exit restores it. */
@@ -257,6 +258,10 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
           }}
           onBlur={() => setInputFocused(false)}
           onChange={(event) => controller.setQuery(event.currentTarget.value)}
+          onPaste={(event) => {
+            const value = flattenedPaste(event);
+            if (value !== null) controller.setQuery(value);
+          }}
           onCompositionStart={() => {
             composing.current = true;
             controller.setComposing(true);
@@ -364,7 +369,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
       scope="Nexus"
       onDismiss={controller.escape}
       label={controller.dialogLabel}
-      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Add" ? addBody : workflowRef}
+      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Import" ? importBody : workflowRef}
       initialFocus={controller.initialFocus}
       skipReturnFocus={controller.suppressReturnFocus}
       returnFocusTo={controller.returnFocusTo}
@@ -377,7 +382,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
         root
       ) : (
         <div ref={workflowRef} className={styles.workflow}>
-          <NexusPages scrollRef={addBody} controller={controller} mobile={false} />
+          <NexusPages scrollRef={importBody} controller={controller} mobile={false} />
         </div>
       )}
     </ModalFrame>

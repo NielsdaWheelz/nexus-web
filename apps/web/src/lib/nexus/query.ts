@@ -1,14 +1,14 @@
 // The Nexus input grammar: raw text becomes one typed intent plus the owned-search query.
+import type { ClipboardEvent } from "react";
 import * as Icon from "@/lib/ui/icons";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import { extractUrls } from "@/lib/extractUrls";
+import { extractLinks } from "@/lib/extractLinks";
 import { browseHref } from "@/lib/browse/query";
-import { DESTINATIONS, getDestination, type DestinationId } from "@/lib/navigation/destinations";
+import { DESTINATIONS, type DestinationId } from "@/lib/navigation/destinations";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { parseSearchInput } from "@/lib/search/parseSearchInput";
 import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { searchHref } from "@/lib/search/searchParams";
-import { MAX_ADD_ITEMS, parseAddUrlList } from "./addInput";
 import type { NexusAction, NexusCommandId } from "./model";
 
 export type BrowseKind = "WebArticle" | "Podcast" | "Video" | "Epub";
@@ -53,12 +53,7 @@ export const NEXUS_COMMANDS: Record<
   "Nexus.Quick.Import": {
     label: "import", aliases: ["/i"], argumentLabel: "links", icon: Icon.Upload,
     keywords: ["add", "import", "url", "file"],
-    action: (argument) => parseAddUrlList(argument).cells.length > MAX_ADD_ITEMS
-      ? { kind: "Unavailable", reason: `add up to ${MAX_ADD_ITEMS} items at a time` }
-      : { kind: "Available", target: {
-        kind: "OpenAdd",
-        seed: { kind: "Content", initialDestinations: [], ...(argument ? { initialUrlDraft: argument } : {}) },
-      } },
+    action: (argument) => ({ kind: "Available", target: { kind: "OpenImport", text: argument } }),
   },
   "Nexus.Quick.Browse": {
     label: "browse…", aliases: ["/b"], argumentLabel: "query", icon: Icon.Browse,
@@ -75,7 +70,8 @@ export type NexusIntent =
   | { readonly kind: "ChooseCreate" }
   | { readonly kind: "Destination"; readonly id: DestinationId }
   | { readonly kind: "Resource"; readonly ref: string }
-  | { readonly kind: "ImportUrl"; readonly url: string };
+  /** The whole input is links, ready for an explicit send. */
+  | { readonly kind: "ImportLinks"; readonly links: readonly string[] };
 
 export interface NexusQuery {
   /** The input trimmed; `norm` is it lowercased. */
@@ -98,9 +94,10 @@ const BROWSE_NOUNS: Record<string, BrowseKind> = {
   book: "Epub",
 };
 
-function singleUrl(value: string): string | null {
-  const urls = extractUrls(value);
-  return urls.length === 1 && urls[0] === value ? new URL(value).toString() : null;
+/** The links, when the text is links and nothing else. */
+function wholeLinks(text: string): string[] | null {
+  const { links, rest } = extractLinks(text, "Urls");
+  return links.length > 0 && rest === "" ? links : null;
 }
 
 function parseIntent(text: string, norm: string): NexusIntent {
@@ -123,8 +120,8 @@ function parseIntent(text: string, norm: string): NexusIntent {
     if (place) return { kind: "Destination", id: place.id };
     return { kind: "Search" };
   }
-  const url = singleUrl(text);
-  if (url !== null) return { kind: "ImportUrl", url };
+  const links = wholeLinks(text);
+  if (links !== null) return { kind: "ImportLinks", links };
   const afterOne = text.replace(/^\S+/, "").trim();
   const afterTwo = text.replace(/^\S+\s+\S+/, "").trim();
   const create = /^(?:new|create)\s+(note|page|chat|library)(?:\s+.*)?$/.exec(norm);
@@ -132,10 +129,8 @@ function parseIntent(text: string, norm: string): NexusIntent {
   if (/^ask\s+\S/.test(norm)) return { kind: "Command", id: "Nexus.Quick.Chat", argument: afterOne };
   const browse = /^(?:browse|find)\s+(article|podcast|video|book)(?:\s+.*)?$/.exec(norm);
   if (browse) return { kind: "Browse", browseKind: BROWSE_NOUNS[browse[1]!]!, query: afterTwo };
-  if (/^(add|import)(?:\s+.*)?$/.test(norm)) {
-    const addUrl = afterOne ? singleUrl(afterOne) : "";
-    if (addUrl !== null) return { kind: "Command", id: "Nexus.Quick.Import", argument: addUrl };
-  }
+  if (/^(add|import)(?:\s+.*)?$/.test(norm) && (afterOne === "" || wholeLinks(afterOne) !== null))
+    return { kind: "Command", id: "Nexus.Quick.Import", argument: afterOne };
   return { kind: "Search" };
 }
 
@@ -164,30 +159,14 @@ export function nexusSearchAction(query: SearchQuery): NexusAction {
     : { kind: "Available", target: { kind: "InternalHref", href, labelHint: "search" } };
 }
 
-/** Prepare the parsed intent without choosing a discovered result. */
-export function nexusQueryAction(query: NexusQuery): NexusAction | null {
-  if (!query.text) return null;
-  const { intent } = query;
-  switch (intent.kind) {
-    case "Search":
-      return nexusSearchAction(query.searchQuery);
-    case "Command":
-      return NEXUS_COMMANDS[intent.id].action(intent.argument);
-    case "CommandLookup":
-      return null;
-    case "Browse":
-      return nexusBrowseAction(intent.query, intent.browseKind);
-    case "ChooseCreate":
-      return { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } };
-    case "Destination": {
-      const place = getDestination(intent.id);
-      return { kind: "Available", target: place.id === "today"
-        ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
-        : { kind: "InternalHref", href: place.href, labelHint: place.label } };
-    }
-    case "Resource":
-      return null; // The controller waits for the canonical item's exact activation.
-    case "ImportUrl":
-      return NEXUS_COMMANDS["Nexus.Quick.Import"].action(intent.url);
-  }
+/** A multi-line paste lands on one line, its breaks as spaces, since a single-line input
+ * would drop them and glue links together. Returns the input's new value, or null when the
+ * paste has no break and pastes natively. */
+export function flattenedPaste(event: ClipboardEvent<HTMLInputElement>): string | null {
+  const text = event.clipboardData.getData("text/plain");
+  if (!/[\r\n]/.test(text)) return null;
+  event.preventDefault();
+  const input = event.currentTarget;
+  input.setRangeText(text.trim().replace(/\s*[\r\n]+\s*/g, " "), input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, "end");
+  return input.value;
 }

@@ -18,7 +18,7 @@ import {
   type FocusEvent,
 } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
-import { useActiveRegion } from "@/components/feedback/stage";
+import { useActiveRegion, useTransportVerbs } from "@/components/feedback/stage";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { Line, Retract } from "@/components/feedback/stage";
@@ -30,7 +30,7 @@ import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { useChangeStamp } from "@/lib/api/changes";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
@@ -70,8 +70,8 @@ import { mediaSourceLine } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
-import { savedSourceReadLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
+import { offerLine } from "@/lib/imports/copy";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -145,14 +145,17 @@ function FailedSource({ mediaId, code, line }: { mediaId: string; code: string |
   if (offer?.kind !== "BrowserCapture") return <Fact line={line} speak={speak} />;
   const fact = code === "E_SOURCE_ACCESS_DENIED" ? "this page blocked the import."
     : code === "E_SOURCE_NOT_READABLE" ? "nexus found no readable article." : line.fact;
-  return <Fact line={{ fact, reason: "nexus capture can save it from your browser." }} speak={speak}
-    verbs={[{ label: "open source", href: offer.source_url, target: "_blank" }]} />;
+  return <Fact line={{ fact, reason: offerLine(offer) }} speak={speak}
+    verbs={[{ label: "open original", href: offer.source_url, target: "_blank" }]} />;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
 function AcceptedSourcePane({ attemptId, postRevision }: { readonly attemptId: string; readonly postRevision: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
   const visible = usePaneIsVisible();
+  const speak = useActiveRegion();
+  const transportVerbs = useTransportVerbs();
+  usePaneChrome({ titleRole: "Pointer" });
   const source = usePaneFreeServerValue({
     key: `source-attempt:${attemptId}`,
     stale: "",
@@ -161,33 +164,38 @@ function AcceptedSourcePane({ attemptId, postRevision }: { readonly attemptId: s
   const result = source.status === "ready" ? source.data : null;
   const settled = result?.settled === true;
   const error = source.status === "loading" ? null : source.error;
-  // imports' domain codes come ahead of transport: a refusal, first read or refresh, is the
-  // attempt's absence. savedSourceReadLine answers only refusals here.
-  const refusal = error !== null && !isSameSystemApiDefect(error) && transportOf(error) === "Refused" ? error : null;
-  const viewImports = { label: "view imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
+  const allImports = { label: "all imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
     activateTargetLink({ event, runtime, target: { href: "/imports" } }) };
-  // justify-polling: an accepted source has no identity event stream. Only visible, unsettled
-  // handoffs poll, on through a transport failure, which the next poll heals; a refusal ends it.
-  // A failed first read has nothing to poll and waits for its retry.
+  // justify-polling: an accepted source has no identity event stream. Only visible,
+  // unsettled handoffs poll. Failed reads stop; the existing read owner repairs them
+  // on admission, online or focus changes, or through an explicit retry.
   useIntervalPoll({
-    enabled: visible && result !== null && !settled && refusal === null,
+    enabled: visible && result !== null && !settled && error === null,
     pollIntervalMs: 2_000,
     onPoll: () => {
-      if (document.visibilityState === "visible") source.refetch();
+      // The read's busy state survives hiding and revealing its pane.
+      if (document.visibilityState === "visible" && source.status === "ready" && !source.refreshing)
+        return source.refetch().catch(() => { /* The read owner renders failures and rethrows defects. */ });
     },
   });
   useEffect(() => {
-    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}${postRevision === null ? "" : `?post_revision=${postRevision}`}`);
+    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}${postRevision === null ? "" : `?post_revision=${postRevision}`}`, { activate: false });
   }, [result, runtime.router, settled, postRevision]);
-  const speak = useActiveRegion();
-  if (refusal !== null) {
-    const domain = savedSourceReadLine(refusal);
-    return <Fact line={domain} verbs={[viewImports]} speak={speak} />;
+  if (error !== null) {
+    if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+    if (error.code === "E_IMPORT_NOT_FOUND" || error.code === "E_INVALID_REQUEST")
+      return <Fact key="refused" line={{ fact: "couldn’t find this import." }} verbs={[allImports]} speak={speak} />;
+    const transport = transportOf(error);
+    const remedy = transportVerbs(transport, { retry: {
+      label: "retry", commandKey: "retry import source", run: source.refetch,
+      busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing,
+    } });
+    return <Fact key="failed" line={TRANSPORT_LINES[transport].command("couldn’t open this import.")}
+      verbs={remedy === null ? [allImports] : [remedy[0], allImports]} speak={speak} />;
   }
-  if (source.status === "failed")
-    return <Failed error={source.error} noun="import details" retry={{ run: source.refetch, busy: source.retrying }} />;
   if (settled || source.status === "loading") return <Ruling />;
-  return <Fact line={{ fact: "importing…", reason: "it opens here when processing finishes." }} verbs={[viewImports]} speak={speak} />;
+  return <Fact key="pending" line={{ fact: "importing…", reason: "this opens by itself when it’s ready." }}
+    verbs={[allImports]} speak={speak} />;
 }
 
 function MediaRoute({ id }: { readonly id: string }) {
@@ -908,7 +916,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         <div className={styles.state}>
           {transcriptChrome}
           {captureHint}
-          {transcript ? (
+          {transcript && media.processing_status !== "suspended" ? (
             <TranscriptState media={media} holdFocus={holdTranscriptFocus} />
           ) : sourceLine ? (
             media.processing_status === "failed" ? <FailedSource mediaId={id} code={media.last_error_code} line={sourceLine} />

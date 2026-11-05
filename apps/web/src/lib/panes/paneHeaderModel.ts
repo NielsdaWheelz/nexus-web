@@ -50,6 +50,7 @@ export type PaneHeaderModel =
   | {
       readonly kind: "Resource";
       readonly title: string;
+      readonly titleRole: "Title" | "Pointer";
       readonly resource:
         | { readonly status: "Pending" }
         | PaneResourceHeaderPublication;
@@ -62,6 +63,7 @@ export type PaneHeaderModel =
 export function resolvePaneHeaderModel(input: {
   readonly route: PaneRouteHeaderContract;
   readonly title: string;
+  readonly titleRole: "Title" | "Pointer";
   readonly publication: PaneHeaderPublication | undefined;
 }): PaneHeaderModel {
   const { route, title, publication } = input;
@@ -84,6 +86,7 @@ export function resolvePaneHeaderModel(input: {
       return {
         kind: "Resource",
         title,
+        titleRole: input.titleRole,
         resource:
           publication?.kind === "Resource"
             ? publication.resource

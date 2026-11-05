@@ -1,5 +1,4 @@
 "use client";
-import * as Icon from "@/lib/ui/icons";
 
 /** The complete occurrence index renders a measured window of ordinary rows.
  * Identity follows nearby and current/focused/open occurrences.
@@ -7,23 +6,26 @@ import * as Icon from "@/lib/ui/icons";
  * success says nothing: focus lands on the moved row or a neighbour, whose position is read. */
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type MouseEvent, type KeyboardEvent } from "react";
 import Button from "@/components/ui/Button";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ActionMenu from "@/components/ui/ActionMenu";
-import MediaIdentity, { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
+import { MediaTitle } from "@/components/media/MediaIdentity";
+import IndexBibliography from "@/components/resources/IndexBibliography";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
+import * as Icon from "@/lib/ui/icons";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
 import { useLocalContent } from "@/lib/offline/localContent";
-import { queueBlock, usePlayerCommands, usePlayerSession, type QueueBlock } from "@/lib/player/playerRuntime";
+import { playingEpisode, queueBlock, usePlayerCommands, usePlayerSession, type QueueBlock } from "@/lib/player/playerRuntime";
 import { QueueCommandError, type QueueCommand, type QueueEntry, type QueueManifest, type QueueRequest } from "@/lib/player/queue";
 import { activateTargetAnchor, type TargetLinkActivationRuntime } from "@/lib/panes/targetLinkActivation";
 import { useQueueWindow } from "./useQueueWindow";
-import styles from "./Player.module.css";
+import styles from "./QueuePanel.module.css";
 
 type FocusRecovery = {
   readonly queueId: string;
@@ -63,20 +65,21 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   const future = currentIndex !== null && index > currentIndex;
   const options: ActionDescriptor[] = [];
   if (future && index > currentIndex + 1) {
-    options.push(action("next", "Play next", null, () => move(manifest.entries[currentIndex + 1]!.id)));
-    options.push(action("earlier", "Move earlier", <Icon.MoveUp />, () => move(manifest.entries[index - 1]!.id)));
+    options.push(action("next", "play next", null, () => move(manifest.entries[currentIndex + 1]!.id)));
+    options.push(action("earlier", "move earlier", <Icon.MoveUp />, () => move(manifest.entries[index - 1]!.id)));
   }
   if (future && index < manifest.entries.length - 1)
-    options.push(action("later", "Move later", <Icon.MoveDown />, () => move(manifest.entries[index + 2]?.id ?? null)));
-  if (future || failed) options.push(action("remove", "Remove from queue", null, () => {
+    options.push(action("later", "move later", <Icon.MoveDown />, () => move(manifest.entries[index + 2]?.id ?? null)));
+  if (future || failed) options.push(action("remove", "remove from queue", null, () => {
     const neighbors = [manifest.entries[index + 1], manifest.entries[index - 1]].flatMap(item => item === undefined ? [] : [item.id]);
     void dispatch({ kind: "remove", entry_id: entry.id, failed_current: failed }, neighbors);
   }));
   const returnFocus = () => rowElement(entry.id)?.querySelector<HTMLElement>('[data-queue-action="more"]')
     ?? rowElement(entry.id)?.querySelector<HTMLElement>("[data-row-focusable]") ?? null;
   return <ResourceRow density="compact" primary={{ kind: "link", href: `/media/${entry.media_id}` }}
+    leadingVisual={<Artwork size={44} title={summary === null ? "" : summary.show?.title ?? summary.title} source={remoteArtwork(summary?.show?.image_url ?? null)} />}
     title={subject === null ? title : <MediaTitle subject={subject} />}
-    content={{ kind: "Index", metadata: subject === null ? null : <MediaIdentity subject={subject} returnFocus={returnFocus} />, facts: summary === null ? null : <MediaFacts summary={summary} /> }} selected={current}
+    content={{ kind: "Index", metadata: summary === null || summary.show === null ? null : <IndexBibliography show={summary.show} contributors={summary.contributors} originalPublishedDate={null} returnFocus={returnFocus} /> }} selected={current}
     rootProps={{ "data-collection-row-id": entry.id, "aria-current": current ? "true" : undefined,
       "aria-posinset": index + 1, "aria-setsize": manifest.entries.length,
       "data-queue-initial-target": initialTarget ? "true" : undefined }}
@@ -130,7 +133,7 @@ export default function QueuePanel({ scrollport, runtime, onOpened, revealOnOpen
   const online = useRemoteAdmission() === "Ready";
   const catalog = useCatalogState();
   const downloads = useLocalContent();
-  const loadedDescriptor = state.kind === "Loaded" && state.source.kind === "Episode" ? state.source.descriptor : null;
+  const loadedDescriptor = playingEpisode(state);
   const downloadTitles = useMemo(() => new Map(downloads.index?.items.map(item => [item.media_id, item.title]) ?? []), [downloads.index]);
   const mediaIds = queueWindow.demand.map(entry => entry.media_id);
   const currentEntry = header?.current_entry_id === null || header === null ? null : entries.get(header.current_entry_id)?.entry;

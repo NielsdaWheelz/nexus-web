@@ -16,7 +16,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid5
 
@@ -45,6 +45,7 @@ from nexus.schemas.part_discovery import (
     PartDiscoveryModelOutput,
     PartDiscoveryOutput,
 )
+from nexus.schemas.reader import ReaderSectionSource
 from nexus.schemas.source_issues import MissingImage, TooManyNotes, UnresolvedNavigationTarget
 from nexus.services import library_entries
 from nexus.services.contributor_credits import load_contributor_credits_for_media
@@ -76,7 +77,7 @@ from nexus.services.reader_text_slice import (
 )
 
 JOB_KIND = "discover_document_parts"
-PROMPT_VERSION = 9
+PROMPT_VERSION = 10
 _INPUT_BYTES = 256 * 1024
 _OUTPUT_BYTES = 64 * 1024
 # justify-polling: a waiting discovery observes an existing structural publication;
@@ -120,10 +121,14 @@ every evidence quote, for any verdict, must be an exact contiguous substring of 
 section_id. use short excerpts; never add quotation marks, punctuation or ellipses, and never quote
 a label as though it appeared in text_blocks. for not_independent use evidence=[] and null title,
 title_basis, contributors and uncertainty_reason. use title_basis=printed for a source-printed
-work title; an offered owned label qualifies only when it is that work title. a section number or
-movement label alone does not establish a work title. use title_basis=incipit for an untitled work's
-evidenced opening words. title must be raw source text: preserve spelling, case, punctuation and
-literal quotation marks, but add no presentation quotes. the application quotes incipits.
+work title. source describes label provenance, not independence. Publisher, Heading and Both
+supply source navigation or heading wording; an owned label qualifies only when it is that work's
+title. InferredNumberedEntry and ImplicitOpening are generated labels, never printed-title evidence.
+a section number or movement label alone does not establish a work title. an opening range is not
+automatically an introduction or an independent work. use title_basis=incipit for an untitled work's
+evidenced opening words from its own text_blocks, not its label. title must be raw source text:
+preserve spelling, case, punctuation and literal quotation marks, but add no presentation quotes.
+the application quotes incipits.
 title_basis must be null exactly when title is null. title evidence must come from the finding's own
 selected sections, never ancestor or neighbor context. distinguish author, editor and translator;
 book editors, publisher, dates and isbn do not belong to every piece. never supply publisher credits.
@@ -139,6 +144,7 @@ class DiscoveryBatch:
     excerpts: dict[str, tuple[str, ...]]
     complete: frozenset[str]
     next_cursor: int
+    label_sources: dict[str, ReaderSectionSource]
 
 
 class _PreparationNeeded(Exception):
@@ -368,9 +374,15 @@ def _text(section: DiscoverySection, fragments: Mapping[int, str]) -> tuple[str,
     return "\n\n".join(pieces), True
 
 
-def _batch(db: Session, payload: PartDiscoveryJob) -> DiscoveryBatch:
+def _batch(db: Session, payload: PartDiscoveryJob, *, proof: NavigationProof) -> DiscoveryBatch:
     capture = payload.capture
     assert capture is not None
+    source_by_id: dict[str, ReaderSectionSource] = {
+        section.section_id: section.source for section in proof.navigation.sections
+    }
+    label_sources: dict[str, ReaderSectionSource] = {
+        section.section_id: source_by_id[section.section_id] for section in capture.sections
+    }
     fragments = dict(
         db.execute(
             text("SELECT idx,canonical_text FROM fragments WHERE media_id=:id ORDER BY idx"),
@@ -407,6 +419,7 @@ def _batch(db: Session, payload: PartDiscoveryJob) -> DiscoveryBatch:
             {
                 "section_id": item.section_id,
                 "label": item.label,
+                "source": label_sources[item.section_id],
                 "parent_section_id": item.parent_section_id,
                 "text_blocks": [_text(item, fragments)[0][:512]],
                 "text_complete": False,
@@ -417,6 +430,7 @@ def _batch(db: Session, payload: PartDiscoveryJob) -> DiscoveryBatch:
         row = {
             "section_id": section.section_id,
             "label": section.label,
+            "source": label_sources[section.section_id],
             "parent_section_id": section.parent_section_id,
             "text_blocks": list(blocks),
             "text_complete": full,
@@ -449,7 +463,12 @@ def _batch(db: Session, payload: PartDiscoveryJob) -> DiscoveryBatch:
             excerpts[cast(str, item["section_id"])] = tuple(cast(list[str], item["text_blocks"]))
         content = trial
     return DiscoveryBatch(
-        content, tuple(owned), excerpts, frozenset(complete), payload.cursor + len(owned)
+        content,
+        tuple(owned),
+        excerpts,
+        frozenset(complete),
+        payload.cursor + len(owned),
+        label_sources,
     )
 
 
@@ -524,12 +543,22 @@ def _accept(
                 )
         title = finding.title
         if title is not None:
-            if not any(
+            grounded = any(
                 title in block for section_id in ids for block in batch.excerpts[section_id]
-            ) and not (
-                finding.title_basis == "printed"
-                and any(title == offered[section_id].label for section_id in ids)
-            ):
+            )
+            if not grounded and finding.title_basis == "printed":
+                for section_id in ids:
+                    if title != offered[section_id].label:
+                        continue
+                    match batch.label_sources[section_id]:
+                        case "Publisher" | "Heading" | "Both":
+                            grounded = True
+                            break
+                        case "InferredNumberedEntry" | "ImplicitOpening":
+                            pass
+                        case unreachable:
+                            assert_never(unreachable)
+            if not grounded:
                 raise InvalidOutput("title is not grounded in the selected source")
             if finding.title_basis == "incipit":
                 title = f"“{title}”"
@@ -603,7 +632,7 @@ def _snapshot(
     if payload.cursor == len(captured.sections):
         return _finish(db, context, payload, "completed")
     try:
-        batch = _batch(db, payload)
+        batch = _batch(db, payload, proof=proof)
     except InvalidOutput:
         failure = queue.TerminalJobFailure(
             {
@@ -698,7 +727,7 @@ def _publish(
     if (
         current != payload
         or _capture(db, source, proof).fingerprint != capture.fingerprint
-        or _batch(db, payload).user_content != batch.user_content
+        or _batch(db, payload, proof=proof).user_content != batch.user_content
     ):
         return _finish(db, context, payload, "superseded")
     if not isinstance(terminal, Succeeded):

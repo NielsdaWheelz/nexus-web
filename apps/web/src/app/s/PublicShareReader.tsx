@@ -222,12 +222,12 @@ function SharedDocument({
   const identity = useReaderState(reader, (state) =>
     state.document.status === "ready" ? state.document.doc.identity : null,
   );
-  const epub = useReaderState(
+  const hasContents = useReaderState(
     reader,
     (state) =>
       state.document.status === "ready" &&
       state.document.doc.kind === "text" &&
-      state.document.doc.format === "epub",
+      state.document.doc.toc.length > 0,
   );
   const decorations = useMemo<Decorations | undefined>(
     () =>
@@ -292,10 +292,10 @@ function SharedDocument({
       ) : null}
       <main
         ref={mainRef}
-        className={epub ? `${styles.reader} ${styles.epub}` : styles.reader}
+        className={hasContents ? `${styles.reader} ${styles.withContents}` : styles.reader}
         tabIndex={-1}
       >
-        {epub ? <Contents reader={reader} /> : null}
+        {hasContents ? <Contents reader={reader} /> : null}
         <DocumentReaderView
           playback={null}
           reader={reader}

@@ -64,8 +64,12 @@ const BUNDLES = [
 const strip = (css) =>
   css.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
 const line = (css, index) => css.slice(0, index).split("\n").length;
+// a registration with an initial value defines its property wherever no declaration sets it.
 const declared = (css) =>
-  new Set([...css.matchAll(/(?:^|[;{])\s*(--[\w-]+)\s*:/gm)].map((m) => m[1]));
+  new Set([
+    ...[...css.matchAll(/(?:^|[;{])\s*(--[\w-]+)\s*:/gm)].map((m) => m[1]),
+    ...[...css.matchAll(/@property\s+(--[\w-]+)\s*\{[^}]*\binitial-value\s*:/g)].map((m) => m[1]),
+  ]);
 const cssFiles = (dir) =>
   readdirSync(dir, { recursive: true })
     .filter((f) => f.endsWith(".css"))

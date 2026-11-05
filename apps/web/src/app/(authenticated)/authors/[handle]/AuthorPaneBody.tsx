@@ -171,15 +171,16 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const complete = (works.status === "ready");
   const matches = useCallback(
     (text: string) =>
-      rows.filter((row) =>
-        matchesPaneFilterQuery(
+      rows.filter((row) => {
+        // Stored media keep queue capture's filter contract; external works match authors.
+        const subject = row.resourceActions?.kind === "Media" ? row.resourceActions.subject : null;
+        return matchesPaneFilterQuery(
           text,
-          mediaListFilterFields({
-            title: row.title.text,
-            contributors: row.contributors,
-          }),
-        ),
-      ),
+          subject?.kind === "Stored"
+            ? mediaListFilterFields(subject.summary)
+            : mediaListFilterFields({ title: row.title.text, contributors: row.contributors, show: null }),
+        );
+      }),
     [rows],
   );
   const filterRows = usePaneFilterRows({

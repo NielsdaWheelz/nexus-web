@@ -18,6 +18,7 @@ import {
 import { createPortal } from "react-dom";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import ButtonLink from "@/components/ui/ButtonLink";
+import { cx } from "@/lib/ui/cx";
 import { isInteractiveTarget } from "@/lib/ui/eventTarget";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { DocumentReaderViewProps } from "../DocumentReader";
@@ -348,12 +349,14 @@ export default function TextSurface({
   }
 
   function renderUnit(unit: TextUnit) {
+    const playback = view.playback?.identity === identity && view.playback.unit === unit.id ? view.playback : null;
     return (
           <section
             key={unit.id}
             data-reader-unit={unit.id}
-            data-playback-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "true" : undefined}
-            className={styles.unit}
+            data-playback-current={playback !== null ? "true" : undefined}
+            data-playback-warm={playback?.warm || undefined}
+            className={cx(styles.unit, format === "transcript" && styles.transcriptUnit)}
             style={{
               containIntrinsicSize: `auto ${Math.ceil(24 + unit.length * density)}px`,
             }}
@@ -374,8 +377,8 @@ export default function TextSurface({
               <p className={styles.time}>
                 {view.onSeekTime ? (
                   <ReaderLink reader={runtime} target={{ kind: "time", ms: unit.time.startMs }}
-                    aria-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "time" : undefined}
-                    aria-label={view.playback?.identity === identity && view.playback.unit === unit.id ? "playback position" : undefined}
+                    aria-current={playback !== null ? "time" : undefined}
+                    aria-label={playback !== null ? "playback position" : undefined}
                     onDefault={() => {
                       // Choosing a segment's time reads from there and seeks the player.
                       runtime.readFrom({ kind: "text", unit: unit.id, offset: 0 });
@@ -385,8 +388,8 @@ export default function TextSurface({
                     {clock(unit.time.startMs)}
                   </ReaderLink>
                 ) : (
-                  <span aria-current={view.playback?.identity === identity && view.playback.unit === unit.id ? "time" : undefined}
-                    aria-label={view.playback?.identity === identity && view.playback.unit === unit.id ? "playback position" : undefined}>{clock(unit.time.startMs)}</span>
+                  <span aria-current={playback !== null ? "time" : undefined}
+                    aria-label={playback !== null ? "playback position" : undefined}>{clock(unit.time.startMs)}</span>
                 )}
                 {unit.speaker ? ` · ${unit.speaker}` : null}
               </p>

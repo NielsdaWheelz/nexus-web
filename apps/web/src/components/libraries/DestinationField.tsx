@@ -24,7 +24,7 @@ export default function DestinationField({ context, label, emptyLabel, chosen, o
     <DestinationTrigger ref={trigger} label={label} emptyLabel={emptyLabel} chosen={chosen}
       expanded={open} disabled={disabled && !open} onToggle={() => setOpen(current => !current)} controls={{ kind: "dialog" }} />
     <PickerSurface slipContent={slipContent} active={open} onClose={() => setOpen(false)} anchor={() => trigger.current} title={label}>
-      <DestinationChooser scrollRef={slipContent} context={context} selection={{ kind: "Item", chosen }} onSet={onSet} disabled={disabled} create={create} />
+      <DestinationChooser scrollRef={slipContent} context={context} chosen={chosen} onSet={onSet} disabled={disabled} create={create} />
     </PickerSurface>
   </div>;
 }

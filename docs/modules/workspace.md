@@ -299,6 +299,11 @@ clears it. fork/history/reopen carry only settled evidence. a preview uses its
 exact sealed target and publishes only after its active provider read resolves;
 cold inactive previews use hints without contacting providers.
 
+an accepted-source media visit retains its admitted pointer hint while its attempt is
+read or waits for settlement. canonical title reconciliation still supplies navigation
+labels, but does not replace that visit's hint. replacing the handoff with the ordinary
+media route resumes settled-title publication; no second hint is stored.
+
 ## Pane Canvas
 
 `usePaneCanvas` owns desktop horizontal canvas measurement, wheel-to-horizontal
@@ -810,8 +815,7 @@ explicit acquisition action, but no
 canonical resource target before acquisition. Open/reload/play/leave Preview
 writes no Media, subscription, Library entry, job, progress, completion, or
 activity fact. Successful Add or Subscribe replaces Preview with the canonical
-owned pane after any eligible one-shot position transfer; failure leaves Preview
-and its staged destination choices intact.
+owned pane; failure leaves Preview and its staged destination choices intact.
 
 browse publishes its submitted query and inline facets as stationary query controls. its form
 retains draft/commit semantics; the shared list owns section continuation.
@@ -834,8 +838,7 @@ rules:
 
 1. a menu offers verbs on its own subject. adjacent pages are not the pane
    menu's subject.
-2. no menu or trigger exists only to carry a fork; the player chapter menu is
-   the one recorded violation ([issue](../issues/chapter-shift-changes-verb.md)).
+2. no menu or trigger exists only to carry a fork.
 3. a menu inside a pane never offers to open the pane's own subject:
    `ContextualActionMenu` omits `Open` and `OpenInNewPane` when its resource is
    the subject the pane's body publishes (`PaneChrome.resourceRef`, read through

@@ -309,13 +309,10 @@ export type ActionOutcome =
   | { readonly kind: "Transport"; readonly fact: string; readonly retry: boolean }
   | { readonly kind: "Unknown"; readonly line: Line };
 
-export function actionOutcome(id: ActionId, feedbackLabel: string, title: string, error: ApiError, rawWrite: boolean): ActionOutcome {
+export function actionOutcome(id: ActionId, feedbackLabel: string, error: ApiError, rawWrite: boolean): ActionOutcome {
   const named = `“${feedbackLabel.replace(/…$/, "")}”`;
   const fact = `couldn’t complete ${named}.`;
   const domain = (line: Line, retry = false): ActionOutcome => ({ kind: "Domain", line, retry });
-  if (id === "Playback") switch (error.code) {
-    case "E_AUDIO_UNAVAILABLE": return domain({ fact: `couldn’t play “${title}”.`, reason: "it has no audio link." });
-  }
   if (id === "LecternMembership" && error.code === "E_RESOURCE_CONFLICT")
     return domain({ fact: "couldn’t change the lectern." });
   if ((id === "RetrySource" || id === "RepairSource" || id === "RepairSearch") && error.code === "E_RESOURCE_CONFLICT")

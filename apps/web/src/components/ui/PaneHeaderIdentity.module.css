@@ -52,6 +52,13 @@
   font-variant-numeric: lining-nums tabular-nums;
 }
 
+.title[data-title-role="Pointer"] {
+  color: var(--ink-machine);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-regular);
+  letter-spacing: normal;
+}
+
 /* Credits are links: never clip a focusable one out of view; each item
    shrinks and ellipsizes on its own instead. */
 .support {

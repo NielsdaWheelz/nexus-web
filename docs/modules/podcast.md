@@ -322,16 +322,48 @@ followed-show and library-show outputs always include stored `image_url`
 (string or null), selected in their existing list queries. `presentPodcast`
 projects it into an artwork capability; suggestions omit that capability.
 rows never fetch show details or provider metadata for artwork.
-`PodcastRowArtwork` owns presentation for each source through `MediaImage` and
-the authenticated image proxy. null, pending and failed sources show initials:
-the first grapheme of each of the first two uppercased words, or `P` for an
-empty title. success hides initials even for transparent images. image and
-initials nodes stay mounted across completion, changing opacity only; source
-changes remount the artwork child while preserving the row. artwork is passive
-with empty alt text and no duplicate accessible name. image delivery retains
-original bytes and the existing private one-day cache.
-next can report cached failures through `onLoad`; readiness requires positive
-`naturalWidth`.
+`components/ui/Artwork.tsx` owns presentation for every show tile (rows, overview,
+metadata overlay, downloaded episode) through `MediaImage`: publisher urls through
+the authenticated image proxy, a downloaded episode's saved image as a local blob.
+[the app csp still blocks saved blob artwork](../issues/downloaded-artwork-blocked-by-csp.md);
+initials preserve presentation without claiming that image delivery works.
+absent, pending and failed sources show initials in one box: the
+first grapheme of each of the first two uppercased words; an empty title paints
+an empty tile. success hides initials even for transparent images. image and
+initials nodes stay mounted across completion, changing visibility only; a source
+change remounts both layers inside the same box. artwork is passive with empty
+alt text and no duplicate accessible name. image delivery retains original bytes
+and the existing private one-day cache. next can report cached failures through
+`onLoad`; readiness requires positive `naturalWidth`.
+
+episode collection indexes carry no artwork. `MediaSummaryOut.show` (`podcast_id`,
+`title`, `image_url`) is non-null exactly for episodes; the sole summary constructor
+requires the catalogue identity, independent of following or playback settings.
+indexes and live episode outline entries show linked show, ordered authors and
+the existing publication date. a matching show's own episode list passes
+`containingPodcastId` and omits only its show. same-pane outlines retain it.
+captured citations, passages and highlights gain no live show enrichment.
+
+show observations share the existing accepted-publication effect. its account/show
+title record survives loading, failure and descriptor changes. the first fresh live
+observation and changed titles record before publishing `Podcasts`; equal titles
+and catalog reads never publish it. the existing summary owner then refreshes all
+retained episodes in batches, including episodes outside the displayed selection.
+`Entries` comparison remains descriptor-keyed; transcript retry remains separate.
+there is no new polling clock or targeted invalidation cache.
+
+bibliography and filtering have separate contracts. `mediaListFilterFields` keeps
+released episode matching: title plus show in mixed indexes; title alone on the
+show's own list. authors remain visible without becoming episode filter fields.
+`playback_snapshot.py` uses the same selection semantics.
+
+saved defaults belong to the viewer/show independently of subscriptions. new
+speed choices use `0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3`. player and podcast
+form share `PlaybackRateEditor`; retained off-ladder values keep their actual
+value at shared display precision until an explicit choice. the range rests at
+the nearest stop without marking a choice. the server still accepts 0.5–3.
+nullable defaults, skip-silence capability and frozen-pair save/review are owned
+by [player](player.md). opening a form never applies or snaps its saved rate.
 
 ## Android Offline Downloads
 

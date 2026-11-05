@@ -2,7 +2,7 @@
 import { excerptTextParts } from "@nexus/authored/excerpt";
 
 import { useCallback, useRef, type ComponentProps, type ReactNode, type Ref } from "react";
-import PodcastRowArtwork from "@/components/podcasts/PodcastRowArtwork";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ResourceRow from "@/components/ui/ResourceRow";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceActions from "@/components/resources/ResourceActions";
@@ -113,7 +113,7 @@ export default function ResourceIndexRow({
       : needsKind ? [{ kind: "text", key: "identity", text: metadata.identity, href: null, date: null }, ...metadata.parts.filter(part => part.key !== "identity")] : metadata.parts;
   }
   const artwork = status === null && parsed.scheme === "podcast" && body.kind === "named" && !item.missing
-    ? <PodcastRowArtwork title={item.label} imageUrl={body.image_url} /> : undefined;
+    ? <Artwork title={item.label} source={remoteArtwork(body.image_url)} size={44} /> : undefined;
   const contributors = source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
   const unavailable = item.missing || item.activation.kind === "none";
   const attention = suppliedAttention ?? (status === null && summary?.processing_status === "failed" ? "couldn’t process this. see its metadata." : null);
@@ -121,7 +121,7 @@ export default function ResourceIndexRow({
   const menuLabel = `more actions for ${currentLabel}${attention ? `: ${attention}` : ""}`;
   const rowMetadata = presentation.kind === "Search" ? <span className={styles.metadata}>
     {unavailable ? <span className={styles.reason}>{item.missing ? "resource unavailable" : "can’t open here"}</span> : null}
-    {summary ? <MediaIdentity subject={{ kind: "Stored", summary }} returnFocus={returnFocus} /> : <IndexBibliography contributors={contributors} originalPublishedDate={null} returnFocus={returnFocus} />}
+    {summary ? <MediaIdentity subject={{ kind: "Stored", summary }} returnFocus={returnFocus} /> : <IndexBibliography show={null} contributors={contributors} originalPublishedDate={null} returnFocus={returnFocus} />}
     {parts.length ? <span className={styles.context}><ResourceMetadata parts={parts} linkSource={true} /></span> : null}
   </span> : null;
   const contextParts = metadata.parts.filter(part => part.key === "source" || (status === null && part.key === "role"));
@@ -133,7 +133,8 @@ export default function ResourceIndexRow({
   const contextMetadata = <span className={`${styles.metadata} ${styles.contextMetadata}`}>
     {status === null && contextReason ? <span className={styles.reason}>{contextReason}</span> : null}
     {contextParts.length ? <span className={styles.context}><ResourceMetadata parts={contextParts} linkSource={true} /></span> : null}
-    <IndexBibliography contributors={contextContributors} originalPublishedDate={status === null ? summary?.original_published_date ?? null : null} returnFocus={returnFocus} />
+    <IndexBibliography show={status === null ? summary?.show ?? null : null} contributors={contextContributors}
+      originalPublishedDate={status === null ? summary?.original_published_date ?? null : null} returnFocus={returnFocus} />
     {locationParts.length ? <span className={styles.context}><ResourceMetadata parts={locationParts} linkSource={true} /></span> : null}
     {status === null && summary?.part_source ? <span className={styles.context}>from {summary.part_source.title}</span> : null}
   </span>;

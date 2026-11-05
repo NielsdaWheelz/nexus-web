@@ -1,4 +1,4 @@
-# nexus capture
+# nexus extension
 
 `manifest.json` and the icons own the firefox package. the client implementation
 is `apps/web/src/extension`; `apps/web/scripts/build-extension.mjs` builds the
@@ -45,11 +45,11 @@ accept that exact normalization only when the parsed manifests are equal and
 every other member hash matches. do not modify a signed package.
 
 open the signed xpi in normal firefox, accept its declared data permissions,
-then connect to nexus and complete a disposable capture. verify persistent
+then connect to nexus and complete a disposable import. verify persistent
 signed installation; temporary debugging installation is not distribution.
 
 the [client release operator](../../README.md#android-release-distribution) owns
 versioning, unlisted signing, reviewer source, signed-installer publication and
-the persistent update/capture check for every changed package. publish the
+the persistent update/import check for every changed package. publish the
 signed xpi and its source/checksums with the paired native-client release;
 `build-extension.mjs` produces only the unsigned input.

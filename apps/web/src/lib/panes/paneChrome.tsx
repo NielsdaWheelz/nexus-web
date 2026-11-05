@@ -105,6 +105,8 @@ export type PaneHeaderEditor = { readonly feedback: ReactNode } & (
 export interface PaneChrome {
   /** Display title of the currently shown body; never canonical or writing evidence. */
   readonly displayTitle?: string;
+  /** The pending source body uses a retained visit hint as a machine pointer. */
+  readonly titleRole?: "Pointer";
   readonly editor?: PaneHeaderEditor;
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };

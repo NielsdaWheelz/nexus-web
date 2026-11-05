@@ -5,8 +5,9 @@ prod) every other request must carry it as ``X-Nexus-Internal`` (403 ``E_INTERNA
 Route-authenticated paths (a handoff code, an extension bearer, a share token) stop there;
 every other request needs a verified bearer (401 ``E_UNAUTHENTICATED``, 503
 ``E_AUTH_UNAVAILABLE``) and gets ``request.state.viewer``. The first sight of a user and token
-email in this process mirrors them (``services.bootstrap``); checkout exhaustion
-reaches the edge as 503 ``E_DATABASE_BUSY``. Other unexpected failures are 500
+email in this process mirrors them (``services.bootstrap``); bootstrap transaction
+busy and checkout exhaustion answer 503 ``E_DATABASE_BUSY`` before routing.
+Other unexpected failures are 500
 ``E_INTERNAL``. Both are retried by the next request.
 """
 
@@ -101,7 +102,12 @@ class AuthMiddleware:
                 if search_read:
                     logger.info("search.auth.bootstrap.begin", mono_ns=time.monotonic_ns())
                 await run_in_threadpool(_bootstrap, user_id, email)
-            except (DatabaseBusyError, PoolTimeout):
+            except DatabaseBusyError as exc:
+                logger.warning("db.resource_busy", exc_info=True)
+                raise ApiError(
+                    ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+                ) from exc
+            except PoolTimeout:
                 raise
             # justify-ignore-error: logged once per request; the request answers a generic 500.
             except Exception:

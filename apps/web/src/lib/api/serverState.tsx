@@ -676,7 +676,7 @@ function useServerState<D>(
           } else {
             if (!remoteAttemptAllowed()) {
               const error = localError ?? admissionRefusal();
-              update(h => ({ ...h, error: h.data === null ? error : null }));
+              update(h => ({ ...h, error: h.data === null ? error : h.error }));
               settle(error);
               current.observe = false;
               break;

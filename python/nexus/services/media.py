@@ -48,6 +48,7 @@ from nexus.schemas.media_summary import (
     MediaDurationOut,
     MediaPartSourceOut,
     MediaProcessingStatus,
+    MediaShowOut,
     MediaSummaryOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
@@ -150,7 +151,8 @@ _ROWS_SQL = f"""
          ORDER BY dead.id LIMIT 1) AS dead_index_job_id,
         mts.transcript_state, mts.transcript_coverage, mts.transcript_origin,
         pls.position_ms, pls.duration_ms AS listened_ms, pe.duration_seconds AS feed_seconds,
-        pe.media_id AS episode_media_id
+        pe.media_id AS episode_media_id,
+        show_row.id AS show_id, show_row.title AS show_title, show_row.image_url AS show_image_url
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
     LEFT JOIN native_x ON native_x.media_id=m.id
@@ -167,6 +169,7 @@ _ROWS_SQL = f"""
     LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
         AND mcis.owner_id = COALESCE(part_definition.source_media_id,m.id)
     LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
+    LEFT JOIN podcasts show_row ON show_row.id = pe.podcast_id
     LEFT JOIN podcast_listening_states pls ON pls.media_id = m.id AND pls.user_id = :viewer_id
     WHERE m.id = ANY(:media_ids)
 """
@@ -231,6 +234,12 @@ def _summaries(
             part_source=None
             if row.part_source_title is None
             else MediaPartSourceOut(title=row.part_source_title, href=row.part_source_href),
+            # justify-defect: every episode has a catalogue show; construction rejects a broken join.
+            show=MediaShowOut(
+                podcast_id=row.show_id, title=row.show_title, image_url=row.show_image_url
+            )
+            if kind == MediaKind.podcast_episode
+            else None,
             contributors=credits[media_id],
             original_published_date=row.original_published_date,
             processing_status=_status(row),
@@ -488,6 +497,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         part_source=None
         if row.part_source_title is None
         else MediaPartSourceOut(title=row.part_source_title, href=row.part_source_href),
+        show=summary.show,
         part_source_edition=None
         if row.part_version is None
         else PartSourceEditionOut(

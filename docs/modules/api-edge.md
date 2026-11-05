@@ -206,7 +206,8 @@ framework upgrades must inspect both outputs before rebasing or removing it.
   a missing or different `X-Nexus-Wire` with 426 `E_WIRE_MISMATCH` before
   routing (`auth.middleware.PUBLIC_PATHS` are exempt); maps physical checkout
   exhaustion to 503 `E_DATABASE_BUSY`, including first-sight auth bootstrap.
-  owned transaction conflicts remain 409 `E_RESOURCE_CONFLICT`. after response
+  unclaimed transaction busy remains 409 `E_RESOURCE_CONFLICT`; confirmation and
+  auth bootstrap translate their busy outcomes to 503 before this fallback. after response
   headers, errors propagate through the stream owner. it renders an exception
   nothing claimed before the response started as 500 `E_INTERNAL` with its
   request id (a client disconnect as 499); logs `http.request.completed` with
@@ -248,7 +249,7 @@ read from `wire.gen.ts` by gradle) send it on every request. It moves at most
 once between releases: the first change merged after a release that breaks that
 release's clients bumps it; later breaking changes before the next release ride
 that bump. The apk treats 426 as retryable and keeps its queues until it is
-updated; the extension shows "Update the Nexus extension to keep capturing."
+updated; the extension shows "update the nexus extension to keep importing."
 
 ## invariants
 

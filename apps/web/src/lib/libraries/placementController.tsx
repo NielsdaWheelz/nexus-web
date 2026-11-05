@@ -18,7 +18,7 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import type { ChooserRow } from "@/components/libraries/LibraryChooser";
 import type { Line } from "@/components/feedback/stage";
-import { PlacementEditor } from "@/components/libraries/PlacementOverlay";
+import PlacementEditor from "@/components/libraries/PlacementEditor";
 import PickerSurface from "@/components/ui/PickerSurface";
 import DestinationChooser from "@/components/libraries/DestinationChooser";
 import { createDestinationCreation, useDestinationCreation } from "@/components/libraries/useDestinationCreation";
@@ -35,16 +35,17 @@ import { refuseLibrary } from "@/lib/libraries/errors";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { pluralize } from "@/lib/text/pluralize";
 import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
-import type { ReturnFocusTarget } from "@/lib/ui/overlay";
+import { getModalForTarget, onOverlayStack, OverlayContext, subscribeOverlayStack, type Layer, type ReturnFocusTarget } from "@/lib/ui/overlay";
 
 export interface LibraryPlacementOpenOptions {
   readonly anchor: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget | null;
 }
-export interface LibraryPlacementSession {
+interface LibraryPlacementSession {
   readonly key: number;
   readonly targets: readonly LibraryPlacementTarget[];
   readonly options: LibraryPlacementOpenOptions;
+  readonly modal: Layer | null;
 }
 interface Change {
   unregister(): void;
@@ -406,6 +407,7 @@ interface ExternalPlacementSession {
   readonly key: number;
   readonly target: string;
   readonly options: LibraryPlacementOpenOptions;
+  readonly modal: Layer | null;
   readonly choose: (destination: LibraryDestination, sessionKey: number) => void;
   readonly pending: boolean;
 }
@@ -444,6 +446,21 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
   const [external, setExternal] = useState<ExternalPlacementSession | null>(null);
   const externalRef = useRef(external);
   externalRef.current = external;
+  useLayoutEffect(() => {
+    const captured = session ?? external;
+    if (captured === null || captured.modal === null) return;
+    const modal = captured.modal;
+    const retire = () => {
+      if (onOverlayStack(modal)) return;
+      // Retire presentation only; accepted commands and creation keep their account lifetime.
+      if (externalRef.current?.key === captured.key) externalRef.current = null;
+      setSession(current => current?.key === captured.key ? null : current);
+      setExternal(current => current?.key === captured.key ? null : current);
+    };
+    const unsubscribe = subscribeOverlayStack(retire);
+    retire();
+    return unsubscribe;
+  }, [session, external]);
   const [destinationCreation] = useState(createDestinationCreation);
   const creation = useDestinationCreation("external-media", destinationCreation);
   useLayoutEffect(() => workGuard.register({ id: "external-library-creation", scope: { kind: "account" },
@@ -457,7 +474,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       lastKey.current += 1;
       externalRef.current = null;
       setExternal(null);
-      setSession({ key: lastKey.current, targets: [...targets], options });
+      setSession({ key: lastKey.current, targets: [...targets], options, modal: getModalForTarget(options.anchor()) });
     },
     hasPendingExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target),
     hasFailedExternalCreation: target => destinationCreation.getSnapshot().pending.some(attempt => attempt.scope === target && attempt.unconfirmed > 0 && !attempt.sending),
@@ -465,7 +482,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       lastKey.current += 1;
       setSession(null);
       const next = { key: lastKey.current, target: input.target,
-        choose: input.choose, pending: input.pending, options };
+        choose: input.choose, pending: input.pending, options, modal: getModalForTarget(options.anchor()) };
       externalRef.current = next;
       setExternal(next);
     },
@@ -474,7 +491,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
       if (current?.key !== sessionKey) return;
       externalRef.current = null;
       setExternal(null);
-      setSession({ key: current.key, targets: [target], options: current.options });
+      setSession({ key: current.key, targets: [target], options: current.options, modal: current.modal });
     },
   }));
   const chooseExternal = (destination: LibraryDestination, captured: ExternalPlacementSession) => {
@@ -498,12 +515,13 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
         secondary: held.stopTracking === null ? undefined : { label: "stop tracking", commandKey: `stop:${held.id}`, run: held.stopTracking, busy: held.busy },
       })} />)}
     {creation.holds}
+    <OverlayContext.Provider value={session?.modal ?? external?.modal ?? null}>
     <PickerSurface slipContent={slipContent} active={external !== null || session !== null} title="libraries"
       focusKey={session !== null ? `stored:${session.key}` : external?.key}
       anchor={session?.options.anchor ?? external?.options.anchor ?? (() => null)}
       returnFocusFallback={session?.options.returnFocusFallback ?? external?.options.returnFocusFallback ?? undefined}
       onClose={() => { externalRef.current = null; setExternal(null); setSession(null); }}>
-      {session !== null ? <PlacementEditor scrollRef={slipContent} targets={session.targets} /> : external !== null ? <DestinationChooser scrollRef={slipContent} context={JSON.stringify([external.key, external.target])} selection={{ kind: "Item", chosen: [] }}
+      {session !== null ? <PlacementEditor scrollRef={slipContent} targets={session.targets} /> : external !== null ? <DestinationChooser scrollRef={slipContent} context={JSON.stringify([external.key, external.target])} chosen={[]}
         disabled={external.pending || controller.hasPendingExternalCreation(external.target)}
         onSet={({ destination, included }) => included && chooseExternal(destination, external)}
         create={{ available: !external.pending && !controller.hasPendingExternalCreation(external.target), pendingNames: creation.pendingNames,
@@ -518,6 +536,7 @@ export function LibraryPlacementControllerProvider({ children }: { children: Rea
           },
         }} /> : null}
     </PickerSurface>
+    </OverlayContext.Provider>
   </Context.Provider>;
 }
 

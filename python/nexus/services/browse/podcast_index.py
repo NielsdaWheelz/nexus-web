@@ -224,7 +224,6 @@ def _episode_shown(episode: ResolvedEpisode) -> dict[str, Any]:
         podcast_ref=episode.podcast_ref,
         episode_ref=episode.episode_ref,
         podcast_title=episode.podcast.title,
-        audio_href=episode.audio_url,
         duration_seconds=episode.duration_seconds,
     )
     return {

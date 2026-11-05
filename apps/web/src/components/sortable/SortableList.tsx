@@ -460,7 +460,7 @@ export default function SortableList({ items, order, renderItem, ariaLabel, busy
     };
     const loaded = (event: Event) => {
       if (event.target instanceof HTMLImageElement &&
-          event.target.parentElement?.hasAttribute("data-row-fixed-artwork")) return;
+          event.target.parentElement?.hasAttribute("data-fixed-artwork")) return;
       invalidate();
     };
     document.addEventListener("scroll", scrolled, true);

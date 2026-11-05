@@ -23,9 +23,11 @@ conversation messages retain their message layout.
 | `ResourceIndexRow.tsx` / `CollectionRow.tsx` | resource-item and collection adapters for the index shell |
 | `SearchPaneBody.tsx` local results | device-owned search rows reuse canonical type presentation without manufacturing server resource items |
 | `lib/resourceGraph/resourceRef.ts` / `lib/resources/type.ts` / `ResourceType.tsx` | canonical type vocabulary and passive row glyph/title composition |
-| `IndexBibliography.tsx` | compact observed author names and first-publication year; complete credits remain in existing metadata |
-| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance; `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
+| `IndexBibliography.tsx` | compact show, observed author names and first-publication year; complete credits remain in existing metadata |
+| `lib/media/mediaListFilter.ts` | existing title/show or title/author filter fields, independent of bibliography and aligned with queue capture |
+| `components/media/MediaIdentity.tsx` | shared index bibliography and provenance; explicit `containingPodcastId` omits only a matching show, retaining authors; `MediaFacts` renders passive consumption/remaining-time facts for row trailing cells and saved detail |
 | `ResourceOutlineRow.tsx` / `ResourceOutlineList.tsx` | outline-owned hierarchy, typed opening markers, editors and recursive lists |
+| `notes/OutlineEditorRow.tsx` | authored row chrome and media-reference bibliography through the shared summary batch; no remote occurrence lifecycle |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
 | `ResourceComposer.tsx` | chat-context and annotation admission using existing insertion primitives; no message-footer creation |
@@ -76,7 +78,7 @@ every wire key is present and snake_case; absence is null.
 | body | primary content |
 | --- | --- |
 | `named` | title/name, ordered credits and nullable live show artwork |
-| `media` | canonical `MediaSummaryOut`: title, credits, original publication, consumption and time |
+| `media` | canonical `MediaSummaryOut`: title, show, credits, original publication, consumption and time |
 | `passage` | frozen excerpt structure with selected runs in saved colour; compact or full view |
 | `prose` | literal note/message text; code preserves whitespace |
 | `images` | image count and up to three alt slots |
@@ -88,7 +90,8 @@ and search rows retain consumption facts and resource quick actions; context
 shows literal target content, source provenance and minus/overflow controls. indexes
 never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
-command primary. only shows have index artwork; episodes never do.
+command primary. only shows have resource-index artwork; episode index rows
+have none. playback bar, mini, sheet and up next display the episode’s show art.
 
 full excerpt recovery is one current outcome. a remote conflict offers retry of
 the frozen capture and a separate choice to read the current excerpt; it does not
@@ -149,8 +152,8 @@ container owns adaptation at its explicit base text size: above `32em - 1px`,
 show up to three observed author names; at or below that boundary, show the first
 and a passive omitted count. the default 15px type gives a 479px boundary;
 enlarged text compacts earlier. compact media facts remain visible and do not
-shrink or ellipsize. `IndexBibliography` owns a compact, left-aligned author/year
-group: no level grows into spare width, and names prefer their natural text width
+shrink or ellipsize. `IndexBibliography` owns a compact, left-aligned show/author/year
+group; an episode's show is one credited name, linked to its page: no level grows into spare width, and names prefer their natural text width
 or a `1em` minimum, whichever is larger. under pressure, names shrink
 proportionally toward that minimum and ellipsize individually; commas, omitted
 count, separator and year retain natural widths. those protected minima propagate
@@ -192,12 +195,22 @@ authorship; ordinary authored rows keep their authoritative local reads.
 
 outlines serve notes, pages and connections: a muted typed opening marker, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource
-ellipsis. immutable references show title, ordered authors and original publication
-in one wrapping flow. no consumption, duration, artwork or inline playback/library
+ellipsis. immutable references show title, canonical episode show, ordered authors and
+original publication in one wrapping flow. only actual live media bodies gain show
+identity; source attribution and captured evidence retain their supplied facts.
+no consumption, duration, artwork or inline playback/library
 controls mount in an outline. source/quoted attribution, machine-content marking,
 unavailable/conflict/unsaved state and operation failures remain visible.
 
 `resourceMetadata` projects bibliography separately from occurrence/source facts.
+actual episode entries put the canonical linked show before ordered author credits
+and the existing date. the same show/author spelling remains two distinct facts;
+missing fields have no separators. only a matching podcast episode list omits
+that show, through an explicit row prop; outlines in its pane retain it. indexes
+keep their existing author count/ellipsis allocation; outlines wrap the full list.
+authored reference links join the existing text/controls model: select item then
+escape admits the read-only controls host, where native tab reaches bibliography
+links. this preserves firefox focus without a separate link-input owner.
 `MediaIdentity`, `ResourceBody` and `ResourceMetadata` share
 formatting without owning family geometry. publication keeps year/month/day
 precision in semantic time markup. omit unknown facts and their separators; use
@@ -228,10 +241,17 @@ tightens the first two. `MediaIdentity` and `IndexBibliography` compose inside t
 standalone detail uses full bibliography with `MediaFacts`.
 
 live media bodies use one existing summary batch. adapters retain supplied live
-summaries through `MediaSummaryProvider`: acknowledged facts survive refresh
+summaries or media ids through `MediaSummaryProvider`: acknowledged facts survive refresh
 failure; null resolution means unavailable. historical bodies remain captured,
 with no live retention/subscription or artwork enrichment. no per-row detail fetch
-or new refresh clock exists. disappearance during hydration removes the old identity
+or new refresh clock exists. `Podcasts` invalidates retained summaries in the
+existing batch owner; this adds no new ordering/filter semantics. authored
+media-reference portals
+share the wrapping media bibliography projection and retain ids in the same batch.
+acknowledged live facts (including unavailable results) survive admission loss; only
+cold offline references without a live observation use the compatible saved catalog.
+no live failure substitutes saved metadata. non-episode portal bibliography is
+unchanged. disappearance during hydration removes the old identity
 and activation together. `MediaIdentity` and `ResourceMetadata` render canonical
 bibliography once; index consumption composes separately. occurrence, location,
 evidence and relationship facts keep their own identity.

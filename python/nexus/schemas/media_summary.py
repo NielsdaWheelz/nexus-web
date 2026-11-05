@@ -40,6 +40,17 @@ class MediaPartSourceOut(BaseModel):
     href: str | None
 
 
+class MediaShowOut(BaseModel):
+    """The canonical show of an episode. ``MediaSummaryOut.show`` is non-null exactly
+    when ``media_kind`` is ``podcast_episode``; missing episode identity is a defect."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    podcast_id: UUID
+    title: str
+    image_url: str | None
+
+
 class MediaSummaryOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +58,7 @@ class MediaSummaryOut(BaseModel):
     media_kind: MediaKind
     title: str
     part_source: MediaPartSourceOut | None
+    show: MediaShowOut | None
     contributors: list[ContributorCreditOut]
     original_published_date: PublicationDate | None
     processing_status: MediaProcessingStatus

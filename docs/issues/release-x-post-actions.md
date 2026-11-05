@@ -1,8 +1,8 @@
 # release quoted-post actions
 
-release the changed api and web together. wire revision stays 18: the last paired
-android release used 17, and the first subsequent breaking change already raised
-it. build current consumer packages through `./scripts/test`; reject older wire.
+release the changed api and web together. retain wire revision 19 from current
+main; this change shares that release's existing bump. build current consumer
+packages through `./scripts/test`; reject older wire.
 
 use the normal release controller's stopped-writer migration and verified backup
 preflight. the new migration converts known empty/parent-only author-thread input

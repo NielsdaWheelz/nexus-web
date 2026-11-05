@@ -1,0 +1,91 @@
+.identity { display: flex; align-items: center; min-width: 0; color: var(--ink); }
+
+/* a link or the mini's opener: the control keeps its focus ring and drops its own box. */
+.identity.opener {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  padding: 0;
+  gap: 0;
+  color: var(--ink);
+  font-weight: inherit;
+  text-align: start;
+  white-space: normal;
+}
+
+.identity.opener:hover { background: transparent; }
+.identity.opener:hover .title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+
+/* art, then two lines; the row never wraps, the lines truncate. */
+.row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; max-width: 100%; }
+
+.art { position: relative; flex: none; display: block; }
+
+.frame {
+  display: block;
+  box-sizing: border-box;
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-sm);
+}
+
+/* presence, not colour, is the signal, so forced colours keep it. */
+.dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--danger-ink);
+  box-shadow: 0 0 0 2px var(--surface-1);
+}
+
+.copy { display: grid; gap: var(--space-1); min-width: 0; }
+
+.title,
+.line2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  color: var(--ink);
+  font: var(--weight-regular) var(--text-base) / 1.2 var(--font-serif);
+}
+
+/* a state word, not an episode. */
+.plain { font-family: var(--font-sans); color: var(--ink-muted); }
+
+.line2 { color: var(--ink-muted); font-size: var(--text-xs); line-height: 1.3; }
+
+/* line 2 is a link only in `Empty` and `UpdateRequired`, whose words never truncate. the press
+   reaches 24px, centred on the word, without growing the line. */
+.line2:has(> .link) { overflow: visible; }
+
+.link { position: relative; color: var(--accent); }
+
+.link::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block: calc(50% - 12px);
+}
+
+.muted .title { color: var(--ink-muted); }
+.muted .art { opacity: 0.6; }
+
+/* the fold: time left leads line 2 once the folio's column is gone. */
+.fold { display: none; }
+
+@container player (width < 46rem) {
+  .fold { display: inline; }
+}
+
+/* the sheet has the room to wrap. */
+.sheet .title { font-size: var(--text-lg); white-space: normal; overflow-wrap: anywhere; }
+
+@media (forced-colors: active) {
+  .dot { forced-color-adjust: none; background: CanvasText; box-shadow: 0 0 0 2px Canvas; }
+}

@@ -9,11 +9,7 @@ import { useActionRuntime, useBusyActionIds } from "@/lib/actions/ResourceAction
 import { usePlaybackSource } from "./playbackSource";
 import { projectLecternAction, projectPlaybackAction } from "@/lib/actions/project";
 import { compareRevision } from "@/lib/collections/order";
-import { ApiError, requestWithDeadline } from "@/lib/api/client";
-import { staleBuild } from "@/lib/api/failure";
-import { browsePreviewHref, fetchBrowsePreview } from "@/lib/browse/api";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { mediaSubjectKind, type MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
 import * as Icon from "@/lib/ui/icons";
@@ -59,56 +55,16 @@ export function useMediaActions(subject: MediaSubject, knownDescriptor: PlayerDe
     invoke: () => { if (!installedApp || remoteReady()) ctx.mediaContinuations.recover(operation.intentId); },
   } : null;
   const actions: ActionButtonSpec[] = [];
-  if (kind === "podcast_episode") {
+  if (kind === "podcast_episode" && mediaId !== null) {
     const state = ctx.player.state;
-    const loadedPreview = state.kind === "Loaded" && subject.kind === "External" &&
-      state.source.kind === "Preview" && state.source.descriptor.target === subject.target;
-    const loaded = state.kind === "Loaded" && (loadedPreview || mediaId !== null &&
-      state.source.kind === "Episode" && state.source.descriptor.media_id === mediaId);
-    const pendingPlayback = ctx.player.pendingPlayback;
-    const pending = pendingPlayback !== null && (
-      mediaId !== null && pendingPlayback.kind === "Episode" && pendingPlayback.mediaId === mediaId ||
-      subject.kind === "External" && pendingPlayback.kind === "Preview" && pendingPlayback.target === subject.target);
-    const playing = pending || loaded && (state.phase === "Playing" || state.phase === "Buffering");
-    const phase = playing ? "Playing" : loaded && state.phase === "Ended" ? "Ended" : loaded ? "Paused" : "Idle";
-    const presentation = ACTION_CATALOG.Playback.states[phase];
-    const available = pending || loaded || (subject.kind === "Stored" ? subject.summary.can_play : true);
-    const updateRequired = state.kind === "Unavailable" && state.reason === "UpdateRequired";
-    const label = presentation.label;
-    if (mediaId !== null && !loadedPreview) {
-      const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, playbackSource: source, ctx, run });
-      actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", menuLabel: projected.label, accessibleLabel: `${projected.label}: ${title}`, icon: projected.icon, busy: false,
-        disabled: projected.disabled === true || !available,
-        disabledReason: projected.disabledReason ?? (available ? null : "this item has no audio."),
-        waiting: projected.waiting === true,
-        invoke: ({ trigger }) => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
-      });
-    } else actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", menuLabel: label, accessibleLabel: `${label}: ${title}`, icon: createElement(presentation.icon), busy: false,
-      disabled: updateRequired || !available,
-      disabledReason: updateRequired ? staleBuild() : available ? null : "this item has no audio.", waiting: false,
-      invoke: () => {
-        if (updateRequired || !available) return;
-        if (playing) { ctx.player.commands.pause(); return; }
-        run({ ref, id: "Playback", title, label, feedbackLabel: label.toLowerCase(), tracked: false, confirmation: null, execute: async () => {
-          if (subject.kind !== "External") return;
-          return ctx.player.commands.playPreviewAudio({ target: subject.target, resolveDescriptor: async () => {
-            const signal = ctx.sessionSignal();
-            const target = subject.target;
-            const preview = await requestWithDeadline({ signal, timeoutMs: 2_000,
-              request: requestSignal => fetchBrowsePreview(target, requestSignal),
-            });
-            signal.throwIfAborted();
-            if (preview.kind !== "Episode" || preview.kind_facts.audio_href.trim() === "")
-              throw new ApiError(409, "E_AUDIO_UNAVAILABLE", "audio unavailable");
-            return { target: preview.target, title: preview.title,
-              previewHref: browsePreviewHref(preview.target), source: preview.source, sourceHref: preview.source_href,
-              audioUrl: preview.kind_facts.audio_href,
-              imageUrl: preview.image === null ? null : buildMediaImageProxySrc(preview.image),
-              durationMs: preview.kind_facts.duration_seconds === null ? null : preview.kind_facts.duration_seconds * 1000,
-            };
-          } });
-        } });
-      },
+    const loaded = state.kind === "Loaded" && state.source.descriptor.media_id === mediaId;
+    const available = ctx.player.pendingPlayback?.mediaId === mediaId || loaded || (subject.kind === "Stored" ? subject.summary.can_play : true);
+    const projected = projectPlaybackAction({ mediaId, title, descriptor, blocked: null, playbackSource: source, ctx, run });
+    actions.push({ controlKey: "Playback", hasPopup: null, id: "Playback", menuLabel: projected.label, accessibleLabel: `${projected.label}: ${title}`, icon: projected.icon, busy: false,
+      disabled: projected.disabled === true || !available,
+      disabledReason: projected.disabledReason ?? (available ? null : "this item has no audio."),
+      waiting: projected.waiting === true,
+      invoke: ({ trigger }) => { if (available) projected.onSelect({ triggerEl: trigger, openIntent: "default" }); },
     });
   }
   if (mediaId !== null) {

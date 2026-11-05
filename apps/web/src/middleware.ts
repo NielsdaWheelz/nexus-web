@@ -50,6 +50,9 @@ const PUBLIC_PREFIXES = ["/auth/", "/pdfjs/", "/_next"];
 
 export async function middleware(request: NextRequest) {
   const { pathname, search, host, protocol } = request.nextUrl;
+  // Only the actual share activity serves these document-local streams.
+  if (pathname === "/_nexus/shared" || pathname.startsWith("/_nexus/shared/"))
+    return new NextResponse(null, { status: 404, headers: { "Cache-Control": "no-store" } });
   const native = isAndroidShellUserAgent(request.headers.get("user-agent") ?? "");
   // Normal browser startup uses the exact same asset shell as the APK. An
   // expired remote session cannot evict its confirmed local account.
