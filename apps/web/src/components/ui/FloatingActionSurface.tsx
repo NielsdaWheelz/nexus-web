@@ -30,7 +30,6 @@ export default function FloatingActionSurface({
   placement,
   anchor,
   strategy = "anchor",
-  selectionSession = null,
   lineRects,
   subscribeAnchor,
   align = "center",
@@ -54,9 +53,7 @@ export default function FloatingActionSurface({
   readonly placement?: "above" | "below";
   readonly anchor: HTMLElement | DOMRect | MeasuredAnchor | null;
   /** "text-selection": above the first selected line, with a caret. */
-  readonly strategy?: "anchor" | "text-selection" | "mobile-selection-actions";
-  /** Current source session; retained through a compact row's temporary hiding. */
-  readonly selectionSession?: string | null;
+  readonly strategy?: "anchor" | "text-selection";
   readonly lineRects?: readonly DOMRect[];
   readonly subscribeAnchor?: (listener: () => void) => () => void;
   readonly align?: "start" | "center" | "end";
@@ -84,8 +81,6 @@ export default function FloatingActionSurface({
     keepAnchorVisible: disclosure,
     gap: 8,
     flip,
-    strategy: strategy === "mobile-selection-actions" ? strategy : undefined,
-    selectionSession,
     lines: strategy === "text-selection" ? (lineRects ?? []) : undefined,
     subscribeContentClearance: mobileViewport.subscribeContentBottomClearance,
     subscribeAnchor,

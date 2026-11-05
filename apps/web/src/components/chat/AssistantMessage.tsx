@@ -10,7 +10,7 @@ import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { useFailedReadRepair } from "@/lib/api/serverState";
 import type { Schema } from "@/lib/api/wire";
-import { PENDING_CHANGE, sayRefusal } from "@/lib/chat/commands";
+import { pendingReason, sayRefusal } from "@/lib/chat/commands";
 import { messageActions, type Link, type Live } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
@@ -142,7 +142,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
     label: "rerun",
     commandKey: `rerun ${id}`,
     busy: repeating,
-    disabledReason: command.kind !== "Idle" && !repeating ? PENDING_CHANGE : undefined,
+    disabledReason: command.kind !== "Idle" && !repeating ? pendingReason(command) ?? undefined : undefined,
     run: (intent: OpenIntent) => void store.repeat("rerun", id, null, intent).then((outcome) => sayRefusal(slips, outcome)),
   }] : undefined;
   // `check` reads the same run and tails it again; it never reruns

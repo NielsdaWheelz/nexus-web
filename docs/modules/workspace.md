@@ -221,7 +221,10 @@ the current mode. the host owns effective visibility, inertness and geometry;
 The workspace store is the sole owner of sequential traversal. It follows
 stored-visible panes in strip order, clamps at the first and last pane,
 and never wraps. The Nexus swipe and `pane-next` / `pane-previous` keybindings
-invoke that same store command.
+invoke that same store command. the strip, adjacent keys and Nexus swipe check
+`hasWorkspaceNavigationBlocker()` before changing panes: the persistent passage
+composer permits navigation, while child choices and modals retain their normal
+blocking policy. this does not change escape ownership or the work guard.
 
 ## Pane Resource Identity
 
@@ -1218,20 +1221,18 @@ forgotten when their visit leaves every stack.
 
 ## reader-to-chat handoff
 
-passage ask transfers `{text, selection, quote}` through `ComposeReaderQuestion`.
-its memory-only attachment freezes the observed source selection and inspection
-input; preview creates no authored object. both installed quote-only drafts and
-unclaimed entries are guarded writing. no passage-launch hash or reload recovery
-exists.
+a passage-composer gesture synchronously uses `activateWorkspaceTarget` with
+`disposition: "Fork"`, creating one adjacent pane even when that chat is already
+open. the destination takes the draft before asynchronous preparation. chat owns
+that draft, acceptance, retries and fenced route updates; see
+[chat](chat.md#browser). source-link activation still follows the ordinary
+`Follow`/shift-`Fork` contract.
 
-reader ask forks into an adjacent pane. draft source inspection follows normally
-and forks on shift activation. deferred handoff validates the surviving source
-visit, input and destination before transfer; retired or changed input cannot be
-resurrected. successful transfer consumes only that unchanged input. accepted chat
-commands replace the provisional route through their existing command owner.
-
-stale review carries the original pane, visit, draft owner and attachment identity
-through an adjacent source pane. replacement preserves question/model and needs a
-separate send. the existing source visit memory retains its composer store and
-opening across mobile unmount; retiring the visit retires its writing and prevents
-undispatched sends. visit memory remains ephemeral and is never copied into a fork.
+ordinary passage-composer transfer keeps its complete quote and input in the
+destination's memory owner, never a url, passive pane entry or browser storage.
+quote-only drafts are guarded writing. stale review forks into a source pane with
+the original pane, visit, draft owner and attachment identity. replacement proves
+that exact attachment and its currently visible conversation route before changing
+it; same-conversation leaf changes remain valid. question, caret and model survive,
+and return never sends. cancel review preserves both drafts. successful replacement
+retires only the unchanged source input through its existing loss guard.

@@ -23,6 +23,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { requestWithRetry, type ReadPolicy } from "./retry";
 import { LIVE_SOURCE, type CatalogRead, type ReadSource } from "@/lib/catalog/types";
 import { demandGeneration, remoteReady, remoteAttemptAllowed, repairGeneration, subscribeRepair } from "@/lib/native/admission";
 import { useRemoteGeneration } from "@/lib/native/admissionHooks";
@@ -31,7 +32,6 @@ import {
   ApiError,
   isApiError,
   isSameSystemApiDefect,
-  requestWithDeadline,
 } from "@/lib/api/client";
 import {
   handleUnauthenticatedApiError,
@@ -56,10 +56,6 @@ export type ServerReadSeed<T> =
   | { readonly status: "success"; readonly data: T; readonly acceptedStale: string | null }
   | { readonly status: "failure"; readonly error: ApiError };
 
-export interface ReadPolicy {
-  readonly retry?: "manual" | "capacity";
-  readonly timeoutMs?: number;
-}
 export interface ReadDescriptor<T> extends ReadPolicy {
   readonly key: string | null;
   readonly stale: string;
@@ -256,52 +252,6 @@ export function useReadOwner(key: string | null, policy: string, stale: string, 
   return handle;
 }
 
-/**
- * The GET retry policy: three attempts with cancellable jittered backoff
- * (250 ms doubling, at most 2 s). Only transport failures and non-defect 5xx
- * retry; a 401 and same-system defects never do. A browser status 0 has already
- * flipped admission to Unavailable, which still admits these attempts; an installed
- * client stops at remoteReady. Capacity mode retries only unadmitted database-busy
- * responses, while Ready; its backoff is outside each attempt's timer.
- */
-export async function requestWithRetry<T>(
-  request: (signal: AbortSignal) => Promise<T>,
-  signal: AbortSignal,
-  policy: ReadPolicy = {},
-): Promise<T> {
-  const capacity = policy.retry === "capacity";
-  const run = async (ownedSignal: AbortSignal): Promise<T> => {
-    for (let attempt = 1; ; attempt += 1) {
-      ownedSignal.throwIfAborted();
-      try {
-        return capacity && policy.timeoutMs !== undefined
-          ? await requestWithDeadline({ request, signal: ownedSignal, timeoutMs: policy.timeoutMs })
-          : await request(ownedSignal);
-      } catch (error) {
-        const retryable =
-          !ownedSignal.aborted && isApiError(error) &&
-          (capacity ? remoteReady() && error.code === "E_DATABASE_BUSY" : remoteAttemptAllowed() && policy.retry !== "manual" &&
-            (error.code === "E_NETWORK" || (!isSameSystemApiDefect(error) && error.status >= 500)));
-        if (!retryable || !capacity && attempt === 3) throw error;
-        const delay = Math.min(250 * 2 ** (attempt - 1), 2000);
-        await new Promise<void>((resolve, reject) => {
-          const abort = () => {
-            clearTimeout(timer);
-            reject(ownedSignal.reason);
-          };
-          const timer = setTimeout(() => {
-            ownedSignal.removeEventListener("abort", abort);
-            resolve();
-          }, delay * (0.75 + Math.random() * 0.5));
-          ownedSignal.addEventListener("abort", abort, { once: true });
-        });
-        if (capacity && !remoteReady()) throw error;
-      }
-    }
-  };
-  return capacity || policy.timeoutMs === undefined ? run(signal)
-    : requestWithDeadline({ request: run, signal, timeoutMs: policy.timeoutMs });
-}
 
 const unobserved = () => () => {};
 

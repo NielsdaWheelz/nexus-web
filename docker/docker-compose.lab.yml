@@ -1,17 +1,19 @@
-# Disposable application data only; auth remains owned by the Supabase CLI.
+# Disposable project-owned disk data; auth remains owned by the Supabase CLI.
+# Match the production database budget without charging all stored data to RAM.
 services:
   postgres:
-    volumes: !reset []
-    tmpfs:
-      - /var/lib/postgresql/data
+    mem_limit: 512m
+    memswap_limit: 512m
     shm_size: 128m
     command:
       - postgres
       - -c
       - shared_preload_libraries=pg_search
       - -c
-      - fsync=off
+      - shared_buffers=64MB
       - -c
-      - synchronous_commit=off
+      - jit=off
       - -c
-      - full_page_writes=off
+      - autovacuum_max_workers=1
+      - -c
+      - autovacuum_work_mem=16MB

@@ -68,7 +68,10 @@ def get_user_profile(
     display_name is read from the DB.
     """
     row = db.execute(
-        text("SELECT display_name, calendar_time_zone FROM users WHERE id = :uid"),
+        text(
+            "SELECT u.display_name,u.calendar_time_zone,d.revision AS chat_deletion_revision "
+            "FROM users u JOIN chat_deletion_revisions d ON d.user_id=u.id WHERE u.id=:uid"
+        ),
         {"uid": user_id},
     ).fetchone()
     if row is None:
@@ -81,6 +84,7 @@ def get_user_profile(
         email=email,
         display_name=row.display_name,
         calendar_time_zone=row.calendar_time_zone,
+        chat_deletion_revision=str(row.chat_deletion_revision),
     )
 
 

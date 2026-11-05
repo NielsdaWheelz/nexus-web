@@ -45,13 +45,11 @@ from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.media_text_scope import (
     apparatus_scope_rows_sql,
     highlight_in_reading_scope_sql,
-    read_media_text_scope,
-    read_scope_fragment,
+    incomplete_table_rows_sql,
     text_scope_rows_sql,
     x_capture_scope_rows_sql,
 )
 from nexus.services.reader_publication import ready_publication_rows_sql
-from nexus.services.reader_text_slice import incomplete_table_intervals
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.search.scope import reading_media_ids_sql
 
@@ -193,19 +191,21 @@ def _text_ctes(*, selected_reading: bool = False) -> str:
 
 
 def _incomplete_tables(db: Session, reading_id: UUID) -> list[tuple[str, dict[str, Any]]]:
-    """Negative structural facts from the same trusted slice the reader receives."""
-    scope = read_media_text_scope(db, reading_id)
+    """Negative structural facts from the publication's table boundaries."""
     records = {}
-    for interval in scope.fragment_intervals:
-        for start, end in incomplete_table_intervals(read_scope_fragment(db, scope, interval)):
-            key = f"reading:{reading_id}:incomplete_table:{interval.fragment_id}:{start}:{end}"
-            records[key] = {
-                "kind": "incomplete_table",
-                "reading_ref": f"media:{reading_id}",
-                "fragment_id": str(interval.fragment_id),
-                "start_offset": start,
-                "end_offset": end,
-            }
+    rows = incomplete_table_rows_sql("SELECT CAST(:reading AS uuid) AS media_id")
+    for fragment, start, end in db.execute(
+        text(f"SELECT fragment_id,start_offset,end_offset FROM ({rows}) incomplete"),
+        {"reading": reading_id},
+    ):
+        key = f"reading:{reading_id}:incomplete_table:{fragment}:{start}:{end}"
+        records[key] = {
+            "kind": "incomplete_table",
+            "reading_ref": f"media:{reading_id}",
+            "fragment_id": str(fragment),
+            "start_offset": start,
+            "end_offset": end,
+        }
     return sorted(records.items())
 
 

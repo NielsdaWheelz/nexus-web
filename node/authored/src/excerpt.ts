@@ -37,6 +37,9 @@ const BRANCHES = new Set("p div span section article header footer nav aside mai
 const PHRASING = new Set("text br media_gap span strong em b i u s cite sup sub code a xref".split(" "));
 const INLINE_PARENTS = new Set("p span h1 h2 h3 h4 h5 h6 strong em b i u s cite sup sub code pre a xref".split(" "));
 const BLOCKS = new Set("p div section article header footer nav aside main h1 h2 h3 h4 h5 h6 pre blockquote ul ol dl dt dd li figure figcaption table thead tbody tfoot tr".split(" "));
+/** Source whitespace in these containers has coordinates but no literal display. */
+export const EXCERPT_STRUCTURAL_CONTAINERS: ReadonlySet<string> = new Set("ul ol dl table thead tbody tfoot tr".split(" "));
+const HTML_WHITESPACE = /^[\t\n\f\r ]*$/u;
 function record(value: unknown, fields: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected excerpt object");
   const expected = fields.split(" ");
@@ -72,6 +75,7 @@ export function validateExcerptBody(value: unknown): asserts value is ExcerptBod
     else if (BRANCHES.has(kind)) fields += " lang dir children" + (kind === "ol" ? " start reversed" : kind === "li" ? " value" : kind === "td" || kind === "th" ? " col_span row_span scope" : "");
     else if (kind !== "br" && kind !== "hr") throw new TypeError("Unknown excerpt node kind");
     const node = record(raw, fields);
+    if (kind === "text" && EXCERPT_STRUCTURAL_CONTAINERS.has(parent ?? "") && typeof node.text === "string" && HTML_WHITESPACE.test(node.text)) return;
     if (INLINE_PARENTS.has(parent ?? "") && !PHRASING.has(kind)) throw new TypeError("Block in excerpt phrasing content");
     if (parent === "ul" || parent === "ol") { if (kind !== "li") throw new TypeError("Excerpt list requires items"); }
     if (parent === "dl" && kind !== "dt" && kind !== "dd") throw new TypeError("Excerpt definition list requires terms and definitions");
@@ -137,8 +141,12 @@ function* sourceEvents(content: ExcerptNode[]): Generator<ExcerptSourceEvent> {
     if (node.kind === "text") { yield {kind: "text", text: node.text, start}; return; }
     if (!("children" in node)) { yield {kind: "leaf", node_kind: node.kind, flow: node.kind === "media_gap" ? node.flow : "inline", start}; return; }
     yield {kind: "enter", node_kind: node.kind, index, start};
-    let cursor = start;
-    for (const [index, child] of node.children.entries()) { yield* walk(child, index, cursor); cursor += nodeSize(child); }
+    let cursor = start, childIndex = 0;
+    for (const child of node.children) {
+      yield* walk(child, childIndex, cursor);
+      cursor += nodeSize(child);
+      if (child.kind !== "text") childIndex++;
+    }
     yield {kind: "exit", node_kind: node.kind, end: cursor};
   }
   let cursor = 0;
@@ -147,8 +155,10 @@ function* sourceEvents(content: ExcerptNode[]): Generator<ExcerptSourceEvent> {
 function* literalTokens(events: Iterable<ExcerptSourceEvent>, utf16 = false): Generator<LiteralToken> {
   let pending = 0, pendingBoundary = 0, emitted = false;
   let previous: LiteralToken | null = null, previousCollapsible = false;
+  const rowEmitted: boolean[] = [];
   const separator = (count: number, boundary: number) => { pending = Math.max(pending, count); pendingBoundary = boundary; };
   function* emit(token: LiteralToken, collapsible = false): Generator<LiteralToken> {
+    if (rowEmitted.length) rowEmitted[rowEmitted.length - 1] = true;
     if (pending && (previous !== null || emitted)) {
       if (previous !== null && !previousCollapsible) { emitted = true; yield previous; }
       previous = null;
@@ -168,8 +178,10 @@ function* literalTokens(events: Iterable<ExcerptSourceEvent>, utf16 = false): Ge
     previousCollapsible = collapsible;
   }
   let pre = 0;
+  const parents: string[] = [];
   for (const event of events) {
     if (event.kind === "text") {
+      if (EXCERPT_STRUCTURAL_CONTAINERS.has(parents.at(-1) ?? "") && HTML_WHITESPACE.test(event.text)) continue;
       let offset = event.start;
       for (const ch of event.text) {
         const text = !pre && /^[\t\n\f\r ]$/u.test(ch) ? " " : ch;
@@ -181,10 +193,18 @@ function* literalTokens(events: Iterable<ExcerptSourceEvent>, utf16 = false): Ge
       if (event.node_kind === "br") yield* emit({text: "\n", spans: [{start: event.start, end: event.start + 1}], synthetic: false, boundary: null});
       else if (event.node_kind === "hr" || event.flow === "block") separator(1, event.start);
     } else if (event.kind === "enter") {
+      parents.push(event.node_kind);
+      if (event.node_kind === "tr") rowEmitted.push(false);
       if (BLOCKS.has(event.node_kind)) separator(event.node_kind === "p" ? 2 : 1, event.start);
-      if ((event.node_kind === "td" || event.node_kind === "th") && event.index > 0) { pending = 0; yield* emit({text: "\t", spans: [], synthetic: true, boundary: event.start}); }
+      if ((event.node_kind === "td" || event.node_kind === "th") && event.index > 0) {
+        // Empty leading cells still owe the row break; later cells only separate columns.
+        if (rowEmitted.at(-1)) pending = 0;
+        yield* emit({text: "\t", spans: [], synthetic: true, boundary: event.start});
+      }
       if (event.node_kind === "pre") pre++;
     } else {
+      parents.pop();
+      if (event.node_kind === "tr" && rowEmitted.pop() && rowEmitted.length) rowEmitted[rowEmitted.length - 1] = true;
       if (event.node_kind === "pre") pre--;
       if (BLOCKS.has(event.node_kind)) separator(event.node_kind === "p" ? 2 : 1, event.end);
     }
@@ -441,10 +461,11 @@ function clipBody(body: ExcerptBody, lo: number, hi: number): ExcerptBody {
             ordinal = node.start;
             let first: number | null = null, childBase = base;
             for (const child of node.children) {
-              if (child.kind !== "li") throw new Error("Ordered list contains a non-item");
-              ordinal = child.value ?? ordinal;
-              if (first === null && childBase < hi && childBase + nodeSize(child) > lo) first = ordinal;
-              ordinal += node.reversed ? -1 : 1;
+              if (child.kind === "li") {
+                ordinal = child.value ?? ordinal;
+                if (first === null && childBase < hi && childBase + nodeSize(child) > lo) first = ordinal;
+                ordinal += node.reversed ? -1 : 1;
+              } else if (child.kind !== "text") throw new Error("Ordered list contains a non-item");
               childBase += nodeSize(child);
             }
             kept.push({...node, start: first ?? node.start, children});

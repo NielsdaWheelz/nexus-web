@@ -114,7 +114,8 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
   }
   const { root } = entry;
   const content = root.content;
-  if (content.kind === "Quotation") return <li ref={attachRow} {...rootProps}>
+  if (content.kind === "ReaderQuote") return <li ref={attachRow} {...rootProps}
+    tabIndex={0} data-resource-ref={root.ref} data-outline-occurrence={occurrenceKey}>
     <QuotedMessageConnection content={content} />
   </li>;
   const disclosureKey = sourceTextKey(entry);

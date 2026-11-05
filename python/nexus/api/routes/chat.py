@@ -185,6 +185,7 @@ def create_conversation(
             viewer_id=viewer.user_id,
             conversation_id=body.id,
             initial_context_refs=body.initial_context_refs,
+            expected_deletion_revision=body.expected_deletion_revision,
         )
     )
 
@@ -256,4 +257,11 @@ def preview_reader_selection(
     db: RepeatableReadDbSession,
 ) -> Data[ReaderSelectionPreview]:
     response.headers["Cache-Control"] = "private, no-store"
-    return Data(data=quotes.preview(db, viewer_id=viewer.user_id, selection=body.selection))
+    return Data(
+        data=quotes.preview(
+            db,
+            viewer_id=viewer.user_id,
+            key=body.key,
+            expected_capture_revision=body.expected_capture_revision,
+        )
+    )

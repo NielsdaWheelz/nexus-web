@@ -10,10 +10,8 @@ import useCollectionReadFeedback from "@/components/collections/useCollectionRea
 import { usePaneFreeServerList } from "@/lib/api/useServerList";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import {
-  requestWithRetry,
-  useSettled,
-} from "@/lib/api/serverState";
+import { useSettled } from "@/lib/api/serverState";
+import { requestWithRetry } from "@/lib/api/retry";
 import {
   getContributor,
   searchContributors,

@@ -167,6 +167,18 @@ class ExcerptTextParts(ExcerptModel):
     suffix: str
 
 
+class ExcerptCanonicalSelection(ExcerptModel):
+    start_offset: int
+    end_offset: int
+
+
+class ExcerptCaptureProof(ExcerptModel):
+    emitted: str
+    length: int
+    selection: ExcerptCanonicalSelection | None
+    text_parts: ExcerptTextParts
+
+
 class ExcerptProjection(ExcerptModel):
     view: ExcerptView
     text_parts: ExcerptTextParts | None

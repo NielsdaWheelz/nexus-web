@@ -42,6 +42,7 @@ from nexus.schemas.conversation import (
     ChatRunCreateRequest,
     ChatRunResponse,
     ExistingChatDestination,
+    HighlightReaderSelectionInput,
     ReaderSelectionInput,
     RejectedChatAdmission,
     RejectionCode,
@@ -54,7 +55,7 @@ from nexus.schemas.llm import (
     InvalidGenerationSelection,
 )
 from nexus.services import authored
-from nexus.services.chat import citations, context, events, quotes, reads, selection
+from nexus.services.chat import citations, context, deletion, events, quotes, reads, selection
 from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
 from nexus.services.generation.catalog import (
     Catalog,
@@ -70,8 +71,7 @@ from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     context_version,
 )
-from nexus.services.resource_graph.edges import create_link
-from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
 from nexus.services.search import projection
 from nexus.services.seq import assign_next_message_seq
 from nexus.services.tools.run import Toolbox
@@ -96,13 +96,15 @@ async def create_chat_run(
     quote = request.reader_selection
     row = await _catalog_row(catalog, request.selection)
 
-    def build(db: Session, resolved: Row) -> ChatRun:
+    def build(db: Session, resolved: Row | ApiError) -> ChatRun:
+        conversation, parent, anchor = _destination(db, viewer_id, request)
+        if isinstance(resolved, ApiError):
+            raise resolved
         if len(request.content) > MAX_MESSAGE_CONTENT_LENGTH:
             raise ApiError(
                 ApiErrorCode.E_MESSAGE_TOO_LONG,
                 f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
             )
-        conversation, parent, anchor = _destination(db, viewer_id, request)
         anchor_kind, anchor_json = _branch_anchor(parent, anchor)
         snapshot = _quote(db, viewer_id, conversation.id, quote) if quote else None
         user, assistant = _insert_pair(
@@ -142,7 +144,7 @@ async def repeat(
         return ChatAdmissionReceipt(outcome=existing)
     row = await _catalog_row(catalog, selection)
 
-    def build(db: Session, resolved: Row) -> ChatRun:
+    def build(db: Session, resolved: Row | ApiError) -> ChatRun:
         # Lock the chat in its own statement, as deletion does, then read the source
         # fresh: rows read beside the lock predate any delete the lock waited on.
         locked = db.scalar(
@@ -164,6 +166,8 @@ async def repeat(
         if locked is None or source is None:
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
         require_branch_revision(locked, expected_revision)
+        if isinstance(resolved, ApiError):
+            raise resolved
         run, user = source
         if operation == "regenerate" and run.status != "complete":
             raise ApiError(
@@ -278,7 +282,7 @@ def _settle(
     viewer_id: UUID,
     run_id: UUID,
     row: Row | ApiError,
-    build: Callable[[Session, Row], ChatRun],
+    build: Callable[[Session, Row | ApiError], ChatRun],
 ) -> ChatAdmissionReceipt:
     """One decision per run id, on one worker-thread session.
 
@@ -298,8 +302,6 @@ def _settle(
             if run is not None and run.owner_user_id != viewer_id:
                 raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
             if run is None:
-                if isinstance(row, ApiError):
-                    raise row
                 try:
                     run = build(db, row)
                 except IntegrityError as error:
@@ -335,6 +337,7 @@ def _destination(
 
     destination = request.destination
     if not isinstance(destination, ExistingChatDestination):
+        deletion.require_revision(db, viewer_id, destination.expected_deletion_revision)
         conversation = Conversation(owner_user_id=viewer_id, title=DEFAULT_TITLE, next_seq=1)
         db.add(conversation)
         db.flush()
@@ -393,33 +396,51 @@ def _branch_anchor(
 def _quote(
     db: Session, viewer_id: UUID, conversation_id: UUID, selection: ReaderSelectionInput
 ) -> dict[str, object]:
-    """Capture the observed passage and attach its ordinary source context.
-
-    The viewer's account head comes before the media family, as in every authored
-    writer; no projection row is locked. The immutable snapshot is compared with the
-    previewed revision, so a concurrent change refuses rather than quoting unseen text."""
+    """Freeze evidence, retain source access and link an explicitly selected highlight."""
 
     from nexus.services.library_entries import lock_media_for_reference
 
-    chosen = selection.selection
-    authored.lock_account(db, viewer_id)
-    if chosen.scope.kind == "media":
-        lock_media_for_reference(db, chosen.scope.media_id)
-    snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, selection=chosen)
-    if quotes.revision(snapshot) != selection.revision:
-        raise ApiError(
-            ApiErrorCode.E_READER_SELECTION_STALE, "Reader selection changed since it was previewed"
+    if isinstance(selection, HighlightReaderSelectionInput):
+        key = selection.key
+        authored.lock_account(db, viewer_id)
+        if key.media_id is not None:
+            lock_media_for_reference(db, key.media_id)
+        snapshot = quotes.build_snapshot(
+            db,
+            viewer_id=viewer_id,
+            key=key,
+            expected_capture_revision=selection.expected_capture_revision,
         )
-    chat = ResourceRef("conversation", conversation_id)
-    if snapshot.highlight_ref is not None:
+        if quotes.revision(snapshot) != selection.revision:
+            raise ApiError(
+                ApiErrorCode.E_READER_SELECTION_STALE,
+                "Reader selection changed since it was previewed",
+            )
+        source = (
+            ResourceRef("media", key.media_id)
+            if key.media_id is not None
+            else require_ref(snapshot.evidence.target.owner_ref or "")
+        )
+        from nexus.services.resource_graph.edges import create_link
+
         create_link(
-            db, viewer_id=viewer_id, source=chat, target=assert_resource_ref(snapshot.highlight_ref)
+            db,
+            viewer_id=viewer_id,
+            source=ResourceRef("conversation", conversation_id),
+            target=ResourceRef("highlight", key.highlight_id),
         )
-    source = (
-        ResourceRef("media", chosen.scope.media_id)
-        if chosen.scope.kind == "media"
-        else assert_resource_ref(snapshot.evidence.target.owner_ref or "")
-    )
+    else:
+        source = require_ref(selection.reading_ref)
+        if source.scheme == "media":
+            lock_media_for_reference(db, source.id)
+        snapshot = quotes.capture_snapshot(db, viewer_id=viewer_id, selection=selection)
+    target = snapshot.evidence.target
+    if target.kind == "passage" and target.locator.type == "x_capture_offsets":
+        from nexus.services.x_source import admit_x_captures_for_accounts
+
+        admit_x_captures_for_accounts(
+            db, account_ids=[viewer_id], capture_ids=[target.locator.capture_id]
+        )
     add_context_ref_without_commit(
         db,
         viewer_id=viewer_id,
@@ -541,11 +562,8 @@ def _start_run(
     )
     db.add(run)
     db.flush()
+    quotes.changed(db, viewer_id=viewer_id, message_ids=[user.id])
     citations.persist_attached(db, run, assembly.attached)
-    if user.reader_selection_snapshot is not None:
-        quotes.invalidate_sources(
-            db, viewer_id=viewer_id, snapshots=[quotes.decode(user.reader_selection_snapshot)]
-        )
     enqueue_job(
         db,
         kind="chat_run",

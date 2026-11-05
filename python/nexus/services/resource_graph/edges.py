@@ -34,7 +34,7 @@ from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_l
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.items import resource_items_out
+from nexus.services.resource_items.items import ref_visible, resource_labels
 
 Pair = tuple[str, UUID]
 CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -154,12 +154,20 @@ def _validate(db: Session, viewer_id: UUID | None, edge: EdgeCreate) -> None:
     _pin_note_owners(db, [edge.source, edge.target])
     # External snapshots outlive what they captured; a citation's source is the
     # in-flight output minting it, not yet read-visible.
-    if edge.ordinal is None and edge.target.scheme != "external_snapshot":
-        assert viewer_id is not None
-        assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
     if edge.ordinal is None:
-        assert viewer_id is not None
-        assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
+        assert viewer_id is not None  # justify-defect: bare facts are account-owned.
+        if edge.origin in ("system", "citation"):
+            # Automatic source facts retain identity. Their evidence owner already
+            # proved any disclosed words; naming the endpoint never hydrates it.
+            if any(
+                not ref_visible(db, viewer_id=viewer_id, ref=ref)
+                for ref in (edge.source, edge.target)
+            ):
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
+        else:
+            if edge.target.scheme != "external_snapshot":
+                assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
+            assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
 
 
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
@@ -296,16 +304,12 @@ def create_link(
         _invalid("Resource cannot be linked")
     a, b = sorted((source, target), key=lambda ref: ref.uri)
     lock_conversation_endpoints(db, [a, b])
-    assert_ref_visible(db, viewer_id=viewer_id, ref=target)
-    assert_ref_visible(db, viewer_id=viewer_id, ref=source)
+    authored.lock_account(db, viewer_id)
+    if not all(ref_visible(db, viewer_id=viewer_id, ref=ref) for ref in (a, b)):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
     existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
         return EdgeWrite(edge_out(existing), created=False)
-    labels = {
-        item.ref: item.label
-        for item in resource_items_out(db, viewer_id=viewer_id, refs=[a, b])
-        if not item.missing
-    }
     # Only the viewer's own notes, pages and highlights are their authored resources; a
     # library peer's highlight is a source the devices know only by its captured label.
     own = {
@@ -317,6 +321,9 @@ def create_link(
             and db.scalar(select(Highlight.user_id).where(Highlight.id == ref.id)) == viewer_id
         )
     }
+    labels = resource_labels(
+        db, viewer_id=viewer_id, refs=[ref for ref in (a, b) if ref not in own]
+    )
     intents: list[dict[str, object]] = [
         {
             "kind": "capture_source",
@@ -340,7 +347,7 @@ def create_link(
         db,
         viewer_id,
         command={"kind": "batch", "intents": intents},
-        resource_refs=[ref.uri for ref in own],
+        resource_refs=[],
         link_ids=[],
     )
     (link,) = result.links

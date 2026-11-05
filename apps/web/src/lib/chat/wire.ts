@@ -57,6 +57,7 @@ const UNQUOTABLE = "this passage can’t be quoted.";
  * Closed: a server's explanation never reaches the screen. */
 const REASONS: Readonly<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE", string | null>> = {
   E_CONVERSATION_CHANGED: "this chat changed meanwhile.",
+  E_CHAT_CREATION_STALE: "this send can no longer be retried.",
   E_MESSAGE_TOO_LONG: "this message is over 20,000 characters.",
   E_INVALID_GENERATION_SELECTION: MODEL_UNAVAILABLE,
   E_GENERATION_SELECTION_UNAVAILABLE: MODEL_UNAVAILABLE,
@@ -90,8 +91,11 @@ export const unquotable = (error: ApiError): string | null =>
 export type Refusal = { readonly line: Line; readonly error: ApiError | null };
 
 /** A refusal by the server's code: the command's fact, then the domain's reason, or the bare fact. */
-export const rejected = (fact: string, code: keyof typeof REASONS): Refusal =>
-  ({ line: { fact, reason: REASONS[code] ?? undefined }, error: null });
+export function rejected(fact: string, code: keyof typeof REASONS): Refusal {
+  const reason = REASONS[code];
+  if (reason === undefined) throw new Error("chat rejection has no owned explanation");
+  return { line: { fact, reason: reason ?? undefined }, error: null };
+}
 
 /** A thrown refusal: a domain code's reason runs ahead of the transport's. */
 export const refusal = (fact: string, error: ApiError): Refusal => isReasoned(error.code)

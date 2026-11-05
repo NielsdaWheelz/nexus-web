@@ -24,13 +24,17 @@ def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | Non
         raise RuntimeError("user bootstrap requires a fresh session")
     ready = db.execute(
         text(
-            "SELECT u.email FROM users u JOIN libraries l ON l.owner_user_id=u.id AND l.is_default "
+            "SELECT u.email,d.revision FROM users u JOIN libraries l ON l.owner_user_id=u.id AND l.is_default "
             "JOIN memberships m ON m.library_id=l.id AND m.user_id=u.id AND m.role='admin' "
+            "LEFT JOIN chat_deletion_revisions d ON d.user_id=u.id "
             "WHERE u.id=:id"
         ),
         {"id": user_id},
     ).first()
     db.rollback()
+    if ready is not None and ready.revision is None:
+        # justify-defect: account creation and the cutover migration establish this row.
+        raise AssertionError("authenticated account has no chat deletion fence")
     if ready is not None and (email is None or ready.email == email):
         return
     params = {"id": user_id, "email": email}
@@ -40,6 +44,10 @@ def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | Non
         # the row before its address: two first sights of one user race on users_pkey alone
         if current is None:
             db.execute(text("INSERT INTO users (id) VALUES (:id)"), params)
+            db.execute(
+                text("INSERT INTO chat_deletion_revisions(user_id,revision) VALUES (:id,1)"),
+                params,
+            )
         if email is not None and (current is None or current.email != email):
             db.execute(
                 text("UPDATE users SET email = NULL WHERE email = :email AND id <> :id"), params

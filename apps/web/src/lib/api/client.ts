@@ -79,7 +79,8 @@ export async function requestWithDeadline<T>({ request, signal, timeoutMs }: {
   try {
     return await request(controller.signal);
   } catch (error) {
-    if (timedOut && !(error instanceof ApiError && !error.sent)) throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
+    if (timedOut && !(error instanceof ApiError && (!error.sent || error.code === "E_UPSTREAM_TIMEOUT")))
+      throw new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out");
     throw error;
   } finally {
     clearTimeout(timer);
@@ -323,10 +324,15 @@ export async function apiFetch<T>(
       error_type: error instanceof Error ? error.name : typeof error,
       error_code: error instanceof ApiError ? error.code : null,
     });
-    if (isAbortError(error)) throw error;
-    const failure = response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed", { requestId }) : error;
+    const deadline = init.signal?.aborted && deadlines.has(init.signal.reason);
+    if (isAbortError(error) && !deadline) throw error;
+    const failure = isAbortError(error) && deadline
+      ? new ApiError(504, "E_UPSTREAM_TIMEOUT", "Backend service timed out", { requestId: response?.headers.get("x-request-id") ?? requestId })
+      : response === undefined ? new ApiError(0, "E_NETWORK", "Network request failed", { requestId }) : error;
     if (failure instanceof ApiError) console.warn(JSON.stringify({ event: "api_request_failed", request_id: requestId, path: url.pathname, status: failure.status, code: failure.code }));
-    observeApiFailure(failure, binding);
+    // A caller-owned deadline retains its request identity, without changing
+    // remote admission merely because this caller stopped waiting.
+    if (!(isAbortError(error) && deadline)) observeApiFailure(failure, binding);
     throw failure;
   }
 }

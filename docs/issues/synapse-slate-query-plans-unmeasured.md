@@ -128,3 +128,13 @@ do not raise timeouts, add a cache, or rewrite the query on that assumption.
 request path (owner ruling Q15); their 504 risk is this issue's. library
 eligibility gained one `NOT EXISTS` over held shows in ranking and delivery
 (held-through-a-show episodes are never offered); its plan is unmeasured too.
+
+2026-11-05 restored chat qualification, source `eb6ed2def`, run
+`20261105-001632-8365a7245358`: two overlapping quick-read requests occupied
+the ordinary pool's two connections for 7.60/7.64 seconds. five later requests
+returned `503 db_pool_exhausted` after about 5 seconds, preventing browser
+bootstrap before the chat driver began. no backend kill, recovery, statement
+timeout or deadlock was logged; cgroup counters were not captured. the exact
+query plan and lock/io waits remain unproved. this pg15 archive contains no
+optimizer statistics; restored-corpus analysis is a restore prerequisite,
+not proof that the product query risk is resolved.

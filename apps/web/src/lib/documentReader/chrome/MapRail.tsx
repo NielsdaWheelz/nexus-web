@@ -57,6 +57,7 @@ const clean = (text: string) => text.replace(/\s+/gu, " ").trim();
 const categories: Record<RailMarker["kind"], string> = {
   Embed: "embedded item",
   Highlight: "highlight",
+  ReaderQuote: "chat quote",
   SourceReference: "citation",
   GeneratedCitation: "citation",
   Link: "link",

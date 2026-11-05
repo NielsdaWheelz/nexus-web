@@ -14,7 +14,6 @@ media, matching the tool effect fence while its conversation lock prevents admis
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -36,7 +35,7 @@ from nexus.schemas.conversation import (
     MessageDeleteOut,
 )
 from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
-from nexus.services.chat import quotes
+from nexus.services.chat import deletion, quotes
 from nexus.services.collection_keyset import (
     UPDATED_TITLE_PLANS,
     KeysetValueKind,
@@ -47,6 +46,7 @@ from nexus.services.collection_keyset import (
 )
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
+from nexus.services.media_text_scope import x_capture_scope_rows_sql
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.edges import create_link
@@ -65,22 +65,31 @@ _ID, _TEXT, _INT = KeysetValueKind.Uuid, KeysetValueKind.Text, KeysetValueKind.I
 
 
 def create(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID, initial_context_refs: Sequence[str]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    initial_context_refs: Sequence[str],
+    expected_deletion_revision: str,
 ) -> ConversationOut:
     """An empty chat with its initial context links under the client's id; any failure
     leaves nothing. A resend answers the viewer's chat as it is; another owner's is 409."""
 
     def attempt() -> ConversationOut:
-        created = db.scalar(
-            text(
-                """
-                INSERT INTO conversations (id, owner_user_id, title, next_seq)
-                VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
-                """
-            ),
-            {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
-        )
-        conversation = db.get_one(Conversation, conversation_id)
+        conversation = db.get(Conversation, conversation_id)
+        created = None
+        if conversation is None:
+            deletion.require_revision(db, viewer_id, expected_deletion_revision)
+            created = db.scalar(
+                text(
+                    """
+                    INSERT INTO conversations (id, owner_user_id, title, next_seq)
+                    VALUES (:id, :viewer, :title, 1) ON CONFLICT (id) DO NOTHING RETURNING id
+                    """
+                ),
+                {"id": conversation_id, "viewer": viewer_id, "title": DEFAULT_TITLE},
+            )
+            conversation = db.get_one(Conversation, conversation_id)
         if conversation.owner_user_id != viewer_id:
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT, "Conversation id belongs to another viewer"
@@ -127,7 +136,7 @@ def conversation_index_rows_sql() -> str:
 
 
 def _source_context_filter(db: Session, viewer_id: UUID, media_id: UUID | None) -> str:
-    """Current readable direct context, shared by the index and latest lookup."""
+    """Current readable direct context for the destination index."""
     if media_id is None:
         return ""
     if not can_read_media(db, viewer_id, media_id):
@@ -185,16 +194,31 @@ def index(
 
 
 def latest(db: Session, *, viewer_id: UUID, media_id: UUID) -> ConversationListItemOut | None:
-    """The newest visible source-context chat, or null; SQL admits at most one row."""
-    media_filter = _source_context_filter(db, viewer_id, media_id)
-    order = order_by_sql(UPDATED_TITLE_PLANS[(None, None)], alias="c")
+    """The last accepted question quoting this reading, independent of chat activity."""
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    captures = x_capture_scope_rows_sql("SELECT CAST(:media_id AS uuid) AS media_id")
     row = (
         db.execute(
             text(f"""
             SELECT c.* FROM ({conversation_index_rows_sql()}) c
-            WHERE TRUE {media_filter} ORDER BY {order} LIMIT 1
+            JOIN messages m ON m.conversation_id = c.id
+            JOIN chat_runs r ON r.user_message_id = m.id AND r.conversation_id = c.id
+            WHERE r.owner_user_id = :viewer_id AND (
+                m.reader_selection_snapshot #>> '{{evidence,target,owner_ref}}' = :reading_ref
+                OR (
+                    m.reader_selection_snapshot #>> '{{evidence,target,locator,type}}' = 'x_capture_offsets'
+                    AND EXISTS (
+                        SELECT 1 FROM ({captures}) occurrence
+                        WHERE m.reader_selection_snapshot #>> '{{evidence,target,owner_ref}}' = 'fragment:' || occurrence.fragment_id::text
+                          AND m.reader_selection_snapshot #>> '{{evidence,target,locator,fragment_id}}' = occurrence.fragment_id::text
+                          AND m.reader_selection_snapshot #>> '{{evidence,target,locator,capture_id}}' = occurrence.capture_id::text
+                    )
+                )
+            )
+            ORDER BY r.created_at DESC, r.id DESC LIMIT 1
         """),
-            {"viewer_id": viewer_id, "media_id": media_id},
+            {"viewer_id": viewer_id, "media_id": media_id, "reading_ref": f"media:{media_id}"},
         )
         .mappings()
         .one_or_none()
@@ -245,10 +269,12 @@ def delete_conversation(
     db: Session, *, viewer_id: UUID, conversation_id: UUID, expected_revision: int
 ) -> None:
     def attempt() -> None:
+        deletion.lock_revision(db, viewer_id, deleting=True)
         conversation = _lock_owned(db, viewer_id, conversation_id)
         if conversation is not None:
             require_branch_revision(conversation, expected_revision)
             _delete(db, conversation, None)
+            deletion.advance(db, viewer_id)
 
     retry_serializable(db, "delete_conversation", attempt)
 
@@ -264,6 +290,7 @@ def delete_message(
     """The message and its subtree; the chat too when nothing remains."""
 
     def attempt() -> MessageDeleteOut:
+        deletion.lock_revision(db, viewer_id, deleting=True)
         conversation = _lock_owned(db, viewer_id, conversation_id)
         if conversation is None:
             return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=True)
@@ -276,6 +303,7 @@ def delete_message(
             return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=False)
         require_branch_revision(conversation, expected_revision)
         deleted = _delete(db, conversation, message_id)
+        deletion.advance(db, viewer_id)
         return MessageDeleteOut(conversation_id=conversation_id, conversation_deleted=deleted)
 
     return retry_serializable(db, "delete_message", attempt)
@@ -362,22 +390,10 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
     cleanup.delete_edges_for_deleted_resources(
         db, refs=[ResourceRef("message", id_) for id_ in ids]
     )
-    quotes.invalidate_sources(
-        db,
-        viewer_id=conversation.owner_user_id,
-        snapshots=[
-            quotes.decode(snapshot)
-            for snapshot in db.scalars(
-                select(Message.reader_selection_snapshot).where(
-                    Message.id.in_(ids), Message.reader_selection_snapshot.is_not(None)
-                )
-            )
-            if snapshot is not None
-        ],
-    )
     # The cascades take runs, events and retrievals; tool calls outlive their answer
     # (link set null) as the account's write history; ``llm_calls`` has no
     # FK and outlives the chat as the operational ledger.
+    quotes.changed(db, viewer_id=conversation.owner_user_id, message_ids=ids)
     db.execute(text("DELETE FROM messages WHERE id = ANY(:ids)"), {"ids": ids})
     for media_id in retained_media:
         claim_document_teardown_if_unreferenced_locked(db, media_id)
@@ -489,6 +505,7 @@ _MESSAGE_CURSOR = (
     SortKey("seq", "asc", _INT),
     SortKey("id", "asc", _ID),
     SortKey("offset", "asc", _INT),
+    SortKey("rendered", "asc", _TEXT),
 )
 
 
@@ -498,18 +515,21 @@ def read_message_page(
     """Bounded completed-message text in the caller's repeatable-read snapshot.
 
     A cursor binds the metadata revision: completing, editing or deleting a message,
-    a late branch or changed quote disclosure makes it stale.
+    or a late branch makes it stale. A partial-message cursor also binds its
+    disclosed rendering; source authority cannot silently move that offset.
     """
 
     binding = {"list": "CompletedMessages", "viewer": viewer_id, "uri": ref.uri}
-    revision, after_seq, after_id, offset = None, -1, UUID(int=0), 0
+    revision, after_seq, after_id, offset, rendered = None, -1, UUID(int=0), 0, ""
     if cursor is not None:
         try:
             values = decode_keyset_cursor(cursor, binding, _MESSAGE_CURSOR)
         except InvalidRequestError:
             return ConversationReadRefusal("invalid_cursor")
-        revision, after_seq, after_id, offset = cast(tuple[str, int, UUID, int], values)
-        if after_seq < 1 or offset < 0:
+        revision, after_seq, after_id, offset, rendered = cast(
+            tuple[str, int, UUID, int, str], values
+        )
+        if after_seq < 1 or offset < 0 or (offset == 0) != (rendered == ""):
             return ConversationReadRefusal("invalid_cursor")
     record = (
         db.execute(
@@ -543,10 +563,7 @@ def read_message_page(
         )
         SELECT EXISTS (SELECT 1 FROM visible) AS visible, metadata.*,
             COALESCE((SELECT jsonb_agg(to_jsonb(chosen) ORDER BY seq, id) FROM chosen),
-                '[]'::jsonb) AS messages,
-            COALESCE((SELECT jsonb_object_agg(m.id::text,m.reader_selection_snapshot)
-                FROM complete c JOIN messages m ON m.id=c.id
-                WHERE m.reader_selection_snapshot IS NOT NULL), '{}'::jsonb) AS quotations
+                '[]'::jsonb) AS messages
         FROM metadata
     """),
             {
@@ -564,16 +581,7 @@ def read_message_page(
     )
     if not record["visible"] or (ref.scheme == "message" and not record["total"]):
         return ConversationReadRefusal("missing")
-    quotations = {
-        id: quotes.snapshot_block(
-            db, viewer_id, quotes.decode(snapshot), "historical_reader_selection"
-        )
-        for id, snapshot in record["quotations"].items()
-    }
-    rendered_revision = hashlib.sha256(
-        (record["revision"] + json.dumps(quotations, sort_keys=True)).encode()
-    ).hexdigest()
-    if revision is not None and revision != rendered_revision:
+    if revision is not None and revision != record["revision"]:
         return ConversationReadRefusal("stale_cursor")
     if cursor is not None and not record["cursor_exists"]:
         return ConversationReadRefusal("invalid_cursor")
@@ -585,8 +593,17 @@ def read_message_page(
     for position, message in enumerate(record["messages"]):
         body = message["content"]
         if message["reader_selection_snapshot"] is not None:
-            body = f"{quotations[message['id']]}\n{body}"
+            quote = quotes.snapshot_block(
+                db,
+                viewer_id,
+                quotes.decode(message["reader_selection_snapshot"]),
+                "historical_reader_selection",
+            )
+            body = f"{quote}\n{body}"
         start = offset if message["id"] == str(after_id) else 0
+        rendered_hash = hashlib.sha256(body.encode()).hexdigest()
+        if start > 0 and rendered_hash != rendered:
+            return ConversationReadRefusal("stale_cursor")
         total = len(body)
         if start > total or (start > 0 and start == total):
             return ConversationReadRefusal("invalid_cursor")
@@ -607,10 +624,11 @@ def read_message_page(
                 binding,
                 _MESSAGE_CURSOR,
                 {
-                    "revision": rendered_revision,
+                    "revision": record["revision"],
                     "seq": message["seq"],
                     "id": message["id"],
                     "offset": end if end < total else 0,
+                    "rendered": rendered_hash if end < total else "",
                 },
             )
         if end < total:

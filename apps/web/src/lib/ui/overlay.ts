@@ -48,6 +48,10 @@ export type OverlayOptions = {
           readonly kind: "transient";
           /** Retire on actual browser traversal, excluding the frame's own cleanup. */
           readonly dismissOnNavigation?: boolean;
+          /** Persistent composition may allow pane navigation; brief choices block it by default. */
+          readonly workspaceNavigation?: "allow" | "block";
+          /** Own boxes still contain focus and help when outside presses must preserve the surface. */
+          readonly dismissOnOutside?: boolean;
         }
     ) & {
       /** A transient's own boxes: a press there is not outside. Absent: no press closes it. */
@@ -193,6 +197,16 @@ export function getOverlayOpeners(): readonly HTMLElement[] {
 
 export function hasActiveInteractionOwner(): boolean {
   return owner() !== undefined;
+}
+
+/** Pane navigation can leave persistent composition, but not a modal or an open choice. */
+export function hasWorkspaceNavigationBlocker(): boolean {
+  if (topModal() !== null) return true;
+  return layers.some(layer => {
+    const options = layer.options.current;
+    return layer.parent === null && options.kind === "transient"
+      && (options.eligible?.() ?? true) && options.workspaceNavigation !== "allow";
+  });
 }
 
 /** A delayed result may retain its initiating layer, but never a competing one. */
@@ -494,7 +508,7 @@ function onPointerDown(event: PointerEvent): void {
       // A caption's portal belongs to the same surface as its trigger.
       const trigger = options.kind === "tooltip" ? options.trigger() : null;
       if (trigger && topmost(layer)) target = trigger;
-    } else {
+    } else if (options.kind !== "transient" || options.dismissOnOutside !== false) {
       dispatch(layer, "outside");
       if (kind === "transient") closed = true;
     }

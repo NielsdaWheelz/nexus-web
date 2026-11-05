@@ -466,12 +466,12 @@ function createWorkspaceStore(
       if (!admit(state, ownerIds)) return { kind: "Cancelled" };
       if (entry) {
         const delivery = { activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry };
-        if (entry.kind === "ComposeChat" || entry.kind === "ComposePage" || entry.kind === "ComposeReaderQuestion") {
+        if (entry.kind === "ComposeChat" || entry.kind === "ComposePage") {
           const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
           memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
           if (entry.kind !== "ComposePage") memento.retainWorkOwner({
             id: paneEntryWorkOwnerId(delivery), scope,
-            read: () => ({ changed: entry.text !== "" || entry.kind === "ComposeReaderQuestion" && entry.quote !== null, unconfirmed: false, stopsBrowserWork: false }),
+            read: () => ({ changed: entry.text !== "", unconfirmed: false, stopsBrowserWork: false }),
             subscribe: () => () => {},
           });
         } else if (previous) {

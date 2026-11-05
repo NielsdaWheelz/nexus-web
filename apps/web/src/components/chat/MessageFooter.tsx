@@ -9,7 +9,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import Button from "@/components/ui/Button";
 import { useResourceActions } from "@/lib/actions/useResourceActions";
 import { useThrowLater } from "@/lib/api/serverState";
-import { PENDING_CHANGE } from "@/lib/chat/commands";
+import { pendingReason } from "@/lib/chat/commands";
 import type { Message } from "@/lib/chat/wire";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -86,7 +86,7 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
   for (const option of state?.kind === "Ready" ? state.options : []) {
     const repeat = option.id === "RegenerateMessage" || option.id === "RerunMessage";
     if ((option.id === "ForkMessage" && busy && command.command.kind === "Send") || ((repeat || option.id === "DeleteMessage") && busy))
-      options.push({ ...option, disabled: true, disabledReason: PENDING_CHANGE });
+      options.push({ ...option, disabled: true, disabledReason: pendingReason(command) ?? undefined });
     else options.push(option);
     if (!repeat || option.kind === "custom") continue;
     const operation = option.id === "RerunMessage" ? "rerun" : "regenerate";
@@ -96,7 +96,7 @@ function MessageMenu({ message, onOpenChange }: { message: Message; onOpenChange
       label: option.id === "RerunMessage" ? "Rerun with…" : "Regenerate with…",
       icon: option.icon,
       disabled: busy || option.disabled,
-      disabledReason: busy ? PENDING_CHANGE : option.disabledReason,
+      disabledReason: busy ? pendingReason(command) ?? undefined : option.disabledReason,
       onSelect: ({ triggerEl, openIntent }) => openDialog({ kind: "Repeat", messageId: message.id, operation, opener: triggerEl, openIntent }),
     });
   }

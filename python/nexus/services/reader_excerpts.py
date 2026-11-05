@@ -5,6 +5,7 @@ from typing import Any
 
 from nexus.schemas.reader_excerpts import (
     ExcerptBody,
+    ExcerptCaptureProof,
     ExcerptProjection,
     ExcerptTextParts,
     FrozenExcerpt,
@@ -72,6 +73,13 @@ def text_parts(bodies: Sequence[ExcerptBody]) -> list[ExcerptTextParts]:
             "excerpt_text_parts", [body.model_dump(mode="json") for body in bodies]
         )
     ]
+
+
+def capture_proof(excerpt: FrozenExcerpt) -> ExcerptCaptureProof:
+    """Validate one native capture and prove its canonical text and selected offsets."""
+    return ExcerptCaptureProof.model_validate(
+        helper.call_items("excerpt_capture_proofs", [excerpt.model_dump(mode="json")])[0]
+    )
 
 
 def quote_parts(quote: Any) -> ExcerptTextParts:

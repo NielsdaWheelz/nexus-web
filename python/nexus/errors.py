@@ -102,6 +102,7 @@ class ApiErrorCode(str, Enum):
     E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # live-stream listener capacity (db/listen.py)
 
     # Reader-selection quote-to-chat errors
+    E_CHAT_CREATION_STALE = ("E_CHAT_CREATION_STALE", 409)
     E_READER_SELECTION_NOT_FOUND = ("E_READER_SELECTION_NOT_FOUND", 404)  # highlight/media absent
     E_READER_SELECTION_FORBIDDEN = ("E_READER_SELECTION_FORBIDDEN", 403)  # not viewer-readable
     E_READER_SELECTION_GEOMETRY_ONLY = ("E_READER_SELECTION_GEOMETRY_ONLY", 400)  # blank exact

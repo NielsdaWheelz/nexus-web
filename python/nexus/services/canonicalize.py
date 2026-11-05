@@ -78,6 +78,16 @@ class CanonicalStructure:
     anchors: dict[str, int]
     apparatus_items: dict[str, int]
     x_embed_slots: dict[str, int]
+    tables: tuple["CanonicalTable", ...]
+
+
+@dataclass(slots=True)
+class CanonicalTable:
+    """A visible table's rich boundary and canonical interval, including empty tables."""
+
+    dom_path: tuple[int, ...]
+    start_offset: int
+    end_offset: int
 
 
 class _CanonicalTextTarget:
@@ -93,6 +103,8 @@ class _CanonicalTextTarget:
         self.anchors: dict[str, int] = {}
         self.apparatus_items: dict[str, int] = {}
         self.x_embed_slots: dict[str, int] = {}
+        self.tables: list[CanonicalTable] = []
+        self._table_stack: list[int] = []
         self._visible_stack: list[bool] = []
         self._tag_stack: list[str] = []
         self._ambiguous_anchors: set[str] = set()
@@ -159,6 +171,11 @@ class _CanonicalTextTarget:
             return
         if normalized_tag in BLOCK_ELEMENTS and self.length and self.last_char != "\n":
             self._append("\n")
+        if self.capture_structure and normalized_tag == "table":
+            if dom_path is None:
+                raise ValueError("Table lies outside the retained fragment root")
+            self._table_stack.append(len(self.tables))
+            self.tables.append(CanonicalTable(dom_path, self.length, self.length))
         if (
             self.capture_structure
             and not root_wrapper
@@ -260,6 +277,8 @@ class _CanonicalTextTarget:
                 self.elements[element].end_offset = self.length
                 if normalized_tag in STRUCTURAL_TAGS:
                     self._container_stack.pop()
+            if visible and normalized_tag == "table":
+                self.tables[self._table_stack.pop()].end_offset = self.length
         if visible and normalized_tag in BLOCK_ELEMENTS and self.length and self.last_char != "\n":
             self._append("\n")
 
@@ -308,13 +327,15 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     anchors = target.anchors
     apparatus_items = target.apparatus_items
     x_embed_slots = target.x_embed_slots
+    tables = target.tables
     del target
-    if not elements and not x_embed_slots:
+    if not elements and not x_embed_slots and not tables:
         text, _sources = _transform(raw_text, None)
-        return CanonicalStructure(text, (), {}, {}, {})
+        return CanonicalStructure(text, (), {}, {}, {}, ())
     boundaries = sorted(
         {offset for element in elements for offset in (element.start_offset, element.end_offset)}
         | set(x_embed_slots.values())
+        | {offset for table in tables for offset in (table.start_offset, table.end_offset)}
     )
     text, sources = _transform(raw_text, boundaries)
     # Bucket prefix counts equal bisect_left(sorted(origins), boundary): only
@@ -330,12 +351,16 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     for element in elements:
         element.start_offset = offsets[element.start_offset]
         element.end_offset = offsets[element.end_offset]
+    for table in tables:
+        table.start_offset = offsets[table.start_offset]
+        table.end_offset = offsets[table.end_offset]
     return CanonicalStructure(
         text,
         tuple(elements),
         anchors,
         apparatus_items,
         {key: offsets[raw_offset] for key, raw_offset in x_embed_slots.items()},
+        tuple(tables),
     )
 
 

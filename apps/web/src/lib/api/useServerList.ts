@@ -30,15 +30,8 @@ import { useRemoteGeneration } from "@/lib/native/admissionHooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { admissionRefusal, isApiError, ApiError } from "@/lib/api/client";
-import {
-  modeledApiError,
-  requestWithRetry,
-  type ReadPolicy,
-  useFailedReadRepair,
-  useReadOwner,
-  useThrowLater,
-  useVisitSnapshot,
-} from "@/lib/api/serverState";
+import { modeledApiError, useFailedReadRepair, useReadOwner, useThrowLater, useVisitSnapshot } from "@/lib/api/serverState";
+import { requestWithRetry, type ReadPolicy } from "@/lib/api/retry";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import type { PaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";

@@ -142,13 +142,18 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   const shownAnnotation = annotation ?? (open?.kind === "annotation" && lastAnnotation.current?.id === open.id ? lastAnnotation.current : null);
   const activeMark = open?.kind === "annotation" ? open.mark : null;
   const ask = () => {
-    if (!chat || !doc || !open || busy || note.hyperlink || note.attachment) return;
-    const anchor = open.kind === "selection" ? open.anchor : annotation?.placement.kind === "placed" ? annotation.placement.anchor : null;
-    if (open.kind === "selection" && open.identity !== doc.identity || open.kind === "annotation" && !annotation?.display) return;
+    if (!chat || !open || open.kind === "choose" || busy) return;
+    if (open.kind === "selection" && !selectionEditor.current?.settleNativeInput()) return;
+    const submitted = draft.read();
+    const current = reader.getState().document;
+    if (submitted.hyperlink || submitted.attachment || current.status !== "ready") return;
+    const selectedAnnotation = open.kind === "annotation" && shownAnnotation?.id === open.id ? shownAnnotation : null;
+    const anchor = open.kind === "selection" ? open.anchor : selectedAnnotation?.placement.kind === "placed" ? selectedAnnotation.placement.anchor : null;
+    if (open.kind === "selection" && open.identity !== current.doc.identity || open.kind === "annotation" && !selectedAnnotation?.display) return;
     // Asking never submits the independent saved-annotation editor as a question.
     if (!guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, ...(chat.reviewing ? [draft.owner] : [])] })) return;
-    if (chat.submit({ identity: doc.identity, anchor, capture: open.kind === "selection" ? open.capture : null,
-      annotation: open.kind === "annotation" ? annotation : null, question: open.kind === "selection" ? note.body : emptyBody() })) {
+    if (chat.submit({ identity: current.doc.identity, anchor, capture: open.kind === "selection" ? open.capture : null,
+      annotation: selectedAnnotation, question: open.kind === "selection" ? submitted.body : emptyBody() })) {
       skipReturn.current = true;
       setOpen(null); setNote(emptyBody()); setIssue(null); setFocused(null);
     }

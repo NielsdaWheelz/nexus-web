@@ -3,7 +3,6 @@ import { validateExcerpt, type ExcerptBody, type ExcerptNode, type ExcerptPoint 
 import { isCanonicalTextSkipped } from "@/lib/canonicalText/domTextCursor";
 
 const BRANCHES = new Set("p div span section article header footer nav aside main h1 h2 h3 h4 h5 h6 strong em b i u s cite sup sub code pre blockquote a xref ul ol li dl dt dd figure figcaption table thead tbody tfoot tr td th".split(" "));
-const STRUCTURAL = new Set("table thead tbody tfoot tr ul ol dl".split(" "));
 export class UnsupportedExcerpt extends Error {}
 
 /** Smallest containing block, promoted through list/table structural ancestry. */
@@ -46,10 +45,8 @@ export function captureNativeExcerpt(root: Element, range: Range, includeRoot = 
       if (!bounds.intersectsNode(child)) { boundaries.push(result.length); continue; }
       const at = [...path, result.length];
       if (child instanceof Text) {
-        if (!STRUCTURAL.has(parent.tagName.toLowerCase()) || child.data.trim()) {
-          points.set(child, { path: at, boundaries: null });
-          result.push({ kind: "text", text: child.data });
-        }
+        points.set(child, { path: at, boundaries: null });
+        result.push({ kind: "text", text: child.data });
       } else if (child instanceof Element) {
         const node = element(child, at);
         if (node) result.push(node);
