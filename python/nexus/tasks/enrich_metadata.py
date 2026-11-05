@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import select, text
@@ -42,6 +43,7 @@ from nexus.schemas.metadata_enrichment import (
     MetadataOutcome,
     MetadataPurpose,
     MetadataTitleCompletedOutcome,
+    MetadataWebSearch,
     TitleMetadataJobPayload,
 )
 from nexus.services.contributor_writes import MediaTarget
@@ -201,6 +203,9 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Set
         if isinstance(research, str):
             return _settle_refusal(context, job.purpose, research)
         owner = Owner("media_enrichment", media_id, requester, context)
+        web_search_available = isinstance(research, MetadataResearchInput) and (
+            "web.search" in runtime.tools.plans["MetadataResearch"].tools.profile.grants
+        )
         if isinstance(research, XTitleInput):
             title_input = research
             terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle] = await generate(
@@ -239,7 +244,14 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Set
             return retry_serializable(
                 publication,
                 "metadata_enrichment.publish",
-                lambda: _publish(publication, context, job, research, terminal),
+                lambda: _publish(
+                    publication,
+                    context,
+                    job,
+                    research,
+                    terminal,
+                    web_search_available=web_search_available,
+                ),
             )
 
     return run_generation_job("metadata_generation", context, work)
@@ -267,6 +279,8 @@ def _publish(
     job: MetadataJobPayload,
     research: MetadataResearchInput | XTitleInput,
     terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle],
+    *,
+    web_search_available: bool,
 ) -> _Settled:
     # The complete source family precedes publication/definition/set and claim.
     from nexus.db.models import MediaPart
@@ -348,7 +362,12 @@ def _publish(
     if len(unresolved) == applicable_count:
         return finish(
             MetadataNoFindingsOutcome(
-                purpose="bibliography", completed_at=_now(db), container_report=report
+                purpose="bibliography",
+                completed_at=_now(db),
+                container_report=report,
+                web_search=_web_search_observation(
+                    db, terminal.generation_id, web_search_available
+                ),
             )
         )
     try:
@@ -360,6 +379,7 @@ def _publish(
         )
     except ContributorObservationRejected:
         return failed("invalid_output")
+    web_search = _web_search_observation(db, terminal.generation_id, web_search_available)
     # Every rejection precedes every write; a writer failure rolls back the whole attempt.
     changed = merge_findings(db, media, findings)
     if apply_prepared_role_slices_in_current_transaction(db, prepared=credits):
@@ -373,8 +393,29 @@ def _publish(
             changed_fields=changed,
             unresolved_fields=unresolved,
             container_report=report,
+            web_search=web_search,
         )
     )
+
+
+def _web_search_observation(db: Session, generation_id: UUID, available: bool) -> MetadataWebSearch:
+    """Host evidence for this settled generation; result prose cannot assert coverage."""
+    statuses = set(
+        db.scalars(
+            text("""SELECT DISTINCT status FROM tool_calls
+                WHERE generation_id=:id AND tool_id='web.search'"""),
+            {"id": generation_id},
+        )
+    )
+    if not statuses:
+        return "not_used" if available else "not_available"
+    if not available or not statuses <= {"complete", "error", "cancelled"}:
+        # justify-service-invariant-check: stored receipts must agree with this
+        # frozen plan and terminal generation; neither fact is type-provable.
+        raise AssertionError("metadata search receipts violate the settled tool plan")
+    if statuses == {"complete"}:
+        return "succeeded"
+    return "mixed" if "complete" in statuses else "failed"
 
 
 def _stamp(db: Session, media: Media) -> Any:

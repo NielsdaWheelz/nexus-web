@@ -209,11 +209,14 @@ function MediaRoute({ id }: { readonly id: string }) {
   const [interacted, setInteracted] = useState(false);
   const pinSaved = useCallback(() => setInteracted(true), []);
   const metadataStamp = useChangeStamp("Metadata");
+  const metadata = useMediaMetadataOperations(usePaneIsVisible() ? id : null);
+  const operation = metadata.view?.operation;
+  const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   const speak = useActiveRegion();
   const { profile } = useReaderContext();
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
-    stale: metadataStamp,
+    stale: JSON.stringify([metadataStamp, metadata.view?.last_enriched_at ?? null, titleJob]),
     load: async (signal) =>
       mediaDetailFromResponse(
         await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
@@ -256,6 +259,8 @@ function MediaRoute({ id }: { readonly id: string }) {
     : <Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />;
   if (record.status === "ready") return <div className={styles.layout}>
     {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
+    {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
+      retry={{ run: record.refetch, busy: record.refreshing }} /></div> : null}
     <MediaPane id={id} record={record} />
   </div>;
   if (localContentAvailable && saved.kind === "Loading") return <Ruling />;
@@ -348,9 +353,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     [],
   );
 
-  // the record as read, until a metadata refresh below replaces it.
-  const [detail, setMedia] = useState(record.data);
-  useEffect(() => { setMedia(record.data); }, [record.data]);
+  const detail = record.data;
   const { snapshot } = useMediaProcessingStatus(detail.id);
   const media = useMemo(() => snapshot === null ? detail : {
       ...detail,
@@ -452,7 +455,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   useEffect(() => {
     if (readable && doc && media.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
-  }, [doc, media.reader_generation, readable, reader]);
+    else if (readable && doc && !transcript && doc.title !== media.title)
+      reader.reload();
+  }, [doc, media.reader_generation, media.title, readable, reader, transcript]);
   useEffect(() => {
     if (readable && snapshot !== null && doc?.kind === "text" && doc.format === "transcript"
       && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key
@@ -484,29 +489,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       }),
     [id, reader],
   );
-
-  // A title job is admitted with source publication, before naming may fail.
-  // Manual title admission costs the same small reread; it does not reload progress.
-  const metadata = useMediaMetadataOperations(paneVisible ? id : null);
-  const stamp = metadata.view?.last_enriched_at != null ? metadata.view.last_enriched_at : null;
-  const operation = metadata.view?.operation;
-  const titleJob = operation?.purpose === "title" ? operation.job_id : null;
-  useEffect(() => {
-    const recorded = media.metadata_enrichment.operation;
-    const recordedTitleJob = recorded?.purpose === "title" ? recorded.job_id : null;
-    const titleAdmitted = titleJob !== null && titleJob !== recordedTitleJob;
-    const metadataPublished = stamp !== null && media.metadata_enriched_at !== stamp;
-    if (!titleAdmitted && !metadataPublished) return;
-    let active = true;
-    void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${id}`).then((response) => {
-      if (!active) return;
-      const detail = mediaDetailFromResponse(response, id);
-      setMedia(detail);
-      // The readiness transition owns the first load; metadata refreshes an existing publication.
-      if (readable && detail.capabilities.can_read && !transcript) reader.reload();
-    });
-    return () => { active = false; };
-  }, [id, media, readable, reader, stamp, titleJob, transcript]);
 
   // ---- annotations ----
   const authored = useAuthoredStore();

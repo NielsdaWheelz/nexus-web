@@ -118,7 +118,7 @@ export default function ResourceMetadataOverlay(props: {
   const { subject, ...frame } = props;
   let content: ReactNode;
   switch (subject.kind) {
-    case "Media": return <MediaInfoOverlay {...frame} mediaId={subject.mediaId} />;
+    case "Media": return <MediaInfoOverlay {...frame} mediaId={subject.mediaId} jobId={subject.jobId} />;
     case "Podcast": content = <PodcastMetadata podcastId={subject.podcastId} open={frame.open} />; break;
     case "Library": content = <LibraryMetadata libraryId={subject.libraryId} open={frame.open} />; break;
     case "DiscoveryPodcast": content = <DirectoryPodcastMetadata directory={subject.candidate} />; break;

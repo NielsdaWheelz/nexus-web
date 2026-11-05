@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     deepgram_base_url: str = "https://api.deepgram.com"
     deepgram_model: str = "nova-3"
     podcast_transcription_timeout_seconds: float = Field(90.0, gt=0)
-    # Optional in chat; metadata research still requires search.
+    # Optional search capability in chat and metadata research.
     brave_search_api_key: str | None = None
     brave_search_base_url: str = "https://api.search.brave.com/res/v1"
     brave_search_timeout_seconds: float = Field(8.0, gt=0)

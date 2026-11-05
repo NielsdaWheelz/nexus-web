@@ -37,6 +37,7 @@ import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
+import MetadataOutcomeHost from "@/lib/media/MetadataOutcomeHost";
 import { ChatSelectionProvider } from "@/lib/chat/selectionMemory";
 import { useChatWorkOwners } from "@/lib/chat/drafts";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
@@ -177,6 +178,7 @@ function Workspace(props: {
                             <ChatSelectionProvider>
                               <ResourceActionPresentation />
                               <MediaAdmissionsHost />
+                              <MetadataOutcomeHost />
                               <ImportsProvider>
                                 <ImportIntakeHost openPage={openImportPage}>
                                   <MediaContinuationHost />

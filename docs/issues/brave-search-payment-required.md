@@ -45,3 +45,26 @@ has terminal error tool receipts and unchanged saved facts. actual local documen
 and resource reads passed; controlled bibliography/no-findings/review composition
 passed. no successful four-tool research claim is made. see
 the scoped qualification in #606.
+
+2026-11-04 read-only production inspection at api/worker sha `e505409d1`:
+both `nexus-worker-background-1` and `nexus-worker-interactive-1` have no
+nonblank `BRAVE_SEARCH_API_KEY` in their configured environment (presence only
+was printed). current bibliography fails before model dispatch with
+`tools unavailable: web.search`, not a newly observed provider 402.
+`services/tools/run.py:173-184` omits the search binding without that key;
+`services/generation/run.py:201-205` refuses unavailable required tools.
+
+the two latest runs for “born again, briefly — greg egan”
+(`dc49a33a-ee43-4da5-8a99-44a4374c06bb`) ended
+`E_METADATA_MODEL_UNAVAILABLE` at 2026-11-04 00:10:31 and 00:29:59 utc;
+latest job `01a1a3f6-724a-7592-825a-578d7ea2c82e` retains the exact missing-tool
+reason in its generation. the latest sonnet 73, 116 and 130 jobs retain that
+same reason. all four media have null `metadata_enriched_at`; egan has no
+credits and the sonnets retain the credited name “author”. no job was submitted,
+configuration changed or provider request made during inspection.
+
+restoration requires provisioning working search credentials through the normal
+configuration owner as well as resolving provider quota. then deliberately rerun
+these items and verify evidenced metadata corrections. the separate
+[manual-command feedback gap](metadata-update-lacks-feedback.md) conceals their
+terminal failures from the initiating menu.
