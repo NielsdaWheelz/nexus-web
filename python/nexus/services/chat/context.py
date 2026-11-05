@@ -5,8 +5,8 @@ Instructions are the fixed system prompt only. The input carries the turn's cont
 ``<resources>``), then as much of the active path's history as fits, newest first and
 contiguous, then the current turn. Mandatory context never drops; when it cannot fit,
 admission rejects the send.
-Quoted-subject labels and words stay snapshot-owned; current proof only decides
-whether that frozen passage remains citable.
+Quoted words stay snapshot-owned; current source authority governs disclosure
+and current location proof governs citation eligibility.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Message
 from nexus.errors import ConflictError, NotFoundError
-from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
 from nexus.services.chat import quotes
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
+    citation_from_evidence,
     citation_from_search_result,
     reopen_search_result,
 )
@@ -83,6 +83,7 @@ SYSTEM_PROMPT = (
     "<resources> block; a highlight there carries a <quote> with the passage and "
     "its surrounding context. Each citable resource has an n attribute; each citable "
     "resource marked quote=reader_selection uses the reader_selection passage above. "
+    "A reader_selection with an n attribute is also citable source evidence. "
     "tool result contains one or more tool_citation sections whose n attribute numbers "
     "that result's selected evidence. "
     "When you use information from a numbered resource or tool citation, cite it as bare [N] "
@@ -136,7 +137,7 @@ class ContextTooLarge(ValueError):
 class Assembly:
     intent: GenerationIntent
     scope_refs: tuple[str, ...]
-    # Citable <resources> in order: resource n is attached[n - 1].
+    # The selected quote, then citable resources: n is attached[n - 1].
     attached: tuple[RetrievalCitation, ...]
 
 
@@ -157,21 +158,23 @@ def assemble(
     snapshot = (
         quotes.decode(user.reader_selection_snapshot) if user.reader_selection_snapshot else None
     )
-    subject_uri = None
+    attached: list[RetrievalCitation] = []
+    quoted_refs: set[str] = set()
     if snapshot is not None:
-        # A quote turn: <subject> is identity only, so the quote text appears once.
-        subject_uri = f"highlight:{snapshot.key.highlight_id}"
+        quoted_refs = {snapshot.highlight_ref} if snapshot.highlight_ref is not None else set()
+        citation = citation_from_evidence(db, viewer_id=viewer_id, evidence=snapshot.evidence)
+        if citation is not None:
+            attached.append(citation)
+        context.append('<subject kind="reader_selection">see reader_selection</subject>')
         context.append(
-            f'<subject kind="reader_highlight" source="{quotes.attribute(snapshot.evidence.source.title or "")}">\n'
-            f"<highlight_id>{snapshot.key.highlight_id}</highlight_id>\n"
-            + (
-                f"<media_id>{snapshot.key.media_id}</media_id>\n"
-                if snapshot.key.media_id
-                else f"<capture_id>{snapshot.key.capture_id}</capture_id>\n"
+            quotes.snapshot_block(
+                db,
+                viewer_id,
+                snapshot,
+                "reader_selection",
+                citation_number=1 if citation is not None else None,
             )
-            + "</subject>"
         )
-        context.append(quotes.snapshot_block(snapshot, "reader_selection"))
     if user.branch_anchor_kind == "assistant_selection":
         anchor = user.branch_anchor
         context.append(
@@ -184,38 +187,19 @@ def assemble(
                 offset_status=_text_or_none(anchor.get("offset_status")),
             )
         )
-    attached: list[RetrievalCitation] = []
     refs = list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
     if refs:
         lines = ["<resources>"]
         for ref in refs:
-            quoted_subject = snapshot is not None and ref.target.uri == subject_uri
-            if snapshot is not None and quoted_subject:
-                target = snapshot.evidence.target
-                citation = (
-                    _attached_citation(
-                        db,
-                        ref.resolved,
-                        viewer_id,
-                        passage_target=target,
-                        captured_evidence=snapshot.evidence,
-                    )
-                    if isinstance(target, CapturedPassageTarget)
-                    else None
-                )
-                if citation is not None:
-                    citation.captured_evidence = snapshot.evidence
-            else:
-                citation = _attached_citation(db, ref.resolved, viewer_id)
+            quoted_subject = ref.target.uri in quoted_refs
+            citation = None if quoted_subject else _attached_citation(db, ref.resolved, viewer_id)
             if citation is not None:
                 attached.append(citation)
             lines.append(
                 _resource(
                     ref.resolved,
                     n=len(attached) if citation is not None else None,
-                    quoted_evidence=snapshot.evidence
-                    if snapshot is not None and quoted_subject
-                    else None,
+                    quoted_subject=quoted_subject,
                     citation=citation,
                 )
             )
@@ -229,7 +213,7 @@ def assemble(
     if tokens_left < 0 or bytes_left < 0:
         raise ContextTooLarge("the turn's mandatory context exceeds the model or input budget")
     history: list[str] = []
-    for unit in reversed(_history_units(db, user)):
+    for unit in reversed(_history_units(db, viewer_id, user)):
         cost = sum(tokens(block) for block in unit)
         size = sum(_size(block) for block in unit)
         if cost > tokens_left or size > bytes_left:
@@ -259,7 +243,7 @@ def _text_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _history_units(db: Session, user: Message) -> list[list[str]]:
+def _history_units(db: Session, viewer_id: UUID, user: Message) -> list[list[str]]:
     """The active path above this turn, oldest first, as user/answer pairs."""
 
     rows = db.execute(
@@ -281,7 +265,9 @@ def _history_units(db: Session, user: Message) -> list[list[str]]:
     blocks: list[str] = []
     for role, content, snapshot in rows:
         if snapshot is not None:
-            quote = quotes.snapshot_block(quotes.decode(snapshot), "historical_reader_selection")
+            quote = quotes.snapshot_block(
+                db, viewer_id, quotes.decode(snapshot), "historical_reader_selection"
+            )
             content = f"{quote}\n\n{content}"
         blocks.append(f"<{role}>\n{content}")
     # A reply's parent is a complete answer, so the path alternates user, answer.
@@ -292,9 +278,6 @@ def _attached_citation(
     db: Session,
     resource: ResolvedResource,
     viewer_id: UUID,
-    *,
-    passage_target: CapturedPassageTarget | None = None,
-    captured_evidence: CapturedEvidence | None = None,
 ) -> RetrievalCitation | None:
     """Citable = rendered with a body or quote, and a retrieval row can materialize."""
 
@@ -318,8 +301,6 @@ def _attached_citation(
             viewer_id=viewer_id,
             result_type=result_type,
             source_id=str(ref.id),
-            passage_target=passage_target,
-            captured_evidence=captured_evidence,
         )
         citation = citation_from_search_result(result)
     except (NotFoundError, ConflictError, ValueError):
@@ -334,7 +315,7 @@ def _resource(
     resource: ResolvedResource,
     n: int | None,
     *,
-    quoted_evidence: CapturedEvidence | None,
+    quoted_subject: bool,
     citation: RetrievalCitation | None,
 ) -> str:
     uri = quotes.attribute(resource.uri)
@@ -345,11 +326,8 @@ def _resource(
         ref.scheme
     ).prompt_render in ("label", "none")
     n_attr = f' n="{n}"' if n is not None and not label_only else ""
-    quoted_subject = quoted_evidence is not None
     quote_attr = ' quote="reader_selection"' if quoted_subject else ""
-    label = (
-        (quoted_evidence.source.title or "selected passage") if quoted_evidence else resource.label
-    )
+    label = resource.label
     summary = "" if quoted_subject else resource.summary
     fetch_hint = "see reader_selection" if quoted_subject else resource.fetch_hint
     head = (
@@ -357,7 +335,14 @@ def _resource(
         f'summary="{quotes.attribute(summary)}" '
         f'fetch_hint="{quotes.attribute(fetch_hint)}">'
     )
-    if quoted_subject or label_only:
+    if quoted_subject:
+        annotation = resource.quote.annotation if resource.quote is not None else None
+        return (
+            f"{head}\n<annotation>{escape(annotation)}</annotation>\n</resource>"
+            if annotation
+            else f"{head}</resource>"
+        )
+    if label_only:
         return f"{head}</resource>"
     captured = citation.captured_evidence if citation else None
     if captured is not None and captured.quote is not None:

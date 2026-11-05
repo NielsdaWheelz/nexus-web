@@ -471,7 +471,7 @@ function createWorkspaceStore(
           memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
           if (entry.kind !== "ComposePage") memento.retainWorkOwner({
             id: paneEntryWorkOwnerId(delivery), scope,
-            read: () => ({ changed: entry.text !== "", unconfirmed: false, stopsBrowserWork: false }),
+            read: () => ({ changed: entry.text !== "" || entry.kind === "ComposeReaderQuestion" && entry.quote !== null, unconfirmed: false, stopsBrowserWork: false }),
             subscribe: () => () => {},
           });
         } else if (previous) {

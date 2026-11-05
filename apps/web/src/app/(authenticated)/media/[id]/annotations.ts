@@ -5,7 +5,7 @@ import { excerptTextParts } from "@nexus/authored/excerpt";
 // whole-document links are local authored state: the account database owns them online
 // too, and they never wait on the network. The server's document map remains a separate,
 // separately failable section of derived evidence: source references, embeds and
-// assistant links. Mounted X owners are read separately and their offsets enter only
+// quoted messages and assistant links. Mounted X owners are read separately and their offsets enter only
 // occurrences at that publication generation. Authored echoes never replace local rows.
 // Restored admission retries mounted remote evidence under its original account binding.
 // A failed re-read over a shown section says nothing: the section stands until a read lands.
@@ -176,7 +176,8 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
             kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview });
           continue;
         }
-        const item = rootItem(root), body = item.preview.body, facet = markerFacet(root);
+        const item = rootItem(root), facet = markerFacet(root);
+        const body = root.content.kind === "Quotation" ? root.content.quotation.preview.body : item.preview.body;
         markers.push({ id: root.ref, position: structure.fraction(extent.start), end: structure.fraction(extent.end),
           kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" ? root.content.kind
             : facet === "citations" ? "GeneratedCitation" : facet === "links" ? "Link" : "MachineLink",

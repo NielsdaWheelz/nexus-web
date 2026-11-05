@@ -16,7 +16,6 @@ import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { useChatDraft } from "@/lib/chat/drafts";
 import { changedLine, commandKey, PENDING_CHANGE, sayRefusal, unsureFact, type CommandOutcome } from "@/lib/chat/commands";
-import { parseReaderSelectionHash } from "@/lib/chat/readerIntent";
 import { chatView, indexChildren, leafUnder, pathTo, type BranchDraft } from "@/lib/chat/tree";
 import { conversationEndpoint, conversationViewHref, type ConversationEndpoint } from "@/lib/chat/view";
 import type { Catalog } from "@/lib/chat/wire";
@@ -29,7 +28,6 @@ import {
   paneSourceKey,
   requirePaneRuntime,
   usePaneEntryDelivery,
-  usePaneHash,
   usePaneIsActive,
   usePaneParam,
   usePaneRouter,
@@ -37,7 +35,6 @@ import {
   usePaneSearchParams,
   type PaneRuntimeContextValue,
 } from "@/lib/panes/paneRuntime";
-import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { CommandVerb } from "@/components/feedback/stage";
@@ -50,7 +47,6 @@ import ChatContext from "./ChatContext";
 import { inspectConversationFindMatch, useConversationFindSource } from "./conversationFind";
 import { useChatStore, type ChatStore } from "./conversationStore";
 import { ForksPanel } from "./Forks";
-import { useQuotePreview } from "./QuotedPassage";
 import { inspectChatMessage, type ChatScrollHandle } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
@@ -69,7 +65,7 @@ function persistEndpoint(runtime: Pick<PaneRuntimeContextValue, "href" | "visitI
   return runtime.updatePaneViewHref({ visitId: runtime.visitId, href: `${href.pathname}${href.search}${href.hash}`, arrival: "preserve" });
 }
 
-// Route state (id, ?leaf, ?message, the quote hash), the pane's endpoint and
+// Route state (id, ?leaf, ?message), the pane's endpoint and
 // the fork being composed live here; the store owns server state, the command owner
 // owns writes, the pane lands their answers.
 function Conversation({ conversationId }: { conversationId: string | null }) {
@@ -89,11 +85,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const router = usePaneRouter();
   const isPaneActive = usePaneIsActive();
   const params = usePaneSearchParams();
-  const hash = usePaneHash();
-  const intent = useMemo(() => sourceTargetFromHref(runtime.href) ? { kind: "none" as const } : parseReaderSelectionHash(hash), [hash, runtime.href]);
-  const { quote, retry: retryQuote } = useQuotePreview(
-    intent.kind === "key" ? intent.key : null,
-  );
   const [branch, setBranch] = useState<BranchDraft | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [invalidatedInspection, setInvalidatedInspection] = useState(false);
@@ -414,7 +405,6 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: a replaced graph repairs a known deleted endpoint once
   }, [messages, ready]);
 
-  const pathOnly = conversationId ? conversationViewHref(conversationId, leafId) : "/conversations/new";
   // a source arrival's failure is said once, and retracted when it clears
   const arrivalFailure = arrival.failure?.title ?? (invalidatedInspection ? "the matched text changed." : null);
   useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
@@ -465,10 +455,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
       : null;
   return (
     <div className={styles.pane}>
-      {unavailableBranch || intent.kind === "invalid" || lane !== null ? <div className={styles.lanes}>
+      {unavailableBranch || lane !== null ? <div className={styles.lanes}>
         {unavailableBranch ? <Fact speak={isPaneActive} line={{ fact: "can’t find this branch." }}
           verbs={[{ label: "show forks", commandKey: "show forks", run: () => runtime.requestSecondarySurface("resource-forks") }]} /> : null}
-        {intent.kind === "invalid" ? <Fact speak={isPaneActive} line={{ fact: "couldn’t attach this quote.", reason: "its link is broken." }} /> : null}
         {lane}
       </div> : null}
       {pending !== null && unknown !== null && holds ? <Hold id={pendingKey} attempt={pending.attempt} line={unknown.line} verbs={unknown.verbs ?? undefined} /> : null}
@@ -495,14 +484,10 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
               null
             }
             onClearBranch={() => setBranch(null)}
-            quote={quote}
-            onRemoveQuote={() => router.replace(pathOnly)}
-            onRetryQuote={retryQuote}
             onRejected={(code) => {
-              if (code === "E_READER_SELECTION_STALE") retryQuote();
               if (code === "E_CONVERSATION_NO_LONGER_EMPTY") void store.load();
             }}
-            focusKey={focusKey ?? (quote ? `quote:${hash}` : null)}
+            focusKey={focusKey}
             isPaneActive={isPaneActive}
           />
         }

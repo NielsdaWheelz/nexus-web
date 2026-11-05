@@ -17,7 +17,7 @@ store and the views).
 |---|---|
 | `admit` | send, rerun/regenerate, cancel: the run-id envelope, destination, anchor, quote, message pair, run freeze, job |
 | `context` | the fixed system prompt, the turn's context blocks, two-budget history, the frozen intent |
-| `quotes` | the reader-quote snapshot: build from the locked highlight, encode/decode, revision, preview, renderer |
+| `quotes` | the reader-quote snapshot: capture source/highlight evidence, preview, revision, source occurrences and invalidation |
 | `citations` | candidate numbering, attached evidence, publication, unpublished text |
 | `retrievals` | `RetrievalCitation`, `citation_from_search_result`, `web_citation`, the one `message_retrievals` writer |
 | `events` | run lock, claim fence, append, tail read, stop flag, the one terminal writer |
@@ -44,7 +44,7 @@ store and the views).
 - **selection**: an exact catalog `route/model/reasoning`; never substituted.
 - **account selection**: the last accepted generation choice, ordered by committed
   admission. it seeds untouched ordinary composers across chats and devices.
-- **quote**: an immutable snapshot of a locked highlight on a user turn.
+- **quote**: immutable source evidence on a user turn, optionally naming an existing highlight.
 - **context**: the chat's scope refs (future prompt membership), frozen per run as
   `tool_scope`.
 - **citation**: a model-visible candidate ordinal, then a published edge with a dense
@@ -89,14 +89,17 @@ re-present existing data and never refetch, publish, reorder or move focus.
 | `PATCH /messages/{id}/fork-title` | `{title, expected_title}` | `ForkTitleOut{fork_title, updated_at}` | absolute title plus the title it replaces: already so named succeeds; named otherwise is 409 with `details.current_title` |
 | `DELETE /messages/{id}?conversation_id&expected_revision` | none | `{conversation_id, conversation_deleted}` | idempotent: an absent target is a no-op; a stale revision is 409 |
 | `DELETE /conversations/{id}?expected_revision` | none | 204 | idempotent, as above |
-| `GET /chat-reader-selections/highlights/{id}?media_id` | none | `ReaderSelectionPreview{key, item, revision}` | read |
+| `POST /chat-reader-selections/preview` | `{selection}` | `ReaderSelectionPreview{selection, item, revision}` | private no-store read; no writes |
 | `GET /stream/chat-runs/{id}/events?after=N` | none | sse `assistant_text_delta{text}`, `tool_call_start`, `tool_result`, `context_ref_added{id, resource_ref}`, `done{status}`; unsequenced `ExecutionAdvisory{phase, cancel_requested}` | resume from the last seen sequence |
 
 a send's `destination` is `{kind:"New"}` (the chat, its pair and its run commit together;
 a refused first send leaves nothing) or `{kind:"Existing", conversation_id,
 expected_revision, insertion: {kind:"Empty"} | {kind:"Reply", parent_message_id,
-branch_anchor}}`. `reader_selection` is `{key:{media_id, highlight_id}, revision} | null`:
-the key and a compare-on-send revision, never text. requests forbid extra keys.
+branch_anchor}}`. `reader_selection` is `{selection, revision} | null`. selection names the observed
+media/capture document identity and either a source locator with exact words or an
+existing highlight with its displayed capture revision. preview and admission use
+one source-evidence capture operation; source identity, scope, exact words and
+complete snapshot revision must still match. requests forbid extra keys.
 
 an optional `media_id` scopes the owned index to current direct context whose endpoint
 or one-hop owner is that readable media; historical citations and transitive links do
@@ -373,8 +376,11 @@ and source arrival remain resource-owned.
     a stopped or failed answer stores its text without candidate markers.
 12. citation edges, back-pointers, context additions and `done` commit together;
     automatic context additions only while the admitted context version is current.
-13. a quote is written once from the locked highlight; every later read derives from the
-    snapshot; its revision is the sha256 of the canonical json.
+13. accepted send stores `{evidence, highlight_ref}` once on its user message;
+    fresh selections create no authored object. its revision hashes canonical json.
+    current and historical prompt quotes apply current source-access admission.
+    chosen highlights add their current annotation through ordinary context; only
+    duplicate passage text is suppressed. annotations acquire no separate snapshot.
     schema conversion preserves its literal words and source attribution. an unknown
     original `source_identity` stays null; a separately proved retained locator may
     still support navigation. attribution is a fallback destination only when the
@@ -416,7 +422,13 @@ and source arrival remain resource-owned.
 
 passage questions consume only their submitted rich input on server acceptance,
 through `ConversationCommands.execute(command, onAcceptance)`. newer editor input
-and an existing saved annotation remain. a fresh question ensures a highlight
-without creating a note. highlight creation and chat admission can partially
-succeed; unknown admission retries the same command, while definitive refusal
-requires a reviewed new command. generation completion does not own input reset.
+and an existing saved annotation remain. a fresh question sends source evidence
+directly, without a highlight write.
+blank ask transfers a memory-only quote and model selection through the existing
+pane entry, creating no conversation. installed quote-only drafts and unclaimed
+entries are guarded writing. unknown admission retries the same command; stale
+refusal requires explicit passage review and a separate send. review returns to
+the exact pane, visit, draft owner and attachment; replacement preserves text and
+model. draft inspection carries source coordinates through pane state. sent quotes
+retain native message-owned source links. generation completion does not own
+input reset.

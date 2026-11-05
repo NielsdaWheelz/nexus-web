@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FocusEventHandler, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
+import QuotedPassage from "@/components/chat/QuotedPassage";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Announcement } from "@/components/feedback/Announcement";
 import { Field } from "@/components/feedback/Fact";
@@ -35,7 +36,7 @@ import { bodyHasContent } from "@nexus/authored/body";
 import type { MediaAnnotations } from "./annotations";
 import type { AnnotationVerbs, MobileSelection } from "./useAnnotationVerbs";
 import HighlightColourPicker, { Colours, HighlightButton } from "./HighlightColourPicker";
-import { HIGHLIGHT_SAVED, SOURCE_CHANGED, type SelectionComposer } from "./useSelectionComposer";
+import { SOURCE_CHANGED, type SelectionComposer } from "./useSelectionComposer";
 import styles from "./media.module.css";
 
 
@@ -375,13 +376,16 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
       : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save annotation",
         <Icon.Save size={16} aria-hidden="true" />, composer.save, saving ? "saving." : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write an annotation first." : null));
     const newLabel = hasMessage ? "Send in new chat" : "Open in new chat";
-    const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another message is still pending." : null);
+    const chatReason = ((draft.quote || draft.quoteDetached) && (draft.issue?.kind === "Source" || sourceChanged) ? null : blockedReason)
+      ?? (draft.quote?.state.kind === "Loading" ? "the quote is still loading." : draft.quote?.state.kind === "Failed" ? "the quote needs attention." : null)
+      ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another message is still pending." : null);
     const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading the chat." : continuationBlocked ? "this chat can’t take a reply here." : null);
     const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), chatReason);
     const existingAction = command("ExistingChat", chatLabel, <Icon.Chat size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
     const chooseAction = { ...command("ChooseChat", "Choose existing chat", <Icon.Choose size={16} aria-hidden="true" />, composer.chooseChat,
       blockedReason ?? (composer.chatLocked ? "another message is still pending." : null)), restoreFocusOnClose: false };
-    const selectAgain: Verb = { label: "select again", commandKey: "ReselectPassage", run: composer.reselect };
+    const selectAgain: Verb = draft.quote ? { label: "review passage", commandKey: "ReviewReaderQuote", run: composer.reviewQuote }
+      : { label: "select again", commandKey: "ReselectPassage", run: composer.reselect };
     const copyText: Verb = { label: "copy text", commandKey: "CopyDraftText", run: () => copy(draft.body.body_text) };
     const openChat: Verb = { label: "open chat", commandKey: "OpenDraftChat", run: composer.openChat };
     const openInChat: Verb = { label: "open in chat", commandKey: "OpenModelInChat", run: composer.recoverModel };
@@ -451,6 +455,12 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     return (
       <div data-mobile={isMobile} className={styles.selectionComposer}>
         {!isMobile ? toolbar : null}
+        {draft.quote ? <QuotedPassage quote={draft.quote.state} inspection={draft.quote.inspection}
+          onRemove={composer.ownChatCommand ? undefined : composer.removeQuote} onRetry={composer.retryQuote} onReview={composer.reviewQuote} /> : null}
+        {composer.quoteReview ? <div className={styles.dock}>
+          <Button onClick={composer.replaceQuote} disabled={sourceChanged || draft.operation !== null}>replace quoted passage</Button>
+          <Button onClick={composer.quoteReview.finish}>cancel review</Button>
+        </div> : null}
         {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
         {/* null means gone only once the store has read; until then the annotation waits */}
         {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
@@ -485,6 +495,8 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   };
   const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
+    {composer.quoteReview && draft === null ? <Field id={fieldId} line={{ fact: "select the passage to use in your question." }}
+      verbs={[{ label: "cancel review", commandKey: "CancelQuoteReview", run: composer.quoteReview.finish }]} /> : null}
     {composer.hiddenPreparationFailures.map(failure => <HiddenPreparationFailure key={failure.id} failure={failure} copy={copy} />)}
     {draft === null ? copying.notice : null}
     {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} canQuote={canQuote} sharePiece={sharePiece} /> : null}
@@ -519,7 +531,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     <Dialog open={verbs.recolouring !== null} title="edit highlight" onClose={() => verbs.recolour(null)}>
       <Colours selected={recolouring?.color ?? null} onSelect={verbs.recolour} />
     </Dialog>
-    {draft ? <ConversationDestinationOverlay key={draft.id} anchor={pickerAnchor} panelId={pickerId} open={composer.pickerOpen} mediaId={draft.sourceMediaId} hasSourceChats={draft.sourceHasChats}
+    {draft ? <ConversationDestinationOverlay key={draft.id} anchor={pickerAnchor} panelId={pickerId} open={composer.pickerOpen} mediaId={composer.mediaId} hasSourceChats={draft.sourceHasChats}
       onClose={composer.closePicker} onSelectConversation={composer.chooseDestination} /> : null}
   </>;
 }
@@ -538,7 +550,7 @@ function chatFieldOf(composer: SelectionComposer, issue: NonNullable<SelectionCo
     return { line: TRANSPORT_LINES[transport].command(issue.fact), verbs: transportVerbs(transport) ?? undefined };
   }
   if (issue) {
-    const line = issue.highlightSaved ? HIGHLIGHT_SAVED : issue.line;
+    const line = issue.line;
     switch (issue.kind) {
       case "Catalog": return { line, verbs: [{ label: "retry", commandKey: "RetryModelList", run: composer.retryCatalog }, verbs.openInChat] };
       case "Passage": case "Source": return { line, verbs: [verbs.selectAgain, verbs.copyText] };

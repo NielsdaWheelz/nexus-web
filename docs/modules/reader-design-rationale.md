@@ -260,12 +260,13 @@ same-generation conflict keeps both choices and asks the user. see
 
 ### reader-to-chat quote selection
 
-quote-to-chat is highlight-first: a durable highlight exists before launch, the
-send carries only `reader_selection = {key: {media_id, highlight_id},
-revision}`, and the server captures an immutable per-message snapshot. a sent
-quote is fixed: editing, moving or deleting the highlight afterwards cannot
-change the displayed or prompted passage. new-chat send is atomic, so a failed
-first send leaves no conversation behind.
+quote-to-chat captures source evidence without creating a highlight. send carries
+`reader_selection = {selection, revision}`; the server validates the observed
+reading and freezes evidence on the message. choosing an existing highlight also
+includes its current annotation through ordinary context. later highlight edits
+or deletion do not rewrite that passage or accepted generation intent; current
+source access still governs disclosure to new runs. new-chat send is atomic, so
+a failed first send leaves no conversation behind.
 
 ## verification strategy
 

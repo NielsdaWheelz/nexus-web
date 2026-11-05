@@ -449,3 +449,8 @@ and invalidation after graph/resource changes. the current `NoteEditor` and
 outline insertion line share these bindings; suggestions stay bounded and inline.
 editor transactions, authored snapshots, undo and context review remain with
 the existing journal and outline owners.
+
+reader draft quotations use `ResourceQuotation.renderSourceControl` for a command
+that carries their full source destination in memory. sent quotations and citations
+use the same passive evidence body with their native source links. a frozen passage
+never implies a separately frozen highlight annotation.

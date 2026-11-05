@@ -151,8 +151,17 @@ class ReaderEvidenceResourceOut(_ReaderMapOut):
     item: ResourceItemOut
 
 
+class ReaderEvidenceQuotationOut(_ReaderMapOut):
+    kind: Literal["Quotation"] = "Quotation"
+    item: ResourceItemOut
+    quotation: ResourceItemOut
+
+
 ReaderEvidenceContentOut = Annotated[
-    ReaderEvidenceHighlightOut | ReaderEvidenceSourceReferenceOut | ReaderEvidenceResourceOut,
+    ReaderEvidenceHighlightOut
+    | ReaderEvidenceSourceReferenceOut
+    | ReaderEvidenceResourceOut
+    | ReaderEvidenceQuotationOut,
     Field(discriminator="kind"),
 ]
 

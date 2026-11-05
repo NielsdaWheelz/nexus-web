@@ -1,7 +1,8 @@
 """The one ``message_retrievals`` writer: a search result as the row and the model see it.
 
-App search, web search, attached ``<resources>`` and ``read_resource`` evidence all
-enter through ``citation_from_search_result`` (provider web hits through ``web_citation``), so
+App search, web search, attached ``<resources>`` and ``read_resource`` evidence
+enter through ``citation_from_search_result``; selected source passages use
+``citation_from_evidence`` and provider web hits use ``web_citation``, so
 the stored ``result_ref`` shape lives here once. It is also the model-visible
 ``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
 every built key, minus the ones whose value is null, an empty list or ``selected`` false
@@ -33,11 +34,13 @@ from nexus.schemas.resource_evidence import (
     CapturedSource,
     ResourceField,
 )
+from nexus.schemas.resource_items import ResourceSourceTargetKey
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
-from nexus.services.reader_excerpts import plain_excerpt
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_items.evidence import capture_evidence
+from nexus.services.reader_excerpts import plain_excerpt, quote_parts
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
+from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import admit_evidence, capture_evidence, evidence_items
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.project import build_source_label
 from nexus.services.search.service import get_search_result
@@ -150,6 +153,59 @@ class RetrievalCitation:
         elif kind == "web_result":
             return compact(ref | {key: self.payload.get(key) for key in _WEB_KEYS})
         return ref
+
+
+def citation_from_evidence(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    evidence: CapturedEvidence,
+) -> RetrievalCitation | None:
+    """A message's selected source extent enters ordinary candidate publication directly."""
+    admitted = admit_evidence(db, viewer_id=viewer_id, evidence=evidence)
+    if (
+        admitted is None
+        or admitted.quote is None
+        or not isinstance(admitted.target, CapturedPassageTarget)
+    ):
+        return None
+    owner = assert_resource_ref(admitted.target.owner_ref)
+    kind = capability(owner.scheme).citable_result_type
+    if kind is None:
+        return None
+    item = evidence_items(
+        db,
+        viewer_id=viewer_id,
+        occurrences=[
+            (owner, admitted, ResourceSourceTargetKey(field=None, resource_ref=owner.uri))
+        ],
+    )[0]
+    if item.missing or item.activation.kind == "none" or item.activation.href is None:
+        return None
+    source = admitted.source
+    return RetrievalCitation(
+        captured_evidence=admitted,
+        result_type=kind,
+        source_id=str(owner.id),
+        title=source.title or "selected passage",
+        source_label=source.location_label,
+        snippet=quote_parts(admitted.quote).exact,
+        deep_link=item.activation.href,
+        citation_target=owner.uri,
+        citation_label=source.location_label,
+        locator=admitted.target.locator.model_dump(mode="json"),
+        context_ref={
+            "type": owner.scheme,
+            "id": str(owner.id),
+            "field": None,
+            "passage_target": admitted.target.model_dump(mode="json"),
+        },
+        evidence_span_id=None,
+        media_id=str(owner.id) if owner.scheme == "media" else None,
+        media_kind=source.media_kind.value if source.media_kind is not None else None,
+        score=None,
+        selected=True,
+    )
 
 
 def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
