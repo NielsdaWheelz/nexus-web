@@ -220,7 +220,7 @@ separate from whether an inspection was already applied.
 `canArrange` still fences guarded drafts. structural commands require both.
 active native input still refuses settlement. a completed composition transfers
 through its existing owner before the command proceeds. if that transfer opens
-a new reference query, settlement refuses until the host can observe its ownership;
+a new reference query, the current command is refused after ownership changes;
 an already active query retains its local history commands.
 
 item text means an occurrence’s own note body or inline page title.

@@ -7,7 +7,7 @@ wire 19 already contains the first breaking change after released wire 18. pair
 api, generated web wire and android assets; reject old clients without translating
 pending commands. finish or copy tab-local questions before reload or cutover.
 
-schema 0330 follows 0329. it backfills account deletion fences, indexes native
+schema 0332 follows 0331. it backfills account deletion fences, indexes native
 quotes and derives table boundaries from retained canonical publications. it
 refuses inconsistent retained text; historical quote words and run inputs stay
 unchanged. use the existing stopped-writer, verified-backup and exact-head deploy

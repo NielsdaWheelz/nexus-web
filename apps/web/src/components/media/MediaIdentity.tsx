@@ -1,13 +1,11 @@
 "use client";
 
-import { createContext, useContext } from "react";
 import * as Icon from "@/lib/ui/icons";
-import IndexBibliography, { type IndexByline } from "@/components/resources/IndexBibliography";
+import IndexBibliography from "@/components/resources/IndexBibliography";
 import {
   collectionActivityText,
   collectionConsumptionText,
 } from "@/components/collections/collectionRowFormatting";
-import { mediaByline } from "@/lib/media/mediaByline";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
 import styles from "./MediaIdentity.module.css";
 
@@ -40,21 +38,18 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
   </span>;
 }
 
-/** The show whose own page lists these rows, which already names it. The page passes the same id
- * to `mediaByline` for its list filter. */
-export const ShowPage = createContext<string | null>(null);
-
-/** Index line 2: the row's byline (`mediaByline`), then the year and part provenance. Rows own facts: MediaFacts goes in their trailing cell. */
-export default function MediaIdentity({ subject, returnFocus }: {
+/** Index bibliography and provenance. Only the matching show's episode list omits its show.
+ * Rows own facts: MediaFacts goes in their trailing cell. */
+export default function MediaIdentity({ subject, returnFocus, containingPodcastId = null }: {
   subject: MediaSubject;
   returnFocus: () => HTMLElement | null;
+  containingPodcastId?: string | null;
 }) {
-  const page = useContext(ShowPage);
   const summary = subject.kind === "Stored" ? subject.summary : null;
-  const byline: IndexByline | null = subject.kind === "External" ? { kind: "Authors", contributors: subject.contributors }
-    : mediaByline(subject.summary, page);
   return <span className={styles.support}>
-    <IndexBibliography byline={byline} originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
+    <IndexBibliography show={summary?.show?.podcast_id === containingPodcastId ? null : summary?.show ?? null}
+      contributors={subject.kind === "Stored" ? subject.summary.contributors : subject.contributors}
+      originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
     {summary?.part_source ? <span className={styles.provenance}>from {summary.part_source.title}</span> : null}
   </span>;
 }

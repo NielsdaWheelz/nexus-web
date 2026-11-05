@@ -1,6 +1,6 @@
 /** The lectern's complete rendered filter/order, shared with queue capture. */
 import type { LecternItem } from "./api";
-import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneFilterRows";
 
 // Code-unit order, never localeCompare: collation depends on the runtime's ICU data.
@@ -26,9 +26,9 @@ export function ordered(
   );
 }
 
-/** The names a lectern row shows, as every media row's filter reads them. */
+/** The lectern's filter fields, shared with queue capture. */
 export function filterFields(item: LecternItem): readonly string[] {
-  return mediaListFilterFields(item.media_summary.title, mediaByline(item.media_summary, null));
+  return mediaListFilterFields(item.media_summary);
 }
 
 export function selectLectern(items: readonly LecternItem[], sort: string, query: string) {

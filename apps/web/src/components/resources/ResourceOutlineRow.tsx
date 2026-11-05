@@ -190,8 +190,8 @@ function remotePresentation(item: Item, props: Shared): Presentation {
         {body.kind !== "passage" || activation.href ? <PrimaryLink href={activation.href} label={item.label}>
           {body.kind === "passage" ? title || item.label : content}</PrimaryLink> : null}
         {body.kind === "passage" ? content : null}
-        {metadata.bibliography.length ? <span className={factualStyles.bibliography}><span className={styles.separator}> · </span>
-          <ResourceMetadata parts={metadata.bibliography} linkSource={false}/></span> : null}
+        {metadata.bibliography.length ? <span className={factualStyles.bibliography}><span className={styles.separator} aria-hidden="true"> · </span>
+          <ResourceMetadata parts={metadata.bibliography} linkSource/></span> : null}
       </div>,
     status: <>
       {parts.length ? <div className={styles.metadata}><ResourceMetadata parts={parts} linkSource/></div> : null}

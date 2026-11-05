@@ -145,12 +145,12 @@ resolves one of:
 on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
 `ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
 additive writes. metadata enrichment selects codex
-personal and freezes exactly `web.search`, `web.read`, `nexus.document.search`,
-and `nexus.resource.read`.
+personal and freezes `web.read`, `nexus.document.search`, and
+`nexus.resource.read`, plus `web.search` when its binding is configured.
 
 codex freezes `CodexCallbacks` authority using the same operation-selected
-portable declarations as `ProviderFunctions`. metadata publishes exactly the four
-research tools above; no-model-tool helpers publish none. chat retains
+portable declarations as `ProviderFunctions`. metadata publishes only its frozen
+research grants; no-model-tool helpers publish none. chat retains
 their selected scope/effect policy. prompts cannot broaden an operation grant.
 
 both routes hand every call to the one callback, `tools.run.run_tool(ToolRun, id,

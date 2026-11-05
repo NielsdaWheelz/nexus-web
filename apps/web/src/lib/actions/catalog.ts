@@ -182,8 +182,8 @@ export const ACTION_CATALOG = {
   // Imports runs the two upload commands on this runtime; no resource menu offers them.
   RetryUpload: { label: "Retry upload", icon: Icon.Again, group: "Manage" },
   RetryMetadata: {
-    label: "Research metadata",
-    icon: Icon.Search,
+    label: "update metadata",
+    icon: null,
     group: "Manage",
   },
   ReviewMetadataResult: {

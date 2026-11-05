@@ -153,7 +153,10 @@ connection, the existing bounded readiness check requires one page target at the
 supplied owned web origin; non-page targets do not prevent admission. attachment
 then requires one context and one page at that origin. rejection reports counts,
 process and forward identity without page titles or urls. the caller owns real
-login, input and cleanup after attachment failure. `close()` stops the owned
+login, input and cleanup after attachment failure. `startup.json` binding proves
+durable local identity only; await public `session_check` admission `Ready` before
+remotely dependent assertions. `restart` can then establish the retained binding
+and current target. `close()` stops the owned
 package and releases its transport and created mappings before a bounded cdp
 disconnect; it returns the exact released mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retires
 the old process and devtools forward before disconnecting, and refuses relaunch
@@ -244,7 +247,10 @@ approval before calibration or the 20-run repeats.
 
 core requires no model credentials and inherits no ambient provider configuration.
 `--live-config FILE` explicitly supplies allowed api/worker provider settings as a
-json object whose values are strings or null. `provider_endpoint_overrides` is a
+json object whose values are strings or null. `x_api_base_url` selects the existing
+x http endpoint for both api and workers; a controlled responder must be reachable
+from both. pair it with a synthetic `x_api_bearer_token` for controlled checks.
+`provider_endpoint_overrides` is a
 json-encoded provider-to-https-origin map STRING, validated by the same import-light
 `provider_runtime.endpoints.normalize_endpoint_overrides` used at dispatch.
 `provider_ca_pem` is the actual pem certificate STRING, not a path. additional
@@ -373,10 +379,10 @@ ISR writes stay in that run's tree and follow its private-input cleanup. build
 and serving retain normal production configuration and process ownership.
 
 `docker/docker-compose.lab.yml` applies only to the disposable compose model,
-shared by image preparation, runtime and recorded recovery. it resets postgres's
-inherited volume mount and places pg15 data at `/var/lib/postgresql/data` on
-tmpfs, with `fsync`, `synchronous_commit` and `full_page_writes` off. storage keeps
-its named volume; Supabase's auth database remains separately CLI-managed.
+shared by image preparation, runtime and recorded recovery. postgres uses its
+project-owned disk volume, normal durable commits and the production 512 mib
+memory/no-swap limit. storage keeps its named volume; supabase's auth database
+remains separately cli-managed.
 
 stores start before migration and api readiness. worker startup uses
 `up --no-build --no-deps` on the precreated lanes: it never reconciles those

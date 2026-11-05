@@ -640,8 +640,12 @@ saved-source selectors fail visibly. invalid targets never become whole-source
 navigation. cold hrefs and in-app activation use the same source-arrival owner.
 an accepted-source handoff cannot also carry a located arrival; that conflict
 uses the same invalid-arrival path instead of settling and discarding its target.
-saved-thread links prepare their exact post unit from the saved publication
-before exposing a native href; obsolete `?x_post` arrivals fail explicitly.
+saved-post links use `?post_revision=<revision>` and resolve the logical post to
+the reading media's current primary capture. this semantic intent survives an
+accepted-source handoff, failed acquisition and retry; application waits for a
+readable publication. whole-post inspection starts at offset zero, including
+image-only posts, without a quotation mark. competing selectors and obsolete
+`?x_post` arrivals fail explicitly.
 an authored destination exceeding the href bound has no raw-hash fallback:
 its focusable link control still inspects locally or reports shifted unavailability.
 

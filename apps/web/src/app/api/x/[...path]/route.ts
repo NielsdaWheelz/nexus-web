@@ -11,7 +11,8 @@ async function handle(
   const { path } = await params;
   const get = request.method === "GET";
   const asset = get && path.length === 4 && path[2] === "assets";
-  const json = path.length === 3 && (
+  const saveState = request.method === "POST" && path.length === 2 && path[1] === "save-state";
+  const json = saveState || path.length === 3 && (
     (get && ["reader", "archive", "document-map"].includes(path[2])) ||
     (request.method === "POST" && path[2] === "retry-images")
   );

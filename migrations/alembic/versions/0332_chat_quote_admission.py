@@ -1,6 +1,6 @@
 """Fence chat creation after deletion and index message-owned reader quotations.
 
-revision 0330 follows head 0329. data effects: initialize one chat deletion fence
+revision 0332 follows head 0331. data effects: initialize one chat deletion fence
 at 1 for every existing account; add the exact snapshot-owner lookup index and
 backfill publication-owned table boundaries from each retained fragment. a table
 whose frozen canonical text cannot be reproduced aborts the migration. no
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0330"
-down_revision: str | Sequence[str] | None = "0329"
+revision: str = "0332"
+down_revision: str | Sequence[str] | None = "0331"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -26,11 +26,8 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "chat_deletion_revisions",
-        sa.Column(
-            "user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-        ),
+        sa.Column("user_id", sa.UUID(), sa.ForeignKey("users.id"), primary_key=True),
         sa.Column("revision", sa.BigInteger(), nullable=False),
-        sa.CheckConstraint("revision > 0", name="ck_chat_deletion_revision_positive"),
     )
     op.execute("INSERT INTO chat_deletion_revisions(user_id,revision) SELECT id,1 FROM users")
     op.execute(
@@ -48,7 +45,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("fragment_id", "dom_path", name="uq_fragment_tables_fragment_path"),
     )
     tables = run_path(
-        str(Path(__file__).resolve().parent.parent / "frozen" / "0330_fragment_tables.py")
+        str(Path(__file__).resolve().parent.parent / "frozen" / "0332_fragment_tables.py")
     )["fragment_tables"]
     db = op.get_bind()
     after = None

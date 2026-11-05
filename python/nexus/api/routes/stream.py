@@ -291,3 +291,23 @@ async def stream_metadata_events(
         return view.model_dump(mode="json"), view.unfinished_count == 0
 
     return await _snapshot_stream(request, "media_events", media_id, read)
+
+
+@router.get("/stream/media/{media_id}/metadata-enrichment/{job_id}/events")
+async def stream_metadata_operation_events(
+    request: Request, media_id: UUID, job_id: UUID, viewer: ViewerDep
+) -> StreamingResponse:
+    """Follow the accepted job, independently of newer operations on its media."""
+
+    def read() -> Snapshot:
+        with _snapshot() as db:
+            operation = metadata_operations.metadata_operation_for_viewer(
+                db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
+            )
+        return operation.model_dump(mode="json"), operation.status in (
+            "completed",
+            "no_findings",
+            "failed",
+        )
+
+    return await _snapshot_stream(request, "media_events", media_id, read)

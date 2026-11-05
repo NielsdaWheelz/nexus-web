@@ -242,7 +242,7 @@ function invocationFocus(trigger: HTMLElement | null, returnFocus?: ReturnFocusT
 
 function metadataSubject(parsed: ResourceRef): MetadataSubject {
   switch (parsed.scheme) {
-    case "media": return { kind: "Media", mediaId: parsed.id };
+    case "media": return { kind: "Media", mediaId: parsed.id, jobId: null };
     case "podcast": return { kind: "Podcast", podcastId: parsed.id };
     case "library": return { kind: "Library", libraryId: parsed.id };
     case "evidence_span": case "content_chunk": case "highlight": case "page": case "note_block":
@@ -860,9 +860,12 @@ export function projectResourceActions(
         return make(
           "RetryMetadata",
           blocked,
-          async () => {
+          async ({ triggerEl }) => {
             if (retry.status !== "allowed") return;
-            const result = await ctx.admissions.admit({ kind: "MetadataResearch", mediaId: id, request: { expected_job_id: retry.expected_job_id } });
+            const result = await ctx.admissions.admit({ kind: "MetadataResearch", mediaId: id,
+              title: facts.label, purpose: retry.purpose,
+              originPaneId: triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? originPaneId(),
+              request: { expected_job_id: retry.expected_job_id } });
             if (!ctx.isActive()) return;
             if (result.kind === "LocalFailure") throw new ResourceActionFailure(result.line);
           },
@@ -870,8 +873,7 @@ export function projectResourceActions(
             tracked: false,
             state: {
               label: metadataResearchLabel(null, retry.purpose),
-              // Search reads true of research, not of generating a title (law 2).
-              icon: retry.purpose === "title" ? null : ACTION_CATALOG.RetryMetadata.icon,
+              icon: null,
             },
             blocked: ctx.online ? undefined : "RequiresOnline",
             disabledReason:

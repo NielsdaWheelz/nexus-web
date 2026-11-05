@@ -626,21 +626,26 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         "media_teardown_intents",
     ):
         _run(db, f"DELETE FROM {table} WHERE media_id = :m", m=media_id)  # noqa: S608
-    # Only synchronous capture acceptance is independent of the deleted presentation.
+    # Capture-input acceptance is historical even when its reading presentation is gone.
     _run(
         db,
         """
         DELETE FROM media_source_attempts attempt WHERE attempt.media_id=:m
           AND NOT (
-              attempt.source_type=:x_post AND attempt.status=:succeeded
-              AND attempt.created_by_user_id IS NOT NULL
-              AND attempt.job_id IS NULL AND attempt.finished_at IS NOT NULL
-              AND EXISTS (SELECT 1 FROM x_post_captures capture
-                  WHERE attempt.source_payload=jsonb_build_object('capture_id',capture.id::text))
+              attempt.created_by_user_id IS NOT NULL AND (
+                  (attempt.source_type=:x_thread
+                    AND EXISTS (SELECT 1 FROM x_post_captures capture
+                        WHERE capture.id::text=attempt.source_payload #>> '{capture_input,capture_id}'))
+                  OR (attempt.source_type=:x_post AND attempt.status=:succeeded
+                    AND attempt.job_id IS NULL AND attempt.finished_at IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM x_post_captures capture
+                        WHERE attempt.source_payload=jsonb_build_object('capture_id',capture.id::text)))
+              )
           )
     """,
         m=media_id,
         x_post=st.X_POST,
+        x_thread=st.X_AUTHOR_THREAD,
         succeeded=st.SUCCEEDED,
     )
     delete_reader_publication(db, media_id=media_id)

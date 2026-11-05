@@ -36,6 +36,7 @@ from nexus.jobs.queue import enqueue_job
 from nexus.schemas.x_source import (
     XAcquiredSource,
     XArticleExcerptCapture,
+    XAuthorThreadPayload,
     XCompletePostCapture,
     XPriorSource,
     XSourceCoverage,
@@ -56,6 +57,7 @@ from nexus.services.x_identity import canonical_x_post_url
 from nexus.services.x_rendering import capture_image_urls, normalized_capture_html, render_post
 from nexus.services.x_source import (
     admit_x_captures_for_accounts,
+    post_from_capture,
     post_label,
     readable_x_capture_ids_sql,
     reconcile_x_article_inspections,
@@ -160,6 +162,7 @@ def x_publication_media_ids(
     db: Session, *, media_id: UUID, prepared: PreparedXSource
 ) -> list[UUID]:
     revisions = {revision for item in prepared.posts for revision in _revision_ids(item.source)}
+    revisions.update(revision for prior in prepared.prior.posts for revision in prior.revision_ids)
     post_ids = select(XPostAlias.post_id).where(XPostAlias.revision_id.in_(revisions))
     ids = {media_id}
     ids.update(db.scalars(select(XPostMedia.media_id).where(XPostMedia.post_id.in_(post_ids))))
@@ -473,14 +476,21 @@ def publish_excerpt_capture(
 
 
 def publish_acquired_captures(db: Session, *, prepared: PreparedXSource) -> dict[str, XPostCapture]:
-    """Publish validated primary evidence and one hop of context, without any media."""
+    """Retain exact prior captures; overlay actual fresh revision observations only."""
     by_revision = {item.source.source_revision_id: item for item in prepared.posts}
     identities = {
         revision: _post_identity(db, revision_id=revision, post=item.source)
         for revision, item in by_revision.items()
     }
     unavailable = {item.checked_revision_id: item for item in prepared.evidence.unavailable}
-    captures: dict[str, XPostCapture] = {}
+    captures = {
+        capture.source_revision_id: capture
+        for capture in db.scalars(
+            select(XPostCapture).where(
+                XPostCapture.id.in_([item.capture_id for item in prepared.prior.posts])
+            )
+        )
+    }
     pending = set(by_revision)
     while pending:
         eligible = [
@@ -547,6 +557,13 @@ def publish_prepared_x_source(
 ) -> SourceRunOutcome:
     del request_id
     evidence = prepared.evidence
+    driver = db.get(MediaSourceAttempt, source_attempt_id)
+    assert driver is not None
+    capture_input = (
+        XAuthorThreadPayload.model_validate_json(json.dumps(driver.source_payload)).capture_input
+        if evidence.scope == "author_thread"
+        else None
+    )
     previously_readable = set(
         db.scalars(text(readable_x_capture_ids_sql()), {"viewer_id": viewer_id})
     )
@@ -573,8 +590,6 @@ def publish_prepared_x_source(
         if holder_ids:
             media_id = next(iter(holder_ids))
         if media_id != driver_media_id:
-            driver = db.get(MediaSourceAttempt, source_attempt_id)
-            assert driver is not None
             latest = sa.latest_attempt(db, media_id, lock=False)
             if latest is not None and latest.status in {"accepted", "queued", "running"}:
                 raise ConflictError(
@@ -592,7 +607,9 @@ def publish_prepared_x_source(
                 canonical_source_url=driver.canonical_source_url,
                 provider="x",
                 provider_target_ref=evidence.requested_revision_id,
-                payload={"parent_source_attempt_id": str(driver.id)},
+                payload=XAuthorThreadPayload(
+                    capture_input=capture_input, parent_source_attempt_id=driver.id
+                ).model_dump(mode="json"),
                 status="succeeded",
             ).id
     media = db.get(Media, media_id)
@@ -639,17 +656,40 @@ def publish_prepared_x_source(
                 .order_by(XThreadPost.ordinal)
             )
         )
-        members = {}
-        for member in old:
-            capture = db.get(XPostCapture, member.capture_id)
-            assert capture is not None
-            members[capture.post_id] = member
-            selected.setdefault(capture.post_id, capture)
-        # Discovery owns the exact primary set; retained primaries preserve earlier coverage.
+        current = {
+            capture.id: capture
+            for capture in db.scalars(
+                select(XPostCapture).where(
+                    XPostCapture.id.in_([member.capture_id for member in old])
+                )
+            )
+        }
         sources = {
             row.id: row
-            for row in db.scalars(select(XPostSource).where(XPostSource.id.in_(selected)))
+            for row in db.scalars(
+                select(XPostSource).where(
+                    XPostSource.id.in_(
+                        {*selected, *(capture.post_id for capture in current.values())}
+                    )
+                )
+            )
         }
+        members = {}
+        for member in old:
+            capture = current[member.capture_id]
+            members[capture.post_id] = member
+            candidate = selected.get(capture.post_id)
+            if candidate is None or candidate.source_revision_id == capture.source_revision_id:
+                selected[capture.post_id] = capture
+            else:
+                history = sources[capture.post_id].edit_history_ids
+                if history is None:
+                    raise _identity_conflict()
+                if history.index(capture.source_revision_id) > history.index(
+                    candidate.source_revision_id
+                ):
+                    selected[capture.post_id] = capture
+        # A worker's detached evidence cannot downgrade a newer publication it now meets.
         if set(sources) != set(selected):
             raise ValueError("thread primary must retain its logical source")
         primary = sorted(
@@ -691,22 +731,40 @@ def publish_prepared_x_source(
             evidence.author.id,
             now,
         )
-        source.root_capture_id = (
-            captures[evidence.root_revision_id].id
-            if evidence.root_revision_id in captures
-            else source.root_capture_id
+        root = (
+            captures.get(evidence.root_revision_id)
+            if evidence.root_revision_id is not None
+            else None
         )
+        if root is None and source.root_capture_id is not None:
+            root = db.get(XPostCapture, source.root_capture_id)
+        source.root_capture_id = selected[root.post_id].id if root is not None else None
         source.membership_checked_at = (
             now if evidence.coverage.search_exhausted is not None else source.membership_checked_at
         )
-        source.coverage = evidence.coverage.model_dump(mode="json")
+        observed_revisions = {
+            *(item.source.source_revision_id for item in prepared.posts),
+            *(item.checked_revision_id for item in evidence.unavailable),
+        }
+        unchecked = set(evidence.coverage.unchecked_primary_post_ids)
+        unchecked.update(
+            capture.post_id
+            for capture in primary
+            if capture.source_revision_id not in observed_revisions
+        )
+        source.coverage = evidence.coverage.model_copy(
+            update={"unchecked_primary_post_ids": tuple(sorted(unchecked))}
+        ).model_dump(mode="json")
         reconcile_x_article_inspections(
             db, loser_id=driver_media_id, winner_id=media_id, observations=evidence.article_ids
         )
-    posts = {item.source.source_revision_id: item.source for item in prepared.posts}
     first = primary[0]
-    if first.source_revision_id in posts:
-        media.title = post_label(posts[first.source_revision_id])
+    first_source = db.get(XPostSource, first.post_id)
+    first_alias = db.scalar(
+        select(XPostAlias).where(XPostAlias.revision_id == first.source_revision_id)
+    )
+    assert first_source is not None and first_alias is not None
+    media.title = post_label(post_from_capture(first, first_source, first_alias))
     media.description = "\n\n".join(
         XCompletePostCapture.model_validate_json(json.dumps(item.payload)).content.text
         for item in primary
@@ -728,15 +786,13 @@ def publish_prepared_x_source(
     )
 
     selected_manifest = capture_manifest(db, capture_ids=[item.id for item in primary])
-    fresh_manifest = capture_manifest(
-        db,
-        capture_ids=[
-            capture.id
-            for revision, capture in captures.items()
-            if revision in evidence.primary_revision_ids
-        ],
+    fresh_manifest = {captures[item.source.source_revision_id].id for item in prepared.posts}
+    frozen_manifest = (
+        set(capture_input.authorized_capture_ids) if capture_input is not None else set()
     )
-    authorized_manifest = sorted(selected_manifest & (previously_readable | fresh_manifest))
+    authorized_manifest = sorted(
+        selected_manifest & (previously_readable | fresh_manifest | frozen_manifest)
+    )
     if not {item.id for item in primary} <= set(authorized_manifest):
         raise ValueError("thread publication cannot admit an unseen retained primary")
     accounts = media_audience_account_ids(db, media_ids=[media_id])

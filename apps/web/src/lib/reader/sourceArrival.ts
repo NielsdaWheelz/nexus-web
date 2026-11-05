@@ -209,6 +209,9 @@ export function useSourceArrival(input: {
       latest.current.input.onAttempt?.(signal, intent.target);
     }
     if (signal.aborted || captured.current?.phase === "Retired") return;
+    // A post names its current primary, which can arrive after failed work is
+    // retried. Until a document exists, its import owns the visible outcome.
+    if (intent.target.kind === "x_post" && sourceIdentity === null) return;
     if (!ready && intent.target.kind !== "invalid_destination") return;
     if (intent.target.kind === "invalid_destination") {
       publishStatus({ ...pending, pending: false, failure: { title: intent.target.reason === "location_too_long" ? "this link is too long to open." : "this link is broken.", error: null } });
@@ -222,12 +225,12 @@ export function useSourceArrival(input: {
       publishStatus({ ...pending, pending: false, failure: { title, error: null } });
       return;
     }
-    if (intent.sourceIdentity !== null && intent.sourceIdentity !== sourceIdentity) {
+    if (intent.target.kind !== "x_post" && intent.sourceIdentity !== null && intent.sourceIdentity !== sourceIdentity) {
       publishStatus({ ...pending, pending: false, failure: { title: sourceIdentity === null ? "couldn’t open that location." : "that location is from another version of this document.", error: null } });
       return;
     }
     const pinnedIntent = { ...intent, sourceIdentity };
-    if (intent.sourceIdentity === null && sourceIdentity !== null) {
+    if (sourceIdentity !== null && (intent.sourceIdentity === null || intent.target.kind === "x_post" && intent.sourceIdentity !== sourceIdentity)) {
       remember(pinnedIntent);
     }
     const current = () => {

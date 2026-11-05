@@ -309,7 +309,8 @@ export default function ResourceActionsProvider({
     const anchor = options?.anchor ?? (() => opener);
     const focusFallback = options?.returnFocusFallback ?? (() => section?.isConnected ? section : findPaneLandmarkFocusTarget(paneId));
     setOverlay((current) =>
-      current?.open
+      current?.open && !(current.kind === "Metadata" && next.kind === "Metadata" &&
+        next.subject.kind === "Media" && next.subject.jobId !== null)
         ? current
         : { ...next, key: (current?.key ?? 0) + 1, open: true, anchor, focusFallback },
     );

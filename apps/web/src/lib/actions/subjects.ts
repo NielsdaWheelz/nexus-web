@@ -2,7 +2,7 @@
 import type { Schema } from "@/lib/api/wire";
 
 export type MetadataSubject =
-  | { readonly kind: "Media"; readonly mediaId: string }
+  | { readonly kind: "Media"; readonly mediaId: string; readonly jobId: string | null }
   | { readonly kind: "Podcast"; readonly podcastId: string }
   | { readonly kind: "Library"; readonly libraryId: string }
   | { readonly kind: "DiscoveryPodcast"; readonly candidate: Schema<"PodcastCandidate"> }

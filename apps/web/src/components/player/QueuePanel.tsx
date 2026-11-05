@@ -16,7 +16,6 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMediaSummaryIds } from "@/lib/media/MediaSummaryProvider";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
-import { mediaByline } from "@/lib/media/mediaByline";
 import * as Icon from "@/lib/ui/icons";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
@@ -80,7 +79,7 @@ const QueueRow = memo(function QueueRow({ entry, index, manifest, currentIndex, 
   return <ResourceRow density="compact" primary={{ kind: "link", href: `/media/${entry.media_id}` }}
     leadingVisual={<Artwork size={44} title={summary === null ? "" : summary.show?.title ?? summary.title} source={remoteArtwork(summary?.show?.image_url ?? null)} />}
     title={subject === null ? title : <MediaTitle subject={subject} />}
-    content={{ kind: "Index", metadata: summary === null || summary.show === null ? null : <IndexBibliography byline={mediaByline(summary, null)} originalPublishedDate={null} returnFocus={returnFocus} /> }} selected={current}
+    content={{ kind: "Index", metadata: summary === null || summary.show === null ? null : <IndexBibliography show={summary.show} contributors={summary.contributors} originalPublishedDate={null} returnFocus={returnFocus} /> }} selected={current}
     rootProps={{ "data-collection-row-id": entry.id, "aria-current": current ? "true" : undefined,
       "aria-posinset": index + 1, "aria-setsize": manifest.entries.length,
       "data-queue-initial-target": initialTarget ? "true" : undefined }}

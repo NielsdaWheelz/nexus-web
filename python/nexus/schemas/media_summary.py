@@ -41,8 +41,8 @@ class MediaPartSourceOut(BaseModel):
 
 
 class MediaShowOut(BaseModel):
-    """The show an episode belongs to. ``MediaSummaryOut.show`` is null exactly when the media
-    has no ``podcast_episodes`` row, which is every media that is not an episode."""
+    """The canonical show of an episode. ``MediaSummaryOut.show`` is non-null exactly
+    when ``media_kind`` is ``podcast_episode``; missing episode identity is a defect."""
 
     model_config = ConfigDict(extra="forbid")
 

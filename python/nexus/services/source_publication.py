@@ -128,6 +128,11 @@ def run_source_publication_phase[T](
             or attempt.status not in st.IN_FLIGHT
         ):
             raise SourcePublicationSuperseded("attempt_identity_changed")
+        if db.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM media_teardown_intents WHERE media_id=:id)"),
+            {"id": attempt.media_id},
+        ):
+            raise SourcePublicationSuperseded("media_withdrawn")
         if db.scalar(text(_LATEST_ID_SQL), {"media_id": attempt.media_id}) != attempt.id:
             raise SourcePublicationSuperseded("newer_source_attempt_exists")
         if lock_running_job_claim(db, context=fence) is None:
@@ -345,7 +350,9 @@ def on_failure(db: Session, job: JobRow) -> dict[str, str] | None:
             text(f"""
                 SELECT a.job_id, a.status,
                        a.id = ({_LATEST_ID_SQL.replace(":media_id", "a.media_id")}) AS latest
-                FROM media_source_attempts a WHERE a.id = :attempt_id
+                FROM media_source_attempts a JOIN media m ON m.id=a.media_id
+                WHERE a.id = :attempt_id AND NOT EXISTS (
+                    SELECT 1 FROM media_teardown_intents ti WHERE ti.media_id=a.media_id)
             """),
             {"attempt_id": job.payload["attempt_id"]},
         )
@@ -361,13 +368,34 @@ def on_dead_letter(db: Session, job: JobRow) -> None:
     """A dead job fails its attempt when no retry can help: a resource limit, or a
     podcast transcript (a later request admits a new attempt). Any other source keeps
     its dead job for the repair offer."""
-    source_type = db.scalar(
-        text("""SELECT source_type FROM media_source_attempts
-            WHERE id = :id AND status IN ('accepted', 'queued', 'running')"""),
-        {"id": job.payload["attempt_id"]},
-    )
     resource = job.error_code == ApiErrorCode.E_RESOURCE_LIMIT.value
-    if source_type is None or not (resource or source_type == st.PODCAST_EPISODE_TRANSCRIPT):
+    params = {
+        "id": job.payload["attempt_id"],
+        "media_id": UUID(job.payload["media_id"]),
+        "job_id": job.id,
+        "resource": resource,
+        "podcast": st.PODCAST_EPISODE_TRANSCRIPT,
+    }
+    if (
+        db.scalar(
+            text("""SELECT m.id FROM media m JOIN media_source_attempts a ON a.media_id=m.id
+            WHERE a.id=:id AND m.id=:media_id AND (:resource OR a.source_type=:podcast)
+            FOR NO KEY UPDATE OF m"""),
+            params,
+        )
+        is None
+    ):
+        return
+    # Queue settlement is READ COMMITTED: re-read every fence after a possible lock wait.
+    if not db.scalar(
+        text(f"""SELECT EXISTS (SELECT 1 FROM media_source_attempts a
+            WHERE a.id=:id AND a.media_id=:media_id AND a.job_id=:job_id
+              AND a.status IN ('accepted', 'queued', 'running')
+              AND a.id=({_LATEST_ID_SQL})
+              AND NOT EXISTS (SELECT 1 FROM media_teardown_intents ti
+                  WHERE ti.media_id=a.media_id))"""),
+        params,
+    ):
         return
     assert job.error_code and job.last_error  # a dead claim has both
     message = job.last_error

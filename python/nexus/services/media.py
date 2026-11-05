@@ -234,11 +234,12 @@ def _summaries(
             part_source=None
             if row.part_source_title is None
             else MediaPartSourceOut(title=row.part_source_title, href=row.part_source_href),
-            show=None
-            if row.show_id is None
-            else MediaShowOut(
+            # justify-defect: every episode has a catalogue show; construction rejects a broken join.
+            show=MediaShowOut(
                 podcast_id=row.show_id, title=row.show_title, image_url=row.show_image_url
-            ),
+            )
+            if kind == MediaKind.podcast_episode
+            else None,
             contributors=credits[media_id],
             original_published_date=row.original_published_date,
             processing_status=_status(row),

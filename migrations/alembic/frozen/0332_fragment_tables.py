@@ -1,4 +1,4 @@
-"""Frozen 0330 table projection; do not regenerate or import application code.
+"""Frozen 0332 table projection; do not regenerate or import application code.
 
 The visible-text walk and normalization are frozen from canonicalize.py at this
 migration. Navigation/native provenance are omitted; table coordinates use the

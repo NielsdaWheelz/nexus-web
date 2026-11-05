@@ -598,6 +598,38 @@ def read_media_search_obligation(
     return _obligation(row, "search", facts, progress)
 
 
+def read_media_source_obligations(
+    db: Session, *, viewer_id: UUID, media_ids: Sequence[UUID]
+) -> dict[UUID, tuple[UUID, ImportObligation]]:
+    """current unresolved source work and its attempt, in the caller's snapshot.
+
+    read permission suffices; physical holdings and the Recent list's ownership
+    filter do not control source feedback. recovery still uses the owner's policy.
+    """
+    if not media_ids:
+        return {}
+    rows = (
+        db.execute(
+            text(f"""{_CTE}
+                SELECT i.*, w.attempt_id AS source_attempt_id
+                FROM import_work i JOIN media_work w ON w.media_id = i.media_id
+                WHERE i.media_id = ANY(:media_ids) AND w.attempt_id IS NOT NULL
+                  AND i.source_classification IN ('Active', 'NeedsAttention')"""),
+            {**_params(viewer_id), "media_ids": list(media_ids)},
+        )
+        .mappings()
+        .all()
+    )
+    hydrated = _hydrate(db, viewer_id, rows)
+    result = {}
+    for row in rows:
+        facts, progress = hydrated[row["media_id"]]
+        obligation = _obligation(row, "source", facts, progress)
+        assert obligation is not None
+        result[row["media_id"]] = (row["source_attempt_id"], obligation)
+    return result
+
+
 def read_import_history(
     db: Session, *, viewer_id: UUID, ref: ParsedImportRef, cursor: str | None, limit: int
 ) -> HistoryPage:
