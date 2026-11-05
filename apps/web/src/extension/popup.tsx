@@ -152,7 +152,10 @@ function Receipt({ op, signedIn }: { op: NonNullable<ViewState["operation"]>; si
       {authors ? <p className={styles.authors}>{authors}</p> : null}
     </div>
     <p className={styles.fine} ref={result} tabIndex={-1}>{line}</p>
-    <Announcement text={preparation === null ? line : `${line}. ${preparation}`} level="Polite" />
+    <Announcement text={[
+      line.endsWith(".") || line.endsWith("…") ? line : `${line}.`,
+      preparation, op.failure?.message,
+    ].filter(Boolean).join(" ")} level="Polite" />
     {preparation !== null ? <p className={styles.fine}>{preparation}</p> : null}
     {op.failure !== null ? <Fact line={{ fact: op.failure.message }} /> : null}
     {!op.account_matches && signedIn ? <Fact line={{ fact: "this request belongs to another account.", reason: "switch to the original account in nexus, then sign in here." }} /> : null}
