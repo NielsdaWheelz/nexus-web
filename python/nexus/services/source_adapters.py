@@ -13,6 +13,7 @@ any other storage error is the queue's to retry.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
@@ -36,7 +37,7 @@ from nexus.schemas.extension_capture import (
     decode_article_packet,
 )
 from nexus.schemas.publication_dates import normalize_source_publication_date
-from nexus.schemas.x_source import XSourceScope
+from nexus.schemas.x_source import XAuthorThreadPayload, XSourceScope
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services import x_client
@@ -167,6 +168,11 @@ def acquire(
                     requested_revision_id=target,
                     scope=scope,
                     viewer_id=attempt.created_by_user_id,
+                    capture_input=XAuthorThreadPayload.model_validate_json(
+                        json.dumps(attempt.source_payload)
+                    ).capture_input
+                    if attempt.source_type == st.X_AUTHOR_THREAD
+                    else None,
                 )
             if scope == "post":
                 return prepare_x_source(

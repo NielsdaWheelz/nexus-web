@@ -146,10 +146,17 @@ shutdown fails. `headless=False` requests visibility, never desktop approval.
 
 `openLabAndroid` requires an explicitly owned disposable package and matching apk.
 it installs and clears only that package, refuses existing reverse ports, and
-returns ownership before `attachPage()` waits for its webview. the caller owns
-real login and input. `close()` stops the owned package and releases its transport
-and created mappings before a bounded cdp disconnect; it returns the exact released
-mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retires
+returns ownership before `attachPage()` waits for its webview. before one cdp
+connection, the existing bounded readiness check requires one page target at the
+supplied owned web origin; non-page targets do not prevent admission. attachment
+then requires one context and one page at that origin. rejection reports counts,
+process and forward identity without page titles or urls. the caller owns real
+login, input and cleanup after attachment failure. `startup.json` binding proves
+durable local identity only; await public `session_check` admission `Ready` before
+remotely dependent assertions. `restart` can then establish the retained binding
+and current target. `close()` stops the owned
+package and releases its transport and created mappings before a bounded cdp
+disconnect; it returns the exact released mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retires
 the old process and devtools forward before disconnecting, and refuses relaunch
 after a retirement error.
 `setWebReachable` gates the owned web reverse through a loopback tcp transport.
@@ -238,7 +245,10 @@ approval before calibration or the 20-run repeats.
 
 core requires no model credentials and inherits no ambient provider configuration.
 `--live-config FILE` explicitly supplies allowed api/worker provider settings as a
-json object whose values are strings or null. `provider_endpoint_overrides` is a
+json object whose values are strings or null. `x_api_base_url` selects the existing
+x http endpoint for both api and workers; a controlled responder must be reachable
+from both. pair it with a synthetic `x_api_bearer_token` for controlled checks.
+`provider_endpoint_overrides` is a
 json-encoded provider-to-https-origin map STRING, validated by the same import-light
 `provider_runtime.endpoints.normalize_endpoint_overrides` used at dispatch.
 `provider_ca_pem` is the actual pem certificate STRING, not a path. additional

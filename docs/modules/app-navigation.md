@@ -37,7 +37,9 @@ the incoming command once. restored data never dispatches commands.
   contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
 
-on desktop, imports belongs under account; it has no standalone rail action.
+on desktop, all imports belongs under account; it has no standalone destination
+in the rail. the footer's `Import` action opens the intake page. its unsettled
+count (`Import · {n}`) is distinct from the account's needs-attention count.
 the shared account menu is exactly stats, imports, downloads when available,
 settings, a separator, and danger-last sign out. imports retains its canonical
 `/imports` link, query/deep links, inspector and contextual acquisition entrances.
@@ -81,7 +83,7 @@ then account. the sheet has a 44px handle strip, scrim dismissal and a guarded
 child pages and active pane moves retain their own dismissal precedence; see
 [overlays](overlays.md#surfaces).
 
-add, create library, use text, choices and capture today stay in the same sheet
+import, create library, use text, choices and capture today stay in the same sheet
 with their own back/title headers and initial focus. pane expansion and
 recently-closed recovery remain inline disclosures. `new pane` is a row verb,
 with the workspace's `Fork` disposition; there is no new-pane picker mode.
@@ -183,6 +185,12 @@ commands participate in latching. use-text's ask/browse/create choices do not.
 the today place does not learn: its date-free identity would collide with quick
 note; name matching still reaches it.
 
+a whole query of links has one explicit `import {pointer}` or `import {n} links`
+row. activating it sends the links and shows their lines. more than 100 is a
+refusal with no send. the slash-command import row only opens the field, even
+when its argument is links. a multi-line paste flattens breaks to spaces in both
+root and the import field, preserving link boundaries.
+
 use-text snapshots text and opening disposition, focuses a heading, and offers
 ask nexus, add to today, browse and create. entering it writes nothing and calls
 no provider. browse/create return there; library returns through create; root
@@ -231,6 +239,67 @@ gestures; the controller owns arming, dispatch, guards and announcements.
 desktop root escape closes with or without text. mobile root back/escape clears
 text, then closes; an open rail, nested overlay, child page or pane move wins
 first. enabled secondary actions remain usable when the primary is unavailable.
+
+## the import page
+
+the import page is one nexus page through `NexusPages`, inside the shared desktop
+frame or phone sheet. its back arrow occupies the desktop query's leading
+gutter, keeping the field and line pointers on the root query's edge. on a phone
+the child header holds the arrow and `import`, with `into` below the field.
+the combobox (`links to import`) owns focus and names the selected cell in the
+`import options` grid. its field and destinations belong to the intake visit:
+palette open to close, including navigation closes. arrow back keeps the visit.
+
+rows, in order: the field's send row while it holds links; lines, newest batch
+first and each batch in paste order; each settled batch of two or more closed
+by its colophon; `choose a file…`; with no lines, the viewer's five newest own
+imports (`view=Recent`), retained and reread on imports observations while shown;
+then `all imports` with its attention count. with no lines and an empty field,
+`choose a file…` is selected. `ImportLine` paints `lineView`; a settled line's
+menu is its media's existing resource menu.
+
+| action | effect |
+| --- | --- |
+| root enter on a whole query of links | sends, opens the page, selects the first line; another enter opens it, armed until accepted |
+| root shift-enter | sends and arms the first new line to open in a fresh pane |
+| page enter | submits field text until an arrow is pressed after the last edit; thereafter invokes the selected row, even after a clamped arrow |
+| field send | takes links, leaves other text with `not a link`; over 100 says `100 at a time. this has {n}.` and sends nothing |
+| a link already listed | adds no line; selects its existing line |
+| enter on an unaccepted line | arms its open; failure, selection movement, input and leaving the page disarm |
+| enter on `choose a file…` | opens the native picker inside that gesture |
+| arrows, tab | arrows select; tab reaches `into`, then the selected row's controls |
+
+the arrow and dismissals use one table. sent work stays in the intake, so these
+transitions do not prompt. a covering picker takes escape first, then field
+feedback regardless of the focused descendant, then the page transition.
+
+| origin and visit | arrow | escape, scrim, android back |
+| --- | --- | --- |
+| palette, nothing admitted | restore origin | restore origin |
+| palette, an admission | clear root query | close |
+| outside, such as rail or library | blank root | close to opener |
+
+the origin retains query, root mode and invoking control. desktop returns to the
+combobox with that control armed when it survives; phone returns to the typed
+query or blank root's invoking control. after admission the query is cleared
+and import is the return control. explicit field replacement clears feedback;
+arrow back preserves it. closing retires the visit. deferred admissions retain
+filing work but cannot revive an open intent after input, selection or exit.
+the root action reads `import · {n} importing` (`import · {n}` on a phone) while
+the intake has unsettled lines; its complete spoken name retains the count.
+
+document ingress yields to existing editable, attachment and overlay owners.
+an unclaimed file drop opens the page and admits up to 100 files; the same cap
+refuses the whole oversized batch. unclaimed all-link paste opens a filled root
+without sending. the drop veil names the same bounded destinations as `into`.
+the doors stay mounted across both shells and hydration; they own no acquisition
+lifecycle. library creation uses the shared creation hold and refusal owner.
+
+the controller publishes import start and settlement speech through one polite
+region. pending sentences retain occurrence order and repetitions until their
+committed publication. intake settlement order, rather than React observation
+order, determines which batch speaks first. unseen outcomes keep the shared
+feedback owner; reopening does not replay old settled history.
 
 ## keyboard shortcuts
 
@@ -295,6 +364,8 @@ actions remain accessible through nexus and ordinary controls.
 | Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/DesktopNexus.tsx`                                                           |
 | Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and `NexusButton.tsx`                                   |
 | Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
+| import page, lines and visit presentation | `apps/web/src/components/nexus/ImportPage.tsx`, `ImportLine.tsx` and `lib/imports/intake.tsx` |
+| unclaimed document file and link ingress | `apps/web/src/components/imports/ImportDoors.tsx` |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Daily Page location and note entries                             | `/daily/{date}` (`dailyDateFor` in `lib/notes/api.ts`) with `AppendNote` / `FocusNote`; the store delivers the entry to the visit the target lands on |
 | fixed shortcut definitions and projections                      | `apps/web/src/lib/shortcuts.ts`                                                                                   |

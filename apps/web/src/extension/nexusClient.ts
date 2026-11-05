@@ -4,6 +4,7 @@
 import { WIRE_HEADER } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import type { Schema } from "@/lib/api/wire";
+import { IMPORT_WORDS } from "@/lib/imports/words";
 import { isAbortError } from "@/lib/errors";
 import { CONTRIBUTOR_ROLES } from "@/lib/contributors/credits";
 import {
@@ -46,7 +47,7 @@ function contributor(raw: unknown): Schema<"ContributorCreditOut"> {
 }
 function item(raw: unknown): ExtensionItem {
   const v = expectExactRecord(raw, ["summary", "has_readable_copy", "source_attempt", "placements", "acquisition_revision"], "item");
-  const s = expectExactRecord(v.summary, ["can_play", "consumption", "contributors", "duration", "media_id", "media_kind", "original_published_date", "part_source", "processing_status", "title", "x_article_content"], "summary");
+  const s = expectExactRecord(v.summary, ["can_play", "consumption", "contributors", "duration", "media_id", "media_kind", "original_published_date", "part_source", "processing_status", "show", "title", "x_article_content"], "summary");
   let attempt: ExtensionItem["source_attempt"] = null;
   if (v.source_attempt !== null) {
     const a = expectExactRecord(v.source_attempt, ["id", "status", "error_code"], "source attempt");
@@ -141,10 +142,38 @@ async function call(token: string, method: "GET" | "POST" | "PUT" | "DELETE", pa
   if (response.ok) return envelope.data;
   const error = expectRecord(envelope.error, "error");
   const code = str(error.code);
-  const message = response.status === 401 ? "sign in to save this item." : response.status >= 500 ? "nexus isn’t answering."
-    : code === "E_SOURCE_TARGET_AMBIGUOUS" ? "more than one saved item matches this source."
-    : code === "E_RESOURCE_CONFLICT" || code === "E_CAPTURE_TARGET_CHANGED" ? "this item changed. make a new choice." : "nexus refused this change.";
-  throw failure(code, message, typeof error.request_id === "string" ? error.request_id : null, response.status);
+  const requestId = typeof error.request_id === "string" ? error.request_id : null;
+  if (isCaptureDefect(code)) {
+    console.error("extension server defect:", { status: response.status, error });
+    throw failure(code, "the extension stopped unexpectedly.", requestId, response.status);
+  }
+  throw failure(code, refusal(code, response.status), requestId, response.status);
+}
+/** Fixed reasons from these routes, never the server's own message. */
+function refusal(code: string, status: number): string {
+  if (status === 401) return "sign in to continue.";
+  if (code === "E_DATABASE_BUSY" || code === "E_RATE_LIMITED" || code === "E_AUTH_UNAVAILABLE") return "nexus is busy.";
+  switch (code) {
+    case "E_SOURCE_TARGET_AMBIGUOUS": return "more than one saved item matches this source.";
+    case "E_RESOURCE_CONFLICT":
+    case "E_CAPTURE_TARGET_CHANGED": return "this item changed. make a new choice.";
+    case "E_MEDIA_DELETING": return `${IMPORT_WORDS.deleting}.`;
+    case "E_INVALID_REQUEST": return `${IMPORT_WORDS.refused}.`;
+    case "E_FILE_TOO_LARGE": return `${IMPORT_WORDS.tooBig}.`;
+    case "E_INVALID_FILE_TYPE": return "nexus refused what arrived.";
+    case "E_SOURCE_INTEGRITY": return `${IMPORT_WORDS.integrity}.`;
+    case "E_CAPTURE_TOO_LARGE": return "this page is too large to save.";
+    case "E_LIBRARY_NOT_FOUND": return "this library is no longer available.";
+    case "E_LIBRARY_FORBIDDEN": return "you can’t change this library.";
+    case "E_UPLOAD_CAPABILITY_EXPIRED": return `${IMPORT_WORDS.timedOut}.`;
+    case "E_SIGN_UPLOAD_FAILED": return `${IMPORT_WORDS.notPrepared}.`;
+    case "E_STORAGE_ERROR": return `${IMPORT_WORDS.notChecked}.`;
+    case "E_STORAGE_MISSING": return `${IMPORT_WORDS.stopped}.`;
+    case "E_UPLOAD_SESSION_NOT_FOUND": return "removed since.";
+    case "E_UPLOAD_GENERATION_STALE": return "this upload was replaced.";
+    case "E_UNAUTHENTICATED": return "sign in to continue.";
+  }
+  return status >= 500 ? "nexus isn’t answering." : `${IMPORT_WORDS.refused}.`;
 }
 export function nexus(token: string) {
   return {
@@ -169,10 +198,10 @@ export type Nexus = ReturnType<typeof nexus>;
 /** Upload exactly the frozen bytes; expired capabilities require the same create. */
 export async function putBytes(upload: Schema<"UploadRequired">, blob: Blob, signal: AbortSignal): Promise<void> {
   const remaining = Date.parse(upload.expires_at) - Date.now();
-  if (remaining <= 0) throw failure("E_UPLOAD_EXPIRED", "this upload expired.");
+  if (remaining <= 0) throw failure("E_UPLOAD_EXPIRED", `${IMPORT_WORDS.timedOut}.`);
   let response: Response;
   try { response = await fetch(upload.upload_url, { method: "PUT", credentials: "omit", headers: { "Content-Type": upload.content_type },
     body: blob, signal: AbortSignal.any([signal, AbortSignal.timeout(remaining)]) }); }
-  catch { throw failure("E_UPLOAD_TRANSPORT", "couldn’t confirm the upload."); }
-  if (!response.ok) throw failure("E_UPLOAD_TRANSPORT", "couldn’t confirm the upload.");
+  catch { throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`); }
+  if (!response.ok) throw failure("E_UPLOAD_TRANSPORT", `${IMPORT_WORDS.stopped}.`);
 }

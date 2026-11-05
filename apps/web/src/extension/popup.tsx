@@ -127,6 +127,8 @@ function Receipt({ op, signedIn }: { op: NonNullable<ViewState["operation"]>; si
   const result = useRef<HTMLParagraphElement>(null);
   const priorRemoval = useRef<string | null>(null);
   const priorPhase = useRef(op.phase);
+  const [failureSpeech, setFailureSpeech] = useState({ attempt: op.failure_attempt, occurrence: {} });
+  if (failureSpeech.attempt !== op.failure_attempt) setFailureSpeech({ attempt: op.failure_attempt, occurrence: {} });
   useLayoutEffect(() => {
     if (op.removal === "reviewing" && priorRemoval.current !== "reviewing") keep.current?.focus();
     else if (op.phase === "removed" && priorPhase.current !== "removed") result.current?.focus();
@@ -155,7 +157,7 @@ function Receipt({ op, signedIn }: { op: NonNullable<ViewState["operation"]>; si
     <Announcement text={[
       line.endsWith(".") || line.endsWith("…") ? line : `${line}.`,
       preparation, op.failure?.message,
-    ].filter(Boolean).join(" ")} level="Polite" />
+    ].filter(Boolean).join(" ")} level="Polite" occurrence={op.failure === null ? undefined : failureSpeech.occurrence} />
     {preparation !== null ? <p className={styles.fine}>{preparation}</p> : null}
     {op.failure !== null ? <Fact line={{ fact: op.failure.message }} /> : null}
     {!op.account_matches && signedIn ? <Fact line={{ fact: "this request belongs to another account.", reason: "switch to the original account in nexus, then sign in here." }} /> : null}

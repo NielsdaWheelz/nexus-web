@@ -330,10 +330,12 @@ function PaneView({
     pull,
     scrollportRef,
   });
+  const pointerTitle = body?.titleRole === "Pointer" ? pane.current_visit.title_hint : null;
   const header = resolvePaneHeaderModel({
     route: route.header,
-    title: body?.displayTitle ?? (body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
+    title: pointerTitle ?? body?.displayTitle ?? (body?.resourceActions?.kind === "Media" && body.resourceActions.subject.kind === "Stored" ? body.resourceActions.subject.summary.title
       : route.id === "media" && body?.header?.kind === "Resource" && body.header.resource.status === "Unavailable" ? "unavailable" : label),
+    titleRole: pointerTitle === null ? "Title" : "Pointer",
     publication: body?.header,
   });
   const inspector = state.companion

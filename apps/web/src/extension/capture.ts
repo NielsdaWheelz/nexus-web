@@ -43,6 +43,8 @@ export interface ViewState {
     item: ExtensionItem | null;
     open_url: string | null;
     failure: CaptureFailure | null;
+    /** Advances only when this operation publishes a new failed attempt. */
+    failure_attempt: number;
     retryable: boolean;
     busy: boolean;
     account_matches: boolean;
@@ -197,7 +199,7 @@ function readFailure(code: string, message: string): DocumentRead {
   return { kind: "failed", failure: { code, message, requestId: null, status: null, offline: false } };
 }
 
-const notADocument = (): DocumentRead => readFailure("E_INVALID_FILE_TYPE", "this link isn’t a pdf or epub.");
+const notADocument = (): DocumentRead => readFailure("E_INVALID_FILE_TYPE", "the link isn’t a pdf or epub.");
 
 /** The last path segment of `url`, decoded, or null. */
 export function urlFilename(url: string): string | null {
@@ -246,7 +248,7 @@ export async function readDocument(
   limits: Record<DocumentKind, number>,
 ): Promise<DocumentRead> {
   if (!response.ok) {
-    return readFailure("E_CAPTURE_HTTP", "couldn’t download this link.");
+    return readFailure("E_CAPTURE_HTTP", "the site didn’t return the file.");
   }
   if (response.body === null) return notADocument();
   const reader = response.body.getReader();

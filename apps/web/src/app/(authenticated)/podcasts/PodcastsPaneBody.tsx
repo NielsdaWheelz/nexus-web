@@ -7,6 +7,8 @@
 import { useCallback, useId, useMemo, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { catalogLine } from "@/lib/catalog/copy";
 import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
@@ -69,6 +71,7 @@ const fields = (row: PodcastRow) => [
 ];
 
 export default function PodcastsPaneBody() {
+  const speak = useActiveRegion();
   const router = usePaneRouter();
   const active = usePaneIsActive();
   const [librariesOpen, setLibrariesOpen] = useState(false);
@@ -116,6 +119,7 @@ export default function PodcastsPaneBody() {
   };
   const list = unstamped(snapshot);
   const failure = list.status === "loading" ? null : list.error;
+  const catalogFailure = failure === null ? null : catalogLine(failure);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const libraries = useServerValue({
@@ -185,6 +189,7 @@ export default function PodcastsPaneBody() {
       ? { kind: "Pending" }
       : { kind: "None" };
   const libraryFailureReason = libraries.status === "failed" ? libraryReason(libraries.error) : null;
+  const catalogLibraryFailure = libraries.status === "failed" ? catalogLine(libraries.error) : null;
   const queryControls = {
     kind: "Controls" as const,
     focusInput,
@@ -197,7 +202,8 @@ export default function PodcastsPaneBody() {
         content: <>
           <RadioGroup label="Show" value={filter} choices={showChoices} onChange={(value) => replaceView({ filter: value === "all" ? null : value })} />
           <RadioGroup label="Library" value={libraryId ?? ""} choices={libraryChoices} disabled={libraries.status === "loading"} onChange={(value) => replaceView({ library_id: value || null })} />
-          {libraries.status === "failed" ? libraryFailureReason !== null
+          {libraries.status === "failed" ? catalogLibraryFailure !== null ? <Fact line={catalogLibraryFailure} speak={speak} />
+            : libraryFailureReason !== null
             ? <Fact line={{ fact: "couldn’t load libraries.", reason: libraryFailureReason }} />
             : <Failed error={libraries.error} noun="libraries" retry={{ run: retryLibraries, busy: indexReading(libraries) }} /> : null}
         </>,
@@ -236,6 +242,7 @@ export default function PodcastsPaneBody() {
         {failure.code === "E_INVALID_REQUEST"
           ? <Fact line={{ fact: "couldn’t load podcasts for this view." }}
             verbs={[{ label: "reset view", commandKey: "reset podcasts view", run: () => router.replace("/podcasts") }]} />
+          : catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
           : <Failed error={failure} noun="podcasts" retry={{ run: retry, busy }} />}
       </>
     );

@@ -32,14 +32,17 @@ import { ActivityCapture } from "@/lib/consumption/capture";
 import { LibraryOrderProvider } from "@/lib/collections/order";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
+import { ImportIntakeHost, ImportIntakeProvider } from "@/lib/imports/intake";
 import { LecternProvider } from "@/lib/lectern/lectern";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
 import { MediaAdmissionsProvider, MediaAdmissionsHost } from "@/lib/media/admissions";
+import MetadataOutcomeHost from "@/lib/media/MetadataOutcomeHost";
 import { ChatSelectionProvider } from "@/lib/chat/selectionMemory";
 import { useChatWorkOwners } from "@/lib/chat/drafts";
 import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
 import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import { connectLocalContent } from "@/lib/offline/localContent";
 import { connectListening } from "@/lib/consumption/listening";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
@@ -91,6 +94,7 @@ export default function AuthenticatedShell(props: {
                 <UnauthenticatedApiBoundary>
                 <DeviceSettingsProvider>
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
+                  <ImportIntakeProvider accountId={props.account.accountId}>
                     <ActivityCapture />
                     <ServerArrivalsProvider>
                       <ReaderProvider initialProfile={props.readerProfile}>
@@ -98,6 +102,7 @@ export default function AuthenticatedShell(props: {
                           initialPresentations={props.initialPresentations} locationLinkFailure={props.locationLinkFailure} bindSignIn={bindSignIn} />
                       </ReaderProvider>
                     </ServerArrivalsProvider>
+                  </ImportIntakeProvider>
                   </MediaAdmissionsProvider>
                 </DeviceSettingsProvider>
                 </UnauthenticatedApiBoundary>
@@ -169,21 +174,30 @@ function Workspace(props: {
                     <ShareControllerProvider>
                       <WorkspacePlayer accountId={accountId}>
                         <ResourceActionsProvider>
-                          <AuthenticatedWorkspaceErrorBoundary>
+                          <WorkspaceCanvas>{(player, readerComposition) => <AuthenticatedWorkspaceErrorBoundary>
                             <ChatSelectionProvider>
                               <ResourceActionPresentation />
                               <MediaAdmissionsHost />
+                              <MetadataOutcomeHost />
                               <ImportsProvider>
-                                <MediaContinuationHost />
-                                <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
-                                  <WorkspaceNavigation>
-                                    <Nexus />
-                                    <WorkspaceCanvas />
-                                  </WorkspaceNavigation>
-                                </WorkspacePresentationsProvider>
+                                <ImportIntakeHost openPage={openImportPage}>
+                                  <MediaContinuationHost />
+                                  <WorkspacePresentationsProvider key={accountId} accountId={accountId} initial={props.initialPresentations}>
+                                    <WorkspaceNavigation>
+                                      <Nexus />
+                                      <div className={styles.layout}>
+                                        <AppNav />
+                                        <main className={styles.main} data-reader-composition={readerComposition || undefined}>
+                                          <WorkspaceHost />
+                                          {player}
+                                        </main>
+                                      </div>
+                                    </WorkspaceNavigation>
+                                  </WorkspacePresentationsProvider>
+                                </ImportIntakeHost>
                               </ImportsProvider>
                             </ChatSelectionProvider>
-                          </AuthenticatedWorkspaceErrorBoundary>
+                          </AuthenticatedWorkspaceErrorBoundary>}</WorkspaceCanvas>
                         </ResourceActionsProvider>
                       </WorkspacePlayer>
                     </ShareControllerProvider>
@@ -197,6 +211,9 @@ function Workspace(props: {
     </PlayerPresentationProvider>
   );
 }
+
+/** A settled batch's `see`: the palette's import command, whichever page it opens. */
+const openImportPage = () => requestNexusOpen({ kind: "QuickAction", actionId: "Nexus.Quick.Import" });
 
 function WorkspacePlayer({ accountId, children }: { accountId: string; children: ReactNode }) {
   const { show } = usePlayerPresentation();
@@ -212,20 +229,14 @@ function WorkspaceNavigation({ children }: { children: ReactNode }) {
 }
 
 /** A route selects the shell composition before loading or mounting its reader. */
-function WorkspaceCanvas() {
+function WorkspaceCanvas({ children }: { children: (player: ReactNode, readerComposition: boolean) => ReactNode }) {
   const { state } = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
   const active = state.panes.find(pane => pane.id === state.active_primary_pane_id);
   if (!active) throw new Error("workspace active pane is missing");
   const readerComposition = isMobile && resolvePaneRouteModel(active.current_visit.href).returnKind === "Reader";
   return <MobileReaderCompositionContext value={readerComposition}>
-    <div className={styles.layout}>
-      <AppNav />
-      <main className={styles.main} data-reader-composition={readerComposition || undefined}>
-        <WorkspaceHost />
-        <GlobalPlayerSurfaces readerComposition={readerComposition} />
-      </main>
-    </div>
+    <GlobalPlayerSurfaces readerComposition={readerComposition}>{player => children(player, readerComposition)}</GlobalPlayerSurfaces>
   </MobileReaderCompositionContext>;
 }
 

@@ -18,6 +18,7 @@ from nexus.schemas.media_summary import (
     MediaDurationOut,
     MediaPartSourceOut,
     MediaProcessingStatus,
+    MediaShowOut,
     MediaSummaryOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
@@ -124,6 +125,7 @@ class MediaOut(BaseModel):
     kind: MediaKind
     title: str
     part_source: MediaPartSourceOut | None
+    show: MediaShowOut | None
     part_source_edition: PartSourceEditionOut | None
     part_version: int | None
     canonical_source_url: str | None

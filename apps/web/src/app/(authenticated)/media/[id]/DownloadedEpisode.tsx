@@ -5,6 +5,7 @@
 // its annotations are the account's local authored highlights of this media.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
+import Artwork from "@/components/ui/Artwork";
 import Button from "@/components/ui/Button";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { WIRE_HEADER } from "@/lib/api/client";
@@ -19,7 +20,6 @@ import { useCompactAnnotations } from "@/lib/documentReader/chrome/CompactAnnota
 import { locatePassage } from "@/lib/documentReader/annotations";
 import { readerDocument } from "@/lib/documentReader/model";
 import type { ReaderSource } from "@/lib/documentReader/ports";
-import { useHostPolicy } from "@/lib/host/policy";
 import { LocalMutationObservationError, localCall, localContentAvailable, localMutation, readyEpisode, useLocalContent, type LocalItem } from "@/lib/offline/localContent";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
@@ -96,7 +96,6 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const runtime = requirePaneRuntime(usePaneRuntime(), "DownloadedEpisode");
   const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
-  const { Image } = useHostPolicy();
   const chrome = useMobileChrome();
   const viewport = useMobileViewport();
   const { playAudio, pause } = usePlayerCommands();
@@ -205,8 +204,10 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     let url: string | null = null;
     void localResponse(componentPath(id, packageId, "artwork"), abort.signal).then(response => response.blob()).then(blob => {
       if (!abort.signal.aborted) { url = URL.createObjectURL(blob); setArtwork(url); }
-    // artwork is decorative: a copy that won't open leaves its slot empty.
-    }).catch(() => {});
+    }).catch(() => {
+      // justify-ignore-error: saved artwork that will not open leaves the show's initials in its
+      // box; decoration degrades to absence, and the audio is unaffected.
+    });
     return () => { abort.abort(); if (url !== null) URL.revokeObjectURL(url); setArtwork(null); };
   }, [artworkReady, id, packageId]);
   const observation = capture.playback_baseline.observation;
@@ -215,7 +216,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
   const fraction = episodeProgress(effective ?? { status: observation.state.consumption_override_status, position_ms: observation.state.position_ms,
     duration_ms: observation.state.duration_ms ?? manifest.audio.duration_ms ?? capture.rendition.duration_ms, lectern_member: observation.state.lectern_member });
   const sourceUnavailable = entry?.local?.disposition === "SourceUnavailable";
-  const loaded = player.kind === "Loaded" && player.source.kind === "Episode" && player.source.descriptor.media_id === id;
+  const loaded = player.kind === "Loaded" && player.source.descriptor.media_id === id;
   const play = useCallback((ms: number | null) => {
     run({ ref: `media:${id}`, id: "Playback", label: "play", feedbackLabel: "play", title: capture.rendition.title, confirmation: null, tracked: false,
       execute: () => playAudio({ mediaId: id, knownDescriptor: null, positionMs: ms, source: null, recapture: false }) });
@@ -256,11 +257,11 @@ export default function DownloadedEpisode({ saved, onIntent }: {
       : transcript.reason === "E_MEDIA_NOT_READY" ? "no transcript existed when this was downloaded." : "couldn’t download the transcript."
     : null;
   const header = <div className={styles.savedEpisode} onPointerDown={onIntent} onKeyDown={onIntent}>
-    {artwork === null ? null : <Image className={styles.savedArtwork} src={artwork} alt="" width={80} height={80} unoptimized onError={() => setArtwork(null)} />}
+    <Artwork title={capture.rendition.subtitle ?? ""} source={artwork === null ? { kind: "Absent" } : { kind: "Local", url: artwork }} size={80} className={styles.savedArtwork} />
     <h1>{capture.rendition.title}</h1>
     {capture.rendition.subtitle === null ? null : <p>{capture.rendition.subtitle}</p>}
     <p>downloaded · {formatByteCount(manifest.audio.byte_count)}</p>
-    {loaded && player.source.kind === "Episode" && player.source.packageId !== null ? <p>{player.phase === "Playing" ? "playing downloaded audio" : "downloaded audio"}</p> : null}
+    {loaded && player.source.packageId !== null ? <p>{player.phase === "Playing" ? "playing downloaded audio" : "downloaded audio"}</p> : null}
     <div className={styles.savedActions}><Button onClick={() => { if (loaded && player.phase === "Playing") pause(); else play(null); }}>{loaded && player.phase === "Playing" ? "pause" : "play"}</Button>
       {extrasFailed ? <Button aria-busy={retrying} disabled={retrying} onClick={() => void retryExtras()}>retry missing content</Button> : null}
       {sourceUnavailable ? <Button onClick={retryListening}>retry listening sync</Button> : null}

@@ -184,16 +184,8 @@ class FromXCaptureRequest(AcquisitionGuard):
     capture_id: UUID
 
 
-class FromXCaptureOut(FromUrlOut):
-    accepted_capture_id: UUID
+class FromXCaptureOut(_Strict):
+    """Immutable acceptance identities, independent of the current destination."""
 
-
-class ReplaceXCaptureRequest(_Strict):
-    capture_id: UUID
-    expected_reader_generation: int = Field(ge=1)
-
-
-class ReplaceXCaptureOut(_Strict):
+    source_attempt_id: UUID
     media_id: UUID
-    capture_id: UUID
-    reader_generation: int

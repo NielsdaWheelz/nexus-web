@@ -123,6 +123,12 @@ owns account-scoped per-library queues, frozen commands and unknown recovery.
 only acknowledged local predecessors may supply dependent revisions. external
 changes require a new choice. closing presentation preserves accepted work.
 
+the hosted placement picker captures its stable opener's containing modal at
+open and retains it when external media becomes stored. departure of that exact
+modal retires the ui session and its retarget handle; temporary coverage does
+not. accepted placement commands and destination creation keep their account
+lifetime. page openers have no parent modal.
+
 library settings retains one unanswered rename or delete in its existing overlay
 draft. an unavailable read may mean lost membership and cannot settle that command;
 its exact retry and loss guard remain reachable. opposite writes wait, while words
@@ -178,6 +184,8 @@ normal placement rows show the exact name and confirmed membership mark. draft
 destination marks mean chosen for that request. mixed counts, read-only
 reasons, progress and recovery remain explicit; highlight never means membership.
 all and system libraries are absent from the named organizational projection.
+the import destination chooser separately shows an unselectable `All / always`
+row, including while filtered: acquisition always files there.
 the revision-fenced placement owner retains accepted work and recovery across
 view closure; collection primitives own neither commands nor settlement.
 

@@ -85,6 +85,14 @@ never regenerated from the current helper.
 
 ## content and identity
 
+standalone plain-text sharing uses the same `captureToday` command and local store.
+its date and note identity freeze on the first explicit press, or come from the
+actual native share's capture metadata; retry retains those bytes and the local
+commit handle. the share-host `AuthoredProvider` requires an `openWorkspace` action
+for sign-in and setup recovery. that action belongs to the document's host, not
+the store: actual share activities open main, ordinary share documents open the
+workspace. the workspace retains ownership of account retirement and setup cleanup.
+
 one note has one permanent body element and one permanent inline yjs text. its
 prosemirror shape is `body{presentation:prose|code}` with text, hard breaks, images
 and typed resource embeds. formatting changes attributes and marks, not the outer
@@ -210,6 +218,10 @@ source-driven expansion requires a fresh open intent. arrival purpose stays
 separate from whether an inspection was already applied.
 `settleNativeInput` reconciles native packets without requiring a query to close;
 `canArrange` still fences guarded drafts. structural commands require both.
+active native input still refuses settlement. a completed composition transfers
+through its existing owner before the command proceeds. if that transfer opens
+a new reference query, the current command is refused after ownership changes;
+an already active query retains its local history commands.
 
 item text means an occurrence’s own note body or inline page title.
 item text is entered by pointer or f2, not sequential tab. each occurrence's

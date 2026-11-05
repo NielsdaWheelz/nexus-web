@@ -838,7 +838,9 @@ make text overflow fixed containers.
 - lists read as editorial rhythm, not a pile of tiles;
 - media artwork can break the typographic field, but decoration cannot;
 - controls have a visible press state and at least a 44–48 point hit region;
-- icons gain labels whenever meaning is not universally obvious.
+- icons gain labels whenever meaning is not universally obvious. the playback
+  speed dial is an explicit exception: its accessible name and mandatory tooltip
+  state the observed rate; the picker exposes the number and all nine choices.
 
 ### Surface recipes
 

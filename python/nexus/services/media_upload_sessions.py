@@ -44,7 +44,7 @@ from nexus.db.models import (
     MediaUploadSessionDestination,
     ProcessingStatus,
 )
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import DatabaseBusyError, retry_read_committed, retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
@@ -359,14 +359,26 @@ def confirm_session(
     Retry rule: a published session answers ``Published`` whatever the generation;
     it includes fresh placements, never a new filing; an expired unpublished upload
     is 409 ``E_UPLOAD_CAPABILITY_EXPIRED``. A stale generation is 409 ``E_UPLOAD_GENERATION_STALE``; a recorded rejection
-    answers its code again.
+    answers its code again. Lock timeout or retry exhaustion is 503 ``E_DATABASE_BUSY``:
+    it cannot resolve an earlier confirmation, so the client retains that command.
     """
-    with transaction(db):
-        session = _owned(db, viewer_id, origin_kind, session_id, lock=False)
+
+    def read_current() -> Published | _Generation:
+        session = _owned(db, viewer_id, origin_kind, session_id)
         if session.published_at is not None:
             return _published(db, viewer_id, session)
         _require_current(db, session, generation)
-        current = _Generation.of(session)
+        return _Generation.of(session)
+
+    try:
+        current = retry_read_committed(db, "upload.confirm.read", read_current)
+    except DatabaseBusyError as exc:
+        logger.warning("db.resource_busy", exc_info=True)
+        raise ApiError(
+            ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+        ) from exc
+    if isinstance(current, Published):
+        return current
     client = get_storage_client()
     candidate_path = build_upload_verification_candidate_storage_path(
         current.candidate_media_id, new_uuid7(), _EXTENSIONS[current.kind]
@@ -477,7 +489,13 @@ def confirm_session(
         record_input_change(db, owners=(f"media:{media.id}",))
         return result
 
-    return retry_serializable(db, "upload.confirm", publish)
+    try:
+        return retry_serializable(db, "upload.confirm", publish)
+    except DatabaseBusyError as exc:
+        logger.warning("db.resource_busy", exc_info=True)
+        raise ApiError(
+            ApiErrorCode.E_DATABASE_BUSY, "nexus is busy. wait a moment, then retry."
+        ) from exc
 
 
 def _new_media(
@@ -682,8 +700,6 @@ def _owned(
     viewer_id: UUID,
     origin_kind: OriginKind | None,
     session_id: UUID,
-    *,
-    lock: bool = True,
 ) -> MediaUploadSession:
     """The viewer's own session, row-locked, of the caller's origin when it has one;
     anything else (another origin included) is not found."""
@@ -692,20 +708,19 @@ def _owned(
     )
     if origin_kind is not None:
         query = query.where(MediaUploadSession.input_origin["kind"].astext == origin_kind)
-    session = db.scalar(
-        (query.with_for_update() if lock else query).execution_options(populate_existing=True)
-    )
+    session = db.scalar(query.with_for_update().execution_options(populate_existing=True))
     if session is None:
         raise NotFoundError(ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found.")
     return session
 
 
 def _require_current(db: Session, session: MediaUploadSession, generation: int) -> None:
+    """Check the locked generation's deadline after any preceding lock waits."""
     if generation != session.upload_generation:
         raise ConflictError(
             ApiErrorCode.E_UPLOAD_GENERATION_STALE, "Upload generation is no longer current."
         )
-    if session.upload_url_expires_at <= _now(db):
+    if session.upload_url_expires_at <= db.execute(select(func.clock_timestamp())).scalar_one():
         raise ConflictError(
             ApiErrorCode.E_UPLOAD_CAPABILITY_EXPIRED, "Upload expired. Choose the file again."
         )

@@ -109,6 +109,7 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
 
 /** The row's spoken name: `here`, the title, facts, evidence and reason; a lookup command is its title and alias. */
 export function nexusRowName(row: NexusRow, here: boolean, alias: string | null): string {
+  if (row.name !== undefined) return rowName([row.name, alias, row.action.kind === "Unavailable" ? row.action.reason : null]);
   const title = rowPrimaryText(row);
   if (alias !== null) return rowName([title, alias]);
   return rowName([here ? "here" : null, title, rowFacts(row), rowEvidence(row, title)?.excerpt.text,
@@ -143,9 +144,9 @@ export function nexusRowVerbs(
   if (row.key.startsWith("Continuation:") || row.key === "Resource:Playback:Current") return null;
   const href = controller.destinationHref(row);
   const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
-  const run = /^(QuickAction|ImportUrl|Intent):/.test(row.key);
-  // Add ignores disposition, so import has no `new pane`.
-  const imports = row.key === "QuickAction:Nexus.Quick.Import" || row.key.startsWith("ImportUrl:");
+  const run = row.key.startsWith("Import:") || /^(QuickAction|Intent):/.test(row.key);
+  // Opening the import field ignores disposition; sending links can arm a fresh pane.
+  const opensImport = row.key === "QuickAction:Nexus.Quick.Import";
   const verb = (fork: boolean): NexusVerb => {
     const id = fork ? "Nexus.OpenInNewPane" : "Nexus.Open";
     const label = fork ? "new pane" : run ? "run" : "open";
@@ -192,7 +193,7 @@ export function nexusRowVerbs(
     occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <Icon.Dismiss aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
   }
   return {
-    pair: [...(here ? [] : [verb(false)]), ...(imports ? [] : [verb(true)])],
+    pair: [...(here ? [] : [verb(false)]), ...(opensImport ? [] : [verb(true)])],
     close: closing === null ? null : { name: `close ${paneName}`,
       verb: { kind: "command", id: `Nexus.ClosePane:${closing}`, label: "close pane", icon: null, onSelect: () => controller.closePane(closing) } },
     menu: resourceRef === null && occurrence.length === 0 ? null : {

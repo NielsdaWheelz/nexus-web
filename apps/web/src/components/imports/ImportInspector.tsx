@@ -292,7 +292,7 @@ export default function ImportInspector({
             <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
           ) : null}
           <div className={styles.inspectorActions}>
-            <MetadataResearchActions mediaId={mediaId} view={metadata} />
+            <MetadataResearchActions mediaId={mediaId} title={item.title} view={metadata} />
           </div>
           {operation === null ? null : (
             <OperationDetails operation={operation} />

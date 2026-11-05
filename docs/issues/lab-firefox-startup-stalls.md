@@ -26,3 +26,11 @@ if repeated, capture browser launch diagnostics and repair the actual launcher
 or resource owner. do not change product behavior or weaken assertions.
 resolved when the cause is identified and the affected launch/teardown reliably
 completes under the existing lab resource contract.
+
+playback recurrence: `20261102-182310-2170d329232b` at `b3d9a2e456`
+(quick-release firefox) and `20261102-222620-10f1eb4846b8` at `9662b8e465`
+(enlarged-text firefox) timed out during persistent-context launch, before
+navigation. the latter had zero frame snapshots and no admitted page, so no
+screenshot or body aria existed. the unchanged enlarged-text case passed on the
+same source in fresh run `20261102-225404-fedad53f3a99` (5.4s). no assertion,
+timeout, helper or product changed. this establishes intermittence, not repair.

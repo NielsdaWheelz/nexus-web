@@ -63,7 +63,8 @@ export default function PaneHeaderIdentity({
       aria-busy={pending || undefined}
       dir="auto"
     >
-      <h1 id={id} className={editor === undefined ? styles.title : "sr-only"} title={model.title}>
+      <h1 id={id} className={editor === undefined ? styles.title : "sr-only"} title={model.title}
+        data-title-role={model.kind === "Resource" ? model.titleRole : undefined}>
         {model.title}
       </h1>
       {editor === undefined ? null : <div className={styles.editor}>{editor}</div>}

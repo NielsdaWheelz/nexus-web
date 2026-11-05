@@ -134,7 +134,7 @@ export function useImportActions({ item, triggerRef, returnFocus }: {
   const commands = [open, source, search].filter((action): action is Command => action !== null);
   const shortcuts = <div ref={shortcutsRef} className={styles.rowActions} data-import-shortcuts="">
     {item.primary === "metadata" && item.media_id !== null && metadata !== null
-      ? <MetadataResearchActions mediaId={item.media_id} view={metadata} primaryOnly />
+      ? <MetadataResearchActions mediaId={item.media_id} title={item.title} view={metadata} primaryOnly />
       : recovery ? <span data-import-shortcut=""><RecoveryControl action={recovery} /></span> : null}
     {open ? <span data-import-shortcut=""><OpenControl item={item} action={open} /></span> : null}
     {upload.retry ? <span data-import-shortcut=""><RecoveryControl action={upload.retry} /></span> : null}

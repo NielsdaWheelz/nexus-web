@@ -6,9 +6,10 @@
 // title job arrives; a failed reread keeps the old values. Desktop dialog, mobile sheet.
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { Failed } from "@/components/feedback/Fact";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import type { Line } from "@/components/feedback/stage";
+import { useTransportVerbs, type Line } from "@/components/feedback/stage";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { formatPublicationDate } from "@/lib/resources/metadata";
 import InformationFrame from "@/components/resources/InformationFrame";
 import { informationFact as fact, informationGroup as group } from "@/components/resources/InformationFacts";
@@ -40,15 +41,18 @@ import {
 } from "@/lib/media/mediaMetadataCopy";
 import {
   reconnectMetadataOperations,
+  reconnectMetadataOperation,
+  useMetadataOperation,
   useMediaMetadataOperations,
   type MetadataEnrichmentView,
+  type MetadataOperation,
 } from "@/lib/media/mediaMetadataOperations";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
 import MetadataResearchResult from "./MetadataResearchResult";
-import MetadataResearchActions from "./MetadataResearchActions";
+import MetadataResearchActions, { MetadataReviewButton } from "./MetadataResearchActions";
 
 const VISIT = definePaneVisitDataKey<Visit<MediaDetail>>("MediaInfo.Detail");
 const COMPLETION = {
@@ -74,23 +78,19 @@ const publication = (value: string | null): ReactNode =>
 /** A line in a facts table is plain row text. */
 const rowText = ({ fact, reason }: Line) => reason ? `${fact} ${reason}` : fact;
 
-function MediaInfo({
-  media,
-  metadata,
-}: {
+function instant(display: ReturnType<typeof useRenderEnvironment>, value: string | null): ReactNode {
+  return value ? <time dateTime={value}>{formatDisplayDate(value, display, {
+    dateStyle: "medium", timeStyle: "short",
+  })}</time> : null;
+}
+
+function MediaInfo({ media, pinned, readStatus, children }: {
   readonly media: MediaDetail;
-  readonly metadata: MetadataEnrichmentView;
+  readonly pinned: boolean;
+  readonly readStatus: ReactNode;
+  readonly children: ReactNode;
 }) {
   const display = useRenderEnvironment();
-  const instant = (value: string | null | undefined): ReactNode =>
-    value ? (
-      <time dateTime={value}>
-        {formatDisplayDate(value, display, {
-          dateStyle: "medium",
-          timeStyle: "short",
-        })}
-      </time>
-    ) : null;
   const credits = groupContributorCredits(media.contributors);
   const publisherCredited = credits.some(
     (role) =>
@@ -101,20 +101,15 @@ function MediaInfo({
   const searchState = mediaSearchLine(media.retrieval_status, media.text_search_ready);
   const { duration, listening_state: listening } = media;
   const verb = duration?.modality === "Read" ? "read" : "listen";
-  const operation = metadata.operation;
-  const earlierRuns = earlierMetadataRuns(metadata);
-  const unfinished = metadata.unfinished_operation;
   const { requested_url: requested, canonical_url: canonical } = media;
   const sourceEdition = media.part_source_edition;
-  const bibliography = operation?.status === "completed" && operation.outcome.purpose === "bibliography" ? operation.outcome : null;
-  const hasResult = bibliography !== null && (bibliography.changed_fields.length > 0 || bibliography.unresolved_fields.length > 0 || bibliography.container_report !== null) ||
-    operation?.status === "no_findings" && operation.container_report !== null;
   return (
     <div className={styles.content}>
       <div className={styles.resourceTitle} dir="auto">
         {media.title}
       </div>
-      {group("publication", [
+      {readStatus}
+      {group(pinned ? "current metadata" : "publication", [
         fact(
           "authors",
           selectMediaAuthors(media.contributors).length === 0
@@ -151,90 +146,7 @@ function MediaInfo({
         fact("publisher", sourceEdition.publisher),
         fact("isbn", sourceEdition.isbn),
       ]) : null}
-      {group(metadataOperationName(operation?.purpose ?? metadata.retry.purpose), [
-        fact(
-          "status",
-          <span aria-live="polite" aria-atomic="true">
-            {operation
-              ? metadataOperationSummary(operation)
-              : `no recorded ${metadataOperationName(metadata.retry.purpose)}`}
-          </span>,
-        ),
-        fact("result", hasResult ? <MetadataResearchResult operation={operation} /> : null),
-        fact(
-          "explanation",
-          operation?.status === "failed"
-            ? METADATA_FAILURE_COPY[operation.code]
-            : null,
-        ),
-        fact(
-          `${metadataOperationName(metadata.retry.purpose)} availability`,
-          metadata.retry.status === "blocked"
-            ? metadataRetryBlockedCopy(metadata.retry)
-            : "available",
-        ),
-        fact(
-          "title evidence",
-          metadata.retry.purpose === "title" ? X_TITLE_CONTEXT_HELP : null,
-        ),
-        fact(
-          "review",
-          operation?.status === "no_findings" && operation.reviewed_at === null
-            ? METADATA_REVIEW_HELP
-            : null,
-        ),
-        fact(
-          "earlier work",
-          earlierRuns > 0
-            ? `${earlierRuns} earlier metadata ${earlierRuns === 1 ? "run remains" : "runs remain"} unfinished`
-            : null,
-        ),
-        fact(
-          "unfinished operation",
-          unfinished !== null && unfinished.job_id !== operation?.job_id ? (
-            <>
-              {metadataOperationSummary(unfinished)} ·{" "}
-              <code>{unfinished.job_id}</code>
-            </>
-          ) : null,
-        ),
-        fact(
-          "actions",
-          <MetadataResearchActions mediaId={media.id} view={metadata} />,
-        ),
-        fact("requested", instant(operation?.created_at)),
-        fact("started", instant(operation?.started_at)),
-        fact(
-          "finished",
-          instant(
-            operation?.status === "completed"
-              ? operation.outcome.completed_at
-              : operation?.status === "no_findings" ||
-                  operation?.status === "failed"
-                ? operation.completed_at
-                : null,
-          ),
-        ),
-        fact(
-          "next retry",
-          instant(operation?.status === "waiting" ? operation.until : null),
-        ),
-        fact("operation id", operation?.job_id),
-        fact("generation id", operation?.generation_id),
-        fact(
-          "reviewed",
-          instant(
-            operation?.status === "no_findings" ? operation.reviewed_at : null,
-          ),
-        ),
-        fact(
-          "model",
-          operation?.selection
-            ? `${operation.selection.route} / ${operation.selection.model} / ${operation.selection.reasoning}`
-            : null,
-        ),
-
-      ])}
+      {children}
       {sourceEdition === null ? group("source", [
         fact("media type", media.kind.replaceAll("_", " ")),
         fact("provider", media.provider ?? "not recorded"),
@@ -248,7 +160,7 @@ function MediaInfo({
         fact(
           "captured",
           media.x_source_context !== null
-            ? instant(media.x_source_context.published_at)
+            ? instant(display, media.x_source_context.published_at)
             : null,
         ),
         fact("source url", link(media.canonical_source_url)),
@@ -293,10 +205,10 @@ function MediaInfo({
         ),
       ])}
       {group("activity", [
-        fact("record created", instant(media.created_at)),
-        fact("record updated", instant(media.updated_at)),
-        fact("metadata enriched", instant(media.metadata_enriched_at)),
-        fact("last engaged", instant(media.last_engaged_at)),
+        fact("record created", instant(display, media.created_at)),
+        fact("record updated", instant(display, media.updated_at)),
+        fact("metadata enriched", instant(display, media.metadata_enriched_at)),
+        fact("last engaged", instant(display, media.last_engaged_at)),
       ])}
       {group("availability", [
         fact("processing", media.processing_status.replaceAll("_", " ")),
@@ -310,9 +222,56 @@ function MediaInfo({
   );
 }
 
+/** A retained run is inspectable independently of the current metadata read. */
+function MetadataOperationInfo({ mediaId, title, metadata, operation, pinned, inspection }: {
+  readonly mediaId: string;
+  readonly title: string | null;
+  readonly metadata: MetadataEnrichmentView | null;
+  readonly operation: MetadataOperation | null;
+  readonly pinned: boolean;
+  readonly inspection: ReactNode;
+}) {
+  const display = useRenderEnvironment();
+  const retry = metadata === null || title === null ? null : metadata.retry;
+  const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
+  const unfinished = metadata === null ? null : metadata.unfinished_operation;
+  const purpose = operation?.purpose ?? retry?.purpose ?? null;
+  const hasResult = operation?.status === "completed" && operation.outcome.purpose === "bibliography" || operation?.status === "no_findings";
+  const needsReview = operation?.status === "no_findings" && operation.reviewed_at === null;
+  const canUpdate = metadata !== null && title !== null;
+  const showReview = needsReview && (pinned || !canUpdate);
+  return group(pinned ? "this update" : purpose === null ? "metadata update" : metadataOperationName(purpose), [
+    fact("observation", inspection),
+    fact("status", operation !== null ? metadataOperationSummary(operation)
+      : !pinned && purpose !== null ? `no recorded ${metadataOperationName(purpose)}` : null),
+    fact("result", hasResult ? <MetadataResearchResult operation={operation} /> : null),
+    fact("explanation", operation?.status === "failed" ? METADATA_FAILURE_COPY[operation.code] : null),
+    retry === null ? null : fact(`${metadataOperationName(retry.purpose)} availability`,
+      retry.status === "blocked" ? metadataRetryBlockedCopy(retry) : "available"),
+    fact("title evidence", retry?.purpose === "title" ? X_TITLE_CONTEXT_HELP : null),
+    fact("review", needsReview ? METADATA_REVIEW_HELP : null),
+    fact("earlier work", earlierRuns > 0
+      ? `${earlierRuns} earlier metadata ${earlierRuns === 1 ? "run remains" : "runs remain"} unfinished` : null),
+    fact("unfinished operation", unfinished !== null && unfinished.job_id !== operation?.job_id
+      ? metadataOperationSummary(unfinished) : null),
+    fact("actions", canUpdate || showReview ? <>
+      {canUpdate ? <MetadataResearchActions mediaId={mediaId} title={title} view={metadata} suppressReview={pinned} /> : null}
+      {showReview && operation?.status === "no_findings"
+        ? <MetadataReviewButton mediaId={mediaId} jobId={operation.job_id} /> : null}
+    </> : null),
+    fact("requested", instant(display, operation?.created_at ?? null)),
+    fact("started", instant(display, operation?.started_at ?? null)),
+    fact("finished", instant(display, operation?.status === "completed" ? operation.outcome.completed_at
+      : operation?.status === "no_findings" || operation?.status === "failed" ? operation.completed_at : null)),
+    fact("next retry", instant(display, operation?.status === "waiting" ? operation.until : null)),
+    fact("reviewed", instant(display, operation?.status === "no_findings" ? operation.reviewed_at : null)),
+  ]);
+}
+
 export default function MediaInfoOverlay({
   open,
   mediaId,
+  jobId,
   returnFocusTo,
   returnFocusFallback,
   skipReturnFocus,
@@ -320,12 +279,29 @@ export default function MediaInfoOverlay({
 }: {
   readonly open: boolean;
   readonly mediaId: string;
+  readonly jobId: string | null;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget;
   readonly skipReturnFocus?: () => boolean;
   readonly onClose: () => void;
 }) {
   const contentRoot = useRef<HTMLDivElement>(null);
+  const transportVerbs = useTransportVerbs();
+  const exact = useMetadataOperation(open ? mediaId : null, open ? jobId : null);
+  const pinnedOperation = "operation" in exact ? exact.operation : null;
+  let inspection: ReactNode = null;
+  if (jobId !== null) {
+    if (exact.status === "loading") inspection = <Ruling />;
+    if (exact.status === "reconnecting") inspection = "reconnecting to this update";
+    if (exact.status === "suspended" || exact.status === "interrupted") {
+      const transport = transportOf(exact.error);
+      const verbs = transportVerbs(transport, exact.status === "interrupted" ? { retry: {
+        label: "check status", commandKey: `metadata status:${mediaId}:${jobId}`,
+        run: () => reconnectMetadataOperation(mediaId, jobId),
+      } } : undefined);
+      inspection = <Fact line={TRANSPORT_LINES[transport].read("this update")} verbs={verbs ?? undefined} />;
+    }
+  }
   const observation = useMediaMetadataOperations(open ? mediaId : null);
   const processing = useMediaProcessingStatus(open ? mediaId : null);
   const view = observation.view;
@@ -348,17 +324,25 @@ export default function MediaInfoOverlay({
         mediaId,
       ),
   });
-  const content =
-    media.status === "loading" ? (
-      <Ruling />
-    ) : media.status === "failed" ? (
-      <Failed error={media.error} noun="metadata" retry={{ run: media.refetch, busy: media.retrying }} />
-    ) : (
-      <MediaInfo
-        media={processing.snapshot ? { ...media.data, ...processing.snapshot } : media.data}
-        metadata={observation.view ?? media.data.metadata_enrichment}
-      />
-    );
+  const metadata = view ?? (media.status === "ready" ? media.data.metadata_enrichment : null);
+  const operationInfo = jobId !== null || metadata !== null ? <MetadataOperationInfo
+    mediaId={mediaId}
+    title={media.status === "ready" ? media.data.title : null}
+    metadata={metadata}
+    operation={jobId === null ? metadata?.operation ?? null : pinnedOperation}
+    pinned={jobId !== null}
+    inspection={inspection}
+  /> : null;
+  const readStatus = media.status === "loading" ? <Ruling /> : media.error !== null
+    ? <Failed error={media.error} noun="current metadata" retry={{ run: media.refetch, busy: media.status === "ready" ? media.refreshing : media.retrying }} /> : null;
+  const content = media.status === "ready" ? <MediaInfo
+    media={processing.snapshot ? { ...media.data, ...processing.snapshot } : media.data}
+    pinned={jobId !== null}
+    readStatus={readStatus}
+  >{operationInfo}</MediaInfo> : <div className={styles.content}>
+    {jobId === null ? readStatus : group("current metadata", [fact("details", readStatus)])}
+    {operationInfo}
+  </div>;
   return <InformationFrame open={open} title="metadata" returnFocusTo={returnFocusTo}
     returnFocusFallback={returnFocusFallback} skipReturnFocus={skipReturnFocus} onClose={onClose} contentRef={contentRoot}>
     {content}

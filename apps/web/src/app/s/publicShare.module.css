@@ -95,13 +95,13 @@
   margin-block: var(--space-5);
 }
 
-.epub {
+.withContents {
   display: grid;
   grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
   gap: var(--space-5);
 }
 
-.epub > nav {
+.withContents > nav {
   max-height: 100%;
   border-inline-end: 1px solid var(--edge-subtle);
 }
@@ -114,12 +114,12 @@
 }
 
 @media (max-width: 720px) {
-  .epub {
+  .withContents {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .epub > nav {
+  .withContents > nav {
     max-height: 10rem;
     border: 1px solid var(--edge-subtle);
     border-radius: var(--radius-md);

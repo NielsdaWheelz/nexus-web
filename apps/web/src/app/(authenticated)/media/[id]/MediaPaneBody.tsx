@@ -15,7 +15,7 @@ import {
   type FocusEvent,
 } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
-import { useActiveRegion } from "@/components/feedback/stage";
+import { useActiveRegion, useTransportVerbs } from "@/components/feedback/stage";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { Line, Retract } from "@/components/feedback/stage";
@@ -27,7 +27,7 @@ import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { useChangeStamp } from "@/lib/api/changes";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { transportOf } from "@/lib/api/failure";
+import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogMedia } from "@/lib/catalog/selectors";
@@ -67,7 +67,6 @@ import { mediaSourceLine } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
-import { savedSourceReadLine } from "@/lib/imports/copy";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import {
   paneSourceKey,
@@ -95,7 +94,8 @@ import { createReaderAnnotations, locatePassage, type ReaderAnnotation } from "@
 import { AnnotationList, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { useReaderChrome } from "./chrome";
-import EmbedCard, { PostActions } from "./Embeds";
+import EmbedCard, { PostActions, PostSaveReadFailure } from "./Embeds";
+import { usePostSaveStates } from "@/lib/media/xPostSaves";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
 import type { EvidenceOpenRequest } from "./evidence/EvidenceRow";
@@ -121,15 +121,19 @@ export default function MediaPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   if (!id) throw new Error("media route requires an id");
   const attemptId = runtime.searchParams.get("source_attempt_id");
-  if (attemptId !== null && sourceTargetFromHref(runtime.href)?.kind !== "invalid_destination")
-    return <AcceptedSourcePane key={attemptId} attemptId={attemptId} />;
+  const target = sourceTargetFromHref(runtime.href);
+  if (attemptId !== null && target?.kind !== "invalid_destination")
+    return <AcceptedSourcePane key={attemptId} attemptId={attemptId} postRevision={target?.kind === "x_post" ? target.revision_id : null} />;
   return <MediaRoute key={id} id={id} />;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
-function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
+function AcceptedSourcePane({ attemptId, postRevision }: { readonly attemptId: string; readonly postRevision: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
   const visible = usePaneIsVisible();
+  const speak = useActiveRegion();
+  const transportVerbs = useTransportVerbs();
+  usePaneChrome({ titleRole: "Pointer" });
   const source = usePaneFreeServerValue({
     key: `source-attempt:${attemptId}`,
     stale: "",
@@ -138,33 +142,38 @@ function AcceptedSourcePane({ attemptId }: { readonly attemptId: string }) {
   const result = source.status === "ready" ? source.data : null;
   const settled = result?.settled === true;
   const error = source.status === "loading" ? null : source.error;
-  // imports' domain codes come ahead of transport: a refusal, first read or refresh, is the
-  // attempt's absence. savedSourceReadLine answers only refusals here.
-  const refusal = error !== null && !isSameSystemApiDefect(error) && transportOf(error) === "Refused" ? error : null;
-  const viewImports = { label: "view imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
+  const allImports = { label: "all imports", href: "/imports", onActivate: (event: TargetActivationEvent) =>
     activateTargetLink({ event, runtime, target: { href: "/imports" } }) };
-  // justify-polling: an accepted source has no identity event stream. Only visible, unsettled
-  // handoffs poll, on through a transport failure, which the next poll heals; a refusal ends it.
-  // A failed first read has nothing to poll and waits for its retry.
+  // justify-polling: an accepted source has no identity event stream. Only visible,
+  // unsettled handoffs poll. Failed reads stop; the existing read owner repairs them
+  // on admission, online or focus changes, or through an explicit retry.
   useIntervalPoll({
-    enabled: visible && result !== null && !settled && refusal === null,
+    enabled: visible && result !== null && !settled && error === null,
     pollIntervalMs: 2_000,
     onPoll: () => {
-      if (document.visibilityState === "visible") source.refetch();
+      // The read's busy state survives hiding and revealing its pane.
+      if (document.visibilityState === "visible" && source.status === "ready" && !source.refreshing)
+        return source.refetch().catch(() => { /* The read owner renders failures and rethrows defects. */ });
     },
   });
   useEffect(() => {
-    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}`);
-  }, [result, runtime.router, settled]);
-  const speak = useActiveRegion();
-  if (refusal !== null) {
-    const domain = savedSourceReadLine(refusal);
-    return <Fact line={domain} verbs={[viewImports]} speak={speak} />;
+    if (settled && result !== null) runtime.router.replace(`/media/${result.media_id}${postRevision === null ? "" : `?post_revision=${postRevision}`}`, { activate: false });
+  }, [result, runtime.router, settled, postRevision]);
+  if (error !== null) {
+    if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+    if (error.code === "E_IMPORT_NOT_FOUND" || error.code === "E_INVALID_REQUEST")
+      return <Fact key="refused" line={{ fact: "couldn’t find this import." }} verbs={[allImports]} speak={speak} />;
+    const transport = transportOf(error);
+    const remedy = transportVerbs(transport, { retry: {
+      label: "retry", commandKey: "retry import source", run: source.refetch,
+      busy: source.status === "failed" ? source.retrying : source.status === "ready" && source.refreshing,
+    } });
+    return <Fact key="failed" line={TRANSPORT_LINES[transport].command("couldn’t open this import.")}
+      verbs={remedy === null ? [allImports] : [remedy[0], allImports]} speak={speak} />;
   }
-  if (source.status === "failed")
-    return <Failed error={source.error} noun="import details" retry={{ run: source.refetch, busy: source.retrying }} />;
   if (settled || source.status === "loading") return <Ruling />;
-  return <Fact line={{ fact: "source saved.", reason: "it opens here when processing finishes." }} verbs={[viewImports]} speak={speak} />;
+  return <Fact key="pending" line={{ fact: "importing…", reason: "this opens by itself when it’s ready." }}
+    verbs={[allImports]} speak={speak} />;
 }
 
 function MediaRoute({ id }: { readonly id: string }) {
@@ -178,11 +187,14 @@ function MediaRoute({ id }: { readonly id: string }) {
   const [interacted, setInteracted] = useState(false);
   const pinSaved = useCallback(() => setInteracted(true), []);
   const metadataStamp = useChangeStamp("Metadata");
+  const metadata = useMediaMetadataOperations(usePaneIsVisible() ? id : null);
+  const operation = metadata.view?.operation;
+  const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   const speak = useActiveRegion();
   const { profile } = useReaderContext();
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
-    stale: metadataStamp,
+    stale: JSON.stringify([metadataStamp, metadata.view?.last_enriched_at ?? null, titleJob]),
     load: async (signal) =>
       mediaDetailFromResponse(
         await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
@@ -225,6 +237,8 @@ function MediaRoute({ id }: { readonly id: string }) {
     : <Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />;
   if (record.status === "ready") return <div className={styles.layout}>
     {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
+    {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
+      retry={{ run: record.refetch, busy: record.refreshing }} /></div> : null}
     <MediaPane id={id} record={record} />
   </div>;
   if (localContentAvailable && saved.kind === "Loading") return <Ruling />;
@@ -317,9 +331,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     [],
   );
 
-  // the record as read, until a metadata refresh below replaces it.
-  const [detail, setMedia] = useState(record.data);
-  useEffect(() => { setMedia(record.data); }, [record.data]);
+  const detail = record.data;
   const { snapshot } = useMediaProcessingStatus(detail.id);
   const media = useMemo(() => snapshot === null ? detail : {
       ...detail,
@@ -395,6 +407,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const viewRestoration = useReaderState(reader, (s) => s.viewRestoration);
   const navigationMode = useReaderState(reader, (s) => s.navigation.mode);
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
+  const postSaves = usePostSaveStates(doc);
   useEffect(() => { forkMiss(null); }, [doc?.identity, forkMiss, runtime.visitId]);
   const articleEmbeds = doc?.kind === "text"
     ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
@@ -420,7 +433,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   useEffect(() => {
     if (readable && doc && media.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
-  }, [doc, media.reader_generation, readable, reader]);
+    else if (readable && doc && !transcript && doc.title !== media.title)
+      reader.reload();
+  }, [doc, media.reader_generation, media.title, readable, reader, transcript]);
   useEffect(() => {
     if (readable && snapshot !== null && doc?.kind === "text" && doc.format === "transcript"
       && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key
@@ -452,29 +467,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       }),
     [id, reader],
   );
-
-  // A title job is admitted with source publication, before naming may fail.
-  // Manual title admission costs the same small reread; it does not reload progress.
-  const metadata = useMediaMetadataOperations(paneVisible ? id : null);
-  const stamp = metadata.view?.last_enriched_at != null ? metadata.view.last_enriched_at : null;
-  const operation = metadata.view?.operation;
-  const titleJob = operation?.purpose === "title" ? operation.job_id : null;
-  useEffect(() => {
-    const recorded = media.metadata_enrichment.operation;
-    const recordedTitleJob = recorded?.purpose === "title" ? recorded.job_id : null;
-    const titleAdmitted = titleJob !== null && titleJob !== recordedTitleJob;
-    const metadataPublished = stamp !== null && media.metadata_enriched_at !== stamp;
-    if (!titleAdmitted && !metadataPublished) return;
-    let active = true;
-    void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${id}`).then((response) => {
-      if (!active) return;
-      const detail = mediaDetailFromResponse(response, id);
-      setMedia(detail);
-      // The readiness transition owns the first load; metadata refreshes an existing publication.
-      if (readable && detail.capabilities.can_read && !transcript) reader.reload();
-    });
-    return () => { active = false; };
-  }, [id, media, readable, reader, stamp, titleJob, transcript]);
 
   // ---- annotations ----
   const authored = useAuthoredStore();
@@ -695,6 +687,20 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }
         return "Applied";
       }
+      if (source.location.kind === "x_post") {
+        if (doc?.kind !== "text") return "Unavailable";
+        const captureId = source.location.capture_id;
+        const units = doc.units.filter(unit => unit.xPost?.relation === "primary" && unit.xPost.owner?.capture_id === captureId);
+        if (units.length !== 1) return "Unavailable";
+        if (!context.restored) {
+          const outcome = await reader.inspect({ target: { kind: "point", point: { kind: "text", unit: units[0].id, offset: 0 } }, signal: context.signal });
+          if (outcome.kind === "Cancelled") return "Cancelled";
+          if (outcome.kind === "Unavailable") return "FailureHandled";
+        }
+        if (context.signal.aborted) return "Cancelled";
+        if (context.mayFocus()) reader.focusSource();
+        return "Applied";
+      }
       if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity, apparatus_reference_id } = source.location;
       if (locator.type === "x_capture_offsets") {
@@ -865,7 +871,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
           {transcriptChrome}
-          {transcript ? (
+          {transcript && media.processing_status !== "suspended" ? (
             <TranscriptState media={media} holdFocus={holdTranscriptFocus} />
           ) : sourceLine ? (
             media.processing_status === "failed" ? <Fact line={sourceLine} speak={speak} />
@@ -924,13 +930,14 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }}
         apparatusDestination={apparatusDestination}
         onSeekTime={transcript ? seek : undefined}
-        renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} /> : null}
+        renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} hostMediaId={id} state={postSaves} /> : null}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
           return embed ? <EmbedCard embed={embed} reader={reader} /> : null;
         }}
         before={
           <>
+            <PostSaveReadFailure state={postSaves} />
             {documentFailed && annotations.local.annotations.length ? <>
               <Fact line={{ fact: PLACEMENT_COPY.unavailable }} />
               <AnnotationList annotations={annotations.local.annotations} />

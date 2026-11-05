@@ -5,6 +5,10 @@ expansion and independent publication are not yet qualified together against x.
 local external-http replay exercises the real api, storage and worker; it does
 not establish upstream behavior or billing for that composition.
 
+for the quoted-post action change, the owner chose controlled end-to-end checks
+only on 2026-11-04. real-x qualification remains deferred; this scope authorizes
+no paid provider calls and does not consume the historical allowance below.
+
 on 2026-10-19, an authenticated exact-carrier lookup returned article
 `2111872137065824256`: `article.plain_text` has 2,695 characters. comparison with
 the signed-in rendered article qualifies its title and prose ending and exposes

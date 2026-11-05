@@ -14,9 +14,16 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import Data
 from nexus.schemas.reader_document import ReaderCaptureDocumentOut
 from nexus.schemas.reader_document_map import ReaderCaptureDocumentMapOut
-from nexus.schemas.x_captures import QuoteRetrieval, RetryXCaptureRequest, XCaptureArchiveOut
+from nexus.schemas.x_captures import (
+    QuoteRetrieval,
+    RetryXCaptureRequest,
+    XCaptureArchiveOut,
+    XPostSaveStateOut,
+    XPostSaveStateRequest,
+)
 from nexus.services.reader_document import read_capture_document
 from nexus.services.reader_document_map import get_capture_document_map
+from nexus.services.x_post_saves import read_x_post_save_states
 from nexus.services.x_source import require_readable_x_capture
 from nexus.storage.client import get_storage_client
 from nexus.tasks.archive_x_capture_assets import archive_status, retry_images
@@ -24,6 +31,15 @@ from nexus.tasks.capture_x_quote import retry_quote
 
 router = APIRouter(tags=["x captures"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
+
+
+@router.post("/x/captures/save-state")
+def read_save_state(
+    body: XPostSaveStateRequest, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[XPostSaveStateOut]:
+    return Data(
+        data=read_x_post_save_states(db, viewer_id=viewer.user_id, capture_ids=body.capture_ids)
+    )
 
 
 @router.get("/x/captures/{capture_id}/reader")

@@ -336,6 +336,11 @@ class NavigationTextRangeOut(_Strict):
     end: NavigationTextPointOut
 
 
+ReaderSectionSource = Literal[
+    "Publisher", "Heading", "Both", "InferredNumberedEntry", "ImplicitOpening"
+]
+
+
 class ReaderNavigationSectionOut(_Strict):
     section_id: str
     label: str
@@ -343,7 +348,7 @@ class ReaderNavigationSectionOut(_Strict):
     target: NavigationTextPointOut
     anchor_id: str | None
     extent: NavigationTextRangeOut | None
-    source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
+    source: ReaderSectionSource
 
 
 class ReaderNavigationTocNodeOut(_Strict):

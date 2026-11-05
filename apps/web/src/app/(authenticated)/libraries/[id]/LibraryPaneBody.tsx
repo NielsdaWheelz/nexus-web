@@ -17,6 +17,8 @@ import { suggestionTargetId } from "@/lib/suggestions";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { catalogLine } from "@/lib/catalog/copy";
 import { Ruling } from "@/components/feedback/Ruling";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
 import ChoiceField from "@/components/ui/ChoiceField";
@@ -95,6 +97,7 @@ export default function LibraryPaneBody() {
 }
 
 function LibraryPane({ id }: { readonly id: string }) {
+  const speak = useActiveRegion();
   const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
@@ -128,6 +131,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const index = list.status === "ready" ? list.data : null;
   const indexItems = useMemo(() => index?.items ?? [], [index]);
   const failure = list.status === "loading" ? null : list.error;
+  const catalogFailure = failure === null ? null : catalogLine(failure);
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library } : list;
@@ -265,27 +269,24 @@ function LibraryPane({ id }: { readonly id: string }) {
     },
     [id, refetchEntries, refreshSuggestionFeed],
   );
-  const addContent: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
+  const importHere: PanePrimaryAction | undefined = live && remoteReady() && library?.can_add_content
     ? {
       kind: "command",
-      id: "ViewAction.Library.AddContent",
-      label: "Add content",
-      icon: <Icon.Add aria-hidden="true" />,
+      id: "ViewAction.Library.Import",
+      label: "Import here",
+      icon: <Icon.Upload aria-hidden="true" />,
       restoreFocusOnClose: false,
       onSelect: ({ triggerEl }) =>
-        requestNexusOpen({
-          kind: "Add",
-          seed: { kind: "Content", initialDestinations: library.is_default ? [] : [{ id, name: library.name }] },
-        }, triggerEl),
+        requestNexusOpen({ kind: "Import", into: library.is_default ? [] : [{ id, name: library.name }] }, triggerEl),
     }
     : undefined;
   const emptyState = emptyEntries({ params, isAll, change: recover });
   const emptyLine = text ? { fact: "no entries match this filter." } : emptyState.line;
   const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: !invalidView && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
-  const menuActions: ActionDescriptor[] = addContent ? [addContent] : [];
+  const menuActions: ActionDescriptor[] = importHere ? [importHere] : [];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
-    primaryAction: addContent,
+    primaryAction: importHere,
     query: invalidView || library === null ? undefined : {
       kind: "Controls",
       focusInput,
@@ -362,7 +363,8 @@ function LibraryPane({ id }: { readonly id: string }) {
     return <>
       {readFeedback.announcement}
       {members.held}
-      {detail.status === "failed" ? <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
+      {detail.status === "failed" ? catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
+        : <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
     </>;
   }
 

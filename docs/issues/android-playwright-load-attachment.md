@@ -1,17 +1,7 @@
-# android playwright webview attachment can wait indefinitely
+# public android attachment retains a setup risk
 
-`AndroidWebView.page()` caches `_fetchPage()`, which calls `connectToWebView`
-with `kNoTimeout` in the installed playwright `coreBundle.js:64771–64778`.
-this can hang disposable qualification or leave it unable to distinguish an
-attachment stall from a blank application document.
+`AndroidWebView.page()` caches its attachment promise; the installed connector's no-timeout wait can outlive a caller deadline. an expired caller does not cancel the acquired operation. earlier attachment stalls remain unexplained, despite later journeys completing that owner.
 
-historical run `20261020-020906-fa069e2d264f` required an owned intent to unblock
-attachment; its original application state and root cause were not isolated.
-the application now cold-starts without that intent: source `c8f6d7383`, real run
-`20261023-101748-008c5ea88487`, passed cold restoration and cleanup through
-bounded direct cdp attachment. this qualifies application startup, not the
-public android connector.
+`apps/web/scripts/lab/android.ts` now bounds its separate `attachPage` discovery. the native SDK cases use `device.webView(...).page()`, so that change does not prove their attachment fixed. their private owner must settle outstanding operations through real closure and reconcile exact acquired resources.
 
-resolve when the supported android sdk attachment reaches an already-loaded
-owned document with bounded waiting and without another navigation. diagnose or
-repair that library/driver boundary; do not add a product navigation workaround.
+resolve by identifying the stalled owner and qualifying supported bounded attachment and late-operation retirement without another navigation, fallback attachment or private options. retain setup failure separately from product behavior.

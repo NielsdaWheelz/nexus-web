@@ -1,5 +1,6 @@
 import type { Schema } from "@/lib/api/wire";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceItem } from "./items";
 import { itemMediaKind, resourceType, resourceTypeName } from "./type";
@@ -18,6 +19,14 @@ export function bibliographyMetadata(contributors: readonly ContributorCredit[],
   return parts;
 }
 
+/** Media bibliography shared by wrapping resource and authored-outline references. */
+export function mediaBibliographyMetadata(summary: MediaSummary): ResourceMetadataPart[] {
+  const parts = bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date);
+  if (summary.show !== null)
+    parts.unshift({ kind: "text", key: "podcast", text: summary.show.title, href: `/podcasts/${summary.show.podcast_id}`, date: null });
+  return parts;
+}
+
 /** canonical identity and occurrence metadata share one factual projection. */
 export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, reason }: {
   item: ResourceItem;
@@ -30,10 +39,10 @@ export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, re
   const parsed = parseResourceRef(item.ref);
   const mediaKind = itemMediaKind(item);
   const identity = parsed !== null ? resourceTypeName(resourceType(parsed.scheme, mediaKind)) : "resource";
-  const credits = body.kind === "media" ? body.media_summary.contributors : source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
-  const bibliography = bibliographyMetadata(
+  const credits = source?.contributors ?? (body.kind === "named" ? body.contributors : null) ?? [];
+  const bibliography = body.kind === "media" ? mediaBibliographyMetadata(body.media_summary) : bibliographyMetadata(
     mediaKind !== null ? selectMediaAuthors(credits) : credits,
-    body.kind === "media" ? body.media_summary.original_published_date : null,
+    null,
   );
   const parts: ResourceMetadataPart[] = [];
   if (occurrenceLabel?.trim()) parts.push({ kind: "text", key: "occurrence", text: occurrenceLabel, href: null, date: null });

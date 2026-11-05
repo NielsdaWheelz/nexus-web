@@ -20,24 +20,20 @@ from nexus.db.models import (
     MediaTeardownIntent,
     MediaUploadSession,
     XArticleInspection,
-    XPostAlias,
-    XPostCapture,
-    XThreadPost,
 )
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError
+from nexus.schemas.acquisition import SourceTarget
 from nexus.schemas.extension_capture import (
     BrowserSource,
     SaveSource,
     SaveTargetOut,
-    SourceTarget,
     XStatusSource,
 )
 from nexus.schemas.x_source import XPriorSource
 from nexus.services import library_entries
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
-from nexus.services.media_processing_state import retained_publication_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import (
     classify_x_article_carrier_url,
@@ -47,6 +43,7 @@ from nexus.services.x_identity import (
     native_x_article_id,
     x_article_provider_id,
 )
+from nexus.services.x_source import x_thread_matches
 
 
 def article_candidates(db: Session, article_id: str) -> list[Media]:
@@ -130,24 +127,11 @@ def matching_media(
 ) -> Media | None:
     visible_ids = set(db.scalars(text(visible_media_ids_cte_sql()), {"viewer_id": viewer_id}))
     if isinstance(source, XStatusSource):
-        membership = (
-            select(XThreadPost.thread_media_id)
-            .join(XPostCapture, XPostCapture.id == XThreadPost.capture_id)
-            .join(XPostAlias, XPostAlias.post_id == XPostCapture.post_id)
-            .where(XPostAlias.revision_id == source.revision_id)
-        )
-        admitted = (
-            select(MediaSourceAttempt.media_id)
-            .join(Media, Media.id == MediaSourceAttempt.media_id)
-            .where(
-                MediaSourceAttempt.source_type == st.X_AUTHOR_THREAD,
-                MediaSourceAttempt.provider_target_ref == source.revision_id,
-                text(f"NOT {retained_publication_sql('media')}"),
-            )
-        )
-        candidates = list(
-            db.scalars(select(Media).where(or_(Media.id.in_(membership), Media.id.in_(admitted))))
-        )
+        matches = x_thread_matches(db, viewer_id=viewer_id, revision_ids=(source.revision_id,))[
+            source.revision_id
+        ]
+        ids = matches.primary_holders + matches.unpublished_attempts
+        candidates = list(db.scalars(select(Media).where(Media.id.in_(ids))))
     elif source.x_article_id is not None:
         candidates = article_candidates(db, source.x_article_id)
     else:

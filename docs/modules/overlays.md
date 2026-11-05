@@ -39,6 +39,11 @@ always a `ModalFrame`), a **transient** (a brief choice), or a **tooltip** (pass
 help). transients and tooltips belong to the modal they render inside (react
 context from the frame) or to the page.
 
+shell-hosted surfaces use `getModalForTarget` to capture the live modal containing
+their stable opener, including a temporarily covered modal. their ui owner uses
+`subscribeOverlayStack` and `onOverlayStack` to retire that session when the exact
+modal departs. the lookup does not transfer command or creation ownership.
+
 the **owner** answers Escape, Back and global commands: the newest eligible
 transient of the newest modal, else that modal; with no modal, the newest
 eligible page transient. a transient of a covered modal never outranks a newer
@@ -142,11 +147,13 @@ button) the focusable element the last press landed on. at close, focus goes to 
 layer being exposed: a modal that was topmost, or a transient that opted in
 (`returnFocus`) whose modal is topmost and that no outside press closed.
 `skipReturnFocus()` vetoes (a navigating close already put focus at the
-destination). the last modal's restore runs again after its history traversal
+destination). a modal chooses its return target after the close commit has exposed
+its trigger, and only while focus is still lost. the last modal's restore runs again after its history traversal
 if focus fell to the body. an inert-uncover retry retires when another control
 claims focus, even if that control later detaches. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
-opener. a menu that skips returning focus passes its stable trigger through
+opener. a prepared menu's transient yields to its own mobile sheet without returning
+focus in between. a menu that skips returning focus passes its stable trigger through
 `requestNexusOpen` metadata, including queued and guarded requests.
 nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection

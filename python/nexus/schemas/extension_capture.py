@@ -24,6 +24,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.acquisition import SourceTarget
 from nexus.schemas.capture_limits import WEB_ARTICLE_HTML_MAX_BYTES
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.media import ExtensionItemOut
@@ -63,11 +64,6 @@ XDecimalId = Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
 
 class LocalFile(_Strict):
     kind: Literal["LocalFile"] = "LocalFile"
-
-
-class SourceTarget(_Strict):
-    media_id: UUID
-    expected_source_attempt_id: UUID | None
 
 
 class SourceBinding(_Strict):

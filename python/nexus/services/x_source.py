@@ -14,7 +14,7 @@ from datetime import datetime
 from uuid import UUID
 
 import regex
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -34,6 +34,7 @@ from nexus.errors import ApiErrorCode, ConflictError
 from nexus.schemas.media import XSourceContext
 from nexus.schemas.x_source import (
     XArticleContent,
+    XCaptureInput,
     XPostContent,
     XPriorPost,
     XPriorSource,
@@ -53,6 +54,90 @@ class PublishedXSource:
     primary_posts: tuple[XSourcePost, ...]
     root_revision_id: str | None
     coverage: XSourceCoverage
+
+
+def x_primary_post_captures_sql() -> str:
+    """Selected primary identities only; callers own readability and personal holdings."""
+    return """
+        SELECT tp.thread_media_id AS media_id, tp.capture_id, c.post_id,
+               'author_thread'::text AS scope
+        FROM x_thread_posts tp JOIN x_post_captures c ON c.id=tp.capture_id
+        UNION ALL
+        SELECT pm.media_id, pm.capture_id, c.post_id, 'post'::text AS scope
+        FROM x_post_media pm JOIN x_post_captures c ON c.id=pm.capture_id
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class XThreadMatches:
+    primary_holders: tuple[UUID, ...]
+    unpublished_attempts: tuple[UUID, ...]
+
+
+def x_thread_matches(
+    db: Session, *, viewer_id: UUID, revision_ids: Sequence[str]
+) -> dict[str, XThreadMatches]:
+    """Readable primary holders and latest unresolved unpublished work.
+
+    A request address is not published membership. Frozen input matches its logical
+    post but grants no access; visibility still belongs to the live media. Ambiguity
+    remains per revision. Callers choose their policy over these shared identity facts.
+    """
+    from nexus.auth.permissions import visible_media_ids_cte_sql
+
+    primary: dict[str, list[UUID]] = {revision: [] for revision in revision_ids}
+    unpublished: dict[str, list[UUID]] = {revision: [] for revision in revision_ids}
+    rows = db.execute(
+        text(f"""
+            WITH requested AS (
+                SELECT revision_id, alias.post_id
+                FROM unnest(CAST(:revision_ids AS text[])) AS requested(revision_id)
+                LEFT JOIN x_post_aliases alias USING (revision_id)
+            ), visible AS ({visible_media_ids_cte_sql()}), primary_holders AS (
+                SELECT DISTINCT requested.revision_id, primary_post.media_id
+                FROM requested JOIN ({x_primary_post_captures_sql()}) primary_post
+                  ON primary_post.post_id=requested.post_id
+                JOIN visible ON visible.media_id=primary_post.media_id
+                WHERE primary_post.scope='author_thread'
+            ), latest AS (
+                SELECT DISTINCT ON (a.media_id) a.* FROM media_source_attempts a
+                JOIN visible ON visible.media_id=a.media_id
+                ORDER BY a.media_id, {st.LATEST_ORDER_SQL}
+            )
+            SELECT revision_id, media_id, true AS is_primary FROM primary_holders
+            UNION ALL
+            SELECT requested.revision_id, latest.media_id, false AS is_primary
+            FROM requested JOIN latest ON latest.source_type='x_author_thread'
+              AND latest.status IN ('accepted','queued','running','failed')
+            LEFT JOIN x_post_aliases target ON target.revision_id=latest.provider_target_ref
+            LEFT JOIN x_post_captures seed
+              ON seed.id::text=latest.source_payload #>> '{{capture_input,capture_id}}'
+            WHERE (latest.provider_target_ref=requested.revision_id
+                OR target.post_id=requested.post_id OR seed.post_id=requested.post_id)
+              AND NOT EXISTS (SELECT 1 FROM reader_publications rp
+                  WHERE rp.media_id=latest.media_id)
+            ORDER BY revision_id, media_id, is_primary
+        """),
+        {"viewer_id": viewer_id, "revision_ids": list(primary)},
+    )
+    for revision, media_id, is_primary in rows:
+        (primary if is_primary else unpublished)[revision].append(media_id)
+    return {
+        revision: XThreadMatches(tuple(ids), tuple(unpublished[revision]))
+        for revision, ids in primary.items()
+    }
+
+
+def x_thread_candidates(
+    db: Session, *, viewer_id: UUID, revision_ids: Sequence[str]
+) -> dict[str, tuple[UUID, ...]]:
+    """Ordinary acquisition prefers published primary holders over unfinished work."""
+    return {
+        revision: matches.primary_holders or matches.unpublished_attempts
+        for revision, matches in x_thread_matches(
+            db, viewer_id=viewer_id, revision_ids=revision_ids
+        ).items()
+    }
 
 
 def x_article_content_facts(
@@ -298,10 +383,14 @@ def load_prior_x_source(
     requested_revision_id: str,
     scope: XSourceScope,
     viewer_id: UUID,
+    capture_input: XCaptureInput | None,
 ) -> XPriorSource:
-    """Detach the selected primary captures and their pinned direct context."""
-    from sqlalchemy import text
+    """Detach selected primaries plus the admission's frozen, complete source evidence.
 
+    Only the frozen root adds membership. Context cannot displace a primary; among
+    primary revisions the newest proved body wins, with the selected capture winning
+    an equal-revision tie. The frozen manifest is worker input, never read authority.
+    """
     from nexus.auth.permissions import visible_media_ids_cte_sql
 
     visible_media = set(db.scalars(text(visible_media_ids_cte_sql()), {"viewer_id": viewer_id}))
@@ -352,7 +441,7 @@ def load_prior_x_source(
     capture_ids = [identity for identity in capture_ids if identity in readable_captures]
     primary_rows = list(db.scalars(select(XPostCapture).where(XPostCapture.id.in_(capture_ids))))
     primary_by_capture = {row.id: row.post_id for row in primary_rows}
-    primary = tuple(primary_by_capture[identity] for identity in capture_ids)
+    primary = [primary_by_capture[identity] for identity in capture_ids]
     capture_ids.extend(
         identity
         for identity in db.scalars(
@@ -363,11 +452,49 @@ def load_prior_x_source(
         )
         if identity is not None and identity in readable_captures
     )
-    captures = list(db.scalars(select(XPostCapture).where(XPostCapture.id.in_(capture_ids))))
-    posts = _capture_posts(db, capture_ids)
-    # A logical post can occur in context at a different revision; the pinned primary wins.
-    selected = {row.post_id: row for row in captures}
-    selected.update({row.post_id: row for row in primary_rows})
+    root = None
+    if capture_input is not None:
+        root = db.get(XPostCapture, capture_input.capture_id)
+        assert root is not None  # immutable evidence outlives the accepted presentation
+        if root.payload["kind"] == "complete_post":
+            capture_ids.extend(capture_input.authorized_capture_ids)
+            if root.post_id not in primary:
+                primary.append(root.post_id)
+        else:
+            root = None  # an article excerpt supplies the permalink, never a full body
+    captures = list(
+        db.scalars(
+            select(XPostCapture).where(
+                XPostCapture.id.in_(capture_ids),
+                XPostCapture.payload["kind"].astext == "complete_post",
+            )
+        )
+    )
+    posts = _capture_posts(db, [row.id for row in captures])
+    selected: dict[UUID, XPostCapture] = {}
+    selected_primary_ids = {row.id for row in primary_rows}
+    primary_capture_ids = selected_primary_ids | ({root.id} if root is not None else set())
+    for row in captures:
+        previous = selected.get(row.post_id)
+        if previous is None:
+            selected[row.post_id] = row
+            continue
+        history = posts[row.id].edit_history_ids
+        if history is None and row.source_revision_id != previous.source_revision_id:
+            raise ConflictError(ApiErrorCode.E_X_IDENTITY_CONFLICT, "saved revisions lack lineage")
+
+        row_priority = (
+            row.id in primary_capture_ids,
+            history.index(row.source_revision_id) if history is not None else 0,
+            row.id in selected_primary_ids,
+        )
+        previous_priority = (
+            previous.id in primary_capture_ids,
+            history.index(previous.source_revision_id) if history is not None else 0,
+            previous.id in selected_primary_ids,
+        )
+        if row_priority > previous_priority:
+            selected[row.post_id] = row
     aliases: dict[UUID, list[str]] = {identity: [] for identity in selected}
     for revision_id, post_id in db.execute(
         select(XPostAlias.revision_id, XPostAlias.post_id).where(XPostAlias.post_id.in_(selected))
@@ -377,12 +504,13 @@ def load_prior_x_source(
         posts=tuple(
             XPriorPost(
                 post_id=identity,
+                capture_id=row.id,
                 post=posts[row.id],
                 revision_ids=tuple(sorted(aliases[identity], key=int)),
             )
             for identity, row in sorted(selected.items())
         ),
-        primary_post_ids=primary,
+        primary_post_ids=tuple(primary),
         root_post_id=primary_by_capture.get(thread.root_capture_id)
         if thread is not None and thread.root_capture_id is not None
         else None,

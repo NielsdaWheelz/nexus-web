@@ -1,6 +1,7 @@
 "use client";
 import * as Icon from "@/lib/ui/icons";
 import type { ReactNode, RefObject } from "react";
+import { Announcement } from "@/components/feedback/Announcement";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import Button from "@/components/ui/Button";
@@ -9,8 +10,7 @@ import { useThrowLater } from "@/lib/api/serverState";
 import type { NexusPage } from "@/lib/nexus/model";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
-import AddPanel from "./AddPanel";
-import AddPanelBoundary from "./AddPanelBoundary";
+import ImportPage from "./ImportPage";
 import type { NexusController } from "./useNexusController";
 import styles from "@/components/switchboard/Switchboard.module.css";
 
@@ -31,7 +31,7 @@ function Header({ title, subtitle, onBack }: { title: string; subtitle?: ReactNo
   );
 }
 
-export default function NexusPages({ controller, mobile, scrollRef }: { controller: NexusController; mobile: boolean; scrollRef?: RefObject<HTMLElement | null> }) {
+function Page({ controller, mobile, scrollRef }: { controller: NexusController; mobile: boolean; scrollRef?: RefObject<HTMLElement | null> }) {
   const { page } = controller;
   switch (page.kind) {
     case "Root":
@@ -85,31 +85,18 @@ export default function NexusPages({ controller, mobile, scrollRef }: { controll
           onSubmit={controller.submitLibrary}
         />
       );
-    case "Add":
-      return (
-        <AddPanelBoundary
-          scrollRef={scrollRef}
-          activeDefect={controller.addDefect}
-          resetKey={page.sessionId}
-          session={controller.addSession}
-          controller={controller}
-          onClearDefect={controller.clearAddDefect}
-          onDefect={controller.reportAddDefect}
-        >
-          <AddPanel
-            scrollRef={scrollRef}
-            key={page.sessionId}
-            session={controller.addSession}
-            mobile={mobile}
-            openingSources={controller.openingSources}
-            onOpen={controller.openAddTarget}
-            onBack={controller.back}
-            onClose={controller.close}
-            onDefect={controller.reportAddDefect}
-          />
-        </AddPanelBoundary>
-      );
+    case "Import":
+      // The phone task stays mounted while closed: it must not count as showing lines.
+      return controller.open ? <ImportPage controller={controller} page={page} mobile={mobile} scrollRef={scrollRef} /> : null;
   }
+}
+
+export default function NexusPages({ controller, mobile, scrollRef }: { controller: NexusController; mobile: boolean; scrollRef?: RefObject<HTMLElement | null> }) {
+  return <>
+    <Page controller={controller} mobile={mobile} scrollRef={scrollRef} />
+    <Announcement text={controller.announcement} level={controller.open ? "Polite" : "None"}
+      label="Nexus status" occurrence={controller.announcementOccurrence} onPublish={controller.publishedAnnouncement} />
+  </>;
 }
 
 /** A note whose words are not saved on this device yet: the one interrupt, until it commits. */

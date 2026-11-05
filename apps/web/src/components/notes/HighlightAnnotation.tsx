@@ -8,6 +8,7 @@ import {bodyHasContent, noteBodySchema, rawBodyText, type NoteBody} from "@nexus
 import type {EditorHistory} from "@/lib/notes/structure";
 import type {WritingDocument} from "@/lib/notes/runtime";
 import {bodyInline, readBody} from "@nexus/authored/documents";
+import {assertNever} from "@/lib/assertNever";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import {useCopyFeedback} from "@/components/ui/useCopyFeedback";
@@ -69,11 +70,10 @@ export default function HighlightAnnotation({highlightRef, resource, rest = true
   const [manualCopy, setManualCopy] = useState<string | null>(null);
   const copied = useCopyFeedback(occurrenceKey);
   const editor = useRef<NoteEditorHandle | null>(null);
-  const pendingFocus = useRef<{token: number; generation: number} | null>(null);
-  const consumed = useRef<number | null>(null);
+  const pendingFocus = useRef<({kind: "Internal"; generation: number} | {kind: "External"; highlightRef: string; token: number; generation: number}) | null>(null);
+  const consumed = useRef<{highlightRef: string; token: number} | null>(null);
   const value = draft.value;
   const readDraft = draft.read, setDraft = draft.set;
-  const allowFocus = useRef(mayFocus); allowFocus.current = mayFocus;
   const section = useRef<HTMLElement>(null);
   const within = (target: EventTarget | null) => target instanceof Node && section.current?.contains(target) === true;
   const settle = useRef<(next: EventTarget | null) => void>(() => {});
@@ -97,25 +97,42 @@ export default function HighlightAnnotation({highlightRef, resource, rest = true
   }, [hasBody, open, interaction, opened.document]);
   const begin = useCallback(() => {
     if (!opened.document || readDraft() !== null) return;
-    pendingFocus.current ??= {token: -1, generation: getInteractionGeneration()};
+    pendingFocus.current ??= {kind: "Internal", generation: getInteractionGeneration()};
     const doc = new Y.Doc();
     Y.applyUpdate(doc, Y.encodeStateAsUpdate(opened.document.doc));
     setDraft({committing: false, doc, vector: Y.encodeStateVector(doc), body: readBody(doc), revision: 0, reference: false, hyperlink: false, attachment: false, links: []});
   }, [opened.document, readDraft, setDraft]);
   // `begin` has no body guard, so this check keeps a stand-in click from becoming a composer.
   useEffect(() => {if (asked && opened.document) {setAsked(false); if (!hasBody && !editing) begin();}}, [asked, opened.document, hasBody, editing, begin]);
+  const deliverFocus = useCallback((handle: NoteEditorHandle) => {
+    const pending = pendingFocus.current;
+    if (pending === null) return;
+    pendingFocus.current = null;
+    switch (pending.kind) {
+      case "Internal": break;
+      case "External":
+        if (pending.highlightRef !== highlightRef || pending.token !== focusRequest) return;
+        // focusing blurs the invoker, which may cancel this request at its host.
+        consumed.current = {highlightRef: pending.highlightRef, token: pending.token};
+        break;
+      default: return assertNever(pending);
+    }
+    if (pending.generation === getInteractionGeneration() && (mayFocus?.() ?? true)) handle.focus("end");
+    if (pending.kind === "External") onFocused?.();
+  }, [highlightRef, focusRequest, mayFocus, onFocused]);
   useEffect(() => {
-    if (focusRequest === null || consumed.current === focusRequest) return;
-    if (pendingFocus.current?.token !== focusRequest) pendingFocus.current = {token: focusRequest, generation: getInteractionGeneration()};
+    const pending = pendingFocus.current;
+    if (pending?.kind === "External" && (pending.highlightRef !== highlightRef || pending.token !== focusRequest)) pendingFocus.current = null;
+    if (focusRequest === null || consumed.current?.highlightRef === highlightRef && consumed.current.token === focusRequest) return;
+    if (pendingFocus.current?.kind !== "External" || pendingFocus.current.highlightRef !== highlightRef || pendingFocus.current.token !== focusRequest)
+      pendingFocus.current = {kind: "External", highlightRef, token: focusRequest, generation: getInteractionGeneration()};
     if (hasBody || editing) setEditing(true); else begin();
-    if (editor.current) {if (pendingFocus.current.generation === getInteractionGeneration() && (allowFocus.current?.() ?? true)) editor.current.focus("end"); consumed.current = focusRequest; pendingFocus.current = null; onFocused?.();}
-  }, [focusRequest, hasBody, editing, begin, onFocused]);
+    if (editor.current) deliverFocus(editor.current);
+  }, [highlightRef, focusRequest, hasBody, editing, begin, deliverFocus]);
   const ready = useCallback((handle: NoteEditorHandle | null) => {
     editor.current = handle; onEditorReady?.(handle);
-    if (handle && pendingFocus.current !== null) {
-      if (pendingFocus.current.generation === getInteractionGeneration() && (allowFocus.current?.() ?? true)) handle.focus("end"); consumed.current = pendingFocus.current.token; pendingFocus.current = null; onFocused?.();
-    }
-  }, [onEditorReady, onFocused]);
+    if (handle) deliverFocus(handle);
+  }, [onEditorReady, deliverFocus]);
   const copyText = () => {
     const body = draft.read()?.body ?? (opened.document ? readBody(opened.document.doc) : null);
     return body ? rawBodyText(noteBodySchema.nodeFromJSON(body.body_pm_json)) : "";
@@ -212,7 +229,7 @@ export default function HighlightAnnotation({highlightRef, resource, rest = true
       // clicks, so a flick across moving rows opens nothing. the preview's own links keep their press.
       <div onClick={event => {
         if (event.target instanceof Element && event.target.closest("a[href], button")) return;
-        setAsked(true); pendingFocus.current ??= {token: -1, generation: getInteractionGeneration()};
+        setAsked(true); pendingFocus.current ??= {kind: "Internal", generation: getInteractionGeneration()};
       }}>
         <NoteEditor editorKey={`annotation-preview:${occurrenceKey}`} containingNoteRef={highlightRef} body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}} revision={0} label="annotation" editable={false} history={null} onEdit={() => {}}/>
       </div>

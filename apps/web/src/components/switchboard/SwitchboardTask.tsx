@@ -19,6 +19,7 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import collection from "@/components/ui/Collection.module.css";
 import type { NexusGroup, NexusRow } from "@/lib/nexus/model";
 import { ARRIVAL_ONSET_MS } from "@/lib/nexus/policy";
+import { flattenedPaste } from "@/lib/nexus/query";
 import { placeChipRows } from "@/lib/nexus/rows";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { ResourceItem } from "@/lib/resources/items";
@@ -42,7 +43,7 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
   const inputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const addBody = useRef<HTMLElement>(null);
+  const importBody = useRef<HTMLElement>(null);
   const composing = useRef(false);
   const placementPress = useRef<string | null>(null);
   const taskPointerId = useRef<number | null>(null);
@@ -267,6 +268,10 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
         data-nexus-control="Search"
         onFocus={() => { if (controller.rail !== null) controller.closeRail(); }}
         onChange={(event) => controller.setQuery(event.currentTarget.value)}
+        onPaste={(event) => {
+          const value = flattenedPaste(event);
+          if (value !== null) controller.setQuery(value);
+        }}
         onCompositionStart={() => { composing.current = true; controller.setComposing(true); }}
         onCompositionEnd={() => { composing.current = false; controller.setComposing(false); }}
         onKeyDown={(event) => {
@@ -294,15 +299,15 @@ export default function SwitchboardTask({ controller }: { controller: NexusContr
 
   return (
     <MobileSheet active={controller.open} panelId="Nexus" handleLabel="close nexus" heightLimit="available" flushBottom={controller.page.kind === "Root"}
-      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Add" ? addBody : undefined}
+      slipContent={controller.page.kind === "Root" ? listRef : controller.page.kind === "Import" ? importBody : undefined}
       interactionLayer={controller.interactionLayer} onDismiss={controller.dismissAccepted} onDismissRequest={controller.guardClose}
-      ariaLabel={controller.addDefect ? "Add needs attention" : controller.dialogLabel} initialFocus={controller.initialFocus}
+      ariaLabel={controller.dialogLabel} initialFocus={controller.initialFocus}
       returnFocusTo={controller.returnFocusTo} returnFocusFallback={controller.returnFocusFallback} skipReturnFocus={controller.suppressReturnFocus} focusKey={controller.focusKey}>
       <div className={cx(styles.sheet, controller.page.kind === "Root" && typed && styles.typed)}
         onPointerDownCapture={(event) => { taskPointerId.current = event.pointerId; }}
         onPointerCancelCapture={(event) => { if (taskPointerId.current === event.pointerId) taskPointerId.current = null; }}
         onClickCapture={admitClick}>
-        {controller.page.kind === "Root" ? root : <NexusPages scrollRef={addBody} controller={controller} mobile />}
+        {controller.page.kind === "Root" ? root : <NexusPages scrollRef={importBody} controller={controller} mobile />}
       </div>
     </MobileSheet>
   );

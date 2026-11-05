@@ -21,9 +21,10 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // justify-polling: processing has no extension push. Only a displayed receipt
 // polls, at a bounded backoff; reopening or Check again starts a fresh read.
 const RECEIPT_POLL_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000] as const;
-const TERMINAL = new Set(["E_WIRE_MISMATCH", "E_SOURCE_INTEGRITY", "E_INVALID_FILE_TYPE", "E_FILE_TOO_LARGE", "E_CAPTURE_TOO_LARGE",
+const VERIFICATION_REJECTIONS = new Set(["E_SOURCE_INTEGRITY", "E_INVALID_FILE_TYPE", "E_FILE_TOO_LARGE", "E_CAPTURE_TOO_LARGE"]);
+const TERMINAL = new Set(["E_WIRE_MISMATCH", ...VERIFICATION_REJECTIONS,
   "E_INVALID_REQUEST", "E_UPLOAD_INTENT_MISMATCH", "E_RESOURCE_CONFLICT", "E_FORBIDDEN", "E_CAPTURE_PAGE_GONE", "E_CAPTURE_TARGET_CHANGED",
-  "E_SOURCE_TARGET_AMBIGUOUS", "E_UPLOAD_GENERATION_STALE", "E_UPLOAD_CAPABILITY_EXPIRED", "E_UPLOAD_SESSION_NOT_FOUND"]);
+  "E_SOURCE_TARGET_AMBIGUOUS", "E_UPLOAD_GENERATION_STALE", "E_UPLOAD_CAPABILITY_EXPIRED", "E_UPLOAD_SESSION_NOT_FOUND", "E_STORAGE_MISSING"]);
 interface PinnedSource {
   kind: "page" | "link" | "x";
   window_id: number;
@@ -53,6 +54,7 @@ interface Operation {
   sent: boolean;
   unknown: boolean;
   failure: CaptureFailure | null;
+  failure_attempt: number;
   retryable: boolean;
   item: ExtensionItem | null;
   destination: { media_id: string; source_attempt_id: string | null; settled: boolean } | null;
@@ -125,7 +127,7 @@ function state(): ViewState {
       item: op.item, open_url: op.destination === null || op.phase === "unavailable" || op.phase === "removed" || !matches(op) ? null
         : op.item?.has_readable_copy ? `${__NEXUS_ORIGIN__}/media/${op.destination.media_id}`
           : `${__NEXUS_ORIGIN__}/imports?selected=${encodeURIComponent(`media:${op.destination.media_id}`)}`,
-      failure: stopped ?? op.failure, retryable: op.retryable, busy: op.running, account_matches: matches(op),
+      failure: stopped ?? op.failure, failure_attempt: op.failure_attempt, retryable: op.retryable, busy: op.running, account_matches: matches(op),
       placement: op.write?.kind === "placement" ? { library_id: op.write.library_id, included: op.write.request.included, unknown: op.unknown } : null,
       removal: op.write?.kind === "removal" ? op.unknown ? "unknown" : "sending" : op.removal_preview === null ? "idle" : "reviewing",
       removal_preview: op.removal_preview } };
@@ -189,7 +191,7 @@ function admit(source: PinnedSource, preview: Preview, activationId: string): Op
     push(); return null;
   }
   const op: Operation = { id: crypto.randomUUID(), activation_id: activationId, source, preview, phase: "saving", account_id: null,
-    lookup: null, bytes: null, write: null, sent: false, unknown: false, failure: null, retryable: false, item: null, destination: null,
+    lookup: null, bytes: null, write: null, sent: false, unknown: false, failure: null, failure_attempt: 0, retryable: false, item: null, destination: null,
     removal_preview: null, required_origins: [], running: false, reading: null, poll_index: 0 };
   operation = op; notice = null; push(); return op;
 }
@@ -211,7 +213,7 @@ async function report(error: unknown): Promise<CaptureFailure> {
   const timedOut = error instanceof DOMException && error.name === "TimeoutError";
   const shown = error instanceof CaptureFailureError ? error.failure : timedOut
     ? failure("E_CAPTURE_TIMEOUT", "the request did not finish in time.").failure : {
-    code: "E_CAPTURE_DEFECT", message: "nexus capture stopped unexpectedly.", requestId: null, status: null, offline: false,
+    code: "E_CAPTURE_DEFECT", message: "the extension stopped unexpectedly.", requestId: null, status: null, offline: false,
   };
   if (!(error instanceof CaptureFailureError) && !timedOut) console.error("extension defect:", error);
   if (isCaptureDefect(shown.code)) stopped ??= shown;
@@ -228,7 +230,7 @@ async function run(op: Operation, action: () => Promise<void>): Promise<void> {
     const shown = await report(error);
     if (operation !== op) return;
     if (op.sent && !writeRefused({ sent: true, status: shown.status, code: shown.code })) op.unknown = true;
-    op.failure = shown;
+    op.failure = shown; op.failure_attempt += 1;
     if (op.write?.kind === "placement" || op.write?.kind === "removal" || op.destination !== null) {
       if (!op.unknown) op.write = null;
       if (op.phase !== "unavailable") op.phase = op.destination === null ? "failed" : "saved";
@@ -320,7 +322,7 @@ async function add(op: Operation, needsPin = false): Promise<void> {
     op.sent = true;
     const answer = await client.create(write.request, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
     op.sent = false; op.unknown = false;
-    if (answer.kind === "Rejected") throw failure(answer.code, "nexus refused this copy.", null, 422);
+    if (answer.kind === "Rejected") throw failure(answer.code, "nexus refused what arrived.", null, 422);
     if (answer.kind === "Published") { accepted(op, answer.media_id, answer.source_attempt_id); void readReceipt(op); return; }
     write.upload = answer;
     await putBytes(answer, bytes.blob, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
@@ -333,9 +335,10 @@ async function add(op: Operation, needsPin = false): Promise<void> {
   try { result = await client.confirm(write.request.id, write.confirmation, AbortSignal.timeout(REQUEST_TIMEOUT_MS)); }
   catch (error) {
     // This owner checks the same session's persisted receipt before its guards.
-    // Its conflict fences that exact confirmation, including an unanswered send.
-    // Authentication and wire refusals happen earlier and prove nothing here.
-    if (error instanceof CaptureFailureError && error.status === 409) { op.unknown = false; op.sent = false; }
+    // Its conflicts and persisted verification refusals fence that confirmation,
+    // including an unanswered send. Auth, wire and busy refusals prove nothing.
+    if (error instanceof CaptureFailureError && error.status !== null
+      && (error.status === 409 || VERIFICATION_REJECTIONS.has(error.failure.code))) { op.unknown = false; op.sent = false; }
     throw error;
   }
   accepted(op, result.media_id, result.source_attempt_id); void readReceipt(op);
@@ -455,6 +458,7 @@ async function readReceipt(op: Operation): Promise<void> {
     if (snapshot.summary.media_id !== destination.media_id && op.removal_preview !== null) {
       op.phase = "unavailable";
       op.failure = failure("E_CAPTURE_TARGET_CHANGED", "this item’s destination changed. keep the item, then check its current destination.").failure;
+      op.failure_attempt += 1;
       op.retryable = true;
       return;
     }
@@ -462,7 +466,7 @@ async function readReceipt(op: Operation): Promise<void> {
     op.item = snapshot; op.failure = null; op.retryable = false;
   } catch (error) {
     if (operation !== op || session !== identity || op.destination !== destination || op.reading !== controller || controller.signal.aborted) return;
-    op.failure = await report(error); op.retryable = true;
+    op.failure = await report(error); op.failure_attempt += 1; op.retryable = true;
     if (op.failure.status === 404) { op.phase = "unavailable"; op.removal_preview = null; }
   } finally { if (op.reading === controller) op.reading = null; push(); }
   if (operation === op && op.phase === "saved" && op.failure === null && op.destination?.settled === false
@@ -515,7 +519,7 @@ async function itemCommand(op: Operation, command: ItemCommand): Promise<void> {
   }
   if (command.kind === "permission") {
     if (op.phase !== "permission") return;
-    if (!command.granted) { op.phase = "failed"; op.retryable = true; op.failure = failure("E_CAPTURE_PERMISSION", "access was not granted. this save hasn’t started.").failure; push(); return; }
+    if (!command.granted) { op.phase = "failed"; op.retryable = true; op.failure = failure("E_CAPTURE_PERMISSION", "access was not granted. this save hasn’t started.").failure; op.failure_attempt += 1; push(); return; }
     await run(op, () => resume(op)); return;
   }
   if (command.kind === "login") { await run(op, () => login(op)); return; }

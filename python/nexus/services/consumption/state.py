@@ -128,24 +128,6 @@ def record_listening(
     return viewer_txn("record_listening", viewer_id, run)
 
 
-def install_preview_position(viewer_id: UUID, media_id: UUID, body: wire.PreviewPositionIn) -> None:
-    """A preview's position, once, never over an existing listening row."""
-
-    def run(db: Session) -> None:
-        _episode(db, viewer_id, media_id)
-        gate = engagement_gate(db, viewer_id=viewer_id, media_id=media_id, listening=True)
-        duration = body.duration_ms
-        position = body.position_ms if not duration else min(body.position_ms, duration)
-        if listening.install_preview(
-            db, viewer_id=viewer_id, media_id=media_id, position_ms=position, duration_ms=duration
-        ):
-            _resume(db, viewer_id, media_id)
-            if gate.moved(db, viewer_id=viewer_id):
-                record_input_change(db, owners=(f"consumption:{viewer_id}:{media_id}",))
-
-    viewer_txn("install_preview_position", viewer_id, run)
-
-
 def finish(viewer_id: UUID, media_id: UUID, body: wire.FinishIn) -> wire.Finish:
     """Mark finished, record the first completion and optionally leave the Lectern. A resend
     re-applies (the answer's undo then restores finished)."""

@@ -14,6 +14,22 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from nexus.schemas.collection_order import OrderRevision
 
 
+class SourceTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: UUID
+    expected_source_attempt_id: UUID | None
+
+
+class ExtensionSourceAdmission(BaseModel):
+    """The immutable intent answered by an extension source-attempt receipt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_target: SourceTarget | None
+    expected_removal_revision: OrderRevision
+
+
 class AcquisitionGuard(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

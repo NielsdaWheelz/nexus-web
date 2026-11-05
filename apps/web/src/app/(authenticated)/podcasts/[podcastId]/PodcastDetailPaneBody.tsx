@@ -20,9 +20,11 @@ import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
+import { useActiveRegion } from "@/components/feedback/stage";
+import { catalogLine } from "@/lib/catalog/copy";
 import { Ruling } from "@/components/feedback/Ruling";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
-import PodcastArtwork from "@/components/podcasts/PodcastArtwork";
+import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -54,6 +56,7 @@ import {
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
+import { pluralize } from "@/lib/text/pluralize";
 import {
   listEpisodes,
   requestPodcastRefresh,
@@ -112,6 +115,7 @@ export default function PodcastDetailPaneBody() {
 }
 
 function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
+  const speak = useActiveRegion();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const active = usePaneIsActive();
@@ -162,6 +166,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const episodeItems = episodes.status === "ready" ? episodes.data.items : [];
   const source = episodes.status === "ready" ? episodes.source : LIVE_SOURCE;
   const episodeFailure = episodes.status === "loading" ? null : episodes.error;
+  const catalogFailure = episodeFailure === null ? null : catalogLine(episodeFailure);
   const busy = indexReading(episodes);
   const retry = () => { void episodes.refetch().catch(() => {}); };
   const head: ServerValue<PodcastDetail> = episodes.status === "ready" ? { ...episodes, data: episodes.data.podcast } : episodes;
@@ -205,6 +210,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       }),
     [loaded, summaries],
   );
+  const matching = (text: string) => resolved.filter(episode =>
+    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, { containingPodcastId: podcastId })));
 
   const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
   const provisioning = episodeItems.some(episode => shouldPollTranscriptProvisioning(episode.transcript_state));
@@ -219,13 +226,20 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     publicationData.podcast.imports.map(operation => [operation.id, operation.updated_at]).sort((a, b) => a[0].localeCompare(b[0])),
   ]), [publicationData]);
   const observedPublication = useRef<{ key: string; signature: string } | null>(null);
+  const showKey = `${ctx.accountId}:${podcastId}`;
+  const showTitle = publicationData?.podcast.podcast.title ?? null;
+  const observedShow = useRef<{ key: string; title: string } | null>(null);
   useEffect(() => {
     if (observedPublication.current?.key !== publicationKey) observedPublication.current = null;
     if (publication === null) return;
     const previous = observedPublication.current;
     observedPublication.current = { key: publicationKey, signature: publication };
     if (previous !== null && previous.signature !== publication) publishChange("Entries");
-  }, [publication, publicationKey]);
+    if (showTitle !== null && (observedShow.current?.key !== showKey || observedShow.current.title !== showTitle)) {
+      observedShow.current = { key: showKey, title: showTitle };
+      publishChange("Podcasts");
+    }
+  }, [publication, publicationKey, showKey, showTitle]);
 
   const { fail } = useOutcome();
   const throwLater = useThrowLater();
@@ -245,10 +259,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   }, [canCheckSource, ctx, podcastId, retainCheck, throwLater]);
   const filterRows = usePaneFilterRows({
     sourceKey: `PodcastDetail.Episodes:${podcastId}`,
-    getRowStatus: (text) => {
-      const visible = resolved.filter(episode => matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)));
-      return indexRowStatus(episodes, resolved.length, visible.length, { singular: "episode", plural: "episodes" });
-    },
+    getRowStatus: (text) =>
+      indexRowStatus(episodes, resolved.length, matching(text).length, { singular: "episode", plural: "episodes" }),
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
@@ -345,9 +357,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
       (ready !== null && episodes.status !== "loading"),
   );
 
-  const visible = resolved.filter((episode) =>
-    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary)),
-  );
+  const visible = matching(text);
   const emptyTitle = text !== ""
     ? "no episodes match this filter."
     : known === "all"
@@ -369,11 +379,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
           {ready && podcast ? (
             <PaneSection className={styles.overview}>
               <div className={styles.identity}>
-                <PodcastArtwork title={podcast.title} image={podcast.image_url !== null ? { kind: "Remote", url: podcast.image_url } : { kind: "Absent" }} size={56} className={styles.artwork} />
+                <Artwork title={podcast.title} source={remoteArtwork(podcast.image_url)} size={56} />
                 <div className={styles.identityCopy}>
                   <ContributorCreditList credits={selectMediaAuthors(podcast.contributors)} />
                   <p className={styles.counts}>
-                    {ready.data.episode_counts.known_count} episodes
+                    {pluralize(ready.data.episode_counts.known_count, "episode")}
                   </p>
                 </div>
                 <Button ref={detailsButton} className={styles.detailButton}
@@ -443,6 +453,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
                 verbs={[{ label: "reset view", commandKey: "reset episodes view", run: () => replaceView({ state: null, sort: null }) }]} />
               : episodeFailure.code === "E_NOT_FOUND" || episodeFailure.code === "E_PODCAST_NOT_FOUND" || episodeFailure.code === "E_FORBIDDEN"
                 ? <Fact line={{ fact: "this podcast isn’t available." }} />
+              : catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
               : <Failed error={episodeFailure} noun="episodes" retry={{ run: retry, busy }} />
           ) : known === undefined || ready === null ? null : (
             <PlaybackSourceContext.Provider value={async selected_media_id => {
@@ -466,6 +477,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               }))}
               status={episodes.status === "loading" ? "loading" : "ready"}
               ariaLabel="Episodes"
+              renderRow={props => <CollectionRow {...props} containingPodcastId={podcastId} />}
               collectionBusy={busy}
               anchorKey={text}
               empty={<Fact line={{ fact: emptyTitle }} />}

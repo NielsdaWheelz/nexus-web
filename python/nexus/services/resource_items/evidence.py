@@ -45,6 +45,8 @@ from nexus.schemas.resource_items import (
     SourceTargetOut,
     UnavailableSourceLocationOut,
     WholeSourceLocationOut,
+    XPostSourceLocationOut,
+    XPostSourceTargetKey,
 )
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 from nexus.services.reader_excerpts import (
@@ -53,6 +55,7 @@ from nexus.services.reader_excerpts import (
     read_captures,
     scope_excerpts,
 )
+from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_items.items import (
@@ -73,6 +76,7 @@ from nexus.services.resource_items.locations import (
     scoped_media_passage,
     source_identities,
 )
+from nexus.services.x_source import x_primary_post_captures_sql
 
 _LOCATOR = TypeAdapter(RetrievalLocator)
 # Schemes a source-target key opens whole: they have no extent inside a source.
@@ -676,6 +680,8 @@ def _occurrence_activation(
             fragment = f"citation-{key.edge_id}"
         case RetrievalSourceTargetKey():
             fragment = f"retrieval-{key.retrieval_id}"
+        case XPostSourceTargetKey():
+            raise ValueError("a logical post target cannot name captured evidence")
     href = source.href.split("#", 1)[0] + "#" + fragment if source.href else None
     return ResourceActivationOut(field=None, resource_ref=ref, kind=source.kind, href=href)
 
@@ -689,6 +695,33 @@ def resolve_source_target(
     quote, citation or retrieval key naming nothing the viewer can read is 404 (a citation
     reads for whoever reads what cites it); a malformed resource ref is 400."""
     match target:
+        case XPostSourceTargetKey():
+            assert reading_media_id is not None
+            if not can_read_media(db, viewer_id, reading_media_id):
+                return _UNAVAILABLE_SOURCE
+            activation = ResourceActivationOut(
+                resource_ref=f"media:{reading_media_id}",
+                field=None,
+                kind="route",
+                href=f"/media/{reading_media_id}",
+            )
+            capture_id = db.execute(
+                text(f"""
+                    SELECT primary_post.capture_id
+                    FROM ({x_primary_post_captures_sql()}) primary_post
+                    JOIN x_post_aliases alias ON alias.post_id = primary_post.post_id
+                    JOIN ({ready_publication_rows_sql()}) publication
+                      ON publication.media_id = primary_post.media_id
+                    WHERE primary_post.media_id = :media_id AND alias.revision_id = :revision_id
+                """),
+                {"media_id": reading_media_id, "revision_id": target.revision_id},
+            ).scalar_one_or_none()
+            return SourceTargetOut(
+                source_activation=activation,
+                location=XPostSourceLocationOut(capture_id=capture_id)
+                if capture_id is not None
+                else UnavailableSourceLocationOut(reason="location_unavailable"),
+            )
         case ResourceSourceTargetKey():
             ref = require_ref(target.resource_ref)
             if target.field == "annotation":

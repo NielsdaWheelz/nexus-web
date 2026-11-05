@@ -1,0 +1,173 @@
+/* The import page and its lines: the palette's frame, one field over one grid. A line's text
+   hangs on the field's edge (`--text-edge`), so typed text and pointers keep one left edge. */
+
+.page {
+  --text-edge: var(--space-10);
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.page[data-mobile] { --text-edge: var(--space-4); }
+.header { padding-inline: var(--space-4); }
+
+.fieldRow {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 var(--space-3) 0 0;
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.fieldBox { display: contents; }
+
+.field {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: var(--space-3) 0;
+  color: var(--ink);
+  font-size: var(--text-md);
+}
+
+/* phone: the header holds the arrow; the field, then `into`, stack. */
+.page[data-mobile] .fieldRow {
+  display: grid;
+  gap: var(--space-1);
+  padding: 0 var(--space-4) var(--space-2);
+  border: 0;
+}
+
+.page[data-mobile] .fieldBox {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+.page[data-mobile] .fieldBox:focus-within { border-color: var(--ring); }
+.page[data-mobile] .field { min-height: 46px; padding: 0; }
+.page[data-mobile] .into { justify-self: start; max-inline-size: 100%; }
+
+/* `into` takes what its names need, up to a third of the row; the field takes the rest. */
+.into { flex: 0 1 auto; min-width: 0; max-inline-size: 33%; }
+
+.fieldLines { padding: 0 var(--space-4) 0 var(--text-edge); }
+
+.scroll { min-height: 0; padding: var(--space-2); scrollbar-gutter: stable; }
+.grid { display: grid; min-width: 0; }
+
+.row { min-height: 36px; }
+
+.cell {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+}
+
+.glyph { flex: 0 0 auto; color: var(--ink-muted); }
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono { font-family: var(--font-mono); font-weight: var(--weight-regular); color: var(--ink-machine); }
+.end { flex: none; color: var(--ink-muted); font-size: var(--text-xs); }
+
+.heading h3 {
+  margin: 0;
+  padding: var(--space-3) var(--space-2) var(--space-1) calc(var(--text-edge) - var(--space-2));
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.failed { padding-inline-start: calc(var(--text-edge) - var(--space-2)); }
+
+/* A line: two rows on every shell; line two truncates and nothing reflows. */
+.line { min-height: 58px; }
+.line .cell { padding-inline-start: calc(var(--text-edge) - 2 * var(--space-2)); }
+.line[data-fall] { animation: fall var(--duration-base) var(--ease-bloom) backwards; }
+
+@keyframes fall {
+  from { opacity: 0; transform: translateY(-6px); }
+}
+
+.lineText {
+  display: grid;
+  flex: 1;
+  grid-template-rows: 24px minmax(18px, auto);
+  min-width: 0;
+}
+
+/* pointer and title stacked in one cell: the title crossfades in once, as the work reads */
+.one { display: grid; min-width: 0; }
+
+.one > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity var(--duration-base) var(--ease-glide);
+}
+
+.pointer { color: var(--ink-machine); font-family: var(--font-mono); font-size: var(--text-sm); }
+.title { color: var(--ink); font-family: var(--reader-font-family, var(--font-serif)); font-size: var(--text-md); }
+.one[data-ink] .pointer { opacity: 0; }
+.one[data-inking] .title { animation: ink var(--duration-base) var(--ease-glide); }
+
+@keyframes ink {
+  from { opacity: 0; }
+}
+
+.two {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.two[data-tone="Warning"] { color: var(--warning-ink); }
+.two[data-tone="Danger"] { color: var(--danger-ink); }
+
+.tail { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+.verb { font-size: var(--text-xs); }
+.dismiss, .menu { color: var(--ink-faint); }
+
+/* The upload's rule: a bottom border, so forced colours keep it, as wide as the bytes sent. */
+.rule {
+  position: absolute;
+  inset-block-end: 3px;
+  inset-inline-start: calc(var(--text-edge) - var(--space-2));
+  border-block-end: var(--stroke-hairline) solid var(--accent);
+}
+
+.colophon div {
+  padding: var(--space-3) var(--space-2) var(--space-2) calc(var(--text-edge) - var(--space-2));
+  color: var(--ink-muted);
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--text-sm);
+  font-style: italic;
+}
+
+.page[data-mobile] .line { min-height: 64px; }
+.page[data-mobile] .row { min-height: 48px; }
+.page[data-mobile] :is(.row, .line)[data-active] { background: transparent; }

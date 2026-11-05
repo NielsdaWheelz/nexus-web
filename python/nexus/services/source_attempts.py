@@ -7,11 +7,13 @@ accepted attempt commits with its job (I11). A media's attempts form a chain ord
 derived id (``successor_id``, I10), so its retry finds its own effect. An explicit new
 browser source instead retains its attempt in the upload receipt. An attempt whose source
 converged on another media keeps that answer in ``media_source_supersessions`` after its
-own media is torn down. actor-owned succeeded x_post attempts with exactly
+own media is torn down. actor-owned x_author_thread attempts with frozen capture
+input retain their original acceptance after teardown, regardless of outcome. They
+are historical facts, not executable work or reading authority. succeeded x_post attempts with exactly
 {capture_id:<uuid>}, no job and a finish time are synchronous capture acceptance
 receipts: they retain their original media_id after physical teardown. all other
 attempts require live media and are deleted with it. creation always locks a live
-media row, including when creating one of these receipts; replay reads the settled
+media row, including when creating one of these receipts; replay reads the acceptance
 receipt rather than creating or restoring media.
 
 The recovery policy lives here too: one answer per latest attempt, read by Imports,
@@ -20,6 +22,7 @@ the media projection, action menus and every recovery admission.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID, uuid5
@@ -43,7 +46,7 @@ from nexus.schemas.imports import (
     RetrySourceOffer,
     SourceRecoveryInput,
 )
-from nexus.schemas.x_source import XArticleContent
+from nexus.schemas.x_source import XArticleContent, XAuthorThreadPayload
 from nexus.services import source_types as st
 from nexus.services.capabilities import SourceRecoveryAnswer, is_same_source_terminal_error
 from nexus.services.import_history import append_processing_event
@@ -95,6 +98,10 @@ def create_attempt(
     An attempt born settled (a re-added source whose media exists) mirrors the
     media's outcome, so I3 holds from its first row.
     """
+    if source_type == st.X_AUTHOR_THREAD:
+        payload = XAuthorThreadPayload.model_validate_json(json.dumps(payload)).model_dump(
+            mode="json"
+        )
     # The column also holds historical capture-receipt targets, so no FK owns this check.
     if (
         db.scalar(

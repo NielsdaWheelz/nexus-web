@@ -27,6 +27,7 @@ from nexus.services.reader_publication import (
 from nexus.services.reader_structure import (
     DocumentPoint,
     DomCut,
+    NavigationNoteIndex,
     NavigationProof,
     SectionProof,
     SectionRangeInput,
@@ -201,6 +202,59 @@ def read_media_navigation_proof(
             nodes[parent_id].children.append(nodes[heading_id])
         else:
             roots.append(nodes[heading_id])
+    if proofs:
+        first = proofs[0]
+        start = DocumentPoint(fragments[0].fragment_idx, 0)
+        note_index = NavigationNoteIndex(
+            note_regions,
+            {fragment.fragment_id: fragment.fragment_idx for fragment in fragments},
+        )
+        if start < first.start and any(
+            not character.isspace()
+            and note_index.is_routine(DocumentPoint(fragment["idx"], offset))
+            for fragment in fragment_rows
+            if fragment["idx"] <= first.start.fragment_idx
+            for offset, character in enumerate(
+                fragment["canonical_text"][
+                    : first.start.offset
+                    if fragment["idx"] == first.start.fragment_idx
+                    else fragment["char_count"]
+                ]
+            )
+        ):
+            target = NavigationTextPointOut(fragment_id=fragments[0].fragment_id, offset=0)
+            opening = ReaderNavigationSectionOut(
+                section_id="web-opening",
+                label="opening",
+                parent_section_id=None,
+                target=target,
+                anchor_id=None,
+                source="ImplicitOpening",
+                extent=NavigationTextRangeOut(start=target, end=sections[0].target),
+            )
+            sections.insert(0, opening)
+            proofs.insert(
+                0,
+                SectionProof(
+                    section_id=opening.section_id,
+                    label=opening.label,
+                    parent_section_id=None,
+                    start=start,
+                    end=first.start,
+                    start_cut=DomCut((), "before"),
+                    end_cut=first.start_cut,
+                ),
+            )
+            roots.insert(
+                0,
+                ReaderNavigationTocNodeOut(
+                    id=opening.section_id,
+                    label=opening.label,
+                    target=target,
+                    section_id=opening.section_id,
+                    children=[],
+                ),
+            )
     navigation = MediaNavigationOut(
         media_id=media_id,
         kind="web_article",

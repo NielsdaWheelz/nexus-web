@@ -105,7 +105,7 @@ export function useConnectionAttachments(selfRef: string) {
       void run(task);
     } };
     if (!(error instanceof UploadSessionError)) { fail(error, notAdded(names), resume); return; }
-    const reason = captureErrorLine(error, "AddAttachment").reason;
+    const reason = captureErrorLine(error).reason;
     const kind = error.outcome.kind;
     const verbs: Verbs | undefined = upload.expired ? [{ label: "choose file", commandKey: `ConnectionAttachments.choose:${task.id}`, run: () => fileInputRef.current?.click() }]
       : kind === "BytesMissing" || kind === "LibraryForbidden" ? [resume] : undefined;

@@ -683,7 +683,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         else if (task.upload.review_required) hold({ fact: NOT_ADDED });
         else if (task.upload.expired) { setAttachment(null); say({ fact: NOT_ADDED, reason: "the upload expired." }); }
         else if (error instanceof UploadSessionError && error.outcome.kind !== "IntentMalformed") {
-          const line = { fact: NOT_ADDED, reason: captureErrorLine(error, "AddAttachment").reason };
+          const line = { fact: NOT_ADDED, reason: captureErrorLine(error).reason };
           if (task.upload.confirmation_unsettled || error.outcome.kind === "Unresolved") hold(UNKNOWN);
           else if (error.outcome.kind === "BytesMissing") hold(line);
           else { setAttachment(null); say(line); }
@@ -1466,7 +1466,14 @@ function NoteEditorContent(props: NoteEditorProps) {
           compositionBase.current === null && referenceRef.current.getState() === null;
       },
       settleNativeInput() {
-        if (nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
+        if (nativeInputOpen.current || view.composing) return false;
+        if (compositionBase.current) {
+          const hadReference = referenceRef.current.getState() !== null;
+          // an ended composition may still need transfer before this command;
+          // a new query changes ownership before its host can observe it.
+          finishComposition(view, compositionBase.current, null);
+          if (!hadReference && referenceRef.current.getState() !== null) return false;
+        }
         reconcile(view);
         if (view.isDestroyed || nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
         syncNativeSelection(view);

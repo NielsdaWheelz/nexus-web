@@ -24,6 +24,7 @@ from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.reader_excerpts import ExcerptView
 from nexus.schemas.resource_evidence import ResourceField, validate_resource_field
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
+from nexus.schemas.x_source import RevisionId
 
 BlockReason = Literal[
     "PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable", "PodcastSubscription"
@@ -64,11 +65,17 @@ class RetrievalSourceTargetKey(_Out):
     retrieval_id: UUID
 
 
+class XPostSourceTargetKey(_Out):
+    kind: Literal["x_post"] = "x_post"
+    revision_id: RevisionId
+
+
 SourceTargetKey = Annotated[
     ResourceSourceTargetKey
     | ReaderQuoteSourceTargetKey
     | CitationSourceTargetKey
-    | RetrievalSourceTargetKey,
+    | RetrievalSourceTargetKey
+    | XPostSourceTargetKey,
     Field(discriminator="kind"),
 ]
 LocationUnavailableReason = Literal["source_unavailable", "location_unavailable"]
@@ -197,10 +204,18 @@ class UnavailableSourceLocationOut(_Out):
     reason: LocationUnavailableReason
 
 
+class XPostSourceLocationOut(_Out):
+    kind: Literal["x_post"] = "x_post"
+    capture_id: UUID
+
+
 class SourceTargetOut(_Out):
     source_activation: ResourceActivationOut | None
     location: Annotated[
-        WholeSourceLocationOut | LocatedSourceLocationOut | UnavailableSourceLocationOut,
+        WholeSourceLocationOut
+        | LocatedSourceLocationOut
+        | UnavailableSourceLocationOut
+        | XPostSourceLocationOut,
         Field(discriminator="kind"),
     ]
 
@@ -210,6 +225,12 @@ class ResolveSourceTargetRequest(BaseModel):
 
     target: SourceTargetKey
     reading_media_id: UUID | None
+
+    @model_validator(mode="after")
+    def require_post_reading_media(self):
+        if isinstance(self.target, XPostSourceTargetKey) and self.reading_media_id is None:
+            raise ValueError("x_post targets require reading_media_id")
+        return self
 
 
 TranscriptState = Literal[

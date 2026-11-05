@@ -91,11 +91,6 @@ class PlayerActivationOut(Closed):
     observation: EpisodeConsumptionObservation
 
 
-class PreviewPositionIn(Closed):
-    position_ms: _Int32
-    duration_ms: _Int32 | None
-
-
 # ---- the Lectern ----
 
 

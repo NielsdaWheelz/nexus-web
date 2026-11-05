@@ -1,3 +1,5 @@
+"use client";
+
 import * as Icon from "@/lib/ui/icons";
 import IndexBibliography from "@/components/resources/IndexBibliography";
 import {
@@ -36,14 +38,17 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
   </span>;
 }
 
-/** Index bibliography and provenance. Rows own facts: `MediaFacts` goes in their trailing cell. */
-export default function MediaIdentity({ subject, returnFocus }: {
+/** Index bibliography and provenance. Only the matching show's episode list omits its show.
+ * Rows own facts: MediaFacts goes in their trailing cell. */
+export default function MediaIdentity({ subject, returnFocus, containingPodcastId = null }: {
   subject: MediaSubject;
   returnFocus: () => HTMLElement | null;
+  containingPodcastId?: string | null;
 }) {
   const summary = subject.kind === "Stored" ? subject.summary : null;
   return <span className={styles.support}>
-    <IndexBibliography contributors={subject.kind === "Stored" ? subject.summary.contributors : subject.contributors}
+    <IndexBibliography show={summary?.show?.podcast_id === containingPodcastId ? null : summary?.show ?? null}
+      contributors={subject.kind === "Stored" ? subject.summary.contributors : subject.contributors}
       originalPublishedDate={summary?.original_published_date ?? null} returnFocus={returnFocus} />
     {summary?.part_source ? <span className={styles.provenance}>from {summary.part_source.title}</span> : null}
   </span>;

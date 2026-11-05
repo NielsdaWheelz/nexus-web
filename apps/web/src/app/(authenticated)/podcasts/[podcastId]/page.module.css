@@ -17,11 +17,6 @@
   gap: var(--space-3);
 }
 
-.artwork {
-  width: 3.5rem;
-  height: 3.5rem;
-}
-
 .identityCopy {
   min-width: 0;
   color: var(--ink-muted);

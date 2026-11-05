@@ -38,7 +38,11 @@ from nexus.schemas.import_history import (
     decode_facts,
     queue_failure_code,
 )
-from nexus.services.source_types import source_failure_progress, source_history_stage
+from nexus.services.source_types import (
+    LATEST_ORDER_SQL,
+    source_failure_progress,
+    source_history_stage,
+)
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -190,14 +194,31 @@ def on_source_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
     settled records nothing; its dead job still invalidates suggestions, after the source's
     own on_dead reaction published the failure."""
     media_id, attempt_id = UUID(job.payload["media_id"]), UUID(job.payload["attempt_id"])
+    # Capture-input receipts outlive their media. Hold the FK target through the
+    # event append; KEY SHARE does not invert the publisher's NO KEY UPDATE lock.
+    if (
+        db.scalar(
+            text("SELECT id FROM media WHERE id=:media_id FOR KEY SHARE"),
+            {"media_id": media_id},
+        )
+        is None
+    ):
+        return
+    if db.scalar(
+        text("SELECT EXISTS (SELECT 1 FROM media_teardown_intents WHERE media_id=:media_id)"),
+        {"media_id": media_id},
+    ):
+        return
     attempt = (
         db.execute(
-            text("""SELECT source_type, processing_stage, progress_completed, progress_total,
+            text(f"""SELECT source_type, processing_stage, progress_completed, progress_total,
                        progress_unit
                 FROM media_source_attempts
                 WHERE id = :attempt_id AND media_id = :media_id
-                  AND status IN ('accepted', 'queued', 'running')"""),
-            {"attempt_id": attempt_id, "media_id": media_id},
+                  AND job_id=:job_id AND status IN ('accepted', 'queued', 'running')
+                  AND id=(SELECT id FROM media_source_attempts WHERE media_id=:media_id
+                      ORDER BY {LATEST_ORDER_SQL} LIMIT 1)"""),
+            {"attempt_id": attempt_id, "media_id": media_id, "job_id": job.id},
         )
         .mappings()
         .one_or_none()
