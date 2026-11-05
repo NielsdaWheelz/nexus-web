@@ -458,6 +458,7 @@ def _settle(
         attempt.status = st.SUCCEEDED
         attempt.error_code = attempt.error_message = None
         sa.record_event(db, attempt, SourceSucceeded(source_attempt_id=attempt.id))
+        db.flush()
         if outcome.pdf_has_text is False:
             mark_stage_warning(
                 db,
