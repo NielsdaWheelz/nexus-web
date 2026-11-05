@@ -221,7 +221,10 @@ the current mode. the host owns effective visibility, inertness and geometry;
 The workspace store is the sole owner of sequential traversal. It follows
 stored-visible panes in strip order, clamps at the first and last pane,
 and never wraps. The Nexus swipe and `pane-next` / `pane-previous` keybindings
-invoke that same store command.
+invoke that same store command. the strip, adjacent keys and Nexus swipe check
+`hasWorkspaceNavigationBlocker()` before changing panes: the persistent passage
+composer permits navigation, while child choices and modals retain their normal
+blocking policy. this does not change escape ownership or the work guard.
 
 ## Pane Resource Identity
 
@@ -1216,16 +1219,19 @@ the stationary query controls. Reader, Chat transcripts, and Atlas keep their se
 scroll/location owners. Mementos and visit data are never persisted and are
 forgotten when their visit leaves every stack.
 
-## Reader-To-Chat Launch Intent
+## reader-to-chat handoff
 
-A reader Highlight quote launches chat through a pane-local intent hash
-`#mediaId=<uuid>&highlightId=<uuid>`, read only through `paneRuntime` pane-local
-hash parameters (never ambient `window.location`). Before the send commits the
-hash is reload/navigation safe and excluded from pane identity.
+a passage-composer gesture synchronously uses `activateWorkspaceTarget` with
+`disposition: "Fork"`, creating one adjacent pane even when that chat is already
+open. the destination takes the draft before asynchronous preparation. chat owns
+that draft, acceptance, retries and fenced route updates; see
+[chat](chat.md#browser). source-link activation still follows the ordinary
+`Follow`/shift-`Fork` contract.
 
-reader-to-chat from a selection forks by default (`openAsyncResult`'s
-`disposition: "Fork"`), creating one adjacent pane even when the destination is
-open; source activation uses `Follow`, and shifted activation `Fork`.
-on a successful run the feature
-route-`replace`s to consume the provisional history entry, so Back cannot
-rehydrate a completed intent.
+explicit saved-highlight links may carry
+`#mediaId=<uuid>&highlightId=<uuid>` or
+`#captureId=<uuid>&highlightId=<uuid>`. the destination reads these through
+`paneRuntime`, never ambient `window.location`; they are excluded from pane
+identity and consumed after acceptance. ordinary passage-composer transfer keeps
+its quote and input in the destination's memory owner, not a url or browser
+storage.

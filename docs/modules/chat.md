@@ -246,8 +246,10 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
 - **reader destination**: the default is the last owned admission quoting the viewed
   media/part, or a captured x fragment actually included there. context membership
   and chat activity are not continuation history. an explicit choice wins over a
-  pending lookup. the chosen tree supplies revision and insertion from its stored
-  leaf, independently of other panes. choosing a destination never sends.
+  pending lookup. the picker reads related chats independently; no accepted
+  default does not mean no related chats. the chosen tree supplies revision and
+  insertion from its stored leaf, independently of other panes. choosing a
+  destination never sends.
 - **reader content** (`@nexus/authored/markdown`) preserves prose, hard breaks,
   code and links through the shared whole-body serializer. draft quotations use
   their real frozen capture and known attribution, without inventing a resource or
@@ -271,9 +273,10 @@ frozen `run_selection{selection, display_at_dispatch}`, `status`, `support_id`,
   undo and disables nothing);
   `Forks` holds the alternatives (or continuations) control and dialog and the Forks
   outline; `ConversationDestinationOverlay` changes only the reader's destination.
-  its source/all views share literal title search and keyset paging; stale rows cannot
-  be selected. plain Enter or click selects a chat, Escape keeps the prior choice, and
-  both return the exact editor caret. composition, extra modifiers and repeated Enter
+  its source/all views share literal title search over the owned index; stale rows
+  cannot be selected. plain Enter or click selects a chat; Escape keeps the prior
+  choice. desktop restores the editor caret; mobile returns focus to the disclosure
+  without opening the keyboard. composition, extra modifiers and repeated Enter
   never select. the reader editor owns save, newline, platform modifier+Enter for new
   chat, and platform modifier+Shift+Enter for the displayed destination or picker;
   reference linking owns its keys first.
