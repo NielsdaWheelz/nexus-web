@@ -136,7 +136,7 @@ def _orders(values: list[BaseModel]) -> None:
 
 
 class OfflineCatalogOut(_Closed):
-    format_version: Literal[2]
+    format_version: Literal[3]
     wire_revision: int
     account_id: UUID
     snapshot_id: UUID

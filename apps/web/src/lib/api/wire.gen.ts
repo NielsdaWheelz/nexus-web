@@ -8026,8 +8026,8 @@ export interface components {
         };
         /**
          * MediaShowOut
-         * @description The show an episode belongs to. ``MediaSummaryOut.show`` is null exactly when the media
-         *     has no ``podcast_episodes`` row, which is every media that is not an episode.
+         * @description The canonical show of an episode. ``MediaSummaryOut.show`` is non-null exactly
+         *     when ``media_kind`` is ``podcast_episode``; missing episode identity is a defect.
          */
         MediaShowOut: {
             /** Image Url */
@@ -8734,7 +8734,7 @@ export interface components {
              * Format Version
              * @constant
              */
-            format_version: 2;
+            format_version: 3;
             lectern: components["schemas"]["LecternOut"];
             /** Libraries */
             libraries: components["schemas"]["CatalogLibraryOut"][];

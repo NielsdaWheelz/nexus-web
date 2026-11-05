@@ -5,10 +5,19 @@
 import HighlightAnnotation from "./HighlightAnnotation";
 import type {TextEditorHandle} from "./NoteEditor";
 import {createPortal} from "react-dom";
-import type {MouseEvent as ReactMouseEvent} from "react";
+import {useRef, type MouseEvent as ReactMouseEvent} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {FullResourceBody} from "@/components/resources/ExcerptDisclosure";
+import ResourceMetadata from "@/components/resources/ResourceMetadata";
+import {Fact, Failed} from "@/components/feedback/Fact";
 import {authoredItem} from "@/lib/notes/presentation";
+import {mediaBibliographyMetadata} from "@/lib/resources/metadata";
+import {useMediaSummaryIds} from "@/lib/media/MediaSummaryProvider";
+import {useRemoteAdmission} from "@/lib/native/admissionHooks";
+import {useCatalogState} from "@/lib/catalog/provider";
+import {catalogMedia} from "@/lib/catalog/selectors";
+import {catalogLine} from "@/lib/catalog/copy";
+import {useActionFocusRecovery} from "@/lib/ui/useActionFocusRecovery";
 import * as Icon from "@/lib/ui/icons";
 import type {BranchRead} from "@/lib/notes/outlineController";
 import AuthoredReadFailure from "./AuthoredReadFailure";
@@ -20,6 +29,29 @@ import {parseResourceRef} from "@/lib/resourceGraph/resourceRef";
 import {resourceType, resourceTypeName} from "@/lib/resources/type";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import styles from "./OutlineEditorRow.module.css";
+import factualStyles from "@/components/resources/ResourceContent.module.css";
+
+/** Accepted live identities remain; cold offline references read the saved catalog. */
+function EpisodeBibliography({mediaId, returnFocus}: {mediaId: string; returnFocus: () => HTMLElement | null}) {
+  const live = useRemoteAdmission() === "Ready";
+  const catalog = useCatalogState();
+  const summaries = useMediaSummaryIds([mediaId]);
+  const observed = summaries.resolve(mediaId);
+  const showingLive = live || !summaries.pending(mediaId);
+  const summary = showingLive ? observed : catalog.data === null ? null : catalogMedia(catalog.data, mediaId);
+  const error = showingLive ? summaries.error : catalog.error;
+  const line = error === null ? null : catalogLine(error);
+  const names = useRef<HTMLSpanElement>(null);
+  useActionFocusRecovery(names, returnFocus);
+  return <>
+    <span ref={names} className={factualStyles.bibliography}>
+      {summary?.media_kind === "podcast_episode" ? <><span aria-hidden="true"> · </span>
+        <ResourceMetadata parts={mediaBibliographyMetadata(summary)} linkSource/></> : null}
+    </span>
+    {error === null ? null : line !== null ? <Fact line={line}/> : <Failed error={error} noun="source metadata"
+      retry={{run: showingLive ? summaries.retry : catalog.refresh, busy: showingLive ? summaries.retrying : catalog.loading}}/>}
+  </>;
+}
 
 export interface OutlineRowChrome {
   row_id: string;
@@ -99,7 +131,9 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
       <AuthoredReadFailure {...row.read} noun="linked items"/>
     </>;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
-      ...(row.kind === "reference" && row.ref !== null ? [createPortal(row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource, null, row.href)} /><HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.label,
-        mount.content, `${row.row_id}:content`)] : [])];
+      ...(row.kind === "reference" && row.ref !== null ? [createPortal(<>
+        {row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource, null, row.href)} /><HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.label}
+        {scheme === "media" ? <EpisodeBibliography mediaId={parsed!.id} returnFocus={() => mount.leading.querySelector<HTMLElement>("[data-row-focusable]")}/> : null}
+      </>, mount.content, `${row.row_id}:content`)] : [])];
   });
 }

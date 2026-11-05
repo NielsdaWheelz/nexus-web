@@ -60,7 +60,7 @@ import {
   offered,
   projections,
 } from "@/lib/libraries/views";
-import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
@@ -88,7 +88,7 @@ const ENTRIES = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryEn
 const UNIT = { singular: "entry", plural: "entries" };
 
 const fields = (entry: LibraryEntry) =>
-  mediaListFilterFields(entry.media_summary.title, mediaByline(entry.media_summary, null));
+  mediaListFilterFields(entry.media_summary);
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");

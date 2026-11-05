@@ -151,7 +151,10 @@ connection, the existing bounded readiness check requires one page target at the
 supplied owned web origin; non-page targets do not prevent admission. attachment
 then requires one context and one page at that origin. rejection reports counts,
 process and forward identity without page titles or urls. the caller owns real
-login, input and cleanup after attachment failure. `close()` stops the owned
+login, input and cleanup after attachment failure. `startup.json` binding proves
+durable local identity only; await public `session_check` admission `Ready` before
+remotely dependent assertions. `restart` can then establish the retained binding
+and current target. `close()` stops the owned
 package and releases its transport and created mappings before a bounded cdp
 disconnect; it returns the exact released mappings. an unconfirmed disconnect is a cleanup error. `restart` likewise retires
 the old process and devtools forward before disconnecting, and refuses relaunch
