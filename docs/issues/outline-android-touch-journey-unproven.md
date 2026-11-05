@@ -68,6 +68,13 @@ cause. if admission fails again, retain the forwarded port's `/json/list`,
 `pidof` (every pid) and `dumpsys activity top | grep -A2 WebView`, then tell a missing target from one
 playwright did not surface.
 
+the same attachment failure recurred outside the outline on 2026-11-04 in
+selection-annotation lab `20261104-215734-8bec5208dd2a`, using a fresh owned api 34
+pixel 6 avd and exact runtime apk. `scripts/lab/android.ts:91` raised
+`android lab expected one owned application WebView page` before sign-in.
+the annotation's ten browser journeys and static gate passed; native touch
+qualification remains pending this attachment diagnosis.
+
 resolved when one run attaches and passes every step above on api 34 with real adb
 touch and the real handoff.
 
