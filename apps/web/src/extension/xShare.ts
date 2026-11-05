@@ -90,6 +90,7 @@ document.addEventListener("click", event => {
     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(key.key)) {
       key.preventDefault(); key.stopPropagation();
       const next = key.key === "Home" ? 0 : key.key === "End" ? items.length - 1
+        : index < 0 ? key.key === "ArrowDown" ? 0 : items.length - 1
         : (index + (key.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
       items[next]?.focus();
     } else if (active === row && (key.key === "Enter" || key.key === " ")) {
