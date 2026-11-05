@@ -9,7 +9,7 @@ import { Field } from "@/components/feedback/Fact";
 import { useTransportVerbs } from "@/components/feedback/stage";
 import type { Retract, Verb, Verbs } from "@/components/feedback/stage";
 import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
-import NoteEditor from "@/components/notes/NoteEditor";
+import NoteEditor, { type NoteEditorHandle } from "@/components/notes/NoteEditor";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -127,7 +127,22 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
   const copy = copying.copy;
   const fieldId = useId();
   const chatFieldId = useId();
+  const inputFieldId = useId();
   const refinementId = useId();
+  const questionEditor = useRef<NoteEditorHandle | null>(null);
+  const editorReady = useCallback((handle: NoteEditorHandle | null) => { questionEditor.current = handle; }, []);
+  const [inputRefusal, setInputRefusal] = useState<{ draftId: string; fact: string } | null>(null);
+  const settleInput = (trigger: HTMLElement | null) => {
+    if (!draft) return false;
+    trigger?.focus({ preventScroll: true });
+    const editor = questionEditor.current;
+    if (!editor?.settleNativeInput()) {
+      setInputRefusal({ draftId: draft.id, fact: editor ? "finish typing, then try again." : "the editor is still opening. try again." });
+      return false;
+    }
+    setInputRefusal(null);
+    return true;
+  };
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
   const destinationTrigger = useRef<HTMLButtonElement | null>(null);
@@ -339,13 +354,19 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
           setAnnotationRequest({ openingId: opening.id, highlightId: annotationId, serial: ++annotationSerial.current, trigger: triggerEl });
         }, null) : null;
     const matchingRequest = annotateAction && annotationRequest?.openingId === opening.id && annotationRequest.highlightId === annotationId ? annotationRequest : null;
+    const inputIssue = inputRefusal?.draftId === draft.id ? inputRefusal : null;
     // A failed local commit retries its retained command, never a second save.
     const saveAction = failed ? command("RetryPassageSave", "retry saving", <Icon.Again size={16} aria-hidden="true" />, failed.retry, saving ? "saving." : null)
-      : command("SavePassageNote", hasNote ? "save annotation" : "save highlight", <Icon.Save size={16} aria-hidden="true" />, composer.save, blockedReason);
+      : command("SavePassageNote", hasNote ? "save annotation" : "save highlight", <Icon.Save size={16} aria-hidden="true" />,
+        ({ triggerEl }) => { if (settleInput(triggerEl)) composer.save(); }, blockedReason);
     const newLabel = hasMessage ? "send in new chat" : "open in new chat";
-    const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), blockedReason);
+    const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />,
+      ({ openIntent, triggerEl }) => { if (settleInput(triggerEl)) composer.newChat(openIntent); }, blockedReason);
     const existingAction = command("ExistingChat", chatLabel, <Icon.Chat size={16} aria-hidden="true" />,
-      ({ openIntent }) => selected ? composer.continueChat(openIntent) : composer.chooseChat(), blockedReason);
+      ({ openIntent, triggerEl }) => {
+        if (!selected) composer.chooseChat();
+        else if (settleInput(triggerEl)) composer.continueChat(openIntent);
+      }, blockedReason);
     const highlightId = draft.highlightId;
     const selectAgain: Verb | null = highlightId === null
       ? { label: "select again", commandKey: "ReselectPassage", run: composer.reselect }
@@ -377,7 +398,9 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
       : refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={selectAgain ? [selectAgain, copyText] : [copyText]} />
       : unavailable || sourceChanged ? <Field id={fieldId} line={draft.issue?.kind === "Source" ? draft.issue.line : SOURCE_CHANGED} verbs={selectAgain ? [selectAgain, copyText] : [copyText]} />
       : failed?.phase === "Preparation" && !hasNote ? <Field key={failed.attempt} id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} /> : null;
-    const save = <SelectionAction action={saveAction} help={isMobile || failed ? saveAction.label : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} describedBy={passageField ? fieldId : undefined} />;
+    const save = <SelectionAction action={saveAction} help={isMobile || failed ? saveAction.label : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving}
+      describedBy={[passageField ? fieldId : null, inputIssue ? inputFieldId : null].filter(Boolean).join(" ") || undefined} />;
+    const chatDescription = [chatField ? chatFieldId : null, inputIssue ? inputFieldId : null].filter(Boolean).join(" ") || undefined;
     const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile} data-passage-interaction>
       <HighlightColourPicker key={opening.id} active={!isMobile || paneActive} selected={isMobile && fresh ? draft.color : annotation?.color ?? "yellow"} persisted={isMobile ? !fresh : draft.highlightId !== null}
         disabledReason={fresh ? blockedReason : localReason ?? (confirming ? "apply or cancel the selection first." : null)} busy={draft.operation?.kind === "Highlight"}
@@ -389,9 +412,9 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
         }} /> : null}
       {(!isMobile && fresh) || failed && !fresh ? save : null}
       {canQuote ? <>
-        <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={false} describedBy={chatField ? chatFieldId : undefined} />
+        <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={false} describedBy={chatDescription} />
         <div className={styles.highlightControl}>
-          <SelectionAction action={existingAction} help={`${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""} · ${shortcut}-shift-enter`} busy={false} describedBy={chatField ? chatFieldId : undefined} />
+          <SelectionAction action={existingAction} help={`${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""} · ${shortcut}-shift-enter`} busy={false} describedBy={chatDescription} />
           <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="choose existing chat" aria-haspopup="dialog"
             aria-expanded={composer.pickerOpen} aria-controls={composer.pickerOpen ? pickerId : undefined}
             aria-disabled={blockedReason !== null || undefined} tooltip={{ text: blockedReason ? `choose existing chat. ${blockedReason}` : "choose existing chat" }}
@@ -415,6 +438,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
       </PreparedResourcesContext> : null}
     </>;
     const feedback = <>
+      {inputIssue ? <Field id={inputFieldId} line={{ fact: inputIssue.fact }} /> : null}
       {passageField}
       {failed?.phase === "Preparation" && hasNote
         ? <Hold id={`preparation:${draft.id}`} attempt={failed.attempt} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} /> : null}
@@ -428,10 +452,11 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
           onCompositionStartCapture={composer.compositionStart} onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
             <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`} containingNoteRef={null}
+              onEditorReady={editorReady}
               body={draft.body} revision={draft.revision} label={fresh ? "note or question about passage" : "question about passage"}
               reference={composer.reference()} placeholder={fresh ? "note or question about passage…" : "question about passage…"} editable
               focus={!isMobile && placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
-              onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
+              onEdit={edit => { setInputRefusal(null); composer.edit(edit); }} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
               onSave={!isMobile && fresh ? composer.save : undefined} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
               onContinueChat={canQuote ? () => composer.continueChat() : undefined} />
