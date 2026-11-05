@@ -2,6 +2,7 @@
 // portals its menu. Observation lasts only for that menu; recycled or ambiguous
 // owners refuse. No feed scan, private API, page-state hook or credential.
 import { xTarget, type AddXCommand, type Preview } from "@/extension/capture";
+import { qualifyXArticleView } from "@nexus-ingest/x_article";
 
 interface BoundShare {
   source_url: string;
@@ -13,7 +14,7 @@ interface BoundShare {
 }
 let dismiss: (() => void) | null = null;
 const SHARE = 'button[aria-label="Share post"],button[aria-label="Share article"],button[aria-label="Share"]';
-const POST = 'article[data-testid="tweet"]';
+const POST = "article";
 const MENU_OPEN_MS = 2_000;
 function own(root: Element, element: Element): boolean {
   if (element.closest(POST) !== root) return false;
@@ -26,24 +27,59 @@ function bound(button: Element): BoundShare | null {
   const current = xTarget(source_url);
   const root = button.closest(POST);
   if (root !== null) {
-    const candidates = [...root.querySelectorAll('a[href] time')].flatMap(time => {
+    if (!own(root, button)) return null;
+    // A post's timestamp link and its own reply action identify the post. Body
+    // links do not: a perfectly ordinary post may link several other statuses.
+    const ids = new Set<string>();
+    for (const time of root.querySelectorAll('a[href] time')) {
       const anchor = time.closest<HTMLAnchorElement>('a[href]');
-      if (anchor === null || !own(root, anchor) || anchor.closest('[data-testid="User-Name"]') === null) return [];
+      if (anchor === null || !own(root, anchor)) continue;
       const target = xTarget(anchor.href);
-      return target?.kind === "status" ? [new URL(anchor.href).origin + new URL(anchor.href).pathname] : [];
+      if (target?.kind === "status") ids.add(target.id);
+    }
+    const group = button.closest('[role="group"]');
+    if (group !== null && own(root, group)) {
+      for (const anchor of group.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+        if (!own(root, anchor)) continue;
+        const url = new URL(anchor.href);
+        const values = url.searchParams.getAll("in_reply_to");
+        if (url.protocol === "https:" && ["x.com", "twitter.com", "mobile.twitter.com"].includes(url.hostname)
+          && url.pathname === "/compose/post" && values.length === 1 && /^[0-9]+$/u.test(values[0])) ids.add(values[0]);
+      }
+    }
+    if (ids.size !== 1) return null;
+    const [id] = ids;
+    const anchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(anchor => own(root, anchor));
+    const candidates = anchors.flatMap(anchor => {
+      const target = xTarget(anchor.href);
+      const url = new URL(anchor.href);
+      return target?.kind === "status" && target.id === id ? [url.origin + url.pathname] : [];
     });
     const urls = [...new Set(candidates)];
     if (urls.length !== 1) return null;
-    const text = [...root.querySelectorAll('[data-testid="tweetText"]')].find(element => own(root, element));
-    const name = [...root.querySelectorAll('[data-testid="User-Name"] a')].find(element => own(root, element));
+    const texts = [...new Set([...root.querySelectorAll('div[dir="auto"]')].filter(element => own(root, element))
+      .map(element => element.textContent?.trim()).filter((value): value is string => !!value))];
+    const permalink = new URL(urls[0]);
+    const handle = permalink.pathname.split("/")[1].toLowerCase();
+    const names = [...new Set(anchors.filter(anchor => new URL(anchor.href).origin === permalink.origin
+      && new URL(anchor.href).pathname.replace(/\/$/u, "").toLowerCase() === `/${handle}`)
+      .map(anchor => anchor.textContent?.trim()).filter((value): value is string => !!value && !value.startsWith("@")))];
     return { source_url, target_url: urls[0], owner: root, button, article: false,
-      preview: { title: text?.textContent?.trim().slice(0, 1024) || null, byline: name?.textContent?.trim().slice(0, 1024) || null } };
+      preview: { title: texts.length === 1 ? texts[0].slice(0, 1024) : null, byline: names.length === 1 ? names[0].slice(0, 1024) : null } };
   }
   if (current?.kind !== "article") return null;
-  const owner = button.closest('main,[data-testid="primaryColumn"]');
-  if (owner === null) return null;
-  return { source_url, target_url: source_url, owner, button, article: true,
-    preview: { title: owner.querySelector('h1')?.textContent?.trim().slice(0, 1024) || null, byline: null } };
+  const view = qualifyXArticleView(document, source_url);
+  const group = button.closest('[role="group"]');
+  if (view === null || group === null || !view.owner.contains(group) || view.body.contains(group)
+    || group.closest('[data-slot="embedded-tweet-frame"]') !== null) return null;
+  const replies = [...group.querySelectorAll<HTMLAnchorElement>('a[href]')].flatMap(anchor => {
+    const url = new URL(anchor.href);
+    return url.origin === location.origin && url.pathname === "/compose/post"
+      ? url.searchParams.getAll("in_reply_to") : [];
+  });
+  if (replies.length !== 1 || replies[0] !== view.carrier_id) return null;
+  return { source_url, target_url: source_url, owner: view.owner, button, article: true,
+    preview: { title: view.title.slice(0, 1024), byline: view.byline.slice(0, 1024) || null } };
 }
 function unchanged(value: BoundShare): boolean {
   if (!value.owner.isConnected || !value.button.isConnected || location.href !== value.source_url) return false;

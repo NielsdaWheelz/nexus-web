@@ -51,7 +51,7 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
   const latest = useRef({ open, options, onActiveChange, onActivate });
   latest.current = { open, options, onActiveChange, onActivate };
   const press = useRef<{
-    readonly key: string; readonly pointerId: number;
+    readonly key: string; readonly pointerId: number; readonly pointerType: string;
     readonly x: number; readonly y: number; moved: boolean;
   } | null>(null);
   const active = open ? options.find(option => option.key === activeKey) ?? null : null;
@@ -113,8 +113,12 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
         },
         onPointerDown(event: PointerEvent<HTMLElement>) {
           if (!event.isPrimary || event.button !== 0) return;
-          press.current = { key, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
-          if (event.pointerType !== "touch") event.preventDefault();
+          press.current = { key, pointerId: event.pointerId, pointerType: event.pointerType, x: event.clientX, y: event.clientY, moved: false };
+        },
+        onMouseDown(event: MouseEvent<HTMLElement>) {
+          // Cancel focus here; Firefox extension pages ignore pointerdown cancellation.
+          const start = press.current;
+          if (event.button === 0 && start?.key === key && start.pointerType !== "touch") event.preventDefault();
         },
         onPointerCancel() { press.current = null; },
         onClick(event: MouseEvent<HTMLElement>) {

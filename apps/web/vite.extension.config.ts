@@ -22,6 +22,7 @@ const shared: UserConfig = {
         __dirname,
         "../../node/ingest/article_extraction.mjs",
       ),
+      "@nexus-ingest/x_article": path.resolve(__dirname, "../../node/ingest/x_article.mjs"),
       "@mozilla/readability": path.resolve(
         __dirname,
         "../../node/ingest/node_modules/@mozilla/readability",

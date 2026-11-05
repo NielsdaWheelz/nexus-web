@@ -37,10 +37,15 @@ by provenance.
 - `node/ingest/ingest.mjs`: a readability filter over bytes python already
   fetched (protocol 2, below); `article_extraction.mjs` owns readable-document
   selection (the extension bundles it). Mozilla
-  Readability is the default extractor. x article pages instead require the
-  qualified `twitterArticleReadView` root and its rich-text body; unsupported
-  layouts refuse rather than invoking Readability. authored metadata and source
-  evidence come from that root too. A unique authored `main` landmark owns
+  Readability is the default extractor. `x_article.mjs` shares the native x full
+  reading-page qualifier with the extension share adapter: canonical carrier
+  route and one same-parent title, byline and body. unsupported layouts refuse
+  rather than invoking Readability. ordered authored html chunks retain their
+  semantic formatting and media; embedded post cards become source-bound
+  `twitter-tweet` evidence, and videos retain their actual poster and media link.
+  authored metadata and source evidence stay inside this reading view. the
+  route number is a carrier; the server resolves the logical article identity.
+  A unique authored `main` landmark owns
   its input so longer related-content cards cannot outscore the page body;
   absent, multiple, or unreadable main landmarks fall back to the whole
   document. A source-shape-specific pre-extraction for Wikisource proofread
