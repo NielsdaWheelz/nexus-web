@@ -1,4 +1,4 @@
-# qualify the current signed-in x share menu
+# qualify the current x share menu
 
 the supplied public x pages expose real `button[aria-label="Share"]` controls,
 but their current logged-out frontend has no `data-testid` attributes. its entry
@@ -6,12 +6,13 @@ script is `entry-client-logged-out-DoPLEsOO.js`. posts and nested quotes are
 semantic `article` elements. the former adapter required
 `article[data-testid="tweet"]` and could not bind these menus.
 
-the current public rendering was observed in owned stock firefox for both
-supplied post urls. a verified trusted share click opens x's sign-in sheet rather
-than a menu; the source code loaded and the intended control received the click.
-the approved temporary sign-in window closed at its time limit without a user
-handoff. its isolated profile is retained pending confirmation, never a personal
-browser attachment. the supplied chrislakin carrier
+the earlier login diagnosis was wrong: `xapq4x7D.js` independently displays its
+logged-out banner on scroll or a timer. `DMpst0-E.js` opens the share menu for
+anonymous users; authentication gates selected actions, not opening the menu.
+the fresh anonymous native probe opens the full article's controlled menu with
+one nexus row through pointer and keyboard. the post probes observed stale
+controls during hydration; they establish neither an authentication requirement
+nor a product defect. the supplied chrislakin carrier
 `2103620465029943764` has a full reading route with same-parent
 `data-article-part` title/byline/body and ordered `data-article-body-html` chunks;
 the former DraftJS/test-id extractor also rejected this current reader.
@@ -26,7 +27,7 @@ the same native article without replacing its browser publication.
 x's loaded `PKzv4WVs.js` opens menus on mousedown or arrow-key keydown, before or
 without click. its active trigger supplies `aria-expanded` and `aria-controls`.
 the adapter pins before opening and uses that explicit relation instead of menu
-newness. source review does not establish live authenticated portal behavior.
+newness. source review does not establish the remaining live portal behavior.
 
 resolve with native pointer/keyboard menu checks on the supplied post, quote and
 full article: one correctly owned row; no write from merely opening; exact target;

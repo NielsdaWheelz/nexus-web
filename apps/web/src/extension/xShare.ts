@@ -151,8 +151,8 @@ function begin(button: Element): void {
       target_url: target!.target_url, preview: target!.preview };
     try {
       const response = await browser.runtime.sendMessage(command) as { accepted: boolean; message: string | null };
-      if (row.isConnected && !response.accepted) { row.textContent = response.message ?? "couldn’t start this save."; row.setAttribute("role", "status"); }
-    } catch { if (row.isConnected) { row.textContent = "nexus isn’t answering. reopen this share menu."; row.setAttribute("role", "status"); } }
+      if (row.isConnected && !response.accepted) { row.textContent = response.message ?? "couldn’t start this save."; row.setAttribute("role", "status"); row.removeAttribute("aria-label"); }
+    } catch { if (row.isConnected) { row.textContent = "nexus isn’t answering. reopen this share menu."; row.setAttribute("role", "status"); row.removeAttribute("aria-label"); } }
   }
   function observe(): void {
     if (!unchanged(target!)) { stop(); return; }

@@ -8,8 +8,8 @@ selected the penultimate native action, skipping the last action.
 for arrow-down and the last for arrow-up when the focused item is not enabled.
 ordinary navigation among enabled items retains its existing wrap behavior.
 
-the correction passed independent source review but awaits a reachable signed-in
-native menu. qualify arrows from a disabled/refused nexus row and confirm native
+the correction passed independent source review. anonymous native menus are
+reachable. qualify arrows from a disabled/refused nexus row and confirm native
 actions remain reachable in order. do not force a refusal or mutate host nodes
 to claim live qualification. ordinary menu activation is tracked separately in
 [the current x menu issue](extension-current-x-dom.md).
