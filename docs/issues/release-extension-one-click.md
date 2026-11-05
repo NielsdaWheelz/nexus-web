@@ -18,11 +18,13 @@ stored event ids remain. local upload imports keep their existing ownership.
 old incompatible verified x snapshots require deliberate live repair before a
 native carrier import can attach; migration does not merge/relabel them.
 
-qualification remains open until the installed native popup's pointer/focus gate,
-library/removal controls and live x menus pass on the paired build. representative
-owner targets: `https://x.com/ftlsid/status/1967396787544899649` and
-`https://x.com/wolftivy/status/2117900288770347078`. an authentication wall requires
-an owned-profile sign-in handoff; synthetic menus do not qualify live x.
+native pointer/keyboard admission, auth/source pinning, library edits and reviewed
+removal are qualified. [wheel delivery](extension-popup-pointer-qualification.md)
+remains open by owner decision. [authenticated x menus](extension-current-x-dom.md) require an
+owned-profile sign-in handoff; synthetic menus do not qualify them. owner targets:
+`https://x.com/ftlsid/status/1967396787544899649`,
+`https://x.com/wolftivy/status/2117900288770347078` and the full reading view at
+`https://x.com/chrislakin/article/2103620465029943764`.
 
 the stopped qualification action in
 [the prior release issue](release-extension-uncertain-filing-refusal.md) remains

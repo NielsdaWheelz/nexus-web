@@ -14,7 +14,10 @@ and document removal markers retain their existing exclusions; canonical episode
 have no personal hiding marker. all's added date comes from the default holding,
 otherwise the earliest qualifying entry. named libraries organize and share direct
 media. grants, catalogue access and reads acquire no holdings. unfiled means
-default-held media without a direct named placement.
+default-held media without a direct named placement. placement snapshots expose
+effective union membership as `all_membership.included` and physical personal
+retention as `all_membership.retained`; effective all membership alone does not
+prove personal retention.
 
 entries contain only media. podcast subscriptions are independent rules, read in
 a separate section above contents; shows never fold episodes or enter media sort,
@@ -78,16 +81,24 @@ acquisition/sync do not. an inert already-absent episode retry returns the curre
 revision without a new write. ordinary `validate_acquisition_destinations` locks
 default plus all selected named libraries, requires admin authority over each named
 one and compares the removal fence. podcast bulk admission files one fenced
-destination. the placement route additionally permits
-canonical episode inclusion in the actor's actual default; default exclusion
-through that route remains forbidden.
+destination. the placement route permits supported media inclusion in the actor's
+actual default, including canonical episodes; default exclusion remains forbidden.
+
+`media.acquisition_revision` uses the same monotone sequence under the media lock.
+explicit acquisition/filing, including no-ops, accepted part restoration and source
+supersession transfer advance it; implicit retention and reads do not. generic
+workspace removal freezes this revision in `GET /media/{id}/removal-preview` and
+requires `expected_acquisition_revision` on deletion. a visible mismatch refuses
+409 before effects; an already unavailable item answers 204. an open review never
+refreshes its guard. the revision is global to the media, so another viewer's save
+can require a new review. podcast removal retains its separate scoped contract.
 
 | command | contract |
 | --- | --- |
-| `PUT /libraries/{id}/items/media:{id}` | absolute `included`, exact `expected_order_revision`; inclusion requires `expected_removal_revision`, exclusion requires null; own-default inclusion additionally permits canonical episodes |
+| `PUT /libraries/{id}/items/media:{id}` | absolute `included`, exact `expected_order_revision`; inclusion requires `expected_removal_revision`, exclusion requires null; own-default inclusion permits supported media |
 | `POST /libraries` | client id, name, `initial_items`, removal fence; empty create uses `[]` and null. create-and-file is atomic; replay never reapplies initial items |
 | `GET /libraries/destinations` | one snapshot `{removal_revision,destinations}`; complete named admin destinations |
-| `GET /libraries/placements/media:{id}` | one snapshot `{removal_revision,all_membership,placements}`; actual default id/revision, effective all inclusion and aggregate removal blocker; named direct/absent relations and exact-rule blockers |
+| `GET /libraries/placements/media:{id}` | one snapshot `{removal_revision,all_membership,placements}`; actual default id/revision, effective all inclusion, physical retention and aggregate removal blocker; named direct/absent relations and exact-rule blockers |
 | `GET /libraries/{id}/entries` | complete intersected media view plus library and podcast section in one snapshot; structural revision only for unfiltered named manual order |
 | `GET /libraries/{id}/order` | complete visible entry ids and revision |
 | `PUT /libraries/{id}/entries/{entry_id}/position` | exact revision, nullable successor; preserves entry identity/date |

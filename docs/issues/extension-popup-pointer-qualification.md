@@ -1,20 +1,22 @@
-# qualify pointer input in the capture popup
+# qualify native wheel delivery in the extension popup
 
-actual pointer scrolling and activation in the small firefox capture popup remain
-unrun. no product pointer defect is established. native keyboard scrolling,
-retry, deliberate tuck and restore are qualified at `cd7d935bb`.
+on `af131cf48`, stock firefox 158.0.1 delivers trusted pointer activation and
+typing into the installed one-click popup. permission/sign-in, library disclosure,
+filter typing and reviewed removal activation have been observed. the previous
+capture draft/held-notice workflow was removed by this cutover.
 
-after discarding a capture, an unanswered disconnection leaves a held notice in
-a content-sized 360×66 popup. its reason requires native scrolling. the temporary
-webdriver probe sent intended popup-local `(26,32)` wheel input as trusted popup
-client `(987,113)`; using local coordinates instead reached browser chrome.
-these observations establish an input-delivery limitation, not inert scrolling.
+wheel qualification remains open. an owned headless webdriver wheel action
+returned success, but the popup received no wheel event and its library list stayed
+at scroll top zero. exact popup/embedder rectangles work for pointer activation;
+they did not establish wheel delivery. this is a tooling limit, not evidence of a
+product scrolling defect. the 2026-11-04 owner decision is to continue headless and
+leave this qualification open; visible/native desktop verification was declined.
 
 owners: `apps/web/src/extension/popup.tsx` and the native firefox qualification
-caller of `python/scripts/lab_firefox.py`. establish the actual popup input
-context before interpreting pointer results.
+caller of `python/scripts/lab_firefox.py`. establish the supported wheel input
+context without geometry changes, javascript scrolling or a product seam.
 
-resolved when ordinary pointer input in the actual extension exposes the complete
-reason, activates retry, and tucks/restores the same unanswered command on the
-current build. record actual delivery and outcome; do not substitute javascript
-clicks, forced scrolling, changed popup geometry or keyboard input for that proof.
+resolved when an ordinary trusted wheel event reaches the actual popup list and
+changes its scroll position, with its controls still usable. keyboard scrolling
+does not substitute for that observation. desktop access requires a new scoped
+approval. the separate stopped lost-answer oracle remains prohibited.

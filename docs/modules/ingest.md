@@ -102,7 +102,6 @@ uploads and captures (`Data{data}`; the web under `/api`, the extension under `/
 | `POST /extension/captures` | `{id, kind, source_url, filename, content_type, size_bytes, sha256, source_binding}` | upload answer union | frozen target or checked absence; no destinations or manual repair discriminator |
 | `POST /extension/captures/{session_id}/confirm` | `{generation, expected_removal_revision}` | `Published` | same upload generation and target; receipt replay precedes current checks |
 | `DELETE /extension/captures/{session_id}` | none | 204 | unpublished session cleanup only; published is 409 |
-| `GET /extension/library-destinations` | no query parameters | complete `{removal_revision,destinations:[{id,name}]}` | read; no create authority |
 | `POST /auth/extension-sessions` (account) | none | 201 `{id, token, created_at}` | a new token per call; the extension keeps the last |
 | `GET`, `DELETE /auth/extension-sessions/current` (bearer) | none | `{user_id, email, display_name, limits}`, 204 | a revoked or unknown token is 401, which the extension reads as revoked |
 

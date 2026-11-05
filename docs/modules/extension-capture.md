@@ -24,9 +24,11 @@ checks the document and spa route again. completed bytes no longer need the page
 changing tabs cannot retarget an admitted operation.
 
 the x adapter has standing access only to x.com, twitter.com and mobile.twitter.com.
-it binds the trusted share invocation to the owning item before the portaled menu
-exists, excludes nested quote links, and inserts one `add to nexus` row. its
-observer lives only while the menu is open. the background independently validates
+it pins the owning item before native pointer/key activation opens the portal,
+excludes nested quote links, and inserts one `add to nexus` row. the active
+trigger's `aria-expanded`/`aria-controls` relation identifies the menu; source and
+menu ownership are checked again before submission. observation ends when that
+relation or source changes. the background independently validates
 sender/frame/host/target; page scripts never receive credentials or general commands.
 
 ## ownership

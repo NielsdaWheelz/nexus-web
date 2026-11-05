@@ -154,8 +154,11 @@ selection scope while execution keeps the same catalog command ids.
   personal default. removal projects subscription protection as
   `PodcastSubscription` and read-only contributions as `PermissionDenied`.
   named `LibraryPlacement` stays separate, with subscribed placements locked.
-  episode removal uses its full guarded preview and command; generic `RemoveMedia`
-  serves other media.
+  episode removal uses its full guarded preview and command. generic `RemoveMedia`
+  fetches the shared media-removal preview before reviewing other media, then
+  deletes with that frozen acquisition revision. a conflict requires new review;
+  it cannot silently refresh the guard. the app and extension share the same owner
+  and consequence copy; authored notes and highlights survive removal.
 - `resourceActions` is the finite media/podcast subject contract shared by pane
   chrome and collection rows. domain hooks supply complete `accessibleLabel`
   values for inline controls and short `menuLabel` values for menu adapters.
