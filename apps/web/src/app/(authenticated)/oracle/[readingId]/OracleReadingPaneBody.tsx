@@ -29,9 +29,6 @@ import {
   usePaneParam,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import {
-  toReaderCitationData,
-} from "@/lib/resourceGraph/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { toRoman } from "@/lib/toRoman";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -306,7 +303,7 @@ export default function OracleReadingPaneBody() {
                     {passage.citation !== null && (
                       <span className={styles.citation}>
                         <ReaderCitation
-                          {...toReaderCitationData(passage.citation)}
+                          {...passage.citation}
                         />
                       </span>
                     )}

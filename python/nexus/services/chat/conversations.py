@@ -13,6 +13,7 @@ media, matching the tool effect fence while its conversation lock prevents admis
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -504,27 +505,31 @@ _MESSAGE_CURSOR = (
     SortKey("seq", "asc", _INT),
     SortKey("id", "asc", _ID),
     SortKey("offset", "asc", _INT),
+    SortKey("rendered", "asc", _TEXT),
 )
 
 
 def read_message_page(
     db: Session, *, viewer_id: UUID, ref: ResourceRef, cursor: str | None
 ) -> ConversationReadPage | ConversationReadRefusal:
-    """Bounded completed-message text for the agent's read tool, in one statement snapshot.
+    """Bounded completed-message text in the caller's repeatable-read snapshot.
 
     A cursor binds the metadata revision: completing, editing or deleting a message,
-    or a late branch, makes it stale.
+    or a late branch makes it stale. A partial-message cursor also binds its
+    disclosed rendering; source authority cannot silently move that offset.
     """
 
     binding = {"list": "CompletedMessages", "viewer": viewer_id, "uri": ref.uri}
-    revision, after_seq, after_id, offset = None, -1, UUID(int=0), 0
+    revision, after_seq, after_id, offset, rendered = None, -1, UUID(int=0), 0, ""
     if cursor is not None:
         try:
             values = decode_keyset_cursor(cursor, binding, _MESSAGE_CURSOR)
         except InvalidRequestError:
             return ConversationReadRefusal("invalid_cursor")
-        revision, after_seq, after_id, offset = cast(tuple[str, int, UUID, int], values)
-        if after_seq < 1 or offset < 0:
+        revision, after_seq, after_id, offset, rendered = cast(
+            tuple[str, int, UUID, int, str], values
+        )
+        if after_seq < 1 or offset < 0 or (offset == 0) != (rendered == ""):
             return ConversationReadRefusal("invalid_cursor")
     record = (
         db.execute(
@@ -588,9 +593,17 @@ def read_message_page(
     for position, message in enumerate(record["messages"]):
         body = message["content"]
         if message["reader_selection_snapshot"] is not None:
-            snapshot = quotes.decode(message["reader_selection_snapshot"])
-            body = f"{quotes.snapshot_block(snapshot, 'historical_reader_selection')}\n{body}"
+            quote = quotes.snapshot_block(
+                db,
+                viewer_id,
+                quotes.decode(message["reader_selection_snapshot"]),
+                "historical_reader_selection",
+            )
+            body = f"{quote}\n{body}"
         start = offset if message["id"] == str(after_id) else 0
+        rendered_hash = hashlib.sha256(body.encode()).hexdigest()
+        if start > 0 and rendered_hash != rendered:
+            return ConversationReadRefusal("stale_cursor")
         total = len(body)
         if start > total or (start > 0 and start == total):
             return ConversationReadRefusal("invalid_cursor")
@@ -615,6 +628,7 @@ def read_message_page(
                     "seq": message["seq"],
                     "id": message["id"],
                     "offset": end if end < total else 0,
+                    "rendered": rendered_hash if end < total else "",
                 },
             )
         if end < total:

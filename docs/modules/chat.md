@@ -46,7 +46,7 @@ store and the views).
 - **selection**: an exact catalog `route/model/reasoning`; never substituted.
 - **account selection**: the last accepted generation choice, ordered by committed
   admission. it seeds untouched ordinary composers across chats and devices.
-- **quote**: immutable captured evidence on a user turn; a saved-highlight key or `null` for an unsaved passage.
+- **quote**: immutable captured evidence on a user turn; an existing `highlight_ref` or `null` for a raw passage.
 - **context**: the chat's scope refs (future prompt membership), frozen per run as
   `tool_scope`.
 - **citation**: a model-visible candidate ordinal, then a published edge with a dense
@@ -92,17 +92,18 @@ re-present existing data and never refetch, publish, reorder or move focus.
 | `PATCH /messages/{id}/fork-title` | `{title, expected_title}` | `ForkTitleOut{fork_title, updated_at}` | absolute title plus the title it replaces: already so named succeeds; named otherwise is 409 with `details.current_title` |
 | `DELETE /messages/{id}?conversation_id&expected_revision` | none | `{conversation_id, conversation_deleted}` | idempotent: an absent target is a no-op; a stale revision is 409 |
 | `DELETE /conversations/{id}?expected_revision` | none | 204 | idempotent, as above |
-| `GET /chat-reader-selections/highlights/{id}?media_id` | none | `ReaderSelectionPreview{key, item, revision}` | read |
+| `POST /chat-reader-selections/preview` | `{key, expected_capture_revision}` | `ReaderSelectionPreview{key, expected_capture_revision, item, revision}` | private no-store read; no writes |
 | `GET /stream/chat-runs/{id}/events?after=N` | none | sse `assistant_text_delta{text}`, `tool_call_start`, `tool_result`, `context_ref_added{id, resource_ref}`, `done{status}`; unsequenced `ExecutionAdvisory{phase, cancel_requested}` | resume from the last seen sequence |
 
 a send's `destination` is `{kind:"New", expected_deletion_revision}` or
 `{kind:"Existing", conversation_id, expected_revision, insertion:
 {kind:"Empty"} | {kind:"Reply", parent_message_id, branch_anchor}}`. creation,
 message pair, run, frozen prompt, job and remembered selection commit together.
-`reader_selection` is null, `{kind:"highlight", key, revision}`, or
+`reader_selection` is null, `{kind:"highlight", key, expected_capture_revision, revision}`, or
 `{kind:"passage", reading_ref, source_ref, capture:SelectionCapture}`. the latter
 carries no authored passage binding. raw capture and saved-highlight preview share
-canonical evidence validation; neither ask creates authored links or highlights.
+canonical evidence validation. neither creates a highlight; a chosen saved highlight
+adds its owned annotation through ordinary live context. raw asks create no authored links.
 requests forbid extra keys. `GET/PATCH /me` expose the read-only positive decimal
 `chat_deletion_revision` used by fresh creation preparation.
 
@@ -369,8 +370,11 @@ and source arrival remain resource-owned.
     automatic context additions only while the admitted context version is current.
 13. a quote freezes canonical evidence once. raw input proves current publication,
     selected words and reading scope; saved input compares its preview revision.
-    historical words and credits never reread mutable content. saved keys remain
-    unchanged; raw snapshot keys are null. source opening proves current selected
+    historical words and credits never reread mutable content. the canonical snapshot is `{evidence, highlight_ref}`; raw
+    `highlight_ref` is null. saved input freezes the displayed capture revision
+    before upload; preview and admission must still match it. current disclosure
+    gates current and historical prompt quotes. annotations stay live in ordinary
+    context and never enter the frozen quote. source opening proves current selected
     coordinates in one read-only repeatable-read snapshot. transcript capture identity
     is provenance, while opening returns the current viewed document identity.
 14. prompt preparation pages context metadata, measures stored bytes before bodies,
@@ -378,7 +382,7 @@ and source arrival remain resource-owned.
     and newest-first within both budgets. mandatory context never drops. automatic
     quote source facts remain identity/tool-scope only, including x follow-ups; direct
     citation construction consumes admitted evidence without discovery search.
-    explicitly attached highlights keep the owner's annotation after a bounded
+    chosen saved highlights keep the owner's live annotation after a bounded
     read. selecting that same saved highlight quotes it once; the annotation stays
     separate and never enters captured reader evidence.
 15. text frames: at most 512 chars, 2048 bytes or 33 ms each, in order, each its own
@@ -414,6 +418,15 @@ and source arrival remain resource-owned.
 reader maps project one native quote root per owned user turn, with a `quotes` count,
 `chat quotes` facet and neutral marker. no authored edge is fabricated. the quote
 connection opens its chat; source activation opens the authorized reading/capture.
-existing annotations revisions and `Chats` invalidation refresh mounted maps. raw
+existing annotation revisions and `Chats` invalidation refresh mounted maps. raw
 asks retain source tool access without eagerly inserting the complete work into each
 prompt. drafts/attempts survive tab-local remounts, not browser closure or reload.
+
+quote review carries the original pane, visit, draft owner and attachment identity
+through an adjacent source pane. replacement also proves the current route belongs
+to that conversation before synchronously changing the quote. question, caret and
+model survive; sending is a separate gesture. cancellation only leaves review mode
+and preserves source writing. replacement retires only the unchanged source draft
+after its guarded transfer succeeds. removing/replacing a quote or retiring its
+draft revokes an undispatched preparation; hiding a pane does not. dispatched
+requests retain their original bytes and run id.

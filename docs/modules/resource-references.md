@@ -195,13 +195,14 @@ draft attachment controls and citation preview lifetimes remain with their calle
 historical outline items likewise retain supplied evidence before considering local
 authorship; ordinary authored rows keep their authoritative local reads.
 
-an unsent reader quote supplies its actual `SelectionCapture`, captured source
-attribution and nullable source href. it uses the shared excerpt projection without
+an unsent reader quote supplies its actual raw-capture or displayed saved
+`ExcerptView`, known source attribution and nullable source href. it uses the
+shared excerpt projection without
 manufacturing a `ResourceItemOut`, fetching a highlight or owning a second renderer.
 after admission the user message owns the immutable evidence. the quote's `ref`
 and `action_ref` are that message; its title opens the source occurrence through
-`#quote-<message_id>`. a nullable highlight key records an explicitly selected saved
-highlight. asking about an unsaved passage creates no highlight, passage anchor or
+`#quote-<message_id>`. a nullable `highlight_ref` records an explicitly selected saved
+highlight; its annotation remains ordinary live owned context. asking about an unsaved passage creates no highlight, passage anchor or
 annotation. reader maps expose it as `ReaderQuote`, with a separate `quotes` count
 and neutral marker; its map action opens the owning chat. admission and deletion
 invalidate the existing reader projections; the message owns the quote's lifetime.
@@ -493,3 +494,8 @@ and invalidation after graph/resource changes. the current `NoteEditor` and
 outline insertion line share these bindings; suggestions stay bounded and inline.
 editor transactions, authored snapshots, undo and context review remain with
 the existing journal and outline owners.
+
+reader draft quotations use `ResourceQuotation.renderSourceControl` for a command
+that carries their full source destination in memory. sent quotations and citations
+use the same passive evidence body with their native source links. a frozen passage
+never implies a separately frozen highlight annotation.

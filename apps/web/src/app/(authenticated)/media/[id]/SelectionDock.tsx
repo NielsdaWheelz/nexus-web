@@ -441,6 +441,12 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
         {more}
       </> : null}
     </div>;
+    const review = composer.quoteReview ? <div className={styles.dock} data-passage-interaction>
+      <Button disabled={blockedReason !== null} onClick={event => {
+        if (settleInput(event.currentTarget)) composer.replaceQuote();
+      }}>replace quoted passage</Button>
+      <Button onClick={composer.quoteReview.finish}>cancel review</Button>
+    </div> : null;
     const savedAnnotation = <>
       {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
       {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
@@ -460,7 +466,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     </>;
     return <div data-mobile={isMobile} className={styles.selectionComposer}>
       {toolbar}
-      {isMobile ? <div className={styles.selectionDetails} data-fresh={fresh}>{refinementControls}{savedAnnotation}{feedback}</div> : savedAnnotation}
+      {isMobile ? <div className={styles.selectionDetails} data-fresh={fresh}>{refinementControls}{review}{savedAnnotation}{feedback}</div> : <>{review}{savedAnnotation}</>}
       <div className={isMobile ? styles.selectionInputRow : undefined}>
         <div data-selection-composer={opening.id} data-passage-interaction data-passage-question className={styles.selectionInput}
           onCompositionStartCapture={composer.compositionStart} onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
@@ -487,6 +493,8 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
   };
   const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
+    {composer.quoteReview && draft === null ? <Field id={fieldId} line={{fact: "select the passage to use in your question."}}
+      verbs={[{label: "cancel review", commandKey: "CancelQuoteReview", run: composer.quoteReview.finish}]} /> : null}
     {composer.hiddenPreparationFailures.map(failure => <HiddenPreparationFailure key={failure.id} failure={failure} copy={copy} />)}
     {draft === null ? copying.notice : null}
     {isMobile ? (draft && opening) || verbs.bounds ? <div ref={mobileSurface} className={styles.mobileComposer} role="group" aria-label="passage composer"

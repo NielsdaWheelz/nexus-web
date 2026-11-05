@@ -37,7 +37,7 @@ from nexus.services import media as media_service
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 from nexus.services.oracle import readings as oracle_readings
-from nexus.services.resource_items.versions import annotations_revision
+from nexus.services.resource_items.versions import evidence_revision
 
 router = APIRouter(tags=["streaming"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -152,16 +152,16 @@ async def _snapshot_stream(
 
 @router.get("/stream/writing")
 async def stream_writing(request: Request, viewer: ViewerDep) -> StreamingResponse:
-    """Listen first, then read the authored head and annotation token in every fresh snapshot.
+    """Listen first, then read the authored head and independent evidence token.
 
     A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
-    refetch document maps whose ``annotations_version`` moved."""
+    refetch document maps whose ``evidence_version`` moved."""
 
     def read() -> Snapshot:
         with _snapshot() as db:
             revision = str(authored.head(db, viewer.user_id))
-            annotations = annotations_revision(db, viewer_id=viewer.user_id)
-        state = WritingState(revision=revision, annotations_revision=str(annotations))
+            evidence = evidence_revision(db, viewer_id=viewer.user_id)
+        state = WritingState(revision=revision, evidence_revision=evidence)
         return state.model_dump(mode="json"), False
 
     return await _snapshot_stream(request, "nexus_writing", viewer.user_id, read)

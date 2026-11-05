@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from nexus.schemas.document_embeds import DocumentEmbedOut
+from nexus.schemas.reader_document import ReaderCitationOccurrenceOut, ReaderUnitOut
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerKind,
     ReaderDocumentMapMarkerOut,
@@ -31,6 +33,49 @@ _ITEM_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
     "Link": "Link",
     "MachineLink": "MachineLink",
 }
+
+
+def evidence_root_key(root: ReaderEvidenceRootOut) -> str:
+    """Citation occurrences keep their identity when they share a referenced resource."""
+    if len(root.direct_facts) == 1:
+        fact = root.direct_facts[0]
+        if fact.origin == "citation" and fact.ordinal is not None:
+            return str(fact.edge_id)
+    return root.ref
+
+
+def citation_point_markers(
+    *,
+    occurrences: list[ReaderCitationOccurrenceOut],
+    units: Sequence[ReaderUnitOut],
+) -> list[ReaderDocumentMapMarkerOut]:
+    """A declared reference has a source point even without any captured target words."""
+    from nexus.services.reader_document import reading_source_ranges
+
+    ranges = reading_source_ranges(list(units))
+    total = sum(end - start for _unit, start, end in ranges)
+    result = []
+    for occurrence in occurrences:
+        point = occurrence.at
+        if point is None:
+            continue
+        before = 0
+        for unit, start, end in ranges:
+            if unit.id == point.unit_id and start <= point.offset <= end:
+                marker = _marker(
+                    kind="GeneratedCitation",
+                    item_id=str(occurrence.citation.edge_id),
+                    position=(before + point.offset - start) / total if total else 0,
+                    end_position=None,
+                    tone="Citation",
+                    label=occurrence.citation.item.label,
+                    preview=preview_texts([occurrence.citation.item])[0] or None,
+                )
+                marker.id = f"marker:{occurrence.citation.edge_id}"
+                result.append(marker)
+                break
+            before += end - start
+    return result
 
 
 def build_markers(
@@ -103,7 +148,9 @@ def build_markers(
     previews = iter(
         preview_texts(
             [
-                root.content.item
+                root.content.quotation
+                if isinstance(root.content, ReaderEvidenceQuoteOut)
+                else root.content.item
                 for root, _, _ in placed
                 if not isinstance(root.content, ReaderEvidenceSourceReferenceOut)
             ]
@@ -120,10 +167,10 @@ def build_markers(
         kind: ReaderDocumentMapMarkerKind
         if isinstance(content, ReaderEvidenceHighlightOut):
             kind = "Highlight"
-        elif isinstance(content, ReaderEvidenceQuoteOut):
-            kind = "ReaderQuote"
         elif isinstance(content, ReaderEvidenceSourceReferenceOut):
             kind = "SourceReference"
+        elif isinstance(content, ReaderEvidenceQuoteOut):
+            kind = "ReaderQuote"
         elif any(
             fact.origin == "citation" and fact.ordinal is not None for fact in root.direct_facts
         ):
@@ -134,14 +181,14 @@ def build_markers(
             kind = "MachineLink"
         marker = _marker(
             kind=kind,
-            item_id=root.ref,
+            item_id=evidence_root_key(root),
             position=position,
             end_position=end_fraction(locator),
             tone=_ITEM_TONES[kind],
             label=label,
             preview=preview or None,
         )
-        marker.id = f"marker:{root.ref}"
+        marker.id = f"marker:{evidence_root_key(root)}"
         markers.append(marker)
     markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
     return markers

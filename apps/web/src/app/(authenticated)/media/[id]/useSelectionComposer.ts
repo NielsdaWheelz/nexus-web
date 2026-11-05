@@ -26,12 +26,12 @@ import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { chatView } from "@/lib/chat/tree";
 import { readCatalog } from "@/lib/chat/catalog";
-import { launchReaderChat } from "@/lib/chat/readerIntent";
+import { captureReaderQuote, launchReaderChat, replaceReaderQuote, type ReaderQuoteReturn } from "@/lib/chat/readerIntent";
 import { type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { rejectedSelectionFact, useReaderState, type DraftAnchor, type Mark, type SelectionCapture, type SelectionEvent, type SelectionNotice } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
-import { sourceTarget, type HighlightColor } from "@/lib/documentReader/model";
+import { type HighlightColor } from "@/lib/documentReader/model";
 import { captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
 import { LocalCommitError, isAuthoredStorageFailure, type LocalCommit } from "@/lib/notes/runtime";
 import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
@@ -65,6 +65,7 @@ export function useSelectionComposer(input: {
   active: boolean;
   isMobile: boolean;
   boundsActive: boolean;
+  quoteReview: { readonly target: ReaderQuoteReturn; readonly finish: () => void } | null;
   onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
 }) {
   const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError } = input;
@@ -472,6 +473,37 @@ export function useSelectionComposer(input: {
     if (!entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive) return;
     setPickerDraftId(entry.id);
   };
+  const quoteFor = (entry: ComposerDraft) => {
+    const shown = reader.getState().document;
+    if (shown.status !== "ready" || shown.refreshing || !activeRef.current ||
+      entry.highlightId === null && shown.doc.identity !== entry.passage.identity) return null;
+    // The render snapshot is the row the user saw; a later lookup cannot authorize it.
+    const annotation = entry.highlightId ? copyAnnotation : null;
+    if (entry.highlightId && annotation?.id !== entry.highlightId) return null;
+    const sourceRef = entry.capture?.sourceRef ?? annotation?.sourceRef ?? `media:${mediaId}`;
+    const label = sourceLabel(sourceRef);
+    return captureReaderQuote({ doc: shown.doc, scope: {kind: "media", media_id: mediaId},
+      anchor: entry.passage.anchor, capture: entry.capture, annotation,
+      source: {ref: sourceRef, title: label?.label ?? null, media_kind: null, contributors: null, location_label: null} });
+  };
+  const replaceQuote = () => {
+    const review = input.quoteReview;
+    if (!review || !prepareInteraction()) return;
+    const entry = current.current && get(current.current.draftId);
+    if (!entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue) return;
+    const quote = quoteFor(entry);
+    if (!quote) {
+      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "select the passage again.", reason: "your words are kept."}}}));
+      return;
+    }
+    if (!canAbandon()) return;
+    if (!replaceReaderQuote(ctx.workspace(), review.target, quote)) {
+      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "the original draft changed or closed."}}}));
+      return;
+    }
+    review.finish();
+    if (get(entry.id)?.revision === entry.revision) close(entry.id);
+  };
   const transferringChat = useRef(false);
   const sendChat = (target: "New" | "Existing") => {
     if (transferringChat.current || !prepareInteraction()) return;
@@ -493,26 +525,21 @@ export function useSelectionComposer(input: {
     const observed = selected.kind === "Selected" && selected.snapshot.kind === "Ready" ? selected.snapshot.tree : null;
     const view = observed ? chatView({messages: new Map(observed.messages.map(message => [message.id,message])), leafId: observed.active_leaf_message_id, history: "Ready"}, observed.conversation.id, null) : null;
     const selection = memory.fresh(catalog) ?? {kind: "Uninitialized" as const};
-    const shown = reader.getState().document;
-    const anchor = entry.passage.anchor;
-    const portable = shown.status === "ready" && shown.doc.identity === entry.passage.identity
-      ? sourceTarget(shown.doc, anchor.kind === "text" ? {kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end} : {kind: "quads", page: anchor.page, quads: anchor.quads}) : null;
-    const href = portable && reader.navigation ? reader.navigation.href({source_identity: entry.passage.identity, target: portable}) : null;
-    const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
-    const sourceRef = entry.capture?.sourceRef ?? annotation?.sourceRef ?? `media:${mediaId}`;
-    const label = sourceLabel(sourceRef);
+    const quote = quoteFor(entry);
+    if (!quote) {
+      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "select the passage again.", reason: "your words are kept."}}}));
+      return;
+    }
     const revision = entry.revision;
     transferringChat.current = true;
     try {
       const result = launchReaderChat({ctx, guard, originPaneId: pane.paneId, question: text,
-        capture: entry.capture, sourceMediaId: mediaId, captureId: null, highlightId: entry.highlightId,
+        quote,
         selection, catalog,
         destination: target === "Existing" && selected.kind === "Selected" ? {kind: "Existing", conversationId: selected.id,
           write: observed && view && (view.target.kind === "Empty" || view.target.kind === "Reply") ? {expected_revision: observed.conversation.branch_revision,
-            insertion: view.target.kind === "Empty" ? {kind: "Empty"} : {kind: "Reply", parent_message_id: view.target.parentId, branch_anchor: view.target.anchor}} : null} : {kind: "New"},
-        source: {ref: sourceRef, title: label?.label ?? null, media_kind: null, contributors: null, location_label: null}, href});
+            insertion: view.target.kind === "Empty" ? {kind: "Empty"} : {kind: "Reply", parent_message_id: view.target.parentId, branch_anchor: view.target.anchor}} : null} : {kind: "New"}});
       if (result.kind === "Opened" && get(entry.id)?.revision === revision) close(entry.id);
-      else if (result.kind === "Refused") store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: result.line}}));
     } finally { transferringChat.current = false; }
   };
   const restoreHistoryFocus = () => {
@@ -522,9 +549,10 @@ export function useSelectionComposer(input: {
   return {
     protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
     draft, opening, copyQuote, copyUnavailable, branchCue, prepareInteraction, selectionBlocked,
+    quoteReview: input.quoteReview, replaceQuote,
     hiddenPreparationFailures: hidden && hidden.issue?.kind === "Failed" && hidden.issue.phase === "Preparation"
       ? [{id: hidden.id, issue: hidden.issue, busy: hidden.operation !== null, text: bodyHasContent(hidden.body) ? hidden.body.body_text : null}] : [],
-    annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,
+    annotation: copyAnnotation,
     reselection, cancelReselection,
     mobileSelection: refinement?.candidate?.kind === "Captured" ? {id: refinement.id, capture: refinement.candidate} : null,
     selectionVisible: refinement !== null && refinement.candidate?.kind === "Captured" && !refinement.inputHeld,

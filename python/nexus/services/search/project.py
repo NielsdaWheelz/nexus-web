@@ -350,6 +350,7 @@ def project(
         }
         attribution = source_metadata.get(owner.uri)
         frozen_source = CapturedSource(
+            attribution_text=attribution.attribution_text if attribution else None,
             ref=owner.uri,
             title=attribution.title if attribution else None,
             media_kind=attribution.media_kind if attribution else None,
@@ -424,7 +425,7 @@ def project(
             else None,
         )
         values["captured_evidence"] = CapturedEvidence(
-            quote=quote, source=frozen_source, target=frozen_target
+            quote=quote, source=frozen_source, target=frozen_target, completion_ref=None
         )
         model = RESULT_MODELS[t]
         results.append(model(**{k: v for k, v in values.items() if k in model.model_fields}))

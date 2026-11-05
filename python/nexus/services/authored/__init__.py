@@ -32,7 +32,7 @@ from nexus.schemas.authored import (
 )
 from nexus.services.authored import helper
 from nexus.services.resource_graph.refs import require_ref
-from nexus.services.resource_items.versions import annotations_revision
+from nexus.services.resource_items.versions import evidence_revision
 
 MAX_CHANGE_BYTES = 2 * 1024 * 1024
 MAX_ENVELOPE_BYTES = 3 * 1024 * 1024
@@ -463,7 +463,7 @@ def _persist_unchecked(db: Session, account_id: UUID, result: MergeResult) -> No
     ):
         if identities and db.scalar(
             text(
-                f"SELECT EXISTS (SELECT 1 FROM {table} WHERE id=ANY(CAST(:ids AS uuid[])) AND user_id<>:a)"
+                f"SELECT EXISTS (SELECT 1 FROM {table} WHERE id=ANY(CAST(:ids AS uuid[])) AND user_id IS DISTINCT FROM :a)"
             ),
             {"a": account_id, "ids": identities},
         ):
@@ -667,9 +667,11 @@ def server_command(
         for field in ("endpoint_a", "endpoint_b")
     }
     sources = {intent["source_ref"] for intent in intents if "source_ref" in intent}
-    states = read_states(
-        db, account_id, resource_refs=list(set(resource_refs) | endpoints), link_ids=link_ids
-    )
+    # Resource mutations need their exact baselines. Link preparation reads its
+    # pair and bounded incident tails; endpoint existence/liveness is the caller's
+    # metadata gate under this account head, never a reason to load resource bodies.
+    resources = set(resource_refs) | {intent["ref"] for intent in intents if "ref" in intent}
+    states = read_states(db, account_id, resource_refs=list(resources), link_ids=link_ids)
     # One untouched tail survives at most one removal/move per intent. This
     # bounded prefix lets the kernel append after earlier effects in the same
     # command without sending a large page's entire adjacency to Node. Ignore
@@ -807,7 +809,7 @@ def download(db: Session, account_id: UUID, after: int) -> DownloadChanges:
             break
         changes.append(change)
     return DownloadChanges(
-        annotations_revision=annotations_revision(db, viewer_id=account_id),
+        evidence_revision=evidence_revision(db, viewer_id=account_id),
         changes=changes,
         next_cursor=changes[-1].server_seq if changes else str(after),
         head_cursor=str(watermark),

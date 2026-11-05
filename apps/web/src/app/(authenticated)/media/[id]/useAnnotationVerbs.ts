@@ -102,6 +102,7 @@ export function useAnnotationVerbs(input: {
   /** The marks mounted in the reader; pane entries wait for their first load. */
   readonly marks: readonly Mark[] | null;
   readonly openEvidence: (itemId: string | null) => void;
+  readonly quoteReview: Parameters<typeof useSelectionComposer>[0]["quoteReview"];
 }): AnnotationVerbs {
   const { reader, mediaId, sourceLabel, active, isMobile, store, marks, openEvidence } = input;
   const writing = useWritingRuntime();
@@ -192,7 +193,7 @@ export function useAnnotationVerbs(input: {
     [outcome, showNotice],
   );
 
-  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, onError: fail });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, quoteReview: input.quoteReview, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
 

@@ -15,7 +15,6 @@ import { messageActions, type Link, type Live } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { truncateText } from "@/lib/display/format";
-import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import AssistantTrust from "./AssistantTrust";
 import { useChatPane } from "./ChatSurface";
@@ -70,7 +69,6 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
   const stopped = Boolean(saved?.cancel_requested || live?.execution?.cancel_requested);
   const link: Link = (pending && live?.link) || { kind: "Live" };
   const text = pending ? (live?.text ?? "") : message.content;
-  const citations = useMemo(() => message.citations.map(toReaderCitationData), [message.citations]);
   const liveRunId = live?.runId ?? null;
   const liveTools = live?.tools ?? null;
   const actions = useMemo(
@@ -197,7 +195,7 @@ export default function AssistantMessage({ message, ordinal, live, latest, engag
           data-pane-find-message-ordinal={ordinal}
           data-pane-find-role="assistant"
         >
-          <MarkdownMessage presentation="chat" content={text} citations={citations} />
+          <MarkdownMessage presentation="chat" content={text} citations={message.citations} />
         </div>
       ) : null}
       {run.publication_warning != null ? <Fact line={{

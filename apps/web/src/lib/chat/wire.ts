@@ -74,8 +74,8 @@ const REASONS: Readonly<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE
   E_READER_SELECTION_STALE: "the quoted passage changed.",
   E_READER_SELECTION_NOT_FOUND: UNQUOTABLE,
   E_READER_SELECTION_FORBIDDEN: UNQUOTABLE,
-  E_READER_SELECTION_GEOMETRY_ONLY: UNQUOTABLE,
-  E_READER_SELECTION_TOO_LARGE: UNQUOTABLE,
+  E_READER_SELECTION_GEOMETRY_ONLY: "this passage has no text to quote.",
+  E_READER_SELECTION_TOO_LARGE: "this passage is too long to quote.",
   E_CONVERSATION_NO_LONGER_EMPTY: "this chat has messages now.",
   E_GENERATION_CONTEXT_TOO_LARGE: "this chat is too long for this model.",
 };
@@ -83,7 +83,8 @@ const isReasoned = (code: string): code is keyof typeof REASONS => code in REASO
 
 /** The reader's refusal of a passage, by the same record: its sentence, or null for any other code. */
 export const unquotable = (error: ApiError): string | null =>
-  isReasoned(error.code) && REASONS[error.code] === UNQUOTABLE ? UNQUOTABLE : null;
+  isReasoned(error.code) && (REASONS[error.code] === UNQUOTABLE || error.code === "E_READER_SELECTION_GEOMETRY_ONLY" || error.code === "E_READER_SELECTION_TOO_LARGE")
+    ? REASONS[error.code] : null;
 
 /** A refused chat command as it reads. `error` is the failure whose transport gave the reason, so
  * that transport's verbs follow the line; a domain or local reason takes none. */

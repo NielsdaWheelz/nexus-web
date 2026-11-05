@@ -314,7 +314,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       const current = ready();
       const displayed = current?.doc.identity === doc.identity
         ? current.doc.kind === "text" && doc.kind === "text"
-          ? { ...current.doc, units: doc.units, title: doc.title, embeds: doc.embeds, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
+          ? { ...current.doc, units: doc.units, title: doc.title, embeds: doc.embeds, citationOccurrences: doc.citationOccurrences, xArticleContent: doc.xArticleContent, transcriptNavigation: doc.transcriptNavigation, transcriptCoverage: doc.transcriptCoverage, sections: doc.sections, toc: doc.toc }
           : { ...current.doc, title: doc.title }
         : doc;
       if (current?.doc.identity === doc.identity && (!recoverPosition || sync?.state().kind !== "LoadFailed")) {

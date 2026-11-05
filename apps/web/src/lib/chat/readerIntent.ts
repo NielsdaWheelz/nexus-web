@@ -1,83 +1,107 @@
 "use client";
 
 import type { ResourceQuotationCapture } from "@/components/resources/ResourceQuotation";
-import type { Line } from "@/components/feedback/stage";
+import { excerptView } from "@nexus/authored/excerpt";
 import type { ActionContext } from "@/lib/actions/ResourceActionsProvider";
-import type { Capture } from "@/lib/documentReader/annotations";
-import type { WorkGuard } from "@/lib/unsavedWork";
+import { apiFetch } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/retry";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import { getChatDraft, type Draft, type DraftQuote } from "./drafts";
+import { placeSelection, type Capture, type ReaderAnnotation } from "@/lib/documentReader/annotations";
+import type { MarkAnchor } from "@/lib/documentReader/DocumentReader";
+import { sourceTarget, type ReaderDocument } from "@/lib/documentReader/model";
+import type { SourceArrivalTarget } from "@/lib/resources/sourceTarget";
+import type { WorkGuard } from "@/lib/unsavedWork";
+import type { WorkspaceStoreValue } from "@/lib/workspace/store";
+import { findChatDraft, getChatDraft, type Draft } from "./drafts";
 import { getConversationCommands, getNewChatCommands, type SendPreparation } from "./commands";
 import { isSelectable, type SelectionEditor } from "./selection";
 import { conversationViewHref } from "./view";
 import type { Catalog, RunCreateRequest } from "./wire";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
-import type { ApiJson, Schema } from "@/lib/api/wire";
-import { isCanonicalUuid } from "@/lib/validation";
 
-// Saved-highlight links name a key; raw passage launches transfer their capture
-// directly into the destination's retained draft.
+type PassageInput = Extract<RunCreateRequest["reader_selection"], { kind: "passage" }>;
+type HighlightInput = Omit<Extract<RunCreateRequest["reader_selection"], { kind: "highlight" }>, "revision">;
+/** A draft owns its quote before any read or send. Preview never changes its input. */
+export interface ReaderQuote {
+  readonly id: string;
+  readonly input: PassageInput | HighlightInput;
+  readonly presentation: ResourceQuotationCapture | null;
+  readonly inspection: { readonly href: string; readonly target: SourceArrivalTarget };
+  readonly stale: boolean;
+}
+export interface ReaderQuoteReturn {
+  readonly pane_id: string;
+  readonly visit_id: string;
+  readonly draft_owner_id: string;
+  readonly attachment_id: string;
+}
+export const QUOTE_CHANGED = "the passage changed. review it before sending.";
 
-export type ReaderSelectionKey = Readonly<{
-  mediaId: string | null;
-  captureId: string | null;
-  highlightId: string;
-}>;
-export type ReaderHighlightChatIntent = Readonly<{
-  destination: { kind: "New" } | { kind: "Existing"; conversationId: string };
-  key: ReaderSelectionKey;
-}>;
-
-export async function getReaderQuotePreview(input: {
-  key: ReaderSelectionKey;
-  signal?: AbortSignal;
-}): Promise<Schema<"ReaderSelectionPreview">> {
-  const query = input.key.captureId ? `capture_id=${input.key.captureId}` : `media_id=${input.key.mediaId}`;
-  const path = `/api/chat-reader-selections/highlights/${input.key.highlightId}?${query}`;
-  // justify-type-assertion: the query string extends the generated route literal.
-  return (await apiFetch<ApiJson<"/chat-reader-selections/highlights/{highlight_id}", "get">>(
-    path as ApiPath, { signal: input.signal },
-  )).data;
+/** Freeze the displayed saved capture or the complete native selection, without a read. */
+export function captureReaderQuote(input: {
+  readonly doc: ReaderDocument;
+  readonly scope: { readonly kind: "media"; readonly media_id: string } | { readonly kind: "x_capture"; readonly capture_id: string };
+  readonly anchor: MarkAnchor | null;
+  readonly capture: Capture | null;
+  readonly annotation: ReaderAnnotation | null;
+  readonly source: ResourceQuotationCapture["source"];
+}): ReaderQuote | null {
+  const { doc, scope, capture, annotation } = input;
+  const shown = annotation?.display?.projection;
+  const placed = shown?.selection ? placeSelection(doc, scope.kind === "media" ? scope.media_id : scope.capture_id, shown.selection) : null;
+  const anchor = placed?.kind === "placed" ? placed.anchor : input.anchor;
+  const target = !anchor || annotation && placed?.kind !== "placed" ? null : sourceTarget(doc, anchor.kind === "text"
+    ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end }
+    : { kind: "quads", page: anchor.page, quads: anchor.quads });
+  if (!annotation && (!target || !capture)) return null;
+  const sourceRef = scope.kind === "media" ? `media:${scope.media_id}` : shown?.source_ref ?? capture?.sourceRef;
+  if (!target && !sourceRef) return null;
+  const captureId = !target && shown?.selection?.locator.type === "x_capture_offsets" ? shown.selection.locator.capture_id : null;
+  const href = scope.kind === "media" ? `/media/${scope.media_id}` : `/x/captures/${captureId ?? scope.capture_id}`;
+  let selection: ReaderQuote["input"];
+  if (annotation) {
+    if (!shown?.capture_revision) return null;
+    selection = { kind: "highlight", key: { media_id: scope.kind === "media" ? scope.media_id : null,
+      capture_id: scope.kind === "x_capture" ? shown.selection?.locator.type === "x_capture_offsets" ? shown.selection.locator.capture_id : scope.capture_id : null,
+      highlight_id: annotation.id }, expected_capture_revision: shown.capture_revision };
+  } else {
+    selection = { kind: "passage", reading_ref: scope.kind === "media" ? `media:${scope.media_id}` : capture!.sourceRef,
+      source_ref: capture!.sourceRef, capture: { ...capture!.selection, passage_ref: null } };
+  }
+  const excerpt = annotation ? shown?.excerpt ?? null : capture ? excerptView(capture.selection.excerpt, "full", { kind: "capture" }) : null;
+  return { id: createRandomId(), input: selection, stale: false,
+    presentation: excerpt ? { excerpt, source: input.source, href } : null,
+    inspection: { href, target: target ? { kind: "reader_destination", destination: { source_identity: doc.identity, target } }
+      : { kind: "resource", resource_ref: sourceRef!, field: null } } };
 }
 
-/** A trusted value that is not canonical is a programmer error. */
-export function assumeReaderSelectionKey(raw: {
-  mediaId?: string | null;
-  captureId?: string | null;
-  highlightId: string;
-}): ReaderSelectionKey {
-  const mediaId = raw.mediaId ?? null, captureId = raw.captureId ?? null;
-  if ((mediaId === null) === (captureId === null) || !isCanonicalUuid(mediaId ?? captureId) || !isCanonicalUuid(raw.highlightId))
-    throw new Error(`Noncanonical reader selection key ${JSON.stringify(raw)}`);
-  return { mediaId, captureId, highlightId: raw.highlightId };
+export async function getReaderQuotePreview(input: HighlightInput, signal?: AbortSignal): Promise<Schema<"ReaderSelectionPreview">> {
+  return (await apiFetch<ApiJson<"/chat-reader-selections/preview", "post">>("/api/chat-reader-selections/preview", {
+    method: "POST", body: JSON.stringify({ key: input.key, expected_capture_revision: input.expected_capture_revision }), signal,
+  })).data;
 }
 
-/** An empty hash is no intent; any other non-canonical hash is a route error. */
-export function parseReaderSelectionHash(
-  hash: string,
-):
-  | { kind: "none" }
-  | { kind: "key"; key: ReaderSelectionKey }
-  | { kind: "invalid" } {
-  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  if (raw === "") return { kind: "none" };
-  // A canonical uuid encodes to itself, so the raw text is the value.
-  const match = /^(mediaId|captureId)=([^&]*)&highlightId=([^&]*)$/.exec(raw);
-  const [kind, source, highlightId] = match ? [match[1], match[2], match[3]] : [null, null, null];
-  return isCanonicalUuid(source) && isCanonicalUuid(highlightId)
-    ? { kind: "key", key: { mediaId: kind === "mediaId" ? source : null, captureId: kind === "captureId" ? source : null, highlightId } }
-    : { kind: "invalid" };
+/** One quote preparation path for reader gestures and ordinary sends. */
+export function prepareDraftQuote(quote: ReaderQuote | null): SendPreparation {
+  return { attachmentId: quote?.id ?? null, authored: quote?.input.kind === "highlight", quote: async signal => {
+    if (quote === null) return null;
+    if (quote.input.kind === "passage") return quote.input;
+    const input = quote.input;
+    const preview = await requestWithRetry(attempt => getReaderQuotePreview(input, attempt), signal);
+    return { kind: "highlight", key: preview.key, expected_capture_revision: preview.expected_capture_revision, revision: preview.revision };
+  }};
 }
 
-export function readerHighlightChatIntentHref(
-  intent: ReaderHighlightChatIntent,
-): string {
-  const path =
-    intent.destination.kind === "New"
-      ? "/conversations/new"
-      : `/conversations/${intent.destination.conversationId}`;
-  return `${path}#${intent.key.captureId ? `captureId=${intent.key.captureId}` : `mediaId=${intent.key.mediaId}`}&highlightId=${intent.key.highlightId}`;
+/** Replace the exact retained attachment before retiring the reviewer's source. */
+export function replaceReaderQuote(workspace: WorkspaceStoreValue, target: ReaderQuoteReturn, quote: ReaderQuote): boolean {
+  const pane = workspace.state.panes.find(value => value.id === target.pane_id);
+  const draft = findChatDraft(target.draft_owner_id);
+  if (pane?.current_visit.id !== target.visit_id || !draft || draft.viewId !== pane.id ||
+    new URL(pane.current_visit.href, "https://nexus.invalid").pathname !== `/conversations/${draft.getScope()}` ||
+    draft.getSnapshot().draft.quote?.id !== target.attachment_id) return false;
+  draft.setQuote(quote);
+  workspace.activatePane(pane.id);
+  return true;
 }
 
 export type ReaderChatLaunchInput = {
@@ -85,46 +109,19 @@ export type ReaderChatLaunchInput = {
   guard: WorkGuard;
   originPaneId: string;
   question: string;
-  capture: Capture | null;
-  sourceMediaId: string | null;
-  captureId: string | null;
-  highlightId: string | null;
+  quote: ReaderQuote;
   selection: SelectionEditor;
   catalog: Catalog | null;
   destination: { kind: "New" } | { kind: "Existing"; conversationId: string; write: {
     expected_revision: number;
     insertion: Extract<RunCreateRequest["destination"], { kind: "Existing" }>["insertion"];
   } | null };
-  source: ResourceQuotationCapture["source"];
-  href: string | null;
 };
 
-/** One quote preparation owner, shared by a reader gesture and the ordinary composer. */
-export function prepareDraftQuote(quote: DraftQuote | null): SendPreparation {
-  return { authored: quote?.kind === "Highlight", quote: async signal => {
-    if (quote === null) return null;
-    if (quote.kind === "Passage") return { kind: "passage", reading_ref: quote.readingRef,
-      source_ref: quote.sourceRef, capture: { ...quote.capture, passage_ref: null } };
-    const preview = await requestWithRetry(attempt => getReaderQuotePreview({ key: quote.key, signal: attempt }), signal);
-    return { kind: "highlight", key: preview.key, revision: preview.revision };
-  }};
-}
-
-/** The same gesture transfers input, protects it, and optionally starts its command.
- * Once adopted, all asynchronous outcomes belong to that destination. */
-export function launchReaderChat(input: ReaderChatLaunchInput):
-  { kind: "Opened"; paneId: string } | { kind: "Cancelled" } | { kind: "Refused"; line: Line } {
-  const { ctx, destination, capture, selection } = input;
-  if (!ctx.isActive() || ctx.sessionSignal().aborted) return { kind: "Cancelled" };
-  if (input.highlightId === null && capture === null)
-    return { kind: "Refused", line: { fact: "this passage can’t be quoted." } };
-  const presentation = capture ? { capture: capture.selection, source: input.source, href: input.href } : null;
-  const quote: DraftQuote = input.highlightId !== null
-    ? { kind: "Highlight", key: assumeReaderSelectionKey({ mediaId: input.sourceMediaId, captureId: input.sourceMediaId === null ? input.captureId : null, highlightId: input.highlightId }), presentation }
-    : { kind: "Passage", capture: capture!.selection, source: input.source, href: input.href,
-        readingRef: input.sourceMediaId === null ? capture!.sourceRef : `media:${input.sourceMediaId}`, sourceRef: capture!.sourceRef };
-  return launchChatDraft({ ctx, guard: input.guard, originPaneId: input.originPaneId,
-    draft: { text: input.question, selection, quote }, catalog: input.catalog, destination });
+/** Adoption, loss protection and optional reservation belong to the same gesture. */
+export function launchReaderChat(input: ReaderChatLaunchInput): { kind: "Opened"; paneId: string } | { kind: "Cancelled" } {
+  return launchChatDraft({ ctx: input.ctx, guard: input.guard, originPaneId: input.originPaneId,
+    draft: { text: input.question, selection: input.selection, quote: input.quote }, catalog: input.catalog, destination: input.destination });
 }
 
 /** A new destination takes the complete draft before its gesture starts a write. */
@@ -150,7 +147,7 @@ export function launchChatDraft(input: {
   try {
     draft.setDraft(submitted);
     const owner = destination.kind === "New" ? getNewChatCommands(ctx.accountId, paneId) : getConversationCommands(ctx.accountId, destination.conversationId);
-    if (!submitted.text.trim() || selection.kind !== "Selected" || input.catalog === null ||
+    if (!submitted.text.trim() || quote?.stale || selection.kind !== "Selected" || input.catalog === null ||
       !isSelectable(input.catalog, selection.selection, selection.route) || !owner.canExecute() ||
       destination.kind === "Existing" && destination.write === null) return { kind: "Opened", paneId };
     const currentVisit = () => {
@@ -175,7 +172,10 @@ export function launchChatDraft(input: {
           ctx.workspace().updatePaneViewHref({ paneId, visitId, href: target, arrival: "clear" });
       }
     }, prepareDraftQuote(quote), failure => draft.reportDefect(failure, visitId)).then(outcome => {
-      if (outcome.kind === "Failed") draft.refuse({ line: outcome.line, error: outcome.error });
+      if (outcome.kind === "Failed") {
+        if (quote && (outcome.rejection === "E_READER_SELECTION_STALE" || outcome.error?.code === "E_READER_SELECTION_STALE")) draft.markQuoteStale(quote.id);
+        else draft.refuse({ line: outcome.line, error: outcome.error });
+      }
     });
   } catch (error) { draft.reportDefect({ error, occurrence: 1 }, visitId); }
   return { kind: "Opened", paneId };

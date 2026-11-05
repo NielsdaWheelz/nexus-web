@@ -46,6 +46,7 @@ class CapturedSource(CapturedModel):
     title: str | None
     media_kind: MediaKind | None
     contributors: list[ContributorCreditOut] | None
+    attribution_text: str | None
     location_label: str | None
 
 
@@ -103,3 +104,12 @@ class CapturedEvidence(CapturedModel):
     quote: CapturedQuote | None
     source: CapturedSource
     target: CapturedTarget
+    completion_ref: str | None
+
+    @model_validator(mode="after")
+    def validate_completion_ref(self) -> CapturedEvidence:
+        if self.completion_ref is not None:
+            scheme, _, identity = self.completion_ref.partition(":")
+            if scheme != "fragment" or str(UUID(identity)) != identity:
+                raise ValueError("completion requires a canonical immutable fragment ref")
+        return self

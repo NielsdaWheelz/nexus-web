@@ -47,7 +47,8 @@
 
 /* ===== Status strip ===== */
 
-.feedback {
+.feedback,
+.end {
   --ink: var(--reader-text);
   --ink-muted: var(--reader-text-secondary);
   --ink-faint: var(--reader-text-muted);
@@ -57,6 +58,9 @@
   --surface-hover: var(--reader-bg-secondary);
   --edge: var(--reader-border);
   --edge-subtle: var(--reader-border-subtle);
+}
+
+.feedback {
   padding-inline: var(--space-3);
 }
 
@@ -246,6 +250,29 @@
 
 .postActions > [data-post-feedback] {
   flex-basis: 100%;
+}
+
+.citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block: var(--space-3);
+  color: var(--reader-accent);
+}
+
+.citations :is(a, button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--size-md);
+  min-block-size: var(--size-md);
+}
+
+@media (pointer: coarse) {
+  .citations :is(a, button) {
+    min-inline-size: var(--size-xl);
+    min-block-size: var(--size-xl);
+  }
 }
 
 .postMeta > p a {

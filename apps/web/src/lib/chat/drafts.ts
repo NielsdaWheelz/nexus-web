@@ -3,21 +3,17 @@
 // A retained pane owns its editable input and accepted-send read obligation. Composer
 // mounts observe it; receipt promotion never writes another chat's command owner.
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import type { ResourceQuotationCapture } from "@/components/resources/ResourceQuotation";
 import { reportClientDefect } from "@/lib/telemetry/clientDefects";
 import type { CommandDefect } from "./commands";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
-import { bindChatWorkGuard, retireChatPanes, setChatCommandAccount, suspendChatCommands } from "./commands";
-import type { ReaderSelectionKey } from "./readerIntent";
+import { bindChatWorkGuard, retireChatPanes, revokeChatPreparation, setChatCommandAccount, suspendChatCommands } from "./commands";
+import type { ReaderQuote } from "./readerIntent";
 import type { SelectionEditor } from "./selection";
 import type { AcceptedReceipt, Refusal } from "./wire";
 
-export type DraftQuote =
-  | ResourceQuotationCapture & { readonly kind: "Passage"; readonly readingRef: string; readonly sourceRef: string }
-  | { readonly kind: "Highlight"; readonly key: ReaderSelectionKey; readonly presentation: ResourceQuotationCapture | null };
-export type Draft = Readonly<{ text: string; selection: SelectionEditor; quote: DraftQuote | null }>;
+export type Draft = Readonly<{ text: string; selection: SelectionEditor; quote: ReaderQuote | null }>;
 export type DraftCaret = Readonly<{ start: number; end: number; direction: "forward" | "backward" | "none" }>;
 export type AcceptedDraft = Readonly<{ receipt: AcceptedReceipt; visitId: string }>;
 type Snapshot = Readonly<{ draft: Draft; accepted: AcceptedDraft | null; refusal: Refusal | null; defect: CommandDefect | null }>;
@@ -35,7 +31,12 @@ function createDraft(accountId: string, viewId: string, initialScope: string, gu
   let release: (() => void) | null = null;
   const listeners = new Set<() => void>();
   const emit = () => { for (const listener of listeners) listener(); };
-  const write = (draft: Draft) => { value = { ...value, draft, refusal: null }; emit(); };
+  const write = (draft: Draft) => {
+    const previous = value.draft.quote;
+    value = { ...value, draft, refusal: null };
+    if (previous && previous.id !== draft.quote?.id) revokeChatPreparation(accountId, scope, viewId, previous.id);
+    emit();
+  };
   const register = () => {
     release?.();
     if (typeof window === "undefined") return;
@@ -45,6 +46,7 @@ function createDraft(accountId: string, viewId: string, initialScope: string, gu
   };
   const owner = {
     accountId, viewId,
+    getScope: () => scope,
     getSnapshot: () => value,
     getCaret: () => caret,
     setCaret: (next: DraftCaret) => { caret = next; },
@@ -52,7 +54,10 @@ function createDraft(accountId: string, viewId: string, initialScope: string, gu
     setDraft: write,
     setText: (text: string) => write({ ...value.draft, text }),
     setSelection: (selection: SelectionEditor) => { if (selection !== value.draft.selection) write({ ...value.draft, selection }); },
-    setQuote: (quote: DraftQuote | null) => write({ ...value.draft, quote }),
+    setQuote: (quote: ReaderQuote | null) => write({ ...value.draft, quote }),
+    markQuoteStale(id: string) {
+      if (value.draft.quote?.id === id) write({ ...value.draft, quote: { ...value.draft.quote, stale: true } });
+    },
     seed: (text: string) => write({ ...value.draft, text }),
     reportDefect(failure: CommandDefect, visitId: string) {
       value = { ...value, defect: { error: failure.error, occurrence: ++occurrence } };
@@ -88,12 +93,14 @@ function createDraft(accountId: string, viewId: string, initialScope: string, gu
     },
     retireAcceptance() { if (value.accepted !== null) { value = { ...value, accepted: null }; emit(); } },
     retain() { drafts.set(chatDraftOwnerId(accountId, viewId, scope), owner); register(); },
-    dispose() { release?.(); release = null; listeners.clear(); },
+    revokePreparation() { revokeChatPreparation(accountId, scope, viewId, null); },
+    dispose() { owner.revokePreparation(); release?.(); release = null; listeners.clear(); },
   };
   register();
   return owner;
 }
 export type ChatDraftOwner = ReturnType<typeof createDraft>;
+export const findChatDraft = (id: string): ChatDraftOwner | null => drafts.get(id) ?? null;
 
 /** Acquisition also installs loss protection; it is safe before the destination mounts. */
 export function getChatDraft(accountId: string, viewId: string, scope: string, guard: WorkGuard): ChatDraftOwner {
@@ -122,6 +129,7 @@ export function useChatWorkOwners() {
         if (entry.accountId === accountId && panes.has(entry.viewId)) {
           const accepted = entry.getSnapshot().accepted;
           const visit = currentPanes.find(pane => pane.id === entry.viewId)!.current_visit;
+          if (new URL(visit.href, "https://nexus.invalid").pathname !== `/conversations/${entry.getScope()}`) entry.revokePreparation();
           if (accepted && (visit.id !== accepted.visitId || new URL(visit.href, "https://nexus.invalid").pathname !== `/conversations/${accepted.receipt.outcome.conversation_id}`)) entry.retireAcceptance();
           continue;
         }

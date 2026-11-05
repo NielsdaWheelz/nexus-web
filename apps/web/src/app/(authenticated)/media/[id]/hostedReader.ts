@@ -14,7 +14,7 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
 import type { Inspection, Reader } from "@/lib/documentReader/DocumentReader";
 import type { ReaderViewSnapshot } from "@/lib/documentReader/runtime";
-import { readerDocument, transcriptUnitAtTime, localPoint, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
+import { readerDocument, transcriptUnitAtTime, localPoint, readingPublicationIdentity, type CursorSnapshot, type ReaderDocument, type ReaderTarget } from "@/lib/documentReader/model";
 import type { ReaderProgressPort, ReaderSource } from "@/lib/documentReader/ports";
 import type { SaveFailure } from "@/lib/documentReader/progress";
 import { serializeReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
@@ -51,6 +51,18 @@ export function destinationTarget(destination: ReaderDestination, reader: Reader
     return start && end ? {kind:"range",unit:start.unit,start:start.offset,end:end.offset} : null;
   }
   return target;
+}
+
+/** Source points name their coordinate owner; the arrival separately fences the full view. */
+export function targetOfSourcePoint(location: Schema<"PointSourceLocationOut">, doc: ReaderDocument): Extract<ReaderTarget, { kind: "point" }> | null {
+  if (doc.kind !== "text") return null;
+  const units = doc.units.filter(unit => unit.id === location.point.unit_id);
+  if (units.length !== 1) return null;
+  const unit = units[0];
+  const identity = unit.xPost?.owner?.capture_id ?? readingPublicationIdentity(doc);
+  if (identity === null || identity !== location.source_identity) return null;
+  const point = localPoint(doc, { unit: unit.id, offset: location.point.offset });
+  return point ? { kind: "point", point: { kind: "text", ...point } } : null;
 }
 
 /** Reads go through the read layer's retry, so one lost response is no failed read. */

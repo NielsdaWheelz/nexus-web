@@ -28,11 +28,11 @@ ReaderEvidenceUnavailableReason = Literal["Missing", "Unanchorable", "Stale"]
 ReaderDocumentMapMarkerKind = Literal[
     "Embed",
     "Highlight",
+    "ReaderQuote",
     "SourceReference",
     "GeneratedCitation",
     "Link",
     "MachineLink",
-    "ReaderQuote",
 ]
 ReaderDocumentMapMarkerTone = Literal[
     "Neutral", "Highlight", "Citation", "Link", "MachineLink", "Warning"
@@ -155,6 +155,7 @@ class ReaderEvidenceResourceOut(_ReaderMapOut):
 class ReaderEvidenceQuoteOut(_ReaderMapOut):
     kind: Literal["ReaderQuote"] = "ReaderQuote"
     item: ResourceItemOut
+    quotation: ResourceItemOut
 
 
 ReaderEvidenceContentOut = Annotated[
@@ -217,10 +218,10 @@ class ReaderEvidenceRootOut(_ReaderMapOut):
 
 class ReaderEvidenceCountsOut(_ReaderMapOut):
     highlights: int = Field(ge=0)
+    quotes: int = Field(ge=0)
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
     machine_links: int = Field(ge=0)
-    quotes: int = Field(ge=0)
 
 
 class ReaderEvidenceOut(_ReaderMapOut):
@@ -253,11 +254,11 @@ class ReaderDocumentMapDiagnosticsOut(_ReaderMapOut):
 class ReaderDocumentMapOut(_ReaderMapOut):
     """Annotations over one publication: ``identity`` is the reader document's identity.
     ``publication_generation`` fences canonical owner offsets; null on transcripts.
-    ``annotations_version`` moves when the viewer's readable annotations of it change."""
+    ``evidence_version`` moves when the viewer's readable annotations of it change."""
 
     media_id: UUID
     publication_generation: int | None = Field(ge=1)
-    annotations_version: int
+    evidence_version: int
     identity: str
     status: ReaderDocumentMapStatus
     embeds: list[DocumentEmbedOut] = Field(default_factory=list)
@@ -271,7 +272,7 @@ class ReaderDocumentMapOut(_ReaderMapOut):
 class ReaderCaptureDocumentMapOut(_ReaderMapOut):
     capture_id: UUID
     publication_generation: None
-    annotations_version: int
+    evidence_version: int
     identity: str
     status: ReaderDocumentMapStatus
     embeds: list[DocumentEmbedOut] = Field(default_factory=list)

@@ -154,6 +154,8 @@ export interface DocumentReaderViewProps {
   readonly onSeekTime?: (ms: number) => void;
   readonly renderEmbed?: (embedId: string) => ReactNode;
   readonly renderPostActions?: (unit: TextUnit) => ReactNode;
+  /** Authenticated hosts render ordinary citations outside the publication text. */
+  readonly renderCitation?: (citation: Schema<"CitationOut">) => ReactNode;
   /** false when the host already presents the source title; capture facts remain. */
   readonly showCaptureTitle?: boolean;
   /** Host content preceding publication content. */

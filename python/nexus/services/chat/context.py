@@ -146,7 +146,7 @@ class ContextTooLarge(ValueError):
 class Assembly:
     intent: GenerationIntent
     scope_refs: tuple[str, ...]
-    # Citable <resources> in order: resource n is attached[n - 1].
+    # Candidate order: the selected passage first, then other citable resources.
     attached: tuple[RetrievalCitation, ...]
 
 
@@ -168,12 +168,26 @@ def assemble(
         quotes.decode(user.reader_selection_snapshot) if user.reader_selection_snapshot else None
     )
     subject_uri = snapshot.evidence.target.owner_ref if snapshot else None
+    attached: list[RetrievalCitation] = []
     if snapshot is not None:
         context.append(
             f'<subject uri="{quotes.attribute(subject_uri or "")}" '
             f'source="{quotes.attribute(snapshot.evidence.source.title or "")}"/>'
         )
-        context.append(quotes.snapshot_block(snapshot, "reader_selection"))
+        selected_citation = citation_from_evidence(
+            db, viewer_id=viewer_id, evidence=snapshot.evidence
+        )
+        if selected_citation is not None:
+            attached.append(selected_citation)
+        context.append(
+            quotes.snapshot_block(
+                db,
+                viewer_id,
+                snapshot,
+                "reader_selection",
+                citation_number=1 if selected_citation is not None else None,
+            )
+        )
     if user.branch_anchor_kind == "assistant_selection":
         anchor = user.branch_anchor
         context.append(
@@ -186,7 +200,6 @@ def assemble(
                 offset_status=_text_or_none(anchor.get("offset_status")),
             )
         )
-    attached: list[RetrievalCitation] = []
     scope_refs: list[str] = []
     current = f"<user>\n{user.content}"
     tokens_left = context_budget - sum(
@@ -202,12 +215,7 @@ def assemble(
         quoted = (
             snapshot.evidence
             if snapshot is not None
-            and (
-                target.uri == subject_uri
-                or snapshot.key is not None
-                and target.scheme == "highlight"
-                and target.id == snapshot.key.highlight_id
-            )
+            and (target.uri == subject_uri or target.uri == snapshot.highlight_ref)
             else None
         )
         annotation: str | None = None
@@ -236,7 +244,6 @@ def assemble(
         citation = None
         if quoted is not None:
             resource = ResolvedResource(target.uri, quoted.source.title or "selected passage", "")
-            citation = citation_from_evidence(db, viewer_id=viewer_id, ref=target, evidence=quoted)
         else:
             native = not identity_only and target.scheme in (
                 "highlight",
@@ -265,9 +272,7 @@ def assemble(
                         if parts
                         else None,
                     )
-                    citation = citation_from_evidence(
-                        db, viewer_id=viewer_id, ref=target, evidence=evidence
-                    )
+                    citation = citation_from_evidence(db, viewer_id=viewer_id, evidence=evidence)
                 else:
                     resource = resolve_prompt(
                         db,
@@ -293,9 +298,7 @@ def assemble(
             ):
                 try:
                     evidence = capture_evidence(db, viewer_id=viewer_id, ref=target)
-                    citation = citation_from_evidence(
-                        db, viewer_id=viewer_id, ref=target, evidence=evidence
-                    )
+                    citation = citation_from_evidence(db, viewer_id=viewer_id, evidence=evidence)
                 except (ConflictError, NotFoundError):
                     # A readable resource may have no currently locatable citation.
                     # Its mandatory prompt text remains; never replace frozen words.
@@ -324,7 +327,7 @@ def assemble(
     if tokens_left < 0 or bytes_left < 0:
         raise ContextTooLarge("the turn's mandatory context exceeds the model or input budget")
     history: list[str] = []
-    for unit in _history_units(db, user, byte_limit=bytes_left):
+    for unit in _history_units(db, viewer_id, user, byte_limit=bytes_left):
         cost = sum(tokens(block) for block in unit)
         size = sum(_size(block) for block in unit)
         if cost > tokens_left or size > bytes_left:
@@ -354,7 +357,9 @@ def _text_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _history_units(db: Session, user: Message, *, byte_limit: int) -> Iterator[list[str]]:
+def _history_units(
+    db: Session, viewer_id: UUID, user: Message, *, byte_limit: int
+) -> Iterator[list[str]]:
     """Newest complete pair first. Measure before loading bodies; stop contiguously."""
     parent = user.parent_message_id
     while parent is not None:
@@ -384,7 +389,7 @@ def _history_units(db: Session, user: Message, *, byte_limit: int) -> Iterator[l
         for role, content, snapshot in rows:
             if snapshot is not None:
                 quote = quotes.snapshot_block(
-                    quotes.decode(snapshot), "historical_reader_selection"
+                    db, viewer_id, quotes.decode(snapshot), "historical_reader_selection"
                 )
                 content = f"{quote}\n\n{content}"
             blocks.append(f"<{role}>\n{content}")

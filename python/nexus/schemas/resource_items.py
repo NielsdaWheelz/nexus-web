@@ -23,6 +23,7 @@ from nexus.schemas.imports import (
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.reader_excerpts import ExcerptView
+from nexus.schemas.reader_point import ReaderPointOut
 from nexus.schemas.resource_evidence import ResourceField, validate_resource_field
 from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 from nexus.schemas.x_source import RevisionId
@@ -59,6 +60,7 @@ class ReaderQuoteSourceTargetKey(_Out):
 class CitationSourceTargetKey(_Out):
     kind: Literal["citation"] = "citation"
     edge_id: UUID
+    side: Literal["source", "target"]
 
 
 class RetrievalSourceTargetKey(_Out):
@@ -169,6 +171,7 @@ class SourceAttributionOut(_Out):
     title: str | None
     media_kind: MediaKind | None
     contributors: list[ContributorCreditOut] | None
+    attribution_text: str | None
     location_label: str | None
     activation: ResourceActivationOut | None
 
@@ -200,6 +203,12 @@ class LocatedSourceLocationOut(_Out):
     apparatus_reference_id: UUID | None
 
 
+class PointSourceLocationOut(_Out):
+    kind: Literal["point"] = "point"
+    point: ReaderPointOut
+    source_identity: str
+
+
 class UnavailableSourceLocationOut(_Out):
     kind: Literal["unavailable"] = "unavailable"
     reason: LocationUnavailableReason
@@ -215,6 +224,7 @@ class SourceTargetOut(_Out):
     location: Annotated[
         WholeSourceLocationOut
         | LocatedSourceLocationOut
+        | PointSourceLocationOut
         | UnavailableSourceLocationOut
         | XPostSourceLocationOut,
         Field(discriminator="kind"),

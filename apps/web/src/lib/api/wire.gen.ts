@@ -256,17 +256,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/chat-reader-selections/highlights/{highlight_id}": {
+    "/chat-reader-selections/preview": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Reader Selection Preview */
-        get: operations["get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Preview Reader Selection */
+        post: operations["preview_reader_selection_chat_reader_selections_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3237,10 +3237,10 @@ export interface paths {
         };
         /**
          * Stream Writing
-         * @description Listen first, then read the authored head and annotation token in every fresh snapshot.
+         * @description Listen first, then read the authored head and independent evidence token.
          *
          *     A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
-         *     refetch document maps whose ``annotations_version`` moved.
+         *     refetch document maps whose ``evidence_version`` moved.
          */
         get: operations["stream_writing_stream_writing_get"];
         put?: never;
@@ -3932,6 +3932,8 @@ export interface components {
         };
         /** CapturedEvidence */
         CapturedEvidence: {
+            /** Completion Ref */
+            completion_ref: string | null;
             quote: components["schemas"]["CapturedQuote"] | null;
             source: components["schemas"]["CapturedSource"];
             /** Target */
@@ -3984,6 +3986,8 @@ export interface components {
         };
         /** CapturedSource */
         CapturedSource: {
+            /** Attribution Text */
+            attribution_text: string | null;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
@@ -4308,11 +4312,6 @@ export interface components {
             item: components["schemas"]["ResourceItemOut"];
             /** Ordinal */
             ordinal: number;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
         };
         /**
          * CitationSnapshot
@@ -4335,6 +4334,11 @@ export interface components {
              * @enum {string}
              */
             kind: "citation";
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "source" | "target";
         };
         /**
          * ClientDefectRequest
@@ -5874,10 +5878,10 @@ export interface components {
         };
         /** DownloadChanges */
         DownloadChanges: {
-            /** Annotations Revision */
-            annotations_revision: string;
             /** Changes */
             changes: components["schemas"]["FeedChange"][];
+            /** Evidence Revision */
+            evidence_revision: string;
             /** Head Cursor */
             head_cursor: string;
             /** Next Cursor */
@@ -6898,6 +6902,8 @@ export interface components {
          * @description A saved highlight with the exact preview the sender observed.
          */
         HighlightReaderSelectionInput: {
+            /** Expected Capture Revision */
+            expected_capture_revision: string;
             key: components["schemas"]["ReaderSelectionKey"];
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -10432,6 +10438,17 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PointSourceLocationOut */
+        PointSourceLocationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "point";
+            point: components["schemas"]["ReaderPointOut"];
+            /** Source Identity */
+            source_identity: string;
+        };
         /**
          * Position
          * @description An insertion after one exact link at the source endpoint, or first.
@@ -10717,8 +10734,6 @@ export interface components {
         };
         /** ReaderCaptureDocumentMapOut */
         ReaderCaptureDocumentMapOut: {
-            /** Annotations Version */
-            annotations_version: number;
             /**
              * Capture Id
              * Format: uuid
@@ -10728,6 +10743,8 @@ export interface components {
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Evidence Version */
+            evidence_version: number;
             /** Identity */
             identity: string;
             /** Markers */
@@ -10747,6 +10764,8 @@ export interface components {
              * Format: uuid
              */
             capture_id: string;
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -10782,6 +10801,11 @@ export interface components {
             position: null;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
+        };
+        /** ReaderCitationOccurrenceOut */
+        ReaderCitationOccurrenceOut: {
+            at: components["schemas"]["ReaderPointOut"] | null;
+            citation: components["schemas"]["CitationOut"];
         };
         /**
          * ReaderCursorEmpty
@@ -10873,7 +10897,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "Embed" | "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "MachineLink" | "ReaderQuote";
+            kind: "Embed" | "Highlight" | "ReaderQuote" | "SourceReference" | "GeneratedCitation" | "Link" | "MachineLink";
             /** Label */
             label: string;
             /** Position */
@@ -10890,15 +10914,15 @@ export interface components {
          * ReaderDocumentMapOut
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
          *     ``publication_generation`` fences canonical owner offsets; null on transcripts.
-         *     ``annotations_version`` moves when the viewer's readable annotations of it change.
+         *     ``evidence_version`` moves when the viewer's readable annotations of it change.
          */
         ReaderDocumentMapOut: {
-            /** Annotations Version */
-            annotations_version: number;
             diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Evidence Version */
+            evidence_version: number;
             /** Identity */
             identity: string;
             /** Markers */
@@ -11005,6 +11029,7 @@ export interface components {
              * @enum {string}
              */
             kind: "ReaderQuote";
+            quotation: components["schemas"]["ResourceItemOut"];
         };
         /** ReaderEvidenceResolvedOut */
         ReaderEvidenceResolvedOut: {
@@ -11172,6 +11197,8 @@ export interface components {
         };
         /** ReaderPartDocumentOut */
         ReaderPartDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11258,6 +11285,8 @@ export interface components {
          *     public share, which grants no annotation authority.
          */
         ReaderPdfDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             file: components["schemas"]["ReaderPdfFileOut"];
             /** Identity */
             identity: string;
@@ -11414,14 +11443,21 @@ export interface components {
         /** ReaderSelectionOut */
         ReaderSelectionOut: {
             item: components["schemas"]["ResourceItemOut"];
-            key: components["schemas"]["ReaderSelectionKey"] | null;
         };
         /** ReaderSelectionPreview */
         ReaderSelectionPreview: {
+            /** Expected Capture Revision */
+            expected_capture_revision: string;
             item: components["schemas"]["ResourceItemOut"];
             key: components["schemas"]["ReaderSelectionKey"];
             /** Revision */
             revision: string;
+        };
+        /** ReaderSelectionPreviewRequest */
+        ReaderSelectionPreviewRequest: {
+            /** Expected Capture Revision */
+            expected_capture_revision: string;
+            key: components["schemas"]["ReaderSelectionKey"];
         };
         /** ReaderSiblingContinuationOut */
         ReaderSiblingContinuationOut: {
@@ -11470,6 +11506,8 @@ export interface components {
          *     are not canonically addressed (public shares).
          */
         ReaderTextDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11519,6 +11557,8 @@ export interface components {
         };
         /** ReaderTranscriptDocumentOut */
         ReaderTranscriptDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -12954,6 +12994,8 @@ export interface components {
         /** SourceAttributionOut */
         SourceAttributionOut: {
             activation: components["schemas"]["ResourceActivationOut"] | null;
+            /** Attribution Text */
+            attribution_text: string | null;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
@@ -13229,7 +13271,7 @@ export interface components {
         /** SourceTargetOut */
         SourceTargetOut: {
             /** Location */
-            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
+            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["PointSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
             source_activation: components["schemas"]["ResourceActivationOut"] | null;
         };
         /** Stamp */
@@ -14330,13 +14372,13 @@ export interface components {
         };
         /**
          * WritingState
-         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``annotations_revision`` changes
-         *     whenever any of the viewer's media ``annotations`` lanes is bumped (a peer's or grant's
-         *     highlight change), so a mounted reader refetches its document map. Decimal counters.
+         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``evidence_revision`` changes
+         *     whenever a readable source's ``evidence`` lane changes. Source citations and
+         *     shared highlights refresh independently of authored writing. Decimal counters.
          */
         WritingState: {
-            /** Annotations Revision */
-            annotations_revision: string;
+            /** Evidence Revision */
+            evidence_revision: string;
             /** Revision */
             revision: string;
         };
@@ -15083,21 +15125,18 @@ export interface operations {
             };
         };
     };
-    get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get: {
+    preview_reader_selection_chat_reader_selections_preview_post: {
         parameters: {
-            query?: {
-                /** @description The key's parent media id */
-                media_id?: string | null;
-                /** @description The key's immutable capture id */
-                capture_id?: string | null;
-            };
+            query?: never;
             header?: never;
-            path: {
-                highlight_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderSelectionPreviewRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

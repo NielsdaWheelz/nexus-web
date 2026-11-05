@@ -1,6 +1,6 @@
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
-import { excerptView } from "@nexus/authored/excerpt";
-import type { SelectionCapture } from "@nexus/authored/types";
+import type { ReactNode } from "react";
+import type { ExcerptView } from "@nexus/authored/excerpt";
 import type { Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
@@ -14,19 +14,19 @@ import styles from "./ResourceQuotation.module.css";
 import linkStyles from "./ResourceLink.module.css";
 
 export type ResourceQuotationCapture = Readonly<{
-  capture: SelectionCapture;
+  excerpt: ExcerptView;
   source: Pick<Schema<"SourceAttributionOut">, "ref" | "title" | "media_kind" | "contributors" | "location_label">;
   href: string | null;
 }>;
 
 /** Supplied evidence and attribution; navigation never replaces captured content. */
-export default function ResourceQuotation(props: { item: Schema<"ResourceItemOut"> } | ResourceQuotationCapture) {
+export default function ResourceQuotation(props: ({ item: Schema<"ResourceItemOut"> } | ResourceQuotationCapture) & { renderSourceControl?: (title: string) => ReactNode }) {
   const item = "item" in props ? props.item : null;
   const body = item?.preview.body ?? null;
   const source = "item" in props ? props.item.preview.source : props.source;
   if (item?.missing && body?.kind === "named" && source === null
     && item.activation.unavailable_reason === "source_unavailable") {
-    return <figure className={styles.quotation}><ResourceLink item={item} /></figure>;
+    return <figure className={styles.quotation}>{props.renderSourceControl?.(item.label) ?? <ResourceLink item={item} />}</figure>;
   }
 
   let identity: { title: string; contributors: readonly ContributorCredit[] | null } | null = null;
@@ -49,9 +49,9 @@ export default function ResourceQuotation(props: { item: Schema<"ResourceItemOut
   const attributedRef = source ? source.ref ? parseResourceRef(source.ref) : null : item ? parseResourceRef(item.ref) : null;
   const type = attributedRef ? resourceType(attributedRef.scheme, item ? itemMediaKind(item) : source?.media_kind ?? null) : null;
   const sourceTitle = source
-    ? source.title?.trim() ? source.title : "untitled"
+    ? source.title?.trim() ? source.title : item?.label ?? "untitled"
     : type ? resourceTypeName(type) : "source";
-  const title = identity ? identity.title.trim() ? identity.title : "untitled" : sourceTitle;
+  const title = identity ? identity.title.trim() ? identity.title : item?.label ?? "untitled" : sourceTitle;
   const authors = selectMediaAuthors(identity ? identity.contributors ?? [] : source?.contributors ?? [])
     .filter(credit => creditName(credit) !== null);
   const distinctSource = identity !== null && source !== null && item !== null && source.ref !== item.ref;
@@ -63,20 +63,21 @@ export default function ResourceQuotation(props: { item: Schema<"ResourceItemOut
     {identity === null && source === null ? null : <span className="sr-only">{resourceTypeName(type)}: </span>}
   </span> : null;
   const role = body?.kind === "prose" && body.role?.trim() ? body.role : null;
-  const content = "capture" in props
-    ? <ReaderExcerpt excerpt={excerptView(props.capture.excerpt, "full", { kind: "capture" })} color={null} full />
+  const content = "excerpt" in props
+    ? <ReaderExcerpt excerpt={props.excerpt} color={null} full />
     : body !== null ? <ResourceBody body={body} full /> : null;
 
   return <figure className={styles.quotation}>
-    {identity === null ? body?.kind === "passage" || "capture" in props
+    {identity === null ? body?.kind === "passage" || "excerpt" in props
       ? <blockquote className={styles.body}>{content}</blockquote>
       : <div className={styles.body}>{content}</div> : null}
     <figcaption className={styles.attribution}>
+      {item?.preview.source?.attribution_text ? <div className={styles.literalAttribution}>{item.preview.source.attribution_text}</div> : null}
       <div className={styles.identity}>
         {!distinctSource ? glyph : null}
         <span className={styles.identityText}>
-          {item !== null ? <ResourceLink item={item} label={title} />
-            : "href" in props && props.href !== null ? <a className={linkStyles.link} href={props.href} data-pane-label-hint={title}>{title}</a> : title}
+          {props.renderSourceControl?.(title) ?? (item !== null ? <ResourceLink item={item} label={title} />
+            : "href" in props && props.href !== null ? <a className={linkStyles.link} href={props.href} data-pane-label-hint={title}>{title}</a> : title)}
           {authors.length > 0 ? <> — <ContributorCreditList credits={authors} maxVisible={authors.length} /></> : null}
           {!distinctSource && source?.location_label?.trim() ? <> · {source.location_label}</> : null}
           {role ? <> · {role}</> : null}

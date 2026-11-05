@@ -17,7 +17,6 @@ from nexus.db.session import (
     RepeatableReadDbSession,
     get_session_factory,
 )
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.chat_selection import ChatSelectionOut
 from nexus.schemas.collection_index import CollectionIndex, parse_index_query
@@ -33,8 +32,8 @@ from nexus.schemas.conversation import (
     ForkTitleOut,
     ForkTitleRequest,
     MessageDeleteOut,
-    ReaderSelectionKey,
     ReaderSelectionPreview,
+    ReaderSelectionPreviewRequest,
 )
 from nexus.services.chat import admit, conversations, quotes, reads, selection
 from nexus.services.generation.catalog import Catalog
@@ -250,17 +249,19 @@ def delete_message(
     )
 
 
-@router.get("/chat-reader-selections/highlights/{highlight_id}")
-def get_reader_selection_preview(
-    highlight_id: UUID,
+@router.post("/chat-reader-selections/preview")
+def preview_reader_selection(
+    body: ReaderSelectionPreviewRequest,
+    response: Response,
     viewer: ViewerDep,
-    db: DbSession,
-    media_id: Annotated[UUID | None, Query(description="The key's parent media id")] = None,
-    capture_id: Annotated[UUID | None, Query(description="The key's immutable capture id")] = None,
+    db: RepeatableReadDbSession,
 ) -> Data[ReaderSelectionPreview]:
-    if (media_id is None) == (capture_id is None):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Exactly one reading identity is required"
+    response.headers["Cache-Control"] = "private, no-store"
+    return Data(
+        data=quotes.preview(
+            db,
+            viewer_id=viewer.user_id,
+            key=body.key,
+            expected_capture_revision=body.expected_capture_revision,
         )
-    key = ReaderSelectionKey(media_id=media_id, capture_id=capture_id, highlight_id=highlight_id)
-    return Data(data=quotes.preview(db, viewer_id=viewer.user_id, key=key))
+    )

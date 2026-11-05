@@ -57,20 +57,27 @@ class ReaderSelectionKey(Wire):
 class ReaderSelectionSnapshot(Wire):
     """The immutable quote on a user turn; its revision is the sha256 of this JSON."""
 
-    key: ReaderSelectionKey | None
     evidence: CapturedEvidence
+    highlight_ref: str | None = Field(
+        pattern=r"^highlight:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
 
 
 class ReaderSelectionOut(Out):
-    key: ReaderSelectionKey | None
     item: ResourceItemOut
 
 
 Revision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
+class ReaderSelectionPreviewRequest(Wire):
+    key: ReaderSelectionKey
+    expected_capture_revision: Revision
+
+
 class ReaderSelectionPreview(Out):
     key: ReaderSelectionKey
+    expected_capture_revision: Revision
     revision: Revision
     item: ResourceItemOut
 
@@ -80,6 +87,7 @@ class HighlightReaderSelectionInput(Wire):
 
     kind: Literal["highlight"]
     key: ReaderSelectionKey
+    expected_capture_revision: Revision
     revision: Revision
 
 

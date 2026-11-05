@@ -163,6 +163,16 @@ def _detect_x_blockquote(
         return None
     identity, _link = candidates[-1]
     excerpt = deepcopy(element)
+    reference_links = {link for _identity, link in candidates}
+    attribution = [element.text] if element.text else []
+    excerpt.text = None
+    for child, captured_child in zip(element, list(excerpt), strict=True):
+        if child in reference_links or child.tag in ("footer", "cite"):
+            attribution.append(child.text_content())
+            excerpt.remove(captured_child)
+        if child.tail:
+            attribution.append(child.tail)
+        captured_child.tail = None
     for image in excerpt.iter("img"):
         if image.get("src"):
             image.set("src", urljoin(base_url, image.get("src")))
@@ -181,11 +191,8 @@ def _detect_x_blockquote(
         canonical_source_url=identity.canonical_url,
         provider_target_ref=identity.provider_id,
         title=None,
-        excerpt_html=inner_html(excerpt),
-        attribution_text=" ".join(
-            text.strip() for text in element.xpath("./text()") if text.strip()
-        )
-        or None,
+        excerpt_html=inner_html(excerpt) or None,
+        attribution_text=" ".join(text.strip() for text in attribution if text.strip()) or None,
     )
 
 

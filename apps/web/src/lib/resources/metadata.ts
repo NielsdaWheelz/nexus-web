@@ -44,6 +44,7 @@ export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, re
     mediaKind !== null ? selectMediaAuthors(credits) : credits,
     null,
   );
+  if (source?.attribution_text) bibliography.unshift({ kind: "text", key: "attribution", text: source.attribution_text, href: null, date: null });
   const parts: ResourceMetadataPart[] = [];
   if (occurrenceLabel?.trim()) parts.push({ kind: "text", key: "occurrence", text: occurrenceLabel, href: null, date: null });
   if (body.kind === "prose" && body.role?.trim()) parts.push({ kind: "text", key: "role", text: body.role, href: null, date: null });

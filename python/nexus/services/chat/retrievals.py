@@ -1,7 +1,8 @@
 """The one ``message_retrievals`` writer: a search result as the row and the model see it.
 
-App search, web search, attached ``<resources>`` and ``read_resource`` evidence all
-enter through ``citation_from_search_result`` (provider web hits through ``web_citation``), so
+App search, web search, attached ``<resources>`` and ``read_resource`` evidence
+enter through ``citation_from_search_result``; selected source passages use
+``citation_from_evidence`` and provider web hits use ``web_citation``, so
 the stored ``result_ref`` shape lives here once. It is also the model-visible
 ``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
 every built key, minus the ones whose value is null, an empty list or ``selected`` false
@@ -36,9 +37,10 @@ from nexus.schemas.resource_evidence import (
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.library_entries import lock_media_for_reference
-from nexus.services.reader_excerpts import plain_excerpt
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_items.evidence import capture_evidence
+from nexus.services.reader_excerpts import plain_excerpt, quote_parts
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
+from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import admit_evidence, capture_evidence
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.project import build_source_label
 from nexus.services.search.service import get_search_result
@@ -240,22 +242,21 @@ def reopen_search_result(
 
 
 def citation_from_evidence(
-    db: Session, *, viewer_id: UUID, ref: ResourceRef, evidence: CapturedEvidence
+    db: Session, *, viewer_id: UUID, evidence: CapturedEvidence
 ) -> RetrievalCitation | None:
     """Already-selected evidence needs current disclosure proof, never discovery search."""
-    from nexus.services.reader_excerpts import quote_parts
-    from nexus.services.resource_items.capabilities import capability
-    from nexus.services.resource_items.evidence import admit_captured_evidence
     from nexus.services.resource_items.routing import (
         captured_passage_activation,
         resource_activation_for_ref,
     )
 
-    admitted = admit_captured_evidence(db, viewer_id=viewer_id, evidence=evidence)
+    admitted = admit_evidence(db, viewer_id=viewer_id, evidence=evidence)
+    if admitted is None or admitted.target.owner_ref is None:
+        return None
+    ref = assert_resource_ref(admitted.target.owner_ref)
     kind = capability(ref.scheme).citable_result_type
     if (
-        admitted is None
-        or kind is None
+        kind is None
         or admitted.quote is None
         or isinstance(admitted.target, CapturedUnavailableTarget)
     ):
@@ -319,6 +320,7 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
     )
     return RetrievalCitation(
         captured_evidence=CapturedEvidence(
+            completion_ref=None,
             quote=CapturedQuote(
                 excerpt=plain_excerpt(hit["snippet"], None, None),
                 exact=hit["snippet"],
@@ -327,7 +329,12 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
                 color=None,
             ),
             source=CapturedSource(
-                ref=ref, title=hit["title"], media_kind=None, contributors=None, location_label=None
+                attribution_text=None,
+                ref=ref,
+                title=hit["title"],
+                media_kind=None,
+                contributors=None,
+                location_label=None,
             ),
             target=CapturedPassageTarget.model_validate(
                 {

@@ -14,6 +14,7 @@ from sqlalchemy import case, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge, ResourceViewState
+from nexus.services.resource_graph.citations import citation_endpoint_match, edge_readable_filter
 from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -29,12 +30,14 @@ def statement(viewer_id: UUID, endpoint: ResourceRef):
             & (ResourceViewState.surface_id == endpoint.id),
         )
         .where(
-            ResourceEdge.user_id == viewer_id,
+            edge_readable_filter(viewer_id),
             or_(
                 (ResourceEdge.source_scheme == endpoint.scheme)
                 & (ResourceEdge.source_id == endpoint.id),
                 (ResourceEdge.target_scheme == endpoint.scheme)
                 & (ResourceEdge.target_id == endpoint.id),
+                citation_endpoint_match([endpoint], "source"),
+                citation_endpoint_match([endpoint], "target"),
             ),
             text(edge_live_sql("resource_edges")),
         )

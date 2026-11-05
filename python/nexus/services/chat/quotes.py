@@ -1,9 +1,9 @@
 """The reader quote: immutable evidence persisted on its user turn.
 
-Every later read derives from the snapshot, never the live highlight. Its revision
+Every later quote derives from the snapshot, never the live highlight. Its revision
 is the sha256 of its sorted compact JSON: the precondition a send compares.
-The key names the reading identity; canonical highlight anchors may belong to
-its source. Capture proves that exact passage within the requested reading scope.
+An optional highlight ref separately retains live conversation context. Current
+source authority governs disclosure of historical words and attribution.
 """
 
 from __future__ import annotations
@@ -34,13 +34,13 @@ from nexus.services.resource_graph.refs import ResourceRef, require_ref
 
 
 def build_snapshot(
-    db: Session, *, viewer_id: UUID, key: ReaderSelectionKey
+    db: Session, *, viewer_id: UUID, key: ReaderSelectionKey, expected_capture_revision: str
 ) -> ReaderSelectionSnapshot:
     """Resolve the highlight (the sender holds its account head) into a snapshot."""
 
     missing = ApiErrorCode.E_READER_SELECTION_NOT_FOUND
     stored = db.execute(
-        text("""SELECT h.authored_visible,
+        text("""SELECT h.authored_visible,h.excerpt_preview->>'capture_revision' AS capture_revision,
         octet_length((r.state #> '{selection,value}')::text) AS capture_size
         FROM highlights h JOIN authored_resources r ON r.account_id=h.user_id AND r.ref='highlight:' || h.id::text
         WHERE h.id=:id"""),
@@ -50,6 +50,8 @@ def build_snapshot(
         raise ApiError(missing, "Highlight not found")
     if not can_read_highlight(db, viewer_id, key.highlight_id):
         raise ApiError(ApiErrorCode.E_READER_SELECTION_FORBIDDEN, "Highlight not readable")
+    if stored.capture_revision != expected_capture_revision:
+        raise ApiError(ApiErrorCode.E_READER_SELECTION_STALE, "The selected highlight changed")
     if stored.capture_size > policy("chat").input_max_bytes:
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds the input budget"
@@ -67,11 +69,22 @@ def build_snapshot(
         raise ApiError(missing, "Highlight is outside the requested reading scope") from error
     if key.capture_id is not None:
         from nexus.schemas.resource_evidence import CapturedPassageTarget
+        from nexus.services.x_source import readable_x_capture_ids_sql
 
         if (
             not isinstance(evidence.target, CapturedPassageTarget)
             or evidence.target.locator.type != "x_capture_offsets"
-            or evidence.target.locator.capture_id != key.capture_id
+            or not db.scalar(
+                text(f"""SELECT :reading IN ({readable_x_capture_ids_sql()}) AND (
+                    :reading=:capture OR EXISTS (
+                        SELECT 1 FROM x_post_capture_contexts
+                        WHERE capture_id=:reading AND target_capture_id=:capture))"""),
+                {
+                    "viewer_id": viewer_id,
+                    "reading": key.capture_id,
+                    "capture": evidence.target.locator.capture_id,
+                },
+            )
         ):
             raise ApiError(missing, "Highlight is outside the requested capture")
     quote = evidence.quote
@@ -88,7 +101,7 @@ def build_snapshot(
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
         )
-    return ReaderSelectionSnapshot(key=key, evidence=evidence)
+    return ReaderSelectionSnapshot(highlight_ref=f"highlight:{key.highlight_id}", evidence=evidence)
 
 
 def capture_snapshot(
@@ -121,7 +134,7 @@ def capture_snapshot(
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Reader selection exceeds a field limit"
         )
-    return ReaderSelectionSnapshot(key=None, evidence=evidence)
+    return ReaderSelectionSnapshot(highlight_ref=None, evidence=evidence)
 
 
 def encode(snapshot: ReaderSelectionSnapshot) -> dict[str, object]:
@@ -147,12 +160,11 @@ def selection_out(
     from nexus.schemas.resource_items import ReaderQuoteSourceTargetKey, ResourceSourceTargetKey
     from nexus.services.resource_items.evidence import evidence_items
 
-    preview_key = snapshot.key
     if message_id is None:
         assert (
-            preview_key is not None
+            snapshot.highlight_ref is not None
         )  # justify-defect: only saved-highlight previews lack a message.
-        ref = ResourceRef("highlight", preview_key.highlight_id)
+        ref = require_ref(snapshot.highlight_ref)
     else:
         ref = ResourceRef("message", message_id)
     key = (
@@ -161,7 +173,7 @@ def selection_out(
         else ResourceSourceTargetKey(field=None, resource_ref=ref.uri)
     )
     item = evidence_items(db, viewer_id=viewer_id, occurrences=[(ref, snapshot.evidence, key)])[0]
-    return ReaderSelectionOut(key=snapshot.key, item=item)
+    return ReaderSelectionOut(item=item)
 
 
 def reader_quotes(
@@ -172,7 +184,7 @@ def reader_quotes(
     fragment_ids: list[UUID] | None = None,
 ) -> list[tuple[UUID, ReaderSelectionSnapshot]]:
     """Indexed message-owned quotes; current reading authority bounds every result."""
-    from nexus.services.resource_items.evidence import admit_captured_evidence
+    from nexus.services.resource_items.evidence import admit_evidence
 
     if reading_media_id is not None:
         owners = db.scalars(
@@ -199,7 +211,7 @@ def reader_quotes(
     result = []
     for row in rows:
         snapshot = decode(row.reader_selection_snapshot)
-        evidence = admit_captured_evidence(
+        evidence = admit_evidence(
             db, viewer_id=viewer_id, evidence=snapshot.evidence, reading_media_id=reading_media_id
         )
         if evidence is not None:
@@ -235,15 +247,24 @@ def changed(db: Session, *, viewer_id: UUID, message_ids: Sequence[UUID]) -> Non
             )
         )
     for ref in sorted(refs, key=lambda ref: ref.uri):
-        bump_version(db, viewer_id=viewer_id, ref=ref, lane="annotations")
+        bump_version(db, viewer_id=viewer_id, ref=ref, lane="evidence")
     if refs:
         db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
 
 
-def preview(db: Session, *, viewer_id: UUID, key: ReaderSelectionKey) -> ReaderSelectionPreview:
-    snapshot = build_snapshot(db, viewer_id=viewer_id, key=key)
+def preview(
+    db: Session, *, viewer_id: UUID, key: ReaderSelectionKey, expected_capture_revision: str
+) -> ReaderSelectionPreview:
+    snapshot = build_snapshot(
+        db, viewer_id=viewer_id, key=key, expected_capture_revision=expected_capture_revision
+    )
     out = selection_out(db, viewer_id=viewer_id, snapshot=snapshot)
-    return ReaderSelectionPreview.model_validate({**dict(out), "revision": revision(snapshot)})
+    return ReaderSelectionPreview(
+        key=key,
+        expected_capture_revision=expected_capture_revision,
+        revision=revision(snapshot),
+        item=out.item,
+    )
 
 
 def quote_block(
@@ -255,10 +276,14 @@ def quote_block(
     source: str | None = None,
     annotation: str | None = None,
     offset_status: str | None = None,
+    citation_number: int | None = None,
 ) -> str:
     """The one XML renderer for quote-shaped prompt blocks."""
 
-    lines = [f'<{tag} source="{attribute(source)}">' if source else f"<{tag}>"]
+    attributes = (f' source="{attribute(source)}"' if source else "") + (
+        f' n="{citation_number}"' if citation_number is not None else ""
+    )
+    lines = [f"<{tag}{attributes}>"]
     if offset_status is not None:
         lines.append(f"<offset_status>{offset_status}</offset_status>")
     if prefix:
@@ -278,12 +303,25 @@ def attribute(value: str) -> str:
     return escape(value, {'"': "&quot;"})
 
 
-def snapshot_block(snapshot: ReaderSelectionSnapshot, tag: str) -> str:
-    parts = quote_parts(snapshot.evidence.quote) if snapshot.evidence.quote else None
+def snapshot_block(
+    db: Session,
+    viewer_id: UUID,
+    snapshot: ReaderSelectionSnapshot,
+    tag: str,
+    *,
+    citation_number: int | None = None,
+) -> str:
+    from nexus.services.resource_items.evidence import admit_evidence
+
+    evidence = admit_evidence(db, viewer_id=viewer_id, evidence=snapshot.evidence)
+    if evidence is None:
+        return f'<{tag} unavailable="true">source unavailable</{tag}>'
+    parts = quote_parts(evidence.quote) if evidence.quote else None
     return quote_block(
         tag,
         exact=parts.exact if parts else "",
         prefix=parts.prefix if parts else None,
         suffix=parts.suffix if parts else None,
-        source=snapshot.evidence.source.title,
+        source=evidence.source.title,
+        citation_number=citation_number,
     )

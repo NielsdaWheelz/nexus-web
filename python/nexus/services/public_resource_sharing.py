@@ -48,7 +48,6 @@ from nexus.schemas.reader_document import (
     ReaderPartDocumentOut,
     ReaderPdfDocumentOut,
     ReaderPdfFileOut,
-    ReaderPointOut,
     ReaderSectionOut,
     ReaderTextBodyOut,
     ReaderTextDocumentOut,
@@ -62,6 +61,7 @@ from nexus.schemas.reader_document import (
     TranscriptReaderChapterOut,
     TranscriptReaderSearchExtentOut,
 )
+from nexus.schemas.reader_point import ReaderPointOut
 from nexus.services import library_entries, resource_grants
 from nexus.services.canonicalize import canonicalize_structure, generate_canonical_text
 from nexus.services.capabilities import is_text_document_ready
@@ -320,6 +320,7 @@ def _read_document(
         _gone()
     if isinstance(document, ReaderPdfDocumentOut):
         return ReaderPdfDocumentOut(
+            citation_occurrences=[],
             kind="pdf",
             identity=document.identity,
             publication_generation=None,
@@ -541,6 +542,7 @@ def _read_document(
         )
 
     body = ReaderTextBodyOut(
+        citation_occurrences=[],
         identity=document.identity,
         title=document.title,
         units=[

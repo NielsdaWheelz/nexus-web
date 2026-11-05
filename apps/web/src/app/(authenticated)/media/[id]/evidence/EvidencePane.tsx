@@ -30,7 +30,7 @@ import type { MediaAnnotationsState } from "../annotations";
 import EvidenceRow, { sourceTextKey, type EvidenceActions, type EvidenceEntry, type EvidenceOpenRequest } from "./EvidenceRow";
 import styles from "./EvidencePane.module.css";
 import { MARGIN_GAP, stackMargin, type MarginFrame, type MarginRow } from "./marginStack";
-import { facets, FILTER_ICONS, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
+import { evidenceRootKey, facets, FILTER_ICONS, FILTER_LABELS, FILTERS, matches, revealFacet, rootExtent, type Filter } from "./model";
 
 /** A margin row. A measuring row is laid out for one read of its height and passage, inside the frame that places it;
  * a placed row's offset is its top within the stack, whose own top is the transform on the outline scope. */
@@ -129,7 +129,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     // a note can be both locally linked and a remote fact's root: keys name their section.
     ...state.local.annotations.map(annotation => ({ kind: "highlight" as const, key: `local:${annotation.ref}`, annotation })),
     ...(state.links.status === "ready" ? state.links.data.map(link => ({ kind: "link" as const, key: `local:${link.resource.ref}`, link })) : []),
-    ...(remote?.evidence.roots ?? []).map(root => ({ kind: "remote" as const, key: `remote:${root.ref}`, root })),
+    ...(remote?.evidence.roots ?? []).map(root => ({ kind: "remote" as const, key: `remote:${evidenceRootKey(root)}`, root })),
   ], [remote, state.links, state.local.annotations]);
   const visible = useMemo(() => new Set(entries.filter(entry => [...entryFacets(entry)].some(facet => !hidden.has(facet))).map(entry => entry.key)), [entries, hidden]);
   const doc = document.status === "ready" ? document.doc : null;
@@ -175,7 +175,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
   const placed = useMemo(() => doc ? entries.filter(entry => extentOf(entry, doc) !== null)
     .map(entry => {
       const extent = extentOf(entry, doc)!;
-      const marker = state.markers.find(marker => marker.id === (entry.kind === "remote" ? entry.root.ref : entry.kind === "highlight" ? entry.annotation.id : entry.link.resource.ref));
+      const marker = state.markers.find(marker => marker.id === (entry.kind === "remote" ? evidenceRootKey(entry.root) : entry.kind === "highlight" ? entry.annotation.id : entry.link.resource.ref));
       return { entry, at: extent.kind === "text" && document.status === "ready" ? document.structure.fraction(extent.start) : marker?.position ?? Number.POSITIVE_INFINITY };
     })
     .sort((a, b) => a.at - b.at || (a.entry.key < b.entry.key ? -1 : 1)).map(({ entry }) => entry) : [], [doc, document, entries, state.markers]);

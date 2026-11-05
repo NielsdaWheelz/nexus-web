@@ -1228,10 +1228,11 @@ that draft, acceptance, retries and fenced route updates; see
 [chat](chat.md#browser). source-link activation still follows the ordinary
 `Follow`/shift-`Fork` contract.
 
-explicit saved-highlight links may carry
-`#mediaId=<uuid>&highlightId=<uuid>` or
-`#captureId=<uuid>&highlightId=<uuid>`. the destination reads these through
-`paneRuntime`, never ambient `window.location`; they are excluded from pane
-identity and consumed after acceptance. ordinary passage-composer transfer keeps
-its quote and input in the destination's memory owner, not a url or browser
-storage.
+ordinary passage-composer transfer keeps its complete quote and input in the
+destination's memory owner, never a url, passive pane entry or browser storage.
+quote-only drafts are guarded writing. stale review forks into a source pane with
+the original pane, visit, draft owner and attachment identity. replacement proves
+that exact attachment and its currently visible conversation route before changing
+it; same-conversation leaf changes remain valid. question, caret and model survive,
+and return never sends. cancel review preserves both drafts. successful replacement
+retires only the unchanged source input through its existing loss guard.

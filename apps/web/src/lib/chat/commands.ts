@@ -36,7 +36,7 @@ import {
 export type ConversationTree = ApiJson<"/conversations/{conversation_id}/tree", "get">["data"];
 type Destination = RunCreateRequest["destination"];
 export type SendRequest = Omit<RunCreateRequest, "destination"> & { destination: { kind: "New" } | Extract<Destination, { kind: "Existing" }> };
-export type SendPreparation = { readonly quote: (signal: AbortSignal) => Promise<RunCreateRequest["reader_selection"]>; readonly authored: boolean };
+export type SendPreparation = { readonly attachmentId: string | null; readonly quote: (signal: AbortSignal) => Promise<RunCreateRequest["reader_selection"]>; readonly authored: boolean };
 export type CommandDefect = Readonly<{ error: unknown; occurrence: number }>;
 const PREPARATION_MS = 30_000;
 /** A send as the composer builds it; the store adds the revision its pane observed. */
@@ -246,6 +246,11 @@ export const getConversationCommands = (accountId: string, conversationId: strin
 /** A new chat's first send belongs to the pane that composed it. */
 export const getNewChatCommands = (accountId: string, viewId: string) => owner(accountId, `new:${viewId}`, null);
 
+/** Only the draft that prepared a send can revoke it; dispatched requests are immutable. */
+export function revokeChatPreparation(accountId: string, scope: string, viewId: string, attachmentId: string | null): void {
+  owners.get(`${accountId}:${scope === "new" ? `new:${viewId}` : scope}`)?.owner.revokePreparation(viewId, attachmentId);
+}
+
 /** What a surface that owns the pending command shows, or null. */
 export function recoveryOf(state: CommandState, owns: (command: ChatCommand) => boolean) {
   return state.kind === "Idle" || !owns(state.command) ? null : state;
@@ -454,9 +459,8 @@ function createCommands(conversationId: string | null, accountActive: () => bool
     attempt.unconfirmed = true;
     return stand({ kind: "Unknown", refused: answer });
   };
-  const send = async (): Promise<CommandOutcome> => {
-    const attempt = pending;
-    if (!attempt) return { kind: "Settled" };
+  const send = async (attempt: NonNullable<typeof pending>): Promise<CommandOutcome> => {
+    if (!isActive() || pending !== attempt) return { kind: "Handled" };
     const command = attempt.command;
     busy(attempt, attempt.body === null && (command.kind === "Send" || command.kind === "Repeat") ? "Preparing" : "Sending");
     if (attempt.body === null && (command.kind === "Send" || command.kind === "Repeat")) {
@@ -581,10 +585,12 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   const run = (work: () => Promise<CommandOutcome>) => {
     defect = null;
     defectCommand = null;
-    const command = pending?.command ?? null;
+    const attempt = pending;
+    const command = attempt?.command ?? null;
     const flight = Promise.resolve().then(work).catch((error: unknown): CommandOutcome => {
+      if (attempt !== null && pending !== attempt && attempt.accepted === null) return { kind: "Handled" };
       if (isActive()) {
-        if (pending && state.kind === "Busy") {
+        if (pending && pending === attempt && state.kind === "Busy") {
           if (state.phase === "Reading") stand({ kind: "Changed", uncertain: pending.unconfirmed });
           else if (pending.unconfirmed || state.phase === "Sending") {
             pending.unconfirmed = true; stand({ kind: "Unknown", refused: null });
@@ -610,6 +616,16 @@ function createCommands(conversationId: string | null, accountActive: () => bool
   return {
     isActive,
     canExecute: () => isActive() && state.kind === "Idle" && running === null && pending === null,
+    revokePreparation(viewId: string, attachmentId: string | null) {
+      const attempt = pending;
+      if (state.kind !== "Busy" || state.phase !== "Preparing" || attempt?.command.kind !== "Send" ||
+        attempt.command.viewId !== viewId || attachmentId !== null && attempt.preparation?.attachmentId !== attachmentId) return;
+      pending = null;
+      running = null;
+      relayDefect = null;
+      attempt.fence.abort(new DOMException("chat preparation revoked", "AbortError"));
+      set(IDLE_COMMAND);
+    },
     hasUnconfirmed: () => pending?.unconfirmed === true || state.kind === "Busy" && state.phase === "Sending",
     getDefect: () => defect,
     getDefectCommand: () => defectCommand,
@@ -642,7 +658,8 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       catch (error) { reportDefect(error, command); relayDefect = null; return Promise.resolve(PENDING); }
       void authored_prefix?.catch(() => {});
       pending = { command, attempt: 0, body: null, unconfirmed: false, accepted: null, onAcceptance, preparation, authored_prefix, fence: new AbortController() };
-      const flight = run(send);
+      const attempt = pending;
+      const flight = run(() => send(attempt));
       busy(pending, command.kind === "Send" || command.kind === "Repeat" ? "Preparing" : "Sending");
       return flight;
     },
@@ -652,7 +669,8 @@ function createCommands(conversationId: string | null, accountActive: () => bool
       if (running) return running;
       upgrade(openIntent);
       if (state.kind === "RefreshRequired") return run(reconcile);
-      return pending ? run(send) : Promise.resolve({ kind: "Settled" });
+      const attempt = pending;
+      return attempt ? run(() => send(attempt)) : Promise.resolve({ kind: "Settled" });
     },
     /** Reread the tree; an unconfirmed command keeps waiting for its own retry. */
     refresh(): Promise<CommandOutcome> {

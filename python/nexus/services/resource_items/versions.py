@@ -1,4 +1,4 @@
-"""Writer-owned context preconditions and readable-annotation invalidation lanes.
+"""Writer-owned context preconditions and readable-evidence invalidation lanes.
 
 Writers lock the lane before incrementing. An absent lane of a live resource is
 version one. Authored content carries no lane: its causality is the authored feed.
@@ -8,28 +8,38 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceVersion
 from nexus.services.resource_graph.refs import ResourceRef
 
 
-def annotations_revision(db: Session, *, viewer_id: UUID) -> str:
-    """Opaque equality token for the viewer's readable remote annotation maps.
+def evidence_revision(db: Session, *, viewer_id: UUID) -> str:
+    """Opaque equality token for the viewer's readable remote evidence.
 
     It is independent of authored feed cursors and confers no source access.
     Pull responses and writing hints read this same owner in their snapshot.
-    Annotation lanes belong to media and survive media deletion; the sum only
-    advances. Apparatus cleanup removes its own scheme's lanes, never these.
+    Source lanes survive source removal; the sum only advances. Captures use
+    their immutable fragment identity, including when they have no saved media.
     """
     return str(
         db.scalar(
             select(func.coalesce(func.sum(ResourceVersion.version), 0)).where(
-                ResourceVersion.user_id == viewer_id, ResourceVersion.lane == "annotations"
+                ResourceVersion.user_id == viewer_id, ResourceVersion.lane == "evidence"
             )
         )
     )
+
+
+def invalidate_evidence(db: Session, *, projections: set[tuple[UUID, ResourceRef]]) -> None:
+    """Flush authorized audience/source revisions; notification publishes at commit."""
+    for viewer_id, ref in sorted(
+        projections, key=lambda item: (item[0], item[1].scheme, item[1].id)
+    ):
+        bump_version(db, viewer_id=viewer_id, ref=ref, lane="evidence")
+    for viewer_id in sorted({viewer for viewer, _ in projections}):
+        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
 
 
 def ensure_version(

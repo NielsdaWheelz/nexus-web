@@ -71,7 +71,7 @@ from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     context_version,
 )
-from nexus.services.resource_graph.refs import require_ref
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
 from nexus.services.search import projection
 from nexus.services.seq import assign_next_message_seq
 from nexus.services.tools.run import Toolbox
@@ -396,7 +396,7 @@ def _branch_anchor(
 def _quote(
     db: Session, viewer_id: UUID, conversation_id: UUID, selection: ReaderSelectionInput
 ) -> dict[str, object]:
-    """Freeze the selected evidence and retain source access, without authored writes."""
+    """Freeze evidence, retain source access and link an explicitly selected highlight."""
 
     from nexus.services.library_entries import lock_media_for_reference
 
@@ -405,19 +405,35 @@ def _quote(
         authored.lock_account(db, viewer_id)
         if key.media_id is not None:
             lock_media_for_reference(db, key.media_id)
-        snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, key=key)
+        snapshot = quotes.build_snapshot(
+            db,
+            viewer_id=viewer_id,
+            key=key,
+            expected_capture_revision=selection.expected_capture_revision,
+        )
         if quotes.revision(snapshot) != selection.revision:
             raise ApiError(
                 ApiErrorCode.E_READER_SELECTION_STALE,
                 "Reader selection changed since it was previewed",
             )
-        source = require_ref(snapshot.evidence.target.owner_ref or "")
+        source = (
+            ResourceRef("media", key.media_id)
+            if key.media_id is not None
+            else require_ref(snapshot.evidence.target.owner_ref or "")
+        )
+        from nexus.services.resource_graph.edges import create_link
+
+        create_link(
+            db,
+            viewer_id=viewer_id,
+            source=ResourceRef("conversation", conversation_id),
+            target=ResourceRef("highlight", key.highlight_id),
+        )
     else:
         source = require_ref(selection.reading_ref)
         if source.scheme == "media":
             lock_media_for_reference(db, source.id)
         snapshot = quotes.capture_snapshot(db, viewer_id=viewer_id, selection=selection)
-        source = require_ref(snapshot.evidence.target.owner_ref or "")
     target = snapshot.evidence.target
     if target.kind == "passage" and target.locator.type == "x_capture_offsets":
         from nexus.services.x_source import admit_x_captures_for_accounts
