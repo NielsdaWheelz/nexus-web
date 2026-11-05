@@ -116,6 +116,20 @@ capture and never loads a live authored resource to replace it.
 
 reader, compact/downloaded reader, outline and detail surfaces share one annotation
 editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`.
+the saved-highlight popup and mobile composer put that command in their action row,
+after highlight and before chat. only a completed, owned highlight projection
+offers it; chat capability does not control annotation access. the command opens
+or focuses the same editor without committing writing. existing bodies stay visible;
+fresh selections retain their explicit composer/save action.
+
+external editor-focus requests are scoped to the highlight and request number.
+null, replacement or a different highlight invalidates delivery without
+acknowledging it. a current request is consumed before moving focus, including
+when its host refuses focus.
+the selection dock admits delivery only while the exact invoked button retains
+focus in the active document; blur cancels the handoff. removing a focused opener
+uses the shared action-focus recovery rather than replacing newer focus.
+
 blank has one look. an emptied field stays mounted, with its undo, only while focus
 or open input is inside it. `HighlightAnnotation` receives its resource from the
 host and unmounts its bound editor once that projection and the document both read

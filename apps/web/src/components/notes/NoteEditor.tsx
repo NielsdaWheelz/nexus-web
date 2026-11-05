@@ -1466,7 +1466,14 @@ function NoteEditorContent(props: NoteEditorProps) {
           compositionBase.current === null && referenceRef.current.getState() === null;
       },
       settleNativeInput() {
-        if (nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
+        if (nativeInputOpen.current || view.composing) return false;
+        if (compositionBase.current) {
+          const hadReference = referenceRef.current.getState() !== null;
+          // an ended composition may still need transfer before this command;
+          // a new query changes ownership before its host can observe it.
+          finishComposition(view, compositionBase.current, null);
+          if (!hadReference && referenceRef.current.getState() !== null) return false;
+        }
         reconcile(view);
         if (view.isDestroyed || nativeInputOpen.current || view.composing || compositionBase.current !== null) return false;
         syncNativeSelection(view);
