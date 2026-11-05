@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import JobRow
-from nexus.services.generation import ledger
+from nexus.services.media_locks import lock_media_rows_in_order
 
 
 def authored_text_index(db: Session, job: JobRow) -> None:
@@ -45,7 +45,7 @@ def x_capture_index(db: Session, job: JobRow) -> None:
           AND NOT EXISTS (SELECT 1 FROM background_jobs other
               WHERE other.kind='x_capture_content_reindex' AND other.id<>:job_id
                 AND other.payload->>'capture_id'=CAST(:capture_id AS text)
-                AND other.status IN ('pending','failed','running'))
+                AND other.status IN ('pending','failed','running','held'))
     """),
         {
             "capture_id": UUID(job.payload["capture_id"]),
@@ -71,7 +71,6 @@ def media_teardown(db: Session, job: JobRow) -> None:
 def media_unit_build(db: Session, job: JobRow) -> None:
     """Media intelligence: the open generation closes and the exact head the job was building
     fails with its code (I16); a head re-ensured since (another fingerprint) stays."""
-    ledger.on_dead_letter(db, job)
     db.execute(
         text("""UPDATE media_summaries
             SET status = 'failed', error_code = :code, error_detail = :detail, updated_at = now()
@@ -137,3 +136,63 @@ def podcast_chapters(db: Session, job: JobRow) -> None:
     """),
         {"id": media_id, "job_id": job.id, "url": job.payload["expected_source_url"]},
     )
+
+
+def lock_owner(db: Session, job: JobRow) -> None:
+    """Import-light settlement locks, in the same order as each domain publisher."""
+    match job.kind:
+        case "chat_run":
+            params = {"id": UUID(job.payload["run_id"])}
+            db.execute(text("SELECT id FROM chat_runs WHERE id=:id FOR UPDATE"), params)
+        case "ingest_media_source":
+            lock_media_rows_in_order(db, [UUID(job.payload["media_id"])], lock_mode="no_key_update")
+            db.execute(
+                text("SELECT id FROM media_source_attempts WHERE id=:id FOR UPDATE"),
+                {"id": UUID(job.payload["attempt_id"])},
+            )
+        case "media_content_reindex_job":
+            lock_media_rows_in_order(db, [UUID(job.payload["media_id"])], lock_mode="no_key_update")
+        case "media_unit_build":
+            db.execute(
+                text("SELECT id FROM media_summaries WHERE id=:id FOR UPDATE"),
+                {"id": UUID(job.payload["summary_id"])},
+            )
+        case "podcast_feed_page":
+            params = {"id": UUID(job.payload["run_id"])}
+            db.execute(
+                text(
+                    "SELECT p.id FROM podcasts p JOIN podcast_feed_runs r ON r.podcast_id=p.id WHERE r.id=:id FOR UPDATE OF p"
+                ),
+                params,
+            )
+            db.execute(text("SELECT id FROM podcast_feed_runs WHERE id=:id FOR UPDATE"), params)
+        case "podcast_chapters":
+            db.execute(
+                text("SELECT id FROM media WHERE id=:id FOR UPDATE"),
+                {"id": UUID(job.payload["media_id"])},
+            )
+        case "authored_text_reindex_job":
+            db.execute(
+                text(
+                    "SELECT owner_id FROM content_index_states WHERE owner_kind=:kind AND owner_id=:id FOR UPDATE"
+                ),
+                {"kind": job.payload["owner_kind"], "id": UUID(job.payload["owner_id"])},
+            )
+        case "x_capture_content_reindex":
+            db.execute(
+                text(
+                    "SELECT owner_id FROM content_index_states WHERE owner_kind='fragment' AND owner_id IN (SELECT id FROM fragments WHERE x_post_capture_id=:id) ORDER BY owner_id FOR UPDATE"
+                ),
+                {"id": UUID(job.payload["capture_id"])},
+            )
+        case "media_teardown":
+            db.execute(
+                text("SELECT id FROM media WHERE id=:id FOR UPDATE"),
+                {"id": UUID(job.payload["media_id"])},
+            )
+            db.execute(
+                text("SELECT id FROM media_teardown_intents WHERE id=:id FOR UPDATE"),
+                {"id": UUID(job.payload["intent_id"])},
+            )
+        case _:
+            raise AssertionError(f"no settlement lock contract for {job.kind}")

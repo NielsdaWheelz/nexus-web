@@ -146,7 +146,7 @@ const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "AddEpisodeToAll", "RemoveEpisodeFromAll", "RemovePodcastEpisodes",
   "RefreshPodcast", "Chat", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
-  "ReviewMetadataResult", "LibrarySettings", "PodcastSettings", "RemoveUpload",
+  "LibrarySettings", "PodcastSettings", "RemoveUpload",
   "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
 ]);
 export function resourceActionRequiresRemote(id: string, tracked = true): boolean {

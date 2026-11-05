@@ -21,7 +21,7 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.x_captures import QuoteRetrieval
 from nexus.schemas.x_source import XPriorSource
-from nexus.services import library_entries, x_client
+from nexus.services import media_locks, x_client
 from nexus.services import source_attempts as sa
 from nexus.services.reader_publication import advance_reader_publications
 from nexus.services.x_capture_job_hooks import retrieval
@@ -83,7 +83,7 @@ def run_job(*, payload: dict[str, object], context: JobExecutionContext) -> JobR
                 if prepared is not None
                 else [media_id]
             )
-            library_entries.lock_media_rows_in_order(db, affected_media)
+            media_locks.lock_media_rows_in_order(db, affected_media)
             row = db.scalar(
                 select(DocumentEmbed).where(DocumentEmbed.id == occurrence_id).with_for_update()
             )
@@ -163,7 +163,7 @@ def retry_quote(
     db: Session, *, viewer_id: UUID, media_id: UUID, occurrence_id: UUID, expected_job_id: UUID
 ) -> QuoteRetrieval:
     def retry() -> QuoteRetrieval:
-        library_entries.lock_media_rows_in_order(db, [media_id])
+        media_locks.lock_media_rows_in_order(db, [media_id])
         parent = db.get(Media, media_id)
         if (
             parent is None

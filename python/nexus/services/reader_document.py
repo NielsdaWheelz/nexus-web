@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
-from typing import Literal
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from lxml.html import fragment_fromstring
+from pydantic import AwareDatetime, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -51,7 +53,7 @@ from nexus.schemas.reader_document import (
     ReaderXReferenceOut,
 )
 from nexus.schemas.reader_point import ReaderPointOut
-from nexus.schemas.x_source import XSourceCoverage
+from nexus.schemas.x_source import XSourceAuthor, XSourceCoverage
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.document_embeds import list_document_embeds_for_fragments
@@ -88,6 +90,206 @@ _UNIT_ROWS_SQL = """
     WHERE f.media_id = :media_id
     ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
 """
+
+
+@dataclass
+class ReaderSourceUnit:
+    """An unhydrated source occurrence, with the same placement as the native reader."""
+
+    id: str
+    idx: int
+    fragment_id: UUID
+    char_count: int
+    x_post: ReaderXPostOut | None
+
+
+@dataclass(frozen=True)
+class ReaderTextPlan:
+    title: str
+    units: list[ReaderSourceUnit]
+    sections: list[ReaderSectionOut]
+    x_capture: ReaderXCaptureOut | None
+    source_links: list[str]
+
+
+@dataclass(frozen=True)
+class _SourceProjection[UnitT: ReaderUnitOut | ReaderSourceUnit]:
+    columns: str
+    build: Callable[[Session, Any, ReaderXPostOut, bool], UnitT]
+
+
+_CREATED_AT = TypeAdapter(AwareDatetime | None)
+
+
+def _source_unit(
+    _db: Session, row: Any, post: ReaderXPostOut, _materialize_assets: bool
+) -> ReaderSourceUnit:
+    return ReaderSourceUnit(
+        id=row.occurrence_id,
+        idx=0,
+        fragment_id=row.fragment_id,
+        char_count=row.char_count,
+        x_post=post,
+    )
+
+
+def _rich_source_unit(
+    db: Session, row: Any, post: ReaderXPostOut, materialize_assets: bool
+) -> ReaderUnitOut:
+    from urllib.parse import quote
+
+    from nexus.services.image_placeholder import replace_image_with_placeholder
+    from nexus.services.x_rendering import capture_image_urls
+
+    raw = row.html_sanitized
+    if "<img" in raw.lower():
+        available = set(
+            db.scalars(
+                text("SELECT asset_key FROM x_post_capture_assets WHERE capture_id=:id"),
+                {"id": row.capture_id},
+            )
+        )
+        urls = {
+            f"/api/x/captures/{row.capture_id}/assets/{key}": key
+            for key in capture_image_urls(row.payload)
+        }
+        container = fragment_fromstring(raw, create_parent=True)
+        for image in list(container.iter("img")):
+            key = urls.get(image.get("src"))
+            if key is None or key not in available or not materialize_assets:
+                alt = image.get("alt") or ""
+                parent = image.getparent()
+                position = parent.index(image)
+                replace_image_with_placeholder(image)
+                placeholder = parent[position]
+                if placeholder is not None:
+                    if key is not None:
+                        placeholder.set("data-nexus-x-capture", str(row.capture_id))
+                        placeholder.set("data-nexus-x-asset", key)
+                        placeholder.set("data-nexus-x-alt", alt)
+                    label = (
+                        f"image unavailable in saved capture: {alt}"
+                        if alt
+                        else "image unavailable in saved capture"
+                    )
+                    placeholder.set("aria-label", label)
+                    if len(placeholder):
+                        placeholder[0].text = label
+            else:
+                image.set("src", f"/api/x/captures/{row.capture_id}/assets/{quote(key, safe='')}")
+        raw = inner_html(container)
+    return ReaderUnitOut(
+        id=row.occurrence_id,
+        idx=0,
+        html_sanitized=raw,
+        canonical_text=row.canonical_text,
+        char_count=row.char_count,
+        href_path=None,
+        t_start_ms=None,
+        t_end_ms=None,
+        speaker_label=None,
+        x_post=post,
+    )
+
+
+_RICH_SOURCE = _SourceProjection("f.html_sanitized,f.canonical_text,c.payload", _rich_source_unit)
+_CANONICAL_SOURCE = _SourceProjection("NULL AS unused", _source_unit)
+
+
+def read_reader_text_plan(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderTextPlan:
+    """Authorize a canonical composition without loading source bodies or native markup.
+
+    The native reader owns membership, one-hop expansion and ordering. These same
+    traversals select only source identities, lengths and attribution here.
+    """
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    media = db.execute(text(_MEDIA_SQL), {"media_id": media_id}).one()
+    generation = read_ready_publication_generation(db, media_id=media_id)
+    if media.kind not in ("web_article", "epub") or generation is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    native = _native_x_units(
+        db, media_id=media_id, viewer_id=viewer_id, source_projection=_CANONICAL_SOURCE
+    )
+    if native is not None:
+        units, capture = native
+        sections = [
+            ReaderSectionOut(
+                id=unit.id,
+                label=f"post {index + 1}",
+                depth=0,
+                at=ReaderPointOut(unit_id=unit.id, offset=0),
+                anchor_id=None,
+            )
+            for index, unit in enumerate(
+                unit for unit in units if unit.x_post and unit.x_post.relation == "primary"
+            )
+        ]
+        links = _x_article_source_links(db, media_id, units)
+    else:
+        units = [
+            ReaderSourceUnit(str(row.id), row.idx, row.id, row.char_count, None)
+            for row in db.execute(
+                text(
+                    "SELECT f.id,f.idx,char_length(f.canonical_text) AS char_count "
+                    + _UNIT_ROWS_SQL
+                ),
+                {"media_id": media_id},
+            )
+        ]
+        links = [
+            str(url)
+            for url in db.scalars(
+                text(
+                    "SELECT COALESCE(e.canonical_source_url,e.source_url) FROM document_embeds e JOIN fragments f ON f.id=e.fragment_id WHERE e.media_id=:id AND e.provider='x' AND COALESCE(e.canonical_source_url,e.source_url) IS NOT NULL ORDER BY f.idx,e.ordinal,e.id"
+                ),
+                {"id": media_id},
+            )
+        ]
+        units = _with_x_embeds(
+            db,
+            media_id=media_id,
+            units=units,
+            viewer_id=viewer_id,
+            source_projection=_CANONICAL_SOURCE,
+        )
+        navigation = read_media_navigation(
+            db, media_id=media_id, kind=media.kind, generation=generation
+        )
+        sections = [
+            ReaderSectionOut(
+                id=section.section_id,
+                label=section.label,
+                depth=0,
+                at=_point(section.target),
+                anchor_id=section.anchor_id,
+            )
+            for section in navigation.sections
+        ]
+        capture = None
+    return ReaderTextPlan(str(media.title), units, sections, capture, links)
+
+
+def _x_article_source_links(
+    db: Session, media_id: UUID, units: Sequence[ReaderUnitOut | ReaderSourceUnit]
+) -> list[str]:
+    from nexus.services.x_identity import canonical_x_article_url
+    from nexus.services.x_source import x_article_link
+
+    links = []
+    for unit in units:
+        post = unit.x_post
+        if post is None or post.relation != "primary" or post.owner is None:
+            continue
+        link = x_article_link(
+            db,
+            capture_id=post.owner.capture_id,
+            source_revision_id=post.source_revision_id,
+            reading_media_id=media_id,
+        )
+        if link is not None:
+            links.append(canonical_x_article_url(link[0]))
+    return links
 
 
 def read_reader_document(
@@ -316,6 +518,7 @@ def build_reader_document(
         viewer_id=viewer_id,
         public_grant_id=public_grant_id,
         materialize_x_assets=materialize_x_assets,
+        source_projection=_RICH_SOURCE,
     )
     if native_x is not None:
         units, capture = native_x
@@ -358,6 +561,7 @@ def build_reader_document(
         viewer_id=viewer_id,
         public_grant_id=public_grant_id,
         materialize_x_assets=materialize_x_assets,
+        source_projection=_RICH_SOURCE,
     )
     embeds.extend(_x_article_embeds(db, units=units, viewer_id=viewer_id))
     navigation = read_media_navigation(db, media_id=media_id, kind=kind, generation=generation)
@@ -598,7 +802,7 @@ def _x_article_embeds(
     reading_media_id: UUID | None = None,
 ) -> list[DocumentEmbedOut]:
     """Project proved carrier article associations onto their displayed occurrences."""
-    from nexus.db.models import Media, ProcessingStatus, XPostCapture
+    from nexus.db.models import Media, ProcessingStatus
     from nexus.services.x_identity import canonical_x_article_url
     from nexus.services.x_source import x_article_link
 
@@ -609,10 +813,13 @@ def _x_article_embeds(
         owner = unit.x_post.owner if unit.x_post and unit.x_post.relation == "primary" else None
         if owner is None:
             continue
-        capture = db.get(XPostCapture, owner.capture_id)
-        if capture is None:
-            continue
-        link = x_article_link(db, capture=capture, reading_media_id=reading_media_id)
+        assert unit.x_post is not None
+        link = x_article_link(
+            db,
+            capture_id=owner.capture_id,
+            source_revision_id=unit.x_post.source_revision_id,
+            reading_media_id=reading_media_id,
+        )
         if link is None:
             continue
         article_id, article_media_id = link
@@ -719,7 +926,7 @@ def x_occurrence_id(
     )
 
 
-def _capture_units(
+def _capture_units[UnitT: ReaderUnitOut | ReaderSourceUnit](
     db: Session,
     *,
     capture_id: UUID,
@@ -732,12 +939,8 @@ def _capture_units(
     expand: bool = True,
     public_grant_id: UUID | None = None,
     materialize_x_assets: bool = False,
-) -> list[ReaderUnitOut]:
-    from urllib.parse import quote
-
-    from nexus.schemas.x_source import XArticleExcerptCapture, XCompletePostCapture
-    from nexus.services.image_placeholder import replace_image_with_placeholder
-    from nexus.services.x_rendering import capture_image_urls
+    source_projection: _SourceProjection[UnitT],
+) -> list[UnitT]:
     from nexus.services.x_source import readable_x_capture_ids_sql, x_evidence_capture_match_sql
 
     visible = "" if viewer_id is None else f"AND c.id IN ({readable_x_capture_ids_sql()})"
@@ -745,63 +948,36 @@ def _capture_units(
         visible += " AND c.id IN (SELECT capture_id FROM resource_grant_captures WHERE grant_id=:public_grant_id)"
     row = db.execute(
         text(f"""
-        SELECT c.*, p.logical_post_id, p.edit_history_ids, f.id AS fragment_id,
-               f.html_sanitized, f.canonical_text, a.availability, a.checked_at
+        SELECT c.id AS capture_id,c.source_revision_id,c.captured_at,
+               c.payload->>'kind' AS capture_kind,c.payload #> '{{content,author}}' AS author,
+               c.payload #>> '{{content,created_at}}' AS created_at,
+               c.payload->>'attribution_text' AS attribution_text,
+               c.payload->>'parent_source_url' AS parent_source_url,
+               c.payload->>'parent_title' AS parent_title,
+               p.logical_post_id,p.edit_history_ids,f.id AS fragment_id,
+               char_length(f.canonical_text) AS char_count,
+               CAST(:occurrence_id AS text) AS occurrence_id,
+               {source_projection.columns},a.availability,a.checked_at
         FROM x_post_captures c JOIN x_post_sources p ON p.id=c.post_id
         JOIN fragments f ON f.x_post_capture_id=c.id
         LEFT JOIN x_post_aliases a ON a.revision_id=c.source_revision_id AND a.post_id=c.post_id
         WHERE c.id=:capture_id {visible}
     """),
-        {"capture_id": capture_id, "viewer_id": viewer_id, "public_grant_id": public_grant_id},
+        {
+            "capture_id": capture_id,
+            "viewer_id": viewer_id,
+            "public_grant_id": public_grant_id,
+            "occurrence_id": occurrence_id,
+        },
     ).one_or_none()
     if row is None:
         return []
-    payload = row.payload
-    complete = payload["kind"] == "complete_post"
-    if complete:
-        content = XCompletePostCapture.model_validate_json(json.dumps(payload)).content
-        author, created_at, attribution = content.author, content.created_at, None
-        parent_source_url, parent_title = None, None
-    else:
-        excerpt = XArticleExcerptCapture.model_validate_json(json.dumps(payload))
-        author, created_at, attribution = None, None, excerpt.attribution_text
-        parent_source_url, parent_title = excerpt.parent_source_url, excerpt.parent_title
-    available = set(
-        db.scalars(
-            text("SELECT asset_key FROM x_post_capture_assets WHERE capture_id=:id"),
-            {"id": capture_id},
-        )
-    )
-    urls = {
-        f"/api/x/captures/{capture_id}/assets/{key}": key for key in capture_image_urls(payload)
-    }
-    raw = row.html_sanitized
-    if "<img" in raw.lower():
-        container = fragment_fromstring(raw, create_parent=True)
-        for image in list(container.iter("img")):
-            key = urls.get(image.get("src"))
-            if key is None or key not in available or not materialize_x_assets:
-                alt = image.get("alt") or ""
-                parent = image.getparent()
-                position = parent.index(image)
-                replace_image_with_placeholder(image)
-                placeholder = parent[position]
-                if placeholder is not None:
-                    if key is not None:
-                        placeholder.set("data-nexus-x-capture", str(capture_id))
-                        placeholder.set("data-nexus-x-asset", key)
-                        placeholder.set("data-nexus-x-alt", alt)
-                    label = (
-                        f"image unavailable in saved capture: {alt}"
-                        if alt
-                        else "image unavailable in saved capture"
-                    )
-                    placeholder.set("aria-label", label)
-                    if len(placeholder):
-                        placeholder[0].text = label
-            else:
-                image.set("src", f"/api/x/captures/{capture_id}/assets/{quote(key, safe='')}")
-        raw = inner_html(container)
+    complete = row.capture_kind == "complete_post"
+    author = XSourceAuthor.model_validate(row.author) if complete else None
+    created_at = _CREATED_AT.validate_python(row.created_at) if complete else None
+    attribution = None if complete else row.attribution_text
+    parent_source_url = None if complete else row.parent_source_url
+    parent_title = None if complete else row.parent_title
     contexts = db.execute(
         text(f"""
         SELECT context.*, c.id IS NOT NULL AS body_available
@@ -816,7 +992,7 @@ def _capture_units(
     """),
         {"id": capture_id, "viewer_id": viewer_id, "public_grant_id": public_grant_id},
     ).all()
-    children: list[ReaderUnitOut] = []
+    children: list[UnitT] = []
     references: list[ReaderXReferenceOut] = []
     for context in contexts:
         child_id = (
@@ -836,12 +1012,13 @@ def _capture_units(
                 occurrence_id=child_id,
                 relation=context.relation,
                 parent_unit_id=occurrence_id,
-                insertion_offset=len(row.canonical_text),
+                insertion_offset=row.char_count,
                 embed_occurrence_key=None,
                 viewer_id=viewer_id,
                 expand=False,
                 public_grant_id=public_grant_id,
                 materialize_x_assets=materialize_x_assets,
+                source_projection=source_projection,
             )
             if child_id and expand
             else []
@@ -873,7 +1050,7 @@ def _capture_units(
         attribution_text=attribution,
         parent_source_url=parent_source_url,
         parent_title=parent_title,
-        capture_kind=payload["kind"],
+        capture_kind=row.capture_kind,
         created_at=created_at,
         is_edited=row.edit_history_ids is not None and len(row.edit_history_ids) > 1,
         availability=row.availability,
@@ -882,18 +1059,7 @@ def _capture_units(
         references=references,
         owner=ReaderXPostOwnerOut(capture_id=capture_id, fragment_id=row.fragment_id),
     )
-    unit = ReaderUnitOut(
-        id=occurrence_id,
-        idx=0,
-        html_sanitized=raw,
-        canonical_text=row.canonical_text,
-        char_count=len(row.canonical_text),
-        href_path=None,
-        t_start_ms=None,
-        t_end_ms=None,
-        speaker_label=None,
-        x_post=metadata,
-    )
+    unit = source_projection.build(db, row, metadata, materialize_x_assets)
     return [unit, *children]
 
 
@@ -909,6 +1075,7 @@ def read_capture_document(
         insertion_offset=None,
         embed_occurrence_key=None,
         viewer_id=viewer_id,
+        source_projection=_RICH_SOURCE,
     )
     if not units:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Source not found")
@@ -940,14 +1107,15 @@ def read_capture_document(
     )
 
 
-def _native_x_units(
+def _native_x_units[UnitT: ReaderUnitOut | ReaderSourceUnit](
     db: Session,
     *,
     media_id: UUID,
     viewer_id: UUID | None,
     public_grant_id: UUID | None = None,
     materialize_x_assets: bool = False,
-) -> tuple[list[ReaderUnitOut], ReaderXCaptureOut] | None:
+    source_projection: _SourceProjection[UnitT],
+) -> tuple[list[UnitT], ReaderXCaptureOut] | None:
     thread = db.execute(
         text("SELECT * FROM x_thread_sources WHERE media_id=:id"), {"id": media_id}
     ).one_or_none()
@@ -979,7 +1147,7 @@ def _native_x_units(
         .tuples()
         .all()
     )
-    units: list[ReaderUnitOut] = []
+    units: list[UnitT] = []
     for occurrence, capture in members:
         selected = _capture_units(
             db,
@@ -992,6 +1160,7 @@ def _native_x_units(
             viewer_id=viewer_id,
             public_grant_id=public_grant_id,
             materialize_x_assets=materialize_x_assets,
+            source_projection=source_projection,
         )
         if not selected:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Source post unavailable")
@@ -1061,22 +1230,23 @@ def _native_x_units(
     )
 
 
-def _with_x_embeds(
+def _with_x_embeds[UnitT: ReaderUnitOut | ReaderSourceUnit](
     db: Session,
     *,
     media_id: UUID,
-    units: list[ReaderUnitOut],
+    units: list[UnitT],
     viewer_id: UUID | None,
     public_grant_id: UUID | None = None,
     materialize_x_assets: bool = False,
-) -> list[ReaderUnitOut]:
+    source_projection: _SourceProjection[UnitT],
+) -> list[UnitT]:
     rows = db.execute(
-        text("""SELECT * FROM document_embeds WHERE media_id=:id AND provider='x'
+        text("""SELECT id,fragment_id,canonical_end_offset,target_x_post_capture_id,occurrence_key FROM document_embeds WHERE media_id=:id AND provider='x'
         AND embed_kind='post' AND target_x_post_capture_id IS NOT NULL
         AND canonical_end_offset IS NOT NULL ORDER BY canonical_end_offset, document_order_key"""),
         {"id": media_id},
     ).all()
-    result: list[ReaderUnitOut] = []
+    result: list[UnitT] = []
     for unit in units:
         result.append(unit)
         for row in rows:
@@ -1097,6 +1267,7 @@ def _with_x_embeds(
                     viewer_id=viewer_id,
                     public_grant_id=public_grant_id,
                     materialize_x_assets=materialize_x_assets,
+                    source_projection=source_projection,
                 )
             )
     for index, unit in enumerate(result):
@@ -1104,15 +1275,17 @@ def _with_x_embeds(
     return result
 
 
-def reading_source_ranges(units: list[ReaderUnitOut]) -> list[tuple[ReaderUnitOut, int, int]]:
+def reading_source_ranges[UnitT: ReaderUnitOut | ReaderSourceUnit](
+    units: list[UnitT],
+) -> list[tuple[UnitT, int, int]]:
     """The bounded direct-X reading order; all offsets remain source-local."""
-    result: list[tuple[ReaderUnitOut, int, int]] = []
-    children: dict[str, list[ReaderUnitOut]] = {}
+    result: list[tuple[UnitT, int, int]] = []
+    children: dict[str, list[UnitT]] = {}
     for unit in units:
         if unit.x_post is not None and unit.x_post.parent_unit_id is not None:
             children.setdefault(unit.x_post.parent_unit_id, []).append(unit)
 
-    def append(unit: ReaderUnitOut) -> None:
+    def append(unit: UnitT) -> None:
         start = 0
         for child in children.get(unit.id, []):
             slot = child.x_post.insertion_offset if child.x_post is not None else None

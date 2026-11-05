@@ -31,7 +31,6 @@ import { mediaSearchLine, mediaSourceLine } from "@/lib/media/mediaErrorMessage"
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import {
   METADATA_FAILURE_COPY,
-  METADATA_REVIEW_HELP,
   X_TITLE_CONTEXT_HELP,
   earlierMetadataRuns,
   metadataOperationName,
@@ -52,7 +51,7 @@ import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
 import MetadataResearchResult from "./MetadataResearchResult";
-import MetadataResearchActions, { MetadataReviewButton } from "./MetadataResearchActions";
+import MetadataResearchActions from "./MetadataResearchActions";
 
 const VISIT = definePaneVisitDataKey<Visit<MediaDetail>>("MediaInfo.Detail");
 const COMPLETION = {
@@ -236,35 +235,28 @@ function MetadataOperationInfo({ mediaId, title, metadata, operation, pinned, in
   const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
   const unfinished = metadata === null ? null : metadata.unfinished_operation;
   const purpose = operation?.purpose ?? retry?.purpose ?? null;
-  const hasResult = operation?.status === "completed" && operation.outcome.purpose === "bibliography" || operation?.status === "no_findings";
-  const needsReview = operation?.status === "no_findings" && operation.reviewed_at === null;
+  const hasResult = operation?.status === "completed" && operation.outcome.purpose === "bibliography";
   const canUpdate = metadata !== null && title !== null;
-  const showReview = needsReview && (pinned || !canUpdate);
   return group(pinned ? "this update" : purpose === null ? "metadata update" : metadataOperationName(purpose), [
     fact("observation", inspection),
     fact("status", operation !== null ? metadataOperationSummary(operation)
       : !pinned && purpose !== null ? `no recorded ${metadataOperationName(purpose)}` : null),
     fact("result", hasResult ? <MetadataResearchResult operation={operation} /> : null),
-    fact("explanation", operation?.status === "failed" ? METADATA_FAILURE_COPY[operation.code] : null),
+    fact("explanation", (operation?.status === "failed" || operation?.status === "held") ? METADATA_FAILURE_COPY[operation.code] : null),
     retry === null ? null : fact(`${metadataOperationName(retry.purpose)} availability`,
       retry.status === "blocked" ? metadataRetryBlockedCopy(retry) : "available"),
     fact("title evidence", retry?.purpose === "title" ? X_TITLE_CONTEXT_HELP : null),
-    fact("review", needsReview ? METADATA_REVIEW_HELP : null),
     fact("earlier work", earlierRuns > 0
       ? `${earlierRuns} earlier metadata ${earlierRuns === 1 ? "run remains" : "runs remain"} unfinished` : null),
     fact("unfinished operation", unfinished !== null && unfinished.job_id !== operation?.job_id
       ? metadataOperationSummary(unfinished) : null),
-    fact("actions", canUpdate || showReview ? <>
-      {canUpdate ? <MetadataResearchActions mediaId={mediaId} title={title} view={metadata} suppressReview={pinned} /> : null}
-      {showReview && operation?.status === "no_findings"
-        ? <MetadataReviewButton mediaId={mediaId} jobId={operation.job_id} /> : null}
-    </> : null),
+    fact("actions", canUpdate ? <MetadataResearchActions mediaId={mediaId} title={title} view={metadata} /> : null),
     fact("requested", instant(display, operation?.created_at ?? null)),
     fact("started", instant(display, operation?.started_at ?? null)),
     fact("finished", instant(display, operation?.status === "completed" ? operation.outcome.completed_at
-      : operation?.status === "no_findings" || operation?.status === "failed" ? operation.completed_at : null)),
+      : operation?.status === "failed" ? operation.completed_at : null)),
     fact("next retry", instant(display, operation?.status === "waiting" ? operation.until : null)),
-    fact("reviewed", instant(display, operation?.status === "no_findings" ? operation.reviewed_at : null)),
+    fact("held", instant(display, operation?.status === "held" ? operation.held_at : null)),
   ]);
 }
 

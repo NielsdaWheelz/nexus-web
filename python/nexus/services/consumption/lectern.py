@@ -22,6 +22,7 @@ from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFo
 from nexus.schemas import collection_actions as collection_wire
 from nexus.schemas import consumption as wire
 from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.services import media_locks
 from nexus.services.consumption import observation, projection, viewer_txn
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.users import lock_viewer
@@ -103,12 +104,11 @@ def append_collection(
     missing target must remain unfinished, readable and in the original source.
     append_missing_in_txn advances once, including an accepted membership no-op.
     """
-    from nexus.services import library_entries
     from nexus.services.consumption.collections import require_source_members
 
     def run(db: Session) -> collection_wire.CollectionLecternOut:
         _require_revision(db, viewer_id, int(body.expected_order_revision))
-        library_entries.lock_media_rows_in_order(db, body.media_ids)
+        media_locks.lock_media_rows_in_order(db, body.media_ids)
         require_source_members(db, viewer_id, body.target, body.media_ids)
         present = {row.media_id for row in _load(db, viewer_id)}
         missing = [media_id for media_id in body.media_ids if media_id not in present]

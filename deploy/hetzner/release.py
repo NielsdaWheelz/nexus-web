@@ -904,7 +904,9 @@ def assert_generation_quiescence() -> None:
             f"accepted work remains (up to 20 ids per category): {json.dumps(census)};"
             " settle through compatible original owners before retrying"
         )
-    note("final stopped-writer census: no nonterminal chats, open calls or unfinished jobs")
+    note(
+        "final stopped-writer census: no nonterminal chats, open calls or pending/retrying/running jobs"
+    )
 
 
 def restore_original() -> None:

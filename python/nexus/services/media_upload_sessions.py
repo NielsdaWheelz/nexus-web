@@ -75,7 +75,7 @@ from nexus.schemas.media_sources import (
     UploadRequired,
     UploadSessionOut,
 )
-from nexus.services import libraries, library_entries, source_targets, users
+from nexus.services import libraries, library_entries, media_locks, source_targets, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.file_ingest_validation import (
@@ -96,7 +96,8 @@ from nexus.services.x_identity import (
     classify_x_article_carrier_url,
     x_article_provider_id,
 )
-from nexus.storage.client import StorageClient, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, get_storage_client
+from nexus.storage.errors import StorageError
 from nexus.storage.paths import (
     build_upload_session_staging_storage_path,
     build_upload_verification_candidate_storage_path,
@@ -417,7 +418,7 @@ def confirm_session(
         session = _owned(db, viewer_id, origin_kind, session_id)
         _require_current(db, session, generation)
         if media is not None:
-            library_entries.lock_media_rows_in_order(db, [media.id])
+            media_locks.lock_media_rows_in_order(db, [media.id])
         library_entries.validate_acquisition_destinations(
             db,
             viewer_id=viewer_id,

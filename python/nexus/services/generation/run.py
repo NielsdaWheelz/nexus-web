@@ -1,8 +1,8 @@
 """``generate``: the one entry point. Resolve, open, watch, dispatch, decode, close.
 
 Every expected outcome comes back as a terminal value with one failure code, except
-a background generation that never reached its model while its job has attempts
-left: that raises ``RouteUnavailable`` so the queue retries the job. Anything else
+classified background retry/repair outcomes raise ``JobFailure`` before an owner
+can settle them as permanent refusal. Anything else
 is a defect: the row closes ``defect`` and the exception goes on to the queue's
 retry. Watcher failure cancels and joins provider dispatch through its task group;
 normal dispatch cancels and joins its watcher. No transaction spans model or tool I/O.
@@ -15,12 +15,13 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, assert_never
 
+from nexus.db.retries import is_transient_database_error
 from nexus.db.session import open_control_async_session
-from nexus.jobs.queue import get_job, running_job_claim_is_current
+from nexus.jobs.queue import JobFailure, running_job_claim_is_current
 from nexus.logging import get_logger
-from nexus.schemas.llm import GenerationSelection, Ready
+from nexus.schemas.llm import GenerationSelection, OperatorActionRequired, Ready
 from nexus.services.generation.contract import (
     Cancelled,
     Decode,
@@ -34,7 +35,6 @@ from nexus.services.generation.contract import (
     Operation,
     Owner,
     RouteResult,
-    RouteUnavailable,
     Stop,
     Succeeded,
     Terminal,
@@ -147,25 +147,57 @@ async def generate[T](
             close_generation(db, terminal, route=chosen.route, evidence=result.evidence)
             db.commit()
     except BaseException as error:
+        transient = is_transient_database_error(error)
         try:
             with runtime.session_factory() as db:
-                defect = Failed(ref.id, "defect", type(error).__name__, "", None)
-                close_generation(db, defect, route=chosen.route, evidence={})
+                failure = Failed(
+                    ref.id,
+                    "runtime_unavailable" if transient else "defect",
+                    type(error).__name__,
+                    "",
+                    None,
+                )
+                close_generation(db, failure, route=chosen.route, evidence={})
                 db.commit()
-        except Exception as close_error:  # justify-ignore-error: the original defect wins.
-            error.add_note(f"closing generation {ref.id} as a defect failed: {close_error!r}")
+        except Exception as close_error:  # justify-ignore-error: the original failure wins.
+            error.add_note(f"closing generation {ref.id} failed: {close_error!r}")
+        if transient:
+            raise JobFailure(
+                "E_DATABASE_BUSY", "The generation lost its database connection.", "retry"
+            ) from error
         raise
-    if (
-        isinstance(terminal, Failed)
-        and terminal.code == "runtime_unavailable"
-        and not result.sent
-        and operation != "chat"
-    ):
-        # Nothing was billed: retry within the job's budget; the last attempt settles.
-        with runtime.session_factory() as db:
-            job = get_job(db, owner.job.job_id)
-        if job is not None and owner.job.attempt_no < job.max_attempts:
-            raise RouteUnavailable(terminal.detail)
+    if isinstance(terminal, Failed) and operation != "chat":
+        code, detail = terminal.code, terminal.detail
+        match code:
+            case "auth" | "quota" | "defect" | "invalid_configuration" | "uncertain_effect":
+                raise JobFailure(f"E_GENERATION_{code.upper()}", detail, "hold")
+            case "runtime_unavailable" | "rate_limited" | "interrupted":
+                raise JobFailure(
+                    f"E_GENERATION_{code.upper()}",
+                    detail,
+                    "retry" if effect_mode == "ReadOnly" or not result.sent else "hold",
+                    retry_at=result.retry_at,
+                )
+            case "timeout" | "output_limit" | "invalid_output":
+                raise JobFailure(
+                    f"E_GENERATION_{code.upper()}",
+                    detail,
+                    "resample" if effect_mode == "ReadOnly" else "hold",
+                )
+            case "content_filtered" | "context_too_large" | "policy_violation":
+                pass  # The owner settles a permanent refusal, never a retry or repair hold.
+            case _:
+                assert_never(code)
+    if isinstance(terminal, Failed) and operation == "chat":
+        # Until durable chat continuation ships, preserve its existing interruption contract.
+        if terminal.code in {"invalid_configuration", "uncertain_effect"}:
+            terminal = Failed(
+                ref.id,
+                "interrupted" if terminal.code == "uncertain_effect" else "defect",
+                terminal.detail,
+                terminal.partial_text,
+                terminal.usage,
+            )
     return terminal
 
 
@@ -190,23 +222,33 @@ async def _resolve(
     try:
         row = selection_row(snapshot, chosen)
     except SelectionUnavailable as error:
-        return ("runtime_unavailable", error.state.explanation), None
+        code = (
+            "invalid_configuration"
+            if isinstance(error.state, OperatorActionRequired)
+            else "runtime_unavailable"
+        )
+        return (code, error.state.explanation), None
     except InvalidSelection:
-        return ("runtime_unavailable", "the selection is not in the current catalog"), None
+        return ("invalid_configuration", "the selection is not in the current catalog"), None
     if not isinstance(row.readiness, Ready):
-        return ("runtime_unavailable", row.readiness.explanation), row
+        code = (
+            "invalid_configuration"
+            if isinstance(row.readiness, OperatorActionRequired)
+            else "runtime_unavailable"
+        )
+        return (code, row.readiness.explanation), row
     if tools is not None:
         if isinstance(row.target, ProviderTarget) and not row.target.supports_tools:
-            return ("runtime_unavailable", "the selected model cannot call tools"), row
+            return ("invalid_configuration", "the selected model cannot call tools"), row
         missing = runtime.tools.plans[tools.plan_id].unavailable()
         if missing:
-            return ("runtime_unavailable", f"tools unavailable: {', '.join(missing)}"), row
+            return ("invalid_configuration", f"tools unavailable: {', '.join(missing)}"), row
         if tools.plan_id in MEMORY_PLANS and tools.plan_id != chat_tool_plan(
             runtime.tools.memory_config,
             user_id=owner.user_id,
             processors=row.presentation.processor_chain.processors,
         ):
-            return ("runtime_unavailable", "the shared memory grant changed"), row
+            return ("invalid_configuration", "the shared memory grant changed"), row
     if len(intent.input.encode()) > rules.input_max_bytes:
         return ("context_too_large", f"input exceeds {rules.input_max_bytes} bytes"), row
     return None, row
@@ -352,8 +394,12 @@ def _expected_failure(error: Exception) -> tuple[FailureCode, str] | None:
     from nexus.services.tools.run import ToolRefused
 
     detail = f"{type(error).__name__}: {error}"[:500]
-    if isinstance(error, ToolRefused | NativeUncertain):
+    if is_transient_database_error(error):
+        return "runtime_unavailable", detail
+    if isinstance(error, ToolRefused):
         return "interrupted", detail
+    if isinstance(error, NativeUncertain):
+        return "uncertain_effect", detail
     if isinstance(
         error,
         CredentialUnavailable | CredentialRejected | CredentialMissing | ApiCredentialRejected,
@@ -363,9 +409,11 @@ def _expected_failure(error: Exception) -> tuple[FailureCode, str] | None:
         return "policy_violation", detail
     if isinstance(
         error,
-        InvalidAgentRequest | AgentRuntimeDefect | NativeDefect | RuntimeDefect | GenerationDefect,
+        AgentRuntimeDefect | NativeDefect | RuntimeDefect | GenerationDefect,
     ):
         return "defect", detail
+    if isinstance(error, InvalidAgentRequest):
+        return "invalid_configuration", detail
     if isinstance(error, AgentRuntimeError):
         return "runtime_unavailable", detail
     return None

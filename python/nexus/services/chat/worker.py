@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
 from nexus.db.retries import retry_serializable
-from nexus.jobs.queue import JobExecutionContext, JobRow
+from nexus.jobs.queue import JobExecutionContext, JobRow, finish_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import ChatRunAssistantTextDeltaEventPayload
 from nexus.services.chat import citations, events, reads
@@ -30,11 +30,12 @@ from nexus.services.generation.contract import (
     GenerationIntent,
     Owner,
     Succeeded,
+    Terminal,
     TextDelta,
     Tools,
 )
 from nexus.services.generation.contract import text as text_output
-from nexus.services.generation.ledger import generation_exists, interrupt_job_generations
+from nexus.services.generation.ledger import generation_exists
 from nexus.services.generation.run import generate
 from nexus.services.generation.runtime import Runtime, run_generation_job
 
@@ -72,14 +73,12 @@ def on_dead_letter(db: Session, job: JobRow) -> None:
     """A dead job ends its run: ``cancelled`` if asked, else ``interrupted``."""
 
     run_id = UUID(str(job.payload["run_id"]))
-    interrupt_job_generations(db, job_id=job.id, detail="its chat job died")
-    # The queue holds the job row: never wait on a run a cancel has locked (run -> job).
-    # That cancel finds this dead job once the transition commits, and ends the run.
+    # Worker settlement already holds generation → conversation → run → job.
     run = db.scalar(
         select(ChatRun)
         .where(ChatRun.id == run_id)
         .execution_options(populate_existing=True)
-        .with_for_update(skip_locked=True)
+        .with_for_update()
     )
     if run is not None:
         events.finalize_dead(db, run)
@@ -98,15 +97,19 @@ async def _execute(
     # Before the generation: one locked transaction decides whether it runs at all.
     run = events.lock_run(db, run_id)
     if run is None or run.status in events.TERMINAL:
+        finish_job(db, context=context, result=None)
         db.commit()
         return
+    events.fence(db, context)
     if generation_exists(db, kind="chat_run", id=run_id):
         # An earlier attempt died after starting it; this attempt's start closed it.
         events.finalize_dead(db, run)
+        finish_job(db, context=context, result=None)
         db.commit()
         return
     if run.cancel_requested_at is not None:
         events.finalize(db, run, status="cancelled", content="")
+        finish_job(db, context=context, result=None)
         db.commit()
         return
     run.status = "running"
@@ -147,48 +150,9 @@ async def _execute(
     finally:
         await streamed.close()
 
-    def publish() -> tuple[str, str] | None:
-        # The serializable attempt preserves conversation → run → job ordering.
-        db.execute(
-            text(
-                "SELECT c.id FROM conversations c JOIN chat_runs r ON r.conversation_id=c.id WHERE r.id=:id FOR UPDATE OF c"
-            ),
-            {"id": run_id},
-        )
-        run = events.lock_run(db, run_id)
-        if run is None:  # deleted mid-generation, together with its job
-            return None
-        events.fence(db, context)
-        # A stop that lands after the model finished does not discard its answer.
-        if isinstance(terminal, Cancelled):
-            content = citations.unpublished(terminal.partial_text)
-            events.finalize(db, run, status="cancelled", content=content)
-        elif isinstance(terminal, Succeeded):
-            published = citations.publish(db, run, terminal.value)
-            degraded = published if isinstance(published, citations.Degraded) else None
-            support_id = uuid4().hex[:12] if degraded is not None else None
-            events.finalize(
-                db,
-                run,
-                status="complete",
-                content=published.content,
-                support_id=support_id,
-                warning="CitationsUnavailable" if support_id else None,
-            )
-            if support_id is not None and degraded is not None:
-                return support_id, degraded.detail
-        else:
-            events.finalize(
-                db,
-                run,
-                status="error",
-                content=citations.unpublished(terminal.partial_text),
-                error_code=terminal.code,
-                support_id=terminal.generation_id.hex[:12],
-            )
-        return None
-
-    degraded = retry_serializable(db, "chat_run.publish", publish)
+    degraded = retry_serializable(
+        db, "chat_run.publish", lambda: _publish(db, run_id, context, terminal)
+    )
     if degraded is not None:
         support_id, detail = degraded
         logger.warning(
@@ -197,6 +161,56 @@ async def _execute(
             support_id=support_id,
             detail=detail,
         )
+
+
+def _publish(
+    db: Session,
+    run_id: UUID,
+    context: JobExecutionContext,
+    terminal: Terminal[str],
+) -> tuple[str, str] | None:
+    """Commit the terminal answer and this execution's queue receipt together."""
+    # The serializable attempt preserves conversation → run → job ordering.
+    db.execute(
+        text(
+            "SELECT c.id FROM conversations c JOIN chat_runs r ON r.conversation_id=c.id WHERE r.id=:id FOR UPDATE OF c"
+        ),
+        {"id": run_id},
+    )
+    run = events.lock_run(db, run_id)
+    if run is None:  # deleted mid-generation, together with its job
+        return None
+    events.fence(db, context)
+    degradation: tuple[str, str] | None = None
+    # A stop that lands after the model finished does not discard its answer.
+    if isinstance(terminal, Cancelled):
+        content = citations.unpublished(terminal.partial_text)
+        events.finalize(db, run, status="cancelled", content=content)
+    elif isinstance(terminal, Succeeded):
+        published = citations.publish(db, run, terminal.value)
+        degraded = published if isinstance(published, citations.Degraded) else None
+        support_id = uuid4().hex[:12] if degraded is not None else None
+        events.finalize(
+            db,
+            run,
+            status="complete",
+            content=published.content,
+            support_id=support_id,
+            warning="CitationsUnavailable" if support_id else None,
+        )
+        if support_id is not None and degraded is not None:
+            degradation = support_id, degraded.detail
+    else:
+        events.finalize(
+            db,
+            run,
+            status="error",
+            content=citations.unpublished(terminal.partial_text),
+            error_code=terminal.code,
+            support_id=terminal.generation_id.hex[:12],
+        )
+    finish_job(db, context=context, result=None)
+    return degradation
 
 
 class _Text:

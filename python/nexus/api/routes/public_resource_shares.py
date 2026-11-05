@@ -21,7 +21,8 @@ from nexus.schemas.public_resource_sharing import PublicApparatusOut, PublicShar
 from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.services import public_resource_sharing
 from nexus.services.media_file_access import parse_single_byte_range
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 
 router = APIRouter(prefix="/public/resource-share", tags=["public-resource-sharing"])
 ShareToken = Annotated[str, Header(alias="X-Nexus-Share-Token")]

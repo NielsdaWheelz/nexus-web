@@ -19,8 +19,8 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from nexus.schemas import podcast as wire
-
+    from nexus.services import media_locks
+from nexus.schemas import podcast as wire
 
 _ROW_SQL = """
     SELECT l.name AS library_name,l.is_default AS library_is_default,i.id,i.library_id,i.run_id,i.added_count,i.already_present_count,i.created_at,
@@ -174,7 +174,7 @@ def publish_episodes(
         )
     )
     media = sorted(set(media_ids) | set(new_media_ids))
-    held_media = library_entries.lock_media_rows_in_order(db, media)
+    held_media = media_locks.lock_media_rows_in_order(db, media)
     held_media = list(
         db.scalars(
             text("""

@@ -49,19 +49,19 @@ _REVISION = TypeAdapter(RevisionId)
 
 def x_capture_evidence(db: Session, *, capture_id: UUID) -> CapturedEvidence:
     """Observe validated retained bytes, including an honestly empty captured body."""
-    capture, fragment = db.execute(
-        select(XPostCapture, Fragment)
+    row = db.execute(
+        select(XPostCapture.payload, Fragment.id, Fragment.canonical_text)
         .join(Fragment, Fragment.x_post_capture_id == XPostCapture.id)
         .where(XPostCapture.id == capture_id)
     ).one()
-    owner = f"fragment:{fragment.id}"
+    owner = f"fragment:{row.id}"
     credits: list[ContributorCreditOut] | None = None
     attribution = None
-    words = fragment.canonical_text
-    if capture.payload["kind"] == "complete_post":
-        payload = XCompletePostCapture.model_validate_json(json.dumps(capture.payload))
+    words = row.canonical_text
+    if row.payload["kind"] == "complete_post":
+        payload = XCompletePostCapture.model_validate_json(json.dumps(row.payload))
         words = generate_canonical_text(render_post_text(payload.content))
-        if not fragment.canonical_text.startswith(words):
+        if not row.canonical_text.startswith(words):
             raise ValueError("captured post text must prove its original fragment extent")
         credits = [
             ContributorCreditOut(
@@ -75,7 +75,7 @@ def x_capture_evidence(db: Session, *, capture_id: UUID) -> CapturedEvidence:
             )
         ]
     else:
-        excerpt = XArticleExcerptCapture.model_validate_json(json.dumps(capture.payload))
+        excerpt = XArticleExcerptCapture.model_validate_json(json.dumps(row.payload))
         attribution = excerpt.attribution_text
     return CapturedEvidence(
         completion_ref=None,
@@ -104,7 +104,7 @@ def x_capture_evidence(db: Session, *, capture_id: UUID) -> CapturedEvidence:
             locator=XCaptureOffsetsLocator(
                 type="x_capture_offsets",
                 capture_id=capture_id,
-                fragment_id=fragment.id,
+                fragment_id=row.id,
                 start_offset=0,
                 end_offset=len(words),
                 text_quote_selector={"exact": words, "prefix": None, "suffix": None},

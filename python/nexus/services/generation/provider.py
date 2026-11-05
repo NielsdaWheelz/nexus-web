@@ -13,6 +13,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -166,30 +167,36 @@ async def run_provider(
         return RouteResult("succeeded", output, loop.usage, None, "", evidence)
     if isinstance(outcome, Cancelled):
         return RouteResult("cancelled", None, loop.usage, None, "", evidence)
-    code, detail = _failure(outcome)
-    return RouteResult("failed", None, loop.usage, code, detail, evidence)
+    code, detail, retry_at = _failure(outcome)
+    return RouteResult("failed", None, loop.usage, code, detail, evidence, retry_at=retry_at)
 
 
-def _failure(outcome: Incomplete | Failed) -> tuple[FailureCode, str]:
+def _failure(outcome: Incomplete | Failed) -> tuple[FailureCode, str, datetime | None]:
     if isinstance(outcome, Incomplete):
         if outcome.reason == "max_output_tokens":
-            return "output_limit", "the provider stopped at its output limit"
-        return "content_filtered", f"the provider filtered the answer ({outcome.status})"
+            return "output_limit", "the provider stopped at its output limit", None
+        return "content_filtered", f"the provider filtered the answer ({outcome.status})", None
     failure = outcome.failure
     if isinstance(failure, ProviderContextTooLarge):
-        return "context_too_large", "the provider refused the context as too large"
+        return "context_too_large", "the provider refused the context as too large", None
     if isinstance(failure, ContinuationTooLarge):
-        return "output_limit", "the tool turn exceeds its continuation bound"
+        return "output_limit", "the tool turn exceeds its continuation bound", None
     if isinstance(failure, InvalidToolArguments | InvalidStructuredOutput):
-        return "invalid_output", failure.safe_detail
+        return "invalid_output", failure.safe_detail, None
     assert isinstance(failure, TransientExhausted)
     cause = failure.cause
     detail = f"{type(cause).__name__} after {failure.attempts} attempts"
     if isinstance(cause, ProviderRateLimit):
-        return "rate_limited", detail
+        delay = cause.retry_after
+        retry_at = (
+            datetime.now(UTC) + timedelta(seconds=delay.value)
+            if isinstance(delay, RuntimePresent)
+            else None
+        )
+        return "rate_limited", detail, retry_at
     if isinstance(cause, ProviderTimeout):
-        return "timeout", detail
-    return "runtime_unavailable", detail
+        return "timeout", detail, None
+    return "runtime_unavailable", detail, None
 
 
 class _Loop:

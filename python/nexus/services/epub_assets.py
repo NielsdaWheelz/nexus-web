@@ -16,7 +16,8 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundEr
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_ingest import SUPPORTED_IMAGE_TYPES
 from nexus.services.media_text_scope import read_media_text_scope
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 _SVG_CONTENT_TYPE = "image/svg+xml"

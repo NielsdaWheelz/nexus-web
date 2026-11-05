@@ -1,4 +1,4 @@
-"""Metadata operations: admission, the projection of kept jobs, and per-viewer reviews.
+"""Metadata operations: fenced admission and projections of retained jobs.
 
 An operation is one ``enrich_metadata`` job, kept forever (I10); its typed outcome is the
 job's result, and a view projects the jobs: the latest and the oldest unfinished by
@@ -6,7 +6,7 @@ job's result, and a view projects the jobs: the latest and the oldest unfinished
 unfinished, from the latest job the viewer saw (I8). A request from an older view answers
 the latest job: the work it asked for, research after what the viewer saw, exists (a
 resend after a lost answer lands here). The media row lock serializes admission with
-automatic enqueues; job rows are never locked.
+automatic enqueues; held replacement then locks its exact job.
 
 Every job freezes its purpose: an X post/thread's title, from the source attempt whose capture
 it names, or other eligible media's bibliography. Native article metadata stays authored;
@@ -30,8 +30,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import LLMCall
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
-from nexus.ids import new_uuid7
-from nexus.jobs.queue import JobRow, enqueue_job
+from nexus.jobs.queue import JobRow, TerminalJobFailure, enqueue_job, supersede_held_job
 from nexus.schemas.metadata_enrichment import (
     BibliographyMetadataJobPayload,
     MetadataBibliographyCompletedOutcome,
@@ -39,7 +38,7 @@ from nexus.schemas.metadata_enrichment import (
     MetadataEnrichmentAccepted,
     MetadataEnrichmentView,
     MetadataFailedOperation,
-    MetadataNoFindingsOperation,
+    MetadataHeldOperation,
     MetadataOperationOut,
     MetadataPurpose,
     MetadataQueuedOperation,
@@ -97,23 +96,30 @@ def metadata_operations_sql() -> str:
     """
     return """
         SELECT projected.*,
-            status IN ('pending', 'running', 'failed') AS is_unfinished,
-            effective_status = 'failed'
-                OR (effective_status = 'no_findings' AND reviewed_at IS NULL) AS needs_attention,
-            CASE WHEN effective_status = 'failed' THEN
+            status IN ('pending', 'running', 'failed', 'held') AS is_unfinished,
+            effective_status IN ('failed', 'held') AS needs_attention,
+            CASE WHEN effective_status IN ('failed', 'held') THEN
                 CASE WHEN result ? 'completed_at' THEN result->>'reason'
                      WHEN error_code = 'E_WORKER_INTERRUPTED' THEN 'worker_interrupted'
                      WHEN error_code = 'E_GENERATION_RUNTIME_UNAVAILABLE' THEN 'model_unavailable'
+                     WHEN error_code = 'E_GENERATION_AUTH' THEN 'authentication_failed'
+                     WHEN error_code = 'E_GENERATION_QUOTA' THEN 'quota_unavailable'
+                     WHEN error_code = 'E_GENERATION_INVALID_CONFIGURATION' THEN 'invalid_configuration'
+                     WHEN error_code = 'E_GENERATION_TIMEOUT' THEN 'research_timeout'
+                     WHEN error_code = 'E_GENERATION_INVALID_OUTPUT' THEN 'invalid_output'
+                     WHEN error_code = 'E_GENERATION_OUTPUT_LIMIT' THEN 'output_limit'
+                     WHEN result->>'kind' = 'ResourceFailure' AND result->>'dimension' = 'Memory' THEN 'memory_exhausted'
+                     WHEN result->>'kind' = 'ResourceFailure' AND result->>'dimension' = 'Time' THEN 'execution_timeout'
                      ELSE 'execution_failed' END
             END AS failure_code,
             COALESCE(completed_at, created_at) AS occurred_at,
-            GREATEST(updated_at, reviewed_at) AS lifecycle_updated_at
+            updated_at AS lifecycle_updated_at
         FROM (
             SELECT job.*, job.id AS job_id, (job.payload->>'media_id')::uuid AS media_id,
-                review.reviewed_at,
                 CASE
                     WHEN job.status IN ('succeeded', 'dead') AND job.result ? 'completed_at'
                         THEN job.result->>'status'
+                    WHEN job.status = 'held' THEN 'held'
                     WHEN job.status = 'running' AND job.lease_expires_at > now() THEN 'running'
                     WHEN job.status = 'dead' THEN 'failed'
                     WHEN job.status = 'failed'
@@ -125,8 +131,6 @@ def metadata_operations_sql() -> str:
                     COALESCE((job.result->>'completed_at')::timestamptz, job.finished_at)
                 END AS completed_at
             FROM background_jobs job
-            LEFT JOIN metadata_result_reviews review
-              ON review.job_id = job.id AND review.viewer_id = :viewer_id
             WHERE job.kind = 'enrich_metadata'
         ) projected
     """
@@ -170,18 +174,11 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 purpose="bibliography",
                 completed_at=row["completed_at"],
                 changed_fields=result["changed_fields"],
-                unresolved_fields=result["unresolved_fields"],
-                container_report=result["container_report"],
-                web_search=result["web_search"],
             )
             return MetadataCompletedOperation(**common, outcome=outcome)
-        case "no_findings":
-            return MetadataNoFindingsOperation(
-                **common,
-                completed_at=row["completed_at"],
-                reviewed_at=row["reviewed_at"],
-                container_report=result["container_report"],
-                web_search=result["web_search"],
+        case "held":
+            return MetadataHeldOperation(
+                **common, held_at=row["updated_at"], code=row["failure_code"]
             )
         case "failed":
             return MetadataFailedOperation(
@@ -193,8 +190,10 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
             return MetadataWaitingOperation(**common, reason="retry", until=row["available_at"])
         case "recovering":
             return MetadataRecoveringOperation(**common)
-        case _:
+        case "queued":
             return MetadataQueuedOperation(**common)
+        case _:
+            raise AssertionError(f"unknown metadata operation state: {row['effective_status']}")
 
 
 def _retry(
@@ -253,6 +252,8 @@ def metadata_enrichment_views(
                             AS latest_position,
                         count(*) FILTER (WHERE is_unfinished) OVER (PARTITION BY media_id)
                             AS unfinished_count,
+                        count(*) FILTER (WHERE is_unfinished AND status != 'held')
+                            OVER (PARTITION BY media_id) AS active_count,
                         row_number() OVER (
                             PARTITION BY media_id, is_unfinished ORDER BY created_at, id
                         ) AS unfinished_position
@@ -286,7 +287,7 @@ def metadata_enrichment_views(
             retry=_retry(
                 item,
                 viewer_id=viewer_id,
-                unfinished=count,
+                unfinished=0 if head is None else head["active_count"],
                 latest=None if head is None else head["job_id"],
                 has_source=item.id in sources,
             ),
@@ -344,10 +345,10 @@ def enqueue_metadata_enrichment(
     """In the caller's transaction, under the media lock, strictly after the latest job; an
     X post/thread without its captured source cannot take a title job; native articles
     never take generated metadata."""
-    from nexus.services import library_entries
+    from nexus.services import media_locks
     from nexus.services.media_parts import part_definition_version
 
-    library_entries.lock_media_rows_in_order(db, [media_id])
+    media_locks.lock_media_rows_in_order(db, [media_id])
     media = db.execute(
         text(
             "SELECT kind::text AS kind, provider, provider_id FROM media WHERE id = :m FOR UPDATE"
@@ -412,7 +413,7 @@ def admit_metadata_enrichment(
     """
 
     def admit() -> MetadataEnrichmentAccepted:
-        from nexus.services.library_entries import lock_media_rows_in_order
+        from nexus.services.media_locks import lock_media_rows_in_order
 
         lock_media_rows_in_order(db, [media_id])
         media = db.execute(
@@ -459,7 +460,12 @@ def admit_metadata_enrichment(
             return MetadataEnrichmentAccepted(
                 media_id=media_id, job_id=latest, last_enriched_at=media.metadata_enriched_at
             )
-        unfinished = sum(job.status in ("pending", "running", "failed") for job in jobs)
+        active = next((job for job in jobs if job.status in ("pending", "running", "failed")), None)
+        if active is not None:
+            return MetadataEnrichmentAccepted(
+                media_id=media_id, job_id=active.id, last_enriched_at=media.metadata_enriched_at
+            )
+        unfinished = 0
         has_source = purpose == "title" and media_id in x_source_attempt_ids(
             db, media_ids=[media_id]
         )
@@ -468,6 +474,23 @@ def admit_metadata_enrichment(
         )
         if isinstance(retry, MetadataRetryBlocked):
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, _BLOCKED_COPY[retry.reason])
+        for previous in jobs:
+            if previous.status != "held":
+                continue
+            supersede_held_job(
+                db,
+                job_id=previous.id,
+                result=TerminalJobFailure(
+                    result_payload={
+                        "status": "failed",
+                        "purpose": previous.purpose,
+                        "completed_at": db.scalar(text("SELECT clock_timestamp()")).isoformat(),
+                        "reason": "superseded",
+                    },
+                    error_code="E_METADATA_SUPERSEDED",
+                    error_message="replaced by a newer metadata update",
+                ),
+            )
         job = enqueue_metadata_enrichment(
             db, media_id=media_id, requester_user_id=viewer_id, request_id=request_id
         )
@@ -476,62 +499,3 @@ def admit_metadata_enrichment(
         )
 
     return retry_read_committed(db, "metadata_enrichment.admit", admit)
-
-
-def review_metadata_result(db: Session, *, viewer_id: UUID, media_id: UUID, job_id: UUID) -> None:
-    """Mark one no-findings result reviewed for this viewer (I11); an existing review stands."""
-
-    def review() -> None:
-        db.execute(text("SELECT 1 FROM media WHERE id = :m FOR UPDATE"), {"m": media_id})
-        if not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        row = (
-            db.execute(
-                text(f"""
-                    SELECT effective_status, reviewed_at FROM ({metadata_operations_sql()}) ops
-                    WHERE job_id = :job AND media_id = :m
-                """),
-                {"viewer_id": viewer_id, "job": job_id, "m": media_id},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Metadata result not found")
-        if row["effective_status"] != "no_findings":
-            raise ConflictError(
-                ApiErrorCode.E_RESOURCE_CONFLICT,
-                "only a no-findings metadata result can be marked reviewed",
-            )
-        if row["reviewed_at"] is None:
-            db.execute(
-                text("""
-                    INSERT INTO metadata_result_reviews (id, viewer_id, job_id, reviewed_at)
-                    VALUES (:id, :viewer, :job, clock_timestamp())
-                    ON CONFLICT (viewer_id, job_id) DO NOTHING
-                """),
-                {"id": new_uuid7(), "viewer": viewer_id, "job": job_id},
-            )
-            db.execute(text("SELECT pg_notify('media_events', :m)"), {"m": str(media_id)})
-
-    retry_read_committed(db, "metadata_result.review", review)
-
-
-_MEDIA_REVIEWS = """
-    DELETE FROM metadata_result_reviews review USING background_jobs job
-    WHERE review.job_id = job.id AND job.kind = 'enrich_metadata'
-      AND job.payload->>'media_id' = :m
-"""
-
-
-def delete_viewer_media_reviews(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
-    """Removal clears this viewer's reviews; the jobs stay (I10, I11)."""
-    db.execute(
-        text(_MEDIA_REVIEWS + " AND review.viewer_id = :viewer"),
-        {"m": str(media_id), "viewer": viewer_id},
-    )
-
-
-def delete_media_reviews(db: Session, *, media_id: UUID) -> None:
-    """Teardown clears every review of the media; the jobs stay (I10)."""
-    db.execute(text(_MEDIA_REVIEWS), {"m": str(media_id)})

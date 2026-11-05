@@ -19,14 +19,14 @@ def retrieval(db: Session, job_id: UUID | None) -> QuoteRetrieval | None:
         "succeeded"
         if job.status == "succeeded"
         else "failed"
-        if job.status == "dead"
+        if job.status in ("dead", "held")
         else "recovering"
         if job.status == "failed" or job.error_code is not None
         else "running"
         if job.status == "running"
         else "queued"
     )
-    message = job.last_error
+    message = "retrieval needs a repair" if job.status == "held" else job.last_error
     if job.kind == "capture_x_quote" and job.status == "dead":
         has_excerpt = db.scalar(
             text("""SELECT EXISTS (SELECT 1 FROM document_embeds de

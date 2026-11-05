@@ -46,7 +46,8 @@ from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import replace_observed_role_slices_batch
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 from nexus.storage.paths import build_source_artifact_storage_path
 
 # MIME walk safety caps: no newsletter legitimately exceeds these.

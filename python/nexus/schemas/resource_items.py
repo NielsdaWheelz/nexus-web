@@ -306,13 +306,6 @@ class RefreshSourceAction(_Action):
     expected_attempt_id: UUID | None
 
 
-class ReviewMetadataResultAction(_Action):
-    """Acknowledge the exact no-findings metadata job the viewer has not reviewed."""
-
-    kind: Literal["ReviewMetadataResult"] = "ReviewMetadataResult"
-    job_id: UUID
-
-
 class RecoveryAction(_Action):
     """One import obligation's offer (source, then search; at most one each), carrying
     the attempt/job/revision the viewer saw."""
@@ -367,7 +360,6 @@ ResourceActionOut = Annotated[
     SimpleAction
     | RefreshSourceAction
     | RetryMetadataAction
-    | ReviewMetadataResultAction
     | RecoveryAction
     | DownloadAction
     | OpenSourceAction

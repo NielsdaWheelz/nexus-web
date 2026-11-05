@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 from urllib.parse import quote
@@ -15,6 +15,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.services.contributor_taxonomy import ContributorRole
+from nexus.services.net.http_retry import retry_at
 from nexus.services.sealed_handles import (
     DiscoveryTargetHandle,
     seal_discovery_target,
@@ -176,18 +177,6 @@ def classify(
     if status in (408, 500, 502, 503, 504):
         return BrowseProviderFailure(BrowseFailureKind.Unavailable)
     return RuntimeError(f"{provider} returned unexpected HTTP {status}")
-
-
-def retry_at(seconds: float | str | None) -> datetime | None:
-    """A provider's Retry-After delay (delta-seconds) as an absolute instant."""
-    try:
-        return (
-            None
-            if seconds is None
-            else datetime.now(UTC) + timedelta(seconds=max(float(seconds), 0.0))
-        )
-    except ValueError:
-        return None
 
 
 def instant(raw: str) -> datetime:

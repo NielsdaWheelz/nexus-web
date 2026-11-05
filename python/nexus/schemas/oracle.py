@@ -16,7 +16,7 @@ _EDGE_SPACE = regex.compile(r"\A\p{White_Space}+|\p{White_Space}+\Z")
 
 # `streaming` is history only: a stored streaming row, or a pending one whose retired
 # log had started (`started_at`); either is unfinished, like `pending`.
-type OracleReadingStatus = Literal["pending", "streaming", "complete", "failed"]
+type OracleReadingStatus = Literal["pending", "streaming", "complete", "failed", "held"]
 type OraclePhase = Literal["descent", "ordeal", "ascent"]
 type OracleSourceKind = Literal["public_domain", "user_media"]
 type OracleFailureCode = Literal[

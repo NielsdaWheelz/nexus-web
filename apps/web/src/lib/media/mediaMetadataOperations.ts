@@ -7,12 +7,11 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { apiFetch, isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import type { Retract } from "@/components/feedback/stage";
 import { publishChange } from "@/lib/api/changes";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishImportsInvalidation } from "@/lib/imports/api";
 
 export type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
 export type MetadataOperation = Schema<"MetadataOperationOut">;
@@ -75,6 +74,7 @@ function receive(entry: Entry, view: MetadataEnrichmentView): void {
 function follow(scope: AccountScope, mediaId: string, restart = false): void {
   if (account !== scope || scope.controller.signal.aborted) return;
   const entry = entryFor(scope.accountId, mediaId);
+  if (entry.listeners.size === 0) return;
   if (entry.stop !== null && !restart) return;
   entry.stop?.();
   entry.stop = openStream<MetadataEnrichmentView, MetadataEnrichmentView>({
@@ -125,7 +125,7 @@ export interface MetadataPresentation {
   readonly purpose: Schema<"MetadataRetryAllowed">["purpose"];
   readonly originPaneId: string | null;
 }
-export type SettledMetadataOperation = Extract<MetadataOperation, { status: "completed" | "no_findings" | "failed" }>;
+export type SettledMetadataOperation = Extract<MetadataOperation, { status: "completed" | "failed" }>;
 export type MetadataOperationObservation =
   | { readonly status: "loading" }
   | { readonly status: "following"; readonly operation: Exclude<MetadataOperation, SettledMetadataOperation> }
@@ -153,6 +153,7 @@ export type MetadataFeedback = MetadataPresentation & {
   readonly retract: Retract;
 } & (
   | { readonly kind: "Terminal"; readonly operation: SettledMetadataOperation }
+  | { readonly kind: "Held"; readonly operation: Extract<MetadataOperation, { status: "held" }> }
   | { readonly kind: "Interrupted"; readonly error: ApiError }
 );
 const EMPTY_EXACT: MetadataOperationObservation = { status: "loading" };
@@ -193,11 +194,12 @@ function observedOperation(entry: ExactEntry): MetadataOperation | null {
 }
 
 function isSettled(operation: MetadataOperation): operation is SettledMetadataOperation {
-  return operation.status === "completed" || operation.status === "no_findings" || operation.status === "failed";
+  return operation.status === "completed" || operation.status === "failed";
 }
 
 function followExact(scope: AccountScope, entry: ExactEntry, restart = false): void {
   if (account !== scope || scope.controller.signal.aborted) return;
+  if (entry.listeners.size === 0 && entry.interest === null) return;
   if (entry.stop !== null && !restart) return;
   entry.stop?.();
   entry.defect = null;
@@ -291,7 +293,13 @@ export function presentMetadataFeedback(present: (feedback: MetadataFeedback) =>
       mediaId: entry.mediaId, jobId: entry.jobId, retract: interest.retract };
     if (snapshot.status === "settled") {
       entry.interest = null;
-      present({ ...identity, kind: "Terminal", operation: snapshot.operation });
+      if (snapshot.operation.status === "failed" && snapshot.operation.code === "superseded")
+        interest.retract();
+      else present({ ...identity, kind: "Terminal", operation: snapshot.operation });
+      pruneExact(entry);
+    } else if (snapshot.status === "following" && snapshot.operation.status === "held") {
+      entry.interest = null;
+      present({ ...identity, kind: "Held", operation: snapshot.operation });
       pruneExact(entry);
     } else if (snapshot.status === "interrupted") {
       interest.reported = snapshot;
@@ -311,7 +319,13 @@ export function useMediaMetadataOperations(
       const entry = entryFor(accountId, mediaId);
       entry.listeners.add(listener);
       if (account?.accountId === accountId) follow(account, mediaId);
-      return () => entry.listeners.delete(listener);
+      return () => {
+        entry.listeners.delete(listener);
+        if (entry.listeners.size === 0) {
+          entry.stop?.();
+          entry.stop = null;
+        }
+      };
     },
     [accountId, mediaId],
   );
@@ -320,29 +334,4 @@ export function useMediaMetadataOperations(
     [accountId, mediaId],
   );
   return useSyncExternalStore(subscribe, snapshot, () => EMPTY);
-}
-
-/** Mark one no-findings result reviewed for this viewer; a repeat is a no-op. */
-export async function submitMetadataResultReview(
-  mediaId: string,
-  jobId: string,
-  onAccepted?: () => void,
-): Promise<void> {
-  const scope = account;
-  if (scope === null) return;
-  try {
-    await apiFetch(
-      `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
-      { method: "POST" },
-    );
-  } catch (error) {
-    if (account !== scope) return;
-    throw error;
-  }
-  if (account !== scope) return;
-  onAccepted?.();
-  publishImportsInvalidation();
-  follow(scope, mediaId, true);
-  const exact = exactEntries.get(`${scope.accountId}:${mediaId}:${jobId}`);
-  if (exact !== undefined) followExact(scope, exact, true);
 }

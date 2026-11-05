@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+from provider_runtime.errors import CredentialMissing
 from pydantic import TypeAdapter
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -21,7 +22,14 @@ from nexus.db.models import OracleCorpusSource, OracleReading
 from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
 from nexus.db.session import open_async_session
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobFailure,
+    enqueue_job,
+    finish_job,
+    list_jobs_for_payload_values,
+    lock_running_job_claim,
+)
 from nexus.schemas.oracle import (
     OracleConcordanceOut,
     OracleFailureCode,
@@ -130,7 +138,7 @@ def get_reading(db: Session, *, viewer_id: UUID, reading_id: UUID) -> OracleRead
         )
     return OracleReadingOut.model_validate(
         {
-            **_columns(reading),
+            **_columns(reading, held=reading.id in _held_readings(db, [reading.id])),
             "question_text": reading.question_text,
             "created_at": reading.created_at,
             "folio_motto_gloss": reading.folio_motto_gloss,
@@ -144,12 +152,18 @@ def get_reading(db: Session, *, viewer_id: UUID, reading_id: UUID) -> OracleRead
 
 
 def list_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSummaryOut]:
-    readings = db.scalars(
-        select(OracleReading)
-        .where(OracleReading.user_id == viewer_id)
-        .order_by(OracleReading.created_at.desc())
+    readings = list(
+        db.scalars(
+            select(OracleReading)
+            .where(OracleReading.user_id == viewer_id)
+            .order_by(OracleReading.created_at.desc())
+        )
     )
-    return [OracleReadingSummaryOut.model_validate(_columns(reading)) for reading in readings]
+    held = _held_readings(db, [reading.id for reading in readings])
+    return [
+        OracleReadingSummaryOut.model_validate(_columns(reading, held=reading.id in held))
+        for reading in readings
+    ]
 
 
 def concordance(db: Session, *, viewer_id: UUID, reading_id: UUID) -> list[OracleConcordanceOut]:
@@ -195,7 +209,19 @@ def _owned(db: Session, *, viewer_id: UUID, reading_id: UUID) -> OracleReading:
     return reading
 
 
-def _columns(reading: OracleReading) -> dict[str, Any]:
+def _held_readings(db: Session, reading_ids: list[UUID]) -> set[UUID]:
+    latest = {}
+    for job in list_jobs_for_payload_values(
+        db,
+        kind="oracle_reading_generate",
+        payload_key="reading_id",
+        values=[str(reading_id) for reading_id in reading_ids],
+    ):
+        latest.setdefault(UUID(job.payload["reading_id"]), job)
+    return {reading_id for reading_id, job in latest.items() if job.status == "held"}
+
+
+def _columns(reading: OracleReading, *, held: bool) -> dict[str, Any]:
     """The fields a summary and a reading share. The plate is the captured one, else
     (history without a plate event) its key's current corpus record."""
     plate: object = reading.plate
@@ -205,7 +231,11 @@ def _columns(reading: OracleReading) -> dict[str, Any]:
     return {
         "id": reading.id,
         "folio_number": reading.folio_number,
-        "status": "streaming" if started else reading.status,
+        "status": "held"
+        if held and reading.status == "pending"
+        else "streaming"
+        if started
+        else reading.status,
         "folio_motto": reading.folio_motto,
         "folio_theme": reading.folio_theme,
         "plate": None
@@ -233,9 +263,18 @@ async def _run(
     reading = db.get(OracleReading, reading_id)
     assert reading is not None  # readings are never deleted
     if reading.status != "pending":
-        status = reading.status
-        db.commit()
-        return {"status": status, "noop": True}
+        db.rollback()
+
+        def finish_existing() -> dict[str, object]:
+            current = db.scalar(
+                select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
+            )
+            assert current is not None
+            result = {"status": current.status, "noop": True}
+            finish_job(db, context=context, result=result)
+            return result
+
+        return retry_serializable(db, "oracle.finish_existing", finish_existing)
     viewer_id, question = reading.user_id, reading.question_text
     prepared = await _prepare(db, viewer_id=viewer_id, question=question)
     if isinstance(prepared, Failure):
@@ -279,7 +318,13 @@ async def _prepare(db: Session, *, viewer_id: UUID, question: str) -> synthesis.
         except ApiError as exc:
             if exc.code is not ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
                 raise
-            return _failure("E_APP_SEARCH_FAILED", "semantic embeddings are unavailable")
+            if isinstance(exc.__cause__, CredentialMissing):
+                raise JobFailure(
+                    "E_EMBEDDING_NOT_CONFIGURED",
+                    "semantic embeddings need provider configuration",
+                    "hold",
+                ) from exc
+            raise
         async with open_async_session() as ordinary:
             await ordinary.run_sync(
                 lambda session: retry_serializable(
@@ -393,7 +438,9 @@ def _publish(
         assert reading is not None
         if not lock_running_job_claim(db, context=context) or reading.status != "pending":
             status = reading.status
-            return {"status": status, "noop": True}
+            result = {"status": status, "noop": True}
+            finish_job(db, context=context, result=result)
+            return result
         final: Success | Failure = outcome
         if isinstance(outcome, Success):
             corpus.refresh_anchors(db)
@@ -407,7 +454,11 @@ def _publish(
             reading.failed_at = func.now()
             reading.error_code = final.error_code
             reading.error_detail = None if final.error_detail is None else final.error_detail[:1000]
-        return {"status": "complete" if isinstance(final, Success) else "failed"}
+        result: dict[str, object] = {
+            "status": "complete" if isinstance(final, Success) else "failed"
+        }
+        finish_job(db, context=context, result=result)
+        return result
 
     return retry_serializable(db, "oracle.publish", attempt)
 

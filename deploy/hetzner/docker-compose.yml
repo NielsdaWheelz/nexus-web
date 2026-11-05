@@ -317,7 +317,7 @@ services:
     # bind source does not exist on the guarded underlay (create_host_path:
     # false). A crashed app-server restarts; a clean stop or a manual kill stays
     # down. Workers never receive the account mount; they share only the socket.
-    restart: on-failure:3
+    restart: on-failure
     mem_reservation: 256m
     mem_limit: 448m
     memswap_limit: 448m

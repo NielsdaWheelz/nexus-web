@@ -457,7 +457,7 @@ def repoint_media_subjects(
 
 def lock_subject(db: Session, subject: ResourceRef) -> bool:
     """Lock a media family, or validate a live retained capture highlight."""
-    from nexus.services.library_entries import lock_media_rows_in_order
+    from nexus.services.media_locks import lock_media_rows_in_order
 
     media_id = subject.id
     if subject.scheme == "highlight":

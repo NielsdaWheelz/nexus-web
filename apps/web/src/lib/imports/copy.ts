@@ -524,7 +524,8 @@ export function obligationStatusLine(
         ? "this copy needs text recognition before its text can be searched"
         : "no searchable text was found in this copy";
     } else {
-      if (!search.text_search_ready) return "preparing text search";
+      if (!search.text_search_ready) return slot.classification === "Active"
+        ? "preparing text search" : "text search needs attention";
       return slot.classification === "Active" ? "text search is ready; related matches are preparing" : "text search is ready; related matches are unavailable";
     }
   }
@@ -671,14 +672,13 @@ export function concurrentWorkLine(item: ImportItem): string | null {
   }
   const metadata = item.obligations.metadata;
   if (metadata !== null) {
-    if (metadata.unfinished_operation !== null)
+    if (metadata.unfinished_operation !== null && metadata.unfinished_operation.status !== "held")
       active.push(metadataOperationName(metadata.unfinished_operation.purpose));
     const latest = metadata.operation;
     if (
       item.primary !== "metadata" &&
       latest !== null &&
-      (latest.status === "failed" ||
-        (latest.status === "no_findings" && latest.reviewed_at === null))
+      (latest.status === "failed" || latest.status === "held")
     )
       attention.push(metadataOperationName(latest.purpose));
   }
@@ -780,9 +780,7 @@ export function eventLine(entry: HistoryEntry): string {
         facts.kind === "SourceFailed" && facts.origin === "Domain"
           ? "The import could not use this source"
           : "The run failed";
-      const outcome = facts.terminal
-        ? "No more automatic retries."
-        : "An automatic retry follows.";
+      const outcome = facts.terminal ? " no automatic retry is scheduled." : "";
       const progress = facts.kind === "SourceFailed" ? facts.progress : null;
       const counted =
         progress === null
@@ -796,7 +794,7 @@ export function eventLine(entry: HistoryEntry): string {
           : progress.unit !== null
             ? ` Stopped at ${progress.unit.toLowerCase()} ${counted}.`
             : ` Stopped at ${counted}.`;
-      return `${label}. ${cause}.${reason} ${outcome}${stopped}`;
+      return `${label}. ${cause}.${reason}${outcome}${stopped}`;
     }
     default:
       return label;

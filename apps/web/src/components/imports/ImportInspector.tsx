@@ -3,9 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import MetadataResearchActions, {
-  MetadataReviewButton,
-} from "@/components/media/MetadataResearchActions";
+import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Button from "@/components/ui/Button";
@@ -46,7 +44,6 @@ import { useImports } from "@/lib/imports/ImportsProvider";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import {
   METADATA_FAILURE_COPY,
-  METADATA_REVIEW_HELP,
   earlierMetadataRuns,
   metadataOperationName,
   metadataOperationSummary,
@@ -96,7 +93,7 @@ function OperationDetails({
   const finished =
     operation.status === "completed"
       ? operation.outcome.completed_at
-      : operation.status === "failed" || operation.status === "no_findings"
+      : operation.status === "failed"
         ? operation.completed_at
         : null;
   return (
@@ -129,12 +126,7 @@ function OperationDetails({
             <Moment value={operation.until} />
           </Field>
         ) : null}
-        {operation.status === "no_findings" &&
-        operation.reviewed_at !== null ? (
-          <Field label="Reviewed">
-            <Moment value={operation.reviewed_at} />
-          </Field>
-        ) : null}
+        {operation.status === "held" ? <Field label="Held"><Moment value={operation.held_at} /></Field> : null}
       </dl>
     </details>
   );
@@ -269,9 +261,7 @@ export default function ImportInspector({
           <p>{operation === null
             ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
             : metadataOperationSummary(operation, at)}</p>
-          {operation?.status === "failed" ? <p>{METADATA_FAILURE_COPY[operation.code]}</p>
-            : operation?.status === "no_findings" && operation.reviewed_at === null ? <p>{METADATA_REVIEW_HELP}</p>
-            : null}
+          {operation?.status === "failed" || operation?.status === "held" ? <p>{METADATA_FAILURE_COPY[operation.code]}</p> : null}
           <MetadataResearchResult operation={operation} />
           {earlierRuns > 0 ? (
             <p>
@@ -306,7 +296,7 @@ export default function ImportInspector({
       >
         <summary ref={historySummary}>History</summary>
         {historyOpen ? (
-          <Attempts importRef={importRef} mediaId={mediaId} matched={matched} />
+          <Attempts importRef={importRef} matched={matched} />
         ) : null}
       </details>
       <details className={styles.diagnostics}>
@@ -386,11 +376,9 @@ function attempts(entries: readonly HistoryEntry[]) {
 /** Recorded events, retained across failed reads; a match can lie beyond the prefix. */
 function Attempts({
   importRef,
-  mediaId,
   matched,
 }: {
   readonly importRef: string;
-  readonly mediaId: string | null;
   readonly matched: ImportItem["matched_event"];
 }) {
   const { observation, revision } = useImports();
@@ -420,7 +408,6 @@ function Attempts({
     <HistoryEvent
       key={entry.id}
       entry={entry}
-      mediaId={mediaId}
       matched={entry.id === matched?.id}
     />
   );
@@ -459,11 +446,9 @@ function Attempts({
 
 function HistoryEvent({
   entry,
-  mediaId,
   matched,
 }: {
   readonly entry: HistoryEntry;
-  readonly mediaId: string | null;
   readonly matched: boolean;
 }) {
   const operation =
@@ -471,11 +456,6 @@ function HistoryEvent({
   return (
     <li aria-current={matched ? "true" : undefined}>
       <span>{eventLine(entry)}</span>
-      {mediaId !== null &&
-      operation?.status === "no_findings" &&
-      operation.reviewed_at === null ? (
-        <MetadataReviewButton mediaId={mediaId} jobId={operation.job_id} />
-      ) : null}
       {matched ? (
         <Pill tone="info" size="sm">
           <span aria-hidden="true">{MATCHED_LABEL}</span>

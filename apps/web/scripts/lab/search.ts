@@ -103,7 +103,7 @@ def await_current_text(owner, *, witness, preparation):
             sections = _read_sections(db, owner)
             state = db.execute(text("SELECT revision, lexical_revision, section_witness_key, section_bounds_key, status, status_reason, updated_at FROM content_index_states WHERE owner_kind='media' AND owner_id=:id"), {"id":owner}).mappings().one_or_none()
             target = {"media_id":str(owner), "revision":None if state is None else state["revision"]}
-            jobs = db.execute(text("SELECT id, kind, payload->'revision' AS revision, status, error_code, last_error, available_at, attempts, max_attempts, claimed_by, lease_expires_at, started_at, finished_at, updated_at FROM background_jobs WHERE id=:job_id OR (kind=:kind AND payload @> CAST(:target AS jsonb)) ORDER BY created_at, id"), {"job_id":preparation.job_id, "kind":JOB_KIND, "target":json.dumps(target)}).mappings().all()
+            jobs = db.execute(text("SELECT id, kind, payload->'revision' AS revision, status, error_code, last_error, available_at, attempts, failed_executions, claimed_by, lease_expires_at, started_at, finished_at, updated_at FROM background_jobs WHERE id=:job_id OR (kind=:kind AND payload @> CAST(:target AS jsonb)) ORDER BY created_at, id"), {"job_id":preparation.job_id, "kind":JOB_KIND, "target":json.dumps(target)}).mappings().all()
         diagnostic = {"owner_ref":"media:"+str(owner), "require_witness":witness,
             "preparation":{"job_id":str(preparation.job_id), "revision":preparation.revision},
             "content_index_state":None if state is None else dict(state),
