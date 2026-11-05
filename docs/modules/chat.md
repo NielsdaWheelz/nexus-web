@@ -375,6 +375,9 @@ and source arrival remain resource-owned.
     and newest-first within both budgets. mandatory context never drops. automatic
     quote source facts remain identity/tool-scope only, including x follow-ups; direct
     citation construction consumes admitted evidence without discovery search.
+    explicitly attached highlights keep the owner's annotation after a bounded
+    read. selecting that same saved highlight quotes it once; the annotation stays
+    separate and never enters captured reader evidence.
 15. text frames: at most 512 chars, 2048 bytes or 33 ms each, in order, each its own
     commit; text before a tool call lands before its frames.
 16. a tool call writes one start frame and one result frame, identity only; projection

@@ -155,8 +155,10 @@ function* sourceEvents(content: ExcerptNode[]): Generator<ExcerptSourceEvent> {
 function* literalTokens(events: Iterable<ExcerptSourceEvent>, utf16 = false): Generator<LiteralToken> {
   let pending = 0, pendingBoundary = 0, emitted = false;
   let previous: LiteralToken | null = null, previousCollapsible = false;
+  const rowEmitted: boolean[] = [];
   const separator = (count: number, boundary: number) => { pending = Math.max(pending, count); pendingBoundary = boundary; };
   function* emit(token: LiteralToken, collapsible = false): Generator<LiteralToken> {
+    if (rowEmitted.length) rowEmitted[rowEmitted.length - 1] = true;
     if (pending && (previous !== null || emitted)) {
       if (previous !== null && !previousCollapsible) { emitted = true; yield previous; }
       previous = null;
@@ -192,11 +194,17 @@ function* literalTokens(events: Iterable<ExcerptSourceEvent>, utf16 = false): Ge
       else if (event.node_kind === "hr" || event.flow === "block") separator(1, event.start);
     } else if (event.kind === "enter") {
       parents.push(event.node_kind);
+      if (event.node_kind === "tr") rowEmitted.push(false);
       if (BLOCKS.has(event.node_kind)) separator(event.node_kind === "p" ? 2 : 1, event.start);
-      if ((event.node_kind === "td" || event.node_kind === "th") && event.index > 0) { pending = 0; yield* emit({text: "\t", spans: [], synthetic: true, boundary: event.start}); }
+      if ((event.node_kind === "td" || event.node_kind === "th") && event.index > 0) {
+        // Empty leading cells still owe the row break; later cells only separate columns.
+        if (rowEmitted.at(-1)) pending = 0;
+        yield* emit({text: "\t", spans: [], synthetic: true, boundary: event.start});
+      }
       if (event.node_kind === "pre") pre++;
     } else {
       parents.pop();
+      if (event.node_kind === "tr" && rowEmitted.pop() && rowEmitted.length) rowEmitted[rowEmitted.length - 1] = true;
       if (event.node_kind === "pre") pre--;
       if (BLOCKS.has(event.node_kind)) separator(event.node_kind === "p" ? 2 : 1, event.end);
     }

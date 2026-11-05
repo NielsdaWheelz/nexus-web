@@ -363,6 +363,11 @@ context and extent proof. read-side identity lookup and durable materialization
 derive the same anchor identity from the proven owner and normalized quote/context;
 publication and locator evidence remain validation inputs, not identity fields.
 exact words alone cannot distinguish repeated occurrences.
+frozen trees retain whitespace between list items, table rows and cells because it
+contributes to canonical publication coordinates. literal projection and display
+omit that structural whitespace, while cell and item text stay literal. table row
+and column boundaries survive empty cells and nested tables. canonical locator
+text and native excerpt text have distinct jobs.
 location resolution may prove where captured words land now; it never rewrites
 the historical words or treats stale offsets as present authority. genuine
 ambiguity stays explicit, even when that refuses an otherwise useful action.

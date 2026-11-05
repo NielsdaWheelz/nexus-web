@@ -199,7 +199,40 @@ def assemble(
     for target, identity_only in iter_context_targets(
         db, viewer_id=viewer_id, conversation_id=conversation_id
     ):
-        quoted = snapshot.evidence if snapshot is not None and target.uri == subject_uri else None
+        quoted = (
+            snapshot.evidence
+            if snapshot is not None
+            and (
+                target.uri == subject_uri
+                or snapshot.key is not None
+                and target.scheme == "highlight"
+                and target.id == snapshot.key.highlight_id
+            )
+            else None
+        )
+        annotation: str | None = None
+        body_bytes_left = bytes_left
+        if target.scheme == "highlight" and not identity_only:
+            # Explicit context keeps the owner's private annotation separately
+            # from captured quotation; measure before loading its text projection.
+            size = db.execute(
+                text("""SELECT octet_length(annotation_body_text) AS bytes FROM highlights
+                    WHERE id=:id AND user_id=:viewer AND authored_visible
+                      AND annotation_body_pm_json IS NOT NULL"""),
+                {"id": target.id, "viewer": viewer_id},
+            ).first()
+            if size is not None:
+                assert size.bytes is not None, "annotation projection pair is incomplete"
+                if size.bytes > bytes_left:
+                    raise ContextTooLarge("a mandatory annotation exceeds the input budget")
+                body_bytes_left -= size.bytes
+                annotation = db.scalar(
+                    text("""SELECT annotation_body_text FROM highlights
+                        WHERE id=:id AND user_id=:viewer AND authored_visible
+                          AND annotation_body_pm_json IS NOT NULL"""),
+                    {"id": target.id, "viewer": viewer_id},
+                )
+                assert annotation is not None, "annotation projection pair is incomplete"
         citation = None
         if quoted is not None:
             resource = ResolvedResource(target.uri, quoted.source.title or "selected passage", "")
@@ -219,7 +252,7 @@ def assemble(
                     from nexus.services.reader_excerpts import quote_parts
 
                     evidence = capture_prompt_evidence(
-                        db, viewer_id=viewer_id, ref=target, byte_limit=bytes_left
+                        db, viewer_id=viewer_id, ref=target, byte_limit=body_bytes_left
                     )
                     parts = quote_parts(evidence.quote) if evidence.quote else None
                     resource = ResolvedResource(
@@ -240,7 +273,7 @@ def assemble(
                         db,
                         viewer_id=viewer_id,
                         ref=target,
-                        byte_limit=bytes_left,
+                        byte_limit=body_bytes_left,
                         identity_only=identity_only,
                     )
             except (PromptBodyTooLarge, PromptEvidenceTooLarge) as error:
@@ -272,6 +305,7 @@ def assemble(
             n=len(attached) + 1 if citation else None,
             quoted_evidence=quoted,
             citation=citation,
+            annotation=annotation,
         )
         cost, size = tokens(line), _size(line)
         if cost > tokens_left or size > bytes_left:
@@ -365,6 +399,7 @@ def _resource(
     *,
     quoted_evidence: CapturedEvidence | None,
     citation: RetrievalCitation | None,
+    annotation: str | None,
 ) -> str:
     uri = quotes.attribute(resource.uri)
     if resource.missing:
@@ -386,6 +421,10 @@ def _resource(
         f'summary="{quotes.attribute(summary)}" '
         f'fetch_hint="{quotes.attribute(fetch_hint)}">'
     )
+    if annotation is None and resource.quote is not None:
+        annotation = resource.quote.annotation
+    if quoted_subject and annotation:
+        return f"{head}\n<annotation>{escape(annotation)}</annotation>\n</resource>"
     if quoted_subject or label_only:
         return f"{head}</resource>"
     captured = citation.captured_evidence if citation else None
@@ -399,7 +438,7 @@ def _resource(
             prefix=parts.prefix,
             suffix=parts.suffix,
             source=captured.source.title,
-            annotation=resource.quote.annotation if resource.quote else None,
+            annotation=annotation,
         )
         return f"{head}\n{inner}\n</resource>"
     if resource.quote is not None:
@@ -410,7 +449,7 @@ def _resource(
             prefix=quote.prefix,
             suffix=quote.suffix,
             source=quote.source_label,
-            annotation=quote.annotation,
+            annotation=annotation,
         )
         return f"{head}\n{inner}\n</resource>"
     if resource.inline_body is not None:
