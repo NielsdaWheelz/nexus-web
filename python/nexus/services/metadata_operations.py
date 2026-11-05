@@ -58,9 +58,9 @@ from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import x_source_attempt_ids
 
 _BLOCKED_COPY = {
-    "not_creator": "only the creator can research metadata",
-    "not_eligible": "metadata research is unavailable for this media state",
-    "active": "metadata research is already in progress",
+    "not_creator": "only the creator can update metadata",
+    "not_eligible": "metadata updates are unavailable for this media state",
+    "active": "a metadata update is already in progress",
     "source_context_missing": "refresh source to generate a title",
 }
 
@@ -172,6 +172,7 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 changed_fields=result["changed_fields"],
                 unresolved_fields=result["unresolved_fields"],
                 container_report=result["container_report"],
+                web_search=result["web_search"],
             )
             return MetadataCompletedOperation(**common, outcome=outcome)
         case "no_findings":
@@ -180,6 +181,7 @@ def _operation(row: RowMapping, call: LLMCall | None) -> MetadataOperationOut:
                 completed_at=row["completed_at"],
                 reviewed_at=row["reviewed_at"],
                 container_report=result["container_report"],
+                web_search=result["web_search"],
             )
         case "failed":
             return MetadataFailedOperation(
@@ -319,6 +321,23 @@ def metadata_enrichment_for_viewer(
     return metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=[media_id])[media_id]
 
 
+def metadata_operation_for_viewer(
+    db: Session, *, viewer_id: UUID, media_id: UUID, job_id: UUID
+) -> MetadataOperationOut:
+    """One exact retained run, authorized by its media in this snapshot."""
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    belongs = db.scalar(
+        text("""SELECT EXISTS (SELECT 1 FROM background_jobs
+            WHERE id=:job_id AND kind='enrich_metadata'
+              AND payload->>'media_id'=:media_id)"""),
+        {"job_id": job_id, "media_id": str(media_id)},
+    )
+    if not belongs:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Metadata operation not found")
+    return metadata_operations_for_jobs(db, viewer_id=viewer_id, job_ids=[job_id])[job_id]
+
+
 def enqueue_metadata_enrichment(
     db: Session, *, media_id: UUID, requester_user_id: UUID, request_id: str | None
 ) -> JobRow:
@@ -407,7 +426,7 @@ def admit_metadata_enrichment(
         if media is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         if media.created_by_user_id != viewer_id:
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "only the creator can research metadata")
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, _BLOCKED_COPY["not_creator"])
         if (
             native_x_article_id(
                 kind=media.kind, provider=media.provider, provider_id=media.provider_id

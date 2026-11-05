@@ -3165,6 +3165,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stream/media/{media_id}/metadata-enrichment/{job_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Metadata Operation Events
+         * @description Follow the accepted job, independently of newer operations on its media.
+         */
+        get: operations["stream_metadata_operation_events_stream_media__media_id__metadata_enrichment__job_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stream/media/{media_id}/metadata/events": {
         parameters: {
             query?: never;
@@ -8178,6 +8198,7 @@ export interface components {
             status: "completed";
             /** Unresolved Fields */
             unresolved_fields: components["schemas"]["MetadataField"][];
+            web_search: components["schemas"]["MetadataWebSearch"] | null;
         };
         /** MetadataCompletedOperation */
         MetadataCompletedOperation: {
@@ -8311,6 +8332,7 @@ export interface components {
              * @enum {string}
              */
             status: "no_findings";
+            web_search: components["schemas"]["MetadataWebSearch"] | null;
         };
         /**
          * MetadataOperationFacts
@@ -8495,6 +8517,8 @@ export interface components {
             /** Until */
             until: string | null;
         };
+        /** @enum {string} */
+        MetadataWebSearch: "not_available" | "not_used" | "succeeded" | "failed" | "mixed";
         /** MeteredApiBilling */
         MeteredApiBilling: {
             /**
@@ -20745,6 +20769,38 @@ export interface operations {
             header?: never;
             path: {
                 media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_metadata_operation_events_stream_media__media_id__metadata_enrichment__job_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+                job_id: string;
             };
             cookie?: never;
         };

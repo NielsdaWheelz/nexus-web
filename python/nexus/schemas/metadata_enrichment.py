@@ -31,6 +31,7 @@ type MetadataField = Literal[
 METADATA_FIELDS: tuple[MetadataField, ...] = get_args(MetadataField.__value__)
 # A media's purpose is fixed by what it is (metadata_purpose); every job freezes its own.
 type MetadataPurpose = Literal["bibliography", "title"]
+type MetadataWebSearch = Literal["not_available", "not_used", "succeeded", "failed", "mixed"]
 
 type MetadataFailureCode = Literal[
     "model_unavailable",
@@ -189,6 +190,7 @@ class MetadataBibliographyCompletedOutcome(_Frozen):
     changed_fields: list[MetadataField]
     unresolved_fields: list[MetadataField]
     container_report: ContainerReport | None
+    web_search: MetadataWebSearch | None
 
 
 class MetadataTitleCompletedOutcome(_Frozen):
@@ -210,6 +212,7 @@ class MetadataNoFindingsOutcome(_Frozen):
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
     container_report: ContainerReport | None
+    web_search: MetadataWebSearch | None
 
 
 class MetadataFailedOutcome(_Frozen):
@@ -305,6 +308,7 @@ class MetadataNoFindingsOperation(_Operation):
     completed_at: AwareDatetime
     reviewed_at: AwareDatetime | None
     container_report: ContainerReport | None
+    web_search: MetadataWebSearch | None
 
 
 class MetadataFailedOperation(_Operation):

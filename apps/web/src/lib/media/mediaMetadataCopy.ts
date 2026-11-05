@@ -1,5 +1,7 @@
 /** Metadata operation presentation shared by imports, menus and media detail. */
 import type { Schema } from "@/lib/api/wire";
+import type { Line } from "@/components/feedback/stage";
+import type { SettledMetadataOperation } from "@/lib/media/mediaMetadataOperations";
 
 type MetadataOperation = Schema<"MetadataOperationOut">;
 type MetadataEnrichmentView = Schema<"MetadataEnrichmentView">;
@@ -36,7 +38,7 @@ export const METADATA_FAILURE_COPY = {
 } satisfies Record<Schema<"MetadataFailureCode">, string>;
 
 export function metadataOperationName(purpose: MetadataPurpose): string {
-  return purpose === "title" ? "title generation" : "metadata research";
+  return ({ title: "title generation", bibliography: "metadata update" } satisfies Record<MetadataPurpose, string>)[purpose];
 }
 
 export function metadataRetryBlockedCopy(
@@ -60,9 +62,9 @@ export function metadataOperationSummary(
   const name = metadataOperationName(operation.purpose);
   switch (operation.status) {
     case "queued":
-      return title ? "title queued" : "metadata research queued";
+      return title ? "title queued" : "metadata update queued";
     case "running":
-      return title ? "generating title" : "researching metadata";
+      return title ? "generating title" : "updating metadata";
     case "recovering":
       return `recovering interrupted ${name}`;
     case "waiting":
@@ -77,7 +79,7 @@ export function metadataOperationSummary(
         ? "no metadata found · reviewed"
         : "no metadata found";
     case "failed":
-      return title ? "couldn't generate a title" : "metadata research failed";
+      return title ? "couldn't generate a title" : "metadata update failed";
     case "completed":
       if (operation.outcome.purpose === "title") {
         return operation.outcome.disposition === "generated"
@@ -85,7 +87,7 @@ export function metadataOperationSummary(
           : "used source label";
       }
       return operation.outcome.changed_fields.length === 0
-        ? "metadata checked; no changes"
+        ? "metadata unchanged"
         : "metadata updated";
   }
 }
@@ -96,15 +98,70 @@ export function metadataResearchLabel(
 ): string {
   if (purpose === "title") {
     if (operation === null || operation.purpose !== "title")
-      return "Generate title";
+      return "generate title";
     return operation.status === "failed"
-      ? "Retry title generation"
-      : "Generate title again";
+      ? "retry title generation"
+      : "generate title again";
   }
-  if (operation === null) return "Research metadata";
+  if (operation === null) return "update metadata";
   return operation.status === "failed"
-    ? "Retry metadata research"
-    : "Research again";
+    ? "retry metadata update"
+    : "update metadata";
+}
+
+/** Search execution is host observation, never a claim of complete or verified evidence. */
+export function metadataSearchCopy(value: Schema<"MetadataBibliographyCompletedOutcome">["web_search"]): string {
+  if (value === null) return "search use was not recorded";
+  return ({
+    not_available: "web search was unavailable for this update",
+    not_used: "web search was not used",
+    succeeded: "web search requests succeeded",
+    failed: "web searches failed",
+    mixed: "some web searches failed",
+  } satisfies Record<NonNullable<typeof value>, string>)[value];
+}
+
+export function metadataRequestLine(title: string, purpose: MetadataPurpose): Line {
+  return { fact: `requesting ${metadataOperationName(purpose)} for “${title}”…` };
+}
+
+export function metadataObservationLine(title: string, purpose: MetadataPurpose): Line {
+  const subject = ({ title: "title generation", bibliography: "the metadata update" } satisfies Record<MetadataPurpose, string>)[purpose];
+  return { fact: `couldn’t check ${subject} for “${title}”.` };
+}
+
+/** Only execution limitations belong in a notice; other observations remain in inspection. */
+function metadataSearchLimitation(value: Schema<"MetadataBibliographyCompletedOutcome">["web_search"]): string | null {
+  return value === "not_available" || value === "failed" || value === "mixed" ? `${metadataSearchCopy(value)}.` : null;
+}
+
+/** One deliberate terminal result. Field lists and unrecorded search belong in inspection. */
+export function metadataResultLine(operation: SettledMetadataOperation, title: string): Line {
+  if (operation.status === "failed") {
+    const action = ({ title: "generate a title", bibliography: "update metadata" } satisfies Record<MetadataPurpose, string>)[operation.purpose];
+    return { fact: `couldn’t ${action} for “${title}”.`, reason: `${METADATA_FAILURE_COPY[operation.code]}.` };
+  }
+  if (operation.status === "no_findings") {
+    const fact = `couldn’t establish metadata for “${title}”.`;
+    const reason = metadataSearchLimitation(operation.web_search);
+    return reason === null ? { fact } : { fact, reason };
+  }
+  const outcome = operation.outcome;
+  if (outcome.purpose === "title") return {
+    fact: outcome.changed_fields.length === 0 ? `title unchanged for “${title}”.`
+      : outcome.disposition === "generated" ? `generated a title for “${title}”.`
+        : `restored the source label for “${title}”.`,
+  };
+  const fields = outcome.changed_fields;
+  const unresolved = outcome.unresolved_fields.length > 0;
+  const changed = fields.length > 0;
+  const labels = fields.length <= 2 ? fields.map(field => METADATA_FIELD_LABELS[field]).join(" and ") : "metadata";
+  const fact = changed ? `updated ${labels} for “${title}”.`
+    : unresolved ? `no metadata changed for “${title}”; some fields remain unresolved.`
+      : `metadata unchanged for “${title}”.`;
+  const reason = [changed && unresolved ? "some fields remain unresolved." : null, metadataSearchLimitation(outcome.web_search)]
+    .filter(value => value !== null).join(" ");
+  return reason ? { fact, reason } : { fact };
 }
 
 export const X_TITLE_CONTEXT_HELP =

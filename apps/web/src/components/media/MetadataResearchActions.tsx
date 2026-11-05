@@ -16,6 +16,7 @@ import type { Schema } from "@/lib/api/wire";
 import {
   METADATA_REVIEW_HELP,
   metadataResearchLabel,
+  metadataOperationName,
 } from "@/lib/media/mediaMetadataCopy";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
@@ -70,10 +71,14 @@ export function MetadataReviewButton({ mediaId, jobId }: { readonly mediaId: str
  */
 export default function MetadataResearchActions({
   mediaId,
+  title,
   view,
   primaryOnly = false,
+  suppressReview = false,
 }: {
   readonly mediaId: string;
+  readonly title: string;
+  readonly suppressReview?: boolean;
   readonly view: Schema<"MetadataEnrichmentView">;
   readonly primaryOnly?: boolean;
 }) {
@@ -88,7 +93,7 @@ export default function MetadataResearchActions({
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
   const reviewJob =
-    operation?.status === "no_findings" && operation.reviewed_at === null
+    !suppressReview && operation?.status === "no_findings" && operation.reviewed_at === null
       ? operation.job_id
       : null;
   const remedyNeeded =
@@ -130,7 +135,8 @@ export default function MetadataResearchActions({
       confirmation: null,
       tracked: false,
       execute: () => landing(trigger, async () => {
-        const result = await admissions.admit({ kind: "MetadataResearch", mediaId,
+        const result = await admissions.admit({ kind: "MetadataResearch", mediaId, title, purpose: retry.purpose,
+          originPaneId: trigger.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? ctx.workspace().state.active_primary_pane_id,
           request: { expected_job_id: retry.expected_job_id } });
         if (result.kind !== "LocalFailure") return;
         if (result.error) fail(result.error, result.line.fact);
@@ -138,13 +144,13 @@ export default function MetadataResearchActions({
       }),
     });
   };
-  const pendingFeedback = pending === null ? null : resendFeedback({ line: { fact: "metadata search" },
+  const pendingFeedback = pending === null ? null : resendFeedback({ line: { fact: metadataOperationName(retry.purpose) },
     resend: { label: "retry", commandKey: `RetryMetadata:${pending.key}`, busy: pending.kind === "sending",
       run: () => run({ ref, id: "RetryMetadata", label: "retry", feedbackLabel: "retry", title: "", confirmation: null, tracked: false,
         execute: () => admissions.retry(pending.key) }) } });
   return (
     <>
-      <span id={reasonId} className="sr-only">{pendingFeedback !== null ? sentence(pendingFeedback.line) : ctx.online ? "metadata search" : BLOCKED_COPY.RequiresOnline}</span>
+      <span id={reasonId} className="sr-only">{pendingFeedback !== null ? sentence(pendingFeedback.line) : ctx.online ? metadataOperationName(retry.purpose) : BLOCKED_COPY.RequiresOnline}</span>
       {reviewJob !== null ? (
         <MetadataReviewButton key={reviewJob} mediaId={mediaId} jobId={reviewJob} />
       ) : null}

@@ -149,6 +149,7 @@ def compose_tools(
             "ChatReadAdditiveWrite",
             "ChatMemoryRead",
             "ChatMemoryReadSave",
+            "MetadataResearch",
         ):
             tool_ids = tuple(tool_id for tool_id in tool_ids if tool_id != "web.search")
         profile = CapabilityProfile(
