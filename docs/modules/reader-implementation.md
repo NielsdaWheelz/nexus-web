@@ -120,6 +120,18 @@ owner. the highlight module owns the capture and merge contract.
 
 ### source-backed pieces
 
+ordinary web articles expose one `opening` section when retained routine text
+precedes their first reading section. navigation derives its continuous prefix
+and rich cuts without changing source text or authored headings. heading-free
+articles keep their start command. contents, section navigation and find share
+the generated section; public contents follows a nonempty toc rather than format.
+
+section label provenance distinguishes source headings/publisher navigation from
+inferred/generated wording. only source-backed labels prefill a fresh manual work
+title or independently ground discovery's printed-title claim. literal selected
+text still grounds titles and incipits. discovery derives provenance from its
+fenced navigation proof; frozen job inputs and accepted work titles stay intact.
+
 piece commands choose a title and proved source sections. discovery supplies an
 independence verdict, source-grounded title, contributors, evidence and uncertainty;
 literary examples guide that judgment without becoming stored classifications.
