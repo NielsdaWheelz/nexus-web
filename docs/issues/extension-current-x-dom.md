@@ -9,10 +9,9 @@ semantic `article` elements. the former adapter required
 the earlier login diagnosis was wrong: `xapq4x7D.js` independently displays its
 logged-out banner on scroll or a timer. `DMpst0-E.js` opens the share menu for
 anonymous users; authentication gates selected actions, not opening the menu.
-the fresh anonymous native probe opens the full article's controlled menu with
-one nexus row through pointer and keyboard. the post probes observed stale
-controls during hydration; they establish neither an authentication requirement
-nor a product defect. the supplied chrislakin carrier
+anonymous native checks now qualify the supplied post and nested quote, including
+exact author-thread acquisition, pointer and keyboard opening/activation, disabled
+row navigation, escape and exclusion from the unrelated more menu. the supplied chrislakin carrier
 `2103620465029943764` has a full reading route with same-parent
 `data-article-part` title/byline/body and ordered `data-article-body-html` chunks;
 the former DraftJS/test-id extractor also rejected this current reader.
@@ -29,7 +28,7 @@ without click. its active trigger supplies `aria-expanded` and `aria-controls`.
 the adapter pins before opening and uses that explicit relation instead of menu
 newness. source review does not establish the remaining live portal behavior.
 
-resolve with native pointer/keyboard menu checks on the supplied post, quote and
-full article: one correctly owned row; no write from merely opening; exact target;
-toolbar/share convergence; existing actions/escape intact; switching menus and
-spa/recycled-node behavior. retain temporary drivers until qualification finishes.
+resolve with native full-article share acquisition and toolbar/share convergence,
+including the actual reading-view navigation and recorded node identities.
+the current temporary caller cannot identify the carrier's full-reading link;
+this is not an authentication refusal. retain drivers until qualification finishes.
