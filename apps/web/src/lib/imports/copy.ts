@@ -451,10 +451,6 @@ function statusLine(
 ): string {
   const source = item.obligations.source;
   if (item.primary === "source" && item.classification === "NeedsAttention") {
-    if (source?.recovery?.kind === "BrowserCapture") {
-      if (source.failure_code === "E_SOURCE_ACCESS_DENIED") return "this page blocked the import.";
-      if (source.failure_code === "E_SOURCE_NOT_READABLE") return "no readable article was found.";
-    }
     const retained = sourceFailureLine(item);
     if (retained !== null) return retained;
   }
@@ -630,8 +626,7 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
   UploadRejected: "This upload was rejected. Remove it and start a new import.",
 };
 
-export function offerLine(offer: RecoveryOffer): string {
-  if (offer.kind === "BrowserCapture") return "the nexus extension for firefox can finish this from the open article.";
+function offerLine(offer: RecoveryOffer): string {
   const stored = offer.input === "StoredSource";
   switch (offer.kind) {
     case "RetryUpload":

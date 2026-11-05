@@ -72,7 +72,8 @@ def source_failure_progress(
 def stored_artifact_path(source_payload: Mapping[str, object] | None) -> str | None:
     """The storage object an attempt's payload owns: a capture packet or an email body.
 
-    File sources keep their bytes in ``media_file``; url sources own nothing.
+    Browser files own immutable candidates too; local uploads use ``media_file``.
+    Url sources own nothing.
     """
     path = (source_payload or {}).get("storage_path")
     return path if isinstance(path, str) and path else None

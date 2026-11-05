@@ -13,6 +13,7 @@
 // refused, unsent or answered, stays unknown until it lands or the user stops tracking it.
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { placementSettlement } from "@/lib/libraries/placementSettlement";
 import { createContext, useContext, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
@@ -230,17 +231,16 @@ function createOwner(signIn: (error: unknown) => boolean, changed: () => void, r
             const fresh = await read(change.row);
             if (!active || lifetime !== run) return;
             const cell = change.row.data?.find(item => item.library_id === libraryId);
-            if (fresh && cell !== undefined && (cell.relation !== "Absent") === change.included) {
+            const settlement = placementSettlement({ desired: change.included,
+              expected_revision: change.expectedRevision, expected_removal_revision: change.removalRevision,
+              observed: fresh && cell !== undefined ? { included: cell.relation !== "Absent", revision: cell.order_revision } : null,
+              removal_revision: fresh ? change.row.removalRevision : null });
+            if (settlement === "Satisfied") {
               remove(change);
               emit();
               continue;
             }
-            const superseded = fresh && (
-              cell !== undefined && BigInt(cell.order_revision) > BigInt(change.expectedRevision)
-              || change.removalRevision !== null && change.row.removalRevision !== null
-                && BigInt(change.row.removalRevision) > BigInt(change.removalRevision)
-            );
-            if (!superseded) {
+            if (settlement === "Unknown") {
               change.unconfirmed += 1;
               change.phase = "Unknown";
               break;

@@ -1,4 +1,4 @@
-// The three Firefox extension bundles, selected by `mode`. build-extension.mjs
+// Firefox extension bundles, selected by `mode`. build-extension.mjs
 // runs each mode once into apps/extension/dist and supplies the pinned
 // __NEXUS_ORIGIN__/__NEXUS_STORAGE_ORIGIN__ defines; this file owns only the
 // bundle shapes:
@@ -22,6 +22,7 @@ const shared: UserConfig = {
         __dirname,
         "../../node/ingest/article_extraction.mjs",
       ),
+      "@nexus-ingest/x_article": path.resolve(__dirname, "../../node/ingest/x_article.mjs"),
       "@mozilla/readability": path.resolve(
         __dirname,
         "../../node/ingest/node_modules/@mozilla/readability",
@@ -72,6 +73,8 @@ export default defineConfig(({ mode }) => {
       return classicScript("background", "nexusBackground");
     case "content":
       return classicScript("content", "nexusContent");
+    case "xShare":
+      return classicScript("xShare", "nexusXShare");
     default:
       throw new Error(`unknown extension build mode: ${mode}`);
   }

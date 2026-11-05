@@ -19,7 +19,11 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Media, PdfPageTextSpan
 from nexus.errors import ApiError, ApiErrorCode, ResourceLimitError
 from nexus.logging import get_logger
-from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
+from nexus.services.contributor_taxonomy import (
+    ObservedRoleSlices,
+    RawCreditEntry,
+    build_observation,
+)
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
     nested_utf8_byte_length,
@@ -303,8 +307,14 @@ def _build_page_spans(
     return spans
 
 
-def publish_pdf_plan(db: Session, media: Media, plan: PdfPlan) -> SourceRunOutcome:
-    """Replace the complete PDF artifact set inside the caller's publication."""
+def publish_pdf_plan(
+    db: Session,
+    media: Media,
+    plan: PdfPlan,
+    *,
+    metadata_policy: Literal["replace", "supplement"],
+) -> SourceRunOutcome:
+    """Publish artifacts with absolute captured metadata or supplemental import facts."""
     # Serialize publication of the complete PDF artifact set against anonymous
     # readers, which hold Media FOR SHARE while resolving a projection.
     db.execute(text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": media.id})
@@ -334,16 +344,22 @@ def publish_pdf_plan(db: Session, media: Media, plan: PdfPlan) -> SourceRunOutco
         note_groups=[],
         status=plan.apparatus_status,
     )
-    if plan.title and media.title and ".pdf" in media.title.lower():
-        media.title = plan.title[:255]
-    if plan.subject and not media.description:
-        media.description = plan.subject[:2000]
+    if metadata_policy == "replace":
+        media.title = (plan.title or "Untitled PDF")[:255]
+        media.description = plan.subject[:2000] if plan.subject else None
+    else:
+        if plan.title and media.title and ".pdf" in media.title.lower():
+            media.title = plan.title[:255]
+        if plan.subject and not media.description:
+            media.description = plan.subject[:2000]
     db.flush()
     # D-31: only semicolons separate people; ``Last, First`` is ONE name.
     names = [part.strip() for part in (plan.author or "").split(";") if part.strip()]
     observation, truncated = build_observation(
         {"author": [RawCreditEntry(credited_name=name) for name in names]}
     )
+    if metadata_policy == "replace" and not isinstance(observation, ObservedRoleSlices):
+        observation = ObservedRoleSlices(frozenset({"author"}), ())
     if truncated:
         logger.info("pdf_author_truncation", media_id=str(media.id), truncated=truncated)
     return SourceRunOutcome(

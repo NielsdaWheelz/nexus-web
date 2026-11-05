@@ -36,7 +36,6 @@ import { conversationViewHref } from "@/lib/chat/view";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { lecternFull } from "@/lib/lectern/lectern";
 import { deleteLibrary, leaveLibrary, placements } from "@/lib/libraries/api";
-import { deleteMedia } from "@/lib/media/mediaLibraries";
 import {
   metadataResearchLabel,
   metadataRetryBlockedCopy,
@@ -704,11 +703,7 @@ export function projectResourceActions(
       await requestPodcastRefresh({ kind: "Podcast", podcast_id: id });
       acknowledged();
     }, { rawWrite: true }],
-    RemoveMedia: deleted(async acknowledged => {
-      await deleteMedia(id);
-      acknowledged();
-      if (ctx.isActive()) ctx.mediaContinuations.forgetDeletedMedia(id);
-    }, "/libraries", true),
+    RemoveMedia: overlay({ kind: "RemoveMedia", mediaId: id }),
     DeleteLibrary: deleted(async acknowledged => { await deleteLibrary(id); acknowledged(); }, "/libraries", true),
     DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(getWritingRuntime(ctx.accountId), id), "/notes"),
@@ -908,8 +903,6 @@ export function projectResourceActions(
         return make("ReviewMetadataResult", blocked, (_, acknowledged) =>
           submitMetadataResultReview(id, action.job_id, acknowledged), { rawWrite: true });
       case "Recovery":
-        if (action.offer.kind === "BrowserCapture") return { kind: "link", id: "BrowserCapture", label: ACTION_CATALOG.BrowserCapture.label,
-          icon: null, href: action.offer.source_url, target: "_blank" };
         const offer = action.offer;
         return make(offer.kind, blocked, async (_, acknowledged) => {
           await recoverMedia(id, offer);
@@ -932,7 +925,6 @@ export function projectResourceActions(
       return descriptor === null ? [] : [[descriptor.id, descriptor] as const];
     }),
   );
-  if (byId.has("BrowserCapture")) byId.delete("OpenSource");
   const playback = facts.actions.find(action => action.kind === "Playback");
   if (playback !== undefined && playback.kind === "Playback" && playbackSource !== null) {
     byId.set("PlayFromHere", make("PlayFromHere", playback.blocked, () => ctx.player.commands.playAudio({

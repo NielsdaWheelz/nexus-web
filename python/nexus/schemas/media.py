@@ -9,19 +9,56 @@ from pydantic import BaseModel, ConfigDict, Field
 from nexus.db.models import MediaKind
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
+from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.library import LibraryPlacementsOut
 from nexus.schemas.media_summary import (
     ConsumptionOut,
     MediaDurationOut,
     MediaPartSourceOut,
     MediaProcessingStatus,
     MediaShowOut,
+    MediaSummaryOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.x_captures import QuoteRetrieval
 from nexus.schemas.x_source import XArticleContent
+
+
+class ExtensionSourceAttemptOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    status: Literal["accepted", "queued", "running", "succeeded", "failed"]
+    error_code: str | None
+
+
+class ExtensionItemOut(BaseModel):
+    """An authorized saved item, its current source and exact organization guards."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: MediaSummaryOut
+    has_readable_copy: bool
+    source_attempt: ExtensionSourceAttemptOut | None
+    placements: LibraryPlacementsOut
+    acquisition_revision: OrderRevision
+
+
+class MediaRemovalPreviewOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: UUID
+    title: str
+    acquisition_revision: OrderRevision
+
+
+class RemoveMediaRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_acquisition_revision: OrderRevision
 
 
 class CapabilitiesOut(BaseModel):
@@ -32,7 +69,6 @@ class CapabilitiesOut(BaseModel):
     can_highlight: bool
     can_quote: bool
     can_retry: bool
-    can_replace_x_article: bool
 
 
 class PlaybackSourceOut(BaseModel):

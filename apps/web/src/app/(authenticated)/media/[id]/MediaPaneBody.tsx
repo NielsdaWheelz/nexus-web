@@ -1,8 +1,5 @@
 "use client";
 
-import { fetchImportDetail } from "@/lib/imports/api";
-import { useImports } from "@/lib/imports/ImportsProvider";
-
 // The media pane: the media record and its states, the shared document reader
 // over the media's publication and cursor, the annotations painted over it,
 // find, the chrome around it, and reading activity. Everything positional is
@@ -72,7 +69,6 @@ import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
-import { offerLine } from "@/lib/imports/copy";
 import {
   paneSourceKey,
   requirePaneRuntime,
@@ -131,24 +127,6 @@ export default function MediaPaneBody() {
   if (attemptId !== null && target?.kind !== "invalid_destination")
     return <AcceptedSourcePane key={attemptId} attemptId={attemptId} postRevision={target?.kind === "x_post" ? target.revision_id : null} />;
   return <MediaRoute key={id} id={id} />;
-}
-
-/** A failed import, where the reader would stand. When the source blocked the server, nexus
- * capture can save it from the reader's own browser. */
-function FailedSource({ mediaId, code, line }: { mediaId: string; code: string | null; line: Line }) {
-  const { observation } = useImports();
-  const speak = useActiveRegion();
-  const detail = usePaneFreeServerValue({
-    key: `failed-source:${mediaId}`,
-    stale: observation,
-    load: signal => fetchImportDetail(`media:${mediaId}`, signal),
-  });
-  const offer = detail.status === "ready" ? detail.data.item.obligations.source?.recovery : null;
-  if (offer?.kind !== "BrowserCapture") return <Fact line={line} speak={speak} />;
-  const fact = code === "E_SOURCE_ACCESS_DENIED" ? "this page blocked the import."
-    : code === "E_SOURCE_NOT_READABLE" ? "nexus found no readable article." : line.fact;
-  return <Fact line={{ fact, reason: offerLine(offer) }} speak={speak}
-    verbs={[{ label: "open original", href: offer.source_url, target: "_blank" }]} />;
 }
 
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
@@ -917,20 +895,15 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader}
       transcriptReaderKey={snapshot?.transcript_reader_key ?? null} />
   ) : null;
-  const captureHint = media.capabilities.can_replace_x_article && media.canonical_source_url
-    ? <Fact line={{ fact: "nexus capture can update this saved article." }} speak={speak}
-      verbs={[{ label: "open on x", href: media.canonical_source_url }]} />
-    : null;
   if (!readable)
     return (
       <div className={styles.stateScrollport} data-mobile={isMobile} ref={root} tabIndex={-1} onBlurCapture={cancelTranscriptFocus}>
         <div className={styles.state}>
           {transcriptChrome}
-          {captureHint}
           {transcript && media.processing_status !== "suspended" ? (
             <TranscriptState media={media} holdFocus={holdTranscriptFocus} />
           ) : sourceLine ? (
-            media.processing_status === "failed" ? <FailedSource mediaId={id} code={media.last_error_code} line={sourceLine} />
+            media.processing_status === "failed" ? <Fact line={sourceLine} speak={speak} />
               : <Fact line={sourceLine} speak={speak} verbs={[{ label: "view imports", href: "/imports",
                 onActivate: (event) => activateTargetLink({ event, runtime, target: { href: "/imports" } }) }]} />
           ) : (
@@ -1013,7 +986,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
                 ? { fact: "these saved threads overlap and need repair.", reason: "both are kept." }
                 : { fact: "couldn’t refresh from x.", reason: "the saved copy is kept." }} /> : null}
             {doc?.kind === "text" && doc.transcriptCoverage === "partial" ? <Fact line={{ fact: "this transcript is partial." }} /> : null}
-            {captureHint}
           </>
         }
         end={

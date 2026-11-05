@@ -37,7 +37,7 @@ if (nexus.protocol !== "https:")
 const storage = pinnedOrigin("NEXUS_EXTENSION_STORAGE_ORIGIN", "http://127.0.0.1:8333");
 
 rmSync(outputDir, { recursive: true, force: true });
-for (const mode of ["popup", "background", "content"]) {
+for (const mode of ["popup", "background", "content", "xShare"]) {
   await build({
     configFile: join(webDir, "vite.extension.config.ts"),
     mode,
@@ -66,6 +66,7 @@ const references = [
   ...Object.values(manifest.browser_action?.default_icon ?? {}),
   manifest.browser_action?.default_popup,
   ...(manifest.background?.scripts ?? []),
+  ...(manifest.content_scripts ?? []).flatMap(script => [...(script.js ?? []), ...(script.css ?? [])]),
   // injected by scripting.executeScript rather than declared
   "content.js",
 ];

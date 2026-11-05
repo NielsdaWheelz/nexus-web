@@ -636,7 +636,9 @@ def publish_prepared_x_source(
                 provider="x",
                 provider_target_ref=evidence.requested_revision_id,
                 payload=XAuthorThreadPayload(
-                    capture_input=capture_input, parent_source_attempt_id=driver.id
+                    capture_input=capture_input,
+                    parent_source_attempt_id=driver.id,
+                    extension_source=None,
                 ).model_dump(mode="json"),
                 status="succeeded",
             ).id

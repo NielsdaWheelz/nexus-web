@@ -141,11 +141,12 @@ class LibraryPlacementOut(BaseModel):
 
 
 class LibraryAllMembershipOut(BaseModel):
-    """Effective all membership, addressed through the viewer's real personal library."""
+    """Effective all membership and physical retention in the viewer's personal library."""
 
     library_id: UUID
     order_revision: OrderRevision
     included: bool
+    retained: bool
     remove_blocked: Literal["RequiresAdmin", "PodcastSubscription"] | None
 
 

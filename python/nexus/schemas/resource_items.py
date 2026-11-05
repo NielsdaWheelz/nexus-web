@@ -15,7 +15,6 @@ from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.imports import (
-    BrowserCaptureOffer,
     RepairSearchOffer,
     RepairSourceOffer,
     RetrySourceOffer,
@@ -320,7 +319,7 @@ class RecoveryAction(_Action):
 
     kind: Literal["Recovery"] = "Recovery"
     offer: Annotated[
-        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer | BrowserCaptureOffer,
+        RetrySourceOffer | RepairSourceOffer | RepairSearchOffer,
         Field(discriminator="kind"),
     ]
 

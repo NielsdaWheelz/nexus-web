@@ -22,6 +22,18 @@ declare module "@nexus-ingest/article_extraction" {
     (ExtractedArticle & { sourceRoot: Element }) | null;
 }
 
+declare module "@nexus-ingest/x_article" {
+  /** Full carrier reading page; the server resolves the logical article id. */
+  export function qualifyXArticleView(document: Document, sourceUrl: string): {
+    owner: Element;
+    body: Element;
+    carrier_id: string;
+    title: string;
+    byline: string;
+    publishedTime: string;
+  } | null;
+}
+
 // 2. The Firefox 153 surface @types/firefox-webext-browser (143) lacks:
 //    scripting.InjectionTarget.documentIds and runtime.MessageSender.documentId
 //    are both version_added 153 in mdn/browser-compat-data. background.ts pins

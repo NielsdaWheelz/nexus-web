@@ -260,6 +260,8 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
         text("SELECT processing_status::text FROM media WHERE id = :id FOR NO KEY UPDATE"),
         {"id": failure.media_id},
     ).scalar_one()
+    if db.scalar(text(_LATEST_ID_SQL), {"media_id": failure.media_id}) != failure.attempt_id:
+        return  # an obsolete queue callback has no authority over the replacement
     row = (
         db.execute(
             text("""

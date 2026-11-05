@@ -12,6 +12,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.acquisition import ExtensionSourceAdmission
 from nexus.schemas.publication_dates import PublicationDate
 
 Nonempty = Annotated[str, Field(min_length=1)]
@@ -221,6 +222,7 @@ class XCaptureInput(_SourceModel):
 class XAuthorThreadPayload(_SourceModel):
     capture_input: XCaptureInput | None
     parent_source_attempt_id: UUID | None
+    extension_source: ExtensionSourceAdmission | None
 
 
 class XPriorSource(_SourceModel):

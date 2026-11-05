@@ -16,4 +16,4 @@ async function handle(
   return proxyExtension(request, target);
 }
 
-export { handle as GET, handle as POST, handle as DELETE };
+export { handle as GET, handle as POST, handle as PUT, handle as DELETE };

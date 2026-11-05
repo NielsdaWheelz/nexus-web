@@ -46,13 +46,13 @@ from nexus.services.media_processing_state import mark_ready_for_reading, mark_s
 from nexus.services.metadata_operations import enqueue_metadata_enrichment
 from nexus.services.search import projection
 from nexus.services.source_adapters import (
+    PreparedBrowserArticle,
     PreparedFileSource,
     PreparedNativeArticle,
-    PreparedWebRecovery,
     acquire,
+    publish_prepared_browser_article,
     publish_prepared_file,
     publish_prepared_native_article,
-    publish_prepared_web_recovery,
 )
 from nexus.services.source_outcome import SourceRunOutcome, source_outcome_to_job_result
 from nexus.services.source_publication import (
@@ -152,8 +152,10 @@ def _run(
         if isinstance(acquired, PreparedXSource):
             outcome = _publish_x(session_factory, media_id, acquired, fence, actor_id, request_id)
             return source_outcome_to_job_result(outcome)
-        if isinstance(acquired, PreparedWebRecovery):
-            outcome = _publish_web_recovery(session_factory, media_id, acquired, fence, request_id)
+        if isinstance(acquired, PreparedBrowserArticle):
+            outcome = _publish_browser_article(
+                session_factory, media_id, acquired, fence, request_id
+            )
             return source_outcome_to_job_result(outcome)
         if isinstance(acquired, PreparedNativeArticle):
             outcome = _publish_native_article(
@@ -188,7 +190,9 @@ def _publish_file(
     request_id: str | None,
 ) -> tuple[SourceRunOutcome, list[str]]:
     def publish(db: Session, attempt: MediaSourceAttempt) -> tuple[SourceRunOutcome, list[str]]:
-        outcome, cleanup = publish_prepared_file(db, media_id=media_id, prepared=prepared)
+        outcome, cleanup = publish_prepared_file(
+            db, media_id=media_id, attempt=attempt, prepared=prepared
+        )
         _settle(db, attempt, media_id, outcome, request_id)
         record_input_change(db, owners=(f"media:{media_id}",))
         return outcome, cleanup
@@ -203,10 +207,10 @@ def _publish_file(
     )
 
 
-def _publish_web_recovery(
+def _publish_browser_article(
     session_factory: sessionmaker[Session],
     media_id: UUID,
-    prepared: PreparedWebRecovery,
+    prepared: PreparedBrowserArticle,
     fence: SourcePublicationFence,
     request_id: str | None,
 ) -> SourceRunOutcome:
@@ -220,7 +224,7 @@ def _publish_web_recovery(
         return children | set(_embed_owners({media_id})(db))
 
     def publish(db: Session, attempt: MediaSourceAttempt) -> SourceRunOutcome:
-        outcome = publish_prepared_web_recovery(
+        outcome = publish_prepared_browser_article(
             db,
             media_id=media_id,
             attempt=attempt,
@@ -234,7 +238,7 @@ def _publish_web_recovery(
 
     return run_source_publication_phase(
         session_factory=session_factory,
-        label="publish_web_recovery",
+        label="publish_browser_article",
         fence=fence,
         media_ids=(media_id,),
         mutate=publish,

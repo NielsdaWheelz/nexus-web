@@ -763,6 +763,7 @@ def decide_candidate(
                 from nexus.services.media_deletion import clear_user_media_deletion
 
                 clear_user_media_deletion(db, viewer_id, candidate.part_id)
+                library_entries.advance_acquisition_revision(db, candidate.part_id)
                 candidate.user_decision = "accepted"
                 candidate.version += 1
                 part_set.revision += 1

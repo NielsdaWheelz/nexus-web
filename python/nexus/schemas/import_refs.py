@@ -20,7 +20,7 @@ class UploadImportRef:
 
 @dataclass(frozen=True, slots=True)
 class MediaImportRef:
-    """An import named by its media; a web recovery preserves this identity."""
+    """An import named by its media, including every targeted capture."""
 
     media_id: UUID
 

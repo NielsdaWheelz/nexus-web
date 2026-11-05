@@ -26,11 +26,13 @@ import {
 declare const content: { fetch: typeof fetch }; // Firefox MV2: fetch in the page's principal
 
 export type ContentRequest =
+  | { kind: "pin"; source_url: string }
   | { kind: "extract"; source_url: string; x_article: boolean }
   | { kind: "bind"; targetElementId: number; linkUrl: string }
   | { kind: "download"; url: string; limits: Record<DocumentKind, number> };
 
 export type ContentReply =
+  | { kind: "pinned"; title: string }
   | { kind: "article"; packet: ArticlePacket; previewText: string }
   | { kind: "unreadable"; message: string }
   | { kind: "bound"; sameOrigin: boolean }
@@ -78,7 +80,9 @@ async function serve(request: ContentRequest): Promise<void> {
   let reply: ContentReply;
   try {
     reply =
-      request.kind === "extract"
+      request.kind === "pin"
+        ? location.href === request.source_url ? { kind: "pinned", title: document.title } : { kind: "unreadable", message: "the page changed. click add to nexus again." }
+        : request.kind === "extract"
         ? extract(request)
         : request.kind === "bind"
           ? bind(request.targetElementId, request.linkUrl)
@@ -91,7 +95,7 @@ async function serve(request: ContentRequest): Promise<void> {
       failure:
         error instanceof CaptureFailureError
           ? error.failure
-          : { code: "E_CAPTURE_CONTENT", message: "couldn’t read this page.", requestId: null, status: null, offline: false },
+          : { code: "E_CAPTURE_CONTENT", message: "nexus couldn’t read this page.", requestId: null, status: null, offline: false },
     };
   }
   // a document's blob is copied by the background on receipt
@@ -103,24 +107,34 @@ async function serve(request: ContentRequest): Promise<void> {
 
 function extract(request: Extract<ContentRequest, { kind: "extract" }>): ContentReply {
   if (location.href !== request.source_url)
-    return { kind: "unreadable", message: "the page changed while nexus read it. reopening this popup retries." };
+    return { kind: "unreadable", message: "the page changed. click add to nexus again." };
   const clone = document.cloneNode(true) as Document;
   const baseUri = document.baseURI;
   const xArticle = request.x_article ? extractXArticle(clone, request.source_url) : null;
   if (request.x_article && xArticle === null)
-    return { kind: "unreadable", message: "nexus couldn’t find the article here. open its reading view, then reopen this popup." };
+    return { kind: "unreadable", message: "open the full article, then click add to nexus." };
   const sourceHtml = sourceEvidence(clone, baseUri, xArticle?.sourceRoot ?? clone); // first: Readability mutates the clone
   const article = xArticle ?? extractArticle(clone);
-  if (!article?.content) return { kind: "unreadable", message: "no readable text in it." };
+  if (!article?.content) {
+    return {
+      kind: "unreadable",
+      message: "this page has no readable article.",
+    };
+  }
   const body = new DOMParser().parseFromString(
     article.content,
     "text/html",
   ).body;
   reduce(body, baseUri);
   const text = collapse(body.textContent ?? "");
-  if (text === "") return { kind: "unreadable", message: "no readable text in it." };
-  if (utf8Length(body.innerHTML) > ARTICLE_CONTENT_MAX_BYTES)
-    return { kind: "unreadable", message: "this article is too large to import." };
+  if (text === "")
+    return { kind: "unreadable", message: "this page has no readable text." };
+  if (utf8Length(body.innerHTML) > ARTICLE_CONTENT_MAX_BYTES) {
+    return {
+      kind: "unreadable",
+      message: "this article is too large to capture.",
+    };
+  }
   return {
     kind: "article",
     packet: {
@@ -211,7 +225,10 @@ function sourceEvidence(clone: Document, baseUri: string, root: Document | Eleme
     }
     if (!piece) continue;
     if (utf8Length(html) + utf8Length(piece) > ARTICLE_SOURCE_MAX_BYTES) {
-      throw failure("E_RESOURCE_LIMIT", "this page’s notes and embeds are too large to import.");
+      throw failure(
+        "E_RESOURCE_LIMIT",
+        "The page's source notes and embeds exceed the capture limit.",
+      );
     }
     html += piece;
   }
@@ -302,7 +319,7 @@ async function download(
     if (aborter.signal.aborted) throw error;
     return {
       kind: "failed",
-      failure: { code: "E_CAPTURE_FETCH", message: "couldn’t download the link.", requestId: null, status: null, offline: false },
+      failure: { code: "E_CAPTURE_FETCH", message: "couldn’t download this link.", requestId: null, status: null, offline: false },
     };
   }
   return readDocument(response, limits);

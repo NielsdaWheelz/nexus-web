@@ -43,7 +43,6 @@ export const ACTION_CATALOG = {
     group: "Navigate",
   },
   OpenSource: { label: "Open source", icon: null, group: "Navigate" },
-  BrowserCapture: { label: "Open source in new tab", icon: null, group: "Navigate" },
   OpenPodcastFeed: { label: "Open feed", icon: null, group: "Navigate" },
   Metadata: { label: "Metadata…", icon: null, group: "Navigate" },
   Playback: {
@@ -212,13 +211,9 @@ export const ACTION_CATALOG = {
   RemovePodcastEpisodes: { label: "Remove episodes from libraries…", icon: Icon.Remove, group: "Danger" },
   RemoveUpload: { label: "Remove import", icon: null, group: "Danger" },
   RemoveMedia: {
-    label: "Remove from Nexus",
+    label: "remove from nexus…",
     icon: null,
     group: "Danger",
-    confirmation: {
-      title: "remove from nexus",
-      body: "remove “{title}” from your nexus and lectern? this removes its individual entries in libraries you manage and revokes sharing you created. your highlights and passage attachments are deleted; note text remains. progress may be lost. other readers may lose access. this cannot be undone.",
-    },
   },
   DeleteLibrary: {
     label: "Delete library",

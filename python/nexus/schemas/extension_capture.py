@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
+    UUID4,
     AfterValidator,
     BaseModel,
     ConfigDict,
@@ -23,8 +24,10 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.acquisition import AcquisitionGuard
+from nexus.schemas.acquisition import SourceTarget
 from nexus.schemas.capture_limits import WEB_ARTICLE_HTML_MAX_BYTES
+from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.media import ExtensionItemOut
 from nexus.services.url_normalize import validate_requested_url
 
 ARTICLE_PACKET_MAX_BYTES = 4 * 1024 * 1024
@@ -54,69 +57,63 @@ def _utf8_at_most(limit: int):
     return check
 
 
-def _distinct(values: list[UUID]) -> list[UUID]:
-    if len(set(values)) != len(values):
-        raise ValueError("library_ids must be distinct")
-    return values
-
-
 RequestedUrl = Annotated[str, StringConstraints(max_length=2048), AfterValidator(_requested_url)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+XDecimalId = Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
 
 
 class LocalFile(_Strict):
     kind: Literal["LocalFile"] = "LocalFile"
 
 
-class CaptureTarget(_Strict):
-    media_id: UUID
-    expected_source_attempt_id: UUID
-    expected_reader_generation: int | None = Field(ge=1)
+class SourceBinding(_Strict):
+    x_article_id: XDecimalId | None
+    target: SourceTarget | None
 
 
-class XArticleBinding(_Strict):
-    kind: Literal["XArticle"] = "XArticle"
-    article_id: Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
-    target: CaptureTarget | None
+class BrowserSource(_Strict):
+    kind: Literal["Browser"] = "Browser"
+    x_article_id: XDecimalId | None
 
 
-class WebRecoveryBinding(_Strict):
-    kind: Literal["WebRecovery"] = "WebRecovery"
-    target: CaptureTarget
-    source_relation: Literal["ExactUrl", "AlternativeCopy"]
+class XStatusSource(_Strict):
+    kind: Literal["XStatus"] = "XStatus"
+    revision_id: XDecimalId
 
 
-CaptureBinding = Annotated[XArticleBinding | WebRecoveryBinding, Field(discriminator="kind")]
+SaveSource = Annotated[BrowserSource | XStatusSource, Field(discriminator="kind")]
 
 
-class TargetSummary(_Strict):
-    title: str
-    source_label: str
-    source_url: str
-    accepted_at: datetime
+class SaveTargetOut(_Strict):
+    source: SaveSource
+    target: SourceTarget | None
+    item: ExtensionItemOut | None
+    expected_removal_revision: OrderRevision
 
 
-class RecoveryCandidate(_Strict):
-    binding: WebRecoveryBinding
-    summary: TargetSummary
+class CreateExtensionSourceRequest(_Strict):
+    id: UUID4
+    url: RequestedUrl
+    expected_target: SourceTarget | None
+    expected_removal_revision: OrderRevision
 
 
-class RecoveryCandidatePage(_Strict):
-    items: list[RecoveryCandidate]
-    next_cursor: str | None
+class BrowserSourcePayload(_Strict):
+    """Verified immutable input and the reader base admitted by the server."""
 
-
-class CaptureTargetOut(_Strict):
-    capture_binding: CaptureBinding | None
-    target_summary: TargetSummary | None
-    web_match: Literal["None", "Unique", "Ambiguous"]
+    source_binding: SourceBinding
+    base_reader_generation: int | None = Field(ge=1)
+    storage_path: str
+    content_type: str
+    size_bytes: int = Field(gt=0)
+    sha256: Sha256Hex
 
 
 class BrowserCapture(_Strict):
     kind: Literal["BrowserCapture"] = "BrowserCapture"
     source_url: RequestedUrl
     sha256: Sha256Hex
-    capture_binding: CaptureBinding | None
+    source_binding: SourceBinding
 
 
 class CreateCaptureRequest(_Strict):
@@ -129,23 +126,12 @@ class CreateCaptureRequest(_Strict):
     content_type: Literal["application/pdf", "application/epub+zip", "application/json"]
     size_bytes: int = Field(gt=0)
     sha256: Sha256Hex
-    capture_binding: CaptureBinding | None
-    library_ids: Annotated[list[UUID], AfterValidator(_distinct)] = Field(default_factory=list)
+    source_binding: SourceBinding
 
 
-class AcquireCaptureRequest(AcquisitionGuard):
-    kind: Literal["Acquire"] = "Acquire"
+class ConfirmCaptureRequest(_Strict):
     generation: int = Field(ge=1)
-
-
-class RecoverCaptureRequest(_Strict):
-    kind: Literal["Recover"] = "Recover"
-    generation: int = Field(ge=1)
-
-
-ConfirmCaptureRequest = Annotated[
-    AcquireCaptureRequest | RecoverCaptureRequest, Field(discriminator="kind")
-]
+    expected_removal_revision: OrderRevision
 
 
 class ArticlePacket(_Strict):

@@ -88,6 +88,7 @@ export type Overlay =
   | { readonly kind: "PodcastLibraries"; readonly target: PodcastTarget; readonly title: string; readonly successFocus?: ReturnFocusTarget }
   | { readonly kind: "SubscribePodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
   | { readonly kind: "RemoveEpisodeFromAll"; readonly mediaId: string; readonly title: string }
+  | { readonly kind: "RemoveMedia"; readonly mediaId: string }
   | { readonly kind: "UnsubscribePodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly successFocus?: ReturnFocusTarget }
   | { readonly kind: "RemovePodcastEpisodes"; readonly podcastId: string; readonly title: string };
 

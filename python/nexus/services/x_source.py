@@ -68,18 +68,25 @@ def x_primary_post_captures_sql() -> str:
     """
 
 
-def x_thread_candidates(
+@dataclass(frozen=True, slots=True)
+class XThreadMatches:
+    primary_holders: tuple[UUID, ...]
+    unpublished_attempts: tuple[UUID, ...]
+
+
+def x_thread_matches(
     db: Session, *, viewer_id: UUID, revision_ids: Sequence[str]
-) -> dict[str, tuple[UUID, ...]]:
-    """Readable primary holders first, otherwise latest unresolved unpublished work.
+) -> dict[str, XThreadMatches]:
+    """Readable primary holders and latest unresolved unpublished work.
 
     A request address is not published membership. Frozen input matches its logical
     post but grants no access; visibility still belongs to the live media. Ambiguity
-    remains per revision so commands and batched saved-state reads share this relation.
+    remains per revision. Callers choose their policy over these shared identity facts.
     """
     from nexus.auth.permissions import visible_media_ids_cte_sql
 
-    candidates: dict[str, list[UUID]] = {revision: [] for revision in revision_ids}
+    primary: dict[str, list[UUID]] = {revision: [] for revision in revision_ids}
+    unpublished: dict[str, list[UUID]] = {revision: [] for revision in revision_ids}
     rows = db.execute(
         text(f"""
             WITH requested AS (
@@ -97,9 +104,9 @@ def x_thread_candidates(
                 JOIN visible ON visible.media_id=a.media_id
                 ORDER BY a.media_id, {st.LATEST_ORDER_SQL}
             )
-            SELECT revision_id, media_id FROM primary_holders
-            UNION
-            SELECT requested.revision_id, latest.media_id
+            SELECT revision_id, media_id, true AS is_primary FROM primary_holders
+            UNION ALL
+            SELECT requested.revision_id, latest.media_id, false AS is_primary
             FROM requested JOIN latest ON latest.source_type='x_author_thread'
               AND latest.status IN ('accepted','queued','running','failed')
             LEFT JOIN x_post_aliases target ON target.revision_id=latest.provider_target_ref
@@ -109,15 +116,28 @@ def x_thread_candidates(
                 OR target.post_id=requested.post_id OR seed.post_id=requested.post_id)
               AND NOT EXISTS (SELECT 1 FROM reader_publications rp
                   WHERE rp.media_id=latest.media_id)
-              AND NOT EXISTS (SELECT 1 FROM primary_holders holder
-                  WHERE holder.revision_id=requested.revision_id)
-            ORDER BY revision_id, media_id
+            ORDER BY revision_id, media_id, is_primary
         """),
-        {"viewer_id": viewer_id, "revision_ids": list(candidates)},
+        {"viewer_id": viewer_id, "revision_ids": list(primary)},
     )
-    for revision, media_id in rows:
-        candidates[revision].append(media_id)
-    return {revision: tuple(ids) for revision, ids in candidates.items()}
+    for revision, media_id, is_primary in rows:
+        (primary if is_primary else unpublished)[revision].append(media_id)
+    return {
+        revision: XThreadMatches(tuple(ids), tuple(unpublished[revision]))
+        for revision, ids in primary.items()
+    }
+
+
+def x_thread_candidates(
+    db: Session, *, viewer_id: UUID, revision_ids: Sequence[str]
+) -> dict[str, tuple[UUID, ...]]:
+    """Ordinary acquisition prefers published primary holders over unfinished work."""
+    return {
+        revision: matches.primary_holders or matches.unpublished_attempts
+        for revision, matches in x_thread_matches(
+            db, viewer_id=viewer_id, revision_ids=revision_ids
+        ).items()
+    }
 
 
 def x_article_content_facts(
