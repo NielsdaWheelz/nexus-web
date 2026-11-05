@@ -67,14 +67,20 @@ from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import bind_epub_fragment_link
 from nexus.services.html_tree import inner_html, parse_html_document
-from nexus.services.locator_resolver import permitted_note_ranges
-from nexus.services.media_text_scope import MediaTextScope, read_media_text_scope
+from nexus.services.media_text_scope import (
+    MediaTextScope,
+    read_media_text_scope,
+    text_scope_rows_sql,
+)
 from nexus.services.reader_locations import (
     locator_is_current_for_media,
     locator_json,
     order_key_from_locator,
 )
-from nexus.services.reader_publication import read_publication_generation
+from nexus.services.reader_publication import (
+    read_publication_generation,
+    read_ready_publication_generation,
+)
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.items import resource_items_out
@@ -347,48 +353,72 @@ def note_reference_for_locator(
     """The first retained in-body reference disclosing this exact outside-body note."""
     if not isinstance(locator, (EpubFragmentOffsetsLocator, WebTextOffsetsLocator)):
         return None
-    if not db.scalar(text("SELECT 1 FROM media_parts WHERE media_id=:id"), {"id": media_id}):
+    part = db.execute(
+        text("""SELECT part.source_media_id,part.source_generation,state.id AS apparatus_state
+            FROM media_parts part LEFT JOIN reader_apparatus_states state
+                ON state.media_id=part.source_media_id WHERE part.media_id=:id"""),
+        {"id": media_id},
+    ).first()
+    if part is None:
         return None
-    state = _read_state(db, viewer_id=viewer_id, media_id=media_id)
-    scope = state.scope
-    if scope is None or str(locator.media_id) != str(scope.source_media_id):
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if read_ready_publication_generation(db, media_id=media_id) is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    if (
+        read_ready_publication_generation(db, media_id=part.source_media_id)
+        != part.source_generation
+    ):
+        raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "source publication changed")
+    if part.apparatus_state is None:
+        raise ApiError(
+            ApiErrorCode.E_READER_APPARATUS_STATE_MISSING, "Reader apparatus state is missing"
+        )
+    if str(locator.media_id) != str(part.source_media_id):
         return None
-    fragment_id = UUID(str(locator.fragment_id))
-    if scope.contains(fragment_id, locator.start_offset, locator.end_offset):
-        return None
-    targets = {
-        id
-        for id, (fragment, start, end) in permitted_note_ranges(db, scope).items()
-        if fragment == fragment_id and start <= locator.start_offset and locator.end_offset <= end
-    }
-    if not targets:
-        return None
-    apparatus = _media_apparatus(db, media_id=media_id, state=state)
-    references = {edge.from_stable_key for edge in apparatus.edges if edge.to_item_id in targets}
-    indexes = {interval.fragment_id: interval.fragment_idx for interval in scope.fragment_intervals}
-    choices: list[tuple[int, int, int, str, UUID]] = []
-    for item in apparatus.items:
-        point = item.locator
-        if (
-            item.stable_key not in references
-            or not item.kind.endswith("_ref")
-            or item.locator_status != "exact"
-            or not isinstance(point, (EpubFragmentOffsetsLocator, WebTextOffsetsLocator))
-            or str(point.media_id) != str(scope.source_media_id)
-        ):
-            continue
-        marker_fragment = UUID(str(point.fragment_id))
-        if scope.contains(marker_fragment, point.start_offset, point.end_offset):
-            choices.append(
-                (
-                    indexes[marker_fragment],
-                    point.start_offset,
-                    point.end_offset,
-                    item.stable_key,
-                    item.id,
-                )
-            )
-    return min(choices)[-1] if choices else None
+    body = text_scope_rows_sql("SELECT CAST(:reading AS uuid) AS media_id")
+    return db.scalar(
+        text(f"""
+            WITH body AS ({body})
+            SELECT marker.id
+            FROM body
+            JOIN reader_apparatus_items marker ON marker.media_id=body.source_media_id
+                AND marker.locator_status='exact'
+                AND marker.locator->>'type' IN ('web_text_offsets','epub_fragment_offsets')
+                AND marker.locator->>'media_id'=body.source_media_id::text
+                AND marker.locator->>'fragment_id'=body.fragment_id::text
+                AND (marker.locator->>'start_offset')::integer>=body.start_offset
+                AND (marker.locator->>'end_offset')::integer<=body.end_offset
+            JOIN reader_apparatus_edges edge ON edge.from_item_id=marker.id
+                AND edge.media_id=marker.media_id
+            JOIN reader_apparatus_items target ON target.id=edge.to_item_id
+                AND target.media_id=marker.media_id
+            WHERE marker.kind IN ('footnote_ref','endnote_ref','sidenote_ref',
+                    'margin_note_ref','bibliography_ref')
+              AND ((edge.relation='points_to_note' AND target.kind='footnote')
+                OR (edge.relation='points_to_endnote' AND target.kind='endnote')
+                OR (edge.relation='points_to_sidenote' AND target.kind='sidenote')
+                OR (edge.relation='points_to_margin_note' AND target.kind='margin_note')
+                OR (edge.relation='cites_bibliography_entry' AND target.kind='bibliography_entry'))
+              AND target.locator_status='exact'
+              AND target.locator->>'type' IN ('web_text_offsets','epub_fragment_offsets')
+              AND target.locator->>'media_id'=body.source_media_id::text
+              AND target.locator->>'fragment_id'=:fragment
+              AND (target.locator->>'start_offset')::integer<=:start
+              AND (target.locator->>'end_offset')::integer>=:end
+              AND NOT EXISTS (SELECT 1 FROM body bounded
+                  WHERE bounded.fragment_id::text=:fragment
+                    AND bounded.start_offset<=:start AND bounded.end_offset>=:end)
+            ORDER BY body.fragment_idx,(marker.locator->>'start_offset')::integer,
+                (marker.locator->>'end_offset')::integer,marker.stable_key LIMIT 1
+        """),
+        {
+            "reading": media_id,
+            "fragment": str(locator.fragment_id),
+            "start": locator.start_offset,
+            "end": locator.end_offset,
+        },
+    )
 
 
 def _media_apparatus(

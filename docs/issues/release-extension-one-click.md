@@ -1,6 +1,6 @@
 # release the one-click extension cutover
 
-pair wire 19, extension 1.1.0 and migration 0334 with the matching server/web build
+pair wire 19, extension 1.1.0 and migration 0335 with the matching server/web build
 and bundled android client. rebuild/install the matching apk before retiring the
 old wire; an already installed client cannot cross this hard cutover.
 old clients refuse. sign/install the canonical extension artifact with its exact

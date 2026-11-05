@@ -11,11 +11,14 @@ the reader is three facts and one policy.
 
 - **publication** (`ReaderDocument`): an immutable ordered list of text units
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
-  `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids; capture
-  readings include their complete composition digest).
-  read once from one snapshot, never mixed with another read. identity versions
-  source text; title and transcript navigation are mutable metadata. embedded capture
-  composition changes participate in the mounted identity. a same-identity reload replaces navigation/find inputs while
+  view `identity` (`g<generation>`, plus an authorized capture-manifest digest when
+  present; transcripts: a digest of the ordered segment ids). read once from one
+  snapshot, never mixed with another read. `readingPublicationIdentity` supplies
+  the canonical coordinate version: the explicit generation, a part's own body
+  identity, or its transcript digest. it never substitutes a part's parent generation
+  or a capture manifest. x passage coordinates name their immutable capture instead.
+  title, embedded-child presentation and transcript navigation are mutable metadata.
+  a same-identity reload replaces navigation/find inputs while
   retaining units, geometry, surface nodes, held origin and unsaved progress.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
@@ -112,7 +115,7 @@ focus transfer or owner unmount releases recovery.
 | `GET /media/{id}/reader` | one snapshot: prose `ReaderTextDocumentOut`, source-backed `ReaderPartDocumentOut`, transcript `ReaderTranscriptDocumentOut`, or `ReaderPdfDocumentOut`. text shares units/embeds; transcripts require coverage and canonical `transcript_navigation`, with empty wire sections/toc. prose archives retain their shape. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
-| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
+| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`, `quotes`; facets overlap. no navigation inside. |
 | `GET /public/resource-share/document` | the public reader's one read (token header). |
 
 the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
@@ -495,44 +498,42 @@ absent, collapsed, foreign, editable or stale ranges and retains typed rejection
 its first and last rectangles are the actual passage endpoints, including when
 offscreen. current source geometry is measured again at reveal and placement.
 
-`useAnnotationVerbs` consumes only admission on desktop, preserving the anchored
-composer, editor and gesture policy. on mobile it owns a provisional candidate
-and one 250 ms quiet timer. range changes, source scrolling and observed input
-hide the actions; input end restarts quiet, and an observed blocker prevents
-reveal. quiet recaptures and measures the current valid passage. collapse,
-outside selection, dismissal, source replacement, inactive/hidden pane, body
-disposal, document hiding, blur and viewport-policy changes retire the candidate.
-no provisional selection is submitted as a write or stored in browser storage or `ReaderState`.
+`useAnnotationVerbs` keeps desktop admission and anchored composition, and
+forwards mobile selection notices to `useSelectionComposer`. a trusted selection
+or explicit saved-highlight activation opens one nonmodal bottom band without
+focusing its editor. native handle movement updates the provisional candidate
+without replacing the editor or its writing. source scrolling does not dismiss it.
 
-mobile actions explicitly open the shared composer in `MobileSheet`; a saved mark
-is another explicit entry. commands prepare one frozen capture and await its
-existing annotation slot through online writes. copy and opening more do not
-author. presentation and save/send semantics belong to
-[highlight](highlight.md#reader-presentation).
+first field, chooser or command interaction synchronously captures the current
+valid passage before focus moves. that owned capture survives its own focus
+collapse; invalid, foreign or rejected ranges never reuse an unrelated last-valid
+passage. leaving before acceptance revokes provisional capture authority, not
+writing. the existing visit draft retains accepted capture, body/history, colour
+and destination across mobile unmounts, without restoring handles or focus.
+reload and process death do not retain this unsubmitted draft.
 
-controls freeze a fresh capture before pointer focus or keyboard transfer and
-execute only their matching semantic activation. direct accessibility focus owns
-that rendered control's exact candidate. cancelled, moved or abandoned presses,
-new source input/range, outside dismissal and source retirement invalidate it.
-its own focus collapse cannot unmount the pressed control. the more owner
-outlives the passive row; closing returns to a surviving trigger or the reader.
-no failed capture uses an unrelated last-valid passage.
+button presses preserve the owned editor and control geometry until semantic
+activation. activation settles native input before save or chat transfer;
+unsettled composition refuses the action and keeps the writing. saved annotations
+have their own bound editor, separate from the question. return in the mobile
+question/fresh-thought editor inserts a newline. [highlights](highlight.md#identity-and-writing) owns local save, colour,
+annotation and loss-guard semantics; [chat](chat.md#browser) owns transfer and send.
 
-mobile bounds and draft reselection retain an owned source session and require
-explicit `apply selection`; invalid/collapsed ranges keep cancel and never reuse
-an old valid proposal. apply uses the capture frozen before button focus. bounds
-retain unit/media/version constraints and relocation's exact-quote rule;
-reselection names the authored draft and source publication. desktop bounds
-admission remains immediate. [highlight](highlight.md#reader-presentation) owns
-submission, recovery and draft preservation. the host's existing `Navigate`
-intent retires selection sessions before explicit navigation; ordinary source
-scrolling and automatic reflow remain available while choosing a passage.
+mobile bounds changes and explicit draft refinement require `apply selection`
+or cancel. apply uses the capture frozen before button focus, and only the
+matching activation may execute it. invalid/collapsed ranges retain cancel,
+never an earlier valid proposal. bounds keep their unit/media/version constraints
+and relocation's exact-quote rule; refinement preserves the accepted rollback
+passage. desktop bounds admission remains immediate.
 
-compact action placement is opt-in and never resizes, reflows or scrolls source
-text. large selections still retain their commands; enlarged text wraps within
-one bounded scrollport. endpoint neighborhoods approximate unavailable native
-handle hit regions, and quiet time does not establish finger release. the
-placement owner is [overlays](overlays.md#reader-action-placement).
+`SelectionDock` allocates the band only while active. it reduces the reader's
+scrollport height without changing its text-column width; an initial reveal may
+bring an endpoint into those smaller bounds. later handle movement owns its
+scroll. the action row stays above bounded, scrollable details and input; fresh
+feedback reserves its slot through focus transfer so it cannot move a pressed
+control. the existing viewport owns keyboard/chrome clearance, counted once.
+[overlays](overlays.md#reader-action-placement) owns containment and escape;
+workspace navigation remains available, and explicit close uses the work guard.
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
 it only after restore. `useFind` receives the pane's required `ownerKey`.
@@ -790,9 +791,9 @@ stretch with nothing nearby stays blank.
 | `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
 | `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `MediaAnnotations`: local authored highlights, attached notes and links remain authoritative; separately reads the mounted media and distinct X owner maps. Each owner occurrence admits offsets only at its explicit publication generation. Canonical evidence rows dedupe by ref while mounted decorations retain their occurrences; a replaced document cancels its old read wave, including same-identity replacements. Failed reads retain only the still-mounted owners’ cached maps. |
-| `useAnnotationVerbs.ts` | desktop admission; mobile provisional candidate, quiet timer and activation ownership; canonical mark verbs, confirmed bounds sessions and highlight pane entries scoped to this reader visit |
-| `useSelectionComposer.ts`, `selectionDrafts.ts` | one source-bound preparation path, explicit capture commands, ephemeral input, online write/retry ownership and reselection sessions |
-| `SelectionDock.tsx` | desktop anchored composer; mobile compact actions and explicit sheet sharing one composer body, canonical actions, history, chat destinations and conflict/retry controls; overlap chooser and recolour dialog |
+| `useAnnotationVerbs.ts` | selection admission, canonical mark verbs, mobile bounds capture/confirmation and highlight pane entries scoped to this reader visit |
+| `useSelectionComposer.ts`, `selectionDrafts.ts` | visit-retained annotation/question draft, native capture acceptance, durable local saves, explicit refinement and immutable chat handoff |
+| `SelectionDock.tsx` | desktop anchored composer and mobile layout band; pre-focus capture, native-input settlement, refinement, pickers and feedback; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; all items uses normal flow |
 | `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the shared 32px document map (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
@@ -840,12 +841,11 @@ give their rail position and order.
   visible and focused, after genuine input within five minutes; reading viewports
   add the document fraction and word ordinal. inspection counts time only. see
   [consumption-activity.md](consumption-activity.md).
-- **quote to chat.** raw selections and existing highlights share source preview
-  and compare-on-send admission. an accepted message owns `{evidence, highlight_ref}`;
-  a raw selection creates no authored object. frozen quotations project neutral link
-  markers and connections by message identity. saved annotations stay ordinary live
-  context. draft inspection maps mounted offsets with `sourceTarget` and carries the
-  complete destination in pane state; sent source links use `#quote-<message id>`.
+- **quote to chat.** raw passages and saved-highlight references transfer into
+  the destination's retained draft. asking creates no highlight; accepted quotes
+  belong to their user message as `{evidence, highlight_ref}`. saved annotations
+  remain ordinary live context. current source-access admission gates disclosure. [chat](chat.md#browser) owns transfer, preparation,
+  admission, continuation defaults and recovery.
 - **offline copies.** a reading copy zips the same `GET /media/{id}/reader`
   document; the shelf maps it with `readerDocument()` and renders the same
   `DocumentReaderView` with a device progress port. see [offline](offline.md).

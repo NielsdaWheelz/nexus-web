@@ -647,6 +647,12 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     projection.withdraw(db, "reader_apparatus_item", apparatus_ids)
     _run(
         db,
+        """DELETE FROM fragment_tables
+            WHERE fragment_id IN (SELECT id FROM fragments WHERE media_id = :m)""",
+        m=media_id,
+    )
+    _run(
+        db,
         """DELETE FROM fragment_blocks
             WHERE fragment_id IN (SELECT id FROM fragments WHERE media_id = :m)""",
         m=media_id,

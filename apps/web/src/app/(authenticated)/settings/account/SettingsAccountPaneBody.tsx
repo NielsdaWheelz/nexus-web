@@ -15,6 +15,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
+import { useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -142,6 +143,7 @@ export default function SettingsAccountPaneBody() {
   const generationId = params.get("generation_id");
   const toolCallId = params.get("tool_call_id");
   const refreshSettings = useSettingsRefresh();
+  const chatStamp = useChangeStamp("Chats");
   const { accountId, setCalendarTimeZone } = useAuthenticatedAccount();
   const { say, fail } = useOutcome();
   /** A refusal of the input is the field's; an unknown outcome holds; the rest is a slip. */
@@ -153,7 +155,7 @@ export default function SettingsAccountPaneBody() {
   };
   const account = useServerValue({
     key: "/me",
-    stale: "",
+    stale: chatStamp,
     visit: VISIT,
     load: async (signal) =>
       (await apiFetch<ApiJson<"/me", "get">>("/api/me", { signal })).data,

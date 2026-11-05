@@ -1,7 +1,7 @@
 /** Published suggestions and direct quick reads share only their item presentation. */
 
 import { apiFetch, requestWithDeadline, type ApiPath } from "@/lib/api/client";
-import { requestWithRetry } from "@/lib/api/serverState";
+import { requestWithRetry } from "@/lib/api/retry";
 import { SUGGESTIONS_REQUEST_TIMEOUT_MS } from "@/lib/api/suggestionPolicy";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { presentMedia } from "@/lib/collections/presenters/media";

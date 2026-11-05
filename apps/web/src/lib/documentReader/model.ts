@@ -109,8 +109,15 @@ export type PdfDocument = {
   readonly pages: number | null;
   readonly file: PdfFile;
 };
-/** Identity versions the body; chapter navigation, title and embedded presentation may change. */
+/** Identity versions the mounted body and capture manifest; mutable metadata may change. */
 export type ReaderDocument = TextDocument | PdfDocument;
+
+/** Canonical passage coordinates belong to the viewed publication, not its capture manifest.
+ * Parts supply their own body identity; part.generation names the canonical parent instead. */
+export function readingPublicationIdentity(doc: ReaderDocument): string | null {
+  if (doc.generation !== null) return `g${doc.generation}`;
+  return doc.kind === "text" && (doc.part !== null || doc.format === "transcript") ? doc.identity : null;
+}
 
 export type ReaderPoint =
   | ({ readonly kind: "text" } & TextPoint)

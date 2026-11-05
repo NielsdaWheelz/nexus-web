@@ -57,7 +57,7 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.services.canonicalize import canonicalize_structure
+from nexus.services.canonicalize import CanonicalTable, canonicalize_structure
 from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
     MAX_CREDITS_PER_MANAGED_ROLE,
@@ -81,6 +81,7 @@ from nexus.services.fragment_blocks import (
     insert_fragment_blocks,
     parse_fragment_blocks,
 )
+from nexus.services.fragment_tables import insert_fragment_tables
 from nexus.services.html_apparatus import (
     HtmlApparatusEntryOpener,
     accepted_apparatus_spans,
@@ -247,6 +248,7 @@ class _PlannedFragment:
     html_sanitized: str
     canonical_text: str
     blocks: list[FragmentBlockSpec]
+    tables: tuple[CanonicalTable, ...]
     apparatus_edges: list[dict[str, object]]
 
 
@@ -617,6 +619,7 @@ def _parse(
             html_sanitized=html_sanitized,
             canonical_text=canonical.text,
             blocks=parse_fragment_blocks(canonical.text),
+            tables=canonical.tables,
             apparatus_edges=apparatus_edges,
         )
         fragments.append(fragment)
@@ -743,6 +746,7 @@ def publish_epub_plan(
     db.flush()
     for fragment in plan.fragments:
         insert_fragment_blocks(db, fragment.id, fragment.blocks)
+        insert_fragment_tables(db, fragment.id, fragment.tables)
         db.add(
             EpubFragmentSource(
                 media_id=media.id,

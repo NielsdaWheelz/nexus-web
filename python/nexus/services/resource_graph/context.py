@@ -10,9 +10,8 @@ Chat commands lock the chat before the account head. Mutations only flush.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -23,7 +22,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, ResourceEdge, ResourceViewState
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import ContextItemOut, ContextOut, DetachContextMutation
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import authored
 from nexus.services.resource_graph.edges import (
     EdgeCreate,
@@ -36,24 +34,18 @@ from nexus.services.resource_graph.edges import (
 )
 from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
-from nexus.services.resource_graph.resolve import ResolvedResource, resolve_refs
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import resource_items_out
-from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.suggestion_changes import record_input_change
 
 
 @dataclass(frozen=True, slots=True)
-class ContextRefOut:
-    """One context fact and its hydrated target, for prompts, SSE and the API."""
+class ContextFact:
+    """A newly attached fact. Presentation is a separate read, never part of a write."""
 
     edge_id: UUID
-    conversation_id: UUID
     target: ResourceRef
-    resolved: ResolvedResource
-    activation: ResourceActivationOut
-    created_at: datetime
 
 
 def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
@@ -65,7 +57,7 @@ def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
         SELECT e.id AS edge_id, e.created_at,
                CASE WHEN {chat} THEN e.target_scheme ELSE e.source_scheme END AS target_scheme,
                CASE WHEN {chat} THEN e.target_id ELSE e.source_id END AS target_id,
-               v.context_order_key AS order_key
+               v.context_order_key AS order_key, FALSE AS identity_only
         FROM resource_edges e
         LEFT JOIN resource_view_states v
           ON v.edge_id = e.id AND v.user_id = e.user_id
@@ -75,34 +67,38 @@ def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
             OR (e.target_scheme = 'conversation' AND e.target_id = {conversation_id_sql}))
         UNION ALL
         SELECT e.id AS edge_id, e.created_at, e.target_scheme, e.target_id,
-               e.source_order_key AS order_key
+               e.source_order_key AS order_key, e.origin = 'system' AS identity_only
         FROM resource_edges e
         WHERE e.user_id = :viewer_id AND e.origin IN ('citation', 'system')
           AND e.ordinal IS NULL AND {chat} AND {edge_live_sql("e")}
     """
 
 
-def list_context_refs(
+def iter_context_targets(
     db: Session, *, viewer_id: UUID, conversation_id: UUID
-) -> list[ContextRefOut]:
-    """One row per target, at its first-attached rank."""
+) -> Iterator[tuple[ResourceRef, bool]]:
+    """Prompt membership, in bounded metadata pages, before any body is loaded."""
     _owned_chat(db, viewer_id, conversation_id)
-    rows = db.execute(
-        text(f"""
+    offset = 0
+    while True:
+        rows = db.execute(
+            text(f"""
         SELECT * FROM (
-            SELECT DISTINCT ON (target_scheme, target_id) *
+            SELECT DISTINCT ON (target_scheme, target_id) *,
+                bool_and(identity_only) OVER (PARTITION BY target_scheme,target_id) AS label_only
             FROM ({context_facts_sql()}) facts
             ORDER BY target_scheme, target_id, order_key ASC NULLS LAST, created_at, edge_id
         ) targets
         ORDER BY order_key ASC NULLS LAST, created_at, edge_id
+        LIMIT 32 OFFSET :offset
         """),
-        {"viewer_id": viewer_id, "conversation_id": conversation_id},
-    ).all()
-    facts = [
-        (row.edge_id, row.created_at, assert_resource_ref(f"{row.target_scheme}:{row.target_id}"))
-        for row in rows
-    ]
-    return _context_refs(db, viewer_id, conversation_id, facts)
+            {"viewer_id": viewer_id, "conversation_id": conversation_id, "offset": offset},
+        ).all()
+        for row in rows:
+            yield assert_resource_ref(f"{row.target_scheme}:{row.target_id}"), row.label_only
+        if len(rows) < 32:
+            return
+        offset += len(rows)
 
 
 def add_context_ref_without_commit(
@@ -113,7 +109,7 @@ def add_context_ref_without_commit(
     target: ResourceRef,
     origin: Literal["citation", "system"],
     user_edit: bool = False,
-) -> ContextRefOut | None:
+) -> ContextFact | None:
     """Attach ``target`` automatically at the next rank, under the chat's lock; ``None``
     when it is already a member."""
     _owned_chat(db, viewer_id, conversation_id)
@@ -133,7 +129,7 @@ def add_context_ref_without_commit(
     edge = create_edge(db, viewer_id=viewer_id, input=fact)
     if user_edit:
         versions.bump_version(db, viewer_id=viewer_id, ref=chat, lane="context")
-    return _context_refs(db, viewer_id, conversation_id, [(edge.id, edge.created_at, target)])[0]
+    return ContextFact(edge.id, target)
 
 
 def context_version(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> int:
@@ -343,26 +339,6 @@ def batch_conversations_with_any_edge_to_ref(
     for target_id, conversation_id in rows:
         out.setdefault(target_id, []).append(chats[conversation_id])
     return out
-
-
-def _context_refs(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    facts: list[tuple[UUID, datetime, ResourceRef]],
-) -> list[ContextRefOut]:
-    targets = [target for _, _, target in facts]
-    resolved = resolve_refs(db, viewer_id=viewer_id, refs=targets)
-    activations = resource_activations_for_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=targets,
-        missing_ref_uris={item.uri for item in resolved if item.missing},
-    )
-    return [
-        ContextRefOut(edge_id, conversation_id, target, item, activations[target.uri], created_at)
-        for (edge_id, created_at, target), item in zip(facts, resolved, strict=True)
-    ]
 
 
 def _owned_chat(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:

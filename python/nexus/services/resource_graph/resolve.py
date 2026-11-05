@@ -26,7 +26,7 @@ from nexus.services.contributor_credits import (
 from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_items.items import visible_refs
+from nexus.services.resource_items.items import ref_visible, visible_refs
 from nexus.services.resource_items.locations import captured_quote, media_passages
 
 INLINE_THRESHOLD_CHARS = 1500
@@ -60,6 +60,55 @@ def resolve_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResolvedRe
     return resolve_refs(db, viewer_id=viewer_id, refs=[ref])[0]
 
 
+class PromptBodyTooLarge(ValueError):
+    """A mandatory resource cannot be materialized within the prompt byte budget."""
+
+
+def resolve_prompt(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, byte_limit: int, identity_only: bool
+) -> ResolvedResource:
+    """Authorize, measure stored bodies, then hydrate at most one bounded resource.
+
+    Label-only resources never load their readable body merely to name the source.
+    Prompt rendering still checks its actual escaped bytes and token estimate.
+    """
+    if not ref_visible(db, viewer_id=viewer_id, ref=ref):
+        return ResolvedResource(ref.uri, "(resource unavailable)", "", missing=True)
+    if ref.scheme == "media":
+        return _media(db, [ref.id], viewer_id, include_summary=False)[0]
+    if identity_only and ref.scheme == "fragment":
+        sql, build = _LOADERS["fragment"]
+        row = db.execute(text(sql), {"ids": [ref.id], "identity_only": True}).one()
+        item = build(ref, row)
+        return ResolvedResource(
+            item.uri, item.label, "", fetch_hint=item.fetch_hint, title=item.title
+        )
+    if ref.scheme == "podcast":
+        title = db.scalar(text("SELECT title FROM podcasts WHERE id=:id"), {"id": ref.id})
+        assert title is not None
+        return _plain(ref, title, "")
+    sql = {
+        "evidence_span": "SELECT octet_length(span_text) FROM evidence_spans WHERE id=:id",
+        "content_chunk": "SELECT octet_length(chunk_text) FROM content_chunks WHERE id=:id",
+        "note_block": "SELECT octet_length(body_text)+octet_length(body_pm_json::text) FROM note_blocks WHERE id=:id",
+        "fragment": "SELECT octet_length(canonical_text) FROM fragments WHERE id=:id",
+        "message": "SELECT octet_length(content)+COALESCE(octet_length(reader_selection_snapshot::text),0) FROM messages WHERE id=:id",
+        "highlight": "SELECT octet_length(h.exact)+octet_length(h.prefix)+octet_length(h.suffix)+COALESCE(octet_length(h.annotation_body_text),0)+COALESCE(octet_length(h.annotation_body_pm_json::text),0)+COALESCE(octet_length((r.state #> '{selection,value}')::text),0) FROM highlights h LEFT JOIN authored_resources r ON r.account_id=h.user_id AND r.ref='highlight:' || h.id::text WHERE h.id=:id",
+        "page": f"SELECT octet_length({page_title_sql('p')}) FROM pages p WHERE id=:id",
+        "reader_apparatus_item": "SELECT COALESCE(octet_length(body_text),0) FROM reader_apparatus_items WHERE id=:id",
+        "external_snapshot": "SELECT octet_length(snippet) FROM resource_external_snapshots WHERE id=:id",
+        "passage_anchor": "SELECT octet_length(a.selector::text)+COALESCE(octet_length((p.state #> '{capture,value}')::text),0) FROM passage_anchors a LEFT JOIN authored_passages p ON p.account_id=a.user_id AND p.anchor_id=a.id::text WHERE a.id=:id",
+        "oracle_reading": "SELECT octet_length(question_text)+COALESCE(octet_length(folio_motto),0)+COALESCE(octet_length(folio_motto_gloss),0)+COALESCE(octet_length(argument_text),0)+COALESCE(octet_length(interpretation_text),0) FROM oracle_readings WHERE id=:id",
+        "oracle_passage_anchor": "SELECT octet_length(COALESCE(es.span_text,cc.chunk_text,a.quote)) FROM oracle_passage_anchors a LEFT JOIN content_chunks cc ON cc.id=a.current_content_chunk_id AND a.resolution_status='resolved' LEFT JOIN evidence_spans es ON es.id=a.current_evidence_span_id AND a.resolution_status='resolved' WHERE a.id=:id",
+    }.get(ref.scheme)
+    if sql is not None:
+        size = db.scalar(text(sql), {"id": ref.id})
+        assert size is not None
+        if size > byte_limit:
+            raise PromptBodyTooLarge(ref.uri)
+    return _load_visible(db, [ref], viewer_id=viewer_id)[ref.uri]
+
+
 def resolve_refs(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResolvedResource]:
@@ -82,20 +131,31 @@ def load_resource_batch(
         for ref in refs
     }
     visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
+    out.update(_load_visible(db, [ref for ref in refs if ref.uri in visible], viewer_id=viewer_id))
+    return out
+
+
+def _load_visible(
+    db: Session, refs: Sequence[ResourceRef], *, viewer_id: UUID
+) -> dict[str, ResolvedResource]:
+    """Load identities admitted by the caller; no nested presentation/visibility read."""
+    out: dict[str, ResolvedResource] = {}
     for scheme in dict.fromkeys(ref.scheme for ref in refs):
-        group = {ref.id: ref for ref in refs if ref.scheme == scheme and ref.uri in visible}
+        group = {ref.id: ref for ref in refs if ref.scheme == scheme}
         if not group:
             continue
         ids = list(group)
         if scheme == "media":
-            found = _media(db, ids, viewer_id)
+            found = _media(db, ids, viewer_id, include_summary=True)
         elif scheme == "library":
             found = _library(db, ids, viewer_id)
         elif scheme == "highlight":
             found = _highlight(db, ids, viewer_id)
         else:
             sql, build = _LOADERS[scheme]
-            rows = db.execute(text(sql), {"ids": ids, "viewer_id": viewer_id})
+            rows = db.execute(
+                text(sql), {"ids": ids, "viewer_id": viewer_id, "identity_only": False}
+            )
             found = [build(group[row.id], row) for row in rows]
         out.update({item.uri: item for item in found})
     return out
@@ -133,7 +193,9 @@ def _read(ref: ResourceRef, label: str, body: str, title: str | None = None) -> 
     )
 
 
-def _media(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedResource]:
+def _media(
+    db: Session, ids: list[UUID], viewer_id: UUID, *, include_summary: bool
+) -> list[ResolvedResource]:
     rows = db.execute(
         text(f"""
         SELECT m.id, m.title, m.kind, {media_author_names_agg_sql()}
@@ -148,7 +210,7 @@ def _media(db: Session, ids: list[UUID], viewer_id: UUID) -> list[ResolvedResour
         uri = f"media:{row.id}"
         kind = row.kind
         parts = [kind]
-        document = load_media_document_summary(db, viewer_id, row.id)
+        document = load_media_document_summary(db, viewer_id, row.id) if include_summary else None
         if document is not None and document.word_count:
             parts.append(f"~{document.word_count:,} words")
         if document is not None and document.section_count:
@@ -422,7 +484,7 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _read(ref, _first_line(row.body)[:120] or "Note", row.body),
     ),
     "fragment": (
-        """SELECT t.id, t.idx, t.canonical_text AS body,
+        """SELECT t.id, t.idx, CASE WHEN :identity_only THEN '' ELSE t.canonical_text END AS body,
             COALESCE(m.title,c.payload #>> '{content,author,name}',c.payload->>'attribution_text',c.payload->>'parent_title','Captured post') AS title
         FROM fragments t LEFT JOIN media m ON m.id = t.media_id
         LEFT JOIN x_post_captures c ON c.id=t.x_post_capture_id

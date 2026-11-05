@@ -23,7 +23,6 @@ from nexus.services.reader_excerpts import scope_excerpts
 _BRANCHES = set(
     "p div span section article header footer nav aside main h1 h2 h3 h4 h5 h6 strong em b i u s cite sup sub code pre blockquote a xref ul dl dt dd figure figcaption table thead tbody tfoot tr ol li td th".split()
 )
-_STRUCTURAL = set("ul ol dl table thead tbody tfoot tr".split())
 
 
 @dataclass(frozen=True)
@@ -78,7 +77,7 @@ def _tree(html: str) -> tuple[dict[str, Any], set[tuple[int, ...]], set[tuple[in
         output: list[dict[str, Any]] = []
 
         def words(value: str | None) -> None:
-            if value and (node.tag not in _STRUCTURAL or value.strip()):
+            if value:
                 output.append({"kind": "text", "text": value})
 
         words(node.text)
@@ -262,13 +261,10 @@ def _source_windows(
                 json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
             )
 
-        def words(node: HtmlElement, attribute: str, parent: HtmlElement) -> None:
+        def words(node: HtmlElement, attribute: str) -> None:
             nonlocal cursor, codepoint_cursor
             value = getattr(node, attribute) or ""
             if not value:
-                return
-            if parent.tag in _STRUCTURAL and not value.strip():
-                target.data(value)
                 return
             units = len(value.encode("utf-16-le")) // 2
             slots[node, attribute] = (cursor, cursor + units)
@@ -341,11 +337,11 @@ def _source_windows(
                     )
                     cursor += 1
                     codepoint_cursor += 1
-                words(node, "text", node)
+                words(node, "text")
                 for child_index, child in enumerate(node):
                     if isinstance(child.tag, str):
                         walk(child, child_index)
-                    words(child, "tail", node)
+                    words(child, "tail")
                 if unsupported:
                     event(
                         {

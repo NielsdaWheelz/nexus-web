@@ -84,6 +84,8 @@ passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and remo
 its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
+postgres uses its project-owned disk volume, normal durable commits, and the
+production 512 mib memory/no-swap limit; teardown removes that exact volume.
 the lab builds or reuses the canonical web production package, including its
 public assets, then serves the canonical tls/http2 standalone runtime without hot reload.
 build constants match the server's public key, exact loopback origin and source
@@ -100,7 +102,9 @@ incomplete owned cleanup turns success into exit 125 and retains recovery inputs
 `--database-backup FILE` restores a supplied postgres custom-format backup into
 the fresh owned database before migrations, api and workers start. restoration
 is transactional and stops on errors; the normal migration/bootstrap/teardown
-path remains authoritative. auth and object storage are separate owners: drivers
+path remains authoritative. restored runs rebuild planner statistics after
+migration and before application writers; [pg15 dumps omit those statistics](https://www.postgresql.org/docs/15/app-pgdump.html#APP-PGDUMP-NOTES).
+auth and object storage are separate owners: drivers
 must establish matching authorized accounts and retained source objects when
 their journey requires them. never overwrite a running lab database to simulate
 an upgrade.
@@ -379,10 +383,10 @@ ISR writes stay in that run's tree and follow its private-input cleanup. build
 and serving retain normal production configuration and process ownership.
 
 `docker/docker-compose.lab.yml` applies only to the disposable compose model,
-shared by image preparation, runtime and recorded recovery. it resets postgres's
-inherited volume mount and places pg15 data at `/var/lib/postgresql/data` on
-tmpfs, with `fsync`, `synchronous_commit` and `full_page_writes` off. storage keeps
-its named volume; Supabase's auth database remains separately CLI-managed.
+shared by image preparation, runtime and recorded recovery. postgres uses its
+project-owned disk volume, normal durable commits and the production 512 mib
+memory/no-swap limit. storage keeps its named volume; supabase's auth database
+remains separately cli-managed.
 
 stores start before migration and api readiness. worker startup uses
 `up --no-build --no-deps` on the precreated lanes: it never reconciles those

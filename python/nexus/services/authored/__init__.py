@@ -667,9 +667,11 @@ def server_command(
         for field in ("endpoint_a", "endpoint_b")
     }
     sources = {intent["source_ref"] for intent in intents if "source_ref" in intent}
-    states = read_states(
-        db, account_id, resource_refs=list(set(resource_refs) | endpoints), link_ids=link_ids
-    )
+    # Resource mutations need their exact baselines. Link preparation reads its
+    # pair and bounded incident tails; endpoint existence/liveness is the caller's
+    # metadata gate under this account head, never a reason to load resource bodies.
+    resources = set(resource_refs) | {intent["ref"] for intent in intents if "ref" in intent}
+    states = read_states(db, account_id, resource_refs=list(resources), link_ids=link_ids)
     # One untouched tail survives at most one removal/move per intent. This
     # bounded prefix lets the kernel append after earlier effects in the same
     # command without sending a large page's entire adjacency to Node. Ignore

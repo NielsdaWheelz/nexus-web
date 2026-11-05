@@ -2,13 +2,12 @@ import type { ExcerptBody } from "@nexus/authored/excerpt";
 import type { NoteEditorProps } from "@/components/notes/NoteEditor";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
-import type { ConversationCommands, ConversationTree } from "@/lib/chat/commands";
-import type { SelectionEditor } from "@/lib/chat/selection";
+import type { ConversationTree } from "@/lib/chat/commands";
+import type { HighlightColor } from "@/lib/documentReader/model";
 import { sameBody } from "@nexus/authored/body";
 import type { Capture } from "@/lib/documentReader/annotations";
 import type { Line } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
-import type { ReaderQuote } from "@/lib/chat/readerIntent";
 
 export type NoteEdit = Parameters<NoteEditorProps["onEdit"]>[0];
 type Body = NoteEditorProps["body"];
@@ -39,20 +38,11 @@ export type DraftIssue =
 export type ChatDestination =
   | { kind: "Resolving" | "Absent" }
   | { kind: "LookupFailed"; error: ApiError }
-  | { kind: "Selected"; id: string; title: string; read: number; snapshot:
-      | { kind: "Loading" | "Failed" | "RefreshRequired" }
+  | { kind: "Selected"; id: string; title: string; snapshot:
+      | { kind: "Loading" | "Failed" }
       | { kind: "Ready"; tree: ConversationTree } };
 
-export type ReaderChatIssue =
-  | { kind: "Model" | "Catalog"; line: Line; destination: "New" | "Existing"; selection: SelectionEditor }
-  | { kind: "Recall"; state: "Pending" | "Failed"; destination: "New" | "Existing"; selection: SelectionEditor }
-  | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Pending"; line: Line }
-  | { kind: "Transport"; error: ApiError; fact: string }
-  | { kind: "Failed"; line: Line };
-
-type ChatAttempt =
-  | { kind: "Preparing"; runId: string }
-  | { kind: "Dispatched"; runId: string; owner: ConversationCommands; selection: Extract<SelectionEditor, { kind: "Selected" }>; destination: "New" | "Existing" };
+export type ReaderChatIssue = { kind: "Missing" | "Failed"; line: Line };
 
 export interface ComposerDraft {
   id: string;
@@ -62,6 +52,7 @@ export interface ComposerDraft {
   capture: Capture | null;
   /** The highlight whose permanent annotation is independent from this question draft. */
   highlightId: string | null;
+  color: HighlightColor;
   bodyRole: "annotation_or_question" | "question";
   annotationBase: string | null;
   /** Unsubmitted annotation-or-question input. Intentional loss uses the work guard. */
@@ -69,51 +60,16 @@ export interface ComposerDraft {
   revision: number;
   selection: NoteEdit["selectionAfter"] | null;
   history: DraftHistory;
-  operation: { id: string; kind: "Save" | "Chat" | "Ensure" | "Highlight" } | null;
+  operation: { id: string; kind: "Save" | "Ensure" | "Highlight" } | null;
   issue: DraftIssue | null;
   referenceActive: boolean;
   linkInputActive: boolean;
   attachmentActive: boolean;
-  sourceHasChats: boolean | null;
+  /** The viewed reading; the capture separately owns canonical source coordinates. */
+  sourceMediaId: string;
   destination: ChatDestination;
-  chatSelection: SelectionEditor;
-  quote: ReaderQuote | null;
-  /** Null before the first ask differs from deliberate removal of its attachment. */
-  quoteDetached: boolean;
-  chatAttempt: ChatAttempt | null;
   chatIssue: ReaderChatIssue | null;
 }
-
-/** One ephemeral working value. Submitted commands belong to the local writing runtime. */
-export function createSelectionDrafts() {
-  let drafts: readonly ComposerDraft[] = [];
-  const listeners = new Set<() => void>();
-  return {
-    getSnapshot: () => drafts,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => { listeners.delete(listener); };
-    },
-    put(draft: ComposerDraft) {
-      drafts = [draft];
-      for (const listener of listeners) listener();
-    },
-    remove(id: string) {
-      drafts = drafts.filter(draft => draft.id !== id);
-      for (const listener of listeners) listener();
-    },
-    update(id: string, change: (draft: ComposerDraft) => ComposerDraft) {
-      const current = drafts.find(draft => draft.id === id);
-      if (!current) return;
-      const next = change(current);
-      if (next === current) return;
-      drafts = drafts.map(draft => draft.id === id ? next : draft);
-      for (const listener of listeners) listener();
-    },
-  };
-}
-
-export type SelectionDrafts = ReturnType<typeof createSelectionDrafts>;
 
 export function samePassage(a: Passage, b: Passage): boolean {
   return a.identity === b.identity && sameAnchor(a.anchor, b.anchor);

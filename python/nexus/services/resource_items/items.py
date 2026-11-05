@@ -62,7 +62,7 @@ from nexus.services.reader_excerpts import (
     text_parts,
 )
 from nexus.services.resource_graph.liveness import ref_live_sql
-from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_items.locations import (
     ScopedMediaPassage,
     media_passages,
@@ -351,6 +351,54 @@ def visible_refs(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -
     return set(rows)
 
 
+def ref_visible(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> bool:
+    """Identity authority without presentation or body hydration.
+
+    Native passages additionally require the evidence owner's disclosure proof
+    before any of their words leave the system. A readable part does not authorize
+    its whole canonical source. The prompt owner composes both checks.
+    """
+    from nexus.auth.permissions import requested_media_ids_cte_sql
+    from nexus.services.media_text_scope import text_scope_rows_sql
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    parameters = {"ids": [ref.id], "id": ref.id, "viewer_id": viewer_id}
+    if ref.scheme not in ("fragment", "oracle_passage_anchor") and db.scalar(
+        text(f"SELECT EXISTS (SELECT 1 FROM ({_query(ref.scheme)}) visible)"), parameters
+    ):
+        return True
+    readings = requested_media_ids_cte_sql()
+    captured = readable_x_capture_ids_sql()
+    if ref.scheme == "fragment":
+        sql = f"""SELECT EXISTS (
+            SELECT 1 FROM fragments f WHERE f.id=:id AND (
+                f.x_post_capture_id IN (SELECT capture_id FROM ({captured}) captures)
+                OR EXISTS (SELECT 1 FROM ({text_scope_rows_sql(readings)}) scope
+                           WHERE scope.fragment_id=f.id AND scope.end_offset>scope.start_offset)))"""
+    elif ref.scheme in ("content_chunk", "evidence_span"):
+        table = "content_chunks" if ref.scheme == "content_chunk" else "evidence_spans"
+        sql = f"""SELECT EXISTS (
+            SELECT 1 FROM {table} t WHERE t.id=:id AND (
+                t.owner_kind='fragment' AND EXISTS (SELECT 1 FROM fragments f WHERE f.id=t.owner_id
+                    AND f.x_post_capture_id IN (SELECT capture_id FROM ({captured}) captures))
+                OR t.owner_kind='media' AND EXISTS (
+                    SELECT 1 FROM ({readings}) reading
+                    LEFT JOIN media_parts part ON part.media_id=reading.media_id
+                    WHERE COALESCE(part.source_media_id,reading.media_id)=t.owner_id)))"""
+    elif ref.scheme == "reader_apparatus_item":
+        from nexus.services.media_text_scope import apparatus_scope_rows_sql
+
+        sql = f"""SELECT EXISTS (SELECT 1 FROM ({apparatus_scope_rows_sql(readings)}) scope
+            WHERE scope.apparatus_item_id=:id)"""
+    elif ref.scheme == "oracle_passage_anchor":
+        sql = f"""SELECT EXISTS (SELECT 1 FROM oracle_passage_anchors a
+            JOIN oracle_corpus_sources s ON s.id=a.corpus_source_id
+            JOIN ({readings}) reading ON reading.media_id=s.media_id WHERE a.id=:id)"""
+    else:
+        return False
+    return bool(db.scalar(text(sql), parameters))
+
+
 def source_attributions(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> dict[str, SourceAttributionOut]:
@@ -365,6 +413,40 @@ def source_attributions(
         scoped=passages,
     )
     return _source_attributions(refs, rows, credits, activations)
+
+
+def resource_labels(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str, str]:
+    """Bounded identity captions for semantic source captures, without reader hydration.
+
+    The existing item queries own audience. Selecting only their caption column
+    leaves excerpt projections, source bodies and activation out of link preparation.
+    Authored endpoints use their local resource state and do not need this capture.
+    """
+    labels: dict[str, str] = {}
+    schemes: dict[ResourceScheme, None] = dict.fromkeys(ref.scheme for ref in refs)
+    for scheme in schemes:
+        column = {
+            "media": "title",
+            "library": "title",
+            "conversation": "title",
+            "podcast": "title",
+            "contributor": "title",
+            "oracle_reading": "title",
+            "message": "prose",
+            "highlight": "exact",
+            "passage_anchor": "exact",
+        }.get(scheme)
+        if column is None:
+            raise ValueError("resource does not use a source label capture")
+        rows = db.execute(
+            text(f"SELECT id,left({column},601) AS label FROM ({_query(scheme)}) visible"),
+            {"ids": [ref.id for ref in refs if ref.scheme == scheme], "viewer_id": viewer_id},
+        )
+        for row in rows:
+            labels[f"{scheme}:{row.id}"] = (
+                row.label or "Untitled" if column == "title" else passage_label(row.label or "")
+            )
+    return labels
 
 
 def _source_attributions(
@@ -479,14 +561,10 @@ def _rows(
     excerpt_mode: ExcerptMode = "compact",
 ) -> tuple[dict[str, dict[str, Any]], dict[str, ScopedMediaPassage]]:
     out: dict[str, dict[str, Any]] = {}
-    for scheme in dict.fromkeys(ref.scheme for ref in refs):
+    schemes: dict[ResourceScheme, None] = dict.fromkeys(ref.scheme for ref in refs)
+    for scheme in schemes:
         ids = list({ref.id for ref in refs if ref.scheme == scheme})
-        if scheme == "external_snapshot":
-            from nexus.services.resource_graph.citations import external_snapshot_visible_sql
-
-            query = f"SELECT s.id,s.title FROM resource_external_snapshots s WHERE s.id=ANY(:ids) AND {external_snapshot_visible_sql('s')}"
-        else:
-            query = _QUERIES[scheme]
+        query = _query(scheme)
         for row in db.execute(text(query), {"ids": ids, "viewer_id": viewer_id}).mappings():
             out[f"{scheme}:{row['id']}"] = dict(row)
     passages = media_passages(
@@ -671,6 +749,14 @@ def _rows(
             if row.title:
                 out[f"fragment:{row.id}"]["title"] = row.title
     return out, passages
+
+
+def _query(scheme: ResourceScheme) -> str:
+    if scheme == "external_snapshot":
+        from nexus.services.resource_graph.citations import external_snapshot_visible_sql
+
+        return f"SELECT s.id,s.title FROM resource_external_snapshots s WHERE s.id=ANY(:ids) AND {external_snapshot_visible_sql('s')}"
+    return _QUERIES[scheme]
 
 
 _NOTE_PARTS_SQL = """

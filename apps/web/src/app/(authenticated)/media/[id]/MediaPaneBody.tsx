@@ -47,7 +47,7 @@ import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState"
 import { assertNever } from "@/lib/assertNever";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { localPoint } from "@/lib/documentReader/model";
+import { localPoint, readingPublicationIdentity } from "@/lib/documentReader/model";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
   ReaderRuling,
@@ -108,6 +108,7 @@ import {
   hostedSource,
   inspectionOfLocator,
   targetOfLocator,
+  targetOfSourcePoint,
   useReaderVisit,
   readerDestinationHref,
   destinationTarget,
@@ -367,6 +368,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const entry = useMemo(() => ({ fresh: null, cold: null, view: savedView }), [savedView]);
   const chrome = useMobileChrome();
   const viewport = useMobileViewport();
+  const readerScrollport = useRef<HTMLElement | null>(null);
   const reader = useDocumentReader(
     id,
     useMemo<ReaderOptions>(
@@ -375,9 +377,14 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         progress: hostedProgress(id),
         entry,
         host: { scrollport: (element: HTMLElement, geometryChanged: (reason: "Occlusion" | "Layout") => void) => {
+          readerScrollport.current = element;
           const releaseChrome = chrome.registerReaderScrollport(element);
           const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
-          return () => { releaseChrome(); releaseViewport(); };
+          return () => {
+            if (readerScrollport.current === element) readerScrollport.current = null;
+            releaseChrome();
+            releaseViewport();
+          };
         }, onIntent: (intent) => {
           arrivalRef.current?.supersede({
             preserveSignal: intent.kind === "Navigate" ? intent.signal : null,
@@ -480,6 +487,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     if (paneActive && readable && reader.getState().document.status === "ready") reader.reload();
   }, [paneActive, readable, reader]);
   const [store] = useState(() => createMediaAnnotations(authored, id));
+  const chatStamp = useChangeStamp("Chats");
+  useEffect(() => store.invalidateChats(chatStamp), [store, chatStamp]);
   const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
   const sourceAbsent = documentFailed || !readable;
   useEffect(() => { if (doc) store.bind(doc); else if (sourceAbsent) store.bind(null); }, [doc, sourceAbsent, store]);
@@ -653,20 +662,19 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         if (context.mayFocus()) reader.focusSource();
         return "Applied";
       }
-      let destination: ReaderDestination | null = result.kind === "reader_destination" ? result.destination : null;
+      const destination: ReaderDestination | null = result.kind === "reader_destination" ? result.destination : null;
+      let sourcePoint: ReturnType<typeof targetOfSourcePoint> = null;
       if (result.kind === "source" && result.source.location.kind === "point") {
-        const location = result.source.location;
-        destination = {
-          source_identity: location.source_identity,
-          target: { kind: "point", point: { kind: "text", unit: location.point.unit_id, offset: location.point.offset } },
-        };
-      }
-      if (destination !== null) {
         if (!doc) return "Unavailable";
-        if (destination.target.kind === "evidence_item") {
+        sourcePoint = targetOfSourcePoint(result.source.location, doc);
+        if (sourcePoint === null) return "Unavailable";
+      }
+      if (destination !== null || sourcePoint !== null) {
+        if (!doc) return "Unavailable";
+        if (destination?.target.kind === "evidence_item") {
           return deliverEvidence(destination.target.item_id, destination.source_identity, context);
         }
-        const target = destinationTarget(destination, reader);
+        const target = sourcePoint ?? (destination !== null ? destinationTarget(destination, reader) : null);
         if (!target) return "Unavailable";
         if (!context.restored) {
           const outcome = await reader.inspect({ target, signal: context.signal });
@@ -721,15 +729,15 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity, apparatus_reference_id } = source.location;
       if (locator.type === "x_capture_offsets") {
-        if (source_identity !== doc.identity || doc.kind !== "text") return "Unavailable";
+        if (source_identity !== locator.capture_id || doc.kind !== "text") return "Unavailable";
         const unit = doc.units.find(item => {
           const owner = item.xPost?.owner;
           return owner != null && owner.capture_id === locator.capture_id && owner.fragment_id === locator.fragment_id;
         });
         if (!unit || locator.end_offset > unit.length || locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return "Unavailable";
-      } else if (source_identity !== doc.identity && source_identity !== doc.identity.split(":", 1)[0]) return "Unavailable";
+      } else if (source_identity === null || source_identity !== readingPublicationIdentity(doc)) return "Unavailable";
       if (apparatus_reference_id !== null) {
-        return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, source_identity, context);
+        return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, doc.identity, context);
       }
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
         const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
@@ -969,10 +977,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }
         lane={
           <>
-            {boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
+            {!isMobile && boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
               verbs={bounds?.phase === "Selecting" ? [{ label: "cancel", commandKey: "CancelHighlightBounds", run: verbs.cancelBounds }] : undefined} /> : null}
-            {isMobile && verbs.composer.reselection ? <Fact line={{ fact: "select the passage again." }} speak={speak}
-              verbs={[{ label: "cancel", commandKey: "CancelReselection", run: verbs.dismissSelection }]} /> : null}
             {inspection && inspection.precision !== "exact" ? <Fact speak={speak}
               line={{ fact: inspection.precision === "time" ? "located by time, not by text." : "this location is approximate." }} /> : null}
             {media.provider === "x" && media.processing_status === "failed" ? <Fact speak={speak}
@@ -996,6 +1002,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       <SelectionDock
         verbs={verbs}
         reader={reader}
+        readerScrollport={readerScrollport}
         store={store}
         isMobile={isMobile}
         canQuote={canQuote}

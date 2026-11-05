@@ -42,8 +42,9 @@ saves its annotation in the same local command. first annotation or reannotation
 of an existing highlight stages a clone of its actual permanent body. saving
 admits only its incremental delta; cancel commits nothing. bound annotation
 editing autosaves through the ordinary writing runtime keyed by `highlight:<id>`.
-annotation editing has no note split/join behavior. creation enter saves,
+annotation editing has no note split/join behavior. desktop creation enter saves,
 shift-enter inserts a break; bound enter inserts a break and tab stays native.
+the mobile passage thought/question editor inserts a newline on return.
 
 explicit save closes only after local durability and only for the unchanged
 submitted draft. a stale completion cannot consume newer writing. failed commits
@@ -51,6 +52,22 @@ retain writing and the existing retry/copy controls. already committed pending
 upload acquires no loss warning. body, reference, hyperlink and attachment input
 participate in the shared work guard. involuntary source changes or remote
 deletion retain unsubmitted input without submitting or retargeting it.
+
+the mobile reader opens one nonmodal bottom composer on text selection or saved
+highlight activation; idle reading allocates nothing. source-handle movement
+retains the editor; first field/chooser/command activation freezes the exact
+valid capture before focus moves. explicit refinement requires apply or cancel.
+unaccepted initial captures lose authority on departure; writing survives in the
+existing visit draft. accepted captures, body/history, colour and destination
+survive retained-tab unmounts without restoring native handles or focus.
+
+saved annotations keep their independent editor and question field. fresh colour
+choice stages until a command; materialized fresh saves apply colour and the
+annotation delta together against the submitted baseline. successful unchanged
+saves retire the draft even after departure; later edits remain independently
+owned. source gestures never dismiss the composer. its contained transient owns
+escape without blocking workspace navigation; child choices retain their own
+dismissal and navigation contracts.
 
 ## frozen excerpts
 

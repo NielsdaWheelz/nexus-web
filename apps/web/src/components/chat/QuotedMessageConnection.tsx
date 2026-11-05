@@ -5,7 +5,7 @@ import styles from "./QuotedMessageConnection.module.css";
 
 /** One question and its frozen source; the reader host owns the row and focus. */
 export default function QuotedMessageConnection({ content }: {
-  readonly content: Schema<"ReaderEvidenceQuotationOut">;
+  readonly content: Schema<"ReaderEvidenceQuoteOut">;
 }) {
   return <div className={styles.connection}>
     <div className={styles.question}><ResourceLink item={content.item} /></div>

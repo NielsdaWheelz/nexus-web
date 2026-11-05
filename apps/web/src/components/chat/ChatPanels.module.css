@@ -138,3 +138,16 @@
   min-block-size: 0;
   flex-direction: column;
 }
+
+.destination[data-mobile="true"] {
+  --control-min-size: var(--size-xl);
+}
+
+.destination[data-mobile="true"] [role="listbox"] {
+  --collection-row-height: var(--size-xl);
+}
+
+.destination[data-mobile="true"] [role="option"],
+.destination[data-mobile="true"] [role="combobox"] {
+  min-block-size: var(--size-xl);
+}

@@ -53,6 +53,10 @@ dispatch (the author search owns keys only while focus is inside it).
 same rule; a sheet's scope is its `panelId`. `interactionOwnedElsewhere(element)`
 reads it too, ignoring an owner whose element or boxes contain `element`; a null
 element counts any owner. tooltips never become this owner.
+`hasWorkspaceNavigationBlocker()` blocks modals and eligible page transients
+unless a transient sets `workspaceNavigation: "allow"`; persistent
+composition may retain escape ownership while allowing pane navigation, and
+child choices still block by default.
 `useOverlay` subscribes to its layer's registration, coverage and depth. for a
 tooltip, `topmost` additionally requires a live trigger inside the current
 owner's boxes or modal room, or on the page when no owner is open. hidden,
@@ -95,7 +99,8 @@ button and the sheet's drag all take that path.
 transient of the top modal (or of the page) until one whose `inside()` boxes
 contain the press. a transient's anchor element is inside it, so pressing a
 trigger never closes and reopens its own surface. a transient without `inside`
-is never closed by a press.
+is never closed by a press. `dismissOnOutside: false` keeps a transient open on
+outside presses while its `inside()` boxes still own focus and help.
 
 the same traversal dismisses pending or visible tooltips outside their
 `inside()` boxes. a tooltip neither stops the traversal at an inside box nor
@@ -157,8 +162,9 @@ focus in between. a menu that skips returning focus passes its stable trigger th
 `requestNexusOpen` metadata, including queued and guarded requests.
 nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
-and clicked-highlight composition use `FloatingActionSurface` on desktop;
-mobile composition explicitly opens the shared body in `MobileSheet`.
+and clicked-highlight composition use `FloatingActionSurface` on desktop.
+mobile passage composition is an in-layout nonmodal band with explicit close,
+contained focus/help, outside dismissal disabled and workspace navigation allowed.
 
 return candidates must be connected, visible and enabled; a css-hidden opener
 cannot suppress its surviving fallback. visible but temporarily inert modal
@@ -405,11 +411,10 @@ radio does nothing, and a disabled group's reason describes its fieldset.
 
 **FloatingActionSurface**: nonmodal selection actions, desktop passage composers,
 clicked-highlight choosers and action-bar popovers. ordinary text-selection
-placement keeps its first/last visible line and edge policy; mobile reader
-actions explicitly select `mobile-selection-actions`. escape, an outside press
-and, inside a modal, back dismiss it. opted-in `preservePointerSelection` keeps
-a live range when pressed; mobile reader actions instead freeze their subject
-before focus transfer and retain native button activation.
+placement keeps its first/last visible line and edge policy. escape, an outside
+press and, inside a modal, back dismiss it. opted-in `preservePointerSelection`
+keeps a live range when pressed. the separate mobile passage band freezes its
+subject before focus transfer and retains native button activation.
 
 **useHoverPreview**: mouse or pen hover, or keyboard focus while focus is
 visible, opens a card above the citation after 150 ms; leaving the citation
@@ -528,40 +533,17 @@ strategies retain their contracts.
 positioned interactive surfaces appear by opacity only; their entrance never
 moves or scales available controls or a nested menu's trigger geometry.
 
-`mobile-selection-actions` is explicit opt-in with a stable `selectionSession`.
-it intersects live reader bounds, visual viewport, safe areas and the existing
-player/keyboard clearance. first/last source rectangles define endpoint
-neighborhoods expanded by 24 css px before clipping; the first visible line never
-substitutes for an offscreen endpoint. the measured compact group is constrained
-to the usable bounds, with one internal scrollport when oversized.
+mobile passage composition uses a normal-flow band, with layout and native
+capture owned by the [reader](reader-implementation.md#flows). its transient
+registers only while active, names its contained controls with `inside`, sets
+`dismissOnOutside: false` and `workspaceNavigation: "allow"`, and does not opt
+into tab/navigation dismissal or automatic return focus. escape and explicit
+close use the feature's work guard. child colour/destination choices keep their
+ordinary dismissal, navigation and focus-return rules.
 
-candidate order is below selection, above selection, centered over its visible
-body, viewport bottom, viewport top and viewport center. within one session the
-previous candidate kind is recomputed and retained while inside bounds and clear
-of endpoint neighborhoods. otherwise use the first clear candidate; if none is
-clear, minimize endpoint overlap, maximize endpoint distance, then retain listed
-order. selected-body overlap is allowed, so lack of empty space never suppresses
-a valid action group. compact actions fade without transforming their geometry,
-so an immediate more activation keeps a stationary trigger.
-source scrolling/reflow measures current geometry; opening
-or hiding these actions never reflows, resizes or scrolls the source.
-
-the annotation controller owns its provisional candidate and quiet timer under
-the [reader selection contract](reader-implementation.md).
-hidden controls have no hit targets or focus stops. owned controls are inside the
-overlay; focus collapse cannot remove a pressed control, and the more owner
-outlives the passive row. native handle hit regions remain unavailable to the
-page; endpoint clearance and quiet time are approximations, not a release signal.
-
-mobile note/ask and saved-mark entry use `MobileSheet` with its guarded handle,
-back, focus and scrolling body behavior. the shared composer body keeps note
-history, destinations and recovery controls. outer dismissal abandons unsubmitted
-prose; child dismissal preserves it. attachment loss retains its guard, submitted
-operations settle in their owner, and closing never reconstructs native selection.
-desktop composition remains a
-nonmodal anchored group with normal tab order; its rich editor consumes escape
-only for nested controls. explicit navigation retires the source interaction
-before its destination can own focus or escape.
+desktop composition remains a nonmodal anchored group with normal tab order;
+its rich editor consumes escape only for nested controls. explicit navigation
+retires the source interaction before its destination can own focus or escape.
 
 destination presenters close without return focus after handled new-pane
 navigation. `FloatingActionSurface.skipReturnFocus` carries that decision through

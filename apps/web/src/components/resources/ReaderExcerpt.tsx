@@ -4,7 +4,7 @@ import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { assertNever } from "@/lib/assertNever";
 import { createElement, Fragment, type ReactNode } from "react";
-import { excerptPointOffsets, type ExcerptNode, type ExcerptView } from "@nexus/authored/excerpt";
+import { EXCERPT_STRUCTURAL_CONTAINERS, excerptPointOffsets, type ExcerptNode, type ExcerptView } from "@nexus/authored/excerpt";
 import readerStyles from "@/components/HtmlRenderer.module.css";
 import styles from "./ReaderExcerpt.module.css";
 
@@ -36,9 +36,16 @@ export default function ReaderExcerpt({ excerpt, color, full = false }: { excerp
     const children: ReactNode[] = [];
     for (let index = 0; index < node.children.length; index++) {
       const child = node.children[index]!;
+      if (child.kind === "text" && EXCERPT_STRUCTURAL_CONTAINERS.has(node.kind)) { position += Array.from(child.text).length; continue; }
       if (node.kind !== "table" || child.kind !== "tr") { children.push(render(child, index)); continue; }
       const rows: ReactNode[] = [], first = index;
-      while (index < node.children.length && node.children[index]!.kind === "tr") { rows.push(render(node.children[index]!, index)); index++; }
+      while (index < node.children.length) {
+        const row = node.children[index]!;
+        if (row.kind === "text") position += Array.from(row.text).length;
+        else if (row.kind === "tr") rows.push(render(row, index));
+        else break;
+        index++;
+      }
       children.push(<tbody key={first}>{rows}</tbody>); index--;
     }
     const tag = node.kind === "a" || node.kind === "xref" ? "span" : ["section", "article", "header", "footer", "nav", "aside", "main"].includes(node.kind) ? "div" : node.kind;

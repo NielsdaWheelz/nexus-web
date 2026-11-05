@@ -5,9 +5,13 @@ main; this change shares that release's existing bump. build current consumer
 packages through `./scripts/test`; reject older wire.
 
 use the normal release controller's stopped-writer migration and verified backup
-preflight. the new migration converts known empty/parent-only author-thread input
-to explicit nullable capture input; unknown shapes abort. standalone saved posts
-and historical exact-capture receipts remain supported data.
+preflight. before migration 0330, archive the exact author-thread source payloads
+privately after writers stop. its converter accepts verified historical url,
+backfill and empty/parent-only input, then emits explicit nullable capture input.
+obsolete destination lists leave live storage; the private archive and verified
+backup retain them. current library holdings, captures and target columns stay
+unchanged. unknown or inconsistent shapes abort. standalone saved posts and
+historical exact-capture receipts remain supported data.
 
 no new production credentials or services. the existing optional `X_API_BASE_URL`
 now reaches local checkout workers as well as the api; controlled qualification

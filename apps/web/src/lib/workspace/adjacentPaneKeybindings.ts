@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { hasWorkspaceNavigationBlocker } from "@/lib/ui/overlay";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 
 /** pane-next / pane-previous move to the adjacent visible pane (clamped). */
@@ -18,7 +18,7 @@ export function useAdjacentPaneKeybindings({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target) || hasActiveInteractionOwner()) return;
+      if (isEditableTarget(event.target) || hasWorkspaceNavigationBlocker()) return;
       const isNext = matchesShortcut(SHORTCUTS["pane-next"], event, platform);
       if (!isNext && !matchesShortcut(SHORTCUTS["pane-previous"], event, platform)) return;
       event.preventDefault();

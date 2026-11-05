@@ -67,6 +67,7 @@ from nexus.services.reader_navigation import read_media_navigation
 from nexus.services.reader_publication import (
     read_publication_source_issues,
     read_ready_publication_generation,
+    ready_publication_rows_sql,
 )
 from nexus.services.transcript_navigation import (
     project_transcript_navigation,
@@ -118,6 +119,136 @@ def x_document_identity(generation: int, units: list[ReaderUnitOut]) -> str:
         return f"g{generation}"
     digest = hashlib.sha256("\n".join(occurrences).encode()).hexdigest()[:24]
     return f"g{generation}:x{digest}"
+
+
+def capture_destination(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    capture_id: UUID,
+    reading_media_id: UUID | None,
+    primary_only: bool = False,
+) -> tuple[UUID | None, str, str]:
+    """Choose a unique admitted occurrence without assembling its reading.
+
+    The occurrence names its immutable capture owner; the complete view identity
+    is a separate arrival fence. Membership follows native roots, valid embeds and
+    one pinned context hop, including replied-to primary suppression. Only two
+    candidate rows cross the boundary; ordering and composition hashes are unused.
+    """
+    from nexus.services.x_source import readable_x_capture_ids_sql
+
+    fragment = db.scalar(
+        text(f"""SELECT f.id FROM fragments f
+        WHERE f.x_post_capture_id=:capture
+          AND f.x_post_capture_id IN ({readable_x_capture_ids_sql()})"""),
+        {"capture": capture_id, "viewer_id": viewer_id},
+    )
+    if fragment is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Source not found")
+    selected = None
+    unit_id = str(capture_id)
+    if reading_media_id is not None and can_read_media(db, viewer_id, reading_media_id):
+        matches = db.execute(
+            text(f"""WITH reading AS (
+            SELECT m.id FROM media m
+            JOIN ({ready_publication_rows_sql()}) p ON p.media_id=m.id
+            WHERE m.id=:reading AND m.kind IN ('web_article','epub')
+        ), roots AS (
+            SELECT tp.capture_id,'primary' AS relation,tp.id::text AS unit_id FROM x_thread_posts tp
+            JOIN x_thread_sources thread ON thread.media_id=tp.thread_media_id
+            JOIN reading ON reading.id=tp.thread_media_id
+            UNION ALL
+            SELECT xm.capture_id,'primary',xm.media_id::text FROM x_post_media xm
+            JOIN reading ON reading.id=xm.media_id
+            WHERE NOT EXISTS (SELECT 1 FROM x_thread_sources t WHERE t.media_id=reading.id)
+            UNION ALL
+            SELECT de.target_x_post_capture_id,'embedded',de.id::text FROM document_embeds de
+            JOIN reading ON reading.id=de.media_id
+            JOIN fragments f ON f.id=de.fragment_id AND f.media_id=reading.id
+            WHERE de.provider='x' AND de.embed_kind='post'
+              AND de.target_x_post_capture_id IS NOT NULL
+              AND de.canonical_end_offset BETWEEN 0 AND char_length(f.canonical_text)
+              AND NOT EXISTS (SELECT 1 FROM x_thread_sources t WHERE t.media_id=reading.id)
+              AND NOT EXISTS (SELECT 1 FROM x_post_media xm WHERE xm.media_id=reading.id)
+        ), readable AS MATERIALIZED ({readable_x_capture_ids_sql()}), admitted_roots AS (
+            SELECT roots.*,c.source_revision_id FROM roots
+            JOIN x_post_captures c ON c.id=roots.capture_id
+            JOIN fragments f ON f.x_post_capture_id=c.id
+            WHERE c.id IN (SELECT capture_id FROM readable)
+        ), occurrences AS (
+            SELECT capture_id,relation,unit_id,NULL::uuid AS parent_capture_id FROM admitted_roots
+            UNION ALL
+            SELECT context.target_capture_id,context.relation,root.unit_id,root.capture_id
+            FROM admitted_roots root
+            JOIN x_post_capture_contexts context ON context.capture_id=root.capture_id
+            JOIN fragments f ON f.x_post_capture_id=context.target_capture_id
+            WHERE context.target_capture_id IN (SELECT capture_id FROM readable)
+              AND NOT (root.relation='primary' AND context.relation='replied_to'
+                AND EXISTS (SELECT 1 FROM admitted_roots primary_post
+                    WHERE primary_post.relation='primary'
+                      AND primary_post.source_revision_id=context.referenced_revision_id))
+        ) SELECT unit_id,parent_capture_id,relation FROM occurrences
+        WHERE capture_id=:capture AND (NOT :primary_only OR relation='primary')
+          AND NOT EXISTS (SELECT 1 FROM roots WHERE roots.relation='primary'
+            AND NOT EXISTS (SELECT 1 FROM admitted_roots WHERE admitted_roots.capture_id=roots.capture_id))
+        LIMIT 2"""),
+            {
+                "reading": reading_media_id,
+                "capture": capture_id,
+                "viewer_id": viewer_id,
+                "primary_only": primary_only,
+            },
+        ).all()
+        if len(matches) == 1:
+            match = matches[0]
+            selected = reading_media_id
+            unit_id = (
+                x_occurrence_id(
+                    match.parent_capture_id,
+                    capture_id,
+                    parent_unit_id=match.unit_id,
+                    relation=match.relation,
+                )
+                if match.parent_capture_id is not None
+                else match.unit_id
+            )
+    return selected, str(capture_id), unit_id
+
+
+def citation_source_point(
+    db: Session, *, viewer_id: UUID, media_id: UUID, edge_id: UUID
+) -> tuple[ReaderPointOut | None, str | None]:
+    """One retained source occurrence in canonical publication coordinates."""
+    from nexus.services.resource_graph.citations import citation_source_visible_sql
+    from nexus.services.resource_graph.liveness import edge_live_sql
+
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    generation = read_ready_publication_generation(db, media_id=media_id)
+    if generation is None:
+        return None, None
+    identity = f"g{generation}"
+    rows = db.execute(
+        text(f"""SELECT de.fragment_id,de.canonical_end_offset FROM document_embeds de
+        JOIN fragments f ON f.id=de.fragment_id AND f.media_id=de.media_id
+        JOIN media m ON m.id=de.media_id
+        JOIN resource_edges e ON e.id=de.citation_id
+        WHERE de.media_id=:media AND e.id=:edge
+          AND e.source_scheme='media' AND e.source_id=de.media_id
+          AND e.origin='citation' AND e.ordinal IS NOT NULL
+          AND {edge_live_sql("e")} AND {citation_source_visible_sql("e")}
+          AND m.kind IN ('web_article','epub')
+          AND NOT EXISTS (SELECT 1 FROM x_thread_sources t WHERE t.media_id=m.id)
+          AND NOT EXISTS (SELECT 1 FROM x_post_media xm WHERE xm.media_id=m.id)
+          AND de.canonical_end_offset BETWEEN 0 AND char_length(f.canonical_text)
+        LIMIT 2"""),
+        {"media": media_id, "edge": edge_id, "viewer_id": viewer_id},
+    ).all()
+    if len(rows) != 1:
+        return None, identity
+    row = rows[0]
+    return ReaderPointOut(unit_id=str(row.fragment_id), offset=row.canonical_end_offset), identity
 
 
 def build_reader_document(

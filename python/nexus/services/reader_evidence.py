@@ -32,7 +32,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceCountsOut,
     ReaderEvidenceHighlightOut,
     ReaderEvidenceOut,
-    ReaderEvidenceQuotationOut,
+    ReaderEvidenceQuoteOut,
     ReaderEvidenceResolutionOut,
     ReaderEvidenceResolvedOut,
     ReaderEvidenceResourceOut,
@@ -54,7 +54,7 @@ from nexus.schemas.resource_items import (
     UnavailableSourceLocationOut,
 )
 from nexus.schemas.retrieval import PdfPageLocator
-from nexus.services.chat.quotes import source_quotations
+from nexus.services.chat import quotes
 from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnections
 from nexus.services.reader_evidence_markers import build_markers
@@ -66,7 +66,7 @@ from nexus.services.reader_locations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.evidence import evidence_items, resolve_source_target
+from nexus.services.resource_items.evidence import resolve_source_target
 from nexus.services.resource_items.items import (
     excerpt,
     passage_label,
@@ -103,35 +103,27 @@ def build_reader_evidence(
 ) -> ReaderEvidenceProjection:
     """Merge direct facts by exact far ref after constructing domain-owned roots."""
     highlight_refs = {f"highlight:{highlight.id}" for highlight in highlights}
-    quotations = source_quotations(db, viewer_id=viewer_id, media_id=media_id)
-    quotation_items = {
-        item.ref: item
-        for item in evidence_items(
-            db,
-            viewer_id=viewer_id,
-            occurrences=[
-                (ref, evidence, ReaderQuoteSourceTargetKey(message_id=ref.id))
-                for ref, evidence in quotations
-            ],
-            reading_media_ids={ref.uri: media_id for ref, _ in quotations},
-        )
-        if not item.missing
-    }
+    quotations = quotes.reader_quotes(db, viewer_id=viewer_id, reading_media_id=media_id)
+    quotation_items: dict[str, ResourceItemOut] = {}
     quotation_targets: dict[str, SourceTargetOut] = {}
-    for ref, _ in quotations:
-        if ref.uri not in quotation_items:
+    for message_id, snapshot in quotations:
+        item = quotes.selection_out(
+            db, viewer_id=viewer_id, snapshot=snapshot, message_id=message_id
+        ).item
+        if item.missing:
             continue
         target = resolve_source_target(
             db,
             viewer_id=viewer_id,
-            target=ReaderQuoteSourceTargetKey(message_id=ref.id),
+            target=ReaderQuoteSourceTargetKey(message_id=message_id),
             reading_media_id=media_id,
         )
         if (
             target.source_activation is not None
             and target.source_activation.resource_ref == f"media:{media_id}"
         ):
-            quotation_targets[ref.uri] = target
+            quotation_items[item.ref] = item
+            quotation_targets[item.ref] = target
     native_refs = highlight_refs | quotation_targets.keys()
     if apparatus.status in ("ready", "partial"):
         native_refs.update(item.resource_ref for item in apparatus.items)
@@ -230,7 +222,7 @@ def build_reader_evidence(
     for ref, target in quotation_targets.items():
         roots[ref] = ReaderEvidenceRootOut(
             ref=ref,
-            content=ReaderEvidenceQuotationOut(item=items[ref], quotation=quotation_items[ref]),
+            content=ReaderEvidenceQuoteOut(item=items[ref], quotation=quotation_items[ref]),
             resolution=_resource_resolution(
                 target=target,
                 media_id=media_id,
@@ -382,15 +374,15 @@ def build_reader_evidence(
         roots.values(),
         key=lambda root: _root_sort_key(root, first_facts, owner_order),
     )
-    counts = {"highlights": 0, "citations": 0, "links": 0, "machine_links": 0}
+    counts = {"highlights": 0, "quotes": 0, "citations": 0, "links": 0, "machine_links": 0}
     for root in roots_out:
         facets: set[str] = set()
         if isinstance(root.content, ReaderEvidenceHighlightOut):
             facets.add("highlights")
         elif isinstance(root.content, ReaderEvidenceSourceReferenceOut):
             facets.add("citations")
-        elif isinstance(root.content, ReaderEvidenceQuotationOut):
-            facets.add("links")
+        elif isinstance(root.content, ReaderEvidenceQuoteOut):
+            facets.add("quotes")
         for fact in root.direct_facts:
             if fact.origin == "citation" and fact.ordinal is not None:
                 facets.add("citations")

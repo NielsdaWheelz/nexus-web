@@ -129,6 +129,14 @@ class ChatSelection(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class ChatDeletionRevision(Base):
+    """The monotonic account fence for replay after hard chat deletion."""
+
+    __tablename__ = "chat_deletion_revisions"
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger)
+
+
 class Page(Base):
     """Projection of one authored page; kept while deleted, hidden by ``authored_visible``."""
 
@@ -1159,6 +1167,17 @@ class FragmentBlock(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     fragment_id: Mapped[UUID]
     block_idx: Mapped[int]
+    start_offset: Mapped[int]
+    end_offset: Mapped[int]
+
+
+class FragmentTable(Base):
+    """Publication-owned table topology in immutable fragment coordinates."""
+
+    __tablename__ = "fragment_tables"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    fragment_id: Mapped[UUID]
+    dom_path: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
     start_offset: Mapped[int]
     end_offset: Mapped[int]
 
