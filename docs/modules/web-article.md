@@ -56,7 +56,8 @@ saved media. the extractor separates structurally identified attribution
 permalinks, direct attribution text and footer/cite containers from excerpt bodies.
 a reference without body text or images stays uncaptured; actual image-only
 evidence may retain a capture without a quotation. existing captured fragments
-remain immutable. provider billing, auth, rate-limit,
+remain immutable. context availability follows authorized retained bodies,
+independently of the one-hop rendering boundary. provider billing, auth, rate-limit,
 timeout, and post-unavailable failures surface as their mapped API error and a
 `x_provider_failure` warning log.
 

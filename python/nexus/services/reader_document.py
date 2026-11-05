@@ -607,7 +607,7 @@ def _capture_units(
     from nexus.schemas.x_source import XArticleExcerptCapture, XCompletePostCapture
     from nexus.services.image_placeholder import replace_image_with_placeholder
     from nexus.services.x_rendering import capture_image_urls
-    from nexus.services.x_source import readable_x_capture_ids_sql
+    from nexus.services.x_source import readable_x_capture_ids_sql, x_evidence_capture_match_sql
 
     visible = "" if viewer_id is None else f"AND c.id IN ({readable_x_capture_ids_sql()})"
     if public_grant_id is not None:
@@ -672,10 +672,18 @@ def _capture_units(
                 image.set("src", f"/api/x/captures/{capture_id}/assets/{quote(key, safe='')}")
         raw = inner_html(container)
     contexts = db.execute(
-        text("""
-        SELECT * FROM x_post_capture_contexts WHERE capture_id=:id ORDER BY ordinal
+        text(f"""
+        SELECT context.*, c.id IS NOT NULL AS body_available
+        FROM x_post_capture_contexts context
+        LEFT JOIN resource_edges e ON e.id=context.citation_id
+        LEFT JOIN fragments evidence_body
+            ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "evidence_body")}
+        LEFT JOIN x_post_captures c
+            ON c.id=COALESCE(context.target_capture_id,evidence_body.x_post_capture_id)
+            AND c.source_revision_id=context.referenced_revision_id {visible}
+        WHERE context.capture_id=:id ORDER BY context.ordinal
     """),
-        {"id": capture_id},
+        {"id": capture_id, "viewer_id": viewer_id, "public_grant_id": public_grant_id},
     ).all()
     children: list[ReaderUnitOut] = []
     references: list[ReaderXReferenceOut] = []
@@ -716,7 +724,7 @@ def _capture_units(
                 source_url=f"https://x.com/i/status/{context.referenced_revision_id}",
                 target_unit_id=child_id if child else None,
                 availability="available"
-                if child
+                if context.body_available
                 else ("unavailable" if context.outcome == "unavailable" else "not_captured"),
             )
         )
