@@ -129,7 +129,7 @@ export default function EmbedCard({ embed, reader }: { readonly embed: DocumentE
           <p>{description}</p>
         ) : null}
         <span className={styles.embedActions}>
-          {retrieval?.status === "failed" ? <span>{target.capture_id ? "couldn’t fetch the full post. the captured excerpt is kept." : "this post wasn’t captured."}</span> : null}
+          {retrieval?.status === "failed" ? <span>couldn’t retrieve the full post during this import.</span> : null}
           {retrieval?.can_retry && embed.media_id ? <CaptureRetry key={JSON.stringify([embed.media_id, embed.id, retrieval.job_id])}
             request={{ path: `/api/media/${embed.media_id}/embeds/${embed.id}/retry`, method: "POST", body: JSON.stringify({ expected_job_id: retrieval.job_id }) }}
             label="retry" fact="couldn’t fetch the full post." unsure="not sure the full post started downloading."

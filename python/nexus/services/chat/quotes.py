@@ -252,6 +252,7 @@ def build_snapshot(
         if attribution is None:
             raise ApiError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Source not found")
         evidence = CapturedEvidence(
+            completion_ref=None,
             quote=CapturedQuote(
                 excerpt=excerpt,
                 exact=words.exact,
@@ -264,6 +265,7 @@ def build_snapshot(
                 title=attribution.title,
                 media_kind=attribution.media_kind,
                 contributors=attribution.contributors,
+                attribution_text=attribution.attribution_text,
                 location_label=label,
             ),
             target=CapturedPassageTarget(
@@ -391,7 +393,7 @@ def invalidate_sources(
             if can_read_media(db, viewer_id, id):
                 refs.add(ResourceRef("media", id))
     for ref in sorted(refs, key=lambda ref: ref.uri):
-        bump_version(db, viewer_id=viewer_id, ref=ref, lane="annotations")
+        bump_version(db, viewer_id=viewer_id, ref=ref, lane="evidence")
     if refs:
         db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
 

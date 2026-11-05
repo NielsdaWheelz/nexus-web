@@ -101,8 +101,8 @@ export interface AuthoredStore {
   /** One initial read and later invalidations share the caller's success/failure owners. */
   subscribe(query: AuthoredQuery, listener: (result: QueryResult) => void, failed: (error: unknown) => void): () => void;
   commit(frame: CommitFrame): Promise<CommitResult>;
-  /** Derived peer annotations are remote evidence, never canonical corpus changes. */
-  annotations_changed(listener: () => void): () => void;
+  /** Derived evidence changes independently of canonical authored content. */
+  evidence_changed(listener: () => void): () => void;
   sync_status(listener: (status: SyncStatus, detail: string | null, failure: SyncFailure) => void): () => void;
   close(): Promise<void>;
 }

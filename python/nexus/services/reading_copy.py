@@ -55,6 +55,7 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
         materialize_x_assets=True,
         pdf_file=lambda: ReaderPdfFileOut(url="document.pdf", expires_at=None),
     )
+    document.citation_occurrences = []
     if document.kind == "text_part":
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND, "pieces do not have offline reading copies"

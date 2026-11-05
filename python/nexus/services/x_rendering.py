@@ -7,6 +7,7 @@ reader projection. Foreign words and generated placeholders never enter this bod
 from __future__ import annotations
 
 import json
+import re
 from html import escape
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
@@ -15,6 +16,7 @@ from nexus.schemas.x_source import (
     XArticleExcerptCapture,
     XArticleText,
     XCompletePostCapture,
+    XPostContent,
     XSourcePost,
 )
 from nexus.services.html_tree import parse_html_document, serialize_html
@@ -26,26 +28,34 @@ def render_article(article: XArticleText) -> str:
     return "<p>" + escape(article.plain_text, quote=False).replace("\n", "<br>") + "</p>"
 
 
+def render_post_text(content: XPostContent) -> str:
+    """Link observed URL tokens without adding labels to the authored paragraph."""
+    words = "\n".join(content.text.splitlines())
+    urls = {entity.url: entity.expanded_url or entity.url for entity in content.urls}
+    pattern = "|".join(re.escape(url) for url in sorted(urls, key=len, reverse=True))
+    parts = ["<p>"]
+    start = 0
+    for match in re.finditer(pattern, words) if urls else ():
+        parts.append(escape(words[start : match.start()], quote=False).replace("\n", "<br>"))
+        parts.append(
+            f'<a href="{escape(urls[match[0]], quote=True)}">{escape(match[0], quote=False)}</a>'
+        )
+        start = match.end()
+    parts.append(escape(words[start:], quote=False).replace("\n", "<br>"))
+    parts.append("</p>")
+    return "".join(parts)
+
+
 def render_post(post: XSourcePost) -> str:
     content = post.content
-    parts = [
-        f"<p>{'<br>'.join(escape(line, quote=False) for line in content.text.splitlines())}</p>"
-    ]
-    for entity in content.urls:
-        if entity.url not in content.text:
-            continue
-        href = entity.expanded_url or entity.url
-        label = entity.display_url or entity.title or href
-        parts.append(
-            f'<p><a href="{escape(href, quote=True)}">{escape(label, quote=False)}</a></p>'
-        )
+    parts = [render_post_text(content)]
     for attachment in content.attachments:
         image = attachment.url or attachment.preview_image_url
         if image is None:
             continue
         alt = attachment.alt_text if attachment.alt_text is not None else attachment.type
         parts.append(
-            f'<figure><img src="{escape(image, quote=True)}" alt="{escape(alt, quote=True)}"><figcaption>{escape(attachment.type, quote=False)}</figcaption></figure>'
+            f'<figure><img src="{escape(image, quote=True)}" alt="{escape(alt, quote=True)}"></figure>'
         )
     return "".join(parts)
 

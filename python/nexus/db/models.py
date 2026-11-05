@@ -203,7 +203,7 @@ class ResourceEdge(Base):
 
     __tablename__ = "resource_edges"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    user_id: Mapped[UUID]
+    user_id: Mapped[UUID | None]
     kind: Mapped[str]
     origin: Mapped[str]
     source_scheme: Mapped[str]
@@ -222,7 +222,7 @@ class ResourceExternalSnapshot(Base):
 
     __tablename__ = "resource_external_snapshots"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    user_id: Mapped[UUID]
+    user_id: Mapped[UUID | None]
     provider: Mapped[str]
     url: Mapped[str]
     title: Mapped[str]
@@ -481,6 +481,7 @@ class XPostCaptureContext(Base):
     ordinal: Mapped[int]
     referenced_revision_id: Mapped[str]
     target_capture_id: Mapped[UUID | None]
+    citation_id: Mapped[UUID | None]
     outcome: Mapped[str]
     error_code: Mapped[str | None]
 
@@ -690,6 +691,7 @@ class DocumentEmbed(Base):
     provider_target_ref: Mapped[str | None]
     target_media_id: Mapped[UUID | None]
     target_x_post_capture_id: Mapped[UUID | None]
+    citation_id: Mapped[UUID | None]
     capture_job_id: Mapped[UUID | None]
     title: Mapped[str | None]
     description: Mapped[str | None]

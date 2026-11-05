@@ -56,7 +56,7 @@ server reads honor semantic visibility for authored roots and incident links.
 local authored adjacency remains authoritative online; separately available
 machine facts never replace it with stale server-authored rows.
 
-`CitationOut` retains edge id, ordinal, role and captured item. its disclosure
+`CitationOut` retains edge id, source-local ordinal and captured item. its disclosure
 identity, literal quotation, source attribution and historical context come from
 the captured evidence. current source access controls reading/actions. assistant
 supports/contradicts/context facts with rationale remain directed evidence and
@@ -66,6 +66,48 @@ note-body embed facts are rebuilt solely from the canonical owner's embedded
 references, in the same server transaction. they retain directional meaning and
 are not additional authored membership. no adapter invents attribution,
 replacement quote text or approximate identity matches.
+
+## citations
+
+ordinal citations are source-owned `origin=citation`, `kind=context` facts with
+null user ownership. source readability authorizes their visibility; null ownership
+never means public. messages, oracle readings, article embeds and native quoted
+posts use the same writer and output. no role or relationship taxonomy is exposed.
+bare conversation context remains account-owned and has no ordinal.
+
+`source_citations.py` binds imported occurrences to ordinary citation ids.
+article publication retires old bindings before their citation rows; immutable
+capture reuse retains existing bindings. known references need no separately saved
+target. absent captures use real source-owned external snapshots.
+
+completion consumes admitted complete captures of the exact declared revision,
+including independent imports. it fills unknown observations under the enclosing
+serializable mutation, never replacing known words, literal attribution, credits
+or captured-empty bodies. edge identity, creation time, bibliographic reference
+and known captured extent remain fixed. completion changes no source composition.
+current source visibility and capture admission are checked inside the transaction.
+
+captured evidence retains its original base and one immutable `completion_ref`.
+only admitted item/location projection merges the later observation; raw/copyable
+evidence never stores that merged view as a new base. denied proof leaves original
+facts intact and exposes no new fields or private proof id. supplementary metadata
+on a known excerpt grants no full-body root or context traversal; a URL-only base
+may use its proof for its first body at the existing admitted root positions.
+
+saved x presentation membership uses proved aliases and primary captures; incidental
+context never makes a post a member. match incoming declared revision and retained
+evidence independently, deduplicate before paging, and retain existing edge cursor
+order. citation snapshots supply historical presentation, never current target text.
+
+source navigation resolves the bound article/native occurrence as a document-fenced
+point; generated sources open their message/oracle resource. target navigation
+opens retained exact evidence or the known external reference. stale/ambiguous
+geometry cannot redirect to another occurrence. original article excerpts and
+generated evidence are capture roots; imported fragment citations are not. extend
+only one admitted context hop from independently established roots. explicit
+capture saving freezes that readable body manifest and publication transfers only
+authorized direct bodies; supplementary metadata proofs add no body admission.
+provider acquisition retains its separate pinned-context manifest.
 
 ## chat context
 

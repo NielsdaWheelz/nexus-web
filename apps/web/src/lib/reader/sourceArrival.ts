@@ -286,13 +286,13 @@ export function useSourceArrival(input: {
           // Endpoint queries never change a conversation's source ownership.
           const sameOwner = source?.resource_ref && destination.resourceRef
             ? source.resource_ref === destination.resourceRef
-            : data.location.kind === "resource" && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
-          if (sameOwner && data.location.kind === "located" && data.location.source_identity !== null &&
+            : (data.location.kind === "resource" || destination.routeId === "xCapture") && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
+          if (sameOwner && (data.location.kind === "located" || data.location.kind === "point") && data.location.source_identity !== null &&
               sourceIdentity !== null && data.location.source_identity !== sourceIdentity) {
             publishStatus({ ...pending, pending: false, failure: { title: "that location is from another version of this document.", error: null } });
             return;
           }
-          target = data.location.kind === "unavailable" || !sameOwner || (data.location.kind === "located" && sourceIdentity === null)
+          target = data.location.kind === "unavailable" || !sameOwner || ((data.location.kind === "located" || data.location.kind === "point") && sourceIdentity === null)
             ? null : { kind: "source", source: data };
         }
         const outcome = target === null ? "Unavailable" : await latest.current.input.apply(target, {

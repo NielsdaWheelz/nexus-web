@@ -17,7 +17,7 @@ import type { AnnotationVerbs } from "../useAnnotationVerbs";
 import type { LocalLink } from "../annotations";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
-import { rootItem, type EvidenceRoot } from "./model";
+import { factFacet, rootItem, type EvidenceRoot } from "./model";
 import type { useEvidenceWindow } from "./useEvidenceWindow";
 
 export interface EvidenceOpenRequest {
@@ -119,6 +119,7 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
   </li>;
   const disclosureKey = sourceTextKey(entry);
   return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
+    historical={root.direct_facts.some(fact => factFacet(fact) === "citations")}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
     sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}

@@ -10,6 +10,7 @@ land now is ``locations``'s proof.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -30,10 +31,12 @@ from nexus.schemas.resource_evidence import (
     ResourceField,
     validate_resource_field,
 )
+from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.schemas.resource_items import (
     CitationSourceTargetKey,
     LocatedSourceLocationOut,
     NamedResourceBodyOut,
+    PointSourceLocationOut,
     ReaderQuoteSourceTargetKey,
     ResourceActivationOut,
     ResourceItemOut,
@@ -63,7 +66,6 @@ from nexus.services.resource_items.items import (
     passage_label,
     resource_item_out,
     source_attributions,
-    visible_refs,
 )
 from nexus.services.resource_items.locations import (
     TIMED_KINDS,
@@ -120,6 +122,7 @@ def capture_evidence(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Annotation not found")
         locator = annotation_locator(ref.id, annotation.body_text)
         return CapturedEvidence(
+            completion_ref=None,
             quote=CapturedQuote(
                 excerpt=plain_excerpt(annotation.body_text),
                 exact=annotation.body_text,
@@ -134,6 +137,7 @@ def capture_evidence(
                 title="annotation",
                 media_kind=None,
                 contributors=None,
+                attribution_text=None,
                 location_label="annotation",
             ),
             target=CapturedPassageTarget(
@@ -160,6 +164,14 @@ def _capture(
     *,
     reading_media_id: UUID | None = None,
 ) -> CapturedEvidence:
+    if ref.scheme == "fragment":
+        capture_id = db.scalar(
+            text("SELECT x_post_capture_id FROM fragments WHERE id=:id"), {"id": ref.id}
+        )
+        if capture_id is not None:
+            from nexus.services.source_citations import x_capture_evidence
+
+            return x_capture_evidence(db, capture_id=capture_id)
     source_ref = item.preview.source.ref if item.preview.source else ref.uri
     media = (
         assert_resource_ref(source_ref).id
@@ -319,6 +331,7 @@ def _capture(
         title=source.title if source else None,
         media_kind=source.media_kind if source else None,
         contributors=source.contributors if source else None,
+        attribution_text=source.attribution_text if source else None,
         location_label=item.preview.source.location_label
         if source and item.preview.source
         else None,
@@ -342,7 +355,7 @@ def _capture(
         raise ConflictError(
             ApiErrorCode.E_READER_CONTENT_CHANGED, "Source changed during evidence capture"
         )
-    return CapturedEvidence(quote=quote, source=captured_source, target=target)
+    return CapturedEvidence(quote=quote, source=captured_source, target=target, completion_ref=None)
 
 
 def _precision(locator: dict[str, Any]) -> LocationPrecision:
@@ -353,7 +366,7 @@ def _precision(locator: dict[str, Any]) -> LocationPrecision:
     return "approximate" if locator.get("projection") == "proportional_text_offsets" else "exact"
 
 
-def _admitted_evidence(
+def _admitted_body(
     db: Session,
     *,
     viewer_id: UUID,
@@ -373,6 +386,20 @@ def _admitted_evidence(
         return (evidence, {"kind": "capture"}, ()) if allowed else None
     owner_ref = target.owner_ref or evidence.source.ref
     if not isinstance(target, CapturedPassageTarget):
+        if owner_ref and owner_ref.startswith("fragment:"):
+            from nexus.services.x_source import readable_x_capture_ids_sql
+
+            capture = db.scalar(
+                text("SELECT x_post_capture_id FROM fragments WHERE id=:id"),
+                {"id": assert_resource_ref(owner_ref).id},
+            )
+            if capture is not None and not db.scalar(
+                text(
+                    f"SELECT EXISTS(SELECT 1 FROM ({readable_x_capture_ids_sql()}) r WHERE r.capture_id=:capture)"
+                ),
+                {"viewer_id": viewer_id, "capture": capture},
+            ):
+                return None
         if evidence.quote is not None and owner_ref and owner_ref.startswith("media:"):
             owner_id = assert_resource_ref(owner_ref).id
             kind = db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": owner_id})
@@ -464,6 +491,82 @@ def _admitted_evidence(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _AdmittedEvidence:
+    original: CapturedEvidence
+    projected: CapturedEvidence
+    scope: dict[str, Any]
+    incomplete_tables: tuple[tuple[int, int], ...]
+
+
+def _admitted_evidence(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    evidence: CapturedEvidence,
+    reading_media_id: UUID | None = None,
+) -> _AdmittedEvidence | None:
+    """Admit the frozen base and its optional observation separately.
+
+    Callers already authorize the containing occurrence. Only the internal
+    projection merges observations; serialized evidence keeps its original base.
+    A supplementary observation is not permission to read that capture's body.
+    """
+    body = _admitted_body(
+        db,
+        viewer_id=viewer_id,
+        evidence=evidence.model_copy(update={"completion_ref": None}),
+        reading_media_id=reading_media_id,
+    )
+    if body is None:
+        return None
+    original, scope, incomplete = body
+    projected = original
+    if evidence.completion_ref is not None:
+        capture_id = db.scalar(
+            text("""
+            SELECT capture.id FROM fragments f
+            JOIN x_post_captures capture ON capture.id=f.x_post_capture_id
+            JOIN x_post_capture_admissions admission ON admission.capture_id=capture.id
+            WHERE f.id=:fragment_id AND admission.user_id=:viewer_id
+              AND capture.payload->>'kind'='complete_post'
+        """),
+            {
+                "fragment_id": assert_resource_ref(evidence.completion_ref).id,
+                "viewer_id": viewer_id,
+            },
+        )
+        if capture_id is not None:
+            from nexus.services.source_citations import x_capture_evidence
+
+            observation = x_capture_evidence(db, capture_id=capture_id)
+            target, quote = original.target, original.quote
+            if (target.owner_ref or "").startswith("external_snapshot:"):
+                admitted_observation = _admitted_body(
+                    db,
+                    viewer_id=viewer_id,
+                    evidence=observation,
+                    reading_media_id=reading_media_id,
+                )
+                if admitted_observation is None:
+                    return _AdmittedEvidence(original, projected, scope, incomplete)
+                observation, scope, incomplete = admitted_observation
+                target, quote = observation.target, observation.quote
+            source = original.source.model_dump()
+            for field, value in observation.source.model_dump().items():
+                if field != "ref" and source[field] is None:
+                    source[field] = value
+            original = original.model_copy(update={"completion_ref": evidence.completion_ref})
+            projected = original.model_copy(
+                update={
+                    "source": CapturedSource.model_validate(source),
+                    "target": target,
+                    "quote": quote,
+                }
+            )
+    return _AdmittedEvidence(original, projected, scope, incomplete)
+
+
 def _scope_admissions(
     admissions: Sequence[
         tuple[CapturedEvidence, dict[str, Any], tuple[tuple[int, int], ...]] | None
@@ -504,8 +607,40 @@ def admit_evidence(
     viewer_id: UUID,
     evidence: CapturedEvidence,
 ) -> CapturedEvidence | None:
-    """Frozen evidence under current disclosure authority, for new model inputs."""
-    return _scope_admissions([_admitted_evidence(db, viewer_id=viewer_id, evidence=evidence)])[0]
+    """Disclose the original base and admitted proof without flattening preview completion."""
+    admitted = _admitted_evidence(db, viewer_id=viewer_id, evidence=evidence)
+    if admitted is None:
+        return None
+    return _scope_admissions([(admitted.original, admitted.scope, admitted.incomplete_tables)])[0]
+
+
+def admit_citation_snapshot(
+    db: Session, *, viewer_id: UUID, snapshot: CitationSnapshot
+) -> CitationSnapshot:
+    """A connection's raw snapshot obeys the same evidence disclosure as its item."""
+    if snapshot.evidence is None:
+        return snapshot
+    return snapshot.model_copy(
+        update={"evidence": admit_evidence(db, viewer_id=viewer_id, evidence=snapshot.evidence)}
+    )
+
+
+def _citation_reference(db: Session, *, edge_id: UUID) -> tuple[str, str | None] | None:
+    """Only source-bound declared references survive denied target evidence."""
+    row = db.execute(
+        text("""
+        SELECT c.referenced_revision_id AS revision,NULL::text AS title
+        FROM x_post_capture_contexts c WHERE c.citation_id=:id AND c.relation='quoted'
+        UNION ALL SELECT d.provider_target_ref,d.title FROM document_embeds d
+        WHERE d.citation_id=:id AND d.provider='x' AND d.embed_kind='post'
+    """),
+        {"id": edge_id},
+    ).one_or_none()
+    if row is None:
+        return None
+    from nexus.services.x_identity import canonical_x_post_url
+
+    return canonical_x_post_url(row.revision), row.title
 
 
 def evidence_items(
@@ -549,7 +684,14 @@ def evidence_items(
         )
         for ref, evidence, _ in occurrences
     ]
-    admitted = _scope_admissions(admissions)
+    admitted = _scope_admissions(
+        [
+            (admission.projected, admission.scope, admission.incomplete_tables)
+            if admission is not None
+            else None
+            for admission in admissions
+        ]
+    )
     owners = {
         owner
         for value in admitted
@@ -572,9 +714,12 @@ def evidence_items(
             [
                 {
                     "source_ref": original.source.ref,
-                    "capture": {"kind": "evidence", "value": original.model_dump(mode="json")},
+                    "capture": {
+                        "kind": "evidence",
+                        "value": admission.projected.model_dump(mode="json"),
+                    },
                     "mode": "full",
-                    "scope": admission[1],
+                    "scope": admission.scope,
                 }
                 for (_, original, _), admission, value in zip(
                     occurrences, admissions, admitted, strict=True
@@ -586,6 +731,33 @@ def evidence_items(
     out = []
     for (ref, evidence, key), value in zip(occurrences, admitted, strict=True):
         if value is None:
+            reference = (
+                _citation_reference(db, edge_id=key.edge_id)
+                if isinstance(key, CitationSourceTargetKey)
+                else None
+            )
+            if reference is not None:
+                url, title = reference
+                out.append(
+                    current[ref.uri].model_copy(
+                        update={
+                            "label": title or url,
+                            "preview": ResourcePreviewOut(
+                                body=NamedResourceBodyOut(
+                                    title=title or url,
+                                    image_url=None,
+                                    media_kind=None,
+                                    contributors=None,
+                                ),
+                                source=None,
+                            ),
+                            "activation": ResourceActivationOut(
+                                field=None, resource_ref=ref.uri, kind="external", href=url
+                            ),
+                        }
+                    )
+                )
+                continue
             out.append(
                 current[ref.uri].model_copy(
                     update={
@@ -635,6 +807,12 @@ def evidence_items(
                 unavailable_reason="location_unavailable",
             )
         quote = evidence.quote
+        reference = (
+            _citation_reference(db, edge_id=key.edge_id)
+            if isinstance(key, CitationSourceTargetKey)
+            else None
+        )
+        display_title = frozen.title or (reference[0] if reference is not None else "Source")
         projection = next(projected) if quote else None
         body = (
             passage_body(
@@ -642,7 +820,7 @@ def evidence_items(
             )
             if quote and projection is not None
             else NamedResourceBodyOut(
-                title=frozen.title or "Source",
+                title=display_title,
                 image_url=None,
                 media_kind=frozen.media_kind,
                 contributors=frozen.contributors,
@@ -653,7 +831,7 @@ def evidence_items(
                 update={
                     "label": passage_label(projection.text_parts.exact)
                     if projection is not None and projection.text_parts is not None
-                    else frozen.title or "Source",
+                    else display_title,
                     "preview": ResourcePreviewOut(body=body, source=attribution),
                     "activation": activation,
                 }
@@ -700,13 +878,138 @@ def _occurrence_activation(
         case ReaderQuoteSourceTargetKey():
             fragment = f"quote-{key.message_id}"
         case CitationSourceTargetKey():
-            fragment = f"citation-{key.edge_id}"
+            fragment = f"citation-{'source-' if key.side == 'source' else ''}{key.edge_id}"
         case RetrievalSourceTargetKey():
             fragment = f"retrieval-{key.retrieval_id}"
         case XPostSourceTargetKey():
             raise ValueError("a logical post target cannot name captured evidence")
     href = source.href.split("#", 1)[0] + "#" + fragment if source.href else None
     return ResourceActivationOut(field=None, resource_ref=ref, kind=source.kind, href=href)
+
+
+def _capture_destination(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    capture_id: UUID,
+    owner: ResourceRef,
+    reading_media_id: UUID | None,
+    primary_only: bool = False,
+) -> tuple[ResourceActivationOut, str, str]:
+    """Choose an exact unique occurrence; otherwise open the retained capture itself."""
+    from nexus.services.reader_document import read_capture_document, read_reader_document
+
+    selected = reading_media_id
+    if selected is not None and can_read_media(db, viewer_id, selected):
+        document = read_reader_document(db, viewer_id, selected)
+        if document.kind != "pdf":
+            matching = [
+                unit
+                for unit in document.units
+                if unit.x_post
+                and unit.x_post.owner
+                and unit.x_post.owner.capture_id == capture_id
+                and (not primary_only or unit.x_post.relation == "primary")
+            ]
+            if len(matching) == 1:
+                return (
+                    ResourceActivationOut(
+                        field=None,
+                        resource_ref=f"media:{selected}",
+                        kind="route",
+                        href=f"/media/{selected}",
+                    ),
+                    document.identity,
+                    matching[0].id,
+                )
+    document = read_capture_document(db, viewer_id, capture_id)
+    return (
+        ResourceActivationOut(
+            field=None, resource_ref=owner.uri, kind="route", href=f"/x/captures/{capture_id}"
+        ),
+        document.identity,
+        str(capture_id),
+    )
+
+
+def _citation_source_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    edge_id: UUID,
+    source_ref: ResourceRef,
+    reading_media_id: UUID | None,
+) -> SourceTargetOut:
+    from nexus.schemas.reader_point import ReaderPointOut
+    from nexus.services.reader_document import read_reader_document
+    from nexus.services.resource_items.routing import resource_activation_for_ref
+
+    if source_ref.scheme in ("message", "oracle_reading"):
+        return SourceTargetOut(
+            source_activation=resource_activation_for_ref(
+                db, viewer_id=viewer_id, ref=source_ref, missing=False
+            ),
+            location=WholeSourceLocationOut(),
+        )
+    if source_ref.scheme == "media":
+        if reading_media_id not in (None, source_ref.id):
+            return _UNAVAILABLE_SOURCE
+        document = read_reader_document(db, viewer_id, source_ref.id)
+        occurrences = [
+            item for item in document.citation_occurrences if item.citation.edge_id == edge_id
+        ]
+        activation = ResourceActivationOut(
+            field=None,
+            resource_ref=source_ref.uri,
+            kind="route",
+            href=f"/media/{source_ref.id}#citation-source-{edge_id}",
+        )
+        if len(occurrences) != 1 or occurrences[0].at is None:
+            return SourceTargetOut(
+                source_activation=activation,
+                location=UnavailableSourceLocationOut(reason="location_unavailable"),
+            )
+        return SourceTargetOut(
+            source_activation=activation,
+            location=PointSourceLocationOut(
+                point=occurrences[0].at, source_identity=document.identity
+            ),
+        )
+    if source_ref.scheme != "fragment":
+        return _UNAVAILABLE_SOURCE
+    row = db.execute(
+        text("""
+        SELECT c.capture_id,f.canonical_text FROM x_post_capture_contexts c
+        JOIN fragments f ON f.x_post_capture_id=c.capture_id
+        WHERE c.citation_id=:edge AND f.id=:fragment AND c.relation='quoted'
+    """),
+        {"edge": edge_id, "fragment": source_ref.id},
+    ).one_or_none()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Citation not found")
+    activation, identity, unit_id = _capture_destination(
+        db,
+        viewer_id=viewer_id,
+        capture_id=row.capture_id,
+        owner=source_ref,
+        reading_media_id=reading_media_id,
+        primary_only=True,
+    )
+    if reading_media_id is not None and activation.resource_ref != f"media:{reading_media_id}":
+        return SourceTargetOut(
+            source_activation=activation,
+            location=UnavailableSourceLocationOut(reason="location_unavailable"),
+        )
+    activation = activation.model_copy(
+        update={"href": f"{activation.href}#citation-source-{edge_id}"}
+    )
+    return SourceTargetOut(
+        source_activation=activation,
+        location=PointSourceLocationOut(
+            point=ReaderPointOut(unit_id=unit_id, offset=len(row.canonical_text)),
+            source_identity=identity,
+        ),
+    )
 
 
 def resolve_source_target(
@@ -826,7 +1129,7 @@ def resolve_source_target(
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Quote not found")
             evidence = decode(raw).evidence
         case CitationSourceTargetKey():
-            from nexus.schemas.resource_graph import CitationSnapshot
+            from nexus.services.resource_graph.citations import citation_source_visible_sql
 
             row = db.execute(
                 text(
@@ -834,24 +1137,83 @@ def resolve_source_target(
                     " FROM resource_edges"
                     " WHERE id = :id AND origin = 'citation' AND ordinal IS NOT NULL"
                     f" AND {edge_live_sql('resource_edges')}"
+                    f" AND {citation_source_visible_sql('resource_edges')}"
                 ),
-                {"id": target.edge_id},
+                {"id": target.edge_id, "viewer_id": viewer_id},
             ).first()
-            if row is None or row.source not in visible_refs(
-                db, viewer_id=viewer_id, refs=[assert_resource_ref(row.source)]
-            ):
+            if row is None:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Citation not found")
+            if target.side == "source":
+                return _citation_source_target(
+                    db,
+                    viewer_id=viewer_id,
+                    edge_id=target.edge_id,
+                    source_ref=assert_resource_ref(row.source),
+                    reading_media_id=reading_media_id,
+                )
             snapshot = CitationSnapshot.model_validate(row.snapshot)
             assert snapshot.evidence is not None
             evidence = snapshot.evidence
     admitted = _admitted_evidence(
-        db, viewer_id=viewer_id, evidence=evidence, reading_media_id=reading_media_id
+        db,
+        viewer_id=viewer_id,
+        evidence=evidence,
+        reading_media_id=None if isinstance(target, CitationSourceTargetKey) else reading_media_id,
     )
     if admitted is None:
+        reference = (
+            _citation_reference(db, edge_id=target.edge_id)
+            if isinstance(target, CitationSourceTargetKey)
+            else None
+        )
+        if reference is not None:
+            return SourceTargetOut(
+                source_activation=ResourceActivationOut(
+                    field=None,
+                    resource_ref=evidence.source.ref or "",
+                    kind="external",
+                    href=reference[0],
+                ),
+                location=WholeSourceLocationOut(),
+            )
         return _UNAVAILABLE_SOURCE
-    evidence = admitted[0]
+    evidence = admitted.projected
     captured = evidence.target
     owner = assert_resource_ref(captured.owner_ref) if captured.owner_ref else None
+    if owner is not None and owner.scheme == "fragment":
+        capture_id = db.scalar(
+            text("SELECT x_post_capture_id FROM fragments WHERE id=:id"), {"id": owner.id}
+        )
+        if capture_id is not None:
+            activation, identity, unit_id = _capture_destination(
+                db,
+                viewer_id=viewer_id,
+                capture_id=capture_id,
+                owner=owner,
+                reading_media_id=reading_media_id,
+            )
+            if (
+                isinstance(captured, CapturedPassageTarget)
+                and captured.locator.type == "x_capture_offsets"
+            ):
+                return SourceTargetOut(
+                    source_activation=activation,
+                    location=LocatedSourceLocationOut(
+                        locator=captured.locator,
+                        precision=captured.precision,
+                        source_identity=identity,
+                        apparatus_reference_id=None,
+                    ),
+                )
+            if captured.kind == "resource":
+                from nexus.schemas.reader_point import ReaderPointOut
+
+                return SourceTargetOut(
+                    source_activation=activation,
+                    location=PointSourceLocationOut(
+                        point=ReaderPointOut(unit_id=unit_id, offset=0), source_identity=identity
+                    ),
+                )
     source = (
         source_attributions(db, viewer_id=viewer_id, refs=[owner]).get(owner.uri) if owner else None
     )

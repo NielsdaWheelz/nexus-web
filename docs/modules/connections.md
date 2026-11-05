@@ -51,16 +51,19 @@ link commands and their outputs are in [resource graph](resource-graph.md).
 
 ## reader inventory
 
-`reader_connections.py` reads exact, bidirectional media adjacency across all
-origins in endpoint-owned order, with its links version in the document map's
-coherent snapshot. `reader_evidence.py` merges its far refs with native highlights and source
-references by canonical ref, retaining every distinct direct fact. native content
-wins. descendants, aliases and captured citation targets create no reader roots.
+`reader_connections.py` reads bidirectional adjacency, including source-owned
+citations through proved primary x presentation membership. reader inventory,
+counts and child probes share that membership in the document map's snapshot;
+the map has no independent links-version field. `reader_evidence.py` merges far
+refs with native highlights and source references, retaining distinct citations
+by edge id even when they share a target. citation roots retain historical items;
+other grouped roots retain their existing native-content precedence. incidental
+quoted context does not become the containing reading's source membership.
 retained quoted user messages supply source-scoped quotation roots, owned by message
 identity. their question opens the chat; their frozen quotation opens its source.
 these roots count under links, have neutral markers and no authored placement,
 unlink or highlight controls. context detachment leaves them; message/subtree/chat
-deletion removes them. source annotation lanes and the existing writing stream
+deletion removes them. source evidence lanes and the existing writing stream
 refresh other profiles even when source context already existed. capture map versions
 sum distinct fragment lanes, so changing a nonmaximum lane changes the token.
 current resource presentation is hydrated in batches; primary annotations carry
@@ -79,8 +82,8 @@ and other-source passages have no local extent; rejected local locations remain
 visible as unavailable. the margin lists placed roots only. all is one flat list
 without headers, in tier order: placed, whole, unavailable.
 unaligned graph roots follow their first incident fact in document order, never
-their label. sibling continuation uses that first fact and the captured document
-links version. a separate authored placement names only an admitted
+their label. sibling continuation names the source and insertion position derived from
+that first fact. a separate authored placement names only an admitted
 user edge and its own original predecessor. moving it can leave an independent
 root supported by another fact. supported source-aligned and unavailable native
 roots continue beneath their resource and have no authored placement. an explicit

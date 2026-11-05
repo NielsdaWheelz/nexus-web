@@ -338,18 +338,32 @@ export default function TextSurface({
       );
   }
 
+  function renderCitations(occurrences: TextDocument["citationOccurrences"], label: string) {
+    const render = view.renderCitation;
+    return render && occurrences.length > 0 ? <div className={styles.citations} data-reader-metadata="" role="group" aria-label={`citations for ${label}`}>
+      {occurrences.map(({ citation }) => <span key={citation.edge_id}>{render(citation)}</span>)}
+    </div> : null;
+  }
+
   function renderEmbed(id: string) {
     const embed = doc.embeds.find((embed) => embed.occurrence_key === id);
-    if (embed?.provider !== "x") return view.renderEmbed?.(id);
-    const href = embed.canonical_url.value ?? embed.source_url.value;
-    if (embed.kind === "link_preview") return view.renderEmbed?.(id) ?? <p data-reader-metadata="">
-      {embed.display.label}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}
-    </p>;
-    return view.renderEmbed?.(id) ?? <p data-reader-metadata="">{embed.display.description}{href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}</p>;
+    const firstAtPoint = embed && doc.embeds.find(candidate => candidate.locator.unit_id === embed.locator.unit_id && candidate.locator.canonical_end_offset === embed.locator.canonical_end_offset);
+    const citations = embed && firstAtPoint === embed ? doc.citationOccurrences.filter(({ at }) =>
+      at !== null && at.unit === embed.locator.unit_id && at.offset === embed.locator.canonical_end_offset) : [];
+    const href = embed?.canonical_url.value ?? embed?.source_url.value;
+    const card = view.renderEmbed?.(id) ?? (embed?.provider === "x" ? <p data-reader-metadata="">
+      {embed.kind === "link_preview" ? embed.display.label : embed.display.description}
+      {href ? <> · <a href={href} target="_blank" rel="noreferrer">open on x</a></> : null}
+    </p> : null);
+    return <>{card}{renderCitations(citations, doc.title)}</>;
   }
 
   function renderUnit(unit: TextUnit) {
     const playback = view.playback?.identity === identity && view.playback.unit === unit.id ? view.playback : null;
+    const citations = doc.citationOccurrences.filter(({ at }) => at !== null && at.unit === unit.id && !doc.embeds.some(embed =>
+      embed.locator.unit_id === at.unit && embed.locator.canonical_end_offset === at.offset));
+    const hasCitations = doc.citationOccurrences.some(({ at }) => at?.unit === unit.id);
+    const references = unit.xPost?.references.filter(reference => reference.relation !== "quoted" || !view.renderCitation || !hasCitations) ?? [];
     return (
           <section
             key={unit.id}
@@ -363,7 +377,14 @@ export default function TextSurface({
           >
             {unit.xPost ? <div className={styles.postMeta} data-reader-metadata="">
               {unit.xPost.relation !== "primary" ? <p>{({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post", embedded: "embedded post" } as const)[unit.xPost.relation]}</p> : null}
-              <p id={`${postContext}:${unit.id}`}>{unit.xPost.author ? <>{unit.xPost.author.name} · @{unit.xPost.author.username}</> : unit.xPost.attribution_text ?? "captured excerpt"}{unit.xPost.created_at ? ` · ${new Date(unit.xPost.created_at).toLocaleDateString()}` : ""}</p>
+              <div id={`${postContext}:${unit.id}`}>
+                {unit.xPost.attribution_text ? <p>{unit.xPost.attribution_text}</p> : null}
+                {unit.xPost.author || unit.xPost.created_at ? <p>
+                  {unit.xPost.author ? <>{unit.xPost.author.name} · @{unit.xPost.author.username}</> : null}
+                  {unit.xPost.created_at ? `${unit.xPost.author ? " · " : ""}${new Date(unit.xPost.created_at).toLocaleDateString()}` : null}
+                </p> : null}
+                {!unit.xPost.attribution_text && !unit.xPost.author && !unit.xPost.created_at ? <p>{unit.xPost.source_url}</p> : null}
+              </div>
               {unit.xPost.capture_kind === "article_excerpt" ? <p>captured excerpt{unit.xPost.parent_title ? ` · ${unit.xPost.parent_title}` : ""}{unit.xPost.parent_source_url ? <> · <a href={unit.xPost.parent_source_url} target="_blank" rel="noreferrer">source article</a></> : null}</p> : null}
               {unit.xPost.is_edited ? <p>edited on x</p> : null}
               {unit.xPost.availability === "unavailable" ? <p>post unavailable on x</p> : null}
@@ -401,8 +422,9 @@ export default function TextSurface({
               <div key={embed.occurrence_key} data-reader-metadata="" data-document-embed-ui="" className={styles.postMeta}>
                 {renderEmbed(embed.occurrence_key)}
               </div>)}
-            {unit.xPost?.references.length ? <div className={styles.postMeta} data-reader-metadata="">
-              {unit.xPost.references.map((reference) => <p key={`${reference.relation}:${reference.referenced_revision_id}`}>
+            {renderCitations(citations, unit.xPost?.source_url ?? doc.title)}
+            {references.length > 0 ? <div className={styles.postMeta} data-reader-metadata="">
+              {references.map((reference) => <p key={`${reference.relation}:${reference.referenced_revision_id}`}>
                 {reference.target_unit_id ? <ReaderLink reader={runtime} target={{ kind: "point", point: { kind: "text", unit: reference.target_unit_id, offset: 0 } }}>
                   {({ quoted: "quoted post", replied_to: "replying to", retweeted: "reposted post" } as const)[reference.relation]}
                 </ReaderLink> : <a href={reference.source_url} target="_blank" rel="noreferrer">
@@ -446,6 +468,7 @@ export default function TextSurface({
         {units.filter((unit) => unit.xPost?.parent_unit_id == null).map(renderUnit)}
         {doc.embeds.filter((embed) => embed.provider === "x" && embed.locator.unit_id === null && !embeds.some(([id]) => id === embed.occurrence_key))
           .map((embed) => <div key={embed.occurrence_key} className={styles.postMeta}>{renderEmbed(embed.occurrence_key)}</div>)}
+        {renderCitations(doc.citationOccurrences.filter(occurrence => occurrence.at === null), doc.title)}
         {view.end ? <section className={styles.end}>{view.end}</section> : null}
         {embeds.map(([id, slot]) => {
           const parent = slot.closest<HTMLElement>("[data-reader-unit]")?.dataset.readerUnit;

@@ -44,7 +44,7 @@ from nexus.services.oracle.synthesis import Candidate, Failure, Success
 from nexus.services.resource_graph.citations import (
     CitationInput,
     build_citation_outs,
-    replace_citations_for_output,
+    replace_citations_for_source,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.locations import reading_owner_sql
@@ -167,9 +167,9 @@ def concordance(db: Session, *, viewer_id: UUID, reading_id: UUID) -> list[Oracl
                         FROM resource_edges mine JOIN resource_edges theirs
                           ON theirs.target_scheme = mine.target_scheme
                          AND theirs.target_id = mine.target_id
-                        WHERE mine.user_id = r.user_id AND mine.origin = 'citation'
+                        WHERE mine.origin = 'citation' AND mine.ordinal IS NOT NULL
                           AND mine.source_scheme = 'oracle_reading' AND mine.source_id = r.id
-                          AND theirs.user_id = r.user_id AND theirs.origin = 'citation'
+                          AND theirs.origin = 'citation' AND theirs.ordinal IS NOT NULL
                           AND theirs.source_scheme = 'oracle_reading' AND theirs.source_id = o.id
                        ) AS shared_passage_count
                 FROM oracle_readings r
@@ -418,12 +418,9 @@ def _complete(db: Session, reading: OracleReading, success: Success) -> None:
     for ordinal, chosen in enumerate(success.passages, start=1):
         target = assert_resource_ref(chosen.candidate.ref)
         snapshot = CitationSnapshot(evidence=chosen.candidate.evidence)
-        citations.append(
-            CitationInput(target=target, ordinal=ordinal, kind="context", snapshot=snapshot)
-        )
-    replace_citations_for_output(
+        citations.append(CitationInput(target=target, ordinal=ordinal, snapshot=snapshot))
+    replace_citations_for_source(
         db,
-        viewer_id=reading.user_id,
         source=ResourceRef(scheme="oracle_reading", id=reading.id),
         citations=citations,
     )
