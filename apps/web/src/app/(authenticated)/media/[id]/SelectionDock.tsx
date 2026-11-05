@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type FocusEventHandler, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type FocusEventHandler, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
@@ -14,8 +14,6 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import MobileSheet from "@/components/ui/MobileSheet";
-import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import type { Reader } from "@/lib/documentReader/runtime";
 import { useReaderState } from "@/lib/documentReader/DocumentReader";
 import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
@@ -24,18 +22,23 @@ import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { localResourceLabel } from "@/lib/resources/localResource";
 import { PaneReturnVisitScope, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
-import { prepareActionSelect, type ActionDescriptor, type MenuContent, type MenuSource } from "@/lib/ui/actionDescriptor";
+import { prepareActionSelect, type ActionDescriptor, type MenuSource } from "@/lib/ui/actionDescriptor";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { usesMeta } from "@/lib/shortcuts";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
+import { useKeyboardReport } from "@/lib/ui/useKeyboardInset";
+import { useOverlay } from "@/lib/ui/overlay";
+import { isTextEntryTarget } from "@/lib/ui/eventTarget";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { bodyHasContent } from "@nexus/authored/body";
 import type { MediaAnnotations } from "./annotations";
 import type { AnnotationVerbs, MobileSelection } from "./useAnnotationVerbs";
-import HighlightColourPicker, { Colours, HighlightButton } from "./HighlightColourPicker";
-import { HIGHLIGHT_SAVED, SOURCE_CHANGED, type SelectionComposer } from "./useSelectionComposer";
+import HighlightColourPicker, { Colours } from "./HighlightColourPicker";
+import { SOURCE_CHANGED, type SelectionComposer } from "./useSelectionComposer";
 import styles from "./media.module.css";
 
 
@@ -62,15 +65,10 @@ function usePassageCopy(target: unknown) {
     </>};
 }
 
-type SelectionActionPresentation =
-  | { readonly action: Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement }; readonly unavailable?: never }
-  | { readonly action: null; readonly unavailable: {
-      readonly id: string; readonly label: string; readonly icon: ReactElement; readonly reason: string;
-      readonly hasPopup: "dialog";
-    } };
+type SelectionActionPresentation = { readonly action: Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } };
 
 /** Primary commands share the overflow's descriptors and the common button contract. */
-function SelectionAction({ action, unavailable, help, busy, buttonRef, describedBy, onBlur }: SelectionActionPresentation & {
+function SelectionAction({ action, help, busy, buttonRef, describedBy, onBlur }: SelectionActionPresentation & {
   readonly help: string;
   readonly busy: boolean;
   readonly buttonRef?: RefObject<HTMLButtonElement | null>;
@@ -79,19 +77,18 @@ function SelectionAction({ action, unavailable, help, busy, buttonRef, described
   readonly describedBy?: string;
 }) {
   const reasonId = useId();
-  const presentation = action ?? unavailable;
   // `command` gives every disabled action its reason.
-  const reason = action ? action.disabledReason ?? null : unavailable.reason;
+  const reason = action.disabledReason ?? null;
   const activate = (event: MouseEvent<HTMLButtonElement> | KeyboardEvent<HTMLButtonElement>) => {
-    if (!action || action.disabled) return;
+    if (action.disabled) return;
     const detail = prepareActionSelect(event, event.currentTarget);
     if (detail) action.onSelect(detail);
   };
   return <>
-    <Button ref={buttonRef} aria-disabled={reason !== null || undefined} iconOnly icon={presentation.icon} className={styles.selectionIcon}
-      tooltip={{ text: reason ? `${help}. ${reason}` : help }} aria-label={presentation.label}
-      aria-describedby={[describedBy, reason ? reasonId : null].filter(Boolean).join(" ") || undefined} data-action-id={presentation.id} aria-busy={busy || action?.busy || undefined}
-      aria-haspopup={presentation.hasPopup}
+    <Button ref={buttonRef} aria-disabled={reason !== null || undefined} iconOnly icon={action.icon} className={styles.selectionIcon}
+      tooltip={{ text: reason ? `${help}. ${reason}` : help }} aria-label={action.label}
+      aria-describedby={[describedBy, reason ? reasonId : null].filter(Boolean).join(" ") || undefined} data-action-id={action.id} aria-busy={busy || action.busy || undefined}
+      aria-haspopup={action.hasPopup}
       onClick={activate} onKeyDown={activate} onBlur={onBlur} />
     {reason ? <span id={reasonId} className="sr-only">{reason}</span> : null}
   </>;
@@ -109,189 +106,11 @@ function RecoverableSelectionAction({ returnFocus, ...props }: SelectionActionPr
   return <SelectionAction {...props} buttonRef={trigger} />;
 }
 
-/** A press freezes one source capture; only its native click may execute it. */
-function MobileSelectionActions({ verbs, reader, canQuote, sharePiece }: {
-  readonly verbs: AnnotationVerbs;
-  readonly reader: Reader;
-  readonly canQuote: boolean;
-  readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
-}) {
-  const ownerId = useId();
-  const row = useRef<HTMLDivElement | null>(null);
-  const menuTrigger = useRef<HTMLButtonElement | null>(null);
-  const [menuSubject, setMenuSubject] = useState<MobileSelection | null>(null);
-  const subject = menuSubject && verbs.selectionCurrent(menuSubject) ? menuSubject : verbs.mobileSelection;
-  const copying = usePassageCopy(subject);
-  const copy = copying.copy;
-  const current = useRef(verbs);
-  current.current = verbs;
-  const press = useRef<{
-    subject: MobileSelection; control: HTMLButtonElement; pointer: number; x: number; y: number; released: boolean;
-  } | null>(null);
-  const focus = useRef<{ subject: MobileSelection; control: HTMLButtonElement } | null>(null);
-  const transfer = useRef<MobileSelection | null>(null);
-  const menuCommand = useRef<MobileSelection | null>(null);
-  const anchor = useCallback(() => subject ? reader.measurePassage(subject.capture) : null, [reader, subject]);
-  const cancelPress = useCallback(() => {
-    press.current = null;
-    focus.current = null;
-    transfer.current = null;
-    current.current.cancelSelectionActivation();
-  }, []);
-  useEffect(() => {
-    if (!verbs.selectionVisible) { press.current = null; focus.current = null; transfer.current = null; return; }
-    const move = (event: globalThis.PointerEvent) => {
-      const held = press.current;
-      if (held && (held.pointer !== event.pointerId || Math.hypot(event.clientX - held.x, event.clientY - held.y) > 8)) cancelPress();
-    };
-    const up = (event: globalThis.PointerEvent) => {
-      const held = press.current;
-      if (!held || held.pointer !== event.pointerId) return;
-      if (!event.composedPath().includes(held.control)) cancelPress();
-      else held.released = true;
-    };
-    const cancel = (event: globalThis.PointerEvent) => { if (press.current?.pointer === event.pointerId) cancelPress(); };
-    const nextPress = () => { if (press.current) cancelPress(); };
-    const tab = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Tab" || event.defaultPrevented || event.isComposing || !current.current.selectionVisible) return;
-      const owned = focus.current;
-      transfer.current = owned && document.activeElement === owned.control && current.current.selectionCurrent(owned.subject)
-        ? owned.subject : current.current.captureSelection();
-    };
-    const arrival = (event: FocusEvent) => {
-      if (event.target instanceof Node && row.current?.contains(event.target)) return;
-      focus.current = null;
-      if (transfer.current) { transfer.current = null; current.current.cancelSelectionActivation(); }
-    };
-    const scroll = (event: Event) => {
-      const panelId = menuTrigger.current?.getAttribute("aria-controls");
-      const panel = panelId ? document.getElementById(panelId) : null;
-      const surface = row.current?.closest('[data-strategy="mobile-selection-actions"]');
-      if (event.target instanceof Node && (surface?.contains(event.target) || panel?.contains(event.target))) return;
-      if (press.current || focus.current || menuTrigger.current?.getAttribute("aria-expanded") === "true") cancelPress();
-    };
-    window.addEventListener("scroll", scroll, { capture: true, passive: true });
-    window.addEventListener("pointerdown", nextPress, true);
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", up, true);
-    window.addEventListener("pointercancel", cancel, true);
-    document.addEventListener("keydown", tab, true);
-    document.addEventListener("focusin", arrival, true);
-    return () => {
-      window.removeEventListener("scroll", scroll, true);
-      window.removeEventListener("pointerdown", nextPress, true);
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", up, true);
-      window.removeEventListener("pointercancel", cancel, true);
-      document.removeEventListener("keydown", tab, true);
-      document.removeEventListener("focusin", arrival, true);
-    };
-  }, [cancelPress, verbs.selectionVisible]);
-  const pointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!event.isPrimary || event.button !== 0 || event.currentTarget.disabled) return;
-    const captured = verbs.captureSelection();
-    if (!captured) return;
-    press.current = { subject: captured, control: event.currentTarget, pointer: event.pointerId,
-      x: event.clientX, y: event.clientY, released: false };
-    transfer.current = captured;
-  };
-  const keyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    if (event.repeat) { event.preventDefault(); return; }
-    if (focus.current?.control === event.currentTarget && verbs.selectionCurrent(focus.current.subject)) return;
-    const captured = verbs.captureSelection();
-    if (captured) focus.current = { subject: captured, control: event.currentTarget };
-  };
-  const focusControl = (control: HTMLButtonElement) => {
-    const captured = transfer.current;
-    transfer.current = null;
-    if (captured && verbs.selectionCurrent(captured)) focus.current = { subject: captured, control };
-    else focus.current = subject && verbs.ownSelectionFocus(subject) ? { subject, control } : null;
-  };
-  const activate = (event: MouseEvent<HTMLButtonElement>, command: (captured: MobileSelection) => void) => {
-    const held = press.current;
-    press.current = null;
-    const captured = event.detail > 0
-      ? held?.released && held.control === event.currentTarget &&
-        (!(event.nativeEvent instanceof globalThis.PointerEvent) || event.nativeEvent.pointerId <= 0 || event.nativeEvent.pointerId === held.pointer)
-        ? held.subject : null
-      : focus.current?.control === event.currentTarget ? focus.current.subject : null;
-    if (!captured || !verbs.selectionCurrent(captured)) { event.preventDefault(); return; }
-    command(captured);
-  };
-  const content = (captured: MobileSelection): MenuContent => {
-    const options: ActionDescriptor[] = [
-      { kind: "command", id: "CopyPassage", label: "Copy passage", icon: copying.copied ? <Icon.Check aria-hidden="true" /> : <Icon.Copy aria-hidden="true" />,
-        onSelect: () => { if (verbs.selectionCurrent(captured)) copy(captured.capture.quote); } },
-      { kind: "custom", id: "HighlightColours", label: "Highlight colour", render: ({ closeMenu }) => (
-        <Colours selected={null} persisted={false} size="comfortable"
-          onSelect={(color) => { closeMenu(); menuCommand.current = captured; verbs.highlightSelection(captured, color); }} />
-      ) },
-      sharePiece === null
-        ? { kind: "command", id: "SharePassage", label: "Share passage", icon: <Icon.Share aria-hidden="true" />,
-          onSelect: ({ triggerEl }) => { menuCommand.current = captured; verbs.shareSelection(captured, triggerEl); } }
-        : { kind: "command", id: "SharePiece", label: "Share piece", icon: <Icon.Share aria-hidden="true" />,
-          onSelect: ({ triggerEl }) => {
-            if (!verbs.selectionCurrent(captured)) return;
-            menuCommand.current = captured;
-            sharePiece(triggerEl);
-          } },
-    ];
-    return { sections: [{ id: "Passage", label: null, options }] };
-  };
-  const source: MenuSource = {
-    kind: "Immediate", subjectKey: subject ? JSON.stringify([subject.id, subject.capture]) : ownerId,
-    title: "passage actions", content: subject ? content(subject) : { sections: [] },
-  };
-  const confirming = verbs.bounds?.phase === "Selecting" || verbs.composer.reselection !== null;
-  return <ActionMenu source={source} label="more passage actions" triggerRef={(node) => { menuTrigger.current = node; }}
-    onOpenChange={(open) => {
-      if (open) return;
-      const closed = menuSubject;
-      setMenuSubject(null);
-      // ActionMenu closes before dispatching its chosen command. Let that command
-      // transfer ownership before retiring an otherwise abandoned menu capture.
-      queueMicrotask(() => {
-        if (menuCommand.current === closed) { menuCommand.current = null; return; }
-        if (!closed || !current.current.selectionVisible || !current.current.selectionCurrent(closed)) return;
-        current.current.cancelSelectionActivation();
-        reader.focusSource();
-      });
-    }}
-    renderTrigger={(trigger) => (
-      <FloatingActionSurface open={verbs.selectionVisible && subject !== null} anchor={anchor} subscribeAnchor={reader.subscribe}
-        strategy="mobile-selection-actions" selectionSession={subject?.id ?? null}
-        role="group" label={confirming ? "confirm passage selection" : "passage actions"} onDismiss={verbs.dismissSelection}>
-        <div ref={row} className={styles.mobileSelectionActions}>
-          {copying.notice}
-          {confirming ? <>
-            <Button size="comfortable" emphasis="strong" onPointerDown={pointerDown} onKeyDown={keyDown}
-              onFocus={(event) => focusControl(event.currentTarget)} onClick={(event) => activate(event, verbs.applySelection)}>apply selection</Button>
-            <Button size="comfortable" onClick={verbs.bounds ? verbs.cancelBounds : verbs.dismissSelection}>cancel</Button>
-          </> : <>
-            {/* every selection becomes a new independent highlight, so the command never shows a persisted colour. */}
-            <HighlightButton selected="yellow" persisted={false} disabledReason={null} busy={false}
-              onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => verbs.highlightSelection(captured, "yellow"))} />
-            <Button iconOnly icon={<Icon.Note aria-hidden="true" />} className={styles.selectionIcon} aria-label="Open passage note"
-              onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Note"))} />
-            {canQuote ? <Button iconOnly icon={<Icon.Chat aria-hidden="true" />} className={styles.selectionIcon} aria-label="Ask about passage"
-              onPointerDown={pointerDown} onKeyDown={keyDown} onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => verbs.composeSelection(captured, "Ask"))} /> : null}
-            <OverflowMenuButton {...trigger} className={styles.selectionIcon} onPointerDown={pointerDown} onKeyDown={keyDown}
-              onFocus={(event) => focusControl(event.currentTarget)}
-              onClick={(event) => activate(event, (captured) => { menuCommand.current = null; setMenuSubject(captured); trigger.onClick(event); })} />
-          </>}
-        </div>
-      </FloatingActionSurface>
-    )} />;
-}
-
-export default function SelectionDock({ verbs, store, reader, isMobile, canQuote, returnFocus, sharePiece }: {
+export default function SelectionDock({ verbs, store, reader, readerScrollport, isMobile, canQuote, returnFocus, sharePiece }: {
   readonly verbs: AnnotationVerbs;
   readonly store: MediaAnnotations;
   readonly reader: Reader;
+  readonly readerScrollport: RefObject<HTMLElement | null>;
   readonly isMobile: boolean;
   readonly canQuote: boolean;
   readonly returnFocus: () => HTMLElement | null;
@@ -301,11 +120,14 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
   const { composer, menu } = verbs;
   const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
+  const paneActive = usePaneIsActive();
+  const viewport = useMobileViewport();
   const { draft, opening, annotation } = composer;
   const copying = usePassageCopy(draft?.id);
   const copy = copying.copy;
   const fieldId = useId();
   const chatFieldId = useId();
+  const refinementId = useId();
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
   const destinationTrigger = useRef<HTMLButtonElement | null>(null);
@@ -314,7 +136,163 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     openingId: string; highlightId: string; serial: number; trigger: HTMLElement;
   } | null>(null);
   const pickerId = useId();
-  const pickerAnchor = useCallback(() => isMobile ? moreTrigger.current : destinationTrigger.current, [isMobile]);
+  const pickerAnchor = useCallback(() => destinationTrigger.current, []);
+  const mobileSurface = useRef<HTMLDivElement | null>(null);
+  const mobileActive = isMobile && paneActive && (draft !== null && opening !== null || verbs.bounds !== null);
+  const confirming = verbs.bounds !== null || composer.reselection !== null;
+  const dismissMobile = () => {
+    const ownsFocus = mobileSurface.current?.contains(document.activeElement) === true;
+    if (verbs.bounds) verbs.cancelBounds();
+    else if (composer.reselection) verbs.dismissSelection();
+    else { composer.dismiss("escape"); return; }
+    if (ownsFocus && paneActive) reader.focusSource();
+  };
+  useOverlay(mobileActive, { kind: "transient", workspaceNavigation: "allow", inside: () => [mobileSurface.current],
+    dismissOnOutside: false, onDismiss: dismissMobile });
+  useKeyboardReport(mobileActive);
+
+  // A layout allocation may hide a low endpoint. Reveal it once, without a reader
+  // navigation or a second clearance band; subsequent handle movement owns its scroll.
+  const revealedSelection = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const selected = verbs.mobileSelection;
+    if (!mobileActive || confirming || !selected || revealedSelection.current === selected.id) return;
+    revealedSelection.current = selected.id;
+    viewport.refreshGeometry();
+    const geometry = reader.measurePassage(selected.capture);
+    const scrollport = readerScrollport.current;
+    const first = geometry?.lines[0], last = geometry?.lines.at(-1);
+    if (!geometry || !scrollport || !first || !last) return;
+    const room = Math.min(last.height, geometry.bounds.height / 4);
+    const below = last.bottom + room - geometry.bounds.bottom;
+    const above = first.top - room - geometry.bounds.top;
+    if (below > 0) scrollport.scrollTop += below;
+    else if (above < 0) scrollport.scrollTop += above;
+  }, [mobileActive, confirming, verbs.mobileSelection, viewport, reader, readerScrollport]);
+
+  const current = useRef(verbs);
+  current.current = verbs;
+  const transfer = useRef<MobileSelection | null>(null);
+  const selectionFocus = useRef<{ subject: MobileSelection; control: Element } | null>(null);
+  const applyPress = useRef<{
+    subject: MobileSelection; control: HTMLButtonElement; pointer: number; x: number; y: number; released: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!mobileActive) return;
+    const cancel = () => {
+      applyPress.current = null;
+      selectionFocus.current = null;
+      transfer.current = null;
+      current.current.cancelSelectionActivation();
+    };
+    const down = (event: globalThis.PointerEvent) => {
+      const outside = !(event.target instanceof Node) || !mobileSurface.current?.contains(event.target);
+      if (applyPress.current || outside && (transfer.current || selectionFocus.current)) cancel();
+    };
+    const move = (event: globalThis.PointerEvent) => {
+      const held = applyPress.current;
+      if (held && (held.pointer !== event.pointerId || Math.hypot(event.clientX - held.x, event.clientY - held.y) > 8)) cancel();
+    };
+    const up = (event: globalThis.PointerEvent) => {
+      const held = applyPress.current;
+      if (!held || held.pointer !== event.pointerId) return;
+      if (!event.composedPath().includes(held.control)) cancel();
+      else held.released = true;
+    };
+    const cancelled = (event: globalThis.PointerEvent) => {
+      if (applyPress.current?.pointer === event.pointerId || transfer.current || selectionFocus.current) cancel();
+    };
+    const tab = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Tab" || event.defaultPrevented || event.isComposing || !current.current.selectionVisible) return;
+      const owned = selectionFocus.current;
+      transfer.current = owned && document.activeElement === owned.control && current.current.selectionCurrent(owned.subject)
+        ? owned.subject : current.current.captureSelection();
+    };
+    const outsideFocus = (event: globalThis.FocusEvent) => {
+      if (event.target instanceof Node && mobileSurface.current?.contains(event.target)) return;
+      if (transfer.current || selectionFocus.current) cancel();
+    };
+    const scroll = (event: Event) => {
+      if (event.target instanceof Node && mobileSurface.current?.contains(event.target)) return;
+      if (applyPress.current || selectionFocus.current) cancel();
+    };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", cancelled, true);
+    window.addEventListener("scroll", scroll, { capture: true, passive: true });
+    document.addEventListener("keydown", tab, true);
+    document.addEventListener("focusin", outsideFocus, true);
+    return () => {
+      applyPress.current = null; selectionFocus.current = null; transfer.current = null;
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", cancelled, true);
+      window.removeEventListener("scroll", scroll, true);
+      document.removeEventListener("keydown", tab, true);
+      document.removeEventListener("focusin", outsideFocus, true);
+    };
+  }, [mobileActive]);
+  const pointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || event.button !== 0 || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
+    const button = event.target.closest("button");
+    // Both owned editors keep their keyboard and the pressed control until click.
+    if (button && isTextEntryTarget(document.activeElement) && event.currentTarget.contains(document.activeElement)) event.preventDefault();
+    if (button?.dataset.passageApply === "true") {
+      const owned = selectionFocus.current;
+      const subject = owned && document.activeElement === owned.control && verbs.selectionCurrent(owned.subject)
+        ? owned.subject : verbs.captureSelection();
+      if (subject) {
+        applyPress.current = { subject, control: button, pointer: event.pointerId, x: event.clientX, y: event.clientY, released: false };
+        transfer.current = subject;
+      }
+      return;
+    }
+    if (!event.target.closest("[data-passage-interaction]") || button?.dataset.actionId === "EditHighlightAnnotation") return;
+    composer.prepareInteraction();
+  };
+  const focus = (event: FocusEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
+    const applying = event.target instanceof HTMLButtonElement && event.target.dataset.passageApply === "true";
+    if (!applying && (!event.target.closest("[data-passage-interaction]") || event.target.getAttribute("data-action-id") === "EditHighlightAnnotation")) {
+      if (transfer.current) { transfer.current = null; verbs.cancelSelectionActivation(); }
+      selectionFocus.current = null;
+      return;
+    }
+    const subject = transfer.current ?? verbs.mobileSelection;
+    transfer.current = null;
+    const owned = subject !== null && verbs.ownSelectionFocus(subject);
+    selectionFocus.current = owned ? { subject, control: event.target } : null;
+    if (!applying) composer.prepareInteraction();
+  };
+  const apply = (event: MouseEvent<HTMLButtonElement>) => {
+    if (verbs.mobileSelection === null || verbs.bounds?.phase === "Submitting") return;
+    const held = applyPress.current;
+    applyPress.current = null;
+    const subject = event.detail > 0
+      ? held?.released && held.control === event.currentTarget &&
+        (!(event.nativeEvent instanceof globalThis.PointerEvent) || event.nativeEvent.pointerId <= 0 || event.nativeEvent.pointerId === held.pointer)
+        ? held.subject : null
+      : selectionFocus.current?.control === event.currentTarget ? selectionFocus.current.subject : null;
+    if (subject && verbs.selectionCurrent(subject)) verbs.applySelection(subject);
+  };
+  const refinementControls = confirming ? <div className={styles.selectionRefinement}>
+    <span id={refinementId}>{verbs.bounds?.issue?.fact ?? "select the passage, then apply."}</span>
+    <Button size="comfortable" emphasis="strong" data-passage-apply="true"
+      aria-describedby={refinementId}
+      aria-disabled={verbs.mobileSelection === null || verbs.bounds?.phase === "Submitting" || undefined}
+      onKeyDown={event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (event.repeat) { event.preventDefault(); return; }
+        const owned = selectionFocus.current;
+        if (owned?.control === event.currentTarget && verbs.selectionCurrent(owned.subject)) return;
+        const subject = verbs.captureSelection();
+        selectionFocus.current = subject ? { subject, control: event.currentTarget } : null;
+      }} onClick={apply}>apply selection</Button>
+    <Button size="comfortable" onClick={dismissMobile}>cancel</Button>
+  </div> : null;
+
   const identity = useReaderState(reader, (state) => state.document.status === "ready" ? state.document.doc.identity : null);
   const sourceChanged = draft?.issue?.kind === "Source" || (draft !== null && draft.highlightId === null && identity !== null && draft.passage.identity !== identity);
   const anchor = useCallback(() => {
@@ -328,36 +306,27 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     if (!menu?.marks[0]) return null;
     return reader.measurePassage({ identity: menu.identity, anchor: menu.marks[0].anchor });
   }, [menu, reader]);
-  const renderComposer = (placed: boolean, unavailable: boolean, headerOnly = false) => {
+  const renderComposer = (placed: boolean, unavailable: boolean) => {
     if (!draft || !opening) return null;
-    const annotationId = draft.bodyRole === "question" && store.getState().local.status !== "loading" && (!annotation || annotation.display) ? draft.highlightId : null;
+    const fresh = draft.bodyRole === "annotation_or_question";
+    const annotationId = !fresh && store.getState().local.status !== "loading" && (!annotation || annotation.display) ? draft.highlightId : null;
     const annotationResource = annotation?.display?.projection ?? null;
     const hasNote = bodyHasContent(draft.body);
     const failed = draft.issue?.kind === "Failed" ? draft.issue : null;
     const refused = draft.issue?.kind === "Capture" || draft.issue?.kind === "Capacity" ? draft.issue : null;
     const saving = failed ? draft.operation !== null : draft.operation?.kind === "Save" || draft.operation?.kind === "Ensure";
-    const blockedReason = failed ? "retry saving first."
-      : sourceChanged ? "the text changed. select the passage again."
-      : refused ? refused.line.fact
-      : draft.chatIssue?.kind === "Passage" || draft.chatIssue?.kind === "Source" ? "select the passage again."
+    const localReason = failed ? "retry saving first."
       : draft.attachmentActive ? "finish the attachment first."
       : draft.linkInputActive ? "finish the link first."
       : draft.referenceActive ? "finish the reference first."
-      : draft.operation ? "the last action is still running."
-      : unavailable && !draft.highlightId ? "this passage is no longer available." : null;
+      : draft.operation ? "the last action is still running." : null;
+    const blockedReason = localReason ?? composer.selectionBlocked
+      ?? (sourceChanged && draft.highlightId === null ? "the text changed. select the passage again."
+        : refused ? refused.line.fact : unavailable && !draft.highlightId ? "this passage is no longer available." : null);
     const destination = draft.destination;
     const selected = destination.kind === "Selected" ? destination : null;
-    const preparing = draft.chatAttempt?.kind === "Preparing" || draft.operation?.kind === "Chat" || draft.operation?.kind === "Ensure" || (selected?.snapshot.kind === "Loading")
-      || draft.chatIssue?.kind === "Recall" && composer.recallPending;
-    const sending = composer.ownChatCommand && composer.chatState.kind === "Busy";
-    const continuationBlocked = (selected !== null && selected.snapshot.kind !== "Ready") || (hasNote && composer.chat?.target.kind === "Blocked");
     const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
-    const chatLabel = selected ? `${hasMessage ? "Send to" : "Open in"} “${selected.title}”` : "Choose existing chat";
-    const chatIssue = draft.chatIssue;
-    const blockedChat = composer.chat?.target.kind === "Blocked" ? composer.chat.target.reason === "AssistantRunning"
-      ? "this chat is still responding." : "this chat can’t take a reply here."
-      : selected?.snapshot.kind === "RefreshRequired" ? "this chat changed."
-      : selected?.snapshot.kind === "Failed" ? "couldn’t load the chat." : null;
+    const chatLabel = selected ? `${hasMessage ? "send to" : "open in"} “${selected.title}”` : "choose chat";
     const shortcut = usesMeta(platform) ? "cmd" : "ctrl";
     const command = (id: string, label: string, icon: ReactElement, onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
@@ -370,132 +339,121 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
           setAnnotationRequest({ openingId: opening.id, highlightId: annotationId, serial: ++annotationSerial.current, trigger: triggerEl });
         }, null) : null;
     const matchingRequest = annotateAction && annotationRequest?.openingId === opening.id && annotationRequest.highlightId === annotationId ? annotationRequest : null;
-    // a failed local commit is retried as the same frozen command, never saved again.
+    // A failed local commit retries its retained command, never a second save.
     const saveAction = failed ? command("RetryPassageSave", "retry saving", <Icon.Again size={16} aria-hidden="true" />, failed.retry, saving ? "saving." : null)
-      : command("SavePassageNote", draft.highlightId === null && !hasNote ? "save highlight" : "save annotation",
-        <Icon.Save size={16} aria-hidden="true" />, composer.save, saving ? "saving." : blockedReason ?? (draft.highlightId !== null && !hasNote ? "write an annotation first." : null));
-    const newLabel = hasMessage ? "Send in new chat" : "Open in new chat";
-    const chatReason = blockedReason ?? ((hasMessage ? composer.chatLocked : composer.readerChatLocked) ? "another message is still pending." : null);
-    const existingReason = chatReason ?? (preparing || destination.kind === "Resolving" ? "loading the chat." : continuationBlocked ? "this chat can’t take a reply here." : null);
-    const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), chatReason);
-    const existingAction = command("ExistingChat", chatLabel, <Icon.Chat size={16} aria-hidden="true" />, ({ openIntent }) => composer.continueChat(openIntent), existingReason);
-    const chooseAction = { ...command("ChooseChat", "Choose existing chat", <Icon.Choose size={16} aria-hidden="true" />, composer.chooseChat,
-      blockedReason ?? (composer.chatLocked ? "another message is still pending." : null)), restoreFocusOnClose: false };
-    const selectAgain: Verb = { label: "select again", commandKey: "ReselectPassage", run: composer.reselect };
+      : command("SavePassageNote", hasNote ? "save annotation" : "save highlight", <Icon.Save size={16} aria-hidden="true" />, composer.save, blockedReason);
+    const newLabel = hasMessage ? "send in new chat" : "open in new chat";
+    const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />, ({ openIntent }) => composer.newChat(openIntent), blockedReason);
+    const existingAction = command("ExistingChat", chatLabel, <Icon.Chat size={16} aria-hidden="true" />,
+      ({ openIntent }) => selected ? composer.continueChat(openIntent) : composer.chooseChat(), blockedReason);
+    const highlightId = draft.highlightId;
+    const selectAgain: Verb | null = highlightId === null
+      ? { label: "select again", commandKey: "ReselectPassage", run: composer.reselect }
+      : annotation?.placement.kind === "placed" ? { label: "adjust selection", commandKey: "EditHighlightBounds", run: () => verbs.editBounds(highlightId) }
+        : annotation?.placement.kind === "unlocated" ? { label: "relocate highlight", commandKey: "RelocateHighlight", run: () => verbs.relocate(highlightId) } : null;
     const copyText: Verb = { label: "copy text", commandKey: "CopyDraftText", run: () => copy(draft.body.body_text) };
-    const openChat: Verb = { label: "open chat", commandKey: "OpenDraftChat", run: composer.openChat };
-    const openInChat: Verb = { label: "open in chat", commandKey: "OpenModelInChat", run: composer.recoverModel };
-    const check: Verb = { label: "check", commandKey: "CheckDraftChat", run: composer.refreshChat };
-    const chatField = chatFieldOf(composer, chatIssue, blockedChat, destination, { selectAgain, copyText, openChat, openInChat, check }, selected !== null, transportVerbs);
-    const copyAction = command("CopyPassage", "Copy passage", copying.copied ? <Icon.Check size={16} aria-hidden="true" /> : <Icon.Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); },
-      composer.copyUnavailable);
-    // sharing a new passage first commits its highlight; an existing one shares as it is.
+    const chatField = chatFieldOf(composer, { selectAgain, copyText }, transportVerbs);
+    const copyAction = command("CopyPassage", "copy passage", copying.copied ? <Icon.Check size={16} aria-hidden="true" /> : <Icon.Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); }, composer.copyUnavailable);
     const shareAction = { ...(sharePiece !== null
-      ? command("SharePiece", "Share piece", <Icon.Share aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
-      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "Share highlight" : "Share passage", <Icon.Share aria-hidden="true" />,
+      ? command("SharePiece", "share piece", <Icon.Share aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
+      : command(draft.highlightId ? "ShareHighlight" : "SharePassage", draft.highlightId ? "share highlight" : "share passage", <Icon.Share aria-hidden="true" />,
         ({ triggerEl }) => verbs.share(triggerEl), draft.highlightId ? null : blockedReason)), hasPopup: "dialog" as const };
-    const options: ActionDescriptor[] = isMobile ? [copyAction] : [];
-    if (isMobile) {
-      options.push({ kind: "custom", id: "HighlightColours", label: "Highlight colours", render: ({ closeMenu }) =>
-        <Colours selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} size="comfortable"
-          onSelect={(color) => { closeMenu(); verbs.highlight(color); }} /> });
-      if (canQuote) {
-        if (selected) options.push({ ...existingAction, label: `${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""}` });
-        options.push(chooseAction);
-      }
-      options.push(shareAction);
-    }
+    const options: ActionDescriptor[] = isMobile ? [copyAction, shareAction] : [];
+    if (isMobile && draft.highlightId === null) options.push({ kind: "command", id: "RefinePassage", label: "adjust selection", icon: null,
+      onSelect: composer.reselect, disabled: localReason !== null || confirming, disabledReason: localReason ?? (confirming ? "apply or cancel the selection first." : undefined) });
     if (draft.highlightId) {
       const id = draft.highlightId;
-      // menu-only words take no sign; `command` requires one because it also feeds the icon-only controls.
       if (annotation?.placement.kind === "placed") options.push({ kind: "command", id: "EditHighlightBounds", label: ACTION_CATALOG.EditHighlightBounds.label, icon: null,
-        onSelect: () => verbs.editBounds(id), disabled: blockedReason !== null, disabledReason: blockedReason ?? undefined });
+        onSelect: () => verbs.editBounds(id), disabled: localReason !== null || confirming, disabledReason: localReason ?? (confirming ? "apply or cancel the selection first." : undefined) });
       const deleteReason = draft.operation ? "the last action is still running." : null;
       options.push({ kind: "command", id: "DeleteHighlight", label: ACTION_CATALOG.DeleteHighlight.label, icon: null, tone: "danger",
         onSelect: () => verbs.remove(id), disabled: deleteReason !== null, disabledReason: deleteReason ?? undefined });
     }
     const source: MenuSource = { kind: "Immediate", subjectKey: JSON.stringify([draft.id, opening.id, draft.highlightId]), title: "passage actions",
       content: { sections: [{ id: "Passage", label: null, options }] } };
-    // the passage's one refusal, beneath the input; the save action it blocks or retries reads it.
-    const passageField = refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={[selectAgain, copyText]} />
-      : unavailable || sourceChanged ? <Field id={fieldId} line={draft.issue?.kind === "Source" ? draft.issue.line : SOURCE_CHANGED} verbs={[selectAgain, copyText]} />
-      : failed?.phase === "Preparation" && !hasNote ? <Field key={failed.attempt} id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} />
-      : null;
-    const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile}>
-      {isMobile ? <HighlightButton selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onClick={() => verbs.highlight(annotation?.color ?? "yellow")} />
-        : <HighlightColourPicker key={opening.id} selected={annotation?.color ?? "yellow"} persisted={draft.highlightId !== null} disabledReason={blockedReason} busy={draft.operation?.kind === "Highlight"} onSelect={verbs.highlight} />}
+    const more = options.length > 0 ? <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} /> : null;
+    const passageField = isMobile && composer.selectionBlocked && !confirming && verbs.mobileSelection === null
+      ? <Field id={fieldId} line={{ fact: composer.selectionBlocked }} />
+      : refused && !sourceChanged ? <Field id={fieldId} line={refused.line} verbs={selectAgain ? [selectAgain, copyText] : [copyText]} />
+      : unavailable || sourceChanged ? <Field id={fieldId} line={draft.issue?.kind === "Source" ? draft.issue.line : SOURCE_CHANGED} verbs={selectAgain ? [selectAgain, copyText] : [copyText]} />
+      : failed?.phase === "Preparation" && !hasNote ? <Field key={failed.attempt} id={fieldId} line={{ fact: "couldn’t save the highlight." }} verbs={[retrySave(failed.retry, saving)]} /> : null;
+    const save = <SelectionAction action={saveAction} help={isMobile || failed ? saveAction.label : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} describedBy={passageField ? fieldId : undefined} />;
+    const toolbar = <div className={styles.dock} data-selection-composer={opening.id} data-mobile={isMobile} data-passage-interaction>
+      <HighlightColourPicker key={opening.id} active={!isMobile || paneActive} selected={isMobile && fresh ? draft.color : annotation?.color ?? "yellow"} persisted={isMobile ? !fresh : draft.highlightId !== null}
+        disabledReason={fresh ? blockedReason : localReason ?? (confirming ? "apply or cancel the selection first." : null)} busy={draft.operation?.kind === "Highlight"}
+        onSelect={isMobile && fresh ? composer.setColor : verbs.highlight} primaryAction={isMobile && fresh ? save : undefined} size={isMobile ? "comfortable" : undefined} />
       {annotateAction ? <RecoverableSelectionAction action={annotateAction} help={annotateAction.label} busy={false}
         returnFocus={() => copyTrigger.current ?? moreTrigger.current ?? returnFocus()} onBlur={event => {
           const trigger = event.currentTarget;
           setAnnotationRequest(current => current?.openingId === opening.id && current.highlightId === annotationId && current.trigger === trigger ? null : current);
         }} /> : null}
-      {draft.bodyRole === "annotation_or_question" || failed ? <SelectionAction action={saveAction} help={failed ? "retry saving" : `${saveAction.label} · enter saves and closes · shift-enter inserts a line`} busy={saving} describedBy={passageField ? fieldId : undefined} /> : null}
+      {(!isMobile && fresh) || failed && !fresh ? save : null}
       {canQuote ? <>
-        <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={sending || preparing} describedBy={chatField ? chatFieldId : undefined} />
-        {!isMobile ? <div className={styles.highlightControl}>
-          <SelectionAction action={existingAction} help={`${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""} · ${shortcut}-shift-enter`} busy={sending || preparing} describedBy={chatField ? chatFieldId : undefined} />
-          <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="Choose existing chat" aria-haspopup="dialog"
+        <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={false} describedBy={chatField ? chatFieldId : undefined} />
+        <div className={styles.highlightControl}>
+          <SelectionAction action={existingAction} help={`${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""} · ${shortcut}-shift-enter`} busy={false} describedBy={chatField ? chatFieldId : undefined} />
+          <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="choose existing chat" aria-haspopup="dialog"
             aria-expanded={composer.pickerOpen} aria-controls={composer.pickerOpen ? pickerId : undefined}
-            aria-disabled={chooseAction.disabled || undefined} tooltip={{ text: chooseAction.disabledReason ? `Choose existing chat. ${chooseAction.disabledReason}` : "Choose existing chat" }}
-            icon={<Icon.Choose aria-hidden="true" />} onClick={composer.chooseChat} />
-        </div> : null}
+            aria-disabled={blockedReason !== null || undefined} tooltip={{ text: blockedReason ? `choose existing chat. ${blockedReason}` : "choose existing chat" }}
+            icon={<Icon.Choose aria-hidden="true" />} onClick={() => { if (blockedReason === null) composer.chooseChat(); }} />
+        </div>
       </> : null}
       {!isMobile ? <>
         <SelectionAction action={copyAction} help={copyAction.label} busy={false} buttonRef={copyTrigger} />
         <RecoverableSelectionAction action={shareAction} help={shareAction.label} busy={sharePiece === null && draft.operation?.kind === "Ensure"}
           returnFocus={() => copyTrigger.current ?? returnFocus()} />
+        {more}
       </> : null}
-      {options.length > 0 ? <ActionMenu source={source} label="more passage actions" className={styles.selectionIcon} triggerRef={(node) => { moreTrigger.current = node; }} /> : null}
     </div>;
-    if (headerOnly) return toolbar;
-    return (
-      <div data-mobile={isMobile} className={styles.selectionComposer}>
-        {!isMobile ? toolbar : null}
-        {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
-        {/* null means gone only once the store has read; until then the annotation waits */}
-        {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
-          <HighlightAnnotation highlightRef={`highlight:${annotationId}`} resource={annotationResource} occurrenceKey={`selection:highlight:${annotationId}`} onWorkOwners={composer.protectOwners}
-            offerBlank={false} focusRequest={matchingRequest?.serial ?? null}
-            onFocused={() => setAnnotationRequest(current => current === matchingRequest ? null : current)}
-            mayFocus={() => matchingRequest === null || document.hasFocus() && document.activeElement === matchingRequest.trigger} />
-        </PreparedResourcesContext> : null}
-        <div data-selection-composer={opening.id} className={styles.selectionInput} onCompositionStartCapture={composer.compositionStart}
-          onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
+    const savedAnnotation = <>
+      {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
+      {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
+        <HighlightAnnotation highlightRef={`highlight:${annotationId}`} resource={annotationResource} occurrenceKey={`selection:highlight:${annotationId}`} onWorkOwners={composer.protectOwners}
+          offerBlank={false} focusRequest={matchingRequest?.serial ?? null}
+          onFocused={() => setAnnotationRequest(current => current === matchingRequest ? null : current)}
+          mayFocus={() => matchingRequest === null || document.hasFocus() && document.activeElement === matchingRequest.trigger} />
+      </PreparedResourcesContext> : null}
+    </>;
+    const feedback = <>
+      {passageField}
+      {failed?.phase === "Preparation" && hasNote
+        ? <Hold id={`preparation:${draft.id}`} attempt={failed.attempt} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} /> : null}
+      {canQuote && chatField ? <Field id={chatFieldId} line={chatField.line} verbs={chatField.verbs} /> : null}
+    </>;
+    return <div data-mobile={isMobile} className={styles.selectionComposer}>
+      {toolbar}
+      {isMobile ? <div className={styles.selectionDetails} data-fresh={fresh}>{refinementControls}{savedAnnotation}{feedback}</div> : savedAnnotation}
+      <div className={isMobile ? styles.selectionInputRow : undefined}>
+        <div data-selection-composer={opening.id} data-passage-interaction data-passage-question className={styles.selectionInput}
+          onCompositionStartCapture={composer.compositionStart} onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
           <PaneReturnVisitScope visitId={visitScope.visitId} routeKey={visitScope.routeKey}>
             <NoteEditor key={draft.id} editorKey={`reader-draft:${draft.id}`} containingNoteRef={null}
-              body={draft.body} revision={draft.revision} label={draft.bodyRole === "question" ? "question about passage" : "annotation"}
-              reference={composer.reference()} placeholder={draft.bodyRole === "question" || opening.mode === "Ask" ? "ask about this passage…" : "write an annotation…"} editable
-              focus={placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
+              body={draft.body} revision={draft.revision} label={fresh ? "note or question about passage" : "question about passage"}
+              reference={composer.reference()} placeholder={fresh ? "note or question about passage…" : "question about passage…"} editable
+              focus={!isMobile && placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
               onEdit={composer.edit} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-              onSave={draft.bodyRole === "question" ? undefined : composer.save} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
-              onContinueChat={canQuote ? () => composer.continueChat() : undefined}
-            />
+              onSave={!isMobile && fresh ? composer.save : undefined} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
+              onContinueChat={canQuote ? () => composer.continueChat() : undefined} />
           </PaneReturnVisitScope>
         </div>
-        {passageField}
-        {failed?.phase === "Preparation" && hasNote
-          ? <Hold id={`preparation:${draft.id}`} attempt={failed.attempt} risk line={UNSAVED} verbs={[retrySave(failed.retry, saving), copyText]} /> : null}
-        {copying.notice}
-        {canQuote && chatField ? <div data-selection-composer={opening.id} style={{ display: "contents" }}>
-          <Field id={chatFieldId} line={chatField.line} verbs={chatField.verbs} />
+        {isMobile ? <div className={styles.selectionSecondary}>
+          <div data-passage-interaction>{more}</div>
+          <Button iconOnly icon={<Icon.Dismiss />} aria-label="close passage composer" onClick={dismissMobile} />
         </div> : null}
       </div>
-    );
+      {!isMobile ? feedback : null}
+      {copying.notice}
+    </div>;
   };
   const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
     {composer.hiddenPreparationFailures.map(failure => <HiddenPreparationFailure key={failure.id} failure={failure} copy={copy} />)}
     {draft === null ? copying.notice : null}
-    {isMobile ? <MobileSelectionActions verbs={verbs} reader={reader} canQuote={canQuote} sharePiece={sharePiece} /> : null}
-    {isMobile ? <MobileSheet active={draft !== null && opening !== null}
-      ariaLabel={opening?.mode === "Ask" ? "ask about passage" : "note on passage"}
-      heightLimit="available" onDismiss={composer.dismiss} focusKey={opening?.id}
-      handleLabel="close passage editor" renderHeader={() => renderComposer(true, false, true)}
-      initialFocus={(panel) => opening?.focus ? panel.querySelector<HTMLElement>('[data-selection-composer] [role="textbox"][contenteditable="true"]') ?? panel : panel}
-      returnFocusTo={() => { const element = returnFocus(); return element ? { element, preventScroll: true } : null; }}>
-      {renderComposer(true, false)}
-    </MobileSheet> : draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
+    {isMobile ? (draft && opening) || verbs.bounds ? <div ref={mobileSurface} className={styles.mobileComposer} role="group" aria-label="passage composer"
+      data-selection-composer={opening?.id} onPointerDownCapture={pointerDown} onFocusCapture={focus}>
+      {draft && opening ? renderComposer(true, false) : <div className={styles.selectionComposer} data-mobile="true"><div className={styles.selectionDetails}>{refinementControls}</div></div>}
+    </div> : null : draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
       containsPoint={(event) => {
         if (!draft.highlightId || !event.isPrimary || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
@@ -519,7 +477,7 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
     <Dialog open={verbs.recolouring !== null} title="edit highlight" onClose={() => verbs.recolour(null)}>
       <Colours selected={recolouring?.color ?? null} onSelect={verbs.recolour} />
     </Dialog>
-    {draft ? <ConversationDestinationOverlay key={draft.id} anchor={pickerAnchor} panelId={pickerId} open={composer.pickerOpen} mediaId={draft.sourceMediaId} hasSourceChats={draft.sourceHasChats}
+    {draft ? <ConversationDestinationOverlay key={draft.id} anchor={pickerAnchor} panelId={pickerId} open={composer.pickerOpen} mediaId={draft.sourceMediaId}
       onClose={composer.closePicker} onSelectConversation={composer.chooseDestination} /> : null}
   </>;
 }
@@ -527,32 +485,21 @@ export default function SelectionDock({ verbs, store, reader, isMobile, canQuote
 const UNSAVED = { fact: "this note isn’t saved yet." };
 const retrySave = (retry: () => void, busy: boolean): Verb => ({ label: "retry", commandKey: "RetryPassagePreparation", run: retry, busy });
 
-/** The chat half's one refusal, beneath the input; send is the retry. */
-function chatFieldOf(composer: SelectionComposer, issue: NonNullable<SelectionComposer["draft"]>["chatIssue"], blocked: string | null,
-  destination: NonNullable<SelectionComposer["draft"]>["destination"],
-  verbs: Record<"selectAgain" | "copyText" | "openChat" | "openInChat" | "check", Verb>, selected: boolean, transportVerbs: ReturnType<typeof useTransportVerbs>): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
-  if (issue?.kind === "Recall") return composer.recallFailed
-    ? { line: { fact: "couldn’t load your last model." }, verbs: [{ label: "retry", commandKey: "RetryModelRecall", run: composer.retryRecall, busy: composer.recallPending }, verbs.openInChat] } : null;
-  if (issue?.kind === "Transport") {
-    const transport = transportOf(issue.error);
-    return { line: TRANSPORT_LINES[transport].command(issue.fact), verbs: transportVerbs(transport) ?? undefined };
-  }
+/** The source owns destination lookup and refusal before the new tab accepts. */
+function chatFieldOf(composer: SelectionComposer, verbs: { selectAgain: Verb | null; copyText: Verb },
+  transportVerbs: ReturnType<typeof useTransportVerbs>): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
+  const draft = composer.draft;
+  if (!draft) return null;
+  const issue = draft.chatIssue;
   if (issue) {
-    const line = issue.highlightSaved ? HIGHLIGHT_SAVED : issue.line;
     switch (issue.kind) {
-      case "Catalog": return { line, verbs: [{ label: "retry", commandKey: "RetryModelList", run: composer.retryCatalog }, verbs.openInChat] };
-      case "Passage": case "Source": return { line, verbs: [verbs.selectAgain, verbs.copyText] };
-      case "Model": return { line, verbs: [verbs.openInChat] };
-      case "Missing": return { line, verbs: [{ label: "choose chat", commandKey: "ChooseDraftChat", run: composer.chooseChat }] };
-      case "Changed": return { line, verbs: [verbs.check, verbs.openChat] };
-      case "Pending": return { line, verbs: selected ? [verbs.openChat] : undefined };
-      case "Failed": return { line };
+      case "Passage": case "Source": return { line: issue.line, verbs: verbs.selectAgain ? [verbs.selectAgain, verbs.copyText] : [verbs.copyText] };
+      case "Missing": return { line: issue.line, verbs: [{ label: "choose chat", commandKey: "ChooseDraftChat", run: composer.chooseChat }] };
+      case "Failed": return { line: issue.line };
     }
   }
-  if (blocked !== null) return { line: { fact: blocked }, verbs: [destination.kind === "Selected" && destination.snapshot.kind === "Failed"
-    ? { label: "retry", commandKey: "RetryDraftChat", run: composer.refreshChat } : verbs.check, verbs.openChat] };
-  if (destination.kind === "LookupFailed") {
-    const transport = transportOf(destination.error);
+  if (draft.destination.kind === "LookupFailed") {
+    const transport = transportOf(draft.destination.error);
     return { line: TRANSPORT_LINES[transport].read("recent chats"),
       verbs: transportVerbs(transport, { retry: { label: "retry", commandKey: "RetryRecentChats", run: composer.retryDefault } }) ?? undefined };
   }

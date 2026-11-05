@@ -75,7 +75,6 @@
 
 /* ===== Selection dock and annotation surfaces ===== */
 
-.mobileSelectionActions,
 .dock {
   display: flex;
   flex-wrap: wrap;
@@ -83,18 +82,22 @@
   gap: var(--space-1);
 }
 
-.mobileSelectionActions {
-  --control-min-size: var(--size-xl);
-  width: max-content;
-  user-select: none;
-}
-
-.mobileSelectionActions > * {
-  flex: none;
-}
-
 .composerSurface {
   flex-direction: column;
+}
+
+/* This temporary band occupies layout space. The reader measures the smaller
+ * scrollport; only actual chrome/keyboard clearance belongs in this padding. */
+.mobileComposer {
+  --control-min-size: var(--size-xl);
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  max-block-size: calc(100% - var(--mobile-pane-content-offset));
+  padding-block-end: var(--mobile-content-bottom-clearance);
+  border-block-start: var(--stroke-hairline) solid var(--edge);
+  background: var(--surface-2);
 }
 
 .selectionComposer {
@@ -109,9 +112,14 @@
 
 .selectionComposer[data-mobile="true"] {
   --control-min-size: var(--size-xl);
-  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
   max-height: none;
-  overflow: visible;
+  gap: 0;
+  padding: 0;
+  overflow-y: auto;
 }
 
 .selectionComposer > * {
@@ -123,10 +131,82 @@
   border-top: var(--stroke-hairline) solid var(--edge-subtle);
 }
 
+.selectionDetails {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-block-size: min(30vh, 12rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2);
+}
+
+.selectionDetails:empty {
+  display: none;
+}
+
+/* A provisional range's feedback changes without moving its actions. Keep the
+ * same slot after focus freezes the capture, through the eventual native click. */
+.selectionDetails[data-fresh="true"] {
+  display: block;
+  flex: 0 1 var(--size-xl);
+  block-size: var(--size-xl);
+  max-block-size: var(--size-xl);
+  padding-block: 0;
+}
+
+.selectionInputRow {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  min-height: var(--size-xl);
+  max-block-size: min(30vh, 12rem);
+  border-block-start: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.selectionInputRow .selectionInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+}
+
+.selectionSecondary {
+  display: flex;
+  flex: none;
+  padding-block: var(--space-1);
+  padding-inline-end: var(--space-1);
+}
+
+.selectionRefinement {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--size-xl);
+}
+
+.selectionRefinement > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-block-size: var(--size-xl);
+  overflow-y: auto;
+}
+
+.selectionRefinement > button {
+  flex: none;
+}
+
 .selectionInput :global([contenteditable="true"]) {
   max-block-size: min(30vh, 12rem);
   overflow-y: auto;
   overflow-wrap: anywhere;
+}
+
+.selectionInputRow .selectionInput :global([contenteditable="true"]) {
+  max-block-size: none;
+  overflow: visible;
 }
 
 .selectionIcon {
@@ -160,7 +240,7 @@
 
 .dock[data-mobile="true"] {
   --control-min-size: var(--size-xl);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2);
 }
 
 .colours {

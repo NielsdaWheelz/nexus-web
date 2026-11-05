@@ -5,8 +5,8 @@ import { CommandTooLargeError } from "@nexus/authored/types";
 // What a reader does with a selection or a mark. A selection is not yet a
 // resource: highlight, note and share create a new independent highlight and
 // continue with it; overlapping or identical extents never reuse another one.
-// Mobile observations remain provisional: only explicit frozen-capture commands
-// prepare authoring. A mark's verbs arrive as this pane visit's entry, claimed
+// Mobile selections open one retained composer; native ranges remain provisional
+// until an owned interaction freezes them. A mark's verbs arrive as this pane visit's entry, claimed
 // once its marks load. Resizing and relocation replace one highlight's whole
 // selection capture locally; its identity, colour and notes stay.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -40,8 +40,6 @@ import type { Reader } from "@/lib/documentReader/runtime";
 import { useSelectionComposer, type SelectionComposer } from "./useSelectionComposer";
 import type { MediaAnnotations } from "./annotations";
 import { samePassage } from "./selectionDrafts";
-
-const MOBILE_SELECTION_QUIET_MS = 250;
 
 export interface MobileSelection {
   readonly id: string;
@@ -80,9 +78,6 @@ export interface AnnotationVerbs {
   cancelSelectionActivation(): void;
   selectionCurrent(subject: MobileSelection): boolean;
   dismissSelection(): void;
-  composeSelection(subject: MobileSelection, mode: "Note" | "Ask"): void;
-  highlightSelection(subject: MobileSelection, color: HighlightColor): void;
-  shareSelection(subject: MobileSelection, trigger: HTMLElement | null): void;
   applySelection(subject: MobileSelection): void;
   onSelection(notice: SelectionNotice): void;
   onMarks(event: MarkEvent): void;
@@ -137,10 +132,8 @@ export function useAnnotationVerbs(input: {
   const [bounds, setBounds] = useState<BoundsSession | null>(null);
   const currentBounds = useRef<BoundsSession | null>(null);
   const [mobileSelection, setMobileSelection] = useState<MobileSelection | null>(null);
-  const [selectionVisible, setSelectionVisible] = useState(false);
   const candidate = useRef<MobileSelection | null>(null);
   const activation = useRef<MobileSelection | null>(null);
-  const quietTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputHeld = useRef(false);
   const mobileRef = useRef(isMobile);
   mobileRef.current = isMobile;
@@ -148,15 +141,10 @@ export function useAnnotationVerbs(input: {
   activeRef.current = active;
   const documentState = useReaderState(reader, state => state.document);
   const publication = documentState.status === "ready" ? documentState.doc.identity : null;
-  const clearQuiet = useCallback(() => {
-    if (quietTimer.current !== null) clearTimeout(quietTimer.current);
-    quietTimer.current = null;
-  }, []);
   const retireSelection = useCallback(() => {
-    clearQuiet();
     candidate.current = null; activation.current = null; inputHeld.current = false;
-    setMobileSelection(null); setSelectionVisible(false);
-  }, [clearQuiet]);
+    setMobileSelection(null);
+  }, []);
   // Admission changes synchronously, before another source event or commit completion.
   const showBounds = useCallback((next: BoundsSession | null) => { currentBounds.current = next; setBounds(next); }, []);
   const cancelBounds = useCallback(() => {
@@ -166,7 +154,7 @@ export function useAnnotationVerbs(input: {
     setSelectionIssue(null);
     reader.focusSource();
   }, [reader, retireSelection, setSelectionIssue, showBounds]);
-  useOverlay(active && bounds !== null && bounds.identity === publication && bounds.phase === "Selecting", {
+  useOverlay(active && !isMobile && bounds !== null && bounds.identity === publication && bounds.phase === "Selecting", {
     kind: "transient",
     onDismiss: cancelBounds,
   });
@@ -185,7 +173,7 @@ export function useAnnotationVerbs(input: {
     document.addEventListener("visibilitychange", visibility);
     return () => { window.removeEventListener("blur", retire); document.removeEventListener("visibilitychange", visibility); };
   }, [retireSelection, setSelectionIssue, showBounds]);
-  useEffect(() => () => { clearQuiet(); candidate.current = null; activation.current = null; currentBounds.current = null; activeRef.current = false; }, [clearQuiet]);
+  useEffect(() => () => { candidate.current = null; activation.current = null; currentBounds.current = null; activeRef.current = false; }, []);
 
   /** A refused or failed write. Storage failures say the title; transport says why for the rest. */
   const fail = useCallback(
@@ -204,7 +192,7 @@ export function useAnnotationVerbs(input: {
     [outcome, showNotice],
   );
 
-  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, onError: fail, onFailure: showNotice });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, onError: fail, onFailure: showNotice });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
 
@@ -213,27 +201,17 @@ export function useAnnotationVerbs(input: {
     return activeRef.current && mobileRef.current && document.visibilityState !== "hidden" &&
       shown.status === "ready" && !shown.refreshing && shown.doc.identity === capture.identity && reader.measureBounds() !== null;
   };
-  const selectionCurrent = (subject: MobileSelection) => activation.current === subject && currentSource(subject.capture);
+  const selectionCurrent = (subject: MobileSelection) => currentBounds.current !== null
+    ? activation.current === subject && currentSource(subject.capture) : composer.selectionCurrent(subject);
   const consumeSelection = () => {
-    clearQuiet(); candidate.current = null; setMobileSelection(null); setSelectionVisible(false);
+    candidate.current = null; setMobileSelection(null);
   };
   const observeSelection = (capture: SelectionCapture, held: boolean) => {
-    clearQuiet(); setSelectionVisible(false);
     const previous = candidate.current;
     const next = previous && samePassage(previous.capture, capture) && previous.capture.quote === capture.quote
       ? previous : { id: previous?.id ?? createRandomId(), capture };
     candidate.current = next; setMobileSelection(next);
-    if (held) return;
-    quietTimer.current = setTimeout(() => {
-      quietTimer.current = null;
-      if (candidate.current?.id !== next.id || inputHeld.current || !currentSource(next.capture)) return;
-      const fresh = reader.captureSelection();
-      if (!fresh || fresh.kind !== "Captured" || !currentSource(fresh) || !reader.measurePassage(fresh)) return retireSelection();
-      const latest = candidate.current;
-      const revealed = latest && samePassage(latest.capture, fresh) && latest.capture.quote === fresh.quote
-        ? latest : { id: next.id, capture: fresh };
-      candidate.current = revealed; setMobileSelection(revealed); setSelectionVisible(true);
-    }, MOBILE_SELECTION_QUIET_MS);
+    inputHeld.current = held;
   };
   const rejectedSelection = (next: Extract<SelectionEvent, { kind: "Rejected" }>) => {
     const shown = reader.getState().document;
@@ -264,7 +242,7 @@ export function useAnnotationVerbs(input: {
   };
   const applyBounds = (session: BoundsSession, next: SelectionEvent) => {
     const admitted = boundsCapture(session, next);
-    if (!admitted || !writing) return;
+    if (!admitted || !writing || next.kind !== "Captured") return;
     const capture = admitted.capture;
     const submitted: BoundsSession = { ...session, phase: "Submitting", issue: null };
     showBounds(submitted);
@@ -273,7 +251,7 @@ export function useAnnotationVerbs(input: {
     const resize = () => {
       if (owns()) showBounds(submitted);
       return resizeHighlight(writing, admitted.annotation, capture).then(
-        () => {if (owns()) showBounds(null);},
+        () => {composer.boundHighlight(session.highlightId, next); if (owns()) showBounds(null);},
         (error: unknown) => {
           if (owns()) showBounds(error instanceof CommandTooLargeError ? {...session, phase: "Selecting", issue: { fact: "this passage is too long to save." }}
             : isAuthoredStorageFailure(error) ? {...session, phase: "Selecting", issue: null} : null);
@@ -283,20 +261,22 @@ export function useAnnotationVerbs(input: {
     };
     void resize().catch(error => fail(error, "couldn’t change the highlight.", resize));
   };
-  const ensureSelection = async (subject: MobileSelection) => {
-    const result = await composer.ensureCapture(subject.capture);
-    return result ? { id: result.id, isCurrent: () => selectionCurrent(subject) && result.isCurrent() } : null;
-  };
   const startBounds = useCallback((id: string, scope: BoundsSession["scope"]) => {
     if (!publication) return;
     retireSelection();
-    if (!composer.dismiss()) return;
+    if (composer.draft?.highlightId !== id) {
+      const annotation = store.annotation(id);
+      if (annotation?.placement.kind === "placed") {
+        if (!composer.activate({id, color: annotation.color, anchor: annotation.placement.anchor}, publication, false)) return;
+      } else if (!composer.dismiss()) return;
+    }
+    composer.cancelReselection();
     setMenu(null);
     setSelectionIssue(null);
     showBounds({ id: createRandomId(), highlightId: id, identity: publication, scope, phase: "Selecting", issue: null });
     setFocused(id);
     reader.focusSource();
-  }, [composer, publication, reader, retireSelection, setSelectionIssue, showBounds]);
+  }, [composer, publication, reader, retireSelection, setSelectionIssue, showBounds, store]);
   const editBounds = useCallback((id: string) => {
     const annotation = store.annotation(id);
     if (annotation?.placement.kind !== "placed") { showNotice({ fact: "this highlight isn’t shown in this version." }); return; }
@@ -353,25 +333,28 @@ export function useAnnotationVerbs(input: {
     cancelBounds,
     editBounds,
     remove,
-    mobileSelection,
-    selectionVisible: active && isMobile && selectionVisible,
+    mobileSelection: bounds ? mobileSelection : composer.mobileSelection,
+    selectionVisible: active && isMobile && (bounds ? mobileSelection !== null && !inputHeld.current : composer.selectionVisible),
     captureSelection() {
+      if (currentBounds.current === null) return composer.captureSelection();
       const shown = candidate.current;
-      if (!shown || !selectionVisible || inputHeld.current || !currentSource(shown.capture)) return null;
+      if (!shown || inputHeld.current || !currentSource(shown.capture)) return null;
       const fresh = reader.captureSelection();
       if (!fresh || fresh.kind !== "Captured" || !currentSource(fresh)) { retireSelection(); return null; }
       if (!samePassage(shown.capture, fresh) || shown.capture.quote !== fresh.quote) {
         activation.current = null; observeSelection(fresh, inputHeld.current); return null;
       }
-      clearQuiet(); candidate.current = shown; activation.current = shown; setMobileSelection(shown);
+      candidate.current = shown; activation.current = shown; setMobileSelection(shown);
       return shown;
     },
     ownSelectionFocus(subject) {
-      if (candidate.current !== subject || !selectionVisible || inputHeld.current || !currentSource(subject.capture)) return false;
-      clearQuiet(); activation.current = subject;
+      if (currentBounds.current === null) return composer.ownSelectionFocus(subject);
+      if (candidate.current !== subject || inputHeld.current || !currentSource(subject.capture)) return false;
+      activation.current = subject;
       return true;
     },
     cancelSelectionActivation() {
+      if (currentBounds.current === null) { composer.cancelSelectionActivation(); return; }
       activation.current = null;
       const fresh = reader.captureSelection();
       if (fresh?.kind === "Captured" && candidate.current && currentSource(fresh)) observeSelection(fresh, inputHeld.current);
@@ -382,21 +365,6 @@ export function useAnnotationVerbs(input: {
       retireSelection(); composer.cancelReselection();
       if (currentBounds.current?.phase === "Selecting") showBounds(null);
       setSelectionIssue(null);
-    },
-    composeSelection(subject, mode) {
-      if (!selectionCurrent(subject)) return;
-      consumeSelection(); composer.compose(subject.capture, mode);
-    },
-    highlightSelection(subject, color) {
-      if (!selectionCurrent(subject)) return;
-      consumeSelection(); void composer.highlightCapture(subject.capture, color);
-    },
-    shareSelection(subject, trigger) {
-      if (!selectionCurrent(subject)) return;
-      consumeSelection();
-      void ensureSelection(subject).then(result => {
-        if (result?.isCurrent()) openShare(resourceShareTarget(`highlight:${result.id}`), anchoredShareOpenOptions(trigger, () => null));
-      });
     },
     applySelection(subject) {
       if (!selectionCurrent(subject)) return;
@@ -424,6 +392,12 @@ export function useAnnotationVerbs(input: {
       }
       const session = currentBounds.current;
       if (isMobile) {
+        if (session === null) {
+          setSelectionIssue(null);
+          if (notice.kind === "Admitted" && next?.kind === "Rejected" && composer.draft === null) rejectedSelection(next);
+          composer.observeSelection(notice);
+          return;
+        }
         const held = notice.kind === "Observed" ? notice.inputHeld : inputHeld.current;
         inputHeld.current = held;
         if (reader.measureBounds() === null) { retireSelection(); return; }
@@ -434,18 +408,16 @@ export function useAnnotationVerbs(input: {
           next.kind === "Captured" && samePassage(owned.capture, next) && owned.capture.quote === next.quote)) return;
         activation.current = null;
         if (!next) { retireSelection(); inputHeld.current = held; return; }
-        if (session?.phase === "Submitting") { retireSelection(); return; }
+        if (session.phase === "Submitting") { retireSelection(); return; }
         if (notice.kind === "Observed" && candidate.current === null) return;
         setSelectionIssue(null);
         if (next.kind === "Rejected") {
           retireSelection();
-          if (session?.phase === "Selecting") boundsCapture(session, next); else rejectedSelection(next);
+          boundsCapture(session, next);
           return;
         }
-        if (session?.phase === "Selecting") {
-          if (!boundsCapture(session, next)) { retireSelection(); return; }
-          if (session.issue) showBounds({ ...session, issue: null });
-        }
+        if (!boundsCapture(session, next)) { retireSelection(); return; }
+        if (session.issue) showBounds({ ...session, issue: null });
         observeSelection(next, held);
         return;
       }

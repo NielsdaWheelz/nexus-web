@@ -35,7 +35,7 @@ import type { MediaKind } from "@/lib/media/kind";
 import { paneGlyph } from "@/lib/resources/type";
 import { NEW_PANE_HINT, PANE_STRIP_DESCRIPTION } from "@/lib/shortcuts";
 import { suppressDragReleaseClick } from "@/lib/ui/dragGesture";
-import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
+import { hasWorkspaceNavigationBlocker } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { paneControls, type PaneControl } from "@/lib/workspace/paneControls";
@@ -119,10 +119,10 @@ function PaneChip(props: {
         aria-keyshortcuts="ArrowLeft ArrowRight Home End Shift+Enter Delete Backspace Shift+M"
         title={`${item.label} · ${NEW_PANE_HINT}`}
         onMouseDown={(event) => {
-          if (!hasActiveInteractionOwner()) sortable.listeners?.onMouseDown?.(event);
+          if (!hasWorkspaceNavigationBlocker()) sortable.listeners?.onMouseDown?.(event);
         }}
         onTouchStart={(event) => {
-          if (!hasActiveInteractionOwner()) sortable.listeners?.onTouchStart?.(event);
+          if (!hasWorkspaceNavigationBlocker()) sortable.listeners?.onTouchStart?.(event);
         }}
         onClick={props.onActivate}
         onFocus={() => props.onFocus("activate")}
@@ -250,7 +250,7 @@ export default function WorkspacePaneStrip(props: {
   useLayoutEffect(() => {
     if (focusAfter === null) return;
     setFocusAfter(null);
-    if (hasActiveInteractionOwner()) return;
+    if (hasWorkspaceNavigationBlocker()) return;
     const paneId = items.find((item) => item.paneId === focusAfter)?.paneId ?? activeId;
     if (!paneId) return;
     setRoving({ paneId, control: "activate" });
@@ -277,7 +277,7 @@ export default function WorkspacePaneStrip(props: {
     const activation = workspaceTargetActivationIntent(event);
     if (activation.kind === "Unowned") return;
     event.preventDefault();
-    if (activation.kind === "Consume" || hasActiveInteractionOwner()) return;
+    if (activation.kind === "Consume" || hasWorkspaceNavigationBlocker()) return;
     const result = props.onActivate(paneId, { kind: activation.intent === "new_pane" ? "Fork" : "Follow" });
     if (result && result.kind !== "Cancelled" && result.kind !== "CreatedPane") reveal(result.paneId);
   };
@@ -294,12 +294,12 @@ export default function WorkspacePaneStrip(props: {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (!event.repeat && !event.nativeEvent.isComposing && !event.metaKey &&
-        !event.ctrlKey && !event.altKey && !hasActiveInteractionOwner()) event.currentTarget.click();
+        !event.ctrlKey && !event.altKey && !hasWorkspaceNavigationBlocker()) event.currentTarget.click();
       return;
     }
     if (
       event.nativeEvent.isComposing ||
-      event.metaKey || event.ctrlKey || event.altKey || hasActiveInteractionOwner() ||
+      event.metaKey || event.ctrlKey || event.altKey || hasWorkspaceNavigationBlocker() ||
       !(event.target instanceof Node) || !strip.current?.contains(event.target)
     ) return;
     if (event.shiftKey && event.key.toLowerCase() === "m") {
@@ -332,7 +332,7 @@ export default function WorkspacePaneStrip(props: {
     draggedOrder.current = null;
     if (!strip.current) return;
     setDraggedId(null);
-    if (document.activeElement === document.body && !hasActiveInteractionOwner()) {
+    if (document.activeElement === document.body && !hasWorkspaceNavigationBlocker()) {
       const state = latestWorkspace().state;
       setFocusAfter(state.panes.some((pane) => pane.id === paneId) ? paneId : state.active_primary_pane_id);
     }
@@ -372,7 +372,7 @@ export default function WorkspacePaneStrip(props: {
           liveIds.every((id, index) => id === original[index]);
         const from = liveIds.indexOf(paneId);
         const to = event.over ? liveIds.indexOf(String(event.over.id)) : -1;
-        if (strip.current && unchanged && from >= 0 && to >= 0 && !hasActiveInteractionOwner()) {
+        if (strip.current && unchanged && from >= 0 && to >= 0 && !hasWorkspaceNavigationBlocker()) {
           const order = arrayMove(liveIds, from, to);
           move({ paneId, beforePaneId: order[to + 1] ?? null });
         }

@@ -54,7 +54,7 @@ import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/playe
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { activateResource } from "@/lib/resources/activation";
 import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
-import { getInteractionGeneration, hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
+import { getInteractionGeneration, hasActiveInteractionOwner, hasWorkspaceNavigationBlocker, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import type { DismissDecision, Layer } from "@/lib/ui/overlay";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -1003,6 +1003,7 @@ export function useNexusController() {
     closePane,
     restoreClosedPane: restoreClosed,
     activateAdjacentPane(input: Parameters<typeof workspace.activateAdjacentPane>[0]) {
+      if (hasWorkspaceNavigationBlocker()) return null;
       reorder.cancel({ silent: true });
       return workspace.activateAdjacentPane(input);
     },

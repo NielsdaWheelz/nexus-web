@@ -21,11 +21,10 @@ import styles from "./ChatPanels.module.css";
 
 const TITLE = "choose existing chat";
 
-/** A destination choice changes only reader intent; the reader restores its caret. */
-export default function ConversationDestinationOverlay({ open, mediaId, hasSourceChats, anchor, panelId, onClose, onSelectConversation }: {
+/** A destination choice changes reader intent; mobile returns to its disclosure. */
+export default function ConversationDestinationOverlay({ open, mediaId, anchor, panelId, onClose, onSelectConversation }: {
   open: boolean;
   mediaId: string;
-  hasSourceChats: boolean | null;
   anchor: () => HTMLElement | null;
   panelId: string;
   onClose(): void;
@@ -36,27 +35,27 @@ export default function ConversationDestinationOverlay({ open, mediaId, hasSourc
   return <PickerSurface slipContent={slipContent} active={open} onClose={onClose} anchor={anchor} panelId={panelId} title={TITLE}
     initialFocus={container => isMobile && wasOverlayInvokedByTouch() ? container
       : container.querySelector<HTMLInputElement>('input[role="combobox"]')}
-    skipReturnFocus={() => true}>
-    {open ? <Picker scrollRef={slipContent} mediaId={mediaId} hasSourceChats={hasSourceChats} onSelect={onSelectConversation} /> : null}
+    skipReturnFocus={() => !isMobile}>
+    {open ? <Picker scrollRef={slipContent} mediaId={mediaId} onSelect={onSelectConversation} /> : null}
   </PickerSurface>;
 }
 
 /** Title search and source scope admit choices only for the exact settled query. A failed first
  * read stands in the list region, outside listbox markup; a failed refresh over shown rows says
  * nothing. */
-function Picker({ mediaId, hasSourceChats, onSelect, scrollRef }: {
+function Picker({ mediaId, onSelect, scrollRef }: {
   scrollRef: RefObject<HTMLDivElement | null>;
   mediaId: string;
-  hasSourceChats: boolean | null;
   onSelect(conversation: Pick<ConversationListItem, "id" | "title">): void;
 }) {
   const env = useRenderEnvironment();
+  const isMobile = useIsMobileViewport();
   const paneActive = usePaneIsActive();
   const id = useId();
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<"Source" | "All">(hasSourceChats === false ? "All" : "Source");
+  const [view, setView] = useState<"Source" | "All">("Source");
   const [active, setActive] = useState<SearchActive>(null);
-  const [initializing, setInitializing] = useState(hasSourceChats === null);
+  const [initializing, setInitializing] = useState(true);
   const input = useRef<HTMLInputElement>(null);
   const composing = useRef(false);
   const settled = useSettled(query, 200);
@@ -76,15 +75,12 @@ function Picker({ mediaId, hasSourceChats, onSelect, scrollRef }: {
   const selectable = (page.status === "ready") && (!initializing || !search) && settled === query;
   const items = selectable ? pageItems : [];
   useEffect(() => {
-    if (initializing && hasSourceChats !== null) {
-      setInitializing(false); setView(hasSourceChats ? "Source" : "All"); setActive(null); return;
-    }
     if (!(page.status === "ready") || settled !== query) return;
     if (initializing && page.status === "ready") {
       setInitializing(false);
       if (!pageItems.length) { setView("All"); setActive(null); return; }
     }
-  }, [hasSourceChats, initializing, page, pageItems.length, query, settled]);
+  }, [initializing, page, pageItems.length, query, settled]);
   const context = JSON.stringify([id, mediaId, view, query]);
   const options = items.map(item => ({ key: item.id, disabledReason: null }));
   const reconciled = reconcileSearchActive({ context, admitted: selectable, options,
@@ -99,7 +95,7 @@ function Picker({ mediaId, hasSourceChats, onSelect, scrollRef }: {
   const emptyTitle = search ? "no chats match this search." : view === "Source" ? "no chats for this source." : "no chats yet.";
   const readFeedback = useIndexReadFeedback({ value: page, requestedKey: readKey, active: paneActive, waiting: settled === query && !(page.status === "ready") && failed === null, outcome: items.length > 0 ? null : emptyTitle });
   const changeView = (next: "Source" | "All") => { setInitializing(false); setView(next); setActive(null); };
-  return <div className={styles.destination}>
+  return <div className={styles.destination} data-mobile={isMobile}>
     <div className={styles.destinationViews}>
       <Button aria-pressed={view === "Source"} onClick={() => changeView("Source")}>for this source</Button>
       <Button aria-pressed={view === "All"} onClick={() => changeView("All")}>all chats</Button>

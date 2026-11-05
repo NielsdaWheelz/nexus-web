@@ -53,6 +53,10 @@ dispatch (the author search owns keys only while focus is inside it).
 same rule; a sheet's scope is its `panelId`. `interactionOwnedElsewhere(element)`
 reads it too, ignoring an owner whose element or boxes contain `element`; a null
 element counts any owner. tooltips never become this owner.
+`hasWorkspaceNavigationBlocker()` blocks modals and eligible page transients
+unless a transient explicitly allows `workspaceNavigation`; persistent
+composition may retain escape ownership while allowing pane navigation, and
+child choices still block by default.
 `useOverlay` subscribes to its layer's registration, coverage and depth. for a
 tooltip, `topmost` additionally requires a live trigger inside the current
 owner's boxes or modal room, or on the page when no owner is open. hidden,
@@ -95,7 +99,8 @@ button and the sheet's drag all take that path.
 transient of the top modal (or of the page) until one whose `inside()` boxes
 contain the press. a transient's anchor element is inside it, so pressing a
 trigger never closes and reopens its own surface. a transient without `inside`
-is never closed by a press.
+is never closed by a press. `dismissOnOutside: false` keeps a transient open on
+outside presses while its `inside()` boxes still own focus and help.
 
 the same traversal dismisses pending or visible tooltips outside their
 `inside()` boxes. a tooltip neither stops the traversal at an inside box nor
@@ -157,8 +162,9 @@ focus in between. a menu that skips returning focus passes its stable trigger th
 `requestNexusOpen` metadata, including queued and guarded requests.
 nexus supplies its search input as invocation context. escape returns
 there without scrolling; outside dismissal does not restore. reader selection
-and clicked-highlight composition use `FloatingActionSurface` on desktop;
-mobile composition explicitly opens the shared body in `MobileSheet`.
+and clicked-highlight composition use `FloatingActionSurface` on desktop.
+mobile passage composition is an in-layout nonmodal band with explicit close,
+contained focus/help, outside dismissal disabled and workspace navigation allowed.
 
 return candidates must be connected, visible and enabled; a css-hidden opener
 cannot suppress its surviving fallback. visible but temporarily inert modal
@@ -405,11 +411,10 @@ radio does nothing, and a disabled group's reason describes its fieldset.
 
 **FloatingActionSurface**: nonmodal selection actions, desktop passage composers,
 clicked-highlight choosers and action-bar popovers. ordinary text-selection
-placement keeps its first/last visible line and edge policy; mobile reader
-actions explicitly select `mobile-selection-actions`. escape, an outside press
-and, inside a modal, back dismiss it. opted-in `preservePointerSelection` keeps
-a live range when pressed; mobile reader actions instead freeze their subject
-before focus transfer and retain native button activation.
+placement keeps its first/last visible line and edge policy. escape, an outside
+press and, inside a modal, back dismiss it. opted-in `preservePointerSelection`
+keeps a live range when pressed. the separate mobile passage band freezes its
+subject before focus transfer and retains native button activation.
 
 **useHoverPreview**: mouse or pen hover, or keyboard focus while focus is
 visible, opens a card above the citation after 150 ms; leaving the citation

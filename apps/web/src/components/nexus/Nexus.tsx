@@ -27,6 +27,7 @@ export default function Nexus() {
           }}
           onSwipe={input => {
             const result = controller.activateAdjacentPane(input);
+            if (result === null) return null;
             if (result.kind === "Unchanged") return input.direction === "Next" ? "last pane" : "first pane";
             const title = controller.panes.find(pane => pane.id === result.paneId)?.presentation.title;
             return title ? title : null;

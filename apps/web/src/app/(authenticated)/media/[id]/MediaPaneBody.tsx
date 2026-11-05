@@ -383,6 +383,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const entry = useMemo(() => ({ fresh: null, cold: null, view: savedView }), [savedView]);
   const chrome = useMobileChrome();
   const viewport = useMobileViewport();
+  const readerScrollport = useRef<HTMLElement | null>(null);
   const reader = useDocumentReader(
     id,
     useMemo<ReaderOptions>(
@@ -391,9 +392,14 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         progress: hostedProgress(id),
         entry,
         host: { scrollport: (element: HTMLElement, geometryChanged: (reason: "Occlusion" | "Layout") => void) => {
+          readerScrollport.current = element;
           const releaseChrome = chrome.registerReaderScrollport(element);
           const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
-          return () => { releaseChrome(); releaseViewport(); };
+          return () => {
+            if (readerScrollport.current === element) readerScrollport.current = null;
+            releaseChrome();
+            releaseViewport();
+          };
         }, onIntent: (intent) => {
           arrivalRef.current?.supersede({
             preserveSignal: intent.kind === "Navigate" ? intent.signal : null,
@@ -974,10 +980,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         }
         lane={
           <>
-            {boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
+            {!isMobile && boundsPrompt ? <Fact line={boundsPrompt} speak={speak}
               verbs={bounds?.phase === "Selecting" ? [{ label: "cancel", commandKey: "CancelHighlightBounds", run: verbs.cancelBounds }] : undefined} /> : null}
-            {isMobile && verbs.composer.reselection ? <Fact line={{ fact: "select the passage again." }} speak={speak}
-              verbs={[{ label: "cancel", commandKey: "CancelReselection", run: verbs.dismissSelection }]} /> : null}
             {inspection && inspection.precision !== "exact" ? <Fact speak={speak}
               line={{ fact: inspection.precision === "time" ? "located by time, not by text." : "this location is approximate." }} /> : null}
             {media.provider === "x" && media.processing_status === "failed" ? <Fact speak={speak}
@@ -1002,6 +1006,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       <SelectionDock
         verbs={verbs}
         reader={reader}
+        readerScrollport={readerScrollport}
         store={store}
         isMobile={isMobile}
         canQuote={canQuote}

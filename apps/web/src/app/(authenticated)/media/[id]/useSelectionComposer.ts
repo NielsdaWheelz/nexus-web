@@ -2,16 +2,17 @@
 import { CommandTooLargeError } from "@nexus/authored/types";
 import { ExcerptCaptureError, excerptTextParts } from "@nexus/authored/excerpt";
 
-// A frozen selection owns one explicit annotation-or-question input. Existing
-// highlight bodies have their own bound editor; this draft then owns questions.
-// Unsubmitted writing survives source publication changes and remote deletion.
+// A visit retains one annotation-or-question draft. An owned interaction freezes
+// its initial native range; leaving before that revokes capture, not writing.
+// Explicit refinement rolls back to the accepted passage. Existing highlight
+// bodies have their own bound editor; this draft then owns questions.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Y from "yjs";
-import {hydrateNote, readBody} from "@nexus/authored/documents";
+import {encodeBytes, hydrateNote, readBody} from "@nexus/authored/documents";
 import {applyDraftBody} from "@/lib/notes/editorBinding";
 import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
-import { usePaneVisitWorkOwner, usePaneVisitWorkScope } from "@/lib/workspace/paneReturnMemento";
+import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -34,7 +35,7 @@ import { readCatalog } from "@/lib/chat/catalog";
 import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
 import { readFailureOf, type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
-import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
+import { rejectedSelectionFact, useReaderState, type DraftAnchor, type Mark, type SelectionCapture, type SelectionEvent, type SelectionNotice } from "@/lib/documentReader/DocumentReader";
 import type { Reader } from "@/lib/documentReader/runtime";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { captureSelection, createHighlight, recolorHighlight, type SourceLabel, type Capture } from "@/lib/documentReader/annotations";
@@ -45,13 +46,14 @@ import { bodyHasContent, emptyBody } from "@nexus/authored/body";
 import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
 import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import type { MediaAnnotations } from "./annotations";
-import { createSelectionDrafts, emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue } from "./selectionDrafts";
+import { emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue } from "./selectionDrafts";
 
 const DEFAULT_VISIT = definePaneVisitDataKey<Visit<{ conversation: ConversationListItem | null }>>("Reader.ChatDefault");
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number; mode: "Note" | "Ask" };
-type Reselection = { id: string; draftId: string; identity: string; mode: Opening["mode"] };
+type Refinement = { id: string; draftId: string; identity: string; candidate: SelectionEvent | null; explicit: boolean; inputHeld: boolean };
+type SelectionSubject = { readonly id: string; readonly capture: SelectionCapture };
 type Command =
   | { kind: "Save" }
   | { kind: "Ensure" }
@@ -59,14 +61,6 @@ type Command =
 
 export const SOURCE_CHANGED: Line = { fact: "the text changed.", reason: "your words are kept." };
 const HIGHLIGHT_DELETED: Line = { fact: "this highlight was deleted.", reason: "your words are kept." };
-const PENDING_ELSEWHERE: Line = { fact: "another message is still pending in that chat." };
-export const HIGHLIGHT_SAVED: Line = { fact: "question not sent.", reason: "the highlight is saved." };
-
-/** A settled draft cannot claim a later command that happens to use the same chat. */
-function readerRecovery(attempt: ComposerDraft["chatAttempt"]) {
-  return attempt?.kind === "Dispatched" ? recoveryOf(attempt.owner.getSnapshot(),
-    command => command.kind === "Send" && command.runId === attempt.runId) : null;
-}
 
 export function useSelectionComposer(input: {
   reader: Reader;
@@ -76,6 +70,7 @@ export function useSelectionComposer(input: {
   sourceLabel: (sourceRef: string) => SourceLabel | null;
   active: boolean;
   isMobile: boolean;
+  boundsActive: boolean;
   onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
   onFailure: (line: Line, verbs: Verbs) => void;
 }) {
@@ -90,19 +85,37 @@ export function useSelectionComposer(input: {
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? () => catalogRead.revalidate() : catalogRead.refetch;
-  const [store] = useState(createSelectionDrafts);
-  const workScope = usePaneVisitWorkScope();
-  const draftOwner = `selection-composer:${visitId}`;
-  usePaneVisitWorkOwner({id: draftOwner, scope: workScope, subscribe: store.subscribe, read: () => ({changed: store.getSnapshot().some(entry => bodyHasContent(entry.body) || entry.referenceActive || entry.linkInputActive), unconfirmed: false, stopsBrowserWork: store.getSnapshot().some(entry => entry.attachmentActive)}), readCopyText: () => store.getSnapshot().map(entry => entry.body.body_text).join("\n\n")});
-  const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const retained = useResourceDraft<ComposerDraft | null>("Reader.SelectionComposer", () => null,
+    entry => ({changed: entry !== null && (bodyHasContent(entry.body) || entry.referenceActive || entry.linkInputActive), unconfirmed: false, stopsBrowserWork: entry?.attachmentActive ?? false}),
+    entry => entry?.body.body_text ?? null);
+  const {read, set, owner: draftOwner} = retained;
+  const store = useMemo(() => ({
+    put: (entry: ComposerDraft) => set(entry),
+    remove: (id: string) => set(entry => entry?.id === id ? null : entry),
+    update: (id: string, change: (entry: ComposerDraft) => ComposerDraft) => set(entry => entry?.id === id ? change(entry) : entry),
+  }), [set]);
+  const get = (id: string) => { const entry = read(); return entry?.id === id ? entry : null; };
   const publication = useReaderState(reader, state => state.document.status === "ready" ? state.document.doc.identity : null);
-  const [reselection, setReselection] = useState<Reselection | null>(null);
-  const reselecting = useRef<Reselection | null>(null);
-  const cancelReselection = useCallback(() => { reselecting.current = null; setReselection(null); }, []);
+  const [refinement, setRefinement] = useState<Refinement | null>(null);
+  const refining = useRef<Refinement | null>(null);
+  const selectionActivation = useRef<SelectionSubject | null>(null);
+  const showRefinement = useCallback((next: Refinement | null) => { refining.current = next; setRefinement(next); }, []);
+  const cancelReselection = useCallback(() => {
+    const session = refining.current;
+    selectionActivation.current = null;
+    showRefinement(null);
+    if (session && !session.explicit) set(entry => {
+      if (entry?.id !== session.draftId) return entry;
+      if (!bodyHasContent(entry.body) && !entry.referenceActive && !entry.linkInputActive && !entry.attachmentActive && !entry.operation) return null;
+      return {...entry, capture: null, issue: {kind: "Capture", line: {fact: "select the passage again.", reason: "your words are kept."}}};
+    });
+  }, [set, showRefinement]);
+  const reselection = refinement?.explicit ? refinement : null;
   const [pickerDraftId, setPickerDraftId] = useState<string | null>(null);
-  const [opening, setOpening] = useState<Opening | null>(null);
-  const current = useRef<Opening | null>(null);
-  const interaction = useRef<string | null>(null);
+  const [opening, setOpening] = useState<Opening | null>(() => retained.value
+    ? {id: createRandomId(), draftId: retained.value.id, focus: false, ownsFocus: false, serial: 0, mode: "Note"} : null);
+  const current = useRef<Opening | null>(opening);
+  const interaction = useRef<string | null>(opening?.id ?? null);
   const serial = useRef(0);
   const attention = useRef(0);
   const activeRef = useRef(active);
@@ -112,29 +125,25 @@ export function useSelectionComposer(input: {
   }, []);
   useEffect(() => { if (!active) setPickerDraftId(null); }, [active]);
   useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
-  const previousPublication = useRef(publication);
   useEffect(() => {
-    if (previousPublication.current === publication) return;
-    previousPublication.current = publication;
-    setPickerDraftId(null);
-    for (const entry of store.getSnapshot()) if (entry.highlightId === null) store.update(entry.id, value => ({...value, issue: {kind: "Source", line: SOURCE_CHANGED}}));
-  }, [publication, show, store]);
+    const entry = read();
+    if (publication && entry?.highlightId === null && entry.passage.identity !== publication) {
+      setPickerDraftId(null);
+      store.update(entry.id, value => value.issue?.kind === "Source" ? value : {...value, issue: {kind: "Source", line: SOURCE_CHANGED}});
+    }
+  }, [publication, read, store]);
   useEffect(() => {
     const retire = () => { if (document.visibilityState === "hidden") cancelReselection(); };
     document.addEventListener("visibilitychange", retire);
     window.addEventListener("blur", cancelReselection);
     return () => { document.removeEventListener("visibilitychange", retire); window.removeEventListener("blur", cancelReselection); };
   }, [cancelReselection]);
-  useEffect(() => () => { current.current = null; interaction.current = null; reselecting.current = null; activeRef.current = false; }, []);
+  useEffect(() => () => { cancelReselection(); current.current = null; interaction.current = null; activeRef.current = false; }, [cancelReselection]);
   useEffect(() => {
     const moved = (event: Event) => {
       const opened = current.current;
       if (!opened) return;
       if (event.type === "pointerdown" && event.target instanceof Element && event.target.closest("[data-passive-tooltip]")) return;
-      // the sheet may focus its panel before this interaction's editor is ready.
-      if (event.type === "focusin" && opened.focus && event.target instanceof Element &&
-        event.target.matches('[role="dialog"]') &&
-        event.target.querySelector("[data-selection-composer]")?.getAttribute("data-selection-composer") === opened.id) return;
       if (event.type === "focusin" || event.type === "blur") attention.current++;
       const inside = event.target instanceof Element && event.target.closest("[data-selection-composer]") !== null;
       if (opened.focus || opened.ownsFocus !== inside) show({ ...opened, focus: false, ownsFocus: inside });
@@ -152,17 +161,16 @@ export function useSelectionComposer(input: {
     return () => { for (const event of NAVIGATION_ATTENTION_EVENTS) window.removeEventListener(event, attended, true); document.removeEventListener("focusin", moved); document.removeEventListener("focusout", blurred); document.removeEventListener("pointerdown", moved, true); window.removeEventListener("blur", moved); };
   }, [show]);
 
-  const draft = active && opening ? drafts.find((entry) => entry.id === opening.draftId) ?? null : null;
+  const draft = active && opening && retained.value?.id === opening.draftId ? retained.value : null;
   const copyAnnotation = draft?.highlightId ? annotations.annotation(draft.highlightId) : null;
   const copyRead = useAuthoredQuery(copyAnnotation ? { kind: "excerpt", ref: copyAnnotation.ref, reading_ref: copyAnnotation.readingRef } : null);
   const copyResource = copyRead.data?.rows[0]?.resource;
   const fullCopyText = useMemo(() => copyResource?.excerpt?.kind === "content" ? excerptTextParts(copyResource.excerpt.body).exact : null, [copyResource]);
   const copyQuote = draft?.highlightId ? copyResource?.capture_revision === copyAnnotation?.projection.capture_revision && copyResource?.excerpt?.kind === "content" ? fullCopyText : null : draft?.passage.quote ?? null;
   const copyUnavailable = draft?.highlightId && copyQuote === null ? copyRead.error ? "couldn’t load this passage." : copyRead.data ? "this passage isn’t in this reading." : "loading the passage." : copyQuote?.trim() ? null : "this highlight has no text to copy.";
-  const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
   const annotationOwners = useRef<readonly string[]>([]);
   const canAbandon = () => {
-    const id = current.current?.draftId;
+    const id = read()?.id;
     return id === undefined || guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, draftOwner, noteEditorAttachmentOwnerId(visitId, `reader-draft:${id}`)] });
   };
   const destination = draft?.destination ?? null;
@@ -178,7 +186,7 @@ export function useSelectionComposer(input: {
       if (entry.destination.kind !== "Resolving" || entry.sourceMediaId !== defaultSource) return entry;
       if (defaultRead.status === "failed") return { ...entry, destination: { kind: "LookupFailed", error: defaultRead.error } };
       const candidate = defaultRead.data.conversation;
-      return { ...entry, sourceHasChats: candidate !== null, destination: candidate
+      return { ...entry, destination: candidate
         ? { kind: "Selected", id: candidate.id, title: candidate.title, read: 0, snapshot: { kind: "Loading" } }
         : { kind: "Absent" } };
     });
@@ -199,63 +207,23 @@ export function useSelectionComposer(input: {
         : { ...entry, destination: { ...selected, snapshot: { kind: "Failed" } }, chatIssue: { kind: "Missing", line: { fact: "this chat isn’t available." } } };
     });
   }, [draft, selectedId, treeRead, treeReadId, store]);
-  const newOwner = useMemo(() => getNewChatCommands(ctx.accountId, pane.paneId), [ctx.accountId, pane.paneId]);
-  const selectedOwner = selectedId ? getConversationCommands(ctx.accountId, selectedId) : null;
-  const commandOwner = (draft?.chatAttempt?.kind === "Dispatched" && readerRecovery(draft.chatAttempt) ? draft.chatAttempt.owner : null) ?? selectedOwner ?? newOwner;
-  const subscribeHeld = useCallback((changed: () => void) => {
-    const owners = new Set(drafts.flatMap(entry => entry.chatAttempt?.kind === "Dispatched" ? [entry.chatAttempt.owner] : []));
-    const subscriptions = [...owners].map(owner => owner.subscribe(changed));
-    return () => subscriptions.forEach(unsubscribe => unsubscribe());
-  }, [drafts]);
-  const readHeld = useCallback(() => {
-    for (const entry of drafts) if (entry.chatAttempt?.kind === "Dispatched") {
-      const state = readerRecovery(entry.chatAttempt);
-      if (state) return state;
-    }
-    return IDLE_COMMAND;
-  }, [drafts]);
-  const heldState = useSyncExternalStore(subscribeHeld, readHeld, readHeld);
-  const hasHeldChat = () => store.getSnapshot().some(entry => entry.chatAttempt?.kind === "Preparing" ||
-    readerRecovery(entry.chatAttempt) !== null);
-  const readerChatLocked = heldState.kind !== "Idle" || drafts.some(entry => entry.chatAttempt?.kind === "Preparing");
-  const chatState = useSyncExternalStore(commandOwner.subscribe, commandOwner.getSnapshot, commandOwner.getSnapshot);
-  const newState = useSyncExternalStore(newOwner.subscribe, newOwner.getSnapshot, newOwner.getSnapshot);
-  const ownChatCommand = draft !== null && draft.chatAttempt?.kind === "Dispatched" && chatState.kind !== "Idle" &&
-    chatState.command.kind === "Send" && chatState.command.runId === draft.chatAttempt.runId;
-  const chatLocked = readerChatLocked || chatState.kind !== "Idle" || newState.kind !== "Idle";
-  useEffect(() => {
-    if (draft?.chatAttempt?.kind === "Dispatched" && chatState.kind === "Idle") store.update(draft.id, entry => ({ ...entry, chatAttempt: null }));
-  }, [chatState.kind, draft, store]);
-  useEffect(() => {
-    if (draft?.chatIssue?.kind === "Catalog" && catalogRead.status === "ready" && !catalogRead.error)
-      store.update(draft.id, entry => ({ ...entry, chatIssue: null }));
-  }, [catalogRead, draft, store]);
-  useEffect(() => {
-    if (draft?.chatIssue?.kind !== "Recall") return;
-    if (freshMemory(catalog)) store.update(draft.id, entry => ({ ...entry, chatIssue: null }));
-    else if (memoryRead.status === "failed" || (memoryRead.status === "ready" && memoryRead.error))
-      store.update(draft.id, entry => entry.chatIssue?.kind === "Recall" && entry.chatIssue.state !== "Failed"
-        ? { ...entry, chatIssue: { ...entry.chatIssue, state: "Failed" } } : entry);
-  }, [draft, freshMemory, catalog, memoryRead, store]);
   const observedTree = destination?.kind === "Selected" && destination.snapshot.kind === "Ready" ? destination.snapshot.tree : null;
   const chat = observedTree ? chatView({ messages: new Map(observedTree.messages.map(message => [message.id, message])),
     leafId: observedTree.active_leaf_message_id, history: "Ready" }, observedTree.conversation.id, null) : null;
   // Target and branch come from the canonical stored leaf, never another pane's endpoint.
   const branchCue = chat && [...chat.children.values()].some(children => children.filter(message => message.role === "user").length > 1)
     ? `branch · response ${chat.path.at(-1)?.seq ?? "empty"}` : null;
-  // A highlight deleted on this or another device closes its composer; typed input is the guard's.
+  // Deleted highlights retain their independent question until deliberate discard.
   const annotationState = useSyncExternalStore(annotations.subscribe, annotations.getState, annotations.getState);
   const seen = useRef(new Set<string>());
   useEffect(() => {
     if (annotationState.local.status !== "ready") return;
     for (const annotation of annotationState.local.annotations) seen.current.add(annotation.id);
-    for (const entry of store.getSnapshot()) {
-      const id = entry.highlightId;
-      if (!id || !seen.current.has(id) || annotations.annotation(id) || entry.operation) continue;
-      seen.current.delete(id);
-      store.update(entry.id, value => ({...value, issue: {kind: "Source", line: HIGHLIGHT_DELETED}}));
-    }
-  }, [annotationState, annotations, show, store]);
+    const entry = read(), id = entry?.highlightId;
+    if (!entry || !id || !seen.current.has(id) || annotations.annotation(id) || entry.operation) return;
+    seen.current.delete(id);
+    store.update(entry.id, value => ({...value, issue: {kind: "Source", line: HIGHLIGHT_DELETED}}));
+  }, [annotationState, annotations, read, store]);
 
   // Opening fixes the exact capture before any command; commands reuse that frozen target.
   const prepare = (selected: ComposerDraft["passage"], highlightId: string | null, carried: ComposerDraft | null): ComposerDraft => {
@@ -265,8 +233,8 @@ export function useSelectionComposer(input: {
         ? { kind: "text", unit: selected.anchor.unit, start: selected.anchor.start, end: selected.anchor.end }
         : { kind: "pdf", page: selected.anchor.page, quads: selected.anchor.quads },
     };
-    const existing = carried ? undefined : store.getSnapshot().find(entry =>
-      (highlightId ? entry.highlightId === highlightId : entry.highlightId === null && samePassage(entry.passage, passage)));
+    const held = read();
+    const existing = !carried && held && (highlightId ? held.highlightId === highlightId : held.highlightId === null && samePassage(held.passage, passage)) ? held : null;
     if (existing) {
       if (highlightId && !samePassage(existing.passage, passage)) {
         const updated = { ...existing, passage: { ...passage, quote: existing.passage.quote } };
@@ -286,42 +254,114 @@ export function useSelectionComposer(input: {
     }
     const sourceRef = annotation?.sourceRef ?? capture?.sourceRef ?? `media:${mediaId}`;
     const entry: ComposerDraft = {
-      id: createRandomId(), passage: annotation ? { ...passage, quote: "" } : passage,
-      capture, highlightId, bodyRole: carried?.bodyRole ?? (highlightId ? "question" : "annotation_or_question"), annotationBase: carried?.annotationBase ?? null,
-      body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
+      id: carried?.id ?? createRandomId(), passage: annotation ? { ...passage, quote: "" } : passage,
+      capture, highlightId, color: carried?.color ?? annotation?.color ?? "yellow", bodyRole: carried?.bodyRole ?? (highlightId ? "question" : "annotation_or_question"), annotationBase: carried?.annotationBase ?? null,
+      body: carried?.body ?? emptyBody(), revision: (carried?.revision ?? -1) + 1, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Capture", line: { fact: refused ? "nexus can’t capture some text in this passage." : "couldn’t capture this passage.", reason: "your words are kept." } },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatAttempt: null, chatIssue: null,
+      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, destination: carried?.destination ?? { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatIssue: null,
     };
     store.put(entry);
     return entry;
   };
   const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null, mode: Opening["mode"]) => {
-    const previous = current.current && get(current.current.draftId);
-    const replacing = previous && (carried !== null || !(highlightId ? previous.highlightId === highlightId : samePassage(previous.passage, passage)));
-    if (replacing && !canAbandon()) return;
+    const previous = read();
+    const replacing = previous && carried === null && !(highlightId ? previous.highlightId === highlightId
+      : previous.highlightId === null && samePassage(previous.passage, passage));
+    if (replacing && !canAbandon()) return false;
     memory.enter();
     refreshCatalog();
     const prepared = prepare(passage, highlightId, carried);
     setPickerDraftId(null);
-    show({ id: createRandomId(), draftId: prepared.id, focus, ownsFocus: true, serial: ++serial.current, mode });
+    const opened = current.current;
+    show({ id: opened?.draftId === prepared.id ? opened.id : createRandomId(), draftId: prepared.id, focus, ownsFocus: focus, serial: ++serial.current, mode });
+    return true;
   };
 
   const highlightDeleted = useCallback((id: string) => {
-    for (const entry of store.getSnapshot()) if (entry.highlightId === id) store.update(entry.id, value => ({...value, issue: {kind: "Source", line: HIGHLIGHT_DELETED}}));
-  }, [store]);
+    const entry = read();
+    if (entry?.highlightId === id) store.update(entry.id, value => ({...value, issue: {kind: "Source", line: HIGHLIGHT_DELETED}}));
+  }, [read, store]);
 
   const close = (id: string | null) => {
     if (id !== null) store.remove(id);
     show(null); setPickerDraftId(null); cancelReselection();
   };
 
+  const currentSource = (capture: SelectionCapture) => {
+    const shown = reader.getState().document;
+    return activeRef.current && isMobile && document.visibilityState !== "hidden" && shown.status === "ready" &&
+      !shown.refreshing && shown.doc.identity === capture.identity && reader.measureBounds() !== null;
+  };
+  const selectionCurrent = (subject: SelectionSubject) => selectionActivation.current === subject &&
+    refining.current?.id === subject.id && currentSource(subject.capture);
+  const captureRefinement = (): SelectionSubject | null => {
+    const session = refining.current;
+    if (!session || session.inputHeld) return null;
+    const capture = reader.captureSelection();
+    if (!capture || capture.kind !== "Captured" || capture.identity !== session.identity || !currentSource(capture)) {
+      selectionActivation.current = null;
+      showRefinement({...session, candidate: capture});
+      return null;
+    }
+    const subject = {id: session.id, capture};
+    selectionActivation.current = subject;
+    showRefinement({...session, candidate: capture});
+    return subject;
+  };
+  /** Freeze before focus changes the native range; commands read this same retained value. */
+  const prepareInteraction = () => {
+    const session = refining.current;
+    if (input.boundsActive) return false;
+    if (!session) return true;
+    if (session.explicit || session.inputHeld) return false;
+    const entry = get(session.draftId);
+    const fresh = reader.captureSelection();
+    const held = selectionActivation.current;
+    const capture = fresh?.kind === "Captured" ? fresh
+      : fresh === null && held && selectionCurrent(held) ? held.capture : null;
+    if (!entry || !capture || capture.identity !== session.identity || !currentSource(capture)) {
+      selectionActivation.current = null;
+      showRefinement({...session, candidate: fresh});
+      return false;
+    }
+    prepare(capture, null, entry);
+    selectionActivation.current = null;
+    showRefinement(null);
+    return true;
+  };
+  const observeSelection = (notice: SelectionNotice) => {
+    if (!activeRef.current || !isMobile) return;
+    const next = notice.selection;
+    const session = refining.current;
+    if (!session) {
+      if (notice.kind !== "Admitted" || !next || next.kind !== "Captured" || !currentSource(next)) return;
+      if (!open(next, null, false, null, "Note")) return;
+      showRefinement({id: createRandomId(), draftId: read()!.id, identity: next.identity, candidate: next, explicit: false, inputHeld: false});
+      return;
+    }
+    const inputHeld = notice.kind === "Observed" ? notice.inputHeld : session.inputHeld;
+    const held = selectionActivation.current;
+    // A control's own focus may collapse its range after the pre-focus capture.
+    if (notice.kind === "Observed" && held && !inputHeld && (next === null || next.kind === "Captured" &&
+      samePassage(held.capture, next) && held.capture.quote === next.quote)) return;
+    selectionActivation.current = null;
+    showRefinement({...session, candidate: next, inputHeld});
+  };
+  const selectionDocument = reader.getState().document;
+  const selectionBlocked = input.boundsActive ? "apply or cancel the selection first." : refinement === null ? null
+    : refinement.explicit ? "apply or cancel the selection first."
+      : refinement.candidate === null ? "select a passage first."
+        : refinement.candidate.kind === "Rejected" ? rejectedSelectionFact(refinement.candidate.reason, selectionDocument.status === "ready" ? selectionDocument.doc : null)
+          : refinement.inputHeld ? "finish adjusting the selection." : null;
+
   /** One local command for the opened draft; the input stays until its commit is durable. */
   const submit = async ({ command, opened, recovery = null }: { command: Command; opened: Opening | null; recovery?: Extract<ComposerDraft["issue"], {kind: "Failed"}> | null }): Promise<{ id: string } | null> => {
+    if (recovery === null && !prepareInteraction()) return null;
     const entry = opened && get(opened.draftId);
     // a failed frame is retried, never resubmitted under a new identity.
     if (!opened || !entry || !writing || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive ||
-      (command.kind === "Save" && entry.bodyRole === "question") || (entry.issue !== null && entry.issue !== recovery) || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source") return null;
+      (command.kind === "Save" && entry.bodyRole === "question") || (entry.issue !== null && entry.issue !== recovery)) return null;
     const annotation = entry.highlightId ? annotations.annotation(entry.highlightId) : null;
     // a just-committed highlight joins the local reads a moment after its commit.
     if (entry.highlightId && !annotation) return null;
@@ -346,34 +386,46 @@ export function useSelectionComposer(input: {
       const value = get(entry.id);
       if (!value) return { id };
       const unchanged = value.revision === submitted.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
-      const complete = command.kind === "Save" && unchanged && intent !== null && activeRef.current &&
+      const complete = command.kind === "Save" && unchanged;
+      const restoreFocus = complete && !isMobile && intent !== null && activeRef.current &&
         current.current?.id === intent.openingId && current.current.draftId === entry.id &&
         attention.current === intent.attention && getInteractionOwner() === intent.layer && getInteractionGeneration() === intent.generation;
-      store.update(entry.id, value => ({ ...value, highlightId: id, capture: null, annotationBase: value.annotationBase ?? createdBody,
+      store.update(entry.id, value => ({ ...value, highlightId: id, capture: null, annotationBase: createdBody ?? value.annotationBase,
+        ...(command.kind === "Highlight" && value.color === submitted.color ? {color: command.color} : {}),
         operation: value.operation?.id === operationId ? null : value.operation,
         issue: failed !== null && value.issue === failed ? null : value.issue,
         ...(note && unchanged ? { body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}) }));
       if (complete) {
         close(entry.id);
-        if (!isMobile) reader.focusSource();
+        if (restoreFocus) reader.focusSource();
       }
       return { id };
     };
     try {
       if (annotation) {
-        if (command.kind === "Highlight") await recolorHighlight(writing, annotation, command.color);
-        else if (command.kind === "Save" && submitted.annotationBase !== null && note) {
-          const clone = hydrateNote(submitted.annotationBase);
-          const vector = Y.encodeStateVector(clone);
-          let delta: Uint8Array;
-          try {applyDraftBody(clone, readBody(clone), note); delta = Y.encodeStateAsUpdate(clone, vector);} finally {clone.destroy();}
-          const document = await writing.openDocument(annotation.ref), origin = Symbol("selection annotation save");
-          await writing.admitWriting({existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);}, prepare: async () => []}).result;
+        if (command.kind === "Highlight") {
+          if (annotation.color !== command.color) await recolorHighlight(writing, annotation, command.color);
+        } else if (command.kind === "Save") {
+          const colour = {kind: "update_highlight" as const, ref: annotation.ref, selection: null, color: submitted.color};
+          if (note) {
+            if (submitted.annotationBase === null) throw new Error("a materialized selection has no annotation baseline");
+            const clone = hydrateNote(submitted.annotationBase);
+            const vector = Y.encodeStateVector(clone);
+            let delta: Uint8Array;
+            try {
+              applyDraftBody(clone, readBody(clone), note);
+              delta = Y.encodeStateAsUpdate(clone, vector);
+              createdBody = encodeBytes(Y.encodeStateAsUpdate(clone));
+            } finally {clone.destroy();}
+            const document = await writing.openDocument(annotation.ref), origin = Symbol("selection annotation save");
+            await writing.admitWriting({existing: [{document, origin}], notes: [], mutate: () => {Y.applyUpdate(document.doc, delta, origin);},
+              prepare: async () => annotation.color === submitted.color ? [] : [colour]}).result;
+          } else if (annotation.color !== submitted.color) await writing.run(colour);
         }
 
       } else {
         const receipt = await createHighlight(writing, { id, capture: submitted.capture!,
-          color: command.kind === "Highlight" ? command.color : "yellow", annotation: note, source: sourceLabel(submitted.capture!.sourceRef) });
+          color: command.kind === "Highlight" ? command.color : submitted.color, annotation: note, source: sourceLabel(submitted.capture!.sourceRef) });
         const created = receipt.change.resources.find(resource => resource.ref === `highlight:${id}`);
         if (created?.kind !== "highlight" || created.body_update === null) throw new Error("highlight creation receipt has no permanent body");
         createdBody = created.body_update;
@@ -420,74 +472,15 @@ export function useSelectionComposer(input: {
     }
   };
 
-  const captureCommand = async (capture: SelectionCapture, command: Extract<Command, { kind: "Ensure" | "Highlight" }>): Promise<{ id: string; isCurrent: () => boolean } | null> => {
-    const activeOpening = current.current;
-    const activeEntry = activeOpening && get(activeOpening.draftId);
-    const sameOwner = activeEntry && activeEntry.highlightId === null && samePassage(activeEntry.passage, capture);
-    if (!sameOwner && !canAbandon()) return null;
-    const prepared = prepare(capture, null, null);
-    const opened: Opening = sameOwner && activeOpening ? activeOpening
-      : { id: createRandomId(), draftId: prepared.id, focus: false, ownsFocus: true, serial: ++serial.current, mode: "Note" };
-    if (!sameOwner) show(null);
-    interaction.current = opened.id;
-    const owns = () => activeRef.current && interaction.current === opened.id;
-    const result = await submit({ command, opened });
-    if (!result) return null;
-    if (!sameOwner) store.remove(prepared.id);
-    return { ...result, isCurrent: owns };
-  };
-
   const restoreEditor = () => {
-    // Expose the parent modal before the editor consumes its focus request.
     flushSync(() => setPickerDraftId(null));
-    if (current.current) show({ ...current.current, focus: true, ownsFocus: true, serial: ++serial.current });
+    if (!isMobile && current.current) show({ ...current.current, focus: true, ownsFocus: true, serial: ++serial.current });
   };
   const chooseChat = () => {
+    if (!prepareInteraction()) return;
     const entry = current.current && get(current.current.draftId);
-    if (!entry || entry.operation || entry.referenceActive || chatLocked || hasHeldChat()) return;
+    if (!entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive) return;
     setPickerDraftId(entry.id);
-  };
-  const chatOutcome = (entry: ComposerDraft, outcome: CommandOutcome, target: "New" | "Existing", submitted = false): OpenResult | null => {
-    const currentAttempt = get(entry.id)?.chatAttempt;
-    const attempt = currentAttempt?.kind === "Dispatched" ? currentAttempt : null;
-    const held = readerRecovery(attempt ?? null) ? attempt : null;
-    // a closed composer cannot show this refusal; one receipt names it and its way back.
-    if (submitted && outcome.kind === "Failed" && current.current?.draftId !== entry.id)
-      onFailure(HIGHLIGHT_SAVED, [{ label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" }]);
-    switch (outcome.kind) {
-      case "Accepted": {
-        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held, chatIssue: null }));
-        return { target: { href: conversationViewHref(outcome.receipt.outcome.conversation_id, outcome.receipt.outcome.assistant_message_id), labelHint: "chat" },
-          title: "question sent", openLabel: "open response" };
-      }
-      case "Pending":
-        store.update(entry.id, value => ({ ...value, operation: null }));
-        return null;
-      case "Gone":
-        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: null,
-          destination: target === "Existing" && value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "Failed" } } : value.destination,
-          chatIssue: { kind: "Missing", line: { fact: "this chat isn’t available." } } }));
-        return null;
-      case "Failed": {
-        const issue: ReaderChatIssue = outcome.rejection === "E_READER_SELECTION_STALE"
-          ? { kind: "Passage", line: SOURCE_CHANGED }
-          : outcome.rejection === "E_CONVERSATION_NOT_FOUND"
-            ? { kind: "Missing", line: { fact: "this chat isn’t available." } }
-            : outcome.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || outcome.rejection === "E_INVALID_GENERATION_SELECTION"
-              ? { kind: "Model", line: { fact: "this model isn’t available." }, destination: attempt?.destination ?? target, selection: attempt?.selection ?? { kind: "Uninitialized" } }
-              : { kind: "Failed", line: outcome.line };
-        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held,
-          destination: target === "Existing" && outcome.rejection === "E_CONVERSATION_NOT_FOUND" && value.destination.kind === "Selected"
-            ? { ...value.destination, snapshot: { kind: "Failed" } } : value.destination,
-          chatIssue: { ...issue, ...(submitted ? { highlightSaved: true as const } : {}) } }));
-        return null;
-      }
-      case "Settled":
-      case "Handled":
-        store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held }));
-        return null;
-      default: return assertNever(outcome);
-    }
   };
   const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: SelectionEditor } | null = null) => {
     const opened = current.current;
@@ -632,70 +625,74 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => value.chatAttempt?.kind === "Preparing" && value.chatAttempt.runId === runId ? { ...value, chatAttempt: null } : value);
     }
   };
-  const refreshChat = async () => {
-    const entry = current.current && get(current.current.draftId);
+  const refreshChat = () => {
+    const entry = read();
     if (!entry || entry.destination.kind !== "Selected" || entry.operation) return;
-    if (entry.chatAttempt?.kind === "Preparing") return;
-    const attempt = entry.chatAttempt;
-    const owner = getConversationCommands(ctx.accountId, entry.destination.id);
-    if (!attempt && owner.getSnapshot().kind !== "Idle") return;
-    if (attempt) {
-      const state = attempt.owner.getSnapshot();
-      if (state.kind === "Unconfirmed" || state.kind === "Busy" || (state.kind !== "Idle" && (state.command.kind !== "Send" || state.command.runId !== attempt.runId))) return;
-      try {
-        const outcome = await attempt.owner.refresh();
-        chatOutcome(entry, outcome, attempt.destination);
-      } catch (error) {
-        if (!ctx.sessionSignal().aborted) onError(error, "couldn’t check the chat.");
-        return;
-      }
-      if (attempt.owner.getSnapshot().kind !== "Idle") return;
-    }
-    store.update(entry.id, value => value.destination.kind !== "Selected" ? value : { ...value, chatIssue: null, chatAttempt: null,
-      destination: { ...value.destination, read: value.destination.read + 1, snapshot: { kind: "Loading" } } });
+    store.update(entry.id, value => value.destination.kind === "Selected" ? {...value, chatIssue: null,
+      destination: {...value.destination, read: value.destination.read + 1, snapshot: {kind: "Loading"}}} : value);
   };
   const restoreHistoryFocus = () => {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
   };
+  const hidden = retained.value?.id !== draft?.id && retained.value?.issue?.kind === "Failed" && retained.value.issue.phase === "Preparation" ? retained.value : null;
   return {
     protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
-    draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
-    hiddenPreparationFailures: drafts.flatMap(entry => entry.id !== draft?.id && entry.issue?.kind === "Failed" && entry.issue.phase === "Preparation"
-      ? [{id: entry.id, issue: entry.issue, busy: entry.operation !== null, text: bodyHasContent(entry.body) ? entry.body.body_text : null}] : []),
+    draft, opening, copyQuote, copyUnavailable, branchCue, prepareInteraction, selectionBlocked,
+    hiddenPreparationFailures: hidden && hidden.issue?.kind === "Failed" && hidden.issue.phase === "Preparation"
+      ? [{id: hidden.id, issue: hidden.issue, busy: hidden.operation !== null, text: bodyHasContent(hidden.body) ? hidden.body.body_text : null}] : [],
     annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,
     reselection, cancelReselection,
+    mobileSelection: refinement?.candidate?.kind === "Captured" ? {id: refinement.id, capture: refinement.candidate} : null,
+    selectionVisible: refinement !== null && refinement.candidate?.kind === "Captured" && !refinement.inputHeld,
+    observeSelection,
+    captureSelection: captureRefinement,
+    selectionCurrent,
+    ownSelectionFocus(subject: SelectionSubject) {
+      const session = refining.current;
+      if (!session || session.id !== subject.id || session.inputHeld || session.candidate?.kind !== "Captured" ||
+        !samePassage(session.candidate, subject.capture) || session.candidate.quote !== subject.capture.quote || !currentSource(subject.capture)) return false;
+      selectionActivation.current = subject;
+      return true;
+    },
+    cancelSelectionActivation() {
+      selectionActivation.current = null;
+      const session = refining.current;
+      if (session) showRefinement({...session, candidate: reader.captureSelection()});
+    },
     reselect() {
       const shown = reader.getState().document;
-      if (!draft || draft.operation || shown.status !== "ready" || shown.refreshing) return;
-      const next: Reselection = { id: createRandomId(), draftId: draft.id, identity: shown.doc.identity, mode: opening?.mode ?? "Note" };
-      reselecting.current = next; setReselection(next); show(null); reader.focusSource();
+      const entry = read();
+      if (!entry || entry.highlightId !== null || entry.operation || shown.status !== "ready" || shown.refreshing) return;
+      showRefinement({id: createRandomId(), draftId: entry.id, identity: shown.doc.identity, candidate: null, explicit: true, inputHeld: false});
+      selectionActivation.current = null;
+      reader.focusSource();
     },
     applyReselection(capture: SelectionCapture) {
-      const selected = reselecting.current, previous = selected && get(selected.draftId);
+      const selected = refining.current, previous = selected && get(selected.draftId);
       const shown = reader.getState().document;
-      if (!selected || !previous || !activeRef.current || shown.status !== "ready" || shown.refreshing ||
+      if (!selected?.explicit || !previous || previous.highlightId !== null || !activeRef.current || shown.status !== "ready" || shown.refreshing ||
         capture.identity !== selected.identity || shown.doc.identity !== selected.identity) return;
+      prepare(capture, null, previous);
       cancelReselection();
-      open(capture, null, true, previous, selected.mode);
+      if (!isMobile && current.current) show({...current.current, focus: true, serial: ++serial.current});
+    },
+    boundHighlight(id: string, capture: SelectionCapture) {
+      const entry = read();
+      if (entry?.highlightId !== id) return;
+      const passage: ComposerDraft["passage"] = {identity: capture.identity, quote: "", excerpt: null, excerpt_start: null, excerpt_end: null,
+        anchor: capture.anchor.kind === "text" ? capture.anchor : {kind: "pdf", page: capture.anchor.page, quads: capture.anchor.quads}};
+      store.update(entry.id, value => ({...value, passage, revision: value.revision + 1}));
     },
     pickerOpen: draft !== null && pickerDraftId === draft.id,
     chooseChat, closePicker: restoreEditor,
     chooseDestination(conversation: Pick<ConversationListItem, "id" | "title">) {
-      if (!draft || chatLocked || hasHeldChat() || draft.operation) return;
+      if (!draft || draft.operation || draft.referenceActive || draft.linkInputActive || draft.attachmentActive) return;
       store.update(draft.id, entry => ({ ...entry, chatIssue: null, destination: { kind: "Selected", id: conversation.id,
         title: conversation.title, read: 0, snapshot: { kind: "Loading" } } }));
       restoreEditor();
     },
     retryDefault() { if (draft && draft.destination.kind === "LookupFailed") store.update(draft.id, entry => ({ ...entry, destination: { kind: "Resolving" } })); },
     refreshChat,
-    retryCatalog: refreshCatalog,
-    retryRecall: memory.enter,
-    recallFailed: memory.read.status !== "loading" && memory.read.error !== null,
-    recallPending: memoryRead.status === "loading" || (memoryRead.status === "ready" ? memoryRead.refreshing : memoryRead.retrying),
-    recoverModel() {
-      const issue = draft?.chatIssue;
-      if (issue?.kind === "Model" || issue?.kind === "Catalog" || issue?.kind === "Recall") void sendChat(issue.destination, "default", { selection: issue.selection });
-    },
     openChat(intent: OpenIntent) {
       if (!draft || draft.destination.kind !== "Selected") return;
       const tree = draft.destination.snapshot.kind === "Ready" ? draft.destination.snapshot.tree : null;
@@ -724,32 +721,22 @@ export function useSelectionComposer(input: {
             });
         } };
     },
-    activePassage: active && draft ? draft.passage : null,
+    activePassage: active && draft && (draft.capture !== null || draft.highlightId !== null) && refinement === null && !input.boundsActive ? draft.passage : null,
     select(capture: SelectionCapture) {
-      const selected = reselecting.current;
+      const selected = refining.current;
       const previous = selected?.identity === capture.identity ? get(selected.draftId) ?? null : null;
       cancelReselection();
-      open(capture, null, capture.input !== "touch", previous, selected?.mode ?? "Note");
-    },
-    compose(capture: SelectionCapture, mode: "Note" | "Ask") {
-      cancelReselection();
-      open(capture, null, true, null, mode);
-    },
-    highlightCapture(capture: SelectionCapture, color: HighlightColor) {
-      return captureCommand(capture, { kind: "Highlight", color });
-    },
-    ensureCapture(capture: SelectionCapture) {
-      return captureCommand(capture, { kind: "Ensure" });
+      return open(capture, null, !isMobile && capture.input !== "touch", previous, "Note");
     },
     activate(mark: Mark, identity: string, focus = true) {
       cancelReselection();
-      open({ identity, anchor: mark.anchor, quote: "", excerpt: null, excerpt_start: null, excerpt_end: null }, mark.id, focus, null, "Note");
+      return open({ identity, anchor: mark.anchor, quote: "", excerpt: null, excerpt_start: null, excerpt_end: null }, mark.id, !isMobile && focus, null, "Note");
     },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
       if (!canAbandon()) return false;
       const returnFocus = current.current?.ownsFocus;
-      const id = current.current?.draftId;
+      const id = read()?.id;
       close(id ?? null);
       if (reason === "escape" && activeRef.current && returnFocus) reader.focusSource();
       return true;
@@ -780,8 +767,14 @@ export function useSelectionComposer(input: {
       restoreHistoryFocus();
     },
     save() { if (draft) void submit({ command: { kind: "Save" }, opened: current.current }); },
-    newChat(openIntent: OpenIntent) { void sendChat("New", openIntent); },
-    continueChat(openIntent: OpenIntent = "default") { void sendChat("Existing", openIntent); },
+    newChat(openIntent: OpenIntent) { if (prepareInteraction()) void sendChat("New", openIntent); },
+    continueChat(openIntent: OpenIntent = "default") { if (prepareInteraction()) void sendChat("Existing", openIntent); },
+    setColor(color: HighlightColor) {
+      if (!prepareInteraction()) return;
+      const entry = read();
+      if (!entry || entry.bodyRole !== "annotation_or_question" || entry.operation || entry.color === color) return;
+      store.update(entry.id, value => ({...value, color, revision: value.revision + 1}));
+    },
     highlight(color: HighlightColor) { void submit({ command: { kind: "Highlight", color }, opened: current.current }); },
     async ensure(): Promise<{ id: string; isCurrent: () => boolean } | null> {
       const opened = current.current;
