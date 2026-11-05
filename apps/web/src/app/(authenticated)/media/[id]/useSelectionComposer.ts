@@ -17,10 +17,8 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import type { Line } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration, getInteractionOwner, type Layer } from "@/lib/ui/overlay";
-import { conversationViewHref } from "@/lib/chat/view";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { readConversationTree, type ConversationTree } from "@/lib/chat/commands";
 import { fetchLatestSourceConversation, type ConversationListItem } from "@/lib/chat/conversationIndex";
@@ -47,7 +45,7 @@ import { emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, ty
 const DEFAULT_VISIT = definePaneVisitDataKey<Visit<{ conversation: ConversationListItem | null }>>("Reader.ChatDefault");
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
-type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number; mode: "Note" | "Ask" };
+type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
 type Refinement = { id: string; draftId: string; identity: string; candidate: SelectionEvent | null; explicit: boolean; inputHeld: boolean };
 type SelectionSubject = { readonly id: string; readonly capture: SelectionCapture };
 type Command =
@@ -107,7 +105,7 @@ export function useSelectionComposer(input: {
   const reselection = refinement?.explicit ? refinement : null;
   const [pickerDraftId, setPickerDraftId] = useState<string | null>(null);
   const [opening, setOpening] = useState<Opening | null>(() => retained.value
-    ? {id: createRandomId(), draftId: retained.value.id, focus: false, ownsFocus: false, serial: 0, mode: "Note"} : null);
+    ? {id: createRandomId(), draftId: retained.value.id, focus: false, ownsFocus: false, serial: 0} : null);
   const current = useRef<Opening | null>(opening);
   const interaction = useRef<string | null>(opening?.id ?? null);
   const serial = useRef(0);
@@ -181,26 +179,25 @@ export function useSelectionComposer(input: {
       if (defaultRead.status === "failed") return { ...entry, destination: { kind: "LookupFailed", error: defaultRead.error } };
       const candidate = defaultRead.data.conversation;
       return { ...entry, destination: candidate
-        ? { kind: "Selected", id: candidate.id, title: candidate.title, read: 0, snapshot: { kind: "Loading" } }
+        ? { kind: "Selected", id: candidate.id, title: candidate.title, snapshot: { kind: "Loading" } }
         : { kind: "Absent" } };
     });
   }, [defaultId, defaultRead, defaultSource, store]);
-  const selectedId = destination?.kind === "Selected" ? destination.id : null;
-  const treeReadId = destination?.kind === "Selected" && destination.snapshot.kind === "Loading" ? destination.read : null;
-  const treeRead = useServerValue({ key: draft && selectedId && treeReadId !== null ? `reader-chat-tree:${draft.id}:${selectedId}:${treeReadId}` : null,
-    stale: "", visit: TREE_VISIT, load: async () => ({ tree: await readConversationTree(selectedId!) }),
+  const loadingChatId = destination?.kind === "Selected" && destination.snapshot.kind === "Loading" ? destination.id : null;
+  const treeRead = useServerValue({ key: draft && loadingChatId ? `reader-chat-tree:${draft.id}:${loadingChatId}` : null,
+    stale: "", visit: TREE_VISIT, load: async () => ({ tree: await readConversationTree(loadingChatId!) }),
   });
   useEffect(() => {
-    if (!draft || !selectedId || treeReadId === null || treeRead.status === "loading") return;
+    if (!draft || !loadingChatId || treeRead.status === "loading") return;
     store.update(draft.id, entry => {
       const selected = entry.destination;
-      if (selected.kind !== "Selected" || selected.id !== selectedId || selected.read !== treeReadId || selected.snapshot.kind !== "Loading") return entry;
+      if (selected.kind !== "Selected" || selected.id !== loadingChatId || selected.snapshot.kind !== "Loading") return entry;
       if (treeRead.status === "failed") return { ...entry, destination: { ...selected, snapshot: { kind: "Failed" } } };
       return treeRead.data.tree ? { ...entry, destination: { ...selected, title: treeRead.data.tree.conversation.title,
         snapshot: { kind: "Ready", tree: treeRead.data.tree } } }
         : { ...entry, destination: { ...selected, snapshot: { kind: "Failed" } }, chatIssue: { kind: "Missing", line: { fact: "this chat isn’t available." } } };
     });
-  }, [draft, selectedId, treeRead, treeReadId, store]);
+  }, [draft, loadingChatId, treeRead, store]);
   const observedTree = destination?.kind === "Selected" && destination.snapshot.kind === "Ready" ? destination.snapshot.tree : null;
   const chat = observedTree ? chatView({ messages: new Map(observedTree.messages.map(message => [message.id, message])),
     leafId: observedTree.active_leaf_message_id, history: "Ready" }, observedTree.conversation.id, null) : null;
@@ -252,12 +249,12 @@ export function useSelectionComposer(input: {
       body: carried?.body ?? emptyBody(), revision: (carried?.revision ?? -1) + 1, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Capture", line: { fact: refused ? "nexus can’t capture some text in this passage." : "couldn’t capture this passage.", reason: "your words are kept." } },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: mediaId, destination: carried?.destination ?? { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatIssue: null,
+      sourceMediaId: mediaId, destination: carried?.destination ?? { kind: "Resolving" }, chatIssue: null,
     };
     store.put(entry);
     return entry;
   };
-  const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null, mode: Opening["mode"]) => {
+  const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null) => {
     const previous = read();
     const replacing = previous && carried === null && !(highlightId ? previous.highlightId === highlightId
       : previous.highlightId === null && samePassage(previous.passage, passage));
@@ -267,7 +264,7 @@ export function useSelectionComposer(input: {
     const prepared = prepare(passage, highlightId, carried);
     setPickerDraftId(null);
     const opened = current.current;
-    show({ id: opened?.draftId === prepared.id ? opened.id : createRandomId(), draftId: prepared.id, focus, ownsFocus: focus, serial: ++serial.current, mode });
+    show({ id: opened?.draftId === prepared.id ? opened.id : createRandomId(), draftId: prepared.id, focus, ownsFocus: focus, serial: ++serial.current });
     return true;
   };
 
@@ -329,7 +326,7 @@ export function useSelectionComposer(input: {
     const session = refining.current;
     if (!session) {
       if (notice.kind !== "Admitted" || !next || next.kind !== "Captured" || !currentSource(next)) return;
-      if (!open(next, null, false, null, "Note")) return;
+      if (!open(next, null, false, null)) return;
       showRefinement({id: createRandomId(), draftId: read()!.id, identity: next.identity, candidate: next, explicit: false, inputHeld: false});
       return;
     }
@@ -480,7 +477,7 @@ export function useSelectionComposer(input: {
     if (transferringChat.current || !prepareInteraction()) return;
     const opened = current.current;
     const entry = opened && get(opened.draftId);
-    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null) return;
+    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || pickerDraftId !== null) return;
     const question = convertReaderQuestion(entry.body);
     if (question.kind === "Unsupported") {
       store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "images and embeds can’t be sent from here."}}}));
@@ -495,7 +492,7 @@ export function useSelectionComposer(input: {
     if (target === "Existing" && selected.kind !== "Selected") { chooseChat(); return; }
     const observed = selected.kind === "Selected" && selected.snapshot.kind === "Ready" ? selected.snapshot.tree : null;
     const view = observed ? chatView({messages: new Map(observed.messages.map(message => [message.id,message])), leafId: observed.active_leaf_message_id, history: "Ready"}, observed.conversation.id, null) : null;
-    const selection = entry.chatSelection.kind === "Uninitialized" ? memory.fresh(catalog) ?? entry.chatSelection : entry.chatSelection;
+    const selection = memory.fresh(catalog) ?? {kind: "Uninitialized" as const};
     const shown = reader.getState().document;
     const anchor = entry.passage.anchor;
     const portable = shown.status === "ready" && shown.doc.identity === entry.passage.identity
@@ -517,12 +514,6 @@ export function useSelectionComposer(input: {
       if (result.kind === "Opened" && get(entry.id)?.revision === revision) close(entry.id);
       else if (result.kind === "Refused") store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: result.line}}));
     } finally { transferringChat.current = false; }
-  };
-  const refreshChat = () => {
-    const entry = read();
-    if (!entry || entry.destination.kind !== "Selected" || entry.operation) return;
-    store.update(entry.id, value => value.destination.kind === "Selected" ? {...value, chatIssue: null,
-      destination: {...value.destination, read: value.destination.read + 1, snapshot: {kind: "Loading"}}} : value);
   };
   const restoreHistoryFocus = () => {
     if (current.current?.ownsFocus) show({ ...current.current, focus: true, serial: ++serial.current });
@@ -581,16 +572,10 @@ export function useSelectionComposer(input: {
     chooseDestination(conversation: Pick<ConversationListItem, "id" | "title">) {
       if (!draft || draft.operation || draft.referenceActive || draft.linkInputActive || draft.attachmentActive) return;
       store.update(draft.id, entry => ({ ...entry, chatIssue: null, destination: { kind: "Selected", id: conversation.id,
-        title: conversation.title, read: 0, snapshot: { kind: "Loading" } } }));
+        title: conversation.title, snapshot: { kind: "Loading" } } }));
       restoreEditor();
     },
     retryDefault() { if (draft && draft.destination.kind === "LookupFailed") store.update(draft.id, entry => ({ ...entry, destination: { kind: "Resolving" } })); },
-    refreshChat,
-    openChat(intent: OpenIntent) {
-      if (!draft || draft.destination.kind !== "Selected") return;
-      const tree = draft.destination.snapshot.kind === "Ready" ? draft.destination.snapshot.tree : null;
-      pane.activateTarget({ target: { href: tree ? conversationViewHref(draft.destination.id, tree.active_leaf_message_id) : `/conversations/${draft.destination.id}`, labelHint: draft.destination.title }, disposition: { kind: intent === "new_pane" ? "Fork" : "Follow" } });
-    },
     /** A reference typed in the composer links the passage's highlight to its target. */
     reference(): ReferenceInputHost | null {
       if (!draft || !writing) return null;
@@ -619,11 +604,11 @@ export function useSelectionComposer(input: {
       const selected = refining.current;
       const previous = selected?.identity === capture.identity ? get(selected.draftId) ?? null : null;
       cancelReselection();
-      return open(capture, null, !isMobile && capture.input !== "touch", previous, "Note");
+      return open(capture, null, !isMobile && capture.input !== "touch", previous);
     },
     activate(mark: Mark, identity: string, focus = true) {
       cancelReselection();
-      return open({ identity, anchor: mark.anchor, quote: "", excerpt: null, excerpt_start: null, excerpt_end: null }, mark.id, !isMobile && focus, null, "Note");
+      return open({ identity, anchor: mark.anchor, quote: "", excerpt: null, excerpt_start: null, excerpt_end: null }, mark.id, !isMobile && focus, null);
     },
     highlightDeleted,
     dismiss(reason?: "outside-click" | "escape") {
@@ -660,8 +645,8 @@ export function useSelectionComposer(input: {
       restoreHistoryFocus();
     },
     save() { if (draft) void submit({ command: { kind: "Save" }, opened: current.current }); },
-    newChat(_openIntent: OpenIntent) { sendChat("New"); },
-    continueChat(_openIntent: OpenIntent = "default") { sendChat("Existing"); },
+    newChat() { sendChat("New"); },
+    continueChat() { sendChat("Existing"); },
     setColor(color: HighlightColor) {
       if (!prepareInteraction()) return;
       const entry = read();

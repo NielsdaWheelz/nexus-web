@@ -374,11 +374,11 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
         ({ triggerEl }) => { if (settleInput(triggerEl)) composer.save(); }, blockedReason);
     const newLabel = hasMessage ? "send in new chat" : "open in new chat";
     const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />,
-      ({ openIntent, triggerEl }) => { if (settleInput(triggerEl)) composer.newChat(openIntent); }, blockedReason);
+      ({ triggerEl }) => { if (settleInput(triggerEl)) composer.newChat(); }, blockedReason);
     const existingAction = command("ExistingChat", chatLabel, <Icon.Chat size={16} aria-hidden="true" />,
-      ({ openIntent, triggerEl }) => {
+      ({ triggerEl }) => {
         if (!selected) composer.chooseChat();
-        else if (settleInput(triggerEl)) composer.continueChat(openIntent);
+        else if (settleInput(triggerEl)) composer.continueChat();
       }, blockedReason);
     const highlightId = draft.highlightId;
     const selectAgain: Verb | null = highlightId === null
@@ -386,7 +386,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
       : annotation?.placement.kind === "placed" ? { label: "adjust selection", commandKey: "EditHighlightBounds", run: () => verbs.editBounds(highlightId) }
         : annotation?.placement.kind === "unlocated" ? { label: "relocate highlight", commandKey: "RelocateHighlight", run: () => verbs.relocate(highlightId) } : null;
     const copyText: Verb = { label: "copy text", commandKey: "CopyDraftText", run: () => copy(draft.body.body_text) };
-    const chatField = chatFieldOf(composer, { selectAgain, copyText }, transportVerbs);
+    const chatField = chatFieldOf(composer, transportVerbs);
     const copyAction = command("CopyPassage", "copy passage", copying.copied ? <Icon.Check size={16} aria-hidden="true" /> : <Icon.Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); }, composer.copyUnavailable);
     const shareAction = { ...(sharePiece !== null
       ? command("SharePiece", "share piece", <Icon.Share aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
@@ -472,7 +472,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
               focus={!isMobile && placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
               onEdit={edit => { setInputRefusal(null); composer.edit(edit); }} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-              onSave={!isMobile && fresh ? composer.save : undefined} onNewChat={canQuote ? () => composer.newChat("default") : undefined}
+              onSave={!isMobile && fresh ? composer.save : undefined} onNewChat={canQuote ? () => composer.newChat() : undefined}
               onContinueChat={canQuote ? () => composer.continueChat() : undefined} />
           </PaneReturnVisitScope>
         </div>
@@ -525,14 +525,13 @@ const UNSAVED = { fact: "this note isn’t saved yet." };
 const retrySave = (retry: () => void, busy: boolean): Verb => ({ label: "retry", commandKey: "RetryPassagePreparation", run: retry, busy });
 
 /** The source owns destination lookup and refusal before the new tab accepts. */
-function chatFieldOf(composer: SelectionComposer, verbs: { selectAgain: Verb | null; copyText: Verb },
+function chatFieldOf(composer: SelectionComposer,
   transportVerbs: ReturnType<typeof useTransportVerbs>): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
   const draft = composer.draft;
   if (!draft) return null;
   const issue = draft.chatIssue;
   if (issue) {
     switch (issue.kind) {
-      case "Passage": case "Source": return { line: issue.line, verbs: verbs.selectAgain ? [verbs.selectAgain, verbs.copyText] : [verbs.copyText] };
       case "Missing": return { line: issue.line, verbs: [{ label: "choose chat", commandKey: "ChooseDraftChat", run: composer.chooseChat }] };
       case "Failed": return { line: issue.line };
     }
