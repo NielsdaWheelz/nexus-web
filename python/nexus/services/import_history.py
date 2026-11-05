@@ -105,7 +105,7 @@ def delete_processing_history_in_current_transaction(db: Session, *, media_id: U
 
 def events_of_import_sql(*, session_id_expr: str, media_id_expr: str) -> str:
     """One import's history as a relation (`event_table, id, storage_id, occurred_at, stage,
-    failure_code, payload, is_failure`): its session's events, viewer-owned web recovery
+    failure_code, payload, is_failure`): its session's events, viewer-owned targeted capture
     session events bound to its media, its media events and metadata operations (time =
     completion, else creation). The caller binds ``viewer_id``."""
     # Metadata is a read projection; the queue hooks below never import its runtime.
@@ -117,8 +117,9 @@ def events_of_import_sql(*, session_id_expr: str, media_id_expr: str) -> str:
         FROM media_upload_events e JOIN media_upload_sessions s ON s.id = e.session_id
         WHERE e.session_id = {session_id_expr} OR (
             s.created_by_user_id = :viewer_id
-            AND s.input_origin->'capture_binding'->>'kind' = 'WebRecovery'
-            AND s.input_origin->'capture_binding'->'target'->>'media_id' = CAST({media_id_expr} AS text)
+            AND s.input_origin->>'kind'='BrowserCapture'
+            AND (s.published_media_id = {media_id_expr}
+                OR s.input_origin->'source_binding'->'target'->>'media_id' = CAST({media_id_expr} AS text))
         ) UNION ALL
         SELECT 'processing', 'processing:' || id::text, id, occurred_at, stage,
             failure_code, payload, payload->>'kind' IN {FAILURE_KINDS!r}

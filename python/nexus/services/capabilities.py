@@ -8,7 +8,6 @@ decided here: the source and search owners make the offer.
 from typing import Literal
 
 from nexus.schemas.imports import (
-    BrowserCaptureOffer,
     RepairSearchOffer,
     RepairSourceOffer,
     RetrySourceOffer,
@@ -17,9 +16,7 @@ from nexus.services.pdf_readiness import pdf_quote_text_readiness_rows_sql
 from nexus.services.reader_publication import ready_publication_rows_sql
 
 SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
-type SourceRecoveryAnswer = (
-    BrowserCaptureOffer | RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
-)
+type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
 type SearchRecoveryAnswer = RepairSearchOffer | Literal["NotOwner"] | None
 
 _TRANSCRIPT_KINDS = ("video", "podcast_episode")

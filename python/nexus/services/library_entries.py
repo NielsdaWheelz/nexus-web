@@ -334,6 +334,17 @@ def lock_media_for_reference(db: Session, media_id: UUID) -> None:
     lock_media_for_references(db, [media_id])
 
 
+def advance_acquisition_revision(db: Session, media_id: UUID) -> None:
+    """Fence older removal reviews after explicit acquisition; caller holds the media lock."""
+    db.execute(
+        text(
+            "UPDATE media SET acquisition_revision=nextval('collection_order_revision_seq') "
+            "WHERE id=:id RETURNING acquisition_revision"
+        ),
+        {"id": media_id},
+    ).scalar_one()
+
+
 def lock_media_for_references(db: Session, media_ids: Sequence[UUID]) -> None:
     """Acquire one complete reference barrier, including the teardown collector fence."""
     if not media_ids:
@@ -554,6 +565,7 @@ def transfer_current_media_references(
     """
     lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
     lock_media_for_reference(db, winner_media_id)
+    advance_acquisition_revision(db, winner_media_id)
     library_ids = sorted(
         {*library_ids_for_media(db, loser_media_id), *library_ids_for_media(db, winner_media_id)}
     )
@@ -723,6 +735,8 @@ def list_item_libraries(
         text(f"""
         SELECT u.removal_revision,personal.id AS all_id,
                personal.order_revision AS all_revision,
+               EXISTS (SELECT 1 FROM library_entries held
+                       WHERE held.library_id=personal.id AND held.media_id=:target_id) AS all_retained,
                EXISTS (
                    SELECT 1 FROM library_entries le
                    JOIN libraries l ON l.id=le.library_id AND l.system_key IS NULL
@@ -770,6 +784,7 @@ def list_item_libraries(
             library_id=first.all_id,
             order_revision=str(first.all_revision),
             included=first.all_included,
+            retained=first.all_retained,
             remove_blocked="PodcastSubscription"
             if first.all_protected
             else "RequiresAdmin"
@@ -850,6 +865,7 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
     for library_id in library_ids:
         inserted = _ensure_entry_locked(db, library_id, media_id) or inserted
     clear_user_media_deletion(db, viewer_id, media_id)
+    advance_acquisition_revision(db, media_id)
     return inserted
 
 
@@ -872,6 +888,7 @@ def assign_libraries_for_media_in_current_transaction(
     for library_id in targets:
         _ensure_entry_locked(db, library_id, media_id)
     clear_user_media_deletion(db, viewer_id, media_id)
+    advance_acquisition_revision(db, media_id)
 
 
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:
@@ -944,14 +961,13 @@ def parse_entry_target(ref: str) -> EntryTarget:
 
 def _lock_placement_target(
     db: Session, *, viewer_id: UUID, library_id: UUID, target: EntryTarget
-) -> UUID | None:
+) -> None:
     libraries.access(db, viewer_id, library_id, lock=False)
-    podcast_id = lock_parent_podcast(db, target.id)
+    lock_parent_podcast(db, target.id)
     lock_media_rows_in_order(db, [target.id])
     libraries.lock_library_rows_in_order(
         db, [libraries.default_library_id(db, viewer_id), library_id]
     )
-    return podcast_id
 
 
 def set_item_in_current_transaction(
@@ -963,6 +979,7 @@ def set_item_in_current_transaction(
     included: bool,
     expected_order_revision: int,
     expected_removal_revision: int | None,
+    allowed_kinds: frozenset[str] | None = None,
 ) -> tuple[LibraryPlacementOut, UUID | None]:
     """One strict placement intent; return the requested library and new entry ownership.
 
@@ -970,11 +987,9 @@ def set_item_in_current_transaction(
     the named revision; no-op retention creates no assistant undo ownership.
     """
     users.lock_viewer(db, viewer_id)
-    podcast_id = _lock_placement_target(
-        db, viewer_id=viewer_id, library_id=library_id, target=target
-    )
+    _lock_placement_target(db, viewer_id=viewer_id, library_id=library_id, target=target)
     library = libraries.access(db, viewer_id, library_id, lock=False)
-    if library.is_default and included and podcast_id is not None:
+    if library.is_default and included:
         library.require_add_content(viewer_id)
     else:
         library.require_mutable()
@@ -984,6 +999,12 @@ def set_item_in_current_transaction(
         or (included and can_restore_media(db, viewer_id, target.id))
     ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if (
+        allowed_kinds is not None
+        and db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": target.id})
+        not in allowed_kinds
+    ):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Unsupported media kind")
     if library.order_revision != expected_order_revision:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed")
     if included:
@@ -994,7 +1015,7 @@ def set_item_in_current_transaction(
         raise InvalidRequestError(message="Exclusion requires a null removal revision")
     before = entry_id(db, library_id, target)
     if included:
-        _file_media(db, viewer_id, target.id, [library_id])
+        _file_media(db, viewer_id, target.id, [] if library.is_default else [library_id])
     else:
         from nexus.services.podcasts import imports
 
@@ -1029,6 +1050,7 @@ def set_item(
     included: bool,
     expected_order_revision: int,
     expected_removal_revision: int | None,
+    allowed_kinds: frozenset[str] | None = None,
 ) -> LibraryPlacementOut:
     """Strict replay keeps the original guards and can conflict after landing."""
 
@@ -1041,6 +1063,7 @@ def set_item(
             included=included,
             expected_order_revision=expected_order_revision,
             expected_removal_revision=expected_removal_revision,
+            allowed_kinds=allowed_kinds,
         )
         record_input_change(db, owners=(f"library:{library_id}", f"media:{target.id}"))
         projection.refresh_viewer_contributors(

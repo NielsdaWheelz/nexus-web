@@ -70,9 +70,10 @@ class Published(_Strict):
     import_ref: ImportRef
     session_id: UUID
     media_id: UUID
+    source_attempt_id: UUID
     current_placements: LibraryPlacementsOut | None
     created: bool
-    """The session's own media (false: a capture reused identical bytes, I8)."""
+    """The session created its media; false when it overwrote an exact source target."""
 
 
 class Rejected(_Strict):

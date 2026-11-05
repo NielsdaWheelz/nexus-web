@@ -62,20 +62,21 @@ upload-session lifecycle and referenced only by the attempt's
 decodes that packet with the same strict model, composes
 `prepare_web_article_fragment` with the packet's base url and evidence, and
 persists title, byline, excerpt, site name and published time from the packet at
-publication. Retries carry the payload unchanged, so the packet reference is
-never lost. Sanitization, no-readable-text, and metadata failures update the
-media row and latest source attempt instead of dropping the capture. Captures,
-fetched pages and emails publish through `web_article.publish_article`; native
-x articles and matched browser replacements use `PreparedNativeArticle` in the
-source runner's terminal transaction. Retrieval
+publication. retries reuse the immutable packet while successor admission stamps
+the current reader generation as its new publication base. Sanitization, no-readable-text, and metadata failures update the
+media row and latest source attempt instead of dropping the capture. fetched pages and emails publish through `web_article.publish_article`. all browser
+articles use `PreparedBrowserArticle`; native api articles use `PreparedNativeArticle`.
+the runner commits each prepared body with its title, authors, provenance and
+source success in one terminal transaction. Retrieval
 failure never rewrites successful source truth; its current durable job is
 pending, running, or visibly suspended.
 
 ## native x articles
 
 native identity is `provider=x`, `provider_id=article:<id>`, with a verified
-`canonical_source_url` and null `canonical_url`. only the submitted carrier's
-article is admitted alongside its independent author thread. the official api
+`canonical_source_url` and null `canonical_url`. a submitted carrier admits its
+article alongside an independent author thread. direct verified browser capture
+creates the same native identity without a carrier or provider fetch. the official api
 supplies actual `article.plain_text`; blank, missing, malformed or teaser-only
 responses fail. line breaks are preserved, html escaped, and formatting/media
 are not inferred. source title/byline/date are absolute, nullable observations;
@@ -94,12 +95,13 @@ busy/progress states inside the qualified x article body refuse capture.
 
 the runner commits body, reader generation, source-owned metadata/credits,
 current facts, attempt success and index admission together. failure retains
-the previous publication and its facts. matching browser capture replaces the
-native resource in place, preserving filing and annotations; ambiguous/missing
+the previous publication and its facts. extension adds retain readable copies;
+a matching unreadable failed/pending resource receives browser input on the same
+media, preserving filing and annotations; ambiguous/missing
 quotes and cursors retain their evidence unresolved. manual relocation selects
 the retained quote under shared normalization, without rewriting it. browser
-publication refuses api refresh and queued api publication; capture again is
-the update path. see [ingest](ingest.md) for target binding and retry contracts.
+publication refuses api refresh and queued api publication. the extension exposes
+no deliberate refresh or replacement control. see [ingest](ingest.md) for target binding and retry contracts.
 
 ## acquisition and the node filter
 

@@ -14,6 +14,7 @@ from nexus.api.routes.consumption_activity import router as consumption_activity
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.email_ingest import router as email_ingest_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
+from nexus.api.routes.extension_items import router as extension_items_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.imports import router as imports_router
 from nexus.api.routes.libraries import router as libraries_router
@@ -53,6 +54,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(telemetry_router)
     api_router.include_router(extension_sessions_router)
     api_router.include_router(extension_captures_router)
+    api_router.include_router(extension_items_router)
     api_router.include_router(auth_handoff_codes_router)
     api_router.include_router(library_members_router)
     api_router.include_router(libraries_router)

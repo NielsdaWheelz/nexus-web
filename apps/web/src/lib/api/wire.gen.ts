@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 18;
+export const WIRE_REVISION = 19;
 
 export interface paths {
     "/assistant-writes": {
@@ -630,23 +630,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/extension/capture-target": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Capture Target */
-        get: operations["capture_target_extension_capture_target_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/extension/captures": {
         parameters: {
             query?: never;
@@ -698,6 +681,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/extension/items/{media_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Item */
+        get: operations["get_item_extension_items__media_id__get"];
+        put?: never;
+        post?: never;
+        /** Remove Item */
+        delete: operations["remove_item_extension_items__media_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/extension/items/{media_id}/removal-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Removal Preview */
+        get: operations["removal_preview_extension_items__media_id__removal_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/extension/libraries/{library_id}/items/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Item Library */
+        put: operations["set_item_library_extension_libraries__library_id__items__ref__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/extension/library-destinations": {
         parameters: {
             query?: never;
@@ -718,15 +753,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/extension/recovery-targets": {
+    "/extension/save-target": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Recovery Targets */
-        get: operations["recovery_targets_extension_recovery_targets_get"];
+        /** Save Target */
+        get: operations["save_target_extension_save_target_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/extension/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Source */
+        post: operations["create_source_extension_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/extension/sources/{source_attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Source */
+        get: operations["read_source_extension_sources__source_attempt_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2277,6 +2346,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/removal-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Media Removal Preview */
+        get: operations["media_removal_preview_media__media_id__removal_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/repair": {
         parameters: {
             query?: never;
@@ -3444,19 +3530,6 @@ export interface components {
              */
             run_id: string;
         };
-        /** AcquireCaptureRequest */
-        AcquireCaptureRequest: {
-            /** Destinations */
-            destinations: string[];
-            expected_removal_revision: components["schemas"]["OrderRevision"];
-            /** Generation */
-            generation: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Acquire";
-        };
         /** ActiveExclusionOut */
         ActiveExclusionOut: {
             device: components["schemas"]["DeviceSummaryOut"];
@@ -3789,17 +3862,6 @@ export interface components {
          * @enum {string}
          */
         BrowseSource: "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
-        /** BrowserCaptureOffer */
-        BrowserCaptureOffer: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "BrowserCapture";
-            /** Source Url */
-            source_url: string;
-            target: components["schemas"]["CaptureTarget"];
-        };
         /** BrowserSessionOut */
         BrowserSessionOut: {
             /**
@@ -3809,6 +3871,16 @@ export interface components {
             id: string;
             revision: components["schemas"]["OrderRevision"];
             state: components["schemas"]["QueueState"];
+        };
+        /** BrowserSource */
+        BrowserSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Browser";
+            /** X Article Id */
+            x_article_id: string | null;
         };
         /** CandidateDetail */
         CandidateDetail: {
@@ -3884,8 +3956,6 @@ export interface components {
             can_quote: boolean;
             /** Can Read */
             can_read: boolean;
-            /** Can Replace X Article */
-            can_replace_x_article: boolean;
             /** Can Retry */
             can_retry: boolean;
         };
@@ -3900,32 +3970,6 @@ export interface components {
             max_epub_bytes: number;
             /** Max Pdf Bytes */
             max_pdf_bytes: number;
-        };
-        /** CaptureTarget */
-        CaptureTarget: {
-            /** Expected Reader Generation */
-            expected_reader_generation: number | null;
-            /**
-             * Expected Source Attempt Id
-             * Format: uuid
-             */
-            expected_source_attempt_id: string;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-        };
-        /** CaptureTargetOut */
-        CaptureTargetOut: {
-            /** Capture Binding */
-            capture_binding: (components["schemas"]["XArticleBinding"] | components["schemas"]["WebRecoveryBinding"]) | null;
-            target_summary: components["schemas"]["TargetSummary"] | null;
-            /**
-             * Web Match
-             * @enum {string}
-             */
-            web_match: "None" | "Unique" | "Ambiguous";
         };
         /** CapturedEvidence */
         CapturedEvidence: {
@@ -4487,6 +4531,12 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ConfirmCaptureRequest */
+        ConfirmCaptureRequest: {
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+            /** Generation */
+            generation: number;
+        };
         /** ConfirmUploadRequest */
         ConfirmUploadRequest: {
             /** Destinations */
@@ -4964,8 +5014,6 @@ export interface components {
          * @description The session id and capture intent are frozen at first dispatch.
          */
         CreateCaptureRequest: {
-            /** Capture Binding */
-            capture_binding: (components["schemas"]["XArticleBinding"] | components["schemas"]["WebRecoveryBinding"]) | null;
             /**
              * Content Type
              * @enum {string}
@@ -4983,12 +5031,11 @@ export interface components {
              * @enum {string}
              */
             kind: "web_article" | "pdf" | "epub";
-            /** Library Ids */
-            library_ids?: string[];
             /** Sha256 */
             sha256: string;
             /** Size Bytes */
             size_bytes: number;
+            source_binding: components["schemas"]["SourceBinding"];
             /** Source Url */
             source_url: string;
         };
@@ -5004,6 +5051,18 @@ export interface components {
             id: string;
             /** Initial Context Refs */
             initial_context_refs: string[];
+        };
+        /** CreateExtensionSourceRequest */
+        CreateExtensionSourceRequest: {
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+            expected_target: components["schemas"]["SourceTarget"] | null;
+            /**
+             * Id
+             * Format: uuid4
+             */
+            id: string;
+            /** Url */
+            url: string;
         };
         /**
          * CreateInvitationRequest
@@ -5185,10 +5244,6 @@ export interface components {
         Data_CandidateReceipt_: {
             data: components["schemas"]["CandidateReceipt"];
         };
-        /** Data[CaptureTargetOut] */
-        Data_CaptureTargetOut_: {
-            data: components["schemas"]["CaptureTargetOut"];
-        };
         /** Data[ChatAdmissionReceipt] */
         Data_ChatAdmissionReceipt_: {
             data: components["schemas"]["ChatAdmissionReceipt"];
@@ -5297,6 +5352,10 @@ export interface components {
         Data_EpisodeDownloadOut_: {
             data: components["schemas"]["EpisodeDownloadOut"];
         };
+        /** Data[ExtensionItemOut] */
+        Data_ExtensionItemOut_: {
+            data: components["schemas"]["ExtensionItemOut"];
+        };
         /** Data[ExtensionSessionOut] */
         Data_ExtensionSessionOut_: {
             data: components["schemas"]["ExtensionSessionOut"];
@@ -5380,6 +5439,10 @@ export interface components {
         /** Data[MediaOut] */
         Data_MediaOut_: {
             data: components["schemas"]["MediaOut"];
+        };
+        /** Data[MediaRemovalPreviewOut] */
+        Data_MediaRemovalPreviewOut_: {
+            data: components["schemas"]["MediaRemovalPreviewOut"];
         };
         /** Data[MessageDeleteOut] */
         Data_MessageDeleteOut_: {
@@ -5533,10 +5596,6 @@ export interface components {
         Data_ReadingCopyOut_: {
             data: components["schemas"]["ReadingCopyOut"];
         };
-        /** Data[RecoveryCandidatePage] */
-        Data_RecoveryCandidatePage_: {
-            data: components["schemas"]["RecoveryCandidatePage"];
-        };
         /** Data[RemoteChildrenOut] */
         Data_RemoteChildrenOut_: {
             data: components["schemas"]["RemoteChildrenOut"];
@@ -5564,6 +5623,10 @@ export interface components {
         /** Data[ResourceTargetSearchResponse] */
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
+        };
+        /** Data[SaveTargetOut] */
+        Data_SaveTargetOut_: {
+            data: components["schemas"]["SaveTargetOut"];
         };
         /** Data[ScopeInputsPage] */
         Data_ScopeInputsPage_: {
@@ -6478,6 +6541,18 @@ export interface components {
              */
             kind: "Existing";
         };
+        /**
+         * ExtensionItemOut
+         * @description An authorized saved item, its current source and exact organization guards.
+         */
+        ExtensionItemOut: {
+            acquisition_revision: components["schemas"]["OrderRevision"];
+            /** Has Readable Copy */
+            has_readable_copy: boolean;
+            placements: components["schemas"]["LibraryPlacementsOut"];
+            source_attempt: components["schemas"]["ExtensionSourceAttemptOut"] | null;
+            summary: components["schemas"]["MediaSummaryOut"];
+        };
         /** ExtensionSessionOut */
         ExtensionSessionOut: {
             /** Display Name */
@@ -6490,6 +6565,21 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /** ExtensionSourceAttemptOut */
+        ExtensionSourceAttemptOut: {
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "accepted" | "queued" | "running" | "succeeded" | "failed";
         };
         /** ExtensionTokenOut */
         ExtensionTokenOut: {
@@ -7050,7 +7140,7 @@ export interface components {
             /** Progress */
             progress: (components["schemas"]["SourceStageProgress"] | components["schemas"]["SourceCountedProgress"]) | null;
             /** Recovery */
-            recovery: components["schemas"]["RetryUploadOffer"] | components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"] | components["schemas"]["BrowserCaptureOffer"] | null;
+            recovery: components["schemas"]["RetryUploadOffer"] | components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"] | null;
             /**
              * Stage
              * @enum {string}
@@ -7255,7 +7345,7 @@ export interface components {
         };
         /**
          * LibraryAllMembershipOut
-         * @description Effective all membership, addressed through the viewer's real personal library.
+         * @description Effective all membership and physical retention in the viewer's personal library.
          */
         LibraryAllMembershipOut: {
             /** Included */
@@ -7268,6 +7358,8 @@ export interface components {
             order_revision: components["schemas"]["OrderRevision"];
             /** Remove Blocked */
             remove_blocked: ("RequiresAdmin" | "PodcastSubscription") | null;
+            /** Retained */
+            retained: boolean;
         };
         /** LibraryCollectionTarget */
         LibraryCollectionTarget: {
@@ -8029,6 +8121,17 @@ export interface components {
             transcript_state: components["schemas"]["TranscriptState"] | null;
             /** Work In Flight */
             work_in_flight: boolean;
+        };
+        /** MediaRemovalPreviewOut */
+        MediaRemovalPreviewOut: {
+            acquisition_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Title */
+            title: string;
         };
         /**
          * MediaResourceBodyOut
@@ -10576,6 +10679,11 @@ export interface components {
              * Format: uuid
              */
             session_id: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
         };
         /** PutPlaybackSessionRequest */
         PutPlaybackSessionRequest: {
@@ -11720,16 +11828,6 @@ export interface components {
             /** Subject */
             subject: string;
         };
-        /** RecoverCaptureRequest */
-        RecoverCaptureRequest: {
-            /** Generation */
-            generation: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Recover";
-        };
         /**
          * RecoveryAction
          * @description One import obligation's offer (source, then search; at most one each), carrying
@@ -11744,19 +11842,7 @@ export interface components {
              */
             kind: "Recovery";
             /** Offer */
-            offer: components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"] | components["schemas"]["BrowserCaptureOffer"];
-        };
-        /** RecoveryCandidate */
-        RecoveryCandidate: {
-            binding: components["schemas"]["WebRecoveryBinding"];
-            summary: components["schemas"]["TargetSummary"];
-        };
-        /** RecoveryCandidatePage */
-        RecoveryCandidatePage: {
-            /** Items */
-            items: components["schemas"]["RecoveryCandidate"][];
-            /** Next Cursor */
-            next_cursor: string | null;
+            offer: components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"];
         };
         /** ReferenceResourceBodyOut */
         ReferenceResourceBodyOut: {
@@ -11922,6 +12008,10 @@ export interface components {
              * @enum {string}
              */
             kind: "remove_fact";
+        };
+        /** RemoveMediaRequest */
+        RemoveMediaRequest: {
+            expected_acquisition_revision: components["schemas"]["OrderRevision"];
         };
         /**
          * RemovedItem
@@ -12301,6 +12391,14 @@ export interface components {
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
+        };
+        /** SaveTargetOut */
+        SaveTargetOut: {
+            expected_removal_revision: components["schemas"]["OrderRevision"];
+            item: components["schemas"]["ExtensionItemOut"] | null;
+            /** Source */
+            source: components["schemas"]["BrowserSource"] | components["schemas"]["XStatusSource"];
+            target: components["schemas"]["SourceTarget"] | null;
         };
         /** ScopeConversationFact */
         ScopeConversationFact: {
@@ -12947,6 +13045,12 @@ export interface components {
             /** Title */
             title: string | null;
         };
+        /** SourceBinding */
+        SourceBinding: {
+            target: components["schemas"]["SourceTarget"] | null;
+            /** X Article Id */
+            x_article_id: string | null;
+        };
         /** SourceCapture */
         SourceCapture: {
             /** Kind */
@@ -13209,6 +13313,16 @@ export interface components {
              */
             source_attempt_id: string;
         };
+        /** SourceTarget */
+        SourceTarget: {
+            /** Expected Source Attempt Id */
+            expected_source_attempt_id: string | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
         /** SourceTargetOut */
         SourceTargetOut: {
             /** Location */
@@ -13376,20 +13490,6 @@ export interface components {
             observed_at: string;
             publication: components["schemas"]["SuggestionPublicationOut"] | null;
             state: components["schemas"]["SuggestionStateOut"];
-        };
-        /** TargetSummary */
-        TargetSummary: {
-            /**
-             * Accepted At
-             * Format: date-time
-             */
-            accepted_at: string;
-            /** Source Label */
-            source_label: string;
-            /** Source Url */
-            source_url: string;
-            /** Title */
-            title: string;
         };
         /** TemporarilyUnavailable */
         TemporarilyUnavailable: {
@@ -14115,20 +14215,6 @@ export interface components {
             target: components["schemas"]["ReaderFragmentTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
         };
-        /** WebRecoveryBinding */
-        WebRecoveryBinding: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WebRecovery";
-            /**
-             * Source Relation
-             * @enum {string}
-             */
-            source_relation: "ExactUrl" | "AlternativeCopy";
-            target: components["schemas"]["CaptureTarget"];
-        };
         /** WebTextOffsetsLocator */
         WebTextOffsetsLocator: {
             /** End Offset */
@@ -14322,17 +14408,6 @@ export interface components {
             /** Revision */
             revision: string;
         };
-        /** XArticleBinding */
-        XArticleBinding: {
-            /** Article Id */
-            article_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "XArticle";
-            target: components["schemas"]["CaptureTarget"] | null;
-        };
         /** @enum {string} */
         XArticleCompleteness: "unknown" | "incomplete";
         /**
@@ -14479,6 +14554,16 @@ export interface components {
             unchecked_post_count: number;
             /** Unresolved Parent Count */
             unresolved_parent_count: number;
+        };
+        /** XStatusSource */
+        XStatusSource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "XStatus";
+            /** Revision Id */
+            revision_id: string;
         };
         _Count: number;
         _Revision: number;
@@ -15749,37 +15834,6 @@ export interface operations {
             };
         };
     };
-    capture_target_extension_capture_target_get: {
-        parameters: {
-            query: {
-                source_url: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_CaptureTargetOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_capture_extension_captures_post: {
         parameters: {
             query?: never;
@@ -15853,7 +15907,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AcquireCaptureRequest"] | components["schemas"]["RecoverCaptureRequest"];
+                "application/json": components["schemas"]["ConfirmCaptureRequest"];
             };
         };
         responses: {
@@ -15864,6 +15918,137 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_Published_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_item_extension_items__media_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ExtensionItemOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_item_extension_items__media_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveMediaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    removal_preview_extension_items__media_id__removal_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_MediaRemovalPreviewOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_item_library_extension_libraries__library_id__items__ref__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                library_id: string;
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaceItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_LibraryPlacementOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15897,13 +16082,10 @@ export interface operations {
             };
         };
     };
-    recovery_targets_extension_recovery_targets_get: {
+    save_target_extension_save_target_get: {
         parameters: {
             query: {
                 source_url: string;
-                q?: string;
-                cursor?: string | null;
-                limit?: number;
             };
             header?: never;
             path?: never;
@@ -15917,7 +16099,71 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_RecoveryCandidatePage_"];
+                    "application/json": components["schemas"]["Data_SaveTargetOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_source_extension_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateExtensionSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_FromUrlOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_source_extension_sources__source_attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SourceAttemptOut_"];
                 };
             };
             /** @description Validation Error */
@@ -18163,7 +18409,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveMediaRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {
@@ -18928,6 +19178,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_SourceAdmission_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    media_removal_preview_media__media_id__removal_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_MediaRemovalPreviewOut_"];
                 };
             };
             /** @description Validation Error */

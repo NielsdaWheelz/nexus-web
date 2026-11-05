@@ -36,6 +36,7 @@ from nexus.auth.permissions import (
     can_read_media,
     contained_media_ids_cte_sql,
     personal_media_removal_allowed_sql,
+    requested_media_ids_cte_sql,
 )
 from nexus.db.retries import (
     TransactionRestart,
@@ -54,6 +55,7 @@ from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas import podcast as wire
+from nexus.schemas.media import MediaRemovalPreviewOut
 from nexus.services import (
     contributors,
     libraries,
@@ -369,13 +371,53 @@ def remove_episode(
     return retry_serializable(db, "remove_podcast_episode", attempt)
 
 
-def remove_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+def media_removal_preview(db: Session, viewer_id: UUID, media_id: UUID) -> MediaRemovalPreviewOut:
+    """Freeze the visible target and acquisition guard before consequence review."""
+    row = db.execute(
+        text(f"""
+            SELECT m.id,m.title,m.kind,m.acquisition_revision,
+                   {personal_media_removal_allowed_sql("m.id")} AS allowed
+            FROM media m WHERE m.id=:media_id AND m.id IN ({requested_media_ids_cte_sql()})
+        """),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).one_or_none()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if row.kind == "podcast_episode":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND, "Podcast episode removal requires a reviewed scope"
+        )
+    if not row.allowed:
+        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
+    return MediaRemovalPreviewOut(
+        media_id=row.id, title=row.title, acquisition_revision=str(row.acquisition_revision)
+    )
+
+
+def remove_media_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    expected_acquisition_revision: int,
+    allowed_kinds: frozenset[str] | None = None,
+) -> None:
     """Drop the media from the viewer's whole workspace (I5). Idempotent: a media the viewer
     cannot read is already removed. One reachable only through a system library is 403."""
-    retry_serializable(db, "remove_media_for_viewer", lambda: _remove(db, viewer_id, media_id))
+    retry_serializable(
+        db,
+        "remove_media_for_viewer",
+        lambda: _remove(db, viewer_id, media_id, expected_acquisition_revision, allowed_kinds),
+    )
 
 
-def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+def _remove(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    expected_acquisition_revision: int,
+    allowed_kinds: frozenset[str] | None,
+) -> None:
     from nexus.services.consumption import lectern
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
@@ -384,20 +426,29 @@ def _remove(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
     # The lectern's lock order, as teardown takes it: the viewer before the media.
     users.lock_viewer(db, viewer_id)
-    users.advance_removal_revision(db, viewer_id)
     kind = _lock_kind(db, media_id)
+    if kind is None or not can_read_media(db, viewer_id, media_id):
+        return
+    if allowed_kinds is not None and kind not in allowed_kinds:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Unsupported media kind")
     if kind == "podcast_episode":
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND, "Podcast episode removal requires a reviewed scope"
         )
-    if kind is None or not can_read_media(db, viewer_id, media_id):
-        return
     family_ids = library_entries.media_family_ids(db, [media_id])
     if not db.scalar(
         text(f"SELECT {personal_media_removal_allowed_sql(':m')}"),
         {"viewer_id": viewer_id, "m": media_id},
     ):
         raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
+    revision = db.execute(
+        text("SELECT acquisition_revision FROM media WHERE id=:id"), {"id": media_id}
+    ).scalar_one()
+    if revision != expected_acquisition_revision:
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT, "Media was acquired again; review removal again"
+        )
+    users.advance_removal_revision(db, viewer_id)
 
     default_id = db.scalar(
         text("SELECT id FROM libraries WHERE owner_user_id = :u AND is_default"),

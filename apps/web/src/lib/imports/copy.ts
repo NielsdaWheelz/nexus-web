@@ -451,10 +451,6 @@ function statusLine(
 ): string {
   const source = item.obligations.source;
   if (item.primary === "source" && item.classification === "NeedsAttention") {
-    if (source?.recovery?.kind === "BrowserCapture") {
-      if (source.failure_code === "E_SOURCE_ACCESS_DENIED") return "this page blocked the import.";
-      if (source.failure_code === "E_SOURCE_NOT_READABLE") return "no readable article was found.";
-    }
     const retained = sourceFailureLine(item);
     if (retained !== null) return retained;
   }
@@ -631,7 +627,6 @@ const RESTRICTION_LINE: Readonly<Record<RecoveryRestriction, string>> = {
 };
 
 function offerLine(offer: RecoveryOffer): string {
-  if (offer.kind === "BrowserCapture") return "when the article is visible, use nexus capture to finish this import.";
   const stored = offer.input === "StoredSource";
   switch (offer.kind) {
     case "RetryUpload":

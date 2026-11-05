@@ -80,7 +80,7 @@ class LibraryAccess:
             raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Only the owner can do this")
 
     def require_add_content(self, viewer_id: UUID) -> None:
-        """Own default and administered mutable named libraries admit podcasts."""
+        """Own default and administered mutable named libraries admit content."""
         self.require_not_system()
         if self.is_default:
             self.require_owner(viewer_id)

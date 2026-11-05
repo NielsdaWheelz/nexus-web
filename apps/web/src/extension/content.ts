@@ -26,11 +26,13 @@ import {
 declare const content: { fetch: typeof fetch }; // Firefox MV2: fetch in the page's principal
 
 export type ContentRequest =
+  | { kind: "pin"; source_url: string }
   | { kind: "extract"; source_url: string; x_article: boolean }
   | { kind: "bind"; targetElementId: number; linkUrl: string }
   | { kind: "download"; url: string; limits: Record<DocumentKind, number> };
 
 export type ContentReply =
+  | { kind: "pinned"; title: string }
   | { kind: "article"; packet: ArticlePacket; previewText: string }
   | { kind: "unreadable"; message: string }
   | { kind: "bound"; sameOrigin: boolean }
@@ -78,7 +80,9 @@ async function serve(request: ContentRequest): Promise<void> {
   let reply: ContentReply;
   try {
     reply =
-      request.kind === "extract"
+      request.kind === "pin"
+        ? location.href === request.source_url ? { kind: "pinned", title: document.title } : { kind: "unreadable", message: "the page changed. click add to nexus again." }
+        : request.kind === "extract"
         ? extract(request)
         : request.kind === "bind"
           ? bind(request.targetElementId, request.linkUrl)
@@ -103,12 +107,12 @@ async function serve(request: ContentRequest): Promise<void> {
 
 function extract(request: Extract<ContentRequest, { kind: "extract" }>): ContentReply {
   if (location.href !== request.source_url)
-    return { kind: "unreadable", message: "the page changed. capture it again." };
+    return { kind: "unreadable", message: "the page changed. click add to nexus again." };
   const clone = document.cloneNode(true) as Document;
   const baseUri = document.baseURI;
   const xArticle = request.x_article ? extractXArticle(clone, request.source_url) : null;
   if (request.x_article && xArticle === null)
-    return { kind: "unreadable", message: "open its reading view, then capture again." };
+    return { kind: "unreadable", message: "open the full article, then click add to nexus." };
   const sourceHtml = sourceEvidence(clone, baseUri, xArticle?.sourceRoot ?? clone); // first: Readability mutates the clone
   const article = xArticle ?? extractArticle(clone);
   if (!article?.content) {

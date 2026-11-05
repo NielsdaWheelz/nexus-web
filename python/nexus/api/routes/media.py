@@ -9,7 +9,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.logging import get_request_id
 from nexus.responses import Data
-from nexus.schemas.media import MediaOut
+from nexus.schemas.media import MediaOut, MediaRemovalPreviewOut, RemoveMediaRequest
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
     ResolvedMediaSummariesOut,
@@ -70,8 +70,22 @@ def review_media_metadata_result(
 
 
 @router.delete("/media/{media_id}", status_code=204)
-def remove_media(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+def remove_media(
+    media_id: UUID, body: RemoveMediaRequest, viewer: ViewerDep, db: DbSession
+) -> Response:
     """Idempotent: a media the viewer cannot read is already removed (204); one reachable
     only through a system library is 403."""
-    media_deletion.remove_media_for_viewer(db, viewer.user_id, media_id)
+    media_deletion.remove_media_for_viewer(
+        db,
+        viewer.user_id,
+        media_id,
+        expected_acquisition_revision=int(body.expected_acquisition_revision),
+    )
     return Response(status_code=204)
+
+
+@router.get("/media/{media_id}/removal-preview")
+def media_removal_preview(
+    media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[MediaRemovalPreviewOut]:
+    return Data(data=media_deletion.media_removal_preview(db, viewer.user_id, media_id))

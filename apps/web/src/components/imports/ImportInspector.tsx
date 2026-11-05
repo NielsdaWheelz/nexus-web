@@ -178,8 +178,6 @@ export default function ImportInspector({
   const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
   const at = (value: string) => momentText(value, display);
   const primary = speaking(item);
-  const sourceOffer = item.obligations.source?.recovery;
-  const showOriginal = original !== null && !(sourceOffer?.kind === "BrowserCapture" && sourceOffer.source_url === original.source_url);
   return (
     <div className={styles.inspector}>
       <header className={styles.inspectorHeading}>
@@ -203,7 +201,7 @@ export default function ImportInspector({
           </p>
         ) : null}
       </header>
-      {showOriginal && original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
+      {original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
       {captures.length > 0 ? <section className={styles.inspectorSection}>
         <h3>pending captures</h3>
         {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} />)}
@@ -242,24 +240,19 @@ export default function ImportInspector({
         const slot = item.obligations[key];
         if (slot === null) return null;
         const detailLine = [
-          slot.recovery?.kind !== "BrowserCapture" && slot.classification === "NeedsAttention" && slot.failure_code !== null
+          slot.classification === "NeedsAttention" && slot.failure_code !== null
             ? [`${importFailureCopy(slot.failure_code).reason}.`, importFailureCopy(slot.failure_code).explanation].filter(part => part !== null).join(" ") : null,
           recoveryLine(slot),
           slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
             ? `choose the original file: ${item.original_filename}` : null,
         ].filter(Boolean).join(" ");
-        let title = (key === "source" ? sourceFailureLine(item) : null)
+        const title = (key === "source" ? sourceFailureLine(item) : null)
           ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null);
-        if (slot.recovery?.kind === "BrowserCapture") {
-          if (slot.failure_code === "E_SOURCE_ACCESS_DENIED") title = "this page blocked the import.";
-          if (slot.failure_code === "E_SOURCE_NOT_READABLE") title = "no readable article was found.";
-        }
         return (
           <section key={key} className={styles.inspectorSection}>
             <h3>{key === "source" ? "Source" : "Search"}</h3>
             <p>{title}</p>
             {detailLine ? <p>{detailLine}</p> : null}
-            {slot.recovery?.kind === "BrowserCapture" ? <p>when the article is visible, use nexus capture to finish this import.</p> : null}
             <div className={styles.inspectorActions}>
               <ImportObligationActions item={item} obligation={key} />
             </div>

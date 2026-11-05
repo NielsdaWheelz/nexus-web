@@ -1,8 +1,9 @@
 """Imports wire contracts (`docs/modules/imports.md`).
 
-One import is a standalone upload session (`upload:<session id>`, kept after publication)
-or a visible media with a source attempt or metadata job (`media:<id>`). A standalone
-published session owns its media's row; web recovery sessions leave the media row intact.
+One import is an unpublished unbound browser capture or local upload session
+(`upload:<session id>`), or a visible media with source or metadata work (`media:<id>`).
+Published browser captures and pending bound captures share the media import; local
+uploads keep their session import after publication.
 Its source, search and metadata obligations are independent; the
 server classifies the import over them and names the one that speaks for it (`primary`).
 `ImportListQuery.normalized()` is the only filter identity a list cursor is bound to.
@@ -18,7 +19,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.extension_capture import CaptureTarget
 from nexus.schemas.import_history import HistoryEntry, ImportFailureCode, SafeFailureCode, Stage
 from nexus.schemas.media_sources import SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
@@ -55,12 +55,6 @@ class RepairSourceOffer(_Wire):
     input: SourceRecoveryInput
 
 
-class BrowserCaptureOffer(_Wire):
-    kind: Literal["BrowserCapture"] = "BrowserCapture"
-    source_url: str
-    target: CaptureTarget
-
-
 class RepairSearchOffer(_Wire):
     kind: Literal["RepairSearch"] = "RepairSearch"
     expected_revision: int = Field(ge=0)
@@ -80,14 +74,7 @@ class ImportObligation(_Wire):
     progress: SourceProgress | None
     next_retry_at: datetime | None
     failure_code: SafeFailureCode | None
-    recovery: (
-        RetryUploadOffer
-        | RetrySourceOffer
-        | RepairSourceOffer
-        | RepairSearchOffer
-        | BrowserCaptureOffer
-        | None
-    )
+    recovery: RetryUploadOffer | RetrySourceOffer | RepairSourceOffer | RepairSearchOffer | None
     unavailable_reason: RecoveryRestriction | None
 
 

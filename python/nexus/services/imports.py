@@ -55,7 +55,6 @@ from nexus.services.collection_keyset import (
 from nexus.services.import_history import events_of_import_sql, history_entries, read_history_page
 from nexus.services.media import MediaFacts, media_facts
 from nexus.services.metadata_operations import metadata_operations_sql
-from nexus.services.source_attempts import web_recovery_eligible_sql
 from nexus.services.source_publication import load_source_progress
 from nexus.services.source_types import (
     COUNTED_PROGRESS_SOURCE_TYPES,
@@ -212,38 +211,37 @@ WITH visible_media AS (
 ), upload_sessions AS (
     SELECT id AS session_id, kind AS upload_kind, filename,
         input_origin->>'kind' AS origin_kind, input_origin->>'source_url' AS capture_url,
-        input_origin->'capture_binding'->>'kind' AS binding_kind,
-        input_origin->'capture_binding'->'target'->>'media_id' AS target_media_id,
-        input_origin->'capture_binding'->'target'->>'expected_source_attempt_id' AS target_attempt_id,
+        input_origin->'source_binding'->'target'->>'media_id' AS target_media_id,
+        input_origin->'source_binding'->'target'->>'expected_source_attempt_id' AS target_attempt_id,
         published_media_id, created_at AS session_created_at,
         updated_at AS session_updated_at, verification_error_code, verification_failed_at,
         upload_url_expires_at, {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state
     FROM media_upload_sessions WHERE created_by_user_id = :viewer_id
-), recovery_sessions AS (
+), targeted_sessions AS (
     SELECT s.* FROM upload_sessions s
     JOIN media m ON m.id::text = s.target_media_id
     JOIN media_work w ON w.media_id = m.id AND w.attempt_id::text = s.target_attempt_id
-    WHERE s.binding_kind = 'WebRecovery' AND s.derived_state <> 'Published'
-      AND {web_recovery_eligible_sql("m", ":viewer_id")}
+    WHERE s.target_media_id IS NOT NULL AND s.derived_state <> 'Published'
 ), import_refs AS (
     SELECT 'upload:' || session_id::text AS ref_key, session_id,
         published_media_id AS media_id, upload_kind, filename, origin_kind, capture_url,
         derived_state, session_created_at, session_updated_at, verification_error_code,
         verification_failed_at, upload_url_expires_at
-    FROM upload_sessions WHERE binding_kind IS DISTINCT FROM 'WebRecovery'
+    FROM upload_sessions WHERE origin_kind='LocalFile'
+        OR (derived_state <> 'Published' AND target_media_id IS NULL)
     UNION ALL
     SELECT 'media:' || media_id::text, NULL, media_id, NULL, NULL, NULL, NULL, NULL, NULL,
         NULL, NULL, NULL, NULL
     FROM import_media w
     WHERE NOT EXISTS (SELECT 1 FROM upload_sessions s WHERE s.published_media_id = w.media_id
-        AND s.binding_kind IS DISTINCT FROM 'WebRecovery')
+        AND s.origin_kind='LocalFile')
 ), import_work AS (
     SELECT r.ref_key, r.session_id, r.media_id, r.derived_state, r.origin_kind,
         pending.derived_state AS pending_state, w.requested_url,
         (SELECT original.source_type FROM media_source_attempts original WHERE original.media_id = w.media_id
             ORDER BY original.attempt_no LIMIT 1) = 'generic_web_url' AS is_ordinary_url,
         CASE WHEN w.title = left(w.requested_url, 255) AND EXISTS (
-            SELECT 1 FROM upload_sessions capture WHERE capture.binding_kind = 'WebRecovery'
+            SELECT 1 FROM upload_sessions capture WHERE capture.target_media_id IS NOT NULL
                 AND capture.target_media_id = w.media_id::text
         ) THEN split_part(split_part(regexp_replace(w.requested_url,
             '^[A-Za-z][A-Za-z0-9+.-]*://', ''), '?', 1), '#', 1)
@@ -294,7 +292,7 @@ WITH visible_media AS (
         w.index_job_status, w.index_job_available_at, w.capacity_job_id, now() AS database_now
     FROM import_refs r LEFT JOIN import_media w ON w.media_id = r.media_id
     LEFT JOIN LATERAL (
-        SELECT * FROM recovery_sessions s WHERE s.target_media_id = r.media_id::text
+        SELECT * FROM targeted_sessions s WHERE s.target_media_id = r.media_id::text
         ORDER BY s.session_created_at DESC, s.session_id DESC LIMIT 1
     ) pending ON TRUE
     WHERE r.derived_state IS DISTINCT FROM 'Published' OR w.media_id IS NOT NULL
@@ -440,7 +438,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                 ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM import_media)
                     + (SELECT count(*) FROM obligations
                        WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
-                    + (SELECT count(*) FROM recovery_sessions WHERE derived_state = 'AwaitingBytes'))::integer
+                    + (SELECT count(*) FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))::integer
                     AS unfinished_work_count
             FROM imports"""),
             _params(viewer_id),
@@ -545,7 +543,7 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
             CASE WHEN derived_state = 'VerificationFailed' THEN verification_error_code
                 WHEN derived_state = 'CapabilityExpired' THEN 'E_UPLOAD_CAPABILITY_EXPIRED'
                 ELSE NULL END AS failure_code
-            FROM recovery_sessions WHERE target_media_id = CAST(:media_id AS text)
+            FROM targeted_sessions WHERE target_media_id = CAST(:media_id AS text)
             ORDER BY session_created_at DESC, session_id DESC"""),
             {**_params(viewer_id), "media_id": row["media_id"]},
         )

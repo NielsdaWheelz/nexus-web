@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Nexus Capture",
-  "version": "1.0.4",
-  "description": "Save the current article, or a linked PDF or EPUB, to your Nexus.",
+  "version": "1.1.0",
+  "description": "Add articles, documents and X threads to Nexus in one click.",
   "icons": {
     "16": "icons/16.png",
     "32": "icons/32.png",
@@ -11,7 +11,7 @@
   },
   "browser_action": {
     "default_popup": "popup.html",
-    "default_title": "Save to Nexus",
+    "default_title": "Add to Nexus",
     "default_icon": {
       "16": "icons/16.png",
       "32": "icons/32.png",
@@ -23,7 +23,13 @@
     "scripts": ["background.js"],
     "persistent": true
   },
-  "permissions": ["activeTab", "identity", "scripting", "storage", "menus"],
+  "permissions": ["activeTab", "identity", "scripting", "storage", "menus", "https://x.com/*", "https://twitter.com/*", "https://mobile.twitter.com/*"],
+  "content_scripts": [{
+    "matches": ["https://x.com/*", "https://twitter.com/*", "https://mobile.twitter.com/*"],
+    "js": ["xShare.js"],
+    "run_at": "document_idle",
+    "all_frames": false
+  }],
   "optional_permissions": ["http://*/*", "https://*/*"],
   "incognito": "not_allowed",
   "browser_specific_settings": {

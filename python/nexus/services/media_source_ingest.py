@@ -55,7 +55,8 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import requeue_dead_job
+from nexus.jobs.queue import requeue_dead_job, supersede_unclaimed_job
+from nexus.schemas.extension_capture import CreateExtensionSourceRequest, XStatusSource
 from nexus.schemas.import_history import SourceRecoveryAccepted
 from nexus.schemas.import_refs import MediaImportRef, format_import_ref
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer
@@ -67,11 +68,11 @@ from nexus.schemas.media_sources import (
     SourceAttemptOut,
     SourceRepairAdmission,
 )
-from nexus.services import libraries, library_entries, users
+from nexus.services import libraries, library_entries, source_targets, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.media_processing_state import mark_extracting
-from nexus.services.reader_publication import ensure_reader_publication
+from nexus.services.reader_publication import ensure_reader_publication, lock_publication_generation
 from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
@@ -84,6 +85,7 @@ from nexus.services.x_identity import (
     classify_x_article_url,
     classify_x_url,
     is_x_url,
+    native_x_article_id,
     x_article_provider_id,
 )
 from nexus.services.x_source import x_article_child_media_ids
@@ -194,14 +196,19 @@ def _reusable_media(
         case st.YOUTUBE_VIDEO:
             where = (Media.kind == MediaKind.video.value, Media.canonical_url == spec.canonical_url)
         case st.X_ARTICLE:
-            return db.scalar(
-                select(Media).where(
-                    Media.kind == MediaKind.web_article.value,
-                    Media.provider == "x",
-                    Media.provider_id == spec.provider_id,
-                    ~exists().where(MediaTeardownIntent.media_id == Media.id),
+            assert spec.provider_id is not None
+            article_id = spec.provider_id.removeprefix("article:")
+            candidates = source_targets.article_candidates(db, article_id)
+            if len(candidates) > 1 or any(
+                native_x_article_id(kind=m.kind, provider=m.provider, provider_id=m.provider_id)
+                != article_id
+                for m in candidates
+            ):
+                raise ConflictError(
+                    ApiErrorCode.E_X_IDENTITY_CONFLICT,
+                    "A saved copy already holds this article identity.",
                 )
-            )
+            return candidates[0] if candidates else None
         case st.X_AUTHOR_THREAD:
             holders = list(
                 db.scalars(
@@ -382,6 +389,89 @@ def accept_url_source(
     # immediate attempts, 0 of 877 exhausted six. production's rate is unknown, and the wide
     # reads that cause it stay open in lone-acquisition-exhausts-serializable-retry.
     return retry_serializable(db, "accept_url_source", admit, retries=6)
+
+
+def accept_extension_source(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    request: CreateExtensionSourceRequest,
+    request_id: str | None,
+) -> FromUrlOut:
+    """Each fresh post invocation owns an attempt; its exact replay only reads."""
+    source = source_targets.source_for_url(request.url)
+    if not isinstance(source, XStatusSource):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "An X post URL is required.")
+    payload: dict[str, object] = {
+        "extension_source": {
+            "expected_target": request.expected_target.model_dump(mode="json")
+            if request.expected_target
+            else None,
+            "expected_removal_revision": request.expected_removal_revision,
+        }
+    }
+
+    def admit() -> FromUrlOut:
+        users.lock_viewer(db, viewer_id)
+        sa.lock_identity(db, f"attempt:{request.id}")
+        superseded = db.execute(
+            text(
+                "SELECT media_id, created_by_user_id FROM media_source_supersessions "
+                "WHERE source_attempt_id=:id FOR SHARE"
+            ),
+            {"id": request.id},
+        ).one_or_none()
+        if superseded is not None:
+            if superseded.created_by_user_id != viewer_id:
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt id is taken.")
+            latest = sa.latest_attempt(db, superseded.media_id, lock=False)
+            assert latest is not None
+            return _from_url_out(db, latest, request.id).model_copy(
+                update={"source_attempt_id": request.id}
+            )
+        sent = db.get(MediaSourceAttempt, request.id, with_for_update={"read": True})
+        if sent is not None:
+            if (
+                sent.created_by_user_id != viewer_id
+                or sent.source_type != st.X_AUTHOR_THREAD
+                or sent.requested_url != request.url
+                or sent.source_payload != payload
+            ):
+                raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Attempt intent changed.")
+            return _from_url_out(db, sent, request.id)
+        media = source_targets.lock_target(
+            db,
+            viewer_id=viewer_id,
+            source_url=request.url,
+            source=source,
+            target=request.expected_target,
+            kind="web_article",
+        )
+        spec = url_source_spec(request.url)
+        if media is None:
+            media = _new_media(db, spec, url=request.url, actor_id=viewer_id)
+        prior = sa.latest_attempt(db, media.id, lock=False)
+        library_entries.validate_acquisition_destinations(
+            db,
+            viewer_id=viewer_id,
+            expected_removal_revision=int(request.expected_removal_revision),
+            library_ids=[],
+        )
+        library_entries.assign_libraries_for_media_in_current_transaction(
+            db, viewer_id, media.id, []
+        )
+        attempt = _url_attempt(
+            db, media, spec, id=request.id, actor_id=viewer_id, url=request.url, payload=payload
+        )
+        if prior is not None and prior.job_id is not None:
+            supersede_unclaimed_job(db, job_id=prior.job_id, kind="ingest_media_source")
+        mark_extracting(db, media)
+        sa.enqueue_attempt(db, attempt, actor_id=viewer_id, request_id=request_id)
+        projection.refresh_viewer_contributors(db, [viewer_id])
+        record_input_change(db, owners=(f"media:{media.id}",))
+        return _from_url_out(db, attempt, request.id)
+
+    return retry_serializable(db, "accept_extension_source", admit)
 
 
 def read_source_attempt(
@@ -823,7 +913,7 @@ def _owned_media(db: Session, viewer_id: UUID, media_id: UUID) -> Media:
     return media
 
 
-def _require_unpublished_document(db: Session, media: Media) -> None:
+def require_unpublished_document(db: Session, media: Media) -> None:
     """I9: an epub's reader identities are never replaced."""
     if media.kind != MediaKind.epub.value:
         return
@@ -855,9 +945,15 @@ def _admit_successor(
     require_unpinned_source(db, media_id=media.id)
     if media.kind == MediaKind.text_part.value:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "pieces have no source attempt")
-    _require_unpublished_document(db, media)
+    require_unpublished_document(db, media)
     payload = dict(latest.source_payload or {})
     payload.pop("parent_source_attempt_id", None)  # a successor runs on its own
+    if latest.source_type in (
+        st.BROWSER_ARTICLE_CAPTURE,
+        st.BROWSER_PDF_CAPTURE,
+        st.BROWSER_EPUB_CAPTURE,
+    ):
+        payload["base_reader_generation"] = lock_publication_generation(db, media_id=media.id)
     if latest.source_type == st.PODCAST_EPISODE_TRANSCRIPT:
         from nexus.services.podcasts.transcription import reset_podcast_transcription_job
 
@@ -1051,7 +1147,7 @@ def repair_source(
             if latest.status in st.IN_FLIGHT:
                 return answer
             raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Nothing to repair.")
-        _require_unpublished_document(db, media)
+        require_unpublished_document(db, media)
         requeue_dead_job(db, job_id=expected_job_id)
         sa.record_event(
             db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RepairSource")

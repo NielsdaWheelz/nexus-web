@@ -17,8 +17,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
 
-from pydantic import TypeAdapter
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.permissions import can_read_media
@@ -33,9 +32,7 @@ from nexus.db.models import (
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.extension_capture import (
-    CaptureBinding,
-    WebRecoveryBinding,
-    XArticleBinding,
+    BrowserSourcePayload,
     decode_article_packet,
 )
 from nexus.schemas.publication_dates import normalize_source_publication_date
@@ -60,7 +57,6 @@ from nexus.services.search import projection
 from nexus.services.source_outcome import (
     SourceDiagnostics,
     SourceRunOutcome,
-    source_contributor_observations,
 )
 from nexus.services.source_publication import (
     SourcePublicationFence,
@@ -102,6 +98,7 @@ class PreparedFileSource:
 
     plan: PdfPlan | EpubPlan
     remote_file: RemoteFile | None
+    source_file: ReaderPublicationSourceFile | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,11 +107,10 @@ class PreparedNativeArticle:
     article: Article
     fragment: WebArticlePreparedFragment
     completeness: Literal["unknown", "incomplete"]
-    capture_binding: XArticleBinding | None
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedWebRecovery:
+class PreparedBrowserArticle:
     article: Article
     fragment: WebArticlePreparedFragment
 
@@ -131,7 +127,7 @@ def acquire(
     | PreparedFileSource
     | PreparedXSource
     | PreparedNativeArticle
-    | PreparedWebRecovery
+    | PreparedBrowserArticle
 ):
     """Acquire one detached attempt in its source type's own refusal order.
 
@@ -225,7 +221,6 @@ def acquire(
             return _prepare_native_article(
                 article_id=article_id,
                 completeness=acquired.completeness,
-                capture_binding=None,
                 article=Article(
                     content_html=render_article(acquired),
                     source_html=None,
@@ -258,7 +253,16 @@ def acquire(
             plan = _prepare(
                 session_factory, media_id, kind, fence, path, fetched.size_bytes, fetched.sha256_hex
             )
-            return PreparedFileSource(plan=plan, remote_file=fetched)
+            return PreparedFileSource(
+                plan=plan,
+                remote_file=fetched,
+                source_file=ReaderPublicationSourceFile(
+                    storage_path=path,
+                    content_type=fetched.content_type,
+                    size_bytes=fetched.size_bytes,
+                    source_sha256=fetched.sha256_hex,
+                ),
+            )
         case st.BROWSER_ARTICLE_CAPTURE:
             _begin(session_factory, media_id, fence, _ARTICLE)
             packet = decode_article_packet(_read_stored(attempt))
@@ -277,45 +281,15 @@ def acquire(
                     published_time=packet.published_time or "",
                 ),
             )
-            binding_payload = attempt.source_payload["capture_binding"]
-            binding = (
-                TypeAdapter(CaptureBinding).validate_python(binding_payload)
-                if binding_payload is not None
-                else None
-            )
-            if isinstance(binding, WebRecoveryBinding):
-                return PreparedWebRecovery(
-                    article=article,
-                    fragment=prepare_article(
-                        article.content_html,
-                        base_url=article.base_url,
-                        document_url=article.document_url,
-                        extract_embeds=article.extract_embeds,
-                        embed_source_html=article.source_html,
-                    ),
-                )
-            if isinstance(binding, XArticleBinding) and binding.target is not None:
-                return _prepare_native_article(
-                    article_id=binding.article_id,
-                    article=article,
-                    completeness="unknown",
-                    capture_binding=binding,
-                )
-            fragment_id = publish_article(
-                session_factory,
-                media_id=media_id,
-                request_id=request_id,
-                fence=fence,
+            return PreparedBrowserArticle(
                 article=article,
-            )
-            return SourceRunOutcome(
-                diagnostics=_published(attempt, fragment_id),
-                observations=source_contributor_observations(
-                    media_id=media_id,
-                    observation=byline_observation(byline),
-                    source="web_article_capture",
+                fragment=prepare_article(
+                    article.content_html,
+                    base_url=article.base_url,
+                    document_url=article.document_url,
+                    extract_embeds=article.extract_embeds,
+                    embed_source_html=article.source_html,
                 ),
-                metadata_enrichment=True,
             )
         case st.EMAIL_MESSAGE:
             _begin(session_factory, media_id, fence, _ARTICLE)
@@ -361,12 +335,29 @@ def acquire(
                 metadata_enrichment=True,
                 transcript_request_reason=reason,
             )
-        case (
-            st.UPLOADED_PDF_FILE
-            | st.UPLOADED_EPUB_FILE
-            | st.BROWSER_PDF_CAPTURE
-            | st.BROWSER_EPUB_CAPTURE
-        ):
+        case st.BROWSER_PDF_CAPTURE | st.BROWSER_EPUB_CAPTURE:
+            kind = _begin(session_factory, media_id, fence, _DOCUMENT)
+            payload = BrowserSourcePayload.model_validate(attempt.source_payload)
+            plan = _prepare(
+                session_factory,
+                media_id,
+                kind,
+                fence,
+                payload.storage_path,
+                payload.size_bytes,
+                payload.sha256,
+            )
+            return PreparedFileSource(
+                plan=plan,
+                remote_file=None,
+                source_file=ReaderPublicationSourceFile(
+                    storage_path=payload.storage_path,
+                    content_type=payload.content_type,
+                    size_bytes=payload.size_bytes,
+                    source_sha256=payload.sha256,
+                ),
+            )
+        case st.UPLOADED_PDF_FILE | st.UPLOADED_EPUB_FILE:
             return _stored_file(session_factory, media_id, fence)
     raise ApiError(ApiErrorCode.E_INVALID_KIND, f"Unsupported source type: {attempt.source_type}")
 
@@ -376,13 +367,11 @@ def _prepare_native_article(
     article_id: str,
     article: Article,
     completeness: Literal["unknown", "incomplete"],
-    capture_binding: XArticleBinding | None,
 ) -> PreparedNativeArticle:
     return PreparedNativeArticle(
         article_id=article_id,
         article=article,
         completeness=completeness,
-        capture_binding=capture_binding,
         fragment=prepare_article(
             article.content_html,
             base_url=article.base_url,
@@ -393,12 +382,21 @@ def _prepare_native_article(
     )
 
 
-def publish_prepared_web_recovery(
+def require_browser_publication_base(
+    db: Session, *, media_id: UUID, attempt: MediaSourceAttempt
+) -> BrowserSourcePayload:
+    payload = BrowserSourcePayload.model_validate(attempt.source_payload)
+    if payload.base_reader_generation != lock_publication_generation(db, media_id=media_id):
+        raise ApiError(ApiErrorCode.E_RESOURCE_CONFLICT, "The saved reader changed.")
+    return payload
+
+
+def publish_prepared_browser_article(
     db: Session,
     *,
     media_id: UUID,
     attempt: MediaSourceAttempt,
-    prepared: PreparedWebRecovery,
+    prepared: PreparedBrowserArticle,
     locked_target_ids: frozenset[UUID],
     request_id: str | None,
 ) -> SourceRunOutcome:
@@ -411,18 +409,12 @@ def publish_prepared_web_recovery(
         or not can_read_media(db, owner, media_id)
     ):
         raise ApiError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "This article is no longer writable.")
-    if media.canonical_url is not None or db.scalar(
-        text("""SELECT EXISTS (
-        SELECT 1 FROM reader_publications WHERE media_id=:id UNION ALL
-        SELECT 1 FROM fragments WHERE media_id=:id UNION ALL
-        SELECT 1 FROM passage_anchors WHERE owner_scheme='media' AND owner_id=:id UNION ALL
-        SELECT 1 FROM media_file WHERE media_id=:id UNION ALL
-        SELECT 1 FROM media_teardown_intents WHERE media_id=:id)"""),
-        {"id": media_id},
-    ):
-        raise ApiError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "This article already has a reader publication."
-        )
+    payload = require_browser_publication_base(db, media_id=media_id, attempt=attempt)
+    article_id = native_x_article_id(
+        kind=media.kind, provider=media.provider, provider_id=media.provider_id
+    )
+    if article_id is not None and article_id != payload.source_binding.x_article_id:
+        raise ApiError(ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED, "The article identity changed.")
     fragment_id = publish_prepared_article(
         db,
         media_id=media_id,
@@ -431,19 +423,38 @@ def publish_prepared_web_recovery(
         prepared=prepared.fragment,
         request_id=request_id,
         locked_target_ids=locked_target_ids,
-        remap_cursors=False,
+        remap_cursors=True,
     )
-    media.canonical_source_url = normalize_url_for_display(prepared.article.document_url)
+    metadata = prepared.article.metadata
+    assert metadata is not None
+    media.title = metadata.title.strip()[:255] or media.title
+    media.description = metadata.excerpt.strip()[:2000] or None
+    media.publisher = metadata.site_name.strip()[:255] or None
+    media.edition_published_date = normalize_source_publication_date(metadata.published_time)
+    media.browser_capture_sha256 = payload.sha256
+    if article_id is not None:
+        facts = db.get(XArticleSource, media_id)
+        if facts is None:
+            db.add(
+                XArticleSource(
+                    media_id=media_id, source_attempt_id=attempt.id, completeness="unknown"
+                )
+            )
+        else:
+            facts.source_attempt_id, facts.completeness = attempt.id, "unknown"
+    else:
+        media.canonical_source_url = normalize_url_for_display(prepared.article.document_url)
+    db.flush()
+    projection.refresh(db, "media", [media_id])
+    observation = byline_observation(metadata.byline)
+    if not isinstance(observation, ObservedRoleSlices):
+        observation = ObservedRoleSlices(frozenset({"author"}), ())
     return SourceRunOutcome(
         diagnostics=_published(attempt, fragment_id),
-        observations=source_contributor_observations(
-            media_id=media_id,
-            observation=byline_observation(
-                prepared.article.metadata.byline if prepared.article.metadata else ""
-            ),
-            source="web_article_capture",
+        observations=(
+            (media_id, observation, "x_article" if article_id else "web_article_capture"),
         ),
-        metadata_enrichment=True,
+        metadata_enrichment=article_id is None,
     )
 
 
@@ -471,23 +482,10 @@ def publish_prepared_native_article(
         != prepared.article_id
     ):
         raise ApiError(ApiErrorCode.E_X_ARTICLE_IDENTITY_CHANGED, "The article identity changed.")
-    if prepared.capture_binding is not None:
-        target = prepared.capture_binding.target
-        assert target is not None
-        if (
-            target.media_id != media_id
-            or target.expected_reader_generation
-            != lock_publication_generation(db, media_id=media_id)
-        ):
-            raise ApiError(
-                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "The article changed. Capture it again."
-            )
-    elif (
+    if (
         facts := x_article_content_facts(db, media_ids=[media_id]).get(media_id)
     ) is not None and facts.representation == "browser_capture":
-        raise ApiError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Capture the page again to replace the browser copy."
-        )
+        raise ApiError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "The saved browser copy is retained.")
     fragment_id = publish_prepared_article(
         db,
         media_id=media_id,
@@ -589,7 +587,7 @@ def _stored_file(
         mutate=begin,
     )
     plan = _prepare(session_factory, media_id, kind, fence, path, size, sha256)
-    return PreparedFileSource(plan=plan, remote_file=None)
+    return PreparedFileSource(plan=plan, remote_file=None, source_file=None)
 
 
 def _prepare(
@@ -636,24 +634,24 @@ def _prepare(
 
 
 def publish_prepared_file(
-    db: Session, *, media_id: UUID, prepared: PreparedFileSource
+    db: Session, *, media_id: UUID, attempt: MediaSourceAttempt, prepared: PreparedFileSource
 ) -> tuple[SourceRunOutcome, list[str]]:
     """Publish a prepared plan in the runner's fenced transaction (the fence is its licence:
     a refresh keeps a retained publication ready); also returns the paths to delete once it
     commits (the superseded file)."""
     plan = prepared.plan
-    source_file = None
+    source_file = prepared.source_file
     media = db.get(Media, media_id)
     assert media is not None  # locked by the fence
     if (fetched := prepared.remote_file) is not None:
         media.canonical_source_url = normalize_url_for_display(fetched.final_url)
         media.updated_at = func.now()
-        source_file = ReaderPublicationSourceFile(
-            storage_path=plan.storage_path,
-            content_type=fetched.content_type,
-            size_bytes=fetched.size_bytes,
-            source_sha256=fetched.sha256_hex,
-        )
+    if attempt.source_type in (st.BROWSER_PDF_CAPTURE, st.BROWSER_EPUB_CAPTURE):
+        payload = require_browser_publication_base(db, media_id=media_id, attempt=attempt)
+        media.browser_capture_sha256 = payload.sha256
+        from nexus.services.media_source_ingest import require_unpublished_document
+
+        require_unpublished_document(db, media)
     superseded = superseded_reader_source_paths(db, media_id=media_id, source_file=source_file)
     if isinstance(plan, PdfPlan):
         outcome = replace_reader_publication(

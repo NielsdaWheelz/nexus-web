@@ -26,16 +26,16 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import personal_media_removal_allowed_sql, requested_media_ids_cte_sql
 from nexus.db.models import MediaKind
-from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.extension_capture import CaptureTarget
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.imports import (
-    BrowserCaptureOffer,
     RepairSearchOffer,
     RepairSourceOffer,
     RetrySourceOffer,
 )
 from nexus.schemas.media import (
     CapabilitiesOut,
+    ExtensionItemOut,
+    ExtensionSourceAttemptOut,
     ListeningStateOut,
     MediaOut,
     MediaProcessingSnapshotOut,
@@ -52,6 +52,7 @@ from nexus.schemas.media_summary import (
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.x_source import XArticleContent
+from nexus.services import library_entries
 from nexus.services.capabilities import (
     SearchRecoveryAnswer,
     SourceRecoveryAnswer,
@@ -74,11 +75,9 @@ from nexus.services.source_attempts import (
     source_recovery,
     source_refreshable,
     source_repairable_sql,
-    web_recovery_eligible_sql,
 )
 from nexus.services.source_types import LATEST_ORDER_SQL
 from nexus.services.transcript_navigation import read_transcript_navigation_source
-from nexus.services.upload_session_state import UPLOAD_SESSION_DERIVED_STATE_SQL
 from nexus.services.x_capture_job_hooks import retrieval as quote_retrieval
 from nexus.services.x_identity import native_x_article_id
 from nexus.services.x_source import (
@@ -109,7 +108,7 @@ _ROWS_SQL = f"""
         WHERE x.capture_id IN ({readable_x_capture_ids_sql()})
         GROUP BY x.reading_media_id
     )
-    SELECT m.id, m.kind, m.title, m.original_published_date,
+    SELECT m.id, m.kind, m.title, m.original_published_date, m.acquisition_revision,
         part_definition.version AS part_version,
         part_source.title AS part_source_title,
         CASE WHEN source_visible.media_id IS NOT NULL THEN '/media/' || part_source.id::text END AS part_source_href,
@@ -122,15 +121,6 @@ _ROWS_SQL = f"""
         {personal_media_removal_allowed_sql("m.id")} AS can_delete,
         EXISTS(SELECT 1 FROM media_parts pin WHERE pin.source_media_id=m.id) AS source_pinned,
         {source_repairable_sql("m")} AS repairable,
-        {web_recovery_eligible_sql("m", ":viewer_id")} AS web_recovery_eligible,
-        m.requested_url, attempt.requested_url AS attempt_requested_url,
-        COALESCE(attempt.source_payload->'capture_binding'->>'kind' = 'WebRecovery', false) AS is_web_recovery_source,
-        (SELECT {UPLOAD_SESSION_DERIVED_STATE_SQL}
-         FROM media_upload_sessions s WHERE s.created_by_user_id=:viewer_id AND s.published_at IS NULL
-         AND s.input_origin->'capture_binding'->>'kind'='WebRecovery'
-         AND s.input_origin->'capture_binding'->'target'->>'media_id'=m.id::text
-         AND s.input_origin->'capture_binding'->'target'->>'expected_source_attempt_id'=attempt.id::text
-         ORDER BY s.created_at DESC, s.id DESC LIMIT 1) AS capture_session_state,
         attempt.id AS attempt_id, attempt.status AS attempt_status,
         attempt.error_code AS attempt_error_code, attempt.source_type,
         attempt.job_id AS attempt_job_id,
@@ -159,7 +149,7 @@ _ROWS_SQL = f"""
     LEFT JOIN media part_source ON part_source.id=part_definition.source_media_id
     LEFT JOIN visible_media source_visible ON source_visible.media_id=part_source.id
     LEFT JOIN LATERAL (
-        SELECT id, status, error_code, source_type, job_id, requested_url, source_payload FROM media_source_attempts
+        SELECT id, status, error_code, source_type, job_id FROM media_source_attempts
         WHERE media_id = m.id ORDER BY {LATEST_ORDER_SQL} LIMIT 1
     ) attempt ON true
     LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
@@ -261,6 +251,44 @@ def media_summaries(
     return _summaries(db, viewer_id, rows, states)
 
 
+def get_extension_item(db: Session, viewer_id: UUID, media_id: UUID) -> ExtensionItemOut:
+    """One authorized capture receipt; caller owns the read snapshot or admission transaction."""
+    rows = _rows(db, viewer_id, [media_id])
+    if not rows:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    row = rows[media_id]
+    if row.kind not in ("web_article", "pdf", "epub"):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Unsupported extension media")
+    states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=[media_id])
+    return ExtensionItemOut(
+        summary=_summaries(db, viewer_id, rows, states)[media_id],
+        has_readable_copy=publication_readable(
+            row.kind, has_file=row.has_file, publication_ready=row.publication_ready
+        ),
+        source_attempt=None
+        if row.attempt_id is None
+        else ExtensionSourceAttemptOut(
+            id=row.attempt_id, status=row.attempt_status, error_code=row.attempt_error_code
+        ),
+        placements=library_entries.list_item_libraries(
+            db, viewer_id=viewer_id, target=library_entries.media_target(media_id)
+        ),
+        acquisition_revision=str(row.acquisition_revision),
+    )
+
+
+def require_extension_media_kind(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+    """Scope extension mutations to captured media; canonical commands still own authorization."""
+    kind = db.scalar(
+        text(
+            f"SELECT kind FROM media WHERE id=:target_id AND id IN ({requested_media_ids_cte_sql()})"
+        ),
+        {"viewer_id": viewer_id, "target_id": media_id},
+    )
+    if kind is not None and kind not in ("web_article", "pdf", "epub"):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Unsupported extension media")
+
+
 @dataclass(frozen=True, slots=True)
 class CompactMediaTarget:
     summary: MediaSummaryOut
@@ -296,20 +324,7 @@ def _recovery(
     search: SearchRecoveryAnswer = None
     refreshable = False
     if row.attempt_id is not None:
-        url = row.attempt_requested_url if row.is_web_recovery_source else row.requested_url
         facts = SourceRecoveryFacts(
-            capture_session_state=row.capture_session_state,
-            is_web_recovery_source=row.is_web_recovery_source,
-            browser_recovery_offer=BrowserCaptureOffer(
-                source_url=url,
-                target=CaptureTarget(
-                    media_id=row.id,
-                    expected_source_attempt_id=row.attempt_id,
-                    expected_reader_generation=None,
-                ),
-            )
-            if row.web_recovery_eligible and url
-            else None,
             attempt_id=row.attempt_id,
             attempt_status=row.attempt_status,
             error_code=row.attempt_error_code,
@@ -366,9 +381,6 @@ def _capabilities(
         can_highlight=can_highlight,
         can_quote=can_quote,
         can_retry=isinstance(source, RetrySourceOffer),
-        can_replace_x_article=row.is_creator
-        and native_x_article_id(kind=row.kind, provider=row.provider, provider_id=row.provider_id)
-        is not None,
     )
 
 
@@ -390,10 +402,10 @@ class MediaFacts:
     can_delete: bool
     progress_resettable: bool
     metadata: MetadataEnrichmentView
-    source_offer: BrowserCaptureOffer | RetrySourceOffer | RepairSourceOffer | None
+    source_offer: RetrySourceOffer | RepairSourceOffer | None
     source_restriction: SourceRecoveryRestriction | None
     """Why the source owner offers this viewer nothing, when it says (Imports reads it)."""
-    creator_source_offer: BrowserCaptureOffer | RetrySourceOffer | RepairSourceOffer | None
+    creator_source_offer: RetrySourceOffer | RepairSourceOffer | None
     search_offer: RepairSearchOffer | None
     search_restriction: Literal["NotOwner"] | None
     creator_search_offer: RepairSearchOffer | None

@@ -313,6 +313,7 @@ class Media(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     kind: Mapped[str]
     title: Mapped[str]
+    acquisition_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     canonical_source_url: Mapped[str | None]
     processing_status: Mapped[ProcessingStatus] = mapped_column(
         Enum(ProcessingStatus, name="processing_status_enum"), server_default=FetchedValue()

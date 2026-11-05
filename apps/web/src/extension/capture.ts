@@ -1,12 +1,8 @@
-// What the popup, the background and the page script share: the view state and
-// commands (popup <-> background), the failure value, the article packet and its
-// serialization, and the document classifier both download contexts use.
-// Pure: no network, no storage, no page DOM. The three bundles come from one
-// build, so these types are the contract and nothing re-validates them.
+// The installed extension's internal protocol. All bundles share this build.
+// The background owns operations; a popup activation is distinct from a server
+// create id. Reconnecting attaches to the same operation and never admits work.
 
 import type { Schema } from "@/lib/api/wire";
-
-type LibraryDestination = Schema<"LibraryDestinationOut">;
 
 export const VIEW_PORT = "nexus-capture-view";
 export const CONTENT_PORT = "nexus-capture-content";
@@ -18,7 +14,6 @@ export interface CaptureFailure {
   status: number | null;
   offline: boolean;
 }
-
 export class CaptureFailureError extends Error {
   constructor(readonly failure: CaptureFailure) {
     super(failure.message);
@@ -26,117 +21,78 @@ export class CaptureFailureError extends Error {
   }
   get status(): number | null { return this.failure.status; }
 }
-
-export function failure(
-  code: string,
-  message: string,
-  requestId: string | null = null,
-  status: number | null = null,
-  offline = false,
-): CaptureFailureError {
+export function failure(code: string, message: string, requestId: string | null = null,
+  status: number | null = null, offline = false): CaptureFailureError {
   return new CaptureFailureError({ code, message, requestId, status, offline });
 }
 
-export type TargetView =
-  | {
-      kind: "article";
-      /** never empty: the host stands in for a missing title */
-      title: string;
-      /** hostname only: signed query parameters are never displayed */
-      host: string;
-      previewText: string;
-      purpose: { kind: "New" } | { kind: "Replacement"; title: string | null } | { kind: "Recovery"; candidate: Schema<"RecoveryCandidate"> };
-      webMatch: "None" | "Unique" | "Ambiguous";
-      webChoice: boolean;
-    }
-  | {
-      kind: "document";
-      title: string;
-      host: string;
-      /** "unknown" until the download classified the bytes */
-      documentKind: "unknown" | DocumentKind;
-    };
-
-export type CapturePhase =
-  | { kind: "draft" }
-  | { kind: "review" }
-  | { kind: "acquiring" }
-  | { kind: "uploading" }
-  | { kind: "confirming" }
-  | { kind: "saved"; openUrl: string | null }
-  | { kind: "failed"; failure: CaptureFailure; recovery: "Retry" | "Check" | "Review" | "Recapture" | "Discard" };
-
+/** Only this projection of the server summary is consumed by the receipt. */
+export type ReceiptSummary = Pick<Schema<"MediaSummaryOut">, "media_id" | "title" | "contributors" | "processing_status">;
+export type ExtensionItem = Omit<Schema<"ExtensionItemOut">, "summary"> & { summary: ReceiptSummary };
+export type SaveTarget = Omit<Schema<"SaveTargetOut">, "item"> & { item: ExtensionItem | null };
+export type Preview = { title: string | null; byline: string | null };
+export type CapturePhase = "saving" | "permission" | "auth" | "saved" | "failed" | "unknown" | "unavailable" | "removed";
 export interface ViewState {
-  account: {
-    userId: string;
-    email: string | null;
-    displayName: string | null;
-  } | null;
-  /** a disconnect nexus did not confirm: the credential is kept, Retry offered */
-  revocationFailure: { kind: "Refused" | "Unknown"; failure: CaptureFailure; attempt: number } | null;
-  /** origins Firefox must grant before login or save; granted ones omitted */
-  requiredOrigins: string[];
-  draft: {
+  account_id: string | null;
+  required_origins: string[];
+  operation: {
     id: string;
-    target: TargetView;
     phase: CapturePhase;
-    destinations: LibraryDestination[];
-    /** submitted choices stay fixed until a definitive refusal is reviewed */
-    locked: boolean;
-    /** no command currently owns the draft and its selection may change */
-    editable: boolean;
-    /** The preview predates target resolution or belongs to another account. */
-    needsRecapture: boolean;
+    preview: Preview;
+    host: string;
+    item: ExtensionItem | null;
+    open_url: string | null;
+    failure: CaptureFailure | null;
+    retryable: boolean;
+    busy: boolean;
+    account_matches: boolean;
+    placement: { library_id: string; included: boolean; unknown: boolean } | null;
+    removal: "idle" | "reviewing" | "sending" | "unknown";
+    removal_preview: Schema<"MediaRemovalPreviewOut"> | null;
   } | null;
-  /** why nothing could be pinned, while no draft exists */
-  unsupported: string | null;
-  checkingFailed: boolean;
+  notice: string | null;
+  revocation_failure: CaptureFailure | null;
 }
 
-export type Command =
-  | { kind: "activate" }
-  | { kind: "list_destinations" }
-  | { kind: "list_recovery_targets"; draftId: string; accountId: string; q: string; cursor: string | null }
-  | { kind: "retry_checking" }
-  | { kind: "stop_checking" }
+export type ViewCommand =
+  | { kind: "connect"; activation_id: string; window_id: number }
+  | { kind: "open"; activation_id: string; window_id: number; tab_id: number; source_url: string }
+  | { kind: "attach"; activation_id: string; window_id: number; operation_id: string | null }
+  | { kind: "command"; activation_id: string; operation_id: string; account_id: string | null; action: ItemCommand }
+  | { kind: "retry_disconnect"; activation_id: string };
+export type ItemCommand =
   | { kind: "login" }
+  | { kind: "permission"; granted: boolean }
   | { kind: "retry" }
-  | { kind: "review" }
-  | { kind: "discard" }
-  | { kind: "capture_again" }
-  | { kind: "disconnect" };
-
-export type CommandResult =
-  | { kind: "state"; state: ViewState }
-  | { kind: "destinations"; snapshot: Schema<"LibraryDestinationsOut"> }
-  | { kind: "recovery_targets"; page: Schema<"RecoveryCandidatePage"> }
-  | { kind: "failure"; failure: CaptureFailure };
-
-/** Selection and its save barrier share this port's ordered message stream. */
-export type ViewCommand = {
-  sequence: number;
-  draftId: string;
-  accountId: string;
-} & (
-  | { kind: "set_recovery_target"; candidate: Schema<"RecoveryCandidate"> | null }
-  | { kind: "set_destination"; destination: LibraryDestination; included: boolean }
-  | { kind: "save" }
-);
-
+  | { kind: "read" }
+  | { kind: "forget" }
+  | { kind: "place"; library_id: string; included: boolean }
+  | { kind: "review_removal" }
+  | { kind: "cancel_removal" }
+  | { kind: "remove" };
 export interface ViewMessage {
   state: ViewState;
-  /** every command through this sequence is represented in state */
-  acknowledged: number;
-  failure: CaptureFailure | null;
+  operation_id: string | null;
+  /** Programmatic attachment consumes the popup's first-focus admission. */
+  attached: boolean;
+}
+export interface AddXCommand {
+  kind: "add_x";
+  activation_id: string;
+  source_url: string;
+  target_url: string;
+  preview: Preview;
 }
 
-/** Explicit intent applies equally to the background and the popup's posted suffix. */
-export function setDestination(
-  current: readonly LibraryDestination[],
-  change: { destination: LibraryDestination; included: boolean },
-): LibraryDestination[] {
-  const remaining = current.filter(item => item.id !== change.destination.id);
-  return change.included ? [...remaining, change.destination] : remaining;
+/** X navigation identities accepted by both the page adapter and background. */
+export function xTarget(url: string): { kind: "status" | "article"; id: string } | null {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return null; }
+  if (parsed.protocol !== "https:" || !["x.com", "twitter.com", "mobile.twitter.com"].includes(parsed.hostname)) return null;
+  const status = /^\/(?:[^/]+|i\/web)\/status\/([0-9]+)\/?$/u.exec(parsed.pathname);
+  if (status) return { kind: "status", id: status[1] };
+  const article = /^\/[^/]+\/article\/([0-9]+)\/?$/u.exec(parsed.pathname);
+  return article ? { kind: "article", id: article[1] } : null;
 }
 
 // --- article packet -----------------------------------------------------------
@@ -298,21 +254,27 @@ export async function readDocument(
   let size = 0;
   let kind: DocumentKind | null = null;
   for (;;) {
-    const { done, value } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array<ArrayBuffer>>;
+    try { chunk = await reader.read(); }
+    catch { return readFailure("E_CAPTURE_FETCH", "couldn’t finish downloading this link."); }
+    const { done, value } = chunk;
     if (done) break;
     chunks.push(value);
     size += value.byteLength;
     if (kind === null && size >= HEAD_BYTES) {
       kind = classify(chunks);
       if (kind === null) {
-        await reader.cancel();
+        // justify-ignore-error: the classified refusal owns the result even if
+        // transport cleanup discovers that the peer already disconnected.
+        await reader.cancel().catch(() => undefined);
         return notADocument();
       }
     }
     const limit =
       kind === null ? Math.max(limits.pdf, limits.epub) : limits[kind];
     if (size > limit) {
-      await reader.cancel();
+      // justify-ignore-error: this bounded read already refused the file.
+      await reader.cancel().catch(() => undefined);
       const megabytes = Math.round(limit / 2 ** 20);
       return readFailure("E_FILE_TOO_LARGE", `this ${kind ?? "file"} is over ${megabytes} megabytes.`);
     }

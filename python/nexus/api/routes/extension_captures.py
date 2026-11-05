@@ -8,7 +8,7 @@ its own session route.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
@@ -17,46 +17,48 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_request_id
 from nexus.responses import Data
 from nexus.schemas.extension_capture import (
-    AcquireCaptureRequest,
     BrowserCapture,
-    CaptureTargetOut,
     ConfirmCaptureRequest,
     CreateCaptureRequest,
-    RecoverCaptureRequest,
-    RecoveryCandidatePage,
+    CreateExtensionSourceRequest,
     RequestedUrl,
+    SaveTargetOut,
 )
 from nexus.schemas.library import LibraryDestinationsOut
-from nexus.schemas.media_sources import Published, UploadSessionOut
-from nexus.services import libraries, media_upload_sessions
+from nexus.schemas.media_sources import FromUrlOut, Published, SourceAttemptOut, UploadSessionOut
+from nexus.services import libraries, media_source_ingest, media_upload_sessions, source_targets
 
 router = APIRouter(prefix="/extension", tags=["extension"])
 ExtensionViewer = Annotated[Viewer, Depends(get_extension_viewer)]
 
 
-@router.get("/capture-target")
-def capture_target(
+@router.get("/save-target")
+def save_target(
     source_url: RequestedUrl, viewer: ExtensionViewer, db: DbSession
-) -> Data[CaptureTargetOut]:
+) -> Data[SaveTargetOut]:
     return Data(
-        data=media_upload_sessions.capture_target(
-            db, viewer_id=viewer.user_id, source_url=source_url
+        data=source_targets.save_target(db, viewer_id=viewer.user_id, source_url=source_url)
+    )
+
+
+@router.post("/sources")
+def create_source(
+    body: CreateExtensionSourceRequest, viewer: ExtensionViewer, db: DbSession
+) -> Data[FromUrlOut]:
+    return Data(
+        data=media_source_ingest.accept_extension_source(
+            db, viewer_id=viewer.user_id, request=body, request_id=get_request_id()
         )
     )
 
 
-@router.get("/recovery-targets")
-def recovery_targets(
-    source_url: RequestedUrl,
-    viewer: ExtensionViewer,
-    db: DbSession,
-    q: str = "",
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=100),
-) -> Data[RecoveryCandidatePage]:
+@router.get("/sources/{source_attempt_id}")
+def read_source(
+    source_attempt_id: UUID, viewer: ExtensionViewer, db: RepeatableReadDbSession
+) -> Data[SourceAttemptOut]:
     return Data(
-        data=media_upload_sessions.recovery_targets(
-            db, viewer_id=viewer.user_id, source_url=source_url, q=q, cursor=cursor, limit=limit
+        data=media_source_ingest.read_source_attempt(
+            db, viewer_id=viewer.user_id, source_attempt_id=source_attempt_id
         )
     )
 
@@ -78,7 +80,7 @@ def create_capture(
     body: CreateCaptureRequest, viewer: ExtensionViewer, db: DbSession
 ) -> Data[UploadSessionOut]:
     origin = BrowserCapture(
-        source_url=body.source_url, sha256=body.sha256, capture_binding=body.capture_binding
+        source_url=body.source_url, sha256=body.sha256, source_binding=body.source_binding
     )
     return Data(
         data=media_upload_sessions.create_session(
@@ -98,11 +100,8 @@ def confirm_capture(
             origin_kind="BrowserCapture",
             session_id=session_id,
             generation=body.generation,
-            expected_removal_revision=int(body.expected_removal_revision)
-            if isinstance(body, AcquireCaptureRequest)
-            else None,
-            destinations=body.destinations if isinstance(body, AcquireCaptureRequest) else None,
-            recovery=isinstance(body, RecoverCaptureRequest),
+            expected_removal_revision=int(body.expected_removal_revision),
+            destinations=[],
             request_id=get_request_id(),
         )
     )
