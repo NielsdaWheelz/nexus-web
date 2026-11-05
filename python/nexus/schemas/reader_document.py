@@ -48,7 +48,6 @@ class ReaderXPostOut(_Out):
     parent_source_url: str | None
     parent_title: str | None
     capture_kind: Literal["complete_post", "article_excerpt"]
-    saved_media_id: UUID | None
     created_at: datetime | None
     is_edited: bool
     availability: Literal["available", "unavailable"] | None

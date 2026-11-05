@@ -363,7 +363,9 @@ uses captured evidence independently of a temporary index span's survival;
 still needs separate qualification for generated graph facts and actual consumers.
 
 `POST /resource-items/source-targets/resolve` accepts one key: current `resource`,
-saved `reader_quote` message, `citation` edge, or saved `retrieval` id. historical
+saved `reader_quote` message, `citation` edge, saved `retrieval` id, or `x_post`
+revision with a required reading media. `x_post` resolves a revision alias to that
+media's selected primary capture; incidental context is not a primary. historical
 keys resolve their frozen facts; none reconstruct history from today's target.
 authorization is checked on both the occurrence and its current source.
 

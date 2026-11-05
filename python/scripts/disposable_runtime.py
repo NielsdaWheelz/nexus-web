@@ -81,7 +81,7 @@ LIVE_KEYS = frozenset(
     "anthropic_generation_api_key gemini_generation_api_key deepseek_generation_api_key "
     "xai_generation_api_key brave_search_api_key youtube_data_api_key x_api_bearer_token "
     "deepgram_api_key podcast_index_api_key podcast_index_api_secret".split()
-) | {"provider_endpoint_overrides", "provider_ca_pem"}
+) | {"provider_endpoint_overrides", "provider_ca_pem", "x_api_base_url"}
 
 
 def message(value: str) -> None:

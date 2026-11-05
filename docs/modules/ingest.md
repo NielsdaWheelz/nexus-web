@@ -6,10 +6,10 @@ owners (`python/nexus/services/`): `source_types.py` (the vocabulary, a leaf the
 
 ## concepts
 
-- **attempt chain.** a media's `media_source_attempts` rows, ordered `attempt_no desc, created_at desc, id desc`; the latest controls source work and recovery; x body selection belongs to its capture binding. status runs `accepted → queued → running → succeeded | failed`; an attempt born for a known source is born `succeeded` or `failed`, mirroring its media. the payload carries source facts: `ingest_purpose`, `request_reason` (transcripts), `storage_path` (a capture packet or an email body), `article_id` (the expected identity of an independently acquired native x article), nullable `capture_binding` (a browser article's frozen replacement or recovery intent) and `capture_id` on a synchronously accepted complete x capture. quoted captures use their occurrence's queue job, without child media or a source attempt.
+- **attempt chain.** a media's `media_source_attempts` rows, ordered `attempt_no desc, created_at desc, id desc`; the latest controls source work and recovery; x body selection belongs to its capture binding. status runs `accepted → queued → running → succeeded | failed`; a known-source receipt reflects its source outcome; x thread settled reuse requires the latest acquisition to have succeeded, even when a failed refresh left its media readable. the payload carries source facts: `ingest_purpose`, `request_reason` (transcripts), `storage_path` (a capture packet or an email body), `article_id` (the expected identity of an independently acquired native x article), nullable `capture_binding` (a browser article's frozen replacement or recovery intent) and explicit nullable `capture_input` / `parent_source_attempt_id` on every x author-thread attempt. quoted captures use their occurrence's queue job, without child media or a source attempt.
 - **supersession.** a run whose source another media already holds settles onto that winner, transfers CURRENT holdings/placements through `library_entries.transfer_current_media_references`, and claims its own media for teardown. loser-only entries keep their id, position and timestamp; duplicates keep the winner id/position and earliest timestamp. winner removal markers survive; loser suppression carries unless the winner was independently readable before transfer. suppressed viewers gain no default holding. publication holds ordered media/library locks and never takes a viewer lock or replays old destination payloads; `media_source_supersessions(source_attempt_id, media_id, created_by_user_id)` keeps every loser attempt's destination and original actor, including a failed acceptance whose retry found the winner. supersession mappings die with the winner; logical x revision aliases and captures have their own retained lifetime. url retries resolve this mapping before answering a still-present loser; another actor's id is refused. historical mappings with unprovable ownership retain null and refuse replay. the mapping owns current destination identity, not historical processing outcome.
 - **successor.** same-source recovery after `a` has the id `uuid5(a, "successor")`. every same-source recovery admission (retry, refresh, system repair) creates exactly that row, so a request that already landed finds its own effect. a newly confirmed browser replacement instead owns a fresh attempt through its upload receipt; it is not an api recovery successor.
-- **identity.** youtube video, readable x thread, standalone logical x post, native x article and an exact web url use their owning deduplication rules: their admission takes one advisory lock per source identity (I12), then reuses the media that source already became (a web article whose `canonical_url` is the normalized url and that is not in teardown; a redirecting url, or an article in teardown, is found only by the run, which supersedes). owned retained ordinary imports also reuse an exact original url while their canonical key is null; an active match refuses a fresh admission with 409 `E_SOURCE_IMPORT_ACTIVE`, as does another post of an x thread whose import is in flight; multiple matches require selection. ordinary url receipts follow current source provenance; a capture-import receipt retains its original accepted capture. an email maps to one media by its Message-ID.
+- **identity.** youtube video, readable x thread, standalone logical x post, native x article and an exact web url use their owning deduplication rules: their admission takes one advisory lock per source identity (I12), then reuses the media that source already became (a web article whose `canonical_url` is the normalized url and that is not in teardown; a redirecting url, or an article in teardown, is found only by the run, which supersedes). owned retained ordinary imports also reuse an exact original url while their canonical key is null; an active match refuses a fresh admission with 409 `E_SOURCE_IMPORT_ACTIVE`, as does any different x thread attempt already in flight; failed x work retains its existing recovery instead of accepting a fresh save; multiple matches require selection. ordinary url receipts follow current source provenance; a capture-input receipt retains its original attempt and media ids independently of current destination availability. an email maps to one media by its Message-ID.
 - **recovery.** one policy over the latest attempt: an in-flight attempt whose exact job is dead offers repair; a failed attempt its creator can re-acquire offers retry (a native X source whose refresh failed keeps its readable copy, so its media stays ready and the retry is still offered); a same-source-terminal error, or a stored source whose bytes are gone (`E_SIGN_UPLOAD_FAILED`, `E_STORAGE_MISSING`), offers nothing. refresh is offered and admitted by one predicate (`source_refreshable`): the creator's settled source on a ready or failed media with no such restriction. every rule reads the attempt's `error_code`.
 - **run.** the job marks the attempt running, keeps a detached snapshot, acquires with no transaction open, then settles: the url families publish through their owners (web article, youtube, podcast transcription) and the runner mirrors the media's outcome; files and X sources are prepared here and published in the runner's terminal transaction (native X positions follow canonical source generations and explicit unresolved-position adoption). only catalogued terminal codes settle a failure, each a typed refusal no retry changes (a lost stored source never comes back; a publication its store refuses, `E_RESOURCE_CONFLICT`, refuses again), at once; anything else re-raises to the queue (three tries, then dead and the repair offer). a resource limit or a podcast transcript fails at dead-letter.
 - **upload session.** bytes go browser -> storage directly (Vercel caps bodies at 4.5 MB) and become media only after the server verifies them. the client mints the session id; the intent (kind, filename, content type, size, origin `LocalFile | BrowserCapture{source_url, sha256, capture_binding}`) never changes. creation keeps an initial destination draft; final confirmation freezes the removal fence and destination ids and persists those ids. every create of an unpublished, unrejected session advances its generation: a new staging path `uploads/sessions/<id>/<generation>/` and a fresh five-minute url, so a failed PUT is answered by creating again, never reported. confirm copies the current generation's staged object to a fresh candidate under `media/<candidate media>/candidates/`, verifies size, content type, sha-256 and the file signature (or the strict article packet), then publishes once. a deterministic refusal (`E_SOURCE_INTEGRITY`, `E_INVALID_FILE_TYPE`, `E_FILE_TOO_LARGE`, `E_CAPTURE_TOO_LARGE`) settles the session `Rejected`; only removal remains. Imports derives its state set-wise (`UPLOAD_SESSION_DERIVED_STATE_SQL`): `Published`, `VerificationFailed`, `CapabilityExpired` (the url lapsed with no publication: Retry upload picks the original file and creates again) or `AwaitingBytes`; a published standalone session keeps its `upload:<session id>` import; web recovery uses its target `media:<id>`.
@@ -79,8 +79,8 @@ positions and annotation identity. no aggregate-thread replacement path remains.
 
 a re-add files all linked children, including failed ones, without retrying them.
 uninspected carriers and explicitly deleted children require fresh discovery on
-that write. reads never resurrect children. same-carrier active runs may join;
-another carrier conflicts. no duplicate capture conversion or merge is performed.
+that write. reads never resurrect children. x active runs refuse another command, including
+the same carrier with another uuid; replay of the accepted uuid remains read-only. no duplicate capture conversion or merge is performed.
 
 ## contracts
 
@@ -213,8 +213,30 @@ article publication retains its literal attributed excerpt before enrichment.
 under the live claim, current slot job and matching published source provenance.
 failure keeps the excerpt or link. `archive_x_capture_assets` stores declared
 images independently; missing bytes do not change body completeness or identity.
-reads use retained bytes, never a provider fetch. save post requires a complete
-readable capture and reuses its exact bytes without network acquisition.
+reads use retained bytes, never a provider fetch. `save post` accepts asynchronous
+author-thread acquisition from a readable complete capture or excerpt. complete
+input freezes the root and readable pinned one-hop context; excerpts supply only
+the permalink to acquisition. retained captures keep their ids, words, context
+and observation times. only the root can add primary membership; context does
+not become primary merely by being frozen. retries preserve input, and supersession
+carries it to the winning attempt. frozen input is worker authority, never a read
+grant. acceptance survives presentation teardown without refiling or restarting
+work; queue hooks treat a removed destination as superseded.
+
+`x_post_saves` projects saved state in bounded repeatable-read batches. saved means
+a readable primary physically held in a personal non-system collection; grants
+and incidental quotations do not count. a unique saved thread takes precedence
+over an existing standalone save. otherwise admission and projection share readable
+primary-holder then unresolved-unpublished candidate selection. readable unheld
+work can block saving and expose its authorized import recovery without claiming
+a personal holding. completion without filing restores `save post`.
+
+reader hosts observe this projection through the existing entry/import clocks.
+`MediaAdmissions` owns uncertain save commands across pane unmount; 202 retires the
+command before subsequent reads. failed observation retries no mutation. the
+normal row exposes only `open on x` and `save post` / `open saved post`; image
+archive recovery remains independent. exact-capture replacement and separate
+post/thread commands have no route or control.
 
 x highlights and passages belong to `fragment:<fragment_id>` with exact capture
 publication and offsets, not a containing media. authorized publication establishes

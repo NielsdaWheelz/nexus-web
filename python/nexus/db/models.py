@@ -415,7 +415,7 @@ class MediaSourceAttempt(Base):
 
     __tablename__ = "media_source_attempts"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    # Settled x-capture receipts retain this original identity after media deletion.
+    # Capture-input acceptance receipts retain this original identity after media deletion.
     media_id: Mapped[UUID]
     created_by_user_id: Mapped[UUID | None]
     source_type: Mapped[str]

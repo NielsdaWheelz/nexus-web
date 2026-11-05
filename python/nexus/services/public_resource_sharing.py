@@ -575,7 +575,6 @@ def _read_document(
                     parent_source_url=unit.x_post.parent_source_url,
                     parent_title=unit.x_post.parent_title,
                     capture_kind=unit.x_post.capture_kind,
-                    saved_media_id=None,
                     created_at=unit.x_post.created_at,
                     is_edited=unit.x_post.is_edited,
                     availability=unit.x_post.availability,

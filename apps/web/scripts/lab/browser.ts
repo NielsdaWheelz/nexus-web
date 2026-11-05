@@ -29,6 +29,14 @@ export async function openLabBrowser(input: {
   const directory = await mkdtemp(join(tmpdir(), "nexus-lab-browser-"));
   const profile = join(directory, "profile");
   const state: { context: BrowserContext | null } = { context: null };
+  async function close() {
+    try {
+      await state.context?.close();
+    } finally {
+      state.context = null;
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
   try {
     await mkdir(profile);
     if (input.browser === "firefox") {
@@ -95,14 +103,9 @@ export async function openLabBrowser(input: {
       await state.context.close();
       state.context = null;
       return open(false, offline);
-    }, close: async () => {
-      await state.context?.close();
-      state.context = null;
-      await rm(directory, { recursive: true, force: true });
-    } };
+    }, close };
   } catch (error) {
-    await state.context?.close();
-    await rm(directory, { recursive: true, force: true });
+    await close();
     throw error;
   }
 }

@@ -2351,23 +2351,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/x-capture": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Replace X Capture */
-        put: operations["replace_x_capture_media__media_id__x_capture_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{source_media_id}/part-candidates/{candidate_id}": {
         parameters: {
             query?: never;
@@ -3319,6 +3302,23 @@ export interface paths {
         get: operations["get_version_version_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/x/captures/save-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Save State */
+        post: operations["read_save_state_x_captures_save_state_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5541,10 +5541,6 @@ export interface components {
         Data_RemoteChildrenOut_: {
             data: components["schemas"]["RemoteChildrenOut"];
         };
-        /** Data[ReplaceXCaptureOut] */
-        Data_ReplaceXCaptureOut_: {
-            data: components["schemas"]["ReplaceXCaptureOut"];
-        };
         /** Data[ResolvedMediaSummariesOut] */
         Data_ResolvedMediaSummariesOut_: {
             data: components["schemas"]["ResolvedMediaSummariesOut"];
@@ -5637,6 +5633,10 @@ export interface components {
         /** Data[XCaptureArchiveOut] */
         Data_XCaptureArchiveOut_: {
             data: components["schemas"]["XCaptureArchiveOut"];
+        };
+        /** Data[XPostSaveStateOut] */
+        Data_XPostSaveStateOut_: {
+            data: components["schemas"]["XPostSaveStateOut"];
         };
         /** Data[list[OracleConcordanceOut]] */
         Data_list_OracleConcordanceOut__: {
@@ -6665,23 +6665,16 @@ export interface components {
              */
             url: string;
         };
-        /** FromXCaptureOut */
+        /**
+         * FromXCaptureOut
+         * @description Immutable acceptance identities, independent of the current destination.
+         */
         FromXCaptureOut: {
-            /**
-             * Accepted Capture Id
-             * Format: uuid
-             */
-            accepted_capture_id: string;
-            /** Created */
-            created: boolean;
-            /** Import Ref */
-            import_ref: string;
             /**
              * Media Id
              * Format: uuid
              */
             media_id: string;
-            processing_status: components["schemas"]["ProcessingStatus"];
             /**
              * Source Attempt Id
              * Format: uuid
@@ -11595,8 +11588,6 @@ export interface components {
              * @enum {string}
              */
             relation: "primary" | "quoted" | "replied_to" | "retweeted" | "embedded";
-            /** Saved Media Id */
-            saved_media_id: string | null;
             /** Source Revision Id */
             source_revision_id: string;
             /** Source Url */
@@ -11995,31 +11986,6 @@ export interface components {
              */
             kind: "RepairSource";
         };
-        /** ReplaceXCaptureOut */
-        ReplaceXCaptureOut: {
-            /**
-             * Capture Id
-             * Format: uuid
-             */
-            capture_id: string;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /** Reader Generation */
-            reader_generation: number;
-        };
-        /** ReplaceXCaptureRequest */
-        ReplaceXCaptureRequest: {
-            /**
-             * Capture Id
-             * Format: uuid
-             */
-            capture_id: string;
-            /** Expected Reader Generation */
-            expected_reader_generation: number;
-        };
         /** ReplyInsertion */
         ReplyInsertion: {
             /** Branch Anchor */
@@ -12045,7 +12011,7 @@ export interface components {
             /** Reading Media Id */
             reading_media_id: string | null;
             /** Target */
-            target: components["schemas"]["ResourceSourceTargetKey"] | components["schemas"]["ReaderQuoteSourceTargetKey"] | components["schemas"]["CitationSourceTargetKey"] | components["schemas"]["RetrievalSourceTargetKey"];
+            target: components["schemas"]["ResourceSourceTargetKey"] | components["schemas"]["ReaderQuoteSourceTargetKey"] | components["schemas"]["CitationSourceTargetKey"] | components["schemas"]["RetrievalSourceTargetKey"] | components["schemas"]["XPostSourceTargetKey"];
         };
         /** ResolvedMediaSummariesOut */
         ResolvedMediaSummariesOut: {
@@ -13212,7 +13178,7 @@ export interface components {
         /** SourceTargetOut */
         SourceTargetOut: {
             /** Location */
-            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"];
+            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
             source_activation: components["schemas"]["ResourceActivationOut"] | null;
         };
         /** Stamp */
@@ -14400,6 +14366,98 @@ export interface components {
              * @enum {string}
              */
             kind: "x_capture";
+        };
+        /** XPostAcquisition */
+        XPostAcquisition: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            obligation: components["schemas"]["ImportObligation"];
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** XPostSaveConflict */
+        XPostSaveConflict: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conflict";
+            /** Saved Media Id */
+            saved_media_id: string | null;
+        };
+        /** XPostSaveResolved */
+        XPostSaveResolved: {
+            acquisition: components["schemas"]["XPostAcquisition"] | null;
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resolved";
+            /** Saved Media Id */
+            saved_media_id: string | null;
+        };
+        XPostSaveState: components["schemas"]["XPostSaveUnavailable"] | components["schemas"]["XPostSaveConflict"] | components["schemas"]["XPostSaveResolved"];
+        /** XPostSaveStateOut */
+        XPostSaveStateOut: {
+            /** Items */
+            items: components["schemas"]["XPostSaveState"][];
+        };
+        /** XPostSaveStateRequest */
+        XPostSaveStateRequest: {
+            /** Capture Ids */
+            capture_ids: string[];
+        };
+        /** XPostSaveUnavailable */
+        XPostSaveUnavailable: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unavailable";
+        };
+        /** XPostSourceLocationOut */
+        XPostSourceLocationOut: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_post";
+        };
+        /** XPostSourceTargetKey */
+        XPostSourceTargetKey: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_post";
+            /** Revision Id */
+            revision_id: string;
         };
         /** XQuoteProcessingOut */
         XQuoteProcessingOut: {
@@ -17846,7 +17904,7 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19064,41 +19122,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ConsumptionOverrideOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    replace_x_capture_media__media_id__x_capture_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReplaceXCaptureRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ReplaceXCaptureOut_"];
                 };
             };
             /** @description Validation Error */
@@ -20955,6 +20978,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    read_save_state_x_captures_save_state_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XPostSaveStateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_XPostSaveStateOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
