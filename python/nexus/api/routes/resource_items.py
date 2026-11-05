@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 
 from nexus.api.search_operation import run_search_operation
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession, RepeatableReadDbSession
+from nexus.db.session import RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.reader_excerpts import ExcerptMode
 from nexus.schemas.resource_items import (
@@ -52,7 +52,7 @@ async def search_resource_targets(
 
 @router.post("/source-targets/resolve")
 def resolve_source_target(
-    request: ResolveSourceTargetRequest, viewer: ViewerDep, db: DbSession
+    request: ResolveSourceTargetRequest, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[SourceTargetOut]:
     return Data(
         data=evidence.resolve_source_target(

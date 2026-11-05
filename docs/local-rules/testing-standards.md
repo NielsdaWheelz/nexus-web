@@ -84,6 +84,8 @@ passes an absolute private `NEXUS_LAB_CONTEXT` json path to the driver, and remo
 its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
+postgres uses its project-owned disk volume, normal durable commits, and the
+production 512 mib memory/no-swap limit; teardown removes that exact volume.
 the lab builds or reuses the canonical web production package, including its
 public assets, then serves the canonical tls/http2 standalone runtime without hot reload.
 build constants match the server's public key, exact loopback origin and source

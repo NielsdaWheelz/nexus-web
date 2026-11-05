@@ -66,6 +66,7 @@ export interface ComposerDraft {
   referenceActive: boolean;
   linkInputActive: boolean;
   attachmentActive: boolean;
+  /** The viewed reading; the capture separately owns canonical source coordinates. */
   sourceMediaId: string;
   destination: ChatDestination;
   chatSelection: SelectionEditor;

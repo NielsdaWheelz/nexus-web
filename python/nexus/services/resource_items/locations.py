@@ -1067,25 +1067,22 @@ def source_identities(db: Session, media_ids: Sequence[UUID]) -> dict[UUID, str]
     identity; a document without a publication has none."""
     if not media_ids:
         return {}
-    from nexus.services.reader_document import transcript_identity
-
     rows = db.execute(
         text("""
-        SELECT m.id, m.kind, r.generation,
-          ARRAY(SELECT f.id::text FROM fragments f WHERE f.media_id = m.id
-                ORDER BY f.t_start_ms NULLS LAST, f.idx) AS unit_ids
+        SELECT m.id, CASE WHEN r.generation IS NOT NULL THEN 'g' || r.generation::text
+          ELSE 't' || left(encode(sha256(convert_to(COALESCE((
+            SELECT string_agg(f.id::text,E'\n' ORDER BY f.t_start_ms NULLS LAST,f.idx)
+            FROM fragments f WHERE f.media_id=m.id
+          ),''),'UTF8')),'hex'),24) END AS identity
         FROM media m LEFT JOIN reader_publications r ON r.media_id = m.id
         WHERE m.id = ANY(:ids)
+          AND (r.generation IS NOT NULL OR m.kind IN ('podcast_episode','video'))
         """),
         {"ids": list(media_ids)},
     )
-    return {
-        row.id: f"g{row.generation}"
-        if row.generation is not None
-        else transcript_identity(row.unit_ids)
-        for row in rows
-        if row.generation is not None or row.kind in ("podcast_episode", "video")
-    }
+    # The transcript digest is reader_document.transcript_identity's exact UTF-8
+    # encoding. Only the digest crosses this boundary, never the complete unit list.
+    return {row.id: row.identity for row in rows}
 
 
 @dataclass(frozen=True, slots=True)

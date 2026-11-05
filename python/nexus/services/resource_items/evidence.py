@@ -422,6 +422,36 @@ def _incomplete_quote_tables(
     )
 
 
+def _passage_reading(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source_id: UUID,
+    fragment_id: UUID,
+    start: int,
+    end: int,
+) -> UUID | None:
+    """Choose an authorized reading containing the exact body or required-note passage."""
+    from nexus.auth.permissions import requested_media_ids_cte_sql
+    from nexus.services.media_text_scope import passage_scope_rows_sql
+    from nexus.services.resource_items.locations import reading_owner_sql
+
+    scopes = passage_scope_rows_sql(requested_media_ids_cte_sql())
+    candidates = f"""SELECT DISTINCT scope.reading_media_id FROM ({scopes}) scope
+        WHERE scope.source_media_id=:source AND scope.fragment_id=:fragment
+          AND scope.start_offset<=:start AND scope.end_offset>=:end"""
+    return db.scalar(
+        text(reading_owner_sql(candidates)),
+        {
+            "viewer_id": viewer_id,
+            "source": source_id,
+            "fragment": fragment_id,
+            "start": start,
+            "end": end,
+        },
+    )
+
+
 def _reader_source(
     db: Session, viewer_id: UUID, owner: ResourceRef, *, location_label: str | None = None
 ) -> CapturedSource:
@@ -468,7 +498,6 @@ def capture_prompt_evidence(
     from nexus.auth.permissions import requested_media_ids_cte_sql
     from nexus.services import locator_resolver
     from nexus.services.media_text_scope import apparatus_scope_rows_sql
-    from nexus.services.resource_items.locations import passage_owner_sql
 
     missing = NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
     if not ref_visible(db, viewer_id=viewer_id, ref=ref):
@@ -596,7 +625,11 @@ def capture_prompt_evidence(
             if words
             else None
         )
-    source_identity = None
+    source_identity = (
+        str(locator["capture_id"])
+        if locator is not None and locator.get("type") == "x_capture_offsets"
+        else None
+    )
     scoped_authority = False
     if owner.scheme == "media":
         if not can_read_media(db, viewer_id, owner.id):
@@ -613,23 +646,13 @@ def capture_prompt_evidence(
                 "web_text_offsets",
                 "epub_fragment_offsets",
             ):
-                chosen = db.scalar(
-                    text(
-                        passage_owner_sql(
-                            requested_media_ids_cte_sql(),
-                            source=":source",
-                            fragment=":fragment",
-                            start=":start",
-                            end=":end",
-                        )
-                    ),
-                    {
-                        "viewer_id": viewer_id,
-                        "source": owner.id,
-                        "fragment": UUID(locator["fragment_id"]),
-                        "start": locator["start_offset"],
-                        "end": locator["end_offset"],
-                    },
+                chosen = _passage_reading(
+                    db,
+                    viewer_id=viewer_id,
+                    source_id=owner.id,
+                    fragment_id=UUID(locator["fragment_id"]),
+                    start=locator["start_offset"],
+                    end=locator["end_offset"],
                 )
             if chosen is None:
                 raise missing
@@ -840,8 +863,7 @@ def _stored_reader_evidence(
     reading_media_id: UUID | None,
 ) -> CapturedEvidence:
     """Stored authored words already have provenance; only current disclosure is decided."""
-    from nexus.auth.permissions import can_read_highlight, requested_media_ids_cte_sql
-    from nexus.services.resource_items.locations import passage_owner_sql
+    from nexus.auth.permissions import can_read_highlight
 
     if ref.scheme == "highlight":
         if not can_read_highlight(db, viewer_id, ref.id):
@@ -890,23 +912,13 @@ def _stored_reader_evidence(
     ):
         if not isinstance(locator, (WebTextOffsetsLocator, EpubFragmentOffsetsLocator)):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
-        chosen = db.scalar(
-            text(
-                passage_owner_sql(
-                    requested_media_ids_cte_sql(),
-                    source=":source",
-                    fragment=":fragment",
-                    start=":start",
-                    end=":end",
-                )
-            ),
-            {
-                "viewer_id": viewer_id,
-                "source": source.id,
-                "fragment": UUID(str(locator.fragment_id)),
-                "start": locator.start_offset,
-                "end": locator.end_offset,
-            },
+        chosen = _passage_reading(
+            db,
+            viewer_id=viewer_id,
+            source_id=source.id,
+            fragment_id=UUID(str(locator.fragment_id)),
+            start=locator.start_offset,
+            end=locator.end_offset,
         )
         if chosen is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage not found")
@@ -1666,6 +1678,15 @@ def _source_target_from_admitted(
         return unavailable
     if locator is None:
         return unavailable
+    source_identity = (
+        str(locator.capture_id)
+        if locator.type == "x_capture_offsets"
+        else source_identities(db, [owner.id]).get(owner.id)
+        if owner.scheme == "media"
+        else None
+    )
+    if owner.scheme == "media" and source_identity is None:
+        return unavailable
     apparatus_reference_id = None
     if owner.scheme == "media":
         from nexus.services.reader_apparatus import note_reference_for_locator
@@ -1678,7 +1699,7 @@ def _source_target_from_admitted(
         location=LocatedSourceLocationOut(
             locator=locator,
             precision="page" if locator.type == "pdf_page" else captured.precision,
-            source_identity=captured.source_identity,
+            source_identity=source_identity,
             apparatus_reference_id=apparatus_reference_id,
         ),
     )

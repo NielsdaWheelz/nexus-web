@@ -45,6 +45,7 @@ from nexus.services.collection_keyset import (
 )
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
+from nexus.services.media_text_scope import x_capture_scope_rows_sql
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.edges import create_link
@@ -134,7 +135,7 @@ def conversation_index_rows_sql() -> str:
 
 
 def _source_context_filter(db: Session, viewer_id: UUID, media_id: UUID | None) -> str:
-    """Current readable direct context, shared by the index and latest lookup."""
+    """Current readable direct context for the destination index."""
     if media_id is None:
         return ""
     if not can_read_media(db, viewer_id, media_id):
@@ -192,16 +193,31 @@ def index(
 
 
 def latest(db: Session, *, viewer_id: UUID, media_id: UUID) -> ConversationListItemOut | None:
-    """The newest visible source-context chat, or null; SQL admits at most one row."""
-    media_filter = _source_context_filter(db, viewer_id, media_id)
-    order = order_by_sql(UPDATED_TITLE_PLANS[(None, None)], alias="c")
+    """The last accepted question quoting this reading, independent of chat activity."""
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    captures = x_capture_scope_rows_sql("SELECT CAST(:media_id AS uuid) AS media_id")
     row = (
         db.execute(
             text(f"""
             SELECT c.* FROM ({conversation_index_rows_sql()}) c
-            WHERE TRUE {media_filter} ORDER BY {order} LIMIT 1
+            JOIN messages m ON m.conversation_id = c.id
+            JOIN chat_runs r ON r.user_message_id = m.id AND r.conversation_id = c.id
+            WHERE r.owner_user_id = :viewer_id AND (
+                m.reader_selection_snapshot #>> '{{evidence,target,owner_ref}}' = :reading_ref
+                OR (
+                    m.reader_selection_snapshot #>> '{{evidence,target,locator,type}}' = 'x_capture_offsets'
+                    AND EXISTS (
+                        SELECT 1 FROM ({captures}) occurrence
+                        WHERE m.reader_selection_snapshot #>> '{{evidence,target,owner_ref}}' = 'fragment:' || occurrence.fragment_id::text
+                          AND m.reader_selection_snapshot #>> '{{evidence,target,locator,fragment_id}}' = occurrence.fragment_id::text
+                          AND m.reader_selection_snapshot #>> '{{evidence,target,locator,capture_id}}' = occurrence.capture_id::text
+                    )
+                )
+            )
+            ORDER BY r.created_at DESC, r.id DESC LIMIT 1
         """),
-            {"viewer_id": viewer_id, "media_id": media_id},
+            {"viewer_id": viewer_id, "media_id": media_id, "reading_ref": f"media:{media_id}"},
         )
         .mappings()
         .one_or_none()

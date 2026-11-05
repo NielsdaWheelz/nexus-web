@@ -246,14 +246,13 @@ export function useSelectionComposer(input: {
       try { capture = captureSelection(shown.doc, mediaId, anchor, selected.excerpt, selected.excerpt_start, selected.excerpt_end); }
       catch (error) { if (error instanceof ExcerptCaptureError) refused = true; else throw error; }
     }
-    const sourceRef = annotation?.sourceRef ?? capture?.sourceRef ?? `media:${mediaId}`;
     const entry: ComposerDraft = {
       id: carried?.id ?? createRandomId(), passage: annotation ? { ...passage, quote: "" } : passage,
       capture, highlightId, color: carried?.color ?? annotation?.color ?? "yellow", bodyRole: carried?.bodyRole ?? (highlightId ? "question" : "annotation_or_question"), annotationBase: carried?.annotationBase ?? null,
       body: carried?.body ?? emptyBody(), revision: (carried?.revision ?? -1) + 1, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Capture", line: { fact: refused ? "nexus can’t capture some text in this passage." : "couldn’t capture this passage.", reason: "your words are kept." } },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, destination: carried?.destination ?? { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatIssue: null,
+      sourceMediaId: mediaId, destination: carried?.destination ?? { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatIssue: null,
     };
     store.put(entry);
     return entry;
