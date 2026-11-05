@@ -1,5 +1,10 @@
 # qualify expired replay after missing bytes
 
+owner disposition, 2026-11-04: the owner explicitly waived this pre-release
+qualification for `c6c90343c4324942b310fe7d9b9fadc4f6e5e944` and confirmed the
+no-use window. the journey remains unverified; retain it as a follow-up. this
+waiver does not authorize stopped qualification actions.
+
 owner-accepted source review qualifies the shared upload repair for this rebuild. the exact missing-bytes-after-unanswered-confirmation followed by natural expiry remains required before release; neighboring runtime controls do not execute it.
 
 `apps/web/src/lib/imports/ingest.ts` retains the original session, generation, filing guard and confirmation command. when bytes are unavailable after local expiry and confirmation remains unsettled, retry asks that original confirmation owner for its authoritative outcome instead of stranding the attempt locally.
