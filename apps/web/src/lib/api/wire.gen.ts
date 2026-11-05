@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 18;
+export const WIRE_REVISION = 19;
 
 export interface paths {
     "/assistant-writes": {
@@ -11091,7 +11091,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "Publisher" | "Heading" | "Both" | "InferredNumberedEntry";
+            source: "Publisher" | "Heading" | "Both" | "InferredNumberedEntry" | "ImplicitOpening";
             target: components["schemas"]["NavigationTextPointOut"];
         };
         /**

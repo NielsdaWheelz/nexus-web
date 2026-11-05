@@ -157,7 +157,18 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
     if (choice.creation_conflict !== null) return <Button data-contents-action="true" aria-label={`unavailable: ${node.label}`} onClick={() => openIntent({ kind: "unavailable", node: node.id, message: partBlockMessage(choice.creation_conflict!.reason), media: choice.creation_conflict!.media_id })}>unavailable</Button>;
     const candidate = exactCandidate(node.sectionId);
     if (candidate) return <Button data-contents-candidate={candidate.id} data-contents-action="true" aria-label={`review ${candidate.title ?? "untitled suggestion"}`} onClick={() => openIntent({ kind: "review", candidate: candidate.id, node: node.id })}>review</Button>;
-    if (choice.eligible || choice.reason === "preparing_structure") return <Button data-contents-action="true" aria-label={`extract ${node.label}`} disabled={blocking} onClick={() => openIntent({ kind: "manual", section: node.sectionId, title: node.label, selection: null, node: node.id })}>extract…</Button>;
+    if (choice.eligible || choice.reason === "preparing_structure") {
+      const section = navigation?.sections.find(section => section.section_id === node.sectionId);
+      if (!section) throw new Error("contents action has no navigation section");
+      const title = {
+        Publisher: section.label,
+        Heading: section.label,
+        Both: section.label,
+        InferredNumberedEntry: "",
+        ImplicitOpening: "",
+      }[section.source];
+      return <Button data-contents-action="true" aria-label={`extract ${node.label}`} disabled={blocking} onClick={() => openIntent({ kind: "manual", section: node.sectionId, title, selection: null, node: node.id })}>extract…</Button>;
+    }
     return <Button data-contents-action="true" aria-label={`unavailable: ${node.label}`} onClick={() => openIntent({ kind: "unavailable", node: node.id, message: partBlockMessage(choice.reason), media: null })}>unavailable</Button>;
   };
   const attachments = new Map<string | null, { id: string; content: ReactNode; placement: Schema<"ContentsPlacement"> }[]>();
