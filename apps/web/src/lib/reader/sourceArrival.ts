@@ -280,11 +280,8 @@ export function useSourceArrival(input: {
           const sameOwner = source?.resource_ref && destination.resourceRef
             ? source.resource_ref === destination.resourceRef
             : data.location.kind === "resource" && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
-          if (sameOwner && data.location.kind === "located" && data.location.source_identity !== null &&
-              sourceIdentity !== null && data.location.source_identity !== sourceIdentity) {
-            publishStatus({ ...pending, pending: false, failure: { title: "that location is from another version of this document.", error: null } });
-            return;
-          }
+          // The destination validates its typed locator and publication identity;
+          // current() separately fences the complete mounted view for this attempt.
           target = data.location.kind === "unavailable" || !sameOwner || (data.location.kind === "located" && sourceIdentity === null)
             ? null : { kind: "source", source: data };
         }

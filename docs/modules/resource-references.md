@@ -446,13 +446,17 @@ named resource panes consume whole historical arrivals through the shell's
 whole sources validate the canonical destination route; located sources require
 the exact owner and a bound source identity. external urls remain native.
 
-the reply has an independent whole-source activation and a `resource`, `located`
-or `unavailable` location. located targets carry the existing locator, precision
-and nullable current reading identity. captured target identity remains provenance:
+the reply has an independent whole-source activation and a `resource`, `located`,
+`x_post` or `unavailable` location. located targets carry the existing locator,
+precision and nullable current reading publication identity. captured target identity
+remains provenance:
 for a piece, the canonical source may be at generation 2 while its reader is at
 generation 1. the returned identity names the destination reader, not the captured
-source generation. an x capture retains its immutable capture identity. previews
-never determine extents.
+source generation. a web reader's full view identity may additionally carry an x
+capture manifest; canonical passage extents and located targets use its publication
+generation. each destination validates that typed coordinate contract, while the
+arrival owner fences the complete view and visit. an x capture retains its immutable
+capture identity. previews never determine extents.
 missing location disables the passage bullet while a readable source can remain
 openable. source access loss removes live enrichment, expansion and actions while
 preserving an authorized output's captured text.

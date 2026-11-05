@@ -49,7 +49,7 @@ import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState"
 import { assertNever } from "@/lib/assertNever";
 import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { localPoint } from "@/lib/documentReader/model";
+import { localPoint, readingPublicationIdentity } from "@/lib/documentReader/model";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
   ReaderRuling,
@@ -737,9 +737,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         if (source_identity !== locator.capture_id || doc.kind !== "text") return "Unavailable";
         const unit = doc.units.find(item => item.xPost?.owner?.capture_id === locator.capture_id && item.xPost.owner.fragment_id === locator.fragment_id);
         if (!unit || locator.end_offset > unit.length || locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return "Unavailable";
-      } else if (source_identity !== doc.identity && source_identity !== doc.identity.split(":", 1)[0]) return "Unavailable";
+      } else if (source_identity === null || source_identity !== readingPublicationIdentity(doc)) return "Unavailable";
       if (apparatus_reference_id !== null) {
-        return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, source_identity, context);
+        return deliverEvidence(`reader_apparatus_item:${apparatus_reference_id}`, doc.identity, context);
       }
       if ((locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") && doc.kind === "text") {
         const unit = doc.units.find((unit) => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);

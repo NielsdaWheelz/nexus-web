@@ -12,7 +12,7 @@ import type { PreparedResource, PreparedResources } from "@/lib/resources/prepar
 import type { LocalCommit, WritingRuntime } from "@/lib/notes/runtime";
 import { ScopeQuoteScanner, normalizeScopeText } from "@nexus/authored/scope";
 import type { DraftAnchor, Inspection, Mark, MarkAnchor } from "./DocumentReader";
-import type { ReaderDocument, ReaderTarget, TextDocument, TextUnit } from "./model";
+import { readingPublicationIdentity, type ReaderDocument, type ReaderTarget, type TextDocument, type TextUnit } from "./model";
 
 const CONTEXT = 64;
 const PAGE = 100;
@@ -137,7 +137,9 @@ export function captureSelection(doc: ReaderDocument, mediaId: string, anchor: D
   const prefix = text.slice(Math.max(0, anchor.start - CONTEXT), anchor.start).join("");
   const suffix = text.slice(anchor.end, anchor.end + CONTEXT).join("");
   if (excerptCanonicalProof(body).emitted !== text.slice(excerptStart, excerptEnd).join("")) return null;
-  const excerpt = captureExcerpt({ ...body, source_extent: { reading_ref: owner.captureId ? `fragment:${owner.fragment}` : mediaRef(mediaId), document_identity: owner.captureId ? `capture:${owner.captureId}` : doc.identity, fragment_id: owner.fragment, start_offset: unit.sourceStartOffset + excerptStart, end_offset: unit.sourceStartOffset + excerptEnd }, truncated_before: false, truncated_after: false });
+  const extentIdentity = owner.captureId ? `capture:${owner.captureId}` : readingPublicationIdentity(doc);
+  if (extentIdentity === null) return null;
+  const excerpt = captureExcerpt({ ...body, source_extent: { reading_ref: owner.captureId ? `fragment:${owner.fragment}` : mediaRef(mediaId), document_identity: extentIdentity, fragment_id: owner.fragment, start_offset: unit.sourceStartOffset + excerptStart, end_offset: unit.sourceStartOffset + excerptEnd }, truncated_before: false, truncated_after: false });
   if (owner.captureId) {
     const sourceRef = `fragment:${owner.fragment}`;
     const locator: Locator = { type: "x_capture_offsets", capture_id: owner.captureId, fragment_id: owner.fragment, start_offset: anchor.start, end_offset: anchor.end, text_quote_selector: { exact, prefix, suffix } };

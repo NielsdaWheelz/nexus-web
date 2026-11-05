@@ -11,10 +11,14 @@ the reader is three facts and one policy.
 
 - **publication** (`ReaderDocument`): an immutable ordered list of text units
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
-  `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
-  read once from one snapshot, never mixed with another read. identity versions
-  source text; title, embedded-child presentation and transcript navigation are
-  mutable metadata. a same-identity reload replaces navigation/find inputs while
+  view `identity` (`g<generation>`, plus an authorized capture-manifest digest when
+  present; transcripts: a digest of the ordered segment ids). read once from one
+  snapshot, never mixed with another read. `readingPublicationIdentity` supplies
+  the canonical coordinate version: the explicit generation, a part's own body
+  identity, or its transcript digest. it never substitutes a part's parent generation
+  or a capture manifest. x passage coordinates name their immutable capture instead.
+  title, embedded-child presentation and transcript navigation are mutable metadata.
+  a same-identity reload replaces navigation/find inputs while
   retaining units, geometry, surface nodes, held origin and unsaved progress.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
@@ -105,7 +109,7 @@ focus transfer or owner unmount releases recovery.
 | `GET /media/{id}/reader` | one snapshot: prose `ReaderTextDocumentOut`, source-backed `ReaderPartDocumentOut`, transcript `ReaderTranscriptDocumentOut`, or `ReaderPdfDocumentOut`. text shares units/embeds; transcripts require coverage and canonical `transcript_navigation`, with empty wire sections/toc. prose archives retain their shape. |
 | `GET /media/{id}/file` | a fresh signed pdf url `{url, expires_at}`; called only after a fetch failed. |
 | `GET/PUT /media/{id}/reader-state` | the cursor: `{state: Empty \| Positioned, revision, locator?}`; PUT `{locator, base_revision}` compares and sets; a stale base is `409 E_READER_STATE_CONFLICT` with `details.current`. |
-| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`; facets overlap. no navigation inside. |
+| `GET /media/{id}/document-map` | `{media_id, identity, status, embeds, evidence, markers, diagnostics}`: `evidence={apparatus_source,roots,counts}`; each exact resource root has native/current content, nullable own-location resolution and direct-fact metadata. count keys are `highlights`, `citations`, `links`, `machine_links`, `quotes`; facets overlap. no navigation inside. |
 | `GET /public/resource-share/document` | the public reader's one read (token header). |
 
 the old incremental reads (`/fragments`, `/fragments/{id}`, `/navigation`,
