@@ -218,6 +218,10 @@ source-driven expansion requires a fresh open intent. arrival purpose stays
 separate from whether an inspection was already applied.
 `settleNativeInput` reconciles native packets without requiring a query to close;
 `canArrange` still fences guarded drafts. structural commands require both.
+active native input still refuses settlement. a completed composition transfers
+through its existing owner before the command proceeds. if that transfer opens
+a new reference query, settlement refuses until the host can observe its ownership;
+an already active query retains its local history commands.
 
 item text means an occurrence’s own note body or inline page title.
 item text is entered by pointer or f2, not sequential tab. each occurrence's
