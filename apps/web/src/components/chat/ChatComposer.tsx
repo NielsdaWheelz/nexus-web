@@ -121,10 +121,13 @@ export default function ChatComposer(props: {
   useEffect(() => {
     mounted.current = true;
     setReady(true);
+    return () => void (mounted.current = false);
+  }, []);
+  useLayoutEffect(() => {
+    if (!inputReady) return;
     const caret = getCaret();
     if (caret) textarea.current?.setSelectionRange(caret.start, caret.end, caret.direction);
-    return () => void (mounted.current = false);
-  }, [getCaret]);
+  }, [inputReady, getCaret]);
   useEffect(() => {
     if (!inputReady || !focusKey || focused.current === focusKey) return;
     focused.current = focusKey; // spent even when the pane is inactive
