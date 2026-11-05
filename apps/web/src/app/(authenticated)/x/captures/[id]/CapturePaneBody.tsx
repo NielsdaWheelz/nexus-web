@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { convertReaderQuestion } from "@nexus/authored/markdown";
+import { captureReaderQuote, replaceReaderQuote } from "@/lib/chat/readerIntent";
+import QuotedMessageConnection from "@/components/chat/QuotedMessageConnection";
 import { useRecent } from "@/lib/recent/store";
 import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -21,6 +25,8 @@ import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { usePaneLayout } from "@/lib/panes/paneChrome";
+import { MapRail, MAP_RAIL_WIDTH_PX } from "@/lib/documentReader/chrome/MapRail";
 import { destinationTarget, targetOfLocator, targetOfResolution, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
 import { PostActions, PostSaveReadFailure } from "@/app/(authenticated)/media/[id]/Embeds";
 import { usePostSaveStates } from "@/lib/media/xPostSaves";
@@ -34,10 +40,12 @@ export default function CapturePaneBody() {
 function CaptureReader({ id }: { readonly id: string }) {
   const recent = useRecent();
   const runtime = requirePaneRuntime(usePaneRuntime(), "CaptureReader");
+  const { ctx } = useActionRuntime();
   const store = useAuthoredStore();
   const { profile } = useReaderContext();
   const mobile = useIsMobileViewport();
   const readerRef = useRef<Reader | null>(null);
+  const evidenceRoot = useRef<HTMLElement>(null);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
   const savedView = useReaderVisit(readerRef);
   const source = useMemo(() => ({
@@ -102,12 +110,12 @@ function CaptureReader({ id }: { readonly id: string }) {
     if (!entry || entry.title_hint === title && entry.detail_hint === "post") return;
     recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: { target: entry.target, href: entry.href, title_hint: title, detail_hint: "post" } });
   }, [doc, id, recent]);
-  const annotations = useCompactAnnotations(reader, id, { kind: "x_capture", label: "post" }, true, true);
   const stamp = useChangeStamp("Notes", "NoteBodies", "Chats", "Entries");
   const map = usePaneFreeServerValue({ key: `capture-map:${id}`, stale: stamp, load: async signal =>
     (await apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal })).data });
   const refreshMap = useRef(map.refetch);
   refreshMap.current = map.refetch;
+  useEffect(() => store.annotations_changed(() => refreshMap.current()), [store]);
   useEffect(() => {
     if (doc?.kind !== "text") return;
     const fragments = [...new Set(doc.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.fragment_id] : []))];
@@ -139,6 +147,54 @@ function CaptureReader({ id }: { readonly id: string }) {
   } });
   const { say } = useOutcome();
   arrivalRef.current = arrival;
+  const annotations = useCompactAnnotations(reader, id, { kind: "x_capture", label: "post" }, true, true, {
+    reviewing: arrival.quoteReview !== null,
+    cancelReview: arrival.finishQuoteReview,
+    submit(input) {
+      if (!doc || input.identity !== doc.identity) return false;
+      const quote = captureReaderQuote({ doc, scope: { kind: "x_capture", capture_id: id }, anchor: input.anchor,
+        capture: input.capture, annotation: input.annotation });
+      if (!quote) { say({ fact: "couldn’t capture this passage." }); return false; }
+      if (arrival.quoteReview) {
+        if (!replaceReaderQuote(ctx.workspace(), arrival.quoteReview, quote)) { say({ fact: "the original draft is no longer open." }); return false; }
+        arrival.finishQuoteReview(); return true;
+      }
+      const question = convertReaderQuestion(input.question);
+      if (question.kind === "Unsupported") { say({ fact: "images and embeds can’t be sent from here." }); return false; }
+      if (question.kind === "Text" && [...question.content].length > 20_000) { say({ fact: "this question is too long." }); return false; }
+      return runtime.activateTarget({ target: { href: "/conversations/new" }, disposition: { kind: "Fork" },
+        entry: { kind: "ComposeReaderQuestion", text: question.kind === "Text" ? question.content : "", selection: { kind: "Uninitialized" }, quote } }).kind !== "Cancelled";
+    },
+  });
+  const mapEvidence = useMemo(() => {
+    if (!doc || map.status !== "ready" || map.data.identity !== doc.identity) return null;
+    const targets = new Map(map.data.evidence.roots.flatMap(root => {
+      const target = root.resolution ? targetOfResolution(root.resolution, doc) : null;
+      return target?.kind === "range" ? [[root.ref, target] as const] : [];
+    }));
+    return {
+      markers: map.data.markers.map(marker => ({ id: marker.item_id, position: marker.position, end: marker.end_position,
+        kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview })),
+      markerTarget: (id: string) => {
+        const target = targets.get(id);
+        if (!target) throw new Error("capture map marker has no text range");
+        return target;
+      },
+      onMarker: (id: string) => {
+        const row = evidenceRoot.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(id)}"]`);
+        if (row) {
+          row.scrollIntoView({ block: "nearest" });
+          (row.querySelector<HTMLElement>("a[href]") ?? row).focus({ preventScroll: true });
+          return;
+        }
+        const target = targets.get(id);
+        if (target) { void reader.inspect({ target }); reader.focusSource(); }
+      },
+    };
+  }, [doc, map, reader]);
+  usePaneLayout(useMemo(() => ({ intrinsicWidthPx: null, rail: mobile ? null : {
+    widthPx: MAP_RAIL_WIDTH_PX, body: <MapRail reader={reader} evidence={mapEvidence} />,
+  } }), [mobile, reader, mapEvidence]));
   // An arrival's failure is its command's outcome: one slip, retracted when it clears.
   const arrivalFailure = arrival.failure?.title ?? null;
   useEffect(() => arrivalFailure === null ? undefined : say({ fact: arrivalFailure }), [arrivalFailure, say]);
@@ -152,9 +208,12 @@ function CaptureReader({ id }: { readonly id: string }) {
       {[...new Set(doc.units.flatMap(unit => unit.xPost?.owner ? [unit.xPost.owner.fragment_id] : []))].map(fragment =>
         <CaptureSourceConnections key={fragment} captureId={id} fragment={fragment} />)}
     </ResourceOutlineList> : null}
-    {map.status === "ready" && map.data.evidence.roots.length ? <section aria-label="source evidence">
+    {map.status === "ready" && map.data.identity === doc?.identity && map.data.evidence.roots.length ? <section ref={evidenceRoot} aria-label="source evidence">
       <h2>evidence</h2><ResourceOutlineList scope={`capture-evidence:${id}`} ariaLabel="source evidence">
         {map.data.evidence.roots.filter(root => root.content.kind !== "Highlight" || !root.content.is_owner).map(root => {
+          if (root.content.kind === "Quotation") return <li key={root.ref} tabIndex={-1} data-resource-ref={root.ref} data-outline-occurrence={`capture:${id}:${root.ref}`}>
+            <QuotedMessageConnection content={root.content} />
+          </li>;
           const item = root.content.kind === "SourceReference" ? null : root.content.item;
           if (!item) return null;
           const target = root.resolution ? targetOfResolution(root.resolution, doc ?? undefined) : null;

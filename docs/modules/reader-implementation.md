@@ -11,10 +11,11 @@ the reader is three facts and one policy.
 
 - **publication** (`ReaderDocument`): an immutable ordered list of text units
   (web fragments, epub spine documents, transcript segments) or one pdf, under one
-  `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids).
+  `identity` (`g<generation>`; transcripts: a digest of the ordered segment ids; capture
+  readings include their complete composition digest).
   read once from one snapshot, never mixed with another read. identity versions
-  source text; title, embedded-child presentation and transcript navigation are
-  mutable metadata. a same-identity reload replaces navigation/find inputs while
+  source text; title and transcript navigation are mutable metadata. embedded capture
+  composition changes participate in the mounted identity. a same-identity reload replaces navigation/find inputs while
   retaining units, geometry, surface nodes, held origin and unsaved progress.
 - **placement**: where the eye is, `{identity, point, offsetPx, zoom}`. measured,
   never stored. `offsetPx` is relative to the visible reading line: positive
@@ -833,10 +834,12 @@ give their rail position and order.
   visible and focused, after genuine input within five minutes; reading viewports
   add the document fraction and word ordinal. inspection counts time only. see
   [consumption-activity.md](consumption-activity.md).
-- **quote to chat.** a quote is a durable highlight first; the chat send captures an
-  immutable per-message `{key, evidence}` snapshot. the admission key is
-  `{media_id, highlight_id, revision}`; the captured words, attribution and
-  complete target never change with later highlight edits.
+- **quote to chat.** raw selections and existing highlights share source preview
+  and compare-on-send admission. an accepted message owns `{evidence, highlight_ref}`;
+  a raw selection creates no authored object. frozen quotations project neutral link
+  markers and connections by message identity. saved annotations stay ordinary live
+  context. draft inspection maps mounted offsets with `sourceTarget` and carries the
+  complete destination in pane state; sent source links use `#quote-<message id>`.
 - **offline copies.** a reading copy zips the same `GET /media/{id}/reader`
   document; the shelf maps it with `readerDocument()` and renders the same
   `DocumentReaderView` with a device progress port. see [offline](offline.md).

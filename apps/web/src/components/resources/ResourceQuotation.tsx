@@ -1,4 +1,5 @@
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
+import type { ReactNode } from "react";
 import type { Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
@@ -10,11 +11,14 @@ import { ResourceTypeIcon } from "./ResourceType";
 import styles from "./ResourceQuotation.module.css";
 
 /** Supplied evidence and attribution; navigation never replaces captured content. */
-export default function ResourceQuotation({ item }: { item: Schema<"ResourceItemOut"> }) {
+export default function ResourceQuotation({ item, renderSourceControl }: {
+  item: Schema<"ResourceItemOut">;
+  renderSourceControl?: (title: string) => ReactNode;
+}) {
   const { body, source } = item.preview;
   if (item.missing && body.kind === "named" && source === null
     && item.activation.unavailable_reason === "source_unavailable") {
-    return <figure className={styles.quotation}><ResourceLink item={item} /></figure>;
+    return <figure className={styles.quotation}>{renderSourceControl ? renderSourceControl(body.title) : <ResourceLink item={item} />}</figure>;
   }
 
   let identity: { title: string; contributors: readonly ContributorCredit[] | null } | null;
@@ -60,7 +64,7 @@ export default function ResourceQuotation({ item }: { item: Schema<"ResourceItem
       <div className={styles.identity}>
         {!distinctSource ? glyph : null}
         <span className={styles.identityText}>
-          <ResourceLink item={item} label={title} />
+          {renderSourceControl ? renderSourceControl(title) : <ResourceLink item={item} label={title} />}
           {authors.length > 0 ? <> — <ContributorCreditList credits={authors} maxVisible={authors.length} /></> : null}
           {!distinctSource && source?.location_label?.trim() ? <> · {source.location_label}</> : null}
           {role ? <> · {role}</> : null}

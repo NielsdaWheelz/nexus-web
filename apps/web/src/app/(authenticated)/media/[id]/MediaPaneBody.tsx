@@ -797,7 +797,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     : doc?.kind === "text" && doc.units.some(unit => unit.xPost?.owner && `fragment:${unit.xPost.owner.fragment_id}` === sourceRef) ? { kind: "x_capture", label: "post" }
     : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
     : null, [doc, id, media]);
-  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
+  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence,
+    quoteReview: arrival.quoteReview ? { target: arrival.quoteReview, finish: arrival.finishQuoteReview } : null });
   verbsRef.current = { isMobile, verbs };
 
   const decorations = useMemo<Decorations>(

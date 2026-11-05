@@ -6,7 +6,7 @@ import type { MarkAnchor, TextRange } from "@/lib/documentReader/DocumentReader"
 import type { ReaderDocument, ReaderPoint } from "@/lib/documentReader/model";
 import { targetOfResolution } from "../hostedReader";
 
-/** A server-derived root (source reference, assistant evidence, a library member's highlight). */
+/** A server-derived root: source reference, quoted message, assistant evidence or peer highlight. */
 export type EvidenceRoot = Schema<"ReaderEvidenceRootOut"> & {
   readonly source: {
     readonly media_id: string;
@@ -33,12 +33,14 @@ export function facets(root: EvidenceRoot): ReadonlySet<Filter> {
   const result = new Set(root.direct_facts.map(factFacet));
   if (root.content.kind === "Highlight") result.add("highlights");
   if (root.content.kind === "SourceReference") result.add("citations");
+  if (root.content.kind === "Quotation") result.add("links");
   return result;
 }
 
 export function markerFacet(root: EvidenceRoot): Filter {
   if (root.content.kind === "Highlight") return "highlights";
   if (root.content.kind === "SourceReference") return "citations";
+  if (root.content.kind === "Quotation") return "links";
   const own = facets(root);
   return own.has("citations") ? "citations" : own.has("links") ? "links" : "machine_links";
 }

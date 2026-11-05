@@ -146,7 +146,9 @@ shutdown fails. `headless=False` requests visibility, never desktop approval.
 
 `openLabAndroid` requires an explicitly owned disposable package and matching apk.
 it installs and clears only that package, refuses existing reverse ports, and
-returns ownership before `attachPage()` waits for its webview. before one cdp
+returns ownership before `attachPage()` waits for its webview. the caller first
+observes the expected rendered entry in the owned native accessibility hierarchy:
+a target url can exist before its renderer is live. before one cdp
 connection, the existing bounded readiness check requires one page target at the
 supplied owned web origin; non-page targets do not prevent admission. attachment
 then requires one context and one page at that origin. rejection reports counts,

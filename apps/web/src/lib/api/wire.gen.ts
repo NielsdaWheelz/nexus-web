@@ -256,17 +256,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/chat-reader-selections/highlights/{highlight_id}": {
+    "/chat-reader-selections/preview": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Reader Selection Preview */
-        get: operations["get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Preview Reader Selection */
+        post: operations["preview_reader_selection_chat_reader_selections_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10738,6 +10738,44 @@ export interface components {
             x_article_content: components["schemas"]["XArticleContent"] | null;
             x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
+        /** ReaderCaptureLocator */
+        ReaderCaptureLocator: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "x_capture_offsets";
+        };
+        /** ReaderCaptureScope */
+        ReaderCaptureScope: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** Document Identity */
+            document_identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_capture";
+        };
         /** ReaderChildContinuationOut */
         ReaderChildContinuationOut: {
             /**
@@ -10883,6 +10921,33 @@ export interface components {
              */
             status: "ready" | "empty" | "partial";
         };
+        /** ReaderEpubLocator */
+        ReaderEpubLocator: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Media Kind */
+            media_kind: null;
+            /** Section Id */
+            section_id: null;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "epub_fragment_offsets";
+        };
         /** ReaderEpubTarget */
         ReaderEpubTarget: {
             /** Anchor Id */
@@ -10962,6 +11027,16 @@ export interface components {
             /** Roots */
             roots: components["schemas"]["ReaderEvidenceRootOut"][];
         };
+        /** ReaderEvidenceQuotationOut */
+        ReaderEvidenceQuotationOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Quotation";
+            quotation: components["schemas"]["ResourceItemOut"];
+        };
         /** ReaderEvidenceResolvedOut */
         ReaderEvidenceResolvedOut: {
             anchor: components["schemas"]["ReaderEvidenceAnchorOut"];
@@ -10989,7 +11064,7 @@ export interface components {
         ReaderEvidenceRootOut: {
             authored_placement: components["schemas"]["ReaderAuthoredPlacementOut"] | null;
             /** Content */
-            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"];
+            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"] | components["schemas"]["ReaderEvidenceQuotationOut"];
             /** Continuation */
             continuation: (components["schemas"]["ReaderChildContinuationOut"] | components["schemas"]["ReaderSiblingContinuationOut"]) | null;
             /** Direct Facts */
@@ -11066,6 +11141,38 @@ export interface components {
         ReaderFragmentTarget: {
             /** Fragment Id */
             fragment_id: string;
+        };
+        /** ReaderHighlightSelection */
+        ReaderHighlightSelection: {
+            /** Expected Capture Revision */
+            expected_capture_revision: string;
+            /**
+             * Highlight Id
+             * Format: uuid
+             */
+            highlight_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "highlight";
+            /** Scope */
+            scope: components["schemas"]["ReaderMediaScope"] | components["schemas"]["ReaderCaptureScope"];
+        };
+        /** ReaderMediaScope */
+        ReaderMediaScope: {
+            /** Document Identity */
+            document_identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
         };
         /**
          * ReaderNavigationFragmentOut
@@ -11236,6 +11343,32 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** ReaderPdfLocator */
+        ReaderPdfLocator: {
+            /** Exact */
+            exact: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Page Number */
+            page_number: number;
+            /** Prefix */
+            prefix: string | null;
+            /** Projection */
+            projection: null;
+            /** Quads */
+            quads: components["schemas"]["PdfGeometryQuad"][];
+            /** Suffix */
+            suffix: string | null;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pdf_page_geometry";
+        };
         /** ReaderPdfPageLocatorOut */
         ReaderPdfPageLocatorOut: {
             /**
@@ -11343,6 +11476,15 @@ export interface components {
              */
             message_id: string;
         };
+        /** ReaderQuoteText */
+        ReaderQuoteText: {
+            /** Exact */
+            exact: string;
+            /** Prefix */
+            prefix: string | null;
+            /** Suffix */
+            suffix: string | null;
+        };
         /** ReaderSectionOut */
         ReaderSectionOut: {
             /** Anchor Id */
@@ -11357,36 +11499,30 @@ export interface components {
         };
         /**
          * ReaderSelectionInput
-         * @description A send's quote: the durable key plus the compare-on-send revision, never text.
+         * @description The observed selection and the complete server preview's compare-on-send hash.
          */
         ReaderSelectionInput: {
-            key: components["schemas"]["ReaderSelectionKey"];
             /** Revision */
             revision: string;
-        };
-        /** ReaderSelectionKey */
-        ReaderSelectionKey: {
-            /** Capture Id */
-            capture_id: string | null;
-            /**
-             * Highlight Id
-             * Format: uuid
-             */
-            highlight_id: string;
-            /** Media Id */
-            media_id: string | null;
+            /** Selection */
+            selection: components["schemas"]["ReaderSourceSelection-Input"] | components["schemas"]["ReaderHighlightSelection"];
         };
         /** ReaderSelectionOut */
         ReaderSelectionOut: {
             item: components["schemas"]["ResourceItemOut"];
-            key: components["schemas"]["ReaderSelectionKey"];
         };
         /** ReaderSelectionPreview */
         ReaderSelectionPreview: {
             item: components["schemas"]["ResourceItemOut"];
-            key: components["schemas"]["ReaderSelectionKey"];
             /** Revision */
             revision: string;
+            /** Selection */
+            selection: components["schemas"]["ReaderSourceSelection-Output"] | components["schemas"]["ReaderHighlightSelection"];
+        };
+        /** ReaderSelectionPreviewRequest */
+        ReaderSelectionPreviewRequest: {
+            /** Selection */
+            selection: components["schemas"]["ReaderSourceSelection-Input"] | components["schemas"]["ReaderHighlightSelection"];
         };
         /** ReaderSiblingContinuationOut */
         ReaderSiblingContinuationOut: {
@@ -11409,6 +11545,30 @@ export interface components {
             kind: "Html";
             /** Text */
             text: string;
+        };
+        /** ReaderSourceSelection */
+        "ReaderSourceSelection-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source";
+            /** Locator */
+            locator: components["schemas"]["ReaderWebLocator"] | components["schemas"]["ReaderEpubLocator"] | components["schemas"]["ReaderCaptureLocator"] | components["schemas"]["ReaderPdfLocator"];
+            /** Scope */
+            scope: components["schemas"]["ReaderMediaScope"] | components["schemas"]["ReaderCaptureScope"];
+        };
+        /** ReaderSourceSelection */
+        "ReaderSourceSelection-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source";
+            /** Locator */
+            locator: components["schemas"]["ReaderWebLocator"] | components["schemas"]["ReaderEpubLocator"] | components["schemas"]["ReaderCaptureLocator"] | components["schemas"]["ReaderPdfLocator"];
+            /** Scope */
+            scope: components["schemas"]["ReaderMediaScope"] | components["schemas"]["ReaderCaptureScope"];
         };
         /** ReaderSourceTextOut */
         ReaderSourceTextOut: {
@@ -11533,6 +11693,31 @@ export interface components {
             /** T Start Ms */
             t_start_ms: number | null;
             x_post: components["schemas"]["ReaderXPostOut"] | null;
+        };
+        /** ReaderWebLocator */
+        ReaderWebLocator: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Media Kind */
+            media_kind: null;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "web_text_offsets";
         };
         /** ReaderXCaptureOut */
         ReaderXCaptureOut: {
@@ -15047,21 +15232,18 @@ export interface operations {
             };
         };
     };
-    get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get: {
+    preview_reader_selection_chat_reader_selections_preview_post: {
         parameters: {
-            query?: {
-                /** @description The key's parent media id */
-                media_id?: string | null;
-                /** @description The key's immutable capture id */
-                capture_id?: string | null;
-            };
+            query?: never;
             header?: never;
-            path: {
-                highlight_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderSelectionPreviewRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

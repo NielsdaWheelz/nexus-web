@@ -4,6 +4,7 @@
 // held local projections; remote roots keep their server presentation. Membership
 // only selects facets and reveal targets; the shared row owns resource commands.
 import { useCallback, useLayoutEffect, useRef, type CSSProperties } from "react";
+import QuotedMessageConnection from "@/components/chat/QuotedMessageConnection";
 import Button from "@/components/ui/Button";
 import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
@@ -113,6 +114,9 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
   }
   const { root } = entry;
   const content = root.content;
+  if (content.kind === "Quotation") return <li ref={attachRow} {...rootProps}>
+    <QuotedMessageConnection content={content} />
+  </li>;
   const disclosureKey = sourceTextKey(entry);
   return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}

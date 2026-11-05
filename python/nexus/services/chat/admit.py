@@ -71,7 +71,7 @@ from nexus.services.resource_graph.context import (
     context_version,
 )
 from nexus.services.resource_graph.edges import create_link
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.search import projection
 from nexus.services.seq import assign_next_message_seq
 from nexus.services.tools.run import Toolbox
@@ -393,7 +393,7 @@ def _branch_anchor(
 def _quote(
     db: Session, viewer_id: UUID, conversation_id: UUID, selection: ReaderSelectionInput
 ) -> dict[str, object]:
-    """Snapshot the highlight; link it and its media into the chat's context.
+    """Capture the observed passage and attach its ordinary source context.
 
     The viewer's account head comes before the media family, as in every authored
     writer; no projection row is locked. The immutable snapshot is compared with the
@@ -401,27 +401,33 @@ def _quote(
 
     from nexus.services.library_entries import lock_media_for_reference
 
-    key = selection.key
+    chosen = selection.selection
     authored.lock_account(db, viewer_id)
-    if key.media_id is not None:
-        lock_media_for_reference(db, key.media_id)
-    snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, key=key)
+    if chosen.scope.kind == "media":
+        lock_media_for_reference(db, chosen.scope.media_id)
+    snapshot = quotes.build_snapshot(db, viewer_id=viewer_id, selection=chosen)
     if quotes.revision(snapshot) != selection.revision:
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_STALE, "Reader selection changed since it was previewed"
         )
     chat = ResourceRef("conversation", conversation_id)
-    highlight = ResourceRef("highlight", key.highlight_id)
-    create_link(db, viewer_id=viewer_id, source=chat, target=highlight)
-    if key.media_id is not None:
-        add_context_ref_without_commit(
-            db,
-            viewer_id=viewer_id,
-            conversation_id=conversation_id,
-            target=ResourceRef("media", key.media_id),
-            origin="system",
-            user_edit=True,
+    if snapshot.highlight_ref is not None:
+        create_link(
+            db, viewer_id=viewer_id, source=chat, target=assert_resource_ref(snapshot.highlight_ref)
         )
+    source = (
+        ResourceRef("media", chosen.scope.media_id)
+        if chosen.scope.kind == "media"
+        else assert_resource_ref(snapshot.evidence.target.owner_ref or "")
+    )
+    add_context_ref_without_commit(
+        db,
+        viewer_id=viewer_id,
+        conversation_id=conversation_id,
+        target=source,
+        origin="system",
+        user_edit=True,
+    )
     return quotes.encode(snapshot)
 
 
@@ -536,6 +542,10 @@ def _start_run(
     db.add(run)
     db.flush()
     citations.persist_attached(db, run, assembly.attached)
+    if user.reader_selection_snapshot is not None:
+        quotes.invalidate_sources(
+            db, viewer_id=viewer_id, snapshots=[quotes.decode(user.reader_selection_snapshot)]
+        )
     enqueue_job(
         db,
         kind="chat_run",

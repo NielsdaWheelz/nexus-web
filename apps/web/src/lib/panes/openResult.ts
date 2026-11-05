@@ -58,7 +58,7 @@ export async function readForNavigation<T>({
 
 /** Account-scoped handoff; the caller retains mutation and retry ownership. */
 export async function openAsyncResult({
-  ctx, originPaneId, intent, disposition = "Follow", originHistory, subject, create, mayOpen, onOpened, onDefault, initiatingLayer, discardOwnerIds,
+  ctx, originPaneId, intent, disposition = "Follow", originHistory, subject, create, mayOpen, entryIsCurrent, onOpened, onDefault, initiatingLayer, discardOwnerIds,
 }: {
   ctx: Pick<ActionContext, "workspace" | "sessionSignal" | "feedback">;
   originPaneId?: string;
@@ -69,7 +69,9 @@ export async function openAsyncResult({
   subject?: string;
   create: () => Promise<OpenResult | null>;
   mayOpen?: () => boolean;
-  /** Automatic handoff only; a later ready-offer never retires its old source. */
+  /** An unsent entry borrows its source draft's authority, including a deferred offer. */
+  entryIsCurrent?: () => boolean;
+  /** Automatic handoff, or an explicitly guarded unsent-entry transfer. */
   onOpened?: () => void;
   discardOwnerIds?: readonly string[];
   /** Same-source inspection or materialisation of an already-placed view. */
@@ -102,6 +104,23 @@ export async function openAsyncResult({
     }
   }
   const label = subject ?? result.target.labelHint;
+  if (result.entry?.kind === "ComposeReaderQuestion") {
+    ctx.feedback.say({ fact: label === undefined ? result.title : `“${label}” is ready to open.` }, [{
+      label: result.openLabel, commandKey: `open reader question ${result.entry.quote?.id ?? result.target.href}`,
+      run: () => {
+        if (signal.aborted) return;
+        if (entryIsCurrent && !entryIsCurrent()) {
+          ctx.feedback.say({ fact: "this draft changed. open it to continue." });
+          return;
+        }
+        const current = ctx.workspace();
+        const opened = current.activateWorkspaceTarget({ originPaneId: current.state.active_primary_pane_id, target: result.target, entry: result.entry,
+          disposition: { kind: "Fork" } });
+        if (opened.kind !== "Cancelled") onOpened?.();
+      },
+    }]);
+    return;
+  }
   // Navigation moved on before the result was ready: this is the result's only way open,
   // so it waits for an unblocked workspace like any other non-success outcome.
   ctx.feedback.say({ fact: label === undefined ? result.title : `“${label}” is ready to open.` }, [{

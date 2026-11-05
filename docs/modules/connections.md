@@ -56,6 +56,13 @@ origins in endpoint-owned order, with its links version in the document map's
 coherent snapshot. `reader_evidence.py` merges its far refs with native highlights and source
 references by canonical ref, retaining every distinct direct fact. native content
 wins. descendants, aliases and captured citation targets create no reader roots.
+retained quoted user messages supply source-scoped quotation roots, owned by message
+identity. their question opens the chat; their frozen quotation opens its source.
+these roots count under links, have neutral markers and no authored placement,
+unlink or highlight controls. context detachment leaves them; message/subtree/chat
+deletion removes them. source annotation lanes and the existing writing stream
+refresh other profiles even when source context already existed. capture map versions
+sum distinct fragment lanes, so changing a nonmaximum lane changes the token.
 current resource presentation is hydrated in batches; primary annotations carry
 their complete canonical rich body and body version.
 

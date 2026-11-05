@@ -9,7 +9,7 @@ land now is ``locations``'s proof.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -464,11 +464,56 @@ def _admitted_evidence(
     )
 
 
+def _scope_admissions(
+    admissions: Sequence[
+        tuple[CapturedEvidence, dict[str, Any], tuple[tuple[int, int], ...]] | None
+    ],
+) -> list[CapturedEvidence | None]:
+    quoted = [value for value in admissions if value is not None and value[0].quote is not None]
+    frozen = iter(
+        scope_excerpts(
+            [
+                {"excerpt": quote.excerpt.model_dump(mode="json"), "scope": value[1]}
+                for value in quoted
+                if (quote := value[0].quote) is not None
+            ],
+            incomplete_tables=[value[2] for value in quoted],
+        )
+    )
+    output: list[CapturedEvidence | None] = []
+    for value in admissions:
+        if value is None:
+            output.append(None)
+        elif value[0].quote is None:
+            output.append(value[0])
+        else:
+            excerpt = next(frozen)
+            output.append(
+                None
+                if excerpt is None
+                else value[0].model_copy(
+                    update={"quote": value[0].quote.model_copy(update={"excerpt": excerpt})}
+                )
+            )
+    return output
+
+
+def admit_evidence(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    evidence: CapturedEvidence,
+) -> CapturedEvidence | None:
+    """Frozen evidence under current disclosure authority, for new model inputs."""
+    return _scope_admissions([_admitted_evidence(db, viewer_id=viewer_id, evidence=evidence)])[0]
+
+
 def evidence_items(
     db: Session,
     *,
     viewer_id: UUID,
     occurrences: Sequence[tuple[ResourceRef, CapturedEvidence, SourceTargetKey]],
+    reading_media_ids: Mapping[str, UUID] | None = None,
 ) -> list[ResourceItemOut]:
     """Each occurrence as an item of its frozen words and attribution; the current state
     of the cited ref's owner decides only whether the location still opens (I6)."""
@@ -496,37 +541,15 @@ def evidence_items(
         for ref, _, _ in occurrences
     }
     admissions = [
-        _admitted_evidence(db, viewer_id=viewer_id, evidence=evidence)
-        for _, evidence, _ in occurrences
-    ]
-    quoted_admissions = [
-        value for value in admissions if value is not None and value[0].quote is not None
-    ]
-    frozen = iter(
-        scope_excerpts(
-            [
-                {"excerpt": quote.excerpt.model_dump(mode="json"), "scope": value[1]}
-                for value in quoted_admissions
-                if (quote := value[0].quote) is not None
-            ],
-            incomplete_tables=[value[2] for value in quoted_admissions],
+        _admitted_evidence(
+            db,
+            viewer_id=viewer_id,
+            evidence=evidence,
+            reading_media_id=reading_media_ids.get(ref.uri) if reading_media_ids else None,
         )
-    )
-    admitted: list[CapturedEvidence | None] = []
-    for admission in admissions:
-        if admission is None:
-            admitted.append(None)
-        elif admission[0].quote is None:
-            admitted.append(admission[0])
-        else:
-            excerpt = next(frozen)
-            admitted.append(
-                None
-                if excerpt is None
-                else admission[0].model_copy(
-                    update={"quote": admission[0].quote.model_copy(update={"excerpt": excerpt})}
-                )
-            )
+        for ref, evidence, _ in occurrences
+    ]
+    admitted = _scope_admissions(admissions)
     owners = {
         owner
         for value in admitted

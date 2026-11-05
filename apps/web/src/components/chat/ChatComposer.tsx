@@ -11,18 +11,21 @@ import Textarea from "@/components/ui/Textarea";
 import { admissionReason, TRANSPORT_LINES, transportOf, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { commandKey, PENDING_CHANGE, recoveryOf, refusalOf, unsureFact, type CommandOutcome, type DraftRequest } from "@/lib/chat/commands";
 import { useChatDraft } from "@/lib/chat/drafts";
+import { prepareReaderQuote } from "@/lib/chat/readerIntent";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { useWritingRuntime } from "@/lib/notes/hooks";
 import { isSelectable, unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import type { ChatView } from "@/lib/chat/tree";
 import type { Execution, Refusal, RejectionCode } from "@/lib/chat/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { truncateText } from "@/lib/display/format";
-import { usePaneEntryDelivery } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { workspaceTargetActivationIntent, type OpenIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useChatPane } from "./ChatSurface";
 import GenerationPicker from "./GenerationPicker";
-import QuotedPassage, { type QuoteState } from "./QuotedPassage";
+import QuotedPassage from "./QuotedPassage";
 import styles from "./ChatComposer.module.css";
 
 /** Why send waits, read with it; a reply target that can't take one is said beneath the input. */
@@ -45,23 +48,26 @@ export default function ChatComposer(props: {
   /** The pending leaf's live advisory, when its stream is tailed. */
   liveExecution: Execution | null;
   onClearBranch(): void;
-  quote: QuoteState | null;
-  onRemoveQuote(): void;
-  onRetryQuote(): void;
   onRejected(code: RejectionCode): void;
   focusKey: string | null;
   isPaneActive: boolean;
 }) {
   const { target, branch, activeRun: run } = props.view;
-  const { quote, focusKey, isPaneActive } = props;
+  const { isPaneActive } = props;
   const { store, command, catalog: catalogRead, scroll } = useChatPane();
-  const { draft, setDraft, setText, setSelection, spend } = useChatDraft(props.scope, props.viewId);
+  const { draft, owner: draftOwner, setDraft, setText, setSelection, setQuote, updateQuote, spend } = useChatDraft(props.scope, props.viewId);
+  const quote = draft.quote;
+  const [entryFocus, setEntryFocus] = useState<string | null>(null);
+  const focusKey = props.focusKey ?? entryFocus ?? quote?.id ?? null;
+  const runtime = requirePaneRuntime(usePaneRuntime(), "ChatComposer");
+  const { ctx } = useActionRuntime();
+  const writing = useWritingRuntime();
   const { read: memoryRead, enter: enterMemory, fresh: freshMemory } = useChatSelection();
-  const { fail } = useOutcome();
+  const { fail, say } = useOutcome();
   const transportVerbs = useTransportVerbs();
   const resendFeedback = useResendFeedback();
   const { delivery, claim } = usePaneEntryDelivery();
-  const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" ? delivery : null;
+  const readerEntry = delivery?.entry.kind === "ComposeReaderQuestion" || delivery?.entry.kind === "ReplaceReaderQuote" ? delivery : null;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const own = recoveryOf(command, (pending) => pending.kind === "Send" && pending.viewId === props.viewId);
   // A new chat's unresolved first send holds its text and model; an existing chat's
@@ -118,12 +124,30 @@ export default function ChatComposer(props: {
     return () => void (mounted.current = false);
   }, []);
   useLayoutEffect(() => {
-    if (!readerEntry || readerEntry.entry.kind !== "ComposeReaderQuestion") return;
-    // no await: the exact visit's delivery and both draft fields transfer together.
-    enterMemory();
-    setDraft({ text: readerEntry.entry.text, selection: readerEntry.entry.selection });
-    claim(readerEntry);
-  }, [readerEntry, claim, setDraft, enterMemory]);
+    if (!readerEntry) return;
+    const entry = readerEntry.entry;
+    if (entry.kind === "ReplaceReaderQuote") {
+      if (!claim(readerEntry)) return;
+      if (entry.target.draft_owner_id === draftOwner && entry.target.attachment_id === quote?.id && entry.target.visit_id === runtime.visitId) {
+        setQuote(entry.quote); setRefusal(null); setEntryFocus(readerEntry.activationId);
+      } else say({ fact: "the original quote is no longer in this draft." });
+    } else if (entry.kind === "ComposeReaderQuestion" && claim(readerEntry)) {
+      // no await: claim and the complete draft install share one turn.
+      enterMemory();
+      setDraft({ text: entry.text, selection: entry.selection, quote: entry.quote });
+      setEntryFocus(readerEntry.activationId);
+    }
+  }, [readerEntry, claim, setDraft, setQuote, enterMemory, draftOwner, quote?.id, runtime.visitId, say]);
+  useEffect(() => {
+    if (quote?.state.kind !== "Unprepared") return;
+    const signal = ctx.sessionSignal();
+    if (!updateQuote(quote.id, value => value.state.kind === "Unprepared" ? { ...value, state: { kind: "Loading" } } : value)) return;
+    void prepareReaderQuote(quote, writing, signal).then(preview => {
+      if (!signal.aborted) updateQuote(quote.id, value => ({ ...value, state: { kind: "Ready", preview } }));
+    }, error => {
+      if (!signal.aborted) updateQuote(quote.id, value => ({ ...value, state: { kind: "Failed", failure: { kind: "Read", error }, preview: null } }));
+    });
+  }, [quote, ctx, writing, updateQuote]);
   useEffect(() => {
     if (!inputReady || !focusKey || focused.current === focusKey) return;
     focused.current = focusKey; // spent even when the pane is inactive
@@ -131,7 +155,7 @@ export default function ChatComposer(props: {
   }, [inputReady, focusKey, isPaneActive]);
 
   const reason = catalog && selection.kind !== "Uninitialized" ? unavailability(catalog, selection) : null;
-  const quoted = quote?.kind === "Ready" ? quote.selection : null;
+  const quoted = quote?.state.kind === "Ready" ? quote.state.preview : null;
   const canSend = inputReady && command.kind === "Idle" && target.kind !== "Blocked" && !!catalog
     && selection.kind === "Selected" && (draft.selection.kind !== "Uninitialized" || recalled !== null) && !reason && !!draft.text.trim() && (!quote || !!quoted);
 
@@ -148,15 +172,17 @@ export default function ChatComposer(props: {
       },
       content: submitted.text,
       selection: selection.selection,
-      reader_selection: quoted ? { key: quoted.key, revision: quoted.revision } : null,
+      reader_selection: quoted ? { selection: quoted.selection, revision: quoted.revision } : null,
     };
     // the pane lands the accepted answer (Conversation)
     present(await store.send(request, selection.route, openIntent, () => { if (spend(submitted)) enterMemory(); }));
   };
   const present = (outcome: CommandOutcome) => {
     if (!mounted.current || outcome.kind !== "Failed") return;
-    setRefusal(refusalOf(outcome));
+    setRefusal(outcome.rejection === "E_READER_SELECTION_STALE" ? null : refusalOf(outcome));
     if (outcome.rejection === null) return;
+    if (outcome.rejection === "E_READER_SELECTION_STALE" && quote) updateQuote(quote.id, value => ({ ...value,
+      state: { kind: "Failed", failure: { kind: "Stale" }, preview: value.state.kind === "Ready" ? value.state.preview : null } }));
     catalogRead.refetch(); // a rejection may mean the catalog changed; rereading is cheap
     props.onRejected(outcome.rejection);
   };
@@ -218,8 +244,8 @@ export default function ChatComposer(props: {
     : stopWaits ? stopReplay?.disabledReason ?? admissionReason() ?? stopRecovery?.line.reason ?? null
     : blocked !== null && blocked !== "ReplyTargetUnavailable" ? BLOCKED[blocked]
     : replayBlocked ? replay?.disabledReason ?? admissionReason() ?? held?.line.reason ?? null
-    : quote?.kind === "Loading" || (quote?.kind === "Failed" && quote.retrying) ? "the quote is still loading."
-    : quote?.kind === "Failed" ? "the quote didn’t load."
+    : quote?.state.kind === "Loading" || quote?.state.kind === "Unprepared" ? "the quote is still loading."
+    : quote?.state.kind === "Failed" ? "the quote needs attention."
     : !run && command.kind !== "Idle" && own === null ? PENDING_CHANGE : null;
   // the draft stays: focus on the withdrawn control returns to it
   const discard = (event: MouseEvent<HTMLButtonElement>) => {
@@ -266,13 +292,16 @@ export default function ChatComposer(props: {
         ) : null}
         {quote ? (
           <QuotedPassage
-            quote={quote}
+            quote={quote.state}
+            inspection={quote.inspection}
             onRemove={locked ? undefined : (event) => {
               if (document.activeElement === event.currentTarget) textarea.current?.focus({ preventScroll: true });
               setRefusal(null);
-              props.onRemoveQuote();
+              setQuote(null);
             }}
-            onRetry={props.onRetryQuote}
+            onRetry={() => updateQuote(quote.id, value => ({ ...value, state: { kind: "Unprepared" } }))}
+            onReview={() => runtime.activateTarget({ target: { href: quote.inspection.href }, disposition: { kind: "Fork" },
+              entry: { kind: "ReviewReaderQuote", quote, target: { pane_id: runtime.paneId, visit_id: runtime.visitId, draft_owner_id: draftOwner, attachment_id: quote.id } } })}
           />
         ) : null}
         <Textarea
@@ -285,7 +314,7 @@ export default function ChatComposer(props: {
             const text = event.target.value;
             setRefusal(null);
             const fresh = freshMemory(catalog);
-            if (draft.selection.kind === "Uninitialized" && fresh) setDraft({ text, selection: fresh });
+            if (draft.selection.kind === "Uninitialized" && fresh) setDraft({ ...draft, text, selection: fresh });
             else setText(text);
           }}
           onCompositionStart={() => (composing.current = true)}
