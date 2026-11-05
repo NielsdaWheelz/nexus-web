@@ -823,7 +823,42 @@ def _bounded_locator(
     return locator
 
 
-def capture_evidence(
+def canonical_source_quote(
+    quote: CapturedQuote, locator: dict[str, Any]
+) -> tuple[CapturedQuote, dict[str, Any]] | None:
+    """Native text evidence selects literal words, excluding outer source whitespace.
+
+    Canonical block separators have no native text token. Applying this rule before
+    either port runs keeps canonical and rich quotes at the same exact coordinates.
+    Internal whitespace, including poem line breaks, remains untouched.
+    """
+    if locator["type"] not in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets"):
+        return quote, locator
+    exact = quote.exact.strip()
+    if not exact:
+        return None
+    before = len(quote.exact) - len(quote.exact.lstrip())
+    after = len(quote.exact.rstrip())
+    prefix = ((quote.prefix or "") + quote.exact[:before])[-64:] or None
+    suffix = (quote.exact[after:] + (quote.suffix or ""))[:64] or None
+    return (
+        CapturedQuote(
+            excerpt=plain_excerpt(exact, prefix, suffix),
+            exact=exact,
+            prefix=prefix,
+            suffix=suffix,
+            color=quote.color,
+        ),
+        {
+            **locator,
+            "start_offset": locator["start_offset"] + before,
+            "end_offset": locator["start_offset"] + after,
+            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
+        },
+    )
+
+
+def read_evidence(
     db: Session,
     *,
     viewer_id: UUID,
@@ -882,7 +917,88 @@ def capture_evidence(
     item = resource_item_out(db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id)
     if item.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
-    return _capture(db, viewer_id, ref, item, reading_media_id=reading_media_id)
+    evidence = _capture(db, viewer_id, ref, item, reading_media_id=reading_media_id)
+    if (
+        ref.scheme not in ("highlight", "passage_anchor")
+        and evidence.quote is not None
+        and isinstance(evidence.target, CapturedPassageTarget)
+    ):
+        canonical = canonical_source_quote(
+            evidence.quote, evidence.target.locator.model_dump(mode="json")
+        )
+        if canonical is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source passage has no literal words")
+        quote, locator = canonical
+        evidence = evidence.model_copy(
+            update={
+                "quote": quote,
+                "target": evidence.target.model_copy(
+                    update={"locator": _LOCATOR.validate_python(locator)}
+                ),
+            }
+        )
+    return evidence
+
+
+def capture_source_excerpts(
+    db: Session,
+    evidence: Sequence[CapturedEvidence],
+    *,
+    retained: Sequence[bool],
+) -> list[CapturedEvidence]:
+    """Materialize only native captures; authored snapshots already own their markup."""
+    from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
+
+    requests = []
+    indices = []
+    for index, (item, saved) in enumerate(zip(evidence, retained, strict=True)):
+        target = item.target
+        if (
+            saved
+            or item.quote is None
+            or not isinstance(target, CapturedPassageTarget)
+            or not isinstance(
+                target.locator,
+                (WebTextOffsetsLocator, EpubFragmentOffsetsLocator, XCaptureOffsetsLocator),
+            )
+        ):
+            continue
+        owner = require_ref(target.owner_ref)
+        locator = target.locator
+        requests.append(
+            SourceExcerptRequest(
+                reading_id=owner.id,
+                fragment_id=UUID(str(locator.fragment_id)),
+                start=locator.start_offset,
+                end=locator.end_offset,
+            )
+        )
+        indices.append(index)
+    result = list(evidence)
+    for index, excerpt in zip(indices, source_excerpts(db, requests), strict=True):
+        item = result[index]
+        assert item.quote is not None
+        result[index] = item.model_copy(
+            update={"quote": item.quote.model_copy(update={"excerpt": excerpt})}
+        )
+    return result
+
+
+def capture_evidence(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    ref: ResourceRef,
+    reading_media_id: UUID | None = None,
+    field: ResourceField = None,
+) -> CapturedEvidence:
+    """Canonical proof and native presentation, frozen in the caller's one snapshot."""
+    evidence = read_evidence(
+        db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id, field=field
+    )
+    return capture_source_excerpts(
+        db, [evidence], retained=[ref.scheme in ("highlight", "passage_anchor")]
+    )[0]
 
 
 def _stored_reader_evidence(
@@ -1135,29 +1251,6 @@ def _capture(
         if locator is not None and locator["type"] == "highlight_annotation_offsets"
         else None
     )
-    if (
-        quote is not None
-        and ref.scheme not in ("highlight", "passage_anchor")
-        and locator is not None
-        and locator["type"] in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets")
-    ):
-        from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
-
-        reading = (
-            owner.id if owner.scheme in ("media", "fragment") else UUID(str(locator["media_id"]))
-        )
-        frozen = source_excerpts(
-            db,
-            [
-                SourceExcerptRequest(
-                    reading_id=reading,
-                    fragment_id=UUID(str(locator["fragment_id"])),
-                    start=locator["start_offset"],
-                    end=locator["end_offset"],
-                )
-            ],
-        )[0]
-        quote = quote.model_copy(update={"excerpt": frozen})
     if locator is not None and locator["type"] == "note_block_offsets":
         # Note offsets freeze with the body version they were proven against.
         proof = CapturedPassageTarget(

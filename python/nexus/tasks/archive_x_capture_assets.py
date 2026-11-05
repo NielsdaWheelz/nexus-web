@@ -15,11 +15,13 @@ from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import (
     JobExecutionContext,
+    JobFailure,
     JobResult,
     TerminalJobFailure,
     enqueue_job,
     get_job,
     lock_running_job_claim,
+    record_job_checkpoint,
 )
 from nexus.schemas.x_captures import XCaptureArchiveOut, XCaptureAssetOut
 from nexus.services.image_validation import ValidatedImage, fetch_validated_image
@@ -78,6 +80,10 @@ def run_job(*, payload: Mapping[str, object], context: JobExecutionContext) -> J
         try:
             image = fetch_validated_image(url)
         except ApiError as exc:
+            if exc.code in (ApiErrorCode.E_INGEST_TIMEOUT, ApiErrorCode.E_IMAGE_FETCH_FAILED):
+                raise JobFailure(
+                    exc.code.value, exc.message, "retry", retry_at=exc.retry_at
+                ) from exc
             failures.append(exc)
             continue
         path = f"media/x-captures/{capture_id}/{new_uuid7()}"
@@ -115,6 +121,8 @@ def run_job(*, payload: Mapping[str, object], context: JobExecutionContext) -> J
                             captured_at=datetime.now(UTC),
                         )
                     )
+                    db.flush()
+                    record_job_checkpoint(db, context=context)
                 return True
 
             if not retry_serializable(db, "archive_x_capture_asset", publish):

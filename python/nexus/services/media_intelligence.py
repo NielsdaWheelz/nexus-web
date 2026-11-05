@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.jobs.queue import jobs_for_payload
 from nexus.logging import get_logger
 from nexus.services.media_intelligence_lifecycle import current_content_fingerprint
 
@@ -45,6 +46,7 @@ class MediaUnit:
 class NotReady(Enum):
     Missing = "missing"
     Building = "building"
+    Held = "held"
     Failed = "failed"
     Stale = "stale"
 
@@ -69,7 +71,14 @@ def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
     if head is None:
         return NotReady.Missing
     if head.status != "ready":
-        return NotReady.Building if head.status == "building" else NotReady.Failed
+        if head.status != "building":
+            return NotReady.Failed
+        jobs = jobs_for_payload(
+            db,
+            kind="media_unit_build",
+            match={"summary_id": str(head.id), "content_fingerprint": head.content_fingerprint},
+        )
+        return NotReady.Held if jobs and jobs[-1].status == "held" else NotReady.Building
     if head.content_fingerprint != current_content_fingerprint(db, media_id=media_id):
         return NotReady.Stale
     claims = db.execute(

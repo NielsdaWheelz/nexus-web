@@ -3,19 +3,21 @@
 A claim mints a fresh ``execution_id``. Every write on behalf of a running attempt
 locks the row and requires that id, so nothing an attempt does commits after the
 job was reclaimed. The lease is liveness only: the worker's heartbeat renews it
-every few seconds, and only an expired lease lets a worker reclaim the job (or,
-with its budget spent, dead-letter it). A late but unreclaimed attempt still
-writes. Lock order everywhere: the job row, then the Heavy capacity row.
+every few seconds. Expiry revokes an execution and schedules recovery without
+spending the repeatable-failure allowance. Domain settlement locks generations,
+then domain rows, then the job and Heavy capacity rows. A late but unreclaimed
+attempt still writes.
 """
 
 from __future__ import annotations
 
 import json
+import random
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -27,18 +29,15 @@ from nexus.db.retries import integrity_constraint_name
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
-from nexus.jobs.registry import registry, resolve
+from nexus.jobs.registry import FAILED_EXECUTION_LIMIT, registry, resolve
 
 LEASE_SECONDS = 30
 
 _HEAVY_BUSY = """EXISTS (SELECT 1 FROM background_job_capacity_leases
     WHERE resource_class = 'Heavy' AND lease_expires_at > clock_timestamp())"""
-# Claimable: a due waiting row, or an expired claim with budget left. Each branch
-# matches a partial index; the order uses the instant each became claimable.
-_DUE = """((status IN ('pending', 'failed') AND available_at <= clock_timestamp())
-    OR (status = 'running' AND lease_expires_at <= clock_timestamp()
-        AND attempts < max_attempts))"""
-_DUE_AT = "CASE WHEN status = 'running' THEN lease_expires_at ELSE available_at END"
+# Expiry is a separate revocation transition; only waiting rows are claimable.
+_DUE = "status IN ('pending', 'failed') AND available_at <= clock_timestamp()"
+_DUE_AT = "available_at"
 _LEASE = f"clock_timestamp() + make_interval(secs => {LEASE_SECONDS})"
 # The one fence: this attempt's row, still running under its own execution.
 _OWNED = "id = :job_id AND status = 'running' AND execution_id = :execution_id"
@@ -55,7 +54,7 @@ class JobRow:
     status: str
     priority: int
     attempts: int
-    max_attempts: int
+    failed_executions: int
     available_at: datetime
     lease_expires_at: datetime | None
     claimed_by: str | None
@@ -81,7 +80,7 @@ class JobExecutionContext:
 
 @dataclass(frozen=True)
 class RescheduleRequested:
-    """A handler's request to run again at ``at``, refunding this attempt."""
+    """A handler's useful continuation at ``at``; claim counts remain monotonic."""
 
     at: datetime
     payload: Mapping[str, Any] | None = None
@@ -94,6 +93,29 @@ class TerminalJobFailure:
     result_payload: Mapping[str, Any]
     error_code: str
     error_message: str
+
+
+type FailureDisposition = Literal["retry", "resample", "hold"]
+
+
+class JobFailure(Exception):
+    """A classified execution failure; the queue owns its scheduling, not a handler."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        disposition: FailureDisposition,
+        *,
+        retry_at: datetime | None = None,
+        result_payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.disposition: FailureDisposition = disposition
+        self.retry_at = retry_at
+        self.result_payload = result_payload
 
 
 type JobResult = Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
@@ -112,14 +134,14 @@ def project_execution_phase(
     *, job_status: str, attempts: int, error_code: str | None
 ) -> DurableExecutionPhase:
     """One unfinished job; ``Suspended`` is a dead job its owner did not end."""
-    if job_status == "dead":
+    if job_status in {"dead", "held"}:
         return DurableExecutionPhase.Suspended
     if job_status == "failed" or error_code is not None:
         return DurableExecutionPhase.Recovering
     if job_status == "pending":
         return DurableExecutionPhase.Queued
     if job_status == "running":
-        return DurableExecutionPhase.Running if attempts == 1 else DurableExecutionPhase.Recovering
+        return DurableExecutionPhase.Running
     raise AssertionError(f"job status {job_status!r} has no execution phase")
 
 
@@ -137,19 +159,18 @@ def enqueue_job(
     dedupe_key: str | None = None,
     created_at: datetime | None = None,
 ) -> JobRow:
-    """Insert one pending job with its kind's attempt budget; commits nothing."""
+    """Insert one pending job; commits nothing."""
     rows = _rows(
         db,
         """INSERT INTO background_jobs
-           (id, kind, payload, priority, max_attempts, available_at, dedupe_key, created_at)
-           VALUES (:id, :kind, CAST(:payload AS jsonb), :priority, :max_attempts,
+           (id, kind, payload, priority, available_at, dedupe_key, created_at)
+           VALUES (:id, :kind, CAST(:payload AS jsonb), :priority,
                    COALESCE(:available_at, now()), :dedupe_key, COALESCE(:created_at, now()))
            ON CONFLICT (id) DO NOTHING RETURNING *""",
         id=new_uuid7() if id is None else id,
         kind=kind,
         payload=json.dumps(dict(payload)),
         priority=priority,
-        max_attempts=registry()[kind].max_attempts,
         available_at=available_at,
         dedupe_key=dedupe_key,
         created_at=created_at,
@@ -225,21 +246,16 @@ def claim_next_job(
     busy = "SELECT lease_expires_at > clock_timestamp() FROM background_job_capacity_leases"
     if heavy and db.scalar(text(f"{busy} WHERE resource_class = 'Heavy' FOR UPDATE")):
         return None
-    reclaimed = candidate[0].status == "running"
     (job,) = _rows(
         db,
         f"""UPDATE background_jobs
             SET status = 'running', attempts = attempts + 1, claimed_by = :worker_id,
                 execution_id = gen_random_uuid(), lease_expires_at = {_LEASE},
                 started_at = COALESCE(started_at, clock_timestamp()),
-                error_code = CASE WHEN :reclaimed THEN 'E_WORKER_INTERRUPTED' ELSE error_code END,
-                last_error = CASE WHEN :reclaimed THEN 'Worker lease expired; job reclaimed.'
-                                  ELSE last_error END,
                 updated_at = clock_timestamp()
             WHERE id = :job_id RETURNING *""",
         job_id=candidate[0].id,
         worker_id=worker_id,
-        reclaimed=reclaimed,
     )
     if heavy:
         db.execute(
@@ -252,8 +268,6 @@ def claim_next_job(
         )
     assert job.execution_id is not None
     context = JobExecutionContext(job.id, job.execution_id, job.attempts)
-    if reclaimed:
-        _react(db, job, candidate[0].execution_id)
     return Claim(job, context)
 
 
@@ -320,7 +334,7 @@ def finish_job(
             error_code=result.error_code,
             message=result.error_message,
             result=result.result_payload,
-            dead=True,
+            disposition="dead",
         )
     return _settle(
         db,
@@ -338,11 +352,11 @@ def reschedule_running_job(
     at: datetime | None,
     payload: Mapping[str, Any] | None = None,
 ) -> JobRow | None:
-    """Back to pending at ``at`` (None: now), refunding the attempt."""
+    """Back to pending at ``at`` (None: now), preserving the claim count."""
     row = _settle(
         db,
         context,
-        f"""status = 'pending', {_RELEASED}, attempts = attempts - 1,
+        f"""status = 'pending', {_RELEASED},
             available_at = COALESCE(CAST(:at AS timestamptz), clock_timestamp()),
             payload = COALESCE(CAST(:payload AS jsonb), payload)""",
         at=at,
@@ -359,56 +373,85 @@ def fail_job(
     context: JobExecutionContext,
     error_code: str,
     message: str,
+    disposition: FailureDisposition | Literal["dead"],
     result: Mapping[str, Any] | None = None,
-    dead: bool = False,
+    retry_at: datetime | None = None,
 ) -> JobRow | None:
-    """Retry after the kind's delay, or dead when ``dead`` or the budget is spent."""
+    """Retry a transient cause, charge a resampling failure, hold a defect, or end intent."""
     owned = lock_running_job_claim(db, context=context)
     if owned is None:
         return None
-    delays = registry()[owned.kind].retry_delays
-    dead = dead or owned.attempts >= owned.max_attempts
+    failures = owned.failed_executions + (disposition == "resample")
+    status = (
+        "dead"
+        if disposition == "dead"
+        else "held"
+        if disposition == "hold" or failures >= FAILED_EXECUTION_LIMIT
+        else "failed"
+    )
     failed = _settle(
         db,
         context,
         f"""status = :status, {_RELEASED}, error_code = :code, last_error = :message,
-            result = CAST(:result AS jsonb),
-            available_at = clock_timestamp() + make_interval(secs => :delay),
-            finished_at = CASE WHEN :dead THEN clock_timestamp() END""",
-        status="dead" if dead else "failed",
+            result = CAST(:result AS jsonb), failed_executions = :failures,
+            available_at = GREATEST(clock_timestamp() + make_interval(secs => :delay),
+                                    CAST(:retry_at AS timestamptz)),
+            finished_at = CASE WHEN :status = 'dead' THEN clock_timestamp() END""",
+        status=status,
         code=error_code,
         message=message[:1000],
         result=_json(result),
-        delay=0 if dead else delays[min(owned.attempts, len(delays)) - 1],
-        dead=dead,
+        failures=failures,
+        delay=failure_cooldown_seconds(),
+        retry_at=retry_at,
     )
-    if not dead:
+    if status == "failed":
         _notify(db, owned.kind)
     if failed is not None:
         _react(db, failed, context.execution_id)
     return failed
 
 
-def dead_letter_expired_job(db: Session, *, kinds: Sequence[str]) -> JobRow | None:
-    """Make one expired running job whose budget is spent dead."""
+def failure_cooldown_seconds() -> float:
+    """The one failure cooldown: sixty seconds with twenty percent jitter."""
+    return random.uniform(48, 72)
+
+
+def recover_expired_job(db: Session, *, kinds: Sequence[str]) -> JobRow | None:
+    """Revoke one expired execution without taking a generation lock after a queue lock."""
+    candidates = _rows(
+        db,
+        """SELECT * FROM background_jobs WHERE status='running'
+            AND lease_expires_at<=clock_timestamp() AND kind=ANY(:kinds)
+            ORDER BY lease_expires_at,id LIMIT 1""",
+        kinds=list(kinds),
+    )
+    if not candidates:
+        return None
+    candidate = candidates[0]
+    definition = registry()[candidate.kind]
+    if definition.lock_owner is not None:
+        resolve(definition.lock_owner)(db, candidate)
     expired = _rows(
         db,
-        """UPDATE background_jobs
-           SET status = 'dead', claimed_by = NULL, lease_expires_at = NULL,
-               error_code = 'E_WORKER_INTERRUPTED',
-               last_error = 'Worker lease expired after max attempts.',
-               finished_at = clock_timestamp(), updated_at = clock_timestamp()
-           WHERE id = (SELECT id FROM background_jobs
-                       WHERE status = 'running' AND lease_expires_at <= clock_timestamp()
-                         AND attempts >= max_attempts AND kind = ANY(:kinds)
-                       ORDER BY lease_expires_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
+        f"""UPDATE background_jobs
+           SET status = 'failed', {_RELEASED}, error_code = 'E_WORKER_INTERRUPTED',
+               last_error = 'Worker lease expired; waiting to retry.', finished_at = NULL,
+               available_at = clock_timestamp() + make_interval(secs => :delay),
+               updated_at = clock_timestamp()
+           WHERE id = (SELECT id FROM background_jobs WHERE id=:id AND status='running'
+                       AND execution_id=:execution_id AND lease_expires_at<=clock_timestamp()
+                       FOR UPDATE SKIP LOCKED)
            RETURNING *""",
-        kinds=list(kinds),
+        id=candidate.id,
+        execution_id=candidate.execution_id,
+        delay=failure_cooldown_seconds(),
     )
     if not expired:
         return None
-    _release_heavy(db, [expired[0].id])
-    _react(db, expired[0], expired[0].execution_id)
+    _release_heavy(db, [candidate.id])
+    _react(db, expired[0], candidate.execution_id)
+    _notify(db, candidate.kind)
     return expired[0]
 
 
@@ -453,7 +496,7 @@ def requeue_dead_job(db: Session, *, job_id: UUID) -> bool:
     """Repair (source import, search index): dead -> pending with a fresh budget."""
     kind = db.execute(
         text(
-            "UPDATE background_jobs SET status = 'pending', attempts = 0, available_at = now(),"
+            "UPDATE background_jobs SET status = 'pending', failed_executions = 0, available_at = now(),"
             " finished_at = NULL, updated_at = now()"
             " WHERE id = :job_id AND status = 'dead' RETURNING kind"
         ),
@@ -464,6 +507,50 @@ def requeue_dead_job(db: Session, *, job_id: UUID) -> bool:
     return kind is not None
 
 
+def resume_held_job(db: Session, *, job_id: UUID) -> bool:
+    """Reviewed owner repair, after its domain locks and intent checks: resume this row."""
+    kind = db.scalar(
+        text("""UPDATE background_jobs SET status='pending', failed_executions=0,
+            available_at=clock_timestamp(), updated_at=clock_timestamp()
+            WHERE id=:id AND status='held' RETURNING kind"""),
+        {"id": job_id},
+    )
+    if kind is not None:
+        _notify(db, kind)
+    return kind is not None
+
+
+def supersede_held_job(db: Session, *, job_id: UUID, result: TerminalJobFailure) -> JobRow | None:
+    """End held metadata under its media lock, retaining the original failure diagnostics."""
+    rows = _rows(
+        db,
+        """UPDATE background_jobs SET status='dead', result=CAST(:result AS jsonb),
+            finished_at=clock_timestamp(), updated_at=clock_timestamp()
+            WHERE id=:id AND status='held' AND kind='enrich_metadata' RETURNING *""",
+        id=job_id,
+        result=_json(result.result_payload),
+    )
+    return rows[0] if rows else None
+
+
+def cancel_held_job(db: Session, *, job_id: UUID) -> bool:
+    """An owner with its domain locked cancels retained work, without replaying it."""
+    return (
+        db.scalar(
+            text("""UPDATE background_jobs SET status='dead', result='{"status":"cancelled"}',
+            finished_at=clock_timestamp(), updated_at=clock_timestamp()
+            WHERE id=:id AND status='held' RETURNING id"""),
+            {"id": job_id},
+        )
+        is not None
+    )
+
+
+def record_job_checkpoint(db: Session, *, context: JobExecutionContext) -> bool:
+    """Reset repeatable failures in the transaction publishing a reusable owner checkpoint."""
+    return _settle(db, context, "failed_executions = 0") is not None
+
+
 def reset_unclaimed_job(
     db: Session, *, job_id: UUID, kind: str, payload: Mapping[str, Any]
 ) -> JobRow:
@@ -471,8 +558,8 @@ def reset_unclaimed_job(
     rows = _rows(
         db,
         """UPDATE background_jobs
-           SET payload = CAST(:payload AS jsonb), status = 'pending', attempts = 0,
-               max_attempts = :max_attempts, available_at = now(), error_code = NULL,
+           SET payload = CAST(:payload AS jsonb), status = 'pending', failed_executions = 0,
+               available_at = now(), error_code = NULL,
                last_error = NULL, result = NULL, started_at = NULL, finished_at = NULL,
                updated_at = now()
            WHERE id = :job_id AND kind = :kind AND status IN ('pending', 'failed')
@@ -480,7 +567,6 @@ def reset_unclaimed_job(
         job_id=job_id,
         kind=kind,
         payload=json.dumps(dict(payload)),
-        max_attempts=registry()[kind].max_attempts,
     )
     if not rows:
         raise RuntimeError(f"job {job_id} is not a waiting {kind}")
@@ -499,7 +585,7 @@ def supersede_unclaimed_job(db: Session, *, job_id: UUID, kind: str) -> None:
             SET status = 'succeeded', result = '{"status": "superseded"}',
                 finished_at = now(), updated_at = now()
             WHERE id = (SELECT id FROM background_jobs
-                        WHERE id = :job_id AND kind = :kind AND status IN ('pending', 'failed')
+                        WHERE id = :job_id AND kind = :kind AND status IN ('pending', 'failed', 'held')
                         FOR UPDATE SKIP LOCKED)"""),
         {"job_id": job_id, "kind": kind},
     )
@@ -536,7 +622,7 @@ def jobs_for_payload(
     *,
     kind: str,
     match: Mapping[str, Any],
-    statuses: Collection[str] = ("pending", "failed", "running", "succeeded", "dead"),
+    statuses: Collection[str] = ("pending", "failed", "running", "held", "succeeded", "dead"),
     lock: bool = False,
 ) -> list[JobRow]:
     """Every ``kind`` job whose payload contains ``match``, oldest first (and lock order)."""

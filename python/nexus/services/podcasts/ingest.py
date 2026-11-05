@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.logging import get_logger
-from nexus.services import library_entries
+from nexus.services import media_locks
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
@@ -138,7 +138,7 @@ def ingest_episodes(
             "values": [a.value for a in flat_aliases],
         },
     ).all()
-    library_entries.lock_media_rows_in_order(db, existing_ids)
+    media_locks.lock_media_rows_in_order(db, existing_ids)
     show_authors = [
         credit.credited_name
         for credit in load_contributor_credits_for_podcasts(db, [podcast_id]).get(podcast_id, [])

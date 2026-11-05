@@ -50,7 +50,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import requeue_dead_job, supersede_unclaimed_job
+from nexus.jobs.queue import get_job, requeue_dead_job, resume_held_job, supersede_unclaimed_job
 from nexus.schemas.acquisition import ExtensionSourceAdmission
 from nexus.schemas.extension_capture import CreateExtensionSourceRequest, XStatusSource
 from nexus.schemas.import_history import SourceRecoveryAccepted
@@ -64,7 +64,7 @@ from nexus.schemas.media_sources import (
     SourceRepairAdmission,
 )
 from nexus.schemas.x_source import XAuthorThreadPayload, XCaptureInput
-from nexus.services import libraries, library_entries, source_targets, users
+from nexus.services import libraries, library_entries, media_locks, source_targets, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.media_processing_state import mark_extracting
@@ -557,7 +557,7 @@ def _accept_url(
         if matches:
             media = matches[0]
             owned_web = True
-            library_entries.lock_media_rows_in_order(db, [media.id])
+            media_locks.lock_media_rows_in_order(db, [media.id])
             db.refresh(media)
             latest = sa.latest_attempt(db, media.id, lock=False)
             if latest is not None and latest.status in st.IN_FLIGHT:
@@ -588,7 +588,7 @@ def _accept_url(
         if spec.source_type == st.X_AUTHOR_THREAD
         else set()
     )
-    library_entries.lock_media_rows_in_order(db, [media.id, *article_ids])
+    media_locks.lock_media_rows_in_order(db, [media.id, *article_ids])
     db.refresh(media)
     latest = sa.latest_attempt(db, media.id, lock=False)
     if spec.source_type == st.X_AUTHOR_THREAD:
@@ -887,7 +887,7 @@ def _owned_media(db: Session, viewer_id: UUID, media_id: UUID) -> Media:
     """The viewer's own media, key-share locked: invisible is 404, another's is 403."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    library_entries.lock_media_rows_in_order(db, [media_id])
+    media_locks.lock_media_rows_in_order(db, [media_id])
     media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -1135,7 +1135,12 @@ def repair_source(
                 return answer
             raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Nothing to repair.")
         require_unpublished_document(db, media)
-        requeue_dead_job(db, job_id=expected_job_id)
+        job = get_job(db, expected_job_id, lock=True)
+        assert job is not None
+        if job.status == "held":
+            resume_held_job(db, job_id=job.id)
+        else:
+            requeue_dead_job(db, job_id=job.id)
         sa.record_event(
             db, latest, SourceRecoveryAccepted(source_attempt_id=latest.id, recovery="RepairSource")
         )

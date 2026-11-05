@@ -204,7 +204,9 @@ export default function OracleLandingPaneBody() {
                       className={styles.alephCell}
                       data-status={reading.status}
                       aria-label={
-                        reading.status === "failed"
+                        reading.status === "held"
+                          ? `${folio}, needs a repair`
+                          : reading.status === "failed"
                           ? `${folio}, unfinished`
                           : `${folio}: ${reading.folio_motto ?? "……"}`
                       }

@@ -41,7 +41,6 @@ import {
   metadataRetryBlockedCopy,
 } from "@/lib/media/mediaMetadataCopy";
 import {
-  submitMetadataResultReview,
 } from "@/lib/media/mediaMetadataOperations";
 import { deletePage } from "@/lib/notes/api";
 import { getWritingRuntime } from "@/lib/notes/runtime";
@@ -899,9 +898,6 @@ export function projectResourceActions(
           },
         );
       }
-      case "ReviewMetadataResult":
-        return make("ReviewMetadataResult", blocked, (_, acknowledged) =>
-          submitMetadataResultReview(id, action.job_id, acknowledged), { rawWrite: true });
       case "Recovery":
         const offer = action.offer;
         return make(offer.kind, blocked, async (_, acknowledged) => {

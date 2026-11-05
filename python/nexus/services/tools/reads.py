@@ -33,12 +33,14 @@ from nexus.services import libraries
 from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
+    citation_from_evidence,
     citation_from_search_result,
     reopen_search_result,
     web_citation,
 )
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
+    DocumentTooLarge,
     get_media_read_map_for_viewer,
     load_media_document,
     read_page_range,
@@ -51,10 +53,11 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.resolve import (
     assert_ref_visible,
-    load_resource_batch,
     parent_media_id_for_read_pointer,
+    read_resource,
 )
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import read_evidence
 from nexus.services.search import projection
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.query import (
@@ -63,7 +66,7 @@ from nexus.services.search.query import (
     build_search_query,
     scope_from_uri,
 )
-from nexus.services.search.service import search_scopes_async
+from nexus.services.search.service import capture_search_scopes_async, search_scopes_async
 from nexus.services.tools import assistant_writes
 from nexus.services.tools.contract import (
     SEARCH_LIMIT,
@@ -263,6 +266,19 @@ def _cite(
     if result_type is None:
         return None
     try:
+        if call.run.chat_run_id is None:
+            evidence = read_evidence(
+                call.db,
+                viewer_id=call.principal,
+                ref=ResourceRef("media", UUID(source_id))
+                if parse_page_range(uri) is not None
+                else _parse(uri),
+                field=field,
+            )
+            citation = citation_from_evidence(call.db, viewer_id=call.principal, evidence=evidence)
+            if citation is not None:
+                call.retrieved = call.selected = [citation]
+            return citation
         result = reopen_search_result(
             call.db,
             viewer_id=call.principal,
@@ -338,7 +354,10 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         limit=value.limit or SEARCH_LIMIT,
     )
     try:
-        response = await search_scopes_async(
+        search_scopes = (
+            capture_search_scopes_async if call.run.chat_run_id is not None else search_scopes_async
+        )
+        response = await search_scopes(
             call.principal,
             replace(query, frozen_context_refs=frozen),
             scopes,
@@ -394,7 +413,10 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         limit=value.limit or 8,
     )
     try:
-        response = await search_scopes_async(
+        search_scopes = (
+            capture_search_scopes_async if call.run.chat_run_id is not None else search_scopes_async
+        )
+        response = await search_scopes(
             call.principal, query, (query.scope,), deadline=call.deadline, purpose="foreground"
         )
     except ApiError as exc:
@@ -431,9 +453,12 @@ def read(value: ResourceReadInput, call: Call) -> ResourceReadSuccess:
     get_repeatable_read_db(call.db)
     try:
         admit(call, value.uri, derived_read=True)
-        kind, body, cited, next_cursor = _read(
-            call.db, call.principal, value.uri, value.cursor, field=value.field
-        )
+        try:
+            kind, body, cited, next_cursor = _read(
+                call.db, call.principal, value.uri, value.cursor, field=value.field
+            )
+        except DocumentTooLarge:
+            refuse("TooLarge")
         if len(body) > READ_DOCUMENT_MAX_CHARS:
             refuse("TooLarge")
         citation = _cite(call, *cited, value.uri, field=value.field) if cited else None
@@ -461,6 +486,14 @@ def _read(
             refuse("InvalidCursor")
         from nexus.services.highlights import read_highlight_annotations
 
+        size = db.scalar(
+            text(
+                "SELECT char_length(annotation_body_text) FROM highlights WHERE id=:id AND user_id=:viewer AND authored_visible"
+            ),
+            {"id": ref.id, "viewer": viewer_id},
+        )
+        if size is not None and size > READ_DOCUMENT_MAX_CHARS:
+            raise DocumentTooLarge(uri)
         annotation = read_highlight_annotations(
             db, viewer_id=viewer_id, highlight_ids=[ref.id]
         ).get(ref.id)
@@ -507,7 +540,7 @@ def _read(
             (_MEDIA_RESULT_TYPE.get(document.kind, "media"), str(ref.id)),
             None,
         )
-    loaded = load_resource_batch(db, [ref], viewer_id=viewer_id)[uri]
+    loaded = read_resource(db, viewer_id=viewer_id, ref=ref)
     if loaded.missing:
         refuse("ResourceUnavailable")
     cited = capability(ref.scheme).citable_result_type

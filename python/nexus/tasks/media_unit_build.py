@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.jobs.queue import JobExecutionContext
+from nexus.jobs.queue import JobExecutionContext, finish_job, lock_running_job_claim
 from nexus.services.connection_discovery import queue_connection_discovery_scan
 from nexus.services.generation.contract import Failed, InvalidOutput, Owner, Succeeded
 from nexus.services.generation.run import generate
@@ -74,8 +74,6 @@ _SYSTEM_PROMPT = build_synthesis_prompt(
 # The head this attempt owns: building at its fingerprint, under this exact claim.
 _OWNED_HEAD = """
     WHERE id = :summary_id AND status = 'building' AND content_fingerprint = :fingerprint
-      AND EXISTS (SELECT 1 FROM background_jobs
-                  WHERE id = :job_id AND status = 'running' AND execution_id = :execution_id)
 """
 
 type _Outcome = Literal["ok", "failed"]
@@ -88,6 +86,8 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict
         "fingerprint": payload["content_fingerprint"],
         "job_id": context.job_id,
         "execution_id": context.execution_id,
+        "attempt_no": context.attempt_no,
+        "media_id": media_id,
     }
 
     async def handler(db: Session, runtime: Runtime) -> dict:
@@ -108,7 +108,7 @@ async def _build(
     owned = db.scalar(text("SELECT 1 FROM media_summaries " + _OWNED_HEAD), fence)
     if owned is None:
         db.rollback()
-        return "ok"
+        return _fail(db, fence, "superseded", None)
     if current_content_fingerprint(db, media_id=media_id) != fence["fingerprint"]:
         db.rollback()  # the index moved on (marked pending, or published without text)
         return _fail(db, fence, "superseded", None)
@@ -146,18 +146,25 @@ async def _build(
 
     def publish() -> bool:
         # Child index writers lock every primary parent before replacing spans.
-        db.execute(text("SELECT id FROM media WHERE id = :m FOR NO KEY UPDATE"), {"m": media_id})
+        owned = _lock_head(db, fence)
         if current_content_fingerprint(db, media_id=media_id) != fence["fingerprint"]:
             return False
-        updated: Any = db.execute(
+        if not owned:
+            finish_job(
+                db,
+                context=context,
+                result={"status": "ok", "outcome": "ok", "media_id": str(media_id)},
+            )
+            return True
+        db.execute(
             text(
                 "UPDATE media_summaries SET summary_md = :summary_md, status = 'ready',"
-                " error_code = NULL, error_detail = NULL, updated_at = now()" + _OWNED_HEAD
+                " error_code = NULL, error_detail = NULL, updated_at = now()"
+                + _OWNED_HEAD
+                + " RETURNING id"
             ),
             {**fence, "summary_md": summary_md},
-        )
-        if updated.rowcount == 0:  # superseded during the model call: write nothing
-            return True
+        ).one()
         db.execute(
             text("DELETE FROM media_claims WHERE summary_id = :s"), {"s": fence["summary_id"]}
         )
@@ -175,6 +182,11 @@ async def _build(
             user_id=owner,
             ref=ResourceRef(scheme="media", id=media_id),
             reason="media_unit_ready",
+        )
+        finish_job(
+            db,
+            context=context,
+            result={"status": "ok", "outcome": "ok", "media_id": str(media_id)},
         )
         return True
 
@@ -204,13 +216,35 @@ def _fail(db: Session, fence: dict[str, Any], code: str, detail: str | None) -> 
     """A modeled failure on the owned head; ``error_detail`` is operator-only, never rendered."""
 
     def op() -> None:
-        db.execute(
-            text(
-                "UPDATE media_summaries SET status = 'failed', error_code = :code,"
-                " error_detail = :detail, updated_at = now()" + _OWNED_HEAD
+        if _lock_head(db, fence):
+            db.execute(
+                text(
+                    "UPDATE media_summaries SET status = 'failed', error_code = :code,"
+                    " error_detail = :detail, updated_at = now()" + _OWNED_HEAD + " RETURNING id"
+                ),
+                {**fence, "code": code, "detail": detail},
+            ).one()
+        finish_job(
+            db,
+            context=JobExecutionContext(
+                fence["job_id"], fence["execution_id"], fence["attempt_no"]
             ),
-            {**fence, "code": code, "detail": detail},
+            result={"status": "ok", "outcome": "failed", "media_id": str(fence["media_id"])},
         )
 
     retry_serializable(db, "media_unit_fail", op)
     return "failed"
+
+
+def _lock_head(db: Session, fence: dict[str, Any]) -> bool:
+    """The media, exact summary head, then current queue execution; no unlocked claim."""
+    db.execute(
+        text("SELECT id FROM media WHERE id=:media_id FOR NO KEY UPDATE"),
+        fence,
+    )
+    head = db.scalar(text("SELECT id FROM media_summaries " + _OWNED_HEAD + " FOR UPDATE"), fence)
+    claim = lock_running_job_claim(
+        db,
+        context=JobExecutionContext(fence["job_id"], fence["execution_id"], fence["attempt_no"]),
+    )
+    return head is not None and claim is not None

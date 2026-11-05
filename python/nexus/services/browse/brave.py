@@ -28,10 +28,10 @@ from nexus.services.browse.targets import (
     instant,
     proxied_image,
     public_url,
-    retry_at,
     seal_target,
     single_credit,
 )
+from nexus.services.net.http_retry import retry_at
 from nexus.services.net.safe_fetch import SafeFetchNotFound, safe_get
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 

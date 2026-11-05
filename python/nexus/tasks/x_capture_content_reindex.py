@@ -36,7 +36,7 @@ from nexus.services.content_indexing import (
     publish_text_index,
     snapshot_published_chunks,
 )
-from nexus.services.library_entries import lock_media_rows_in_order
+from nexus.services.media_locks import lock_media_rows_in_order
 from nexus.services.media_text_scope import x_capture_scope_rows_sql
 from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.suggestion_changes import record_input_change
@@ -158,6 +158,7 @@ def run_job(*, payload: Mapping[str, Any], context: queue.JobExecutionContext) -
                         chunks=read_spool(chunks_path),
                         reason="capture",
                     )
+                    queue.record_job_checkpoint(db, context=context)
                     record_input_change(db, owners=(f"fragment:{fragment_id}",))
                     return published
 
@@ -180,12 +181,13 @@ def run_job(*, payload: Mapping[str, Any], context: queue.JobExecutionContext) -
             if not index_phase("snapshot_x_capture_chunks", snapshot_chunks):
                 return result | {"status": "superseded"}
             spool_embeddings(chunks_path, embeddings_path)
-        except CredentialMissing:
-            return queue.TerminalJobFailure(
+        except CredentialMissing as error:
+            raise queue.JobFailure(
+                ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
+                "No embedding provider credential is configured.",
+                "hold",
                 result_payload=result | {"status": "embedding_not_configured"},
-                error_code=ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
-                error_message="No embedding provider credential is configured.",
-            )
+            ) from error
         except EnvelopeExceeded:
             return queue.TerminalJobFailure(
                 result_payload=result | {"status": "too_large"},

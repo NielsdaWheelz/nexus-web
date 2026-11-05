@@ -31,7 +31,6 @@ type MetadataField = Literal[
 METADATA_FIELDS: tuple[MetadataField, ...] = get_args(MetadataField.__value__)
 # A media's purpose is fixed by what it is (metadata_purpose); every job freezes its own.
 type MetadataPurpose = Literal["bibliography", "title"]
-type MetadataWebSearch = Literal["not_available", "not_used", "succeeded", "failed", "mixed"]
 
 type MetadataFailureCode = Literal[
     "model_unavailable",
@@ -49,6 +48,11 @@ type MetadataFailureCode = Literal[
     "policy_violation",
     "worker_interrupted",
     "execution_failed",
+    "superseded",
+    "no_result",
+    "memory_exhausted",
+    "execution_timeout",
+    "invalid_configuration",
 ]
 
 _ShortText = Annotated[str, StringConstraints(min_length=1, max_length=255, pattern=r"\S")]
@@ -67,7 +71,192 @@ _Handle = Annotated[
     ),
 ]
 _Description = Annotated[str, StringConstraints(min_length=1, max_length=2000, pattern=r"\S")]
-_Language = Annotated[str, StringConstraints(min_length=2, max_length=2, pattern=r"^[a-z]{2}$")]
+# Assigned alpha-2 codes: https://www.loc.gov/standards/iso639-2/php/code_list.php
+_Language = Literal[
+    "aa",
+    "ab",
+    "ae",
+    "af",
+    "ak",
+    "am",
+    "an",
+    "ar",
+    "as",
+    "av",
+    "ay",
+    "az",
+    "ba",
+    "be",
+    "bg",
+    "bi",
+    "bm",
+    "bn",
+    "bo",
+    "br",
+    "bs",
+    "ca",
+    "ce",
+    "ch",
+    "co",
+    "cr",
+    "cs",
+    "cu",
+    "cv",
+    "cy",
+    "da",
+    "de",
+    "dv",
+    "dz",
+    "ee",
+    "el",
+    "en",
+    "eo",
+    "es",
+    "et",
+    "eu",
+    "fa",
+    "ff",
+    "fi",
+    "fj",
+    "fo",
+    "fr",
+    "fy",
+    "ga",
+    "gd",
+    "gl",
+    "gn",
+    "gu",
+    "gv",
+    "ha",
+    "he",
+    "hi",
+    "ho",
+    "hr",
+    "ht",
+    "hu",
+    "hy",
+    "hz",
+    "ia",
+    "id",
+    "ie",
+    "ig",
+    "ii",
+    "ik",
+    "io",
+    "is",
+    "it",
+    "iu",
+    "ja",
+    "jv",
+    "ka",
+    "kg",
+    "ki",
+    "kj",
+    "kk",
+    "kl",
+    "km",
+    "kn",
+    "ko",
+    "kr",
+    "ks",
+    "ku",
+    "kv",
+    "kw",
+    "ky",
+    "la",
+    "lb",
+    "lg",
+    "li",
+    "ln",
+    "lo",
+    "lt",
+    "lu",
+    "lv",
+    "mg",
+    "mh",
+    "mi",
+    "mk",
+    "ml",
+    "mn",
+    "mr",
+    "ms",
+    "mt",
+    "my",
+    "na",
+    "nb",
+    "nd",
+    "ne",
+    "ng",
+    "nl",
+    "nn",
+    "no",
+    "nr",
+    "nv",
+    "ny",
+    "oc",
+    "oj",
+    "om",
+    "or",
+    "os",
+    "pa",
+    "pi",
+    "pl",
+    "ps",
+    "pt",
+    "qu",
+    "rm",
+    "rn",
+    "ro",
+    "ru",
+    "rw",
+    "sa",
+    "sc",
+    "sd",
+    "se",
+    "sg",
+    "si",
+    "sk",
+    "sl",
+    "sm",
+    "sn",
+    "so",
+    "sq",
+    "sr",
+    "ss",
+    "st",
+    "su",
+    "sv",
+    "sw",
+    "ta",
+    "te",
+    "tg",
+    "th",
+    "ti",
+    "tk",
+    "tl",
+    "tn",
+    "to",
+    "tr",
+    "ts",
+    "tt",
+    "tw",
+    "ty",
+    "ug",
+    "uk",
+    "ur",
+    "uz",
+    "ve",
+    "vi",
+    "vo",
+    "wa",
+    "wo",
+    "xh",
+    "yi",
+    "yo",
+    "za",
+    "zh",
+    "zu",
+]
 
 
 class _Frozen(BaseModel):
@@ -109,7 +298,9 @@ class MetadataCredit(_Frozen):
 
 class MetadataRoleSlice(_Frozen):
     role: ContributorRole
-    credits: Annotated[list[MetadataCredit], Field(max_length=MAX_CREDITS_PER_MANAGED_ROLE)]
+    credits: Annotated[
+        list[MetadataCredit], Field(min_length=1, max_length=MAX_CREDITS_PER_MANAGED_ROLE)
+    ]
 
     @model_validator(mode="after")
     def _one_person_once(self) -> MetadataRoleSlice:
@@ -119,39 +310,9 @@ class MetadataRoleSlice(_Frozen):
         return self
 
 
-type ClearMetadataField = Literal[
-    "original_published_date",
-    "edition_published_date",
-    "edition_isbn",
-    "publisher",
-    "language",
-    "description",
-]
-type ContainerDiscrepancyField = Literal[
-    "title",
-    "contributors",
-    "original_published_date",
-    "edition_published_date",
-    "edition_isbn",
-    "publisher",
-    "language",
-]
-
-
-class ContainerDiscrepancy(_Frozen):
-    field: ContainerDiscrepancyField
-    explanation: Annotated[str, StringConstraints(min_length=1, max_length=400, pattern=r"\S")]
-
-
-class ContainerReport(_Frozen):
-    source_title: str
-    discrepancies: Annotated[list[ContainerDiscrepancy], Field(min_length=1, max_length=7)]
-
-
 class MetadataFindings(_Frozen):
-    """The sole external research result, including explicit clears and source reports."""
+    """The complete research result: non-null replaces, null preserves storage."""
 
-    # Unlisted null preserves storage; contributors=[] is invalid; credits=[] clears a role.
     title: _ShortText | None
     contributors: (
         Annotated[
@@ -165,21 +326,12 @@ class MetadataFindings(_Frozen):
     publisher: _ShortText | None
     language: _Language | None
     description: _Description | None
-    clear_fields: list[ClearMetadataField]
-    container_discrepancies: Annotated[list[ContainerDiscrepancy], Field(max_length=7)]
 
     @model_validator(mode="after")
     def _each_role_once(self) -> MetadataFindings:
         roles = [item.role for item in self.contributors or []]
         if len(roles) != len(set(roles)):
             raise ValueError("each contributor role must occur at most once")
-        if len(self.clear_fields) != len(set(self.clear_fields)):
-            raise ValueError("duplicate clear field")
-        if any(getattr(self, field) is not None for field in self.clear_fields):
-            raise ValueError("a cleared field must be null")
-        fields = [item.field for item in self.container_discrepancies]
-        if len(fields) != len(set(fields)):
-            raise ValueError("duplicate container discrepancy")
         return self
 
 
@@ -188,9 +340,6 @@ class MetadataBibliographyCompletedOutcome(_Frozen):
     purpose: Literal["bibliography"]
     completed_at: AwareDatetime
     changed_fields: list[MetadataField]
-    unresolved_fields: list[MetadataField]
-    container_report: ContainerReport | None
-    web_search: MetadataWebSearch | None
 
 
 class MetadataTitleCompletedOutcome(_Frozen):
@@ -207,14 +356,6 @@ type MetadataCompletedOutcome = Annotated[
 ]
 
 
-class MetadataNoFindingsOutcome(_Frozen):
-    status: Literal["no_findings"] = "no_findings"
-    purpose: Literal["bibliography"]
-    completed_at: AwareDatetime
-    container_report: ContainerReport | None
-    web_search: MetadataWebSearch | None
-
-
 class MetadataFailedOutcome(_Frozen):
     status: Literal["failed"] = "failed"
     purpose: MetadataPurpose
@@ -223,7 +364,7 @@ class MetadataFailedOutcome(_Frozen):
 
 
 type MetadataOutcome = Annotated[
-    MetadataCompletedOutcome | MetadataNoFindingsOutcome | MetadataFailedOutcome,
+    MetadataCompletedOutcome | MetadataFailedOutcome,
     Field(discriminator="status"),
 ]
 
@@ -302,13 +443,11 @@ class MetadataCompletedOperation(_Operation):
     outcome: MetadataCompletedOutcome
 
 
-class MetadataNoFindingsOperation(_Operation):
-    status: Literal["no_findings"] = "no_findings"
-    purpose: Literal["bibliography"]
-    completed_at: AwareDatetime
-    reviewed_at: AwareDatetime | None
-    container_report: ContainerReport | None
-    web_search: MetadataWebSearch | None
+class MetadataHeldOperation(_Operation):
+    status: Literal["held"] = "held"
+    purpose: MetadataPurpose
+    code: MetadataFailureCode
+    held_at: AwareDatetime
 
 
 class MetadataFailedOperation(_Operation):
@@ -322,7 +461,8 @@ type MetadataUnfinishedOperation = Annotated[
     MetadataQueuedOperation
     | MetadataRunningOperation
     | MetadataRecoveringOperation
-    | MetadataWaitingOperation,
+    | MetadataWaitingOperation
+    | MetadataHeldOperation,
     Field(discriminator="status"),
 ]
 
@@ -332,7 +472,7 @@ type MetadataOperationOut = Annotated[
     | MetadataRecoveringOperation
     | MetadataWaitingOperation
     | MetadataCompletedOperation
-    | MetadataNoFindingsOperation
+    | MetadataHeldOperation
     | MetadataFailedOperation,
     Field(discriminator="status"),
 ]

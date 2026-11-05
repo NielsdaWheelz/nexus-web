@@ -19,15 +19,14 @@ from nexus.config import get_settings
 
 type Lane = Literal["interactive", "background"]
 
+FAILED_EXECUTION_LIMIT = 3
+
 
 @dataclass(frozen=True)
 class JobDefinition:
     lane: Lane
     # fn(*, payload, context) -> JobResult.
     handler: str
-    max_attempts: int = 3
-    # Attempt n failing waits retry_delays[n - 1] (the last delay repeats).
-    retry_delays: tuple[int, ...] = (60, 300, 900)
     # Holds the one cluster-wide Heavy capacity lease while running.
     heavy: bool = False
     # Enqueued once per UTC slot of this length.
@@ -41,6 +40,8 @@ class JobDefinition:
     # fn(db, job) -> Mapping | None, under the claim before a failed attempt settles:
     # a result says the owner's work already finished, and the job completes with it.
     on_failure: str | None = None
+    # fn(db, job): lock domain rows before the queue row during worker settlement.
+    lock_owner: str | None = None
     # fn(db, job) in the transaction that makes the job dead.
     on_dead: str | None = None
     # fn(db, job, execution_id) after each retry, dead, reclaim or reschedule: job is
@@ -53,10 +54,6 @@ def resolve(path: str) -> Any:
     return getattr(importlib.import_module(module), name)
 
 
-_GENERATION_DEAD = "nexus.services.generation.ledger:on_dead_letter"
-_HOURS = (60, 300, 900, 3600, 21600)
-
-
 @cache
 def registry() -> dict[str, JobDefinition]:
     s = get_settings()
@@ -65,32 +62,25 @@ def registry() -> dict[str, JobDefinition]:
         "chat_run": JobDefinition(
             "interactive",
             "nexus.services.chat.worker:run_job",
-            retry_delays=(30, 120, 300),
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             keep_dead=True,
             on_dead="nexus.services.chat.worker:on_dead_letter",
         ),
         "enrich_metadata": JobDefinition(
-            "interactive",
+            "background",
             "nexus.tasks.enrich_metadata:run_job",
-            max_attempts=2,
-            retry_delays=(0,),
             keep_succeeded=True,
             keep_dead=True,
-            on_dead=_GENERATION_DEAD,
         ),
         "discover_document_parts": JobDefinition(
             "interactive",
             "nexus.tasks.discover_document_parts:run_job",
-            retry_delays=(30, 120, 300),
             keep_succeeded=True,
             keep_dead=True,
-            on_dead=_GENERATION_DEAD,
         ),
         "oracle_reading_generate": JobDefinition(
             "interactive",
             "nexus.services.oracle.readings:run_job",
-            retry_delays=(0,),
-            on_dead=_GENERATION_DEAD,
         ),
         # Background lane: one fresh, memory-bounded child per job.
         "suggestion_shortlist_refresh": JobDefinition(
@@ -102,7 +92,7 @@ def registry() -> dict[str, JobDefinition]:
         "ingest_media_source": JobDefinition(
             "background",
             "nexus.services.source_runner:run_job",
-            retry_delays=(60, 300),
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             heavy=True,
             keep_dead=True,
             parser_temp_key="attempt_id",
@@ -127,13 +117,14 @@ def registry() -> dict[str, JobDefinition]:
         "x_capture_content_reindex": JobDefinition(
             "background",
             "nexus.tasks.x_capture_content_reindex:run_job",
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             keep_dead=True,
             on_dead="nexus.jobs.dead_letters:x_capture_index",
         ),
         "media_content_reindex_job": JobDefinition(
             "background",
             "nexus.services.content_indexing:run_media_reindex_job",
-            retry_delays=(60, 300),
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             heavy=True,
             keep_dead=True,
             on_history="nexus.services.import_history:on_index_job_outcome",
@@ -141,35 +132,37 @@ def registry() -> dict[str, JobDefinition]:
         "authored_text_reindex_job": JobDefinition(
             "background",
             "nexus.services.authored_text_indexing:run_authored_text_reindex_job",
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             on_dead="nexus.jobs.dead_letters:authored_text_index",
         ),
         "media_unit_build": JobDefinition(
             "background",
             "nexus.tasks.media_unit_build:run_job",
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             keep_dead=True,
             on_dead="nexus.jobs.dead_letters:media_unit_build",
         ),
         "connection_discovery_scan": JobDefinition(
             "background",
             "nexus.services.connection_discovery:connection_discovery_scan_job",
-            on_dead=_GENERATION_DEAD,
         ),
         "podcast_feed_page": JobDefinition(
             "background",
             "nexus.services.podcasts.traversal:run_job",
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             keep_dead=True,
             on_dead="nexus.jobs.dead_letters:podcast_feed_run",
         ),
         "podcast_chapters": JobDefinition(
             "background",
             "nexus.services.podcasts.chapters:run_job",
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             on_dead="nexus.jobs.dead_letters:podcast_chapters",
         ),
         "media_teardown": JobDefinition(
             "background",
             "nexus.services.media_deletion:run_teardown_job",
-            max_attempts=5,
-            retry_delays=_HOURS,
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
             keep_dead=True,
             on_dead="nexus.jobs.dead_letters:media_teardown",
         ),
@@ -177,35 +170,27 @@ def registry() -> dict[str, JobDefinition]:
         "podcast_refresh_due_job": JobDefinition(
             "background",
             "nexus.services.podcasts.sync:run_due_job",
-            max_attempts=1,
-            retry_delays=(0,),
             periodic_seconds=s.podcast_refresh_due_schedule_seconds,
         ),
         "atlas_project_job": JobDefinition(
             "background",
             "nexus.services.atlas:atlas_project_job",
-            retry_delays=(120, 600, 1800),
             periodic_seconds=s.atlas_project_schedule_seconds or None,
         ),
         "storage_orphan_sweep": JobDefinition(
             "background",
             "nexus.tasks.storage_orphan_sweep:storage_orphan_sweep",
-            retry_delays=(300, 900, 3600),
             periodic_seconds=6 * 3600,
             keep_dead=True,
         ),
         "prune_background_jobs_job": JobDefinition(
             "background",
             "nexus.jobs.queue:prune_job",
-            max_attempts=1,
-            retry_delays=(0,),
             periodic_seconds=3600,
         ),
         "purge_expired_auth_handoff_codes": JobDefinition(
             "background",
             "nexus.services.auth_handoff_codes:purge_job",
-            max_attempts=1,
-            retry_delays=(0,),
             periodic_seconds=3600,
         ),
     }

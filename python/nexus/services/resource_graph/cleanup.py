@@ -84,7 +84,7 @@ def delete_edges_for_deleted_resources(
             else and_(ResourceEdge.ordinal.is_(None), at_target),
         ),
     )
-    from nexus.services.library_entries import lock_media_rows_in_order
+    from nexus.services.media_locks import lock_media_rows_in_order
 
     retained_media = lock_media_rows_in_order(
         db,

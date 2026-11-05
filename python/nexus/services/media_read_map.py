@@ -12,6 +12,7 @@ The caller owns the coherent read snapshot.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import text
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.reader_document import ReaderTextBodyOut, ReaderXPostOut
+from nexus.schemas.reader_document import ReaderXPostOut
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.media_document_metrics import load_media_summary_metrics
 from nexus.services.media_text_scope import text_scope_rows_sql
@@ -27,9 +28,22 @@ from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.reader_navigation import get_media_navigation_for_viewer
 from nexus.services.transcript_navigation import read_transcript_navigation_source
 
-READ_DOCUMENT_MAX_CHARS = 50_000  # media: read over this → too_large redirect
+if TYPE_CHECKING:
+    from nexus.services.reader_document import ReaderSourceUnit, ReaderTextPlan
+
+
+READ_DOCUMENT_MAX_CHARS = 50_000  # Full reads refuse before body hydration.
 _PAGE_GROUP_CHARS = 6_000  # PDF pages are grouped into read sections up to ~this size
 _MAX_MAP_SECTIONS = 200  # cap the read map; the model app_searches for the rest
+
+
+class DocumentTooLarge(ValueError):
+    """A full read exceeds its character allowance; no body was hydrated."""
+
+
+def _preview_sql(body: str) -> str:
+    """Select only the first nonblank line, bounded at its SQL producer."""
+    return f"left(btrim((regexp_match({body}, '[^\\n\\r]*[^\\n\\r\\s][^\\n\\r]*'))[1]),160)"
 
 
 @dataclass(frozen=True)
@@ -113,10 +127,10 @@ def get_media_read_map_for_viewer(
     if readable is None:
         return None
     if readable.has_x_composition:
-        document = _composed_document(db, viewer_id, media_id)
+        document = _composition(db, viewer_id, media_id)
         if document is None:
             return None
-        sections = _composed_sections(document)
+        sections = _composed_sections(db, document)
     elif readable.kind in ("web_article", "epub"):
         sections = _heading_sections(db, viewer_id, media_id)
         if sections is None:
@@ -129,7 +143,7 @@ def get_media_read_map_for_viewer(
                 label=readable.title,
                 section_kind="heading",
                 read_uri=f"media:{media_id}",
-                preview=_preview(_scope_text(db, media_id)),
+                preview=_scope_preview(db, media_id),
             )
         ]
     else:
@@ -154,8 +168,8 @@ def load_media_document_summary(
     metrics = load_media_summary_metrics(db, media_id)
     section_count = metrics.source_section_count
     if readable.has_x_composition:
-        document = _composed_document(db, viewer_id, media_id)
-        section_count = None if document is None else len(_composed_sections(document))
+        document = _composition(db, viewer_id, media_id)
+        section_count = None if document is None else len(_composed_sections(db, document))
     elif readable.kind in ("web_article", "epub"):
         try:
             section_count = len(get_media_navigation_for_viewer(db, viewer_id, media_id).sections)
@@ -170,12 +184,20 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     if readable is None:
         return None
     if readable.has_x_composition:
-        document = _composed_document(db, viewer_id, media_id)
+        document = _composition(db, viewer_id, media_id)
         if document is None:
             return None
-        body = _composed_text(document)
+        body = _composed_text(db, document)
     elif readable.kind == "pdf":
-        body = str(_plain_text(db, media_id) or "")
+        count = db.scalar(
+            text("SELECT COALESCE(char_length(plain_text),0) FROM media WHERE id=:id"),
+            {"id": media_id},
+        )
+        if count > READ_DOCUMENT_MAX_CHARS:
+            raise DocumentTooLarge(str(media_id))
+        body = str(
+            db.scalar(text("SELECT plain_text FROM media WHERE id=:id"), {"id": media_id}) or ""
+        )
     elif readable.kind == "text_part":
         body = _scope_text(db, media_id)
     else:
@@ -183,17 +205,16 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     return DocumentRead(media_id, readable.kind, readable.title, body, len(body))
 
 
-def _composed_document(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderTextBodyOut | None:
-    from nexus.services.reader_document import read_reader_document
+def _composition(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderTextPlan | None:
+    from nexus.services.reader_document import read_reader_text_plan
 
     try:
-        document = read_reader_document(db, viewer_id, media_id)
+        return read_reader_text_plan(db, viewer_id, media_id)
     except ApiError as exc:
         if exc.code not in (ApiErrorCode.E_MEDIA_NOT_FOUND, ApiErrorCode.E_MEDIA_NOT_READY):
             raise
         # justify-ignore-error: absent or unreadable source composition is unavailable to tools.
         return None
-    return document if isinstance(document, ReaderTextBodyOut) else None
 
 
 def _post_label(post: ReaderXPostOut) -> str:
@@ -209,10 +230,10 @@ def _post_label(post: ReaderXPostOut) -> str:
     return f"{relation} · {post.attribution_text or 'captured excerpt'}"
 
 
-def _composed_text(document: ReaderTextBodyOut) -> str:
+def _composed_text(db: Session, document: ReaderTextPlan) -> str:
     from nexus.services.reader_document import reading_source_ranges
 
-    parts: list[str] = []
+    parts: list[tuple[str, ReaderSourceUnit | None, int, int]] = []
     emitted_posts: set[str] = set()
     if capture := document.x_capture:
         coverage: list[str] = []
@@ -223,13 +244,12 @@ def _composed_text(document: ReaderTextBodyOut) -> str:
         if capture.unchecked_post_count:
             coverage.append(f"{capture.unchecked_post_count} saved posts were not checked")
         if coverage:
-            parts.append("capture: " + "; ".join(coverage))
+            parts.append(("capture: " + "; ".join(coverage), None, 0, 0))
     for unit, start, end in reading_source_ranges(document.units):
-        body = unit.canonical_text[start:end]
         post = unit.x_post
         if post is None:
-            if body:
-                parts.append(body)
+            if end > start:
+                parts.append(("", unit, start, end))
             continue
         if unit.id in emitted_posts:
             continue
@@ -262,21 +282,44 @@ def _composed_text(document: ReaderTextBodyOut) -> str:
                 else ""
             )
             lines.append(f"{relation}: {reference.source_url}{availability}")
-        parts.append("\n".join(lines) + "\n\n" + body)
-    links = [
-        f"embedded post: {url}"
-        for embed in document.embeds
-        if embed.provider == "x"
-        and (url := embed.canonical_url.value or embed.source_url.value) is not None
-    ]
-    if links:
-        parts.append("source links:\n" + "\n".join(links))
-    return "\n\n".join(parts)
+        parts.append(("\n".join(lines) + "\n\n", unit, start, end))
+    if document.source_links:
+        parts.append(
+            (
+                "source links:\n"
+                + "\n".join(f"embedded post: {url}" for url in document.source_links),
+                None,
+                0,
+                0,
+            )
+        )
+    size = (
+        sum(len(header) + end - start for header, _, start, end in parts)
+        + max(0, len(parts) - 1) * 2
+    )
+    if size > READ_DOCUMENT_MAX_CHARS:
+        raise DocumentTooLarge("reader composition")
+    bodies = []
+    for header, unit, start, end in parts:
+        body = (
+            ""
+            if unit is None
+            else db.scalar(
+                text(
+                    "SELECT substring(canonical_text FROM :start+1 FOR :size) FROM fragments WHERE id=:id"
+                ),
+                {"id": unit.fragment_id, "start": start, "size": end - start},
+            )
+        )
+        assert body is not None
+        bodies.append(header + body)
+    return "\n\n".join(bodies)
 
 
-def _composed_sections(document: ReaderTextBodyOut) -> list[MediaReadMapSection]:
+def _composed_sections(db: Session, document: ReaderTextPlan) -> list[MediaReadMapSection]:
     from nexus.services.reader_document import reading_source_ranges
 
+    previews = _fragment_previews(db, [unit.fragment_id for unit in document.units])
     sections: list[MediaReadMapSection] = []
     emitted_posts: set[str] = set()
     for unit, start, end in reading_source_ranges(document.units):
@@ -293,7 +336,7 @@ def _composed_sections(document: ReaderTextBodyOut) -> list[MediaReadMapSection]
                     label=_post_label(post),
                     section_kind="heading",
                     read_uri=f"fragment:{post.owner.fragment_id}",
-                    preview=f"{post.source_url}\n{_preview(unit.canonical_text)}",
+                    preview=f"{post.source_url}\n{previews.get(unit.fragment_id, '')}",
                     fragment_id=post.owner.fragment_id,
                 )
             )
@@ -308,7 +351,7 @@ def _composed_sections(document: ReaderTextBodyOut) -> list[MediaReadMapSection]
                         label=section.label or "(section)",
                         section_kind="heading",
                         read_uri=f"fragment:{unit.id}",
-                        preview=_preview(unit.canonical_text),
+                        preview=previews.get(unit.fragment_id, ""),
                         fragment_id=UUID(unit.id),
                     )
                 )
@@ -318,7 +361,7 @@ def _composed_sections(document: ReaderTextBodyOut) -> list[MediaReadMapSection]
                     label=document.title,
                     section_kind="heading",
                     read_uri=f"fragment:{unit.id}",
-                    preview=_preview(unit.canonical_text),
+                    preview=previews.get(unit.fragment_id, ""),
                     fragment_id=UUID(unit.id),
                 )
             )
@@ -331,9 +374,6 @@ def read_page_range(
     readable = _readable(db, viewer_id, media_id)
     if readable is None or readable.kind != "pdf":
         return None
-    plain_text = _plain_text(db, media_id)
-    if plain_text is None:
-        return None
     bounds = db.execute(
         text(
             "SELECT MIN(start_offset), MAX(end_offset) FROM pdf_page_text_spans"
@@ -343,7 +383,13 @@ def read_page_range(
     ).first()
     if bounds is None or bounds[0] is None:
         return None
-    return str(plain_text)[int(bounds[0]) : int(bounds[1])]
+    start, end = int(bounds[0]), int(bounds[1])
+    if end - start > READ_DOCUMENT_MAX_CHARS:
+        raise DocumentTooLarge(str(media_id))
+    return db.scalar(
+        text("SELECT substring(plain_text FROM :start+1 FOR :size) FROM media WHERE id=:id"),
+        {"id": media_id, "start": start, "size": end - start},
+    )
 
 
 def _heading_sections(
@@ -368,7 +414,6 @@ def _heading_sections(
 
 
 def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
-    plain_text = str(_plain_text(db, media_id) or "")
     sections: list[MediaReadMapSection] = []
     group: list[tuple[int, str | None, int, int]] = []
 
@@ -382,7 +427,15 @@ def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
                 label=f"Page {first}" if first_page == last_page else f"Pages {first}-{last}",
                 section_kind="page_range",
                 read_uri=f"page_range:{media_id}:{first_page}-{last_page}",
-                preview=_preview(plain_text[group_start:group_end]),
+                preview=str(
+                    db.scalar(
+                        text(
+                            f"SELECT {_preview_sql('substring(plain_text FROM :start+1 FOR :size)')} FROM media WHERE id=:id"
+                        ),
+                        {"id": media_id, "start": group_start, "size": group_end - group_start},
+                    )
+                    or ""
+                ),
                 page_start=first_page,
                 page_end=last_page,
             )
@@ -410,12 +463,12 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSectio
     sections: list[MediaReadMapSection] = []
     for row in db.execute(
         text(
-            "SELECT id, canonical_text, t_start_ms, t_end_ms FROM fragments"
+            f"SELECT id, {_preview_sql('canonical_text')}, t_start_ms, t_end_ms FROM fragments"
             " WHERE media_id = :id ORDER BY t_start_ms ASC NULLS LAST, idx ASC"
         ),
         {"id": media_id},
     ):
-        preview = _preview(str(row[1] or ""))
+        preview = str(row[1] or "")
         t_start_ms = int(row[2]) if row[2] is not None else None
         t_end_ms = int(row[3]) if row[3] is not None else None
         containing = [
@@ -440,48 +493,60 @@ def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSectio
     return sections
 
 
-def _plain_text(db: Session, media_id: UUID) -> str | None:
-    return db.scalar(text("SELECT plain_text FROM media WHERE id = :id"), {"id": media_id})
-
-
 def _join_fragments(db: Session, media_id: UUID) -> str:
-    rows = db.execute(
+    count = db.scalar(
         text(
-            "SELECT canonical_text FROM fragments WHERE media_id = :id"
-            " ORDER BY t_start_ms ASC NULLS LAST, idx ASC"
+            "SELECT COALESCE(sum(char_length(canonical_text)),0)+GREATEST(count(*)-1,0)*2 FROM fragments WHERE media_id=:id"
         ),
         {"id": media_id},
     )
-    return "\n\n".join(str(row[0] or "") for row in rows)
+    if count > READ_DOCUMENT_MAX_CHARS:
+        raise DocumentTooLarge(str(media_id))
+    return db.scalar(
+        text(
+            "SELECT COALESCE(string_agg(canonical_text,E'\\n\\n' ORDER BY t_start_ms NULLS LAST,idx),'') FROM fragments WHERE media_id=:id"
+        ),
+        {"id": media_id},
+    )
 
 
 def _scope_text(db: Session, media_id: UUID) -> str:
-    """A piece's canonical words: its source slices in order (``text_scope_rows_sql``)."""
-    rows = db.execute(
-        text(f"""
-            SELECT f.canonical_text, scope.start_offset, scope.end_offset
-            FROM ({text_scope_rows_sql("SELECT CAST(:id AS uuid) AS media_id")}) scope
-            JOIN fragments f ON f.id = scope.fragment_id
-            ORDER BY scope.fragment_idx
-        """),
+    """A piece's bounded canonical words, sliced by SQL before body hydration."""
+    scope = text_scope_rows_sql("SELECT CAST(:id AS uuid) AS media_id")
+    count = db.scalar(
+        text(
+            f"SELECT COALESCE(sum(end_offset-start_offset),0)+GREATEST(count(*)-1,0)*2 FROM ({scope}) scope"
+        ),
         {"id": media_id},
     )
-    return "\n\n".join(str(words)[start:end] for words, start, end in rows)
+    if count > READ_DOCUMENT_MAX_CHARS:
+        raise DocumentTooLarge(str(media_id))
+    return db.scalar(
+        text(
+            f"SELECT COALESCE(string_agg(substring(f.canonical_text FROM scope.start_offset+1 FOR scope.end_offset-scope.start_offset),E'\\n\\n' ORDER BY scope.fragment_idx),'') FROM ({scope}) scope JOIN fragments f ON f.id=scope.fragment_id"
+        ),
+        {"id": media_id},
+    )
+
+
+def _scope_preview(db: Session, media_id: UUID) -> str:
+    scope = text_scope_rows_sql("SELECT CAST(:id AS uuid) AS media_id")
+    return str(
+        db.scalar(
+            text(
+                f"SELECT preview FROM (SELECT scope.fragment_idx,{_preview_sql('substring(f.canonical_text FROM scope.start_offset+1 FOR scope.end_offset-scope.start_offset)')} AS preview FROM ({scope}) scope JOIN fragments f ON f.id=scope.fragment_id) previews WHERE preview IS NOT NULL AND preview<>'' ORDER BY fragment_idx LIMIT 1"
+            ),
+            {"id": media_id},
+        )
+        or ""
+    )
 
 
 def _fragment_previews(db: Session, fragment_ids: list[UUID]) -> dict[UUID, str]:
     if not fragment_ids:
         return {}
     rows = db.execute(
-        text("SELECT id, canonical_text FROM fragments WHERE id = ANY(:ids)"),
+        text(f"SELECT id,{_preview_sql('canonical_text')} FROM fragments WHERE id=ANY(:ids)"),
         {"ids": fragment_ids},
     )
-    return {row[0]: _preview(str(row[1] or "")) for row in rows}
-
-
-def _preview(body: str) -> str:
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped[:160]
-    return ""
+    return {row[0]: str(row[1] or "") for row in rows}

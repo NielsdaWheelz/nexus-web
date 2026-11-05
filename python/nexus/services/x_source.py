@@ -238,7 +238,7 @@ def x_article_child_media_ids(db: Session, *, thread_media_ids: Sequence[UUID]) 
 
 
 def x_article_link(
-    db: Session, *, capture: XPostCapture, reading_media_id: UUID
+    db: Session, *, capture_id: UUID, source_revision_id: str, reading_media_id: UUID
 ) -> tuple[str, UUID | None] | None:
     """An association in the authorized reading thread, for this exact captured revision.
 
@@ -253,10 +253,10 @@ def x_article_link(
         )
         .outerjoin(Media, Media.id == XArticleInspection.article_media_id)
         .where(
-            XArticleInspection.carrier_post_id == capture.source_revision_id,
+            XArticleInspection.carrier_post_id == source_revision_id,
             XArticleInspection.thread_media_id == reading_media_id,
             XArticleInspection.thread_media_id.in_(
-                select(XThreadPost.thread_media_id).where(XThreadPost.capture_id == capture.id)
+                select(XThreadPost.thread_media_id).where(XThreadPost.capture_id == capture_id)
             ),
         )
     ).all()

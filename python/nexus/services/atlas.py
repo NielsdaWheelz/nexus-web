@@ -16,8 +16,9 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobExecutionContext
+from nexus.jobs.queue import JobExecutionContext, finish_job, lock_running_job_claim
 from nexus.schemas.atlas import AtlasEdgeOut, AtlasOut, ConstellationOut, StarOut
 from nexus.services.embeddings import EMBEDDING_PROVIDER, embedding_model
 from nexus.services.library_entries import library_media_ids_cte_sql
@@ -78,8 +79,8 @@ def read_atlas(db: Session, *, viewer_id: UUID, default_library_id: UUID) -> Atl
     )
 
 
-def project_all(db: Session) -> int:
-    """Recompute the one frame; flush only. Returns the positioned count."""
+def _project(db: Session, context: JobExecutionContext) -> dict[str, int | str]:
+    """Compute before locking the exact execution, then publish in its transaction."""
     rows = db.execute(
         text("""
             SELECT cc.owner_id, CAST(avg(ce.embedding_vector) AS real[])
@@ -99,6 +100,8 @@ def project_all(db: Session) -> int:
         {"provider": EMBEDDING_PROVIDER, "model": embedding_model()},
     ).all()
     positions = _repulse(_frame(np.array([mean for _, mean in rows], dtype=np.float64)))
+    if lock_running_job_claim(db, context=context) is None:
+        return {"status": "superseded"}
     db.execute(
         text("DELETE FROM media_atlas_positions WHERE media_id <> ALL(:ids)"),
         {"ids": [media_id for media_id, _ in rows]},
@@ -111,17 +114,17 @@ def project_all(db: Session) -> int:
             ),
             [{"id": row[0], "x": x, "y": y} for row, (x, y) in zip(rows, positions, strict=True)],
         )
-    return len(rows)
+    result: dict[str, int | str] = {"positioned": len(rows)}
+    finish_job(db, context=context, result=result)
+    return result
 
 
 def atlas_project_job(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> dict[str, int]:
+) -> dict[str, int | str]:
     """A retry recomputes the whole frame in one transaction (idempotent)."""
     with get_session_factory()() as db:
-        positioned = project_all(db)
-        db.commit()
-    return {"positioned": positioned}
+        return retry_serializable(db, "atlas.project", lambda: _project(db, context))
 
 
 def _frame(vectors: np.ndarray) -> list[tuple[float, float]]:

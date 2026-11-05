@@ -100,7 +100,7 @@ def run_source_publication_phase[T](
     def phase() -> T:
         if lock_identities is not None:
             lock_identities(db)
-        from nexus.services.library_entries import media_family_ids
+        from nexus.services.media_locks import media_family_ids
 
         requested = sorted({*media_ids, *(discover(db) if discover is not None else ())})
         ordered = media_family_ids(db, requested)

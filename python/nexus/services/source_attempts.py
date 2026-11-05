@@ -229,11 +229,11 @@ def superseding_media_id(db: Session, *, source_attempt_id: UUID) -> UUID | None
 
 
 def source_repairable_sql(media_alias: str) -> str:
-    """Boolean SQL: the media's latest attempt is in flight and its exact job is dead."""
+    """Boolean SQL: the media's latest in-flight attempt has an exact job needing repair."""
     return f"""EXISTS(
     SELECT 1
     FROM media_source_attempts latest
-    JOIN background_jobs job ON job.id = latest.job_id AND job.status = 'dead'
+    JOIN background_jobs job ON job.id = latest.job_id AND job.status IN ('dead', 'held')
     WHERE latest.media_id = {media_alias}.id
       AND latest.status IN ('accepted', 'queued', 'running')
       AND latest.id = (
@@ -333,15 +333,15 @@ def reacquisition_restriction(
 def recovery_facts(
     db: Session, media: Media, attempt: MediaSourceAttempt, *, viewer_id: UUID
 ) -> SourceRecoveryFacts:
-    """An admission's facts, read under its locks; an exact dead job stays locked."""
-    dead = (
+    """An admission's facts, read under its locks; its exact repairable job stays locked."""
+    repairable = (
         attempt.job_id is not None
         and attempt.status in st.IN_FLIGHT
         and db.scalar(
             text("SELECT status FROM background_jobs WHERE id = :id FOR UPDATE"),
             {"id": attempt.job_id},
         )
-        == "dead"
+        in ("dead", "held")
     )
     return SourceRecoveryFacts(
         attempt_id=attempt.id,
@@ -350,7 +350,7 @@ def recovery_facts(
         source_type=attempt.source_type,
         processing_status=media.processing_status.value,
         job_id=attempt.job_id,
-        repairable=dead,
+        repairable=repairable,
         is_creator=media.created_by_user_id == viewer_id,
         native_article_id=native_x_article_id(
             kind=media.kind, provider=media.provider, provider_id=media.provider_id

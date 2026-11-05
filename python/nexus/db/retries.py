@@ -15,7 +15,8 @@ as 503 before that fallback. Workers keep their existing transient queue retry.
 from collections.abc import Callable
 from typing import Literal
 
-from sqlalchemy.exc import IntegrityError, OperationalError
+import psycopg
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 # Unique constraints whose violation is a first-sight race, not a defect: two writers insert
@@ -134,3 +135,34 @@ def _retryable(exc: Exception) -> bool:
     if isinstance(exc, IntegrityError):
         return integrity_constraint_name(exc) in RETRYABLE_UNIQUE_CONSTRAINTS
     return isinstance(exc, TransactionRestart)
+
+
+def is_transient_database_error(error: BaseException) -> bool:
+    """Recognized database unavailability only; a mixed exception group stays a defect."""
+    if isinstance(error, BaseExceptionGroup):
+        return bool(error.exceptions) and all(
+            is_transient_database_error(leaf) for leaf in error.exceptions
+        )
+    if isinstance(error, DatabaseBusyError):
+        return True
+    if isinstance(error, DBAPIError):
+        if error.connection_invalidated:
+            return True
+        original = error.orig
+        if original is None:
+            return False
+        error = original
+    if not isinstance(error, psycopg.Error):
+        return False
+    state = error.sqlstate
+    if state is not None:
+        return state.startswith("08") or state in {
+            "40001",
+            "40P01",
+            "55P03",
+            "53300",
+            "57P01",
+            "57P02",
+            "57P03",
+        }
+    return isinstance(error, psycopg.OperationalError | psycopg.InterfaceError)

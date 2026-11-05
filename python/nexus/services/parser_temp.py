@@ -18,7 +18,8 @@ from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import JobExecutionContext, JobResult
-from nexus.storage.client import StorageClient, StorageError
+from nexus.storage.client import StorageClient
+from nexus.storage.errors import StorageError
 
 _SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -103,7 +104,7 @@ def stream_storage_object_to_file(
             )
     except StorageError as exc:
         destination.unlink(missing_ok=True)
-        raise StorageError(exc.message, exc.code) from exc
+        raise StorageError(exc.message, exc.code, reason=exc.reason) from exc
     except Exception:
         destination.unlink(missing_ok=True)
         raise
@@ -124,11 +125,11 @@ def prune_job(*, payload: Mapping[str, Any], context: JobExecutionContext | None
             live = db.execute(
                 text("""SELECT EXISTS (
                     SELECT 1 FROM media_source_attempts a JOIN background_jobs j ON j.id = a.job_id
-                    WHERE a.id = :id AND j.status IN ('pending', 'failed', 'running')
+                    WHERE a.id = :id AND j.status IN ('pending', 'failed', 'running', 'held')
                     UNION ALL
                     SELECT 1 FROM background_jobs
                     WHERE id = :id AND kind IN ('media_content_reindex_job', 'authored_text_reindex_job', 'x_capture_content_reindex')
-                      AND status IN ('pending', 'failed', 'running'))"""),
+                      AND status IN ('pending', 'failed', 'running', 'held'))"""),
                 {"id": operation_id},
             ).scalar_one()
             if path.is_dir() and not live:

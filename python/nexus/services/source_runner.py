@@ -4,8 +4,10 @@ Runs in the bounded background child. Marks the attempt running and keeps a deta
 snapshot of it, acquires the source through ``source_adapters`` with no transaction
 open, then settles: success mirrors the media's outcome onto the attempt and requests
 the reindex and metadata enrichment; a typed refusal is a terminal failure, published at
-once (I3); any other error re-raises to the queue (3 tries, then dead and the repair
-offer). A run that finds its source is another media's transfers current holdings and
+once (I3); other failures retain their typed queue retry or repair disposition.
+Prepared file and transcript publication commits body, attempt success and follow-up
+work together. A run whose exact attempt already succeeded does no acquisition.
+A run that finds its source is another media's transfers current holdings and
 placements, preserving entry identity/position and earliest time, then claims
 the loser for teardown. Winner removal markers remain; loser suppression carries
 unless the viewer independently reads the winner. Publication takes ordered
@@ -25,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.jobs.queue import JobExecutionContext, JobResult
+from nexus.jobs.queue import JobExecutionContext, JobResult, get_job, running_job_claim_is_current
 from nexus.logging import get_logger
 from nexus.schemas.import_history import (
     SourceExecutionStarted,
@@ -33,7 +35,7 @@ from nexus.schemas.import_history import (
     SourceSucceeded,
     assume_safe_failure_code,
 )
-from nexus.services import library_entries, resource_grants
+from nexus.services import library_entries, media_locks, resource_grants
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.contributor_writes import MediaTarget
@@ -44,6 +46,10 @@ from nexus.services.media_deletion import (
 )
 from nexus.services.media_processing_state import mark_ready_for_reading, mark_stage_warning
 from nexus.services.metadata_operations import enqueue_metadata_enrichment
+from nexus.services.podcasts.transcription import (
+    PreparedTranscriptSource,
+    publish_prepared_transcript,
+)
 from nexus.services.search import projection
 from nexus.services.source_adapters import (
     PreparedBrowserArticle,
@@ -59,6 +65,7 @@ from nexus.services.source_publication import (
     SourceAttemptFailure,
     SourcePublicationFence,
     SourcePublicationSuperseded,
+    on_failure,
     publish_source_attempt_failure,
     reset_source_progress,
     run_source_publication_phase,
@@ -71,7 +78,7 @@ from nexus.services.x_ingest import (
     publish_prepared_x_source,
     x_publication_media_ids,
 )
-from nexus.storage.client import StorageError
+from nexus.storage.errors import StorageError
 
 logger = get_logger(__name__)
 
@@ -84,7 +91,7 @@ _TERMINAL_CODES = frozenset(
     E_SOURCE_NOT_READABLE E_SANITIZATION_FAILED E_SSRF_BLOCKED E_INVALID_FILE_TYPE
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE
     E_INVALID_REQUEST E_INVALID_KIND E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE
-    E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED E_X_PROVIDER_AUTH_REJECTED
+    E_X_POST_UNAVAILABLE
     E_REPAIR_NOT_ALLOWED E_RESOURCE_CONFLICT E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE
     E_X_IDENTITY_CONFLICT E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED E_PART_SOURCE_PINNED""".split()
 )
@@ -103,6 +110,10 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobR
         )
     except SourcePublicationSuperseded:
         result = {"status": "superseded"}
+        with get_session_factory()() as db:
+            job = get_job(db, context.job_id)
+            if job is not None and running_job_claim_is_current(db, context=context):
+                result = on_failure(db, job) or result
     logger.info(
         "ingest_media_source_completed",
         media_id=payload["media_id"],
@@ -149,6 +160,9 @@ def _run(
             outcome, cleanup = _publish_file(session_factory, media_id, acquired, fence, request_id)
             delete_document_storage_objects(cleanup)
             return source_outcome_to_job_result(outcome)
+        if isinstance(acquired, PreparedTranscriptSource):
+            outcome = _publish_transcript(session_factory, media_id, acquired, fence, request_id)
+            return source_outcome_to_job_result(outcome)
         if isinstance(acquired, PreparedXSource):
             outcome = _publish_x(session_factory, media_id, acquired, fence, actor_id, request_id)
             return source_outcome_to_job_result(outcome)
@@ -180,6 +194,37 @@ def _run(
             discover=_embed_owners({media_id}),
         )
         return {"status": "failed", "error_code": code, "error_message": message}
+
+
+def _publish_transcript(
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    prepared: PreparedTranscriptSource,
+    fence: SourcePublicationFence,
+    request_id: str | None,
+) -> SourceRunOutcome:
+    def publish(db: Session, attempt: MediaSourceAttempt) -> SourceRunOutcome:
+        publish_prepared_transcript(db, media_id=media_id, prepared=prepared)
+        outcome = SourceRunOutcome(
+            diagnostics={
+                "status": "completed",
+                "segment_count": len(prepared.segments),
+                "source_type": attempt.source_type,
+            },
+            metadata_enrichment=True,
+            transcript_request_reason=prepared.reason,
+        )
+        _settle(db, attempt, media_id, outcome, request_id)
+        record_input_change(db, owners=(f"media:{media_id}",))
+        return outcome
+
+    return run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_podcast_transcript",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=publish,
+    )
 
 
 def _publish_file(
@@ -488,7 +533,7 @@ def _supersede(
     """
     from nexus.services.media_parts import require_unpinned_source
 
-    library_entries.lock_media_rows_in_order(db, [loser_id, winner_id])
+    media_locks.lock_media_rows_in_order(db, [loser_id, winner_id])
     require_unpinned_source(db, media_id=loser_id)
     kinds = db.scalars(
         text("SELECT kind FROM media WHERE id=ANY(:ids)"), {"ids": [loser_id, winner_id]}

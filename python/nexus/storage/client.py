@@ -13,16 +13,27 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO
 
 from boto3.session import Session
 from botocore.client import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    IncompleteReadError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    ReadTimeoutError,
+    ResponseStreamingError,
+)
 
 from nexus.config import get_settings
+from nexus.storage.errors import StorageError, StorageFailureReason
 
 _CHUNK_BYTES = 8 * 1024 * 1024
-type StorageErrorCode = Literal["E_STORAGE_ERROR", "E_STORAGE_MISSING"]
 
 
 @dataclass(frozen=True)
@@ -31,18 +42,50 @@ class ObjectMetadata:
     size_bytes: int
 
 
-class StorageError(Exception):
-    """Not an ApiError: each caller maps it. ``E_STORAGE_MISSING`` is a 404 on read/copy."""
-
-    def __init__(self, message: str, code: StorageErrorCode = "E_STORAGE_ERROR"):
-        super().__init__(message)
-        self.message = message
-        self.code: StorageErrorCode = code
-
-
-def _missing(exc: Exception) -> bool:
-    code = isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code")
-    return code in ("404", "NoSuchKey", "NotFound")
+def _failure_reason(exc: Exception) -> StorageFailureReason:
+    """Classify the SDK's typed transport/status failure before losing its representation."""
+    if isinstance(
+        exc,
+        (
+            EndpointConnectionError,
+            ConnectionClosedError,
+            ConnectTimeoutError,
+            ReadTimeoutError,
+            ResponseStreamingError,
+            IncompleteReadError,
+            ConnectionError,
+            TimeoutError,
+        ),
+    ):
+        return "transient"
+    if isinstance(exc, NoCredentialsError | PartialCredentialsError):
+        return "configuration"
+    if isinstance(exc, ClientError):
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code in {
+            "NoSuchBucket",
+            "AccessDenied",
+            "InvalidAccessKeyId",
+            "SignatureDoesNotMatch",
+        } or status in {401, 403}:
+            return "configuration"
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return "missing"
+        if (
+            code
+            in {
+                "RequestTimeout",
+                "RequestTimeoutException",
+                "SlowDown",
+                "Throttling",
+                "ThrottlingException",
+            }
+            or status in {408, 429}
+            or (isinstance(status, int) and 500 <= status < 600)
+        ):
+            return "transient"
+    return "defect"
 
 
 class StorageClient:
@@ -51,7 +94,9 @@ class StorageClient:
         if not (
             s.r2_s3_api_origin and s.r2_access_key_id and s.r2_secret_access_key and s.r2_bucket
         ):
-            raise StorageError("R2 storage is not configured (R2_* settings)")
+            raise StorageError(
+                "R2 storage is not configured (R2_* settings)", reason="configuration"
+            )
         self._bucket = s.r2_bucket
         self._lock = Lock()
         self._s3 = Session().client(
@@ -76,8 +121,9 @@ class StorageClient:
             with self._lock:
                 return getattr(self._s3, operation)(Bucket=self._bucket, **params)
         except (BotoCoreError, ClientError) as exc:
-            code = "E_STORAGE_MISSING" if _missing(exc) else "E_STORAGE_ERROR"
-            raise StorageError(f"Failed to {what}", code) from exc
+            reason = _failure_reason(exc)
+            code = "E_STORAGE_MISSING" if reason == "missing" else "E_STORAGE_ERROR"
+            raise StorageError(f"Failed to {what}", code, reason=reason) from exc
 
     def close(self) -> None:
         with self._lock:
@@ -99,7 +145,7 @@ class StorageClient:
                 ExpiresIn=expires_in,
             )
         except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to sign {path}") from exc
+            raise StorageError(f"Failed to sign {path}", reason=_failure_reason(exc)) from exc
 
     def head_object(self, path: str) -> ObjectMetadata | None:
         try:
@@ -135,15 +181,19 @@ class StorageClient:
             remaining = int(response["ContentLength"])
             total = int(response["ContentRange"].rsplit("/", 1)[1]) if byte_range else remaining
             if expected_size is not None and total != expected_size:
-                raise StorageError(f"{path} holds {total} bytes, its row says {expected_size}")
+                raise StorageError(
+                    f"{path} holds {total} bytes, its row says {expected_size}", reason="integrity"
+                )
             while remaining > 0:
                 try:
                     with self._lock:
                         chunk = body.read(min(_CHUNK_BYTES, remaining))
                 except (BotoCoreError, ClientError, OSError) as exc:
-                    raise StorageError(f"Failed to read {path}") from exc
+                    raise StorageError(
+                        f"Failed to read {path}", reason=_failure_reason(exc)
+                    ) from exc
                 if not chunk:
-                    raise StorageError(f"{path} ended {remaining} bytes short")
+                    raise StorageError(f"{path} ended {remaining} bytes short", reason="integrity")
                 remaining -= len(chunk)
                 yield chunk
         finally:

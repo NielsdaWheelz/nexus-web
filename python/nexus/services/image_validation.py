@@ -11,6 +11,7 @@ from PIL import Image
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.net.http_retry import RETRYABLE_STATUSES, retry_at
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream
 
 logger = get_logger(__name__)
@@ -128,4 +129,12 @@ def _image_error(exc: SafeFetchFailed) -> ApiError:
         )
     if exc.reason == "Timeout":
         return ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Image fetch timed out")
-    return ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {exc.message}")
+    if exc.reason in ("Gone", "Denied", "Type") or (
+        exc.reason == "Status" and exc.status not in RETRYABLE_STATUSES
+    ):
+        return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Image is unavailable")
+    return ApiError(
+        ApiErrorCode.E_IMAGE_FETCH_FAILED,
+        f"Failed to fetch image: {exc.message}",
+        retry_at=retry_at(exc.retry_after),
+    )

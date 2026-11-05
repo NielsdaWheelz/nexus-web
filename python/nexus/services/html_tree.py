@@ -14,7 +14,7 @@ import re
 from html import escape
 from typing import cast
 
-from lxml.html import HtmlElement, document_fromstring, tostring
+from lxml.html import Element, HtmlElement, document_fromstring, tostring
 
 _LEADING_XML_ENCODING_DECLARATION_RE = re.compile(
     r"""\A
@@ -119,6 +119,8 @@ def normalize_html5_shape(root: HtmlElement) -> None:
         _split_at(nested, outer)
 
     for element in list(root.iter()):
+        if _tag(element) == "table":
+            _table_flow(element)
         if _tag(element) not in TABLE_STRUCTURE_TAGS:
             continue
         ancestor = element.getparent()
@@ -126,6 +128,50 @@ def normalize_html5_shape(root: HtmlElement) -> None:
             ancestor = ancestor.getparent()
         if ancestor is None:
             element.drop_tag()
+
+
+def _table_flow(table: HtmlElement) -> None:
+    """Retain caption/prose order without HTML5's table foster parenting.
+
+    Only a literal leading prefix or a real edge caption can move intact. Prose
+    between rows cannot be moved without changing the table's relationships.
+    """
+    parent = table.getparent()
+    if parent is None:
+        return
+    children = [child for child in table if isinstance(child.tag, str)]
+    captions = [child for child in children if child.tag == "caption"]
+    if any((child.tail or "").strip("\t\n\f\r ") for child in table):
+        return
+    if any(child.tag not in TABLE_STRUCTURE_TAGS for child in children):
+        return
+    prefix = (table.text or "").strip("\t\n\f\r ")
+    if captions:
+        if prefix or len(captions) != 1 or captions[0] not in (children[0], children[-1]):
+            return
+        caption = captions[0]
+        leading = caption is children[0]
+        wrapper = Element("figure")
+        caption.tag = "figcaption"
+    elif prefix and children:
+        wrapper = Element("div")
+        caption = None
+        leading = True
+    else:
+        return
+    for name in ("lang", "xml:lang", "{http://www.w3.org/XML/1998/namespace}lang", "dir"):
+        if (value := table.get(name)) is not None:
+            wrapper.set(name, value)
+    index = parent.index(table)
+    wrapper.tail, table.tail = table.tail, None
+    if leading:
+        wrapper.text, table.text = table.text, None
+    parent.insert(index, wrapper)
+    if caption is not None and leading:
+        wrapper.append(caption)
+    wrapper.append(table)
+    if caption is not None and not leading:
+        wrapper.append(caption)
 
 
 def _tag(element: object) -> str | None:

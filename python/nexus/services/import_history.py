@@ -286,7 +286,7 @@ def on_index_job_outcome(db: Session, job: JobRow, execution_id: UUID) -> None:
 
 
 def _queue_outcome(job: JobRow) -> tuple[SafeFailureCode | None, bool, bool]:
-    """(failure, terminal, a retry follows): pending was rescheduled, running reclaimed."""
+    """(failure, terminal, a retry follows): held needs repair; pending was rescheduled, running reclaimed."""
     failure = None
     if job.status != "pending":
         assert job.error_code  # failing, dead-lettering and reclaiming each set it

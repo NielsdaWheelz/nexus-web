@@ -58,17 +58,6 @@ def enrich_media_metadata(
     )
 
 
-@router.post("/media/{media_id}/metadata-enrichment/{job_id}/review", status_code=204)
-def review_media_metadata_result(
-    media_id: UUID, job_id: UUID, viewer: ViewerDep, db: DbSession
-) -> Response:
-    """Idempotent: an existing review stands."""
-    metadata_operations.review_metadata_result(
-        db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
-    )
-    return Response(status_code=204)
-
-
 @router.delete("/media/{media_id}", status_code=204)
 def remove_media(
     media_id: UUID, body: RemoveMediaRequest, viewer: ViewerDep, db: DbSession

@@ -31,7 +31,7 @@ from nexus.schemas.extension_capture import (
     XStatusSource,
 )
 from nexus.schemas.x_source import XPriorSource
-from nexus.services import library_entries
+from nexus.services import media_locks
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
@@ -217,7 +217,7 @@ def lock_target(
         return None
     if media is None or media.id != target.media_id or media.kind != kind:
         raise changed_target()
-    library_entries.lock_media_rows_in_order(db, [media.id])
+    media_locks.lock_media_rows_in_order(db, [media.id])
     db.refresh(media)
     latest = sa.latest_attempt(db, media.id, lock=False)
     if (

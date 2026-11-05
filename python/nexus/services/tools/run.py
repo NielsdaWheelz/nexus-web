@@ -288,22 +288,24 @@ async def run_tool(
                 )
         except BaseException as error:
             status = "cancelled" if isinstance(error, asyncio.CancelledError) else "error"
-            await database.rollback()
+            try:
+                await database.rollback()
 
-            def mark_failed() -> None:
-                call.db.execute(
-                    text(
-                        "UPDATE tool_calls SET status = :status WHERE id = :id AND status = 'running'"
-                    ),
-                    {
-                        "id": call.id,
-                        "status": status,
-                    },
+                def mark_failed() -> None:
+                    call.db.execute(
+                        text(
+                            "UPDATE tool_calls SET status = :status WHERE id = :id AND status = 'running'"
+                        ),
+                        {"id": call.id, "status": status},
+                    )
+
+                await database.run_sync(
+                    lambda db: retry_serializable(db, "fail_tool_call", mark_failed)
                 )
-
-            await database.run_sync(
-                lambda db: retry_serializable(db, "fail_tool_call", mark_failed)
-            )
+            except (
+                Exception
+            ) as cleanup_error:  # justify-ignore-error: preserve the primary failure.
+                error.add_note(f"settling tool call {call.id} failed: {cleanup_error!r}")
             raise
     return ToolOutput(call.id, result, model_text)
 

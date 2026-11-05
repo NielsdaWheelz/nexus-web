@@ -39,7 +39,7 @@ from nexus.services.search.admission import (
 )
 from nexus.services.search.candidates import SearchResponse, SearchResultOut
 from nexus.services.search.policy import background_computation_deadline
-from nexus.services.search.project import family_of, project
+from nexus.services.search.project import capture_project, family_of, project
 from nexus.services.search.query import (
     FORMAT_STORAGE,
     MAX_LIMIT,
@@ -101,6 +101,7 @@ def _page(
     limit: int,
     *,
     embedding_failure: ApiError | None = None,
+    projector: Callable[[Session, UUID, Sequence[Hit], str], list[SearchResultOut]] = project,
 ) -> tuple[list[SearchResultOut], bool]:
     """One page of the merged order over the union of ``scopes`` (authorized even when no
     family serves the query), and whether more follow. A requested embedding failure
@@ -124,14 +125,15 @@ def _page(
     hits = merge(rank(db, r, families=families))
     page = hits[offset : offset + limit + 1]
     more = len(page) > limit and is_offset(offset + limit)
-    return project(db, viewer_id, page[:limit], r.terms), more
+    return projector(db, viewer_id, page[:limit], r.terms), more
 
 
-async def search_scopes_async(
+async def _search_scopes_async(
     viewer_id: UUID,
     base: SearchQuery,
     scopes: Sequence[SearchScope],
     *,
+    projector: Callable[[Session, UUID, Sequence[Hit], str], list[SearchResultOut]],
     deadline: float | None,
     purpose: Literal["foreground", "background"],
 ) -> SearchResponse:
@@ -179,11 +181,40 @@ async def search_scopes_async(
                         0,
                         limit,
                         embedding_failure=embedding_failure,
+                        projector=projector,
                     ),
                     deadline=deadline,
                 )
             )
     return SearchResponse(results=results, page=SearchPageInfo(has_more=more, next_cursor=None))
+
+
+async def search_scopes_async(
+    viewer_id: UUID,
+    base: SearchQuery,
+    scopes: Sequence[SearchScope],
+    *,
+    deadline: float | None,
+    purpose: Literal["foreground", "background"],
+) -> SearchResponse:
+    """Canonical words and proven locations, without native-source presentation."""
+    return await _search_scopes_async(
+        viewer_id, base, scopes, projector=project, deadline=deadline, purpose=purpose
+    )
+
+
+async def capture_search_scopes_async(
+    viewer_id: UUID,
+    base: SearchQuery,
+    scopes: Sequence[SearchScope],
+    *,
+    deadline: float | None,
+    purpose: Literal["foreground", "background"],
+) -> SearchResponse:
+    """Canonical results with rich excerpts frozen in that same authorized snapshot."""
+    return await _search_scopes_async(
+        viewer_id, base, scopes, projector=capture_project, deadline=deadline, purpose=purpose
+    )
 
 
 def get_search_result(
@@ -267,7 +298,7 @@ def get_search_result(
         1.0,
         owner.id if owner is not None and owner.scheme == "media" else None,
     )
-    found = project(db, viewer_id, [hit], "", evidence_span_ids=evidence_span_ids)
+    found = capture_project(db, viewer_id, [hit], "", evidence_span_ids=evidence_span_ids)
     if not found:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
     result = found[0]

@@ -2,8 +2,8 @@
 
 Each adapter opens with one fenced phase that checks the media kind and marks it
 extracting (a retained publication keeps it ready), then fetches or reads with no transaction open. Url families publish
-through their owners (web article, X, YouTube, podcast transcription) and return an
-outcome; files and native articles are prepared here and published by the runner
+through their owners (web article, X, YouTube) and return an
+outcome; files, native articles and transcripts are prepared here and published by the runner
 in its terminal transaction, including current-body facts and source settlement.
 Bytes are written before the row that
 names them: a write that never commits is an orphan the storage sweep reclaims.
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -47,7 +47,10 @@ from nexus.services.epub_ingest import EpubPlan, prepare_epub_source, publish_ep
 from nexus.services.media_processing_state import mark_extracting
 from nexus.services.media_source_ingest import record_x_article_inspection
 from nexus.services.pdf_ingest import PdfPlan, prepare_pdf_source, publish_pdf_plan
-from nexus.services.podcasts.transcription import run_podcast_transcription_now
+from nexus.services.podcasts.transcription import (
+    PreparedTranscriptSource,
+    prepare_podcast_transcript,
+)
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
     lock_publication_generation,
@@ -65,7 +68,6 @@ from nexus.services.source_publication import (
     record_source_progress,
     run_source_publication_phase,
 )
-from nexus.services.transcripts.request_reason import TranscriptRequestReason
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article import (
     Article,
@@ -130,6 +132,7 @@ def acquire(
     | PreparedXSource
     | PreparedNativeArticle
     | PreparedBrowserArticle
+    | PreparedTranscriptSource
 ):
     """Acquire one detached attempt in its source type's own refusal order.
 
@@ -328,19 +331,9 @@ def acquire(
                 diagnostics=_published(attempt, fragment_id), metadata_enrichment=False
             )
         case st.PODCAST_EPISODE_TRANSCRIPT:
-            reason = cast(TranscriptRequestReason, attempt.source_payload["request_reason"])
             _begin(session_factory, media_id, fence, frozenset({MediaKind.podcast_episode.value}))
-            completed = run_podcast_transcription_now(
+            return prepare_podcast_transcript(
                 session_factory, media_id=media_id, publication_fence=fence
-            )
-            return SourceRunOutcome(
-                diagnostics={
-                    "status": completed.status,
-                    "segment_count": completed.segment_count,
-                    "source_type": attempt.source_type,
-                },
-                metadata_enrichment=True,
-                transcript_request_reason=reason,
             )
         case st.BROWSER_PDF_CAPTURE | st.BROWSER_EPUB_CAPTURE:
             kind = _begin(session_factory, media_id, fence, _DOCUMENT)

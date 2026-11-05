@@ -30,10 +30,19 @@ from uuid import UUID
 
 from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES, Settings
 from nexus.db.engine import bind_database_role
+from nexus.db.retries import is_transient_database_error
 from nexus.errors import ApiError, ResourceFailureDimension, ResourceLimitError
-from nexus.jobs.queue import JobExecutionContext, JobResult, RescheduleRequested, TerminalJobFailure
+from nexus.jobs.queue import (
+    FailureDisposition,
+    JobExecutionContext,
+    JobFailure,
+    JobResult,
+    RescheduleRequested,
+    TerminalJobFailure,
+)
 from nexus.jobs.registry import resolve
 from nexus.logging import configure_logging, get_logger
+from nexus.storage.errors import StorageError
 
 logger = get_logger(__name__)
 
@@ -44,8 +53,10 @@ class Failed:
 
     code: str
     message: str
-    # Set for a resource failure, which is dead at once.
     dimension: ResourceFailureDimension | None = None
+    disposition: FailureDisposition = "hold"
+    retry_at: datetime | None = None
+    result_payload: Mapping[str, Any] | None = None
 
 
 class Lost:
@@ -53,17 +64,59 @@ class Lost:
 
 
 class Released:
-    """Shutdown killed the child: the job goes back to pending, its attempt refunded."""
+    """Shutdown killed the child: the same job waits to retry, without charging failure."""
 
 
 type Outcome = JobResult | Failed | Lost | Released
 
 
 def failure_of(exc: Exception) -> Failed:
-    """A raised exception as a failure: an owned API code, else a handler defect."""
+    """Normalize only declared temporary causes; unknown failures hold for repair."""
+    if isinstance(exc, JobFailure):
+        return Failed(
+            exc.code,
+            exc.message,
+            disposition=exc.disposition,
+            retry_at=exc.retry_at,
+            result_payload=exc.result_payload,
+        )
+    if is_transient_database_error(exc):
+        return Failed(
+            "E_DATABASE_BUSY", "The database is temporarily unavailable.", disposition="retry"
+        )
+    if isinstance(exc, StorageError):
+        return Failed(
+            exc.code, exc.message, disposition="retry" if exc.reason == "transient" else "hold"
+        )
+    if isinstance(exc, ResourceLimitError):
+        disposition: FailureDisposition = (
+            "resample" if exc.dimension in {"Memory", "Time"} else "hold"
+        )
+        return Failed(exc.code.value, exc.message, exc.dimension, disposition)
     if isinstance(exc, ApiError):
-        dimension = exc.dimension if isinstance(exc, ResourceLimitError) else None
-        return Failed(exc.code.value, exc.message, dimension)
+        transient = exc.code.value in {
+            "E_AUTH_UNAVAILABLE",
+            "E_DATABASE_BUSY",
+            "E_EMBEDDING_PROVIDER_UNAVAILABLE",
+            "E_SEARCH_TIMEOUT",
+            "E_RATE_LIMITED",
+            "E_BROWSE_PROVIDER_UNAVAILABLE",
+            "E_BROWSE_PROVIDER_RATE_LIMITED",
+            "E_PODCAST_FEED_UNAVAILABLE",
+            "E_X_PROVIDER_UNAVAILABLE",
+            "E_X_PROVIDER_RATE_LIMITED",
+            "E_X_PROVIDER_TIMEOUT",
+            "E_TRANSCRIPTION_TIMEOUT",
+            "E_INGEST_TIMEOUT",
+            "E_SOURCE_FETCH_FAILED",
+            "E_GENERATION_RUNTIME_UNAVAILABLE",
+        }
+        return Failed(
+            exc.code.value,
+            exc.message,
+            disposition="retry" if transient else "hold",
+            retry_at=exc.retry_at,
+        )
     return Failed("E_WORKER_HANDLER_FAILED", f"{type(exc).__name__}: {exc}")
 
 
@@ -147,19 +200,37 @@ class ChildExecutor:
                         pass_fds=fds,
                     )
                 except OSError as exc:
-                    return Failed("E_WORKER_INTERRUPTED", f"Background child did not start: {exc}")
+                    return Failed(
+                        "E_WORKER_CHILD_START_FAILED", f"Background child did not start: {exc}"
+                    )
                 stopped = self._await(process, shutdown, lost, wall_seconds or self.wall_seconds)
                 if stopped is not None:
                     return stopped
                 if _oom_kills(self.cgroup) > oom_before:
                     message = "Background job exceeded its memory limit."
-                    return Failed("E_RESOURCE_LIMIT", message, "Memory")
+                    return Failed("E_RESOURCE_LIMIT", message, "Memory", "resample")
                 result.seek(0)
                 encoded = result.read(self.result_max_bytes + 1)
+                if process.returncode is not None and -process.returncode in {
+                    signal.SIGTERM,
+                    signal.SIGKILL,
+                    signal.SIGINT,
+                    signal.SIGHUP,
+                }:
+                    return Failed(
+                        "E_WORKER_INTERRUPTED",
+                        "Background child was terminated.",
+                        disposition="retry",
+                    )
                 if process.returncode or not encoded or len(encoded) > self.result_max_bytes:
                     detail = f"exit {process.returncode}, {len(encoded)} result bytes"
-                    return Failed("E_WORKER_INTERRUPTED", f"Background child failed: {detail}.")
-                return _decode(encoded)
+                    return Failed("E_WORKER_CHILD_PROTOCOL", f"Background child failed: {detail}.")
+                try:
+                    return _decode(encoded)
+                except (ValueError, KeyError, TypeError) as exc:
+                    return Failed(
+                        "E_WORKER_CHILD_PROTOCOL", f"Invalid child result: {type(exc).__name__}."
+                    )
         finally:
             os.close(alive_r)
             os.close(alive_w)
@@ -184,7 +255,10 @@ class ChildExecutor:
                 stopped = Released()
             elif time.monotonic() >= deadline:
                 stopped = Failed(
-                    "E_RESOURCE_LIMIT", "Background job exceeded its time limit.", "Time"
+                    "E_RESOURCE_LIMIT",
+                    "Background job exceeded its time limit.",
+                    "Time",
+                    "resample",
                 )
             else:
                 # justify-polling: neither an Event nor a child exit is selectable.
@@ -209,6 +283,9 @@ def _encode(result: JobResult | Failed) -> bytes:
                 "code": code,
                 "message": message[:3000],
                 "dimension": dimension,
+                "disposition": result.disposition,
+                "retry_at": None if result.retry_at is None else result.retry_at.isoformat(),
+                "result": result.result_payload,
             }
         case TerminalJobFailure():
             value = {
@@ -227,15 +304,66 @@ def _encode(result: JobResult | Failed) -> bytes:
 
 def _decode(encoded: bytes) -> Outcome:
     value = json.loads(encoded)
+    if not isinstance(value, dict):
+        raise ValueError("child outcome must be an object")
     match value["kind"]:
         case "Succeeded":
+            if set(value) != {"kind", "result"} or not isinstance(value["result"], dict):
+                raise ValueError("invalid success result")
             return value["result"]
         case "Reschedule":
-            return RescheduleRequested(datetime.fromisoformat(value["at"]), value["payload"])
+            if set(value) != {"kind", "at", "payload"} or not (
+                value["payload"] is None or isinstance(value["payload"], dict)
+            ):
+                raise ValueError("invalid continuation result")
+            return RescheduleRequested(_protocol_datetime(value["at"]), value["payload"])
         case "Terminal":
+            if set(value) != {"kind", "result", "code", "message"} or not (
+                isinstance(value["result"], dict)
+                and isinstance(value["code"], str)
+                and isinstance(value["message"], str)
+            ):
+                raise ValueError("invalid terminal result")
             return TerminalJobFailure(value["result"], value["code"], value["message"])
+        case "Failed":
+            if set(value) != {
+                "kind",
+                "code",
+                "message",
+                "dimension",
+                "disposition",
+                "retry_at",
+                "result",
+            } or not (
+                isinstance(value["code"], str)
+                and isinstance(value["message"], str)
+                and (value["result"] is None or isinstance(value["result"], dict))
+            ):
+                raise ValueError("invalid failure result")
+            if value["disposition"] not in {"retry", "resample", "hold"}:
+                raise ValueError("unknown failure disposition")
+            if value["dimension"] not in {None, "Memory", "Time", "Structure", "Output"}:
+                raise ValueError("unknown resource dimension")
+            return Failed(
+                value["code"],
+                value["message"],
+                value["dimension"],
+                value["disposition"],
+                None if value["retry_at"] is None else _protocol_datetime(value["retry_at"]),
+                value["result"],
+            )
         case _:
-            return Failed(value["code"], value["message"], value["dimension"])
+            raise ValueError("unknown child outcome")
+
+
+def _protocol_datetime(value: object) -> datetime:
+    """Child scheduling instants must carry their time zone explicitly."""
+    if not isinstance(value, str):
+        raise ValueError("child scheduling instant must be a string")
+    instant = datetime.fromisoformat(value)
+    if instant.utcoffset() is None:
+        raise ValueError("child scheduling instant must have a time zone")
+    return instant
 
 
 def _child(request_fd: int, result_fd: int, alive_fd: int, supervisor_pid: int) -> None:

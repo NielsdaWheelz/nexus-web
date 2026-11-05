@@ -27,9 +27,10 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
 - **plan**: plan id -> granted tool ids, in publication order: `NoModelTools`,
   `ChatReadAdditiveWrite`, `ChatMemoryRead`, `ChatMemoryReadSave`,
   `MetadataResearch`. Generation policy picks one; admission freezes it into the
-  generation spec. A plan with an unavailable granted tool (no embedding key, no
-  Brave key, memory not connected/admitted) is refused at admission and in the
-  picker.
+  generation spec. unavailable required tools refuse admission. metadata research
+  omits unconfigured optional web search; an exposed web search or page-read
+  refusal, unavailability or timeout is a typed result, so research may continue
+  with saved text and learned knowledge.
 - **admitted scope**: the frozen resource URIs a generation may touch (a chat: its
   context refs at admission; metadata research: `media:{id}`). Reads also accept a
   pointer into an admitted parent: a `page_range:` of an admitted media, a complete
@@ -106,6 +107,25 @@ canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
 Writes (`writes._write`) admit every URI field directly, take the fence (held to
 commit), count the cap, run the domain owner, and map reviewed owner refusals to
 declared errors.
+
+## canonical reads and native captures
+
+background research selects canonical search and `read_evidence`; retained chat
+citations select explicit rich ports. both retain one scope/source/locator proof.
+rich excerpts are frozen within the read snapshot before `_complete` opens its
+publication transaction. existing authored snapshots use their shared clipping
+owner; canonical research never fetches native html or hydrates its excerpts.
+
+full resource reads refuse `TooLarge` above 50,000 characters before their sql
+producer sends body text to python. accepted reads return the complete requested
+text; separators count toward the limit. pieces select only admitted sql slices;
+pdf ranges select only their page bounds. previews are bounded in sql. x reads
+reuse the native reader's occurrence, visibility and ordering traversal, selecting
+an unhydrated source plan first; attribution, relationship text and separators
+count before canonical body slices are loaded. no full native reader document is
+built merely to read or inspect text. highlight reads return only their authorized
+frozen quote, preserving the author's retained selection or applying current peer
+disclosure; annotations and owner presentation bodies are separate reads.
 
 ## Account history and undo
 

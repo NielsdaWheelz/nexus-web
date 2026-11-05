@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import enqueue_unique_job, revoke_jobs_by_dedupe_keys
+from nexus.jobs.queue import enqueue_unique_job
 
 MEDIA_UNIT_JOB_KIND = "media_unit_build"
 
@@ -72,7 +72,7 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
     """Find-or-create the head at the current fingerprint and enqueue its build.
 
     Flushes, never commits: the enqueue stays atomic with the index publish that calls it.
-    A head ready or building at the current fingerprint is left alone.
+    Every current head retains its intent, including a permanent refusal or held job.
     """
     waiting, ready = db.execute(
         text(f"""
@@ -91,7 +91,6 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
     live = db.scalar(
         text("""
             SELECT 1 FROM media_summaries WHERE media_id = :m AND content_fingerprint = :fp
-              AND status IN ('ready', 'building')
         """),
         {"m": media_id, "fp": fingerprint},
     )
@@ -110,9 +109,7 @@ def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
         {"m": media_id, "fp": fingerprint, "model": _model_name()},
     )
     db.execute(text("DELETE FROM media_claims WHERE summary_id = :s"), {"s": summary_id})
-    # A terminal row holding this key would block the unique insert.
     key = media_unit_dedupe_key(media_id, fingerprint)
-    revoke_jobs_by_dedupe_keys(db, kind=MEDIA_UNIT_JOB_KIND, dedupe_keys=[key])
     enqueue_unique_job(
         db,
         kind=MEDIA_UNIT_JOB_KIND,

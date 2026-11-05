@@ -148,7 +148,7 @@ class CandidateReceipt(_Closed):
 
 class PartOperation(_Closed):
     job_id: UUID
-    status: Literal["pending", "running", "failed", "succeeded", "dead"]
+    status: Literal["pending", "running", "failed", "succeeded", "dead", "held"]
     completed_sections: int
     total_sections: int
     error_code: str | None

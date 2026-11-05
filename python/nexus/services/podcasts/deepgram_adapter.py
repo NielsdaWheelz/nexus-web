@@ -7,7 +7,9 @@ import httpx
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.jobs.queue import JobFailure
 from nexus.logging import get_logger
+from nexus.services.net.http_retry import RETRYABLE_STATUSES, retry_at
 from nexus.services.url_normalize import validate_requested_url
 
 logger = get_logger(__name__)
@@ -31,16 +33,16 @@ class DeepgramClient:
         except InvalidRequestError as exc:
             raise ApiError(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE, "Transcript unavailable") from exc
         if not self.api_key:
-            raise RuntimeError("Transcription provider credentials are not configured")
+            raise JobFailure(
+                "E_TRANSCRIPTION_CONFIGURATION",
+                "Transcription credentials are not configured",
+                "hold",
+            )
         # Deepgram takes the primary subtag; an episode of unknown language stays English.
         language = (language or "en").split("-")[0]
-        try:
-            return self._listen(url, language, diarize=True), None
-        except ApiError:
-            undiarized = self._listen(url, language, diarize=False)
-            return undiarized, ApiErrorCode.E_DIARIZATION_FAILED.value
+        return self._listen(url, language), None
 
-    def _listen(self, url: str, language: str, *, diarize: bool) -> list[dict[str, Any]]:
+    def _listen(self, url: str, language: str) -> list[dict[str, Any]]:
         try:
             response = httpx.post(
                 f"{self.base_url}/v1/listen",
@@ -50,7 +52,7 @@ class DeepgramClient:
                     "smart_format": "true",
                     "punctuate": "true",
                     "language": language,
-                    "diarize": str(diarize).lower(),
+                    "diarize": "true",
                     "utterances": "true",
                 },
                 json={"url": url},
@@ -59,18 +61,25 @@ class DeepgramClient:
             response.raise_for_status()
             segments = _segments(response.json())
         except httpx.TimeoutException as exc:
-            raise ApiError(ApiErrorCode.E_TRANSCRIPTION_TIMEOUT, "Transcription timed out") from exc
+            raise JobFailure("E_TRANSCRIPTION_TIMEOUT", "Transcription timed out", "retry") from exc
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             logger.warning("deepgram_provider_http_error", status_code=status)
-            timeout = status in (408, 504)
-            code = ApiErrorCode.E_TRANSCRIPTION_TIMEOUT if timeout else None
-            raise ApiError(
-                code or ApiErrorCode.E_TRANSCRIPTION_FAILED, "Transcription failed"
+            raise JobFailure(
+                "E_TRANSCRIPTION_FAILED",
+                "Transcription failed",
+                "retry" if status in RETRYABLE_STATUSES else "hold",
+                retry_at=retry_at(exc.response.headers.get("retry-after")),
+            ) from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise JobFailure(
+                "E_TRANSCRIPTION_FAILED", "Transcription connection failed", "retry"
             ) from exc
         except (httpx.HTTPError, ValueError, LookupError, TypeError, AttributeError) as exc:
             logger.warning("deepgram_provider_request_failed", error=str(exc))
-            raise ApiError(ApiErrorCode.E_TRANSCRIPTION_FAILED, "Transcription failed") from exc
+            raise JobFailure(
+                "E_TRANSCRIPTION_FAILED", "Transcription provider returned invalid data", "hold"
+            ) from exc
         if not segments:
             raise ApiError(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE, "Transcript unavailable")
         return segments

@@ -62,7 +62,7 @@ from nexus.schemas.reader_document import (
     TranscriptReaderSearchExtentOut,
 )
 from nexus.schemas.reader_point import ReaderPointOut
-from nexus.services import library_entries, resource_grants
+from nexus.services import media_locks, resource_grants
 from nexus.services.canonicalize import canonicalize_structure, generate_canonical_text
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.contributor_credits import load_current_source_author_bylines
@@ -80,7 +80,8 @@ from nexus.services.x_identity import (
     classify_x_article_url,
     classify_x_url,
 )
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 
 Readiness = Literal["ProjectionNotReady", "ProjectionUnsupported"]
 _UNSUPPORTED: Readiness = "ProjectionUnsupported"
@@ -136,7 +137,7 @@ def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
     media_id = db.execute(
         text(f"SELECT m.id FROM media m WHERE m.id = {media}"), {"id": subject_id}
     ).scalar()
-    if media_id is None or not library_entries.lock_media_rows_in_order(db, [media_id]):
+    if media_id is None or not media_locks.lock_media_rows_in_order(db, [media_id]):
         return _UNSUPPORTED
     facts = db.execute(text(_FACTS_SQL), {"media_id": media_id}).mappings().one()
     kind = facts["kind"]
