@@ -4,6 +4,7 @@
 // held local projections; remote roots keep their server presentation. Membership
 // only selects facets and reveal targets; the shared row owns resource commands.
 import { useCallback, useLayoutEffect, useRef, type CSSProperties } from "react";
+import QuotedMessageConnection from "@/components/chat/QuotedMessageConnection";
 import Button from "@/components/ui/Button";
 import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
@@ -16,7 +17,7 @@ import type { AnnotationVerbs } from "../useAnnotationVerbs";
 import type { LocalLink } from "../annotations";
 import SourceNote from "./SourceNote";
 import styles from "./EvidencePane.module.css";
-import { rootItem, type EvidenceRoot } from "./model";
+import { factFacet, rootItem, type EvidenceRoot } from "./model";
 import type { useEvidenceWindow } from "./useEvidenceWindow";
 
 export interface EvidenceOpenRequest {
@@ -113,8 +114,12 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
   }
   const { root } = entry;
   const content = root.content;
+  if (content.kind === "Quotation") return <li ref={attachRow} {...rootProps}>
+    <QuotedMessageConnection content={content} />
+  </li>;
   const disclosureKey = sourceTextKey(entry);
   return <ResourceOutlineRow incoming={null} item={rootItem(root)} occurrenceKey={occurrenceKey} rowRef={attachRow} rootProps={rootProps} inSource={placed && content.kind === "Highlight"}
+    historical={root.direct_facts.some(fact => factFacet(fact) === "citations")}
     omitResourceActions={!actions.sourceContext && content.kind === "Highlight" ? ["Share"] : undefined}
     sourceContent={content.kind === "SourceReference" && disclosureKey !== null ? <SourceNote disclosureKey={disclosureKey} open={sourceText.has(disclosureKey)} onOpenChange={onSourceTextChange} occurrenceKey={occurrenceKey} reference={content} mediaId={root.source.media_id} identity={root.source.identity} openRequest={openRequest} reader={reader} onContentChanged={actions.refresh} /> : undefined}
     onChanged={actions.refresh}

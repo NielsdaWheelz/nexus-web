@@ -1,6 +1,6 @@
 # release the one-click extension cutover
 
-pair wire 19, extension 1.1.0 and migration 0332 with the matching server/web build
+pair wire 19, extension 1.1.0 and migration 0334 with the matching server/web build
 and bundled android client. rebuild/install the matching apk before retiring the
 old wire; an already installed client cannot cross this hard cutover.
 old clients refuse. sign/install the canonical extension artifact with its exact
@@ -12,8 +12,8 @@ their jobs are no longer pending/running. migration expires unpublished browser
 sessions and transforms settled provenance; staging bytes expire normally. an
 unprovable historical byte input aborts rather than being guessed.
 existing strict x-thread payloads gain explicit null extension admission facts;
-frozen capture inputs and parent attempt identities remain unchanged. migrations
-0330 and 0331 retain their existing ownership.
+frozen capture inputs and parent attempt identities remain unchanged. earlier
+migrations retain their existing ownership.
 
 all published browser captures now use `media:<id>` import history. previous
 browser `upload:<id>` history links retire without redirects; media ids/links and

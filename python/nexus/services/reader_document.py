@@ -32,6 +32,7 @@ from nexus.schemas.reader import (
 )
 from nexus.schemas.reader_document import (
     ReaderCaptureDocumentOut,
+    ReaderCitationOccurrenceOut,
     ReaderPartDocumentOut,
     ReaderPartExtentOut,
     ReaderPartExtentPointOut,
@@ -39,7 +40,6 @@ from nexus.schemas.reader_document import (
     ReaderPartUnitOut,
     ReaderPdfDocumentOut,
     ReaderPdfFileOut,
-    ReaderPointOut,
     ReaderSectionOut,
     ReaderTextDocumentOut,
     ReaderTocNodeOut,
@@ -50,6 +50,7 @@ from nexus.schemas.reader_document import (
     ReaderXPostOwnerOut,
     ReaderXReferenceOut,
 )
+from nexus.schemas.reader_point import ReaderPointOut
 from nexus.schemas.x_source import XSourceCoverage
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.capabilities import is_text_document_ready
@@ -154,6 +155,7 @@ def build_reader_document(
             toc_nodes=[],
             source_issues=[],
             embeds=embeds,
+            citation_occurrences=[],
             x_article_content=None,
             transcript_coverage=media.transcript_coverage,
             transcript_navigation=project_transcript_navigation(navigation, units),
@@ -172,6 +174,7 @@ def build_reader_document(
             publication_generation=generation,
             title=title,
             page_count=media.page_count,
+            citation_occurrences=[],
             file=pdf_file(),
         )
 
@@ -211,6 +214,9 @@ def build_reader_document(
                 db, units=units, viewer_id=viewer_id, reading_media_id=media_id
             ),
             x_capture=capture,
+            citation_occurrences=reader_citation_occurrences(
+                db, viewer_id=viewer_id, media_id=media_id, units=units
+            ),
             x_article_content=None,
         )
     units, embeds = _units(db, media_id=media_id, epub=kind == "epub", viewer_id=viewer_id)
@@ -260,6 +266,9 @@ def build_reader_document(
         toc_nodes=[node(toc) for toc in navigation.toc_nodes],
         source_issues=navigation.source_issues,
         embeds=embeds,
+        citation_occurrences=reader_citation_occurrences(
+            db, viewer_id=viewer_id, media_id=media_id, units=units
+        ),
         x_article_content=x_article_content_facts(db, media_ids=[media_id]).get(media_id),
     )
 
@@ -358,6 +367,7 @@ def build_part_document(db: Session, *, scope: MediaTextScope, title: str) -> Re
             )
     first, last = scope.fragment_intervals[0], scope.fragment_intervals[-1]
     return ReaderPartDocumentOut(
+        citation_occurrences=[],
         kind="text_part",
         source_format=scope.source_format,
         provenance=ReaderPartProvenanceOut(
@@ -389,6 +399,59 @@ def build_part_document(db: Session, *, scope: MediaTextScope, title: str) -> Re
         x_capture=None,
         x_article_content=None,
     )
+
+
+def reader_citation_occurrences(
+    db: Session,
+    *,
+    viewer_id: UUID | None,
+    media_id: UUID | None,
+    units: list[ReaderUnitOut],
+) -> list[ReaderCitationOccurrenceOut]:
+    """Current source membership and exact source points, independent of target capture."""
+    from nexus.services.resource_graph.citations import build_citation_outs_for_sources
+    from nexus.services.resource_graph.refs import ResourceRef
+
+    if viewer_id is None:
+        return []
+    source_units: dict[str, list[ReaderUnitOut]] = {}
+    for unit in units:
+        if unit.x_post and unit.x_post.relation == "primary" and unit.x_post.owner:
+            source_units.setdefault(f"fragment:{unit.x_post.owner.fragment_id}", []).append(unit)
+    sources = [ResourceRef("fragment", UUID(ref.removeprefix("fragment:"))) for ref in source_units]
+    if media_id is not None:
+        sources.append(ResourceRef("media", media_id))
+    citations = build_citation_outs_for_sources(db, viewer_id=viewer_id, sources=sources)
+    points: dict[UUID, ReaderPointOut] = {}
+    unit_lengths = {unit.id: len(unit.canonical_text) for unit in units}
+    if media_id is not None:
+        for row in db.execute(
+            text("""
+            SELECT citation_id,fragment_id,canonical_end_offset FROM document_embeds
+            WHERE media_id=:media AND citation_id IS NOT NULL
+        """),
+            {"media": media_id},
+        ):
+            if row.fragment_id is not None and row.canonical_end_offset is not None:
+                unit_id = str(row.fragment_id)
+                if (
+                    unit_id in unit_lengths
+                    and 0 <= row.canonical_end_offset <= unit_lengths[unit_id]
+                ):
+                    points[row.citation_id] = ReaderPointOut(
+                        unit_id=unit_id, offset=row.canonical_end_offset
+                    )
+    result: list[ReaderCitationOccurrenceOut] = []
+    for source in sources:
+        for citation in citations[source.uri]:
+            native = source_units.get(source.uri, [])
+            point = (
+                ReaderPointOut(unit_id=native[0].id, offset=len(native[0].canonical_text))
+                if len(native) == 1
+                else points.get(citation.edge_id)
+            )
+            result.append(ReaderCitationOccurrenceOut(citation=citation, at=point))
+    return result
 
 
 def transcript_identity(unit_ids: list[str]) -> str:
@@ -544,7 +607,7 @@ def _capture_units(
     from nexus.schemas.x_source import XArticleExcerptCapture, XCompletePostCapture
     from nexus.services.image_placeholder import replace_image_with_placeholder
     from nexus.services.x_rendering import capture_image_urls
-    from nexus.services.x_source import readable_x_capture_ids_sql
+    from nexus.services.x_source import readable_x_capture_ids_sql, x_evidence_capture_match_sql
 
     visible = "" if viewer_id is None else f"AND c.id IN ({readable_x_capture_ids_sql()})"
     if public_grant_id is not None:
@@ -609,10 +672,18 @@ def _capture_units(
                 image.set("src", f"/api/x/captures/{capture_id}/assets/{quote(key, safe='')}")
         raw = inner_html(container)
     contexts = db.execute(
-        text("""
-        SELECT * FROM x_post_capture_contexts WHERE capture_id=:id ORDER BY ordinal
+        text(f"""
+        SELECT context.*, c.id IS NOT NULL AS body_available
+        FROM x_post_capture_contexts context
+        LEFT JOIN resource_edges e ON e.id=context.citation_id
+        LEFT JOIN fragments evidence_body
+            ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "evidence_body")}
+        LEFT JOIN x_post_captures c
+            ON c.id=COALESCE(context.target_capture_id,evidence_body.x_post_capture_id)
+            AND c.source_revision_id=context.referenced_revision_id {visible}
+        WHERE context.capture_id=:id ORDER BY context.ordinal
     """),
-        {"id": capture_id},
+        {"id": capture_id, "viewer_id": viewer_id, "public_grant_id": public_grant_id},
     ).all()
     children: list[ReaderUnitOut] = []
     references: list[ReaderXReferenceOut] = []
@@ -653,7 +724,7 @@ def _capture_units(
                 source_url=f"https://x.com/i/status/{context.referenced_revision_id}",
                 target_unit_id=child_id if child else None,
                 availability="available"
-                if child
+                if context.body_available
                 else ("unavailable" if context.outcome == "unavailable" else "not_captured"),
             )
         )
@@ -725,6 +796,9 @@ def read_capture_document(
             ).encode()
         ).hexdigest()[:24],
         title="post",
+        citation_occurrences=reader_citation_occurrences(
+            db, viewer_id=viewer_id, media_id=None, units=units
+        ),
         units=units,
         sections=[],
         toc_nodes=[],

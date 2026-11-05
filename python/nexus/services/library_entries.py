@@ -866,6 +866,10 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
         inserted = _ensure_entry_locked(db, library_id, media_id) or inserted
     clear_user_media_deletion(db, viewer_id, media_id)
     advance_acquisition_revision(db, media_id)
+
+    from nexus.services.source_citations import complete_media_citations
+
+    complete_media_citations(db, media_ids=[media_id])
     return inserted
 
 
@@ -890,6 +894,10 @@ def assign_libraries_for_media_in_current_transaction(
     clear_user_media_deletion(db, viewer_id, media_id)
     advance_acquisition_revision(db, media_id)
 
+    from nexus.services.source_citations import complete_media_citations
+
+    complete_media_citations(db, media_ids=[media_id])
+
 
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:
     """Automatically acquire into All unless the viewer explicitly removed this media."""
@@ -907,7 +915,11 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
     resource_grants.admit_library_captures(
         db, grantor_id=user_id, media_ids=[media_id], library_ids=[default_id]
     )
-    return ensure_entry(db, default_id, media_target(media_id))
+    inserted = ensure_entry(db, default_id, media_target(media_id))
+    from nexus.services.source_citations import complete_media_citations
+
+    complete_media_citations(db, media_ids=[media_id])
+    return inserted
 
 
 def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:
@@ -924,7 +936,11 @@ def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID
     resource_grants.admit_library_captures(
         db, grantor_id=owner_id, media_ids=[media_id], library_ids=[library_id]
     )
-    return ensure_entry(db, library_id, media_target(media_id))
+    inserted = ensure_entry(db, library_id, media_target(media_id))
+    from nexus.services.source_citations import complete_media_citations
+
+    complete_media_citations(db, media_ids=[media_id])
+    return inserted
 
 
 def remove_media_from_library_in_current_transaction(

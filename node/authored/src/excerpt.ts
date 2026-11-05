@@ -30,7 +30,7 @@ export type ExcerptView =
   | { kind: "table_summary" };
 export type ExcerptScope = { kind: "capture" } | { kind: "selection" } | { kind: "interval"; start_offset: number; end_offset: number };
 export type ExcerptTextParts = { prefix: string; exact: string; suffix: string };
-export type ExcerptEvidence = { quote: { excerpt: FrozenExcerpt; exact: string; prefix: string | null; suffix: string | null; color: string | null }; source: unknown; target: unknown };
+export type ExcerptEvidence = { quote: { excerpt: FrozenExcerpt; exact: string; prefix: string | null; suffix: string | null; color: string | null }; source: unknown; target: unknown; completion_ref: string | null };
 export type ExcerptCapture = { kind: "selection"; value: SelectionCapture } | { kind: "passage"; value: PassageCapture } | { kind: "evidence"; value: ExcerptEvidence };
 
 const BRANCHES = new Set("p div span section article header footer nav aside main h1 h2 h3 h4 h5 h6 strong em b i u s cite sup sub code pre blockquote a xref ul dl dt dd figure figcaption table thead tbody tfoot tr ol li td th".split(" "));

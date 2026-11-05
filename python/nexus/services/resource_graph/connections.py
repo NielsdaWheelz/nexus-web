@@ -37,6 +37,7 @@ from nexus.schemas.resource_graph import (
     RemoveFactMutation,
 )
 from nexus.schemas.resource_items import CitationSourceTargetKey
+from nexus.services.resource_graph.citations import citation_endpoint_match, edge_readable_filter
 from nexus.services.resource_graph.edges import Pair
 from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.owners import owner_rows_sql
@@ -46,7 +47,7 @@ from nexus.services.resource_items.capabilities import (
     capability,
     expand_owned_child_refs,
 )
-from nexus.services.resource_items.evidence import evidence_items
+from nexus.services.resource_items.evidence import admit_citation_snapshot, evidence_items
 from nexus.services.resource_items.items import resource_items_out, visible_refs
 from nexus.services.tools import assistant_writes
 
@@ -90,6 +91,7 @@ def _connection_statement(
         scheme = getattr(ResourceEdge, f"{side}_scheme")
         id_ = getattr(ResourceEdge, f"{side}_id")
         exact = or_(*(and_(scheme == s, id_.in_(ids)) for s, ids in ids_by_scheme.items()))
+        exact = or_(exact, citation_endpoint_match(list(refs.values()), side))
         if page_ids:
             page_children = []
             for page_id in page_ids:
@@ -165,7 +167,7 @@ def _connection_statement(
         "outgoing": or_(at_source, and_(link, at_target)),
     }[query.direction]
     stmt = select(ResourceEdge, at_source, at_target).where(
-        ResourceEdge.user_id == viewer_id, incident, text(edge_live_sql("resource_edges"))
+        edge_readable_filter(viewer_id), incident, text(edge_live_sql("resource_edges"))
     )
     filters = query.filters
     if filters.origins is not None:
@@ -291,15 +293,32 @@ def hydrate_connections(
     )
     endpoints = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=refs)}
     citation_rows = [row for row in rows if row.origin == "citation" and row.ordinal is not None]
+    # Reader inventory supplies its presentation refs. Resolve additional primary
+    # membership here too, so its direction agrees with paginated connection reads.
+    membership: dict[UUID, tuple[bool, bool]] = {}
+    if citation_rows:
+        queried = [assert_resource_ref(f"{scheme}:{id_}") for scheme, id_ in matched]
+        for edge_id, source_matches, target_matches in db.execute(
+            select(
+                ResourceEdge.id,
+                citation_endpoint_match(queried, "source"),
+                citation_endpoint_match(queried, "target"),
+            ).where(ResourceEdge.id.in_([row.id for row in citation_rows]))
+        ):
+            membership[edge_id] = (source_matches, target_matches)
     occurrences = []
+    admitted_snapshots = {}
     for row in citation_rows:
         snapshot = CitationSnapshot.model_validate(row.snapshot)
+        admitted_snapshots[row.id] = admit_citation_snapshot(
+            db, viewer_id=viewer_id, snapshot=snapshot
+        )
         assert snapshot.evidence is not None
         occurrences.append(
             (
                 assert_resource_ref(f"{row.target_scheme}:{row.target_id}"),
                 snapshot.evidence,
-                CitationSourceTargetKey(edge_id=row.id),
+                CitationSourceTargetKey(edge_id=row.id, side="target"),
             )
         )
     captured = dict(
@@ -340,8 +359,23 @@ def hydrate_connections(
         incoming = direction == "incoming"
         authored = row.origin in AUTHORED_LINK_ORIGINS
         if authored or direction == "both":
-            far_end_is_source = (row.source_scheme, row.source_id) not in matched
-            incoming = (row.target_scheme, row.target_id) in matched and far_end_is_source
+            extra_source, extra_target = membership.get(row.id, (False, False))
+            source_matches = (row.source_scheme, row.source_id) in matched or extra_source
+            target_matches = (row.target_scheme, row.target_id) in matched or extra_target
+            incoming = target_matches and not source_matches
+        source_item = endpoints[source]
+        if row.ordinal is not None and source_item.activation.kind == "route":
+            activation = source_item.activation
+            assert activation.href is not None
+            source_item = source_item.model_copy(
+                update={
+                    "activation": activation.model_copy(
+                        update={
+                            "href": activation.href.split("#", 1)[0] + f"#citation-source-{row.id}"
+                        }
+                    )
+                }
+            )
         creation = provenance.get(row.id) if row.origin == "assistant" else None
         mutation: RemoveFactMutation | DetachContextMutation | None = None
         if row.origin in ("discovery", "assistant"):
@@ -358,13 +392,15 @@ def hydrate_connections(
                 direction="undirected" if authored else ("incoming" if incoming else "outgoing"),
                 kind=cast(EdgeKind, row.kind),
                 origin=cast(EdgeOrigin, row.origin),
-                snapshot=CitationSnapshot.model_validate(row.snapshot)
+                snapshot=admitted_snapshots.get(
+                    row.id, CitationSnapshot.model_validate(row.snapshot)
+                )
                 if row.snapshot is not None
                 else None,
                 ordinal=row.ordinal,
-                source=endpoints[source],
+                source=source_item,
                 target=captured.get(row.id, endpoints[target]),
-                other=endpoints[source] if incoming else captured.get(row.id, endpoints[target]),
+                other=source_item if incoming else captured.get(row.id, endpoints[target]),
                 creation=creation,
                 mutation=mutation,
                 created_at=row.created_at,

@@ -26,7 +26,7 @@ from nexus.services.chat.markdown_citations import Marker, parse_markers
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
 from nexus.services.resource_graph.citations import (
     CitationInput,
-    replace_citations_for_output,
+    replace_citations_for_source,
 )
 from nexus.services.resource_graph.context import add_context_ref_without_commit, context_version
 from nexus.services.resource_graph.refs import (
@@ -189,10 +189,9 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
         row = by_n[n]
         target = cast(ResourceRef, citable_target(row.result_ref))  # only citable rows are numbered
         snapshot = CitationSnapshot(evidence=CapturedEvidence.model_validate(row.captured_evidence))
-        citations.append(CitationInput(target, ordinal, "context", snapshot))
-    edges = replace_citations_for_output(
+        citations.append(CitationInput(target, ordinal, snapshot))
+    edges = replace_citations_for_source(
         db,
-        viewer_id=run.owner_user_id,
         source=ResourceRef("message", run.assistant_message_id),
         citations=citations,
     )

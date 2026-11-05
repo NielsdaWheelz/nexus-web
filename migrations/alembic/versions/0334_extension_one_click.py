@@ -14,8 +14,8 @@ from uuid import UUID
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0332"
-down_revision = "0331"
+revision = "0334"
+down_revision = "0333"
 branch_labels = None
 depends_on = None
 
@@ -24,7 +24,7 @@ def _binding(old: object) -> tuple[dict, int | None]:
     if old is None:
         return {"x_article_id": None, "target": None}, None
     if not isinstance(old, dict):
-        raise RuntimeError("0332 invalid capture binding")
+        raise RuntimeError("0334 invalid capture binding")
     kind = old.get("kind")
     if kind == "XArticle" and set(old) == {"kind", "article_id", "target"}:
         article = old["article_id"]
@@ -33,29 +33,29 @@ def _binding(old: object) -> tuple[dict, int | None]:
             or not article.isascii()
             or not article.isdecimal()
         ):
-            raise RuntimeError("0332 invalid article identity")
+            raise RuntimeError("0334 invalid article identity")
     elif kind == "WebRecovery" and set(old) == {"kind", "target", "source_relation"}:
         if old["source_relation"] not in {"ExactUrl", "AlternativeCopy"}:
-            raise RuntimeError("0332 invalid recovery relation")
+            raise RuntimeError("0334 invalid recovery relation")
         article = None
     else:
-        raise RuntimeError("0332 unknown capture binding shape")
+        raise RuntimeError("0334 unknown capture binding shape")
     target = old["target"]
     if target is None:
         if kind == "WebRecovery":
-            raise RuntimeError("0332 recovery target missing")
+            raise RuntimeError("0334 recovery target missing")
         return {"x_article_id": article, "target": None}, None
     if not isinstance(target, dict) or set(target) != {
         "media_id",
         "expected_source_attempt_id",
         "expected_reader_generation",
     }:
-        raise RuntimeError("0332 invalid capture target")
+        raise RuntimeError("0334 invalid capture target")
     UUID(target["media_id"])
     UUID(target["expected_source_attempt_id"])
     generation = target["expected_reader_generation"]
     if generation is not None and (type(generation) is not int or generation < 1):
-        raise RuntimeError("0332 invalid reader generation")
+        raise RuntimeError("0334 invalid reader generation")
     return {
         "x_article_id": article,
         "target": {
@@ -111,7 +111,7 @@ def upgrade() -> None:
                 ):
                     raise ValueError("invalid capture manifest")
         except ValueError as exc:
-            raise RuntimeError(f"0332 invalid thread input {row['id']}") from exc
+            raise RuntimeError(f"0334 invalid thread input {row['id']}") from exc
         thread_payloads.append((row["id"], {**payload, "extension_source": None}))
 
     for attempt_id, payload in thread_payloads:
@@ -134,7 +134,7 @@ def upgrade() -> None:
     )
     if live:
         raise RuntimeError(
-            f"0332 requires settling {live} live browser source attempts"
+            f"0334 requires settling {live} live browser source attempts"
         )
 
     op.add_column(
@@ -173,7 +173,7 @@ def upgrade() -> None:
             "sha256",
             "capture_binding",
         }:
-            raise RuntimeError(f"0332 invalid browser origin {row['id']}")
+            raise RuntimeError(f"0334 invalid browser origin {row['id']}")
         binding, _ = _binding(origin["capture_binding"])
         if row["published_at"] is None:
             for table, column in (
@@ -203,7 +203,7 @@ def upgrade() -> None:
         if not isinstance(payload, dict) or set(payload) != (
             {"storage_path", "capture_binding"} if article else set()
         ):
-            raise RuntimeError(f"0332 unknown browser payload {row['id']}")
+            raise RuntimeError(f"0334 unknown browser payload {row['id']}")
         if article:
             binding, generation = _binding(payload["capture_binding"])
             candidates = [
@@ -246,7 +246,7 @@ def upgrade() -> None:
                 .one_or_none()
             )
             if file is None:
-                raise RuntimeError(f"0332 missing browser file {row['id']}")
+                raise RuntimeError(f"0334 missing browser file {row['id']}")
             candidates = [
                 s
                 for s in candidates
@@ -261,7 +261,7 @@ def upgrade() -> None:
             for s in candidates
         }
         if len(facts) != 1 or not isinstance(path, str) or not path:
-            raise RuntimeError(f"0332 cannot prove browser input {row['id']}")
+            raise RuntimeError(f"0334 cannot prove browser input {row['id']}")
         content_type, size, sha256 = facts.pop()
         converted = {
             "source_binding": binding,
@@ -282,4 +282,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("0332 is a hard cutover; restore the matched backup")
+    raise RuntimeError("0334 is a hard cutover; restore the matched backup")

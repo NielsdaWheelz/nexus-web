@@ -1,6 +1,6 @@
 "use client";
 
-// Unsent text and model choice live only in memory, per account, pane and chat.
+// Unsent text, model choice and a frozen quotation live only in memory, per account, pane and chat.
 // Pane retirement forgets its drafts; acceptance spends only the unchanged submitted object.
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
@@ -8,9 +8,10 @@ import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { bindChatWorkGuard, retireChatPanes, setChatCommandAccount, suspendChatCommands } from "./commands";
 import type { SelectionEditor } from "./selection";
+import type { ReaderQuote } from "./readerIntent";
 
-export type Draft = Readonly<{ text: string; selection: SelectionEditor }>;
-const EMPTY: Draft = { text: "", selection: { kind: "Uninitialized" } };
+export type Draft = Readonly<{ text: string; selection: SelectionEditor; quote: ReaderQuote | null }>;
+const EMPTY: Draft = { text: "", selection: { kind: "Uninitialized" }, quote: null };
 export const chatDraftOwnerId = (accountId: string, viewId: string, scope: string) =>
   JSON.stringify(["chat-draft", accountId, viewId, scope]);
 const drafts = new Map<string, {
@@ -66,7 +67,7 @@ export function useChatDraft(scope: string, viewId: string) {
     drafts.set(key, entry);
     entry.release?.();
     entry.release = guard.register({ id: key, scope: { kind: "pane", paneId: viewId },
-      read: () => ({ changed: entry.value.text !== "", unconfirmed: false, stopsBrowserWork: false }), subscribe });
+      read: () => ({ changed: entry.value.text !== "" || entry.value.quote !== null, unconfirmed: false, stopsBrowserWork: false }), subscribe });
     // A retained pane, not this particular composer mount, owns registration.
   }, [entry, guard, key, viewId, subscribe]);
   const draft = useSyncExternalStore(subscribe, () => entry.value, () => EMPTY);
@@ -76,13 +77,23 @@ export function useChatDraft(scope: string, viewId: string) {
       setDraft: (draft: Draft) => write(draft),
       setText: (text: string) => write({ ...entry.value, text }),
       setSelection: (selection: SelectionEditor) => { if (selection !== entry.value.selection) write({ ...entry.value, selection }); },
+      setQuote: (quote: ReaderQuote | null) => write({ ...entry.value, quote }),
+      updateQuote: (id: string, change: (quote: ReaderQuote) => ReaderQuote) => {
+        if (drafts.get(key) !== entry) return false;
+        const previous = entry.value.quote;
+        if (previous?.id !== id) return false;
+        const quote = change(previous);
+        if (quote === previous) return false;
+        write({ ...entry.value, quote });
+        return true;
+      },
       seed: (text: string) => write({ ...entry.value, text }),
       spend: (submitted: Draft) => {
         if (entry.value !== submitted) return false;
-        write({ text: "", selection: { kind: "Uninitialized" } });
+        write(EMPTY);
         return true;
       },
     };
-  }, [entry]);
+  }, [entry, key]);
   return { draft, owner: key, ...commands };
 }

@@ -104,6 +104,7 @@ def get_reader_document_map(
         total_fragment_chars += char_count
 
     generation = None
+    document = None
     if media_kind in ("epub", "web_article", "pdf", "text_part"):
         generation = read_publication_generation(db, media_id=media_id)
         if generation is None:
@@ -181,6 +182,17 @@ def get_reader_document_map(
         page_count=page_count,
         pdf_page_heights=pdf_page_heights,
     )
+    if document is not None and document.kind != "pdf":
+        from nexus.services.reader_evidence_markers import citation_point_markers
+
+        points = citation_point_markers(
+            occurrences=document.citation_occurrences, units=document.units
+        )
+        point_ids = {marker.item_id for marker in points}
+        projection.markers[:] = [
+            marker for marker in projection.markers if marker.item_id not in point_ids
+        ] + points
+        projection.markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
     apparatus_status = apparatus.status
     del apparatus
 
@@ -192,9 +204,9 @@ def get_reader_document_map(
     return ReaderDocumentMapOut(
         media_id=media_id,
         publication_generation=generation,
-        annotations_version=versions_for_ref(
+        evidence_version=versions_for_ref(
             db, viewer_id=viewer_id, ref=ResourceRef("media", media_id)
-        ).get("annotations", 1),
+        ).get("evidence", 1),
         identity=identity,
         status=status,
         embeds=embed_rows,
@@ -218,15 +230,20 @@ def get_capture_document_map(
         ReaderEvidenceCountsOut,
         ReaderEvidenceHighlightOut,
         ReaderEvidenceOut,
+        ReaderEvidenceQuotationOut,
         ReaderEvidenceResolvedOut,
         ReaderEvidenceResourceOut,
         ReaderEvidenceRootOut,
+        ReaderEvidenceUnavailableOut,
     )
+    from nexus.schemas.resource_items import LocatedSourceLocationOut, ReaderQuoteSourceTargetKey
     from nexus.schemas.retrieval import XCaptureOffsetsLocator
+    from nexus.services.chat.quotes import source_quotations
     from nexus.services.reader_document import read_capture_document, reading_source_ranges
     from nexus.services.reader_evidence_markers import build_markers
     from nexus.services.resource_graph import order
     from nexus.services.resource_graph.connections import hydrate_connections
+    from nexus.services.resource_items.evidence import evidence_items, resolve_source_target
     from nexus.services.resource_items.items import resource_items_out
 
     document = read_capture_document(db, viewer_id, capture_id)
@@ -251,7 +268,9 @@ def get_capture_document_map(
         )
         .order_by(Highlight.created_at, Highlight.id)
     ).all()
+    quotations = source_quotations(db, viewer_id=viewer_id, fragment_ids=tuple(owners))
     refs = [ResourceRef("highlight", highlight.id) for highlight, _ in rows]
+    refs.extend(ref for ref, _ in quotations)
     items = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=refs)}
     roots: dict[str, ReaderEvidenceRootOut] = {}
     for highlight, anchor in rows:
@@ -291,6 +310,46 @@ def get_capture_document_map(
             continuation=None,
             authored_placement=None,
         )
+    quotation_items = evidence_items(
+        db,
+        viewer_id=viewer_id,
+        occurrences=[
+            (ref, evidence, ReaderQuoteSourceTargetKey(message_id=ref.id))
+            for ref, evidence in quotations
+        ],
+    )
+    owner_refs = {f"fragment:{fragment}" for fragment in owners}
+    for (ref, _), quotation in zip(quotations, quotation_items, strict=True):
+        if quotation.missing:
+            continue
+        target = resolve_source_target(
+            db, viewer_id=viewer_id, target=ReaderQuoteSourceTargetKey(message_id=ref.id)
+        )
+        if (
+            target.source_activation is None
+            or target.source_activation.resource_ref not in owner_refs
+        ):
+            continue
+        resolution: ReaderEvidenceResolvedOut | ReaderEvidenceUnavailableOut = (
+            ReaderEvidenceUnavailableOut(reason="Unanchorable")
+        )
+        if isinstance(target.location, LocatedSourceLocationOut):
+            locator = target.location.locator
+            if (
+                locator.type == "x_capture_offsets"
+                and owners.get(locator.fragment_id) == locator.capture_id
+            ):
+                resolution = ReaderEvidenceResolvedOut(
+                    anchor=ReaderEvidenceAnchorOut(locator=locator),
+                    order_key=f"fragment:{indexes[str(locator.fragment_id)]:010d}:{locator.start_offset:010d}",
+                )
+        roots[ref.uri] = ReaderEvidenceRootOut(
+            ref=ref.uri,
+            content=ReaderEvidenceQuotationOut(item=items[ref.uri], quotation=quotation),
+            resolution=resolution,
+            continuation=None,
+            authored_placement=None,
+        )
     for fragment_id in owners:
         endpoint = ResourceRef("fragment", fragment_id)
         edges = [edge for edge, _ in order.ordered(db, viewer_id, endpoint)]
@@ -298,8 +357,12 @@ def get_capture_document_map(
             db, viewer_id, edges, {(endpoint.scheme, endpoint.id)}, "both"
         )
         for connection in connections:
+            cited = connection.origin == "citation" and connection.ordinal is not None
+            if cited and owners[fragment_id] != capture_id:
+                continue
             ref = connection.other.ref
-            root = roots.get(ref)
+            key = str(connection.edge_id) if cited else ref
+            root = roots.get(key)
             if root is None:
                 root = ReaderEvidenceRootOut(
                     ref=ref,
@@ -308,7 +371,7 @@ def get_capture_document_map(
                     continuation=None,
                     authored_placement=None,
                 )
-                roots[ref] = root
+                roots[key] = root
             if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):
                 root.direct_facts.append(
                     ReaderDirectFactOut(
@@ -325,7 +388,10 @@ def get_capture_document_map(
             for root in values
         ),
         links=sum(
-            any(f.origin not in ("citation", "assistant", "discovery") for f in root.direct_facts)
+            isinstance(root.content, ReaderEvidenceQuotationOut)
+            or any(
+                f.origin not in ("citation", "assistant", "discovery") for f in root.direct_facts
+            )
             for root in values
         ),
         machine_links=sum(
@@ -343,17 +409,20 @@ def get_capture_document_map(
         page_count=None,
         pdf_page_heights={},
     )
+    from nexus.services.reader_evidence_markers import citation_point_markers
+
+    markers.extend(
+        citation_point_markers(occurrences=document.citation_occurrences, units=document.units)
+    )
+    markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
     return ReaderCaptureDocumentMapOut(
         capture_id=capture_id,
         publication_generation=None,
-        annotations_version=max(
-            (
-                versions_for_ref(
-                    db, viewer_id=viewer_id, ref=ResourceRef("fragment", fragment)
-                ).get("annotations", 1)
-                for fragment in owners
-            ),
-            default=1,
+        evidence_version=sum(
+            versions_for_ref(db, viewer_id=viewer_id, ref=ResourceRef("fragment", fragment)).get(
+                "evidence", 1
+            )
+            for fragment in owners
         ),
         identity=document.identity,
         status="ready" if values else "empty",

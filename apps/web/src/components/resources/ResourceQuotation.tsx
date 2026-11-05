@@ -1,4 +1,5 @@
 import { ContributorCreditList } from "@/components/contributors/ContributorCredits";
+import type { ReactNode } from "react";
 import type { Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import { creditName, selectMediaAuthors, type ContributorCredit } from "@/lib/contributors/credits";
@@ -10,11 +11,14 @@ import { ResourceTypeIcon } from "./ResourceType";
 import styles from "./ResourceQuotation.module.css";
 
 /** Supplied evidence and attribution; navigation never replaces captured content. */
-export default function ResourceQuotation({ item }: { item: Schema<"ResourceItemOut"> }) {
+export default function ResourceQuotation({ item, renderSourceControl }: {
+  item: Schema<"ResourceItemOut">;
+  renderSourceControl?: (title: string) => ReactNode;
+}) {
   const { body, source } = item.preview;
   if (item.missing && body.kind === "named" && source === null
     && item.activation.unavailable_reason === "source_unavailable") {
-    return <figure className={styles.quotation}><ResourceLink item={item} /></figure>;
+    return <figure className={styles.quotation}>{renderSourceControl ? renderSourceControl(body.title) : <ResourceLink item={item} />}</figure>;
   }
 
   let identity: { title: string; contributors: readonly ContributorCredit[] | null } | null;
@@ -37,9 +41,9 @@ export default function ResourceQuotation({ item }: { item: Schema<"ResourceItem
   const attributedRef = source ? source.ref ? parseResourceRef(source.ref) : null : parseResourceRef(item.ref);
   const type = attributedRef ? resourceType(attributedRef.scheme, itemMediaKind(item)) : null;
   const sourceTitle = source
-    ? source.title?.trim() ? source.title : "untitled"
+    ? source.title?.trim() ? source.title : item.label
     : type ? resourceTypeName(type) : "source";
-  const title = identity ? identity.title.trim() ? identity.title : "untitled" : sourceTitle;
+  const title = identity ? identity.title.trim() ? identity.title : item.label : sourceTitle;
   const authors = selectMediaAuthors(identity ? identity.contributors ?? [] : source?.contributors ?? [])
     .filter(credit => creditName(credit) !== null);
   const distinctSource = identity !== null && source !== null && source.ref !== item.ref;
@@ -57,10 +61,11 @@ export default function ResourceQuotation({ item }: { item: Schema<"ResourceItem
       ? <blockquote className={styles.body}><ResourceBody body={body} full /></blockquote>
       : <div className={styles.body}><ResourceBody body={body} full /></div> : null}
     <figcaption className={styles.attribution}>
+      {source?.attribution_text ? <div className={styles.literalAttribution}>{source.attribution_text}</div> : null}
       <div className={styles.identity}>
         {!distinctSource ? glyph : null}
         <span className={styles.identityText}>
-          <ResourceLink item={item} label={title} />
+          {renderSourceControl ? renderSourceControl(title) : <ResourceLink item={item} label={title} />}
           {authors.length > 0 ? <> — <ContributorCreditList credits={authors} maxVisible={authors.length} /></> : null}
           {!distinctSource && source?.location_label?.trim() ? <> · {source.location_label}</> : null}
           {role ? <> · {role}</> : null}

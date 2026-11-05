@@ -22,6 +22,7 @@ import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes
 import type { SourceArrivalTarget, SourceTarget } from "@/lib/resources/sourceTarget";
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import type { ChatFindDestination } from "@/lib/chat/findDestination";
+import type { ReaderQuoteReturn } from "@/lib/chat/readerIntent";
 import { getInteractionOwner, hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -34,6 +35,7 @@ interface ArrivalIntent {
   readonly purpose: "Open" | "RestoreVisit";
   readonly phase: "Pending" | "Applied" | "Retired";
   readonly sourceIdentity: string | null;
+  readonly quoteReview: ReaderQuoteReturn | null;
 }
 const ARRIVAL = definePaneVisitDataKey<ArrivalIntent>("Source.Inspection");
 
@@ -144,8 +146,13 @@ export function useSourceArrival(input: {
 
   useLayoutEffect(() => {
     const delivery = runtime.paneEntryDelivery;
-    if (delivery?.entry.kind !== "InspectSource") return;
-    const next: ArrivalIntent = { activationId: delivery.activationId, target: delivery.entry.target, purpose: delivery.entry.purpose, phase: "Pending", sourceIdentity: null };
+    if (delivery?.entry.kind !== "InspectSource" && delivery?.entry.kind !== "ReviewReaderQuote") return;
+    const entry = delivery.entry;
+    const next: ArrivalIntent = { activationId: delivery.activationId,
+      target: entry.kind === "ReviewReaderQuote" ? entry.quote.inspection.target : entry.target,
+      purpose: entry.kind === "ReviewReaderQuote" ? "Open" : entry.purpose,
+      quoteReview: entry.kind === "ReviewReaderQuote" ? entry.target : null,
+      phase: "Pending", sourceIdentity: null };
     write(next);
     if (!runtime.claimPaneEntryDelivery(delivery)) return;
     if (mobile && !(next.target.kind === "reader_destination" && next.target.destination.target.kind === "evidence_item")) runtime.closeSecondaryPane({ restoreFocus: false });
@@ -279,13 +286,13 @@ export function useSourceArrival(input: {
           // Endpoint queries never change a conversation's source ownership.
           const sameOwner = source?.resource_ref && destination.resourceRef
             ? source.resource_ref === destination.resourceRef
-            : data.location.kind === "resource" && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
-          if (sameOwner && data.location.kind === "located" && data.location.source_identity !== null &&
+            : (data.location.kind === "resource" || destination.routeId === "xCapture") && source?.kind === "route" && source.href !== null && resolveWorkspaceActivationRouteId(source.href) === resolveWorkspaceActivationRouteId(destination.href);
+          if (sameOwner && (data.location.kind === "located" || data.location.kind === "point") && data.location.source_identity !== null &&
               sourceIdentity !== null && data.location.source_identity !== sourceIdentity) {
             publishStatus({ ...pending, pending: false, failure: { title: "that location is from another version of this document.", error: null } });
             return;
           }
-          target = data.location.kind === "unavailable" || !sameOwner || (data.location.kind === "located" && sourceIdentity === null)
+          target = data.location.kind === "unavailable" || !sameOwner || ((data.location.kind === "located" || data.location.kind === "point") && sourceIdentity === null)
             ? null : { kind: "source", source: data };
         }
         const outcome = target === null ? "Unavailable" : await latest.current.input.apply(target, {
@@ -300,7 +307,7 @@ export function useSourceArrival(input: {
           },
         });
         if (!current()) return;
-        if (outcome === "Applied" && (target?.kind === "resource" || target?.kind === "source" && target.source.location.kind === "resource")) {
+        if (outcome === "Applied" && intent.quoteReview === null && (target?.kind === "resource" || target?.kind === "source" && target.source.location.kind === "resource")) {
           remember(null);
           publishStatus(null);
           return;
@@ -350,6 +357,8 @@ export function useSourceArrival(input: {
 
   if (defect) throw defect.error;
   return {
+    quoteReview: intent?.quoteReview ?? null,
+    finishQuoteReview: () => { if (captured.current) remember({ ...captured.current, quoteReview: null }); },
     pending: status?.visitId === runtime.visitId && status.activationId === activationId && status.pending,
     failure: status?.visitId === runtime.visitId && status.activationId === activationId ? status.failure : null,
     clear,

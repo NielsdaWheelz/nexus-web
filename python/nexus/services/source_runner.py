@@ -515,6 +515,11 @@ def _supersede(
             db, grantor_id=account_id, media_ids=[winner_id]
         )
         admit_x_captures_for_accounts(db, account_ids=[account_id], capture_ids=captures)
+        from nexus.services.source_citations import complete_source_citations
+
+        complete_source_citations(
+            db, account_ids=[account_id], capture_ids=captures, media_ids=[winner_id]
+        )
 
 
 def _embed_owners(media_ids: set[UUID]) -> Callable[[Session], list[UUID]]:

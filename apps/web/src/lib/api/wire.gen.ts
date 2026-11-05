@@ -256,17 +256,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/chat-reader-selections/highlights/{highlight_id}": {
+    "/chat-reader-selections/preview": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Reader Selection Preview */
-        get: operations["get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Preview Reader Selection */
+        post: operations["preview_reader_selection_chat_reader_selections_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3303,10 +3303,10 @@ export interface paths {
         };
         /**
          * Stream Writing
-         * @description Listen first, then read the authored head and annotation token in every fresh snapshot.
+         * @description Listen first, then read the authored head and independent evidence token.
          *
          *     A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
-         *     refetch document maps whose ``annotations_version`` moved.
+         *     refetch document maps whose ``evidence_version`` moved.
          */
         get: operations["stream_writing_stream_writing_get"];
         put?: never;
@@ -3956,6 +3956,8 @@ export interface components {
         };
         /** CapturedEvidence */
         CapturedEvidence: {
+            /** Completion Ref */
+            completion_ref: string | null;
             quote: components["schemas"]["CapturedQuote"] | null;
             source: components["schemas"]["CapturedSource"];
             /** Target */
@@ -4008,6 +4010,8 @@ export interface components {
         };
         /** CapturedSource */
         CapturedSource: {
+            /** Attribution Text */
+            attribution_text: string | null;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
@@ -4331,11 +4335,6 @@ export interface components {
             item: components["schemas"]["ResourceItemOut"];
             /** Ordinal */
             ordinal: number;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
         };
         /**
          * CitationSnapshot
@@ -4358,6 +4357,11 @@ export interface components {
              * @enum {string}
              */
             kind: "citation";
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "source" | "target";
         };
         /**
          * ClientDefectRequest
@@ -5915,10 +5919,10 @@ export interface components {
         };
         /** DownloadChanges */
         DownloadChanges: {
-            /** Annotations Revision */
-            annotations_revision: string;
             /** Changes */
             changes: components["schemas"]["FeedChange"][];
+            /** Evidence Revision */
+            evidence_revision: string;
             /** Head Cursor */
             head_cursor: string;
             /** Next Cursor */
@@ -10482,6 +10486,17 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PointSourceLocationOut */
+        PointSourceLocationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "point";
+            point: components["schemas"]["ReaderPointOut"];
+            /** Source Identity */
+            source_identity: string;
+        };
         /**
          * Position
          * @description An insertion after one exact link at the source endpoint, or first.
@@ -10772,8 +10787,6 @@ export interface components {
         };
         /** ReaderCaptureDocumentMapOut */
         ReaderCaptureDocumentMapOut: {
-            /** Annotations Version */
-            annotations_version: number;
             /**
              * Capture Id
              * Format: uuid
@@ -10783,6 +10796,8 @@ export interface components {
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Evidence Version */
+            evidence_version: number;
             /** Identity */
             identity: string;
             /** Markers */
@@ -10802,6 +10817,8 @@ export interface components {
              * Format: uuid
              */
             capture_id: string;
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -10826,6 +10843,44 @@ export interface components {
             x_article_content: components["schemas"]["XArticleContent"] | null;
             x_capture: components["schemas"]["ReaderXCaptureOut"] | null;
         };
+        /** ReaderCaptureLocator */
+        ReaderCaptureLocator: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "x_capture_offsets";
+        };
+        /** ReaderCaptureScope */
+        ReaderCaptureScope: {
+            /**
+             * Capture Id
+             * Format: uuid
+             */
+            capture_id: string;
+            /** Document Identity */
+            document_identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x_capture";
+        };
         /** ReaderChildContinuationOut */
         ReaderChildContinuationOut: {
             /**
@@ -10837,6 +10892,11 @@ export interface components {
             position: null;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
+        };
+        /** ReaderCitationOccurrenceOut */
+        ReaderCitationOccurrenceOut: {
+            at: components["schemas"]["ReaderPointOut"] | null;
+            citation: components["schemas"]["CitationOut"];
         };
         /**
          * ReaderCursorEmpty
@@ -10945,15 +11005,15 @@ export interface components {
          * ReaderDocumentMapOut
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
          *     ``publication_generation`` fences canonical owner offsets; null on transcripts.
-         *     ``annotations_version`` moves when the viewer's readable annotations of it change.
+         *     ``evidence_version`` moves when the viewer's readable annotations of it change.
          */
         ReaderDocumentMapOut: {
-            /** Annotations Version */
-            annotations_version: number;
             diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Evidence Version */
+            evidence_version: number;
             /** Identity */
             identity: string;
             /** Markers */
@@ -10970,6 +11030,33 @@ export interface components {
              * @enum {string}
              */
             status: "ready" | "empty" | "partial";
+        };
+        /** ReaderEpubLocator */
+        ReaderEpubLocator: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Media Kind */
+            media_kind: null;
+            /** Section Id */
+            section_id: null;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "epub_fragment_offsets";
         };
         /** ReaderEpubTarget */
         ReaderEpubTarget: {
@@ -11050,6 +11137,16 @@ export interface components {
             /** Roots */
             roots: components["schemas"]["ReaderEvidenceRootOut"][];
         };
+        /** ReaderEvidenceQuotationOut */
+        ReaderEvidenceQuotationOut: {
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Quotation";
+            quotation: components["schemas"]["ResourceItemOut"];
+        };
         /** ReaderEvidenceResolvedOut */
         ReaderEvidenceResolvedOut: {
             anchor: components["schemas"]["ReaderEvidenceAnchorOut"];
@@ -11077,7 +11174,7 @@ export interface components {
         ReaderEvidenceRootOut: {
             authored_placement: components["schemas"]["ReaderAuthoredPlacementOut"] | null;
             /** Content */
-            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"];
+            content: components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceResourceOut"] | components["schemas"]["ReaderEvidenceQuotationOut"];
             /** Continuation */
             continuation: (components["schemas"]["ReaderChildContinuationOut"] | components["schemas"]["ReaderSiblingContinuationOut"]) | null;
             /** Direct Facts */
@@ -11155,6 +11252,38 @@ export interface components {
             /** Fragment Id */
             fragment_id: string;
         };
+        /** ReaderHighlightSelection */
+        ReaderHighlightSelection: {
+            /** Expected Capture Revision */
+            expected_capture_revision: string;
+            /**
+             * Highlight Id
+             * Format: uuid
+             */
+            highlight_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "highlight";
+            /** Scope */
+            scope: components["schemas"]["ReaderMediaScope"] | components["schemas"]["ReaderCaptureScope"];
+        };
+        /** ReaderMediaScope */
+        ReaderMediaScope: {
+            /** Document Identity */
+            document_identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
         /**
          * ReaderNavigationFragmentOut
          * @description One unique canonical text unit in document order.
@@ -11216,6 +11345,8 @@ export interface components {
         };
         /** ReaderPartDocumentOut */
         ReaderPartDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11302,6 +11433,8 @@ export interface components {
          *     public share, which grants no annotation authority.
          */
         ReaderPdfDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             file: components["schemas"]["ReaderPdfFileOut"];
             /** Identity */
             identity: string;
@@ -11323,6 +11456,32 @@ export interface components {
             expires_at: string | null;
             /** Url */
             url: string;
+        };
+        /** ReaderPdfLocator */
+        ReaderPdfLocator: {
+            /** Exact */
+            exact: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Page Number */
+            page_number: number;
+            /** Prefix */
+            prefix: string | null;
+            /** Projection */
+            projection: null;
+            /** Quads */
+            quads: components["schemas"]["PdfGeometryQuad"][];
+            /** Suffix */
+            suffix: string | null;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pdf_page_geometry";
         };
         /** ReaderPdfPageLocatorOut */
         ReaderPdfPageLocatorOut: {
@@ -11431,6 +11590,15 @@ export interface components {
              */
             message_id: string;
         };
+        /** ReaderQuoteText */
+        ReaderQuoteText: {
+            /** Exact */
+            exact: string;
+            /** Prefix */
+            prefix: string | null;
+            /** Suffix */
+            suffix: string | null;
+        };
         /** ReaderSectionOut */
         ReaderSectionOut: {
             /** Anchor Id */
@@ -11445,36 +11613,30 @@ export interface components {
         };
         /**
          * ReaderSelectionInput
-         * @description A send's quote: the durable key plus the compare-on-send revision, never text.
+         * @description The observed selection and the complete server preview's compare-on-send hash.
          */
         ReaderSelectionInput: {
-            key: components["schemas"]["ReaderSelectionKey"];
             /** Revision */
             revision: string;
-        };
-        /** ReaderSelectionKey */
-        ReaderSelectionKey: {
-            /** Capture Id */
-            capture_id: string | null;
-            /**
-             * Highlight Id
-             * Format: uuid
-             */
-            highlight_id: string;
-            /** Media Id */
-            media_id: string | null;
+            /** Selection */
+            selection: components["schemas"]["ReaderSourceSelection-Input"] | components["schemas"]["ReaderHighlightSelection"];
         };
         /** ReaderSelectionOut */
         ReaderSelectionOut: {
             item: components["schemas"]["ResourceItemOut"];
-            key: components["schemas"]["ReaderSelectionKey"];
         };
         /** ReaderSelectionPreview */
         ReaderSelectionPreview: {
             item: components["schemas"]["ResourceItemOut"];
-            key: components["schemas"]["ReaderSelectionKey"];
             /** Revision */
             revision: string;
+            /** Selection */
+            selection: components["schemas"]["ReaderSourceSelection-Output"] | components["schemas"]["ReaderHighlightSelection"];
+        };
+        /** ReaderSelectionPreviewRequest */
+        ReaderSelectionPreviewRequest: {
+            /** Selection */
+            selection: components["schemas"]["ReaderSourceSelection-Input"] | components["schemas"]["ReaderHighlightSelection"];
         };
         /** ReaderSiblingContinuationOut */
         ReaderSiblingContinuationOut: {
@@ -11497,6 +11659,30 @@ export interface components {
             kind: "Html";
             /** Text */
             text: string;
+        };
+        /** ReaderSourceSelection */
+        "ReaderSourceSelection-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source";
+            /** Locator */
+            locator: components["schemas"]["ReaderWebLocator"] | components["schemas"]["ReaderEpubLocator"] | components["schemas"]["ReaderCaptureLocator"] | components["schemas"]["ReaderPdfLocator"];
+            /** Scope */
+            scope: components["schemas"]["ReaderMediaScope"] | components["schemas"]["ReaderCaptureScope"];
+        };
+        /** ReaderSourceSelection */
+        "ReaderSourceSelection-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source";
+            /** Locator */
+            locator: components["schemas"]["ReaderWebLocator"] | components["schemas"]["ReaderEpubLocator"] | components["schemas"]["ReaderCaptureLocator"] | components["schemas"]["ReaderPdfLocator"];
+            /** Scope */
+            scope: components["schemas"]["ReaderMediaScope"] | components["schemas"]["ReaderCaptureScope"];
         };
         /** ReaderSourceTextOut */
         ReaderSourceTextOut: {
@@ -11523,6 +11709,8 @@ export interface components {
          *     are not canonically addressed (public shares).
          */
         ReaderTextDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11572,6 +11760,8 @@ export interface components {
         };
         /** ReaderTranscriptDocumentOut */
         ReaderTranscriptDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11621,6 +11811,31 @@ export interface components {
             /** T Start Ms */
             t_start_ms: number | null;
             x_post: components["schemas"]["ReaderXPostOut"] | null;
+        };
+        /** ReaderWebLocator */
+        ReaderWebLocator: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Media Kind */
+            media_kind: null;
+            /** Start Offset */
+            start_offset: number;
+            text_quote_selector: components["schemas"]["ReaderQuoteText"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "web_text_offsets";
         };
         /** ReaderXCaptureOut */
         ReaderXCaptureOut: {
@@ -12997,6 +13212,8 @@ export interface components {
         /** SourceAttributionOut */
         SourceAttributionOut: {
             activation: components["schemas"]["ResourceActivationOut"] | null;
+            /** Attribution Text */
+            attribution_text: string | null;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
@@ -13288,7 +13505,7 @@ export interface components {
         /** SourceTargetOut */
         SourceTargetOut: {
             /** Location */
-            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
+            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["PointSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
             source_activation: components["schemas"]["ResourceActivationOut"] | null;
         };
         /** Stamp */
@@ -14360,13 +14577,13 @@ export interface components {
         };
         /**
          * WritingState
-         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``annotations_revision`` changes
-         *     whenever any of the viewer's media ``annotations`` lanes is bumped (a peer's or grant's
-         *     highlight change), so a mounted reader refetches its document map. Decimal counters.
+         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``evidence_revision`` changes
+         *     whenever a readable source's ``evidence`` lane changes. Source citations and
+         *     shared highlights refresh independently of authored writing. Decimal counters.
          */
         WritingState: {
-            /** Annotations Revision */
-            annotations_revision: string;
+            /** Evidence Revision */
+            evidence_revision: string;
             /** Revision */
             revision: string;
         };
@@ -15112,21 +15329,18 @@ export interface operations {
             };
         };
     };
-    get_reader_selection_preview_chat_reader_selections_highlights__highlight_id__get: {
+    preview_reader_selection_chat_reader_selections_preview_post: {
         parameters: {
-            query?: {
-                /** @description The key's parent media id */
-                media_id?: string | null;
-                /** @description The key's immutable capture id */
-                capture_id?: string | null;
-            };
+            query?: never;
             header?: never;
-            path: {
-                highlight_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReaderSelectionPreviewRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

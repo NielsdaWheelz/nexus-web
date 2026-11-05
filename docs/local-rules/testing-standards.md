@@ -146,7 +146,9 @@ shutdown fails. `headless=False` requests visibility, never desktop approval.
 
 `openLabAndroid` requires an explicitly owned disposable package and matching apk.
 it installs and clears only that package, refuses existing reverse ports, and
-returns ownership before `attachPage()` waits for its webview. before one cdp
+returns ownership before `attachPage()` waits for its webview. the caller first
+observes the expected rendered entry in the owned native accessibility hierarchy:
+a target url can exist before its renderer is live. before one cdp
 connection, the existing bounded readiness check requires one page target at the
 supplied owned web origin; non-page targets do not prevent admission. attachment
 then requires one context and one page at that origin. rejection reports counts,
@@ -251,8 +253,8 @@ from both. pair it with a synthetic `x_api_bearer_token` for controlled checks.
 `provider_endpoint_overrides` is a
 json-encoded provider-to-https-origin map STRING, validated by the same import-light
 `provider_runtime.endpoints.normalize_endpoint_overrides` used at dispatch.
-`provider_ca_pem` is the actual pem certificate STRING, not a path. additional
-operator certificates extend normal verified trust roots for generation and
+`provider_ca_pem` is the actual pem certificate STRING, not a path.
+additional operator certificates extend normal verified trust roots for generation and
 embeddings; endpoint overrides retain each adapter's api path. ordinary live
 configuration may combine with `--live-codex`. enroll its dedicated account once
 with `./scripts/lab-codex enroll`; `up`, `status` and `down` own explicit installed

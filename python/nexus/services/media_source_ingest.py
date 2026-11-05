@@ -1189,8 +1189,12 @@ def accept_x_capture(
     request_id: str | None,
 ) -> FromXCaptureOut:
     """Admit thread acquisition with frozen evidence; replay never files or restarts work."""
-    from nexus.services.x_ingest import capture_manifest, lock_x_capture_revisions
-    from nexus.services.x_source import readable_x_capture_ids_sql, require_readable_x_capture
+    from nexus.services.x_ingest import lock_x_capture_revisions
+    from nexus.services.x_source import (
+        readable_x_capture_ids_sql,
+        require_readable_x_capture,
+        x_capture_read_manifest,
+    )
 
     def admit() -> FromXCaptureOut:
         users.lock_viewer(db, viewer_id)
@@ -1208,7 +1212,7 @@ def accept_x_capture(
         if capture.payload["kind"] == "complete_post":
             authorized = set(
                 db.scalars(text(readable_x_capture_ids_sql()), {"viewer_id": viewer_id})
-            ) & capture_manifest(db, capture_ids=[capture_id])
+            ) & x_capture_read_manifest(db, capture_ids=[capture_id])
         result = _accept_url(
             db,
             viewer_id,

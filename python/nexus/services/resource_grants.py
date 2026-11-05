@@ -130,15 +130,34 @@ def capture_manifest_for_media(
 ) -> list[UUID]:
     """Freeze only selected captures/direct context the grantor can read NOW."""
     from nexus.services.media_text_scope import x_capture_scope_rows_sql
-    from nexus.services.x_source import readable_x_capture_ids_sql
+    from nexus.services.x_source import readable_x_capture_ids_sql, x_evidence_capture_match_sql
 
     return (
         list(
             db.scalars(
                 text(f"""
-        SELECT DISTINCT x.capture_id
-        FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:media_ids AS uuid[])) AS media_id")}) x
-        WHERE x.capture_id IN ({readable_x_capture_ids_sql()})
+        WITH selected AS (
+            SELECT capture_id FROM x_post_media WHERE media_id=ANY(:media_ids)
+            UNION SELECT capture_id FROM x_thread_posts WHERE thread_media_id=ANY(:media_ids)
+            UNION SELECT target_x_post_capture_id FROM document_embeds
+                WHERE media_id=ANY(:media_ids) AND target_x_post_capture_id IS NOT NULL
+            UNION SELECT f.x_post_capture_id FROM document_embeds de
+                JOIN resource_edges e ON e.id=de.citation_id
+                JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+                WHERE de.media_id=ANY(:media_ids)
+        ), manifest AS (
+            SELECT capture_id FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:media_ids AS uuid[])) AS media_id")}) x
+            UNION SELECT capture_id FROM selected
+            UNION SELECT c.target_capture_id FROM selected s
+                JOIN x_post_capture_contexts c ON c.capture_id=s.capture_id
+                WHERE c.target_capture_id IS NOT NULL
+            UNION SELECT f.x_post_capture_id FROM selected s
+                JOIN x_post_capture_contexts c ON c.capture_id=s.capture_id AND c.relation='quoted'
+                JOIN resource_edges e ON e.id=c.citation_id
+                JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+        )
+        SELECT DISTINCT capture_id FROM manifest
+        WHERE capture_id IN ({readable_x_capture_ids_sql()})
     """),
                 {"viewer_id": grantor_id, "media_ids": list(media_ids)},
             )
@@ -269,14 +288,16 @@ def annotation_visibility(
 
 
 def invalidate_annotation_visibility(db: Session, projections: set[tuple[UUID, UUID]]) -> None:
-    """Bump each ``(viewer, media)`` annotations lane in one sorted order, then wake each viewer's
+    """Bump each ``(viewer, media)`` evidence lane in one sorted order, then wake each viewer's
     writing stream; flush-only, the notification publishes with the caller's commit."""
-    from nexus.services.resource_items.versions import bump_version
+    from nexus.services.resource_items.versions import invalidate_evidence
 
-    for user_id, media_id in sorted(projections):
-        bump_version(db, viewer_id=user_id, ref=ResourceRef("media", media_id), lane="annotations")
-    for user_id in sorted({user_id for user_id, _ in projections}):
-        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(user_id)})
+    invalidate_evidence(
+        db,
+        projections={
+            (user_id, ResourceRef("media", media_id)) for user_id, media_id in projections
+        },
+    )
 
 
 def library_annotation_visibility(
@@ -506,7 +527,11 @@ def insert_grant(
     )
     if media_id is not None:
         lock_media_for_reference(db, media_id)
-    from nexus.services.x_source import admit_x_captures_for_accounts, readable_x_capture_ids_sql
+    from nexus.services.x_source import (
+        admit_x_captures_for_accounts,
+        readable_x_capture_ids_sql,
+        x_evidence_capture_match_sql,
+    )
 
     if media_id is not None:
         captures = capture_manifest_for_media(db, grantor_id=creator_id, media_ids=[media_id])
@@ -523,6 +548,10 @@ def insert_grant(
                 UNION SELECT c.target_capture_id FROM roots
                 JOIN x_post_capture_contexts c ON c.capture_id=roots.capture_id
                 WHERE c.target_capture_id IS NOT NULL
+                UNION SELECT f.x_post_capture_id FROM roots
+                JOIN x_post_capture_contexts c ON c.capture_id=roots.capture_id AND c.relation='quoted'
+                JOIN resource_edges e ON e.id=c.citation_id
+                JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
             )
             SELECT capture_id FROM manifest WHERE capture_id IN ({readable_x_capture_ids_sql()})
         """),
@@ -546,6 +575,14 @@ def insert_grant(
     )
     db.add(grant)
     db.flush()
+    from nexus.services.source_citations import complete_source_citations
+
+    complete_source_citations(
+        db,
+        account_ids=[creator_id, *([] if grantee_id is None else [grantee_id])],
+        capture_ids=captures,
+        media_ids=[media_id] if media_id is not None else [],
+    )
     if grantee_id is None:
         _insert_public_capture_manifest(db, grant_ids=[grant.id], capture_ids=captures)
     invalidate_annotation_visibility(

@@ -1216,16 +1216,22 @@ the stationary query controls. Reader, Chat transcripts, and Atlas keep their se
 scroll/location owners. Mementos and visit data are never persisted and are
 forgotten when their visit leaves every stack.
 
-## Reader-To-Chat Launch Intent
+## reader-to-chat handoff
 
-A reader Highlight quote launches chat through a pane-local intent hash
-`#mediaId=<uuid>&highlightId=<uuid>`, read only through `paneRuntime` pane-local
-hash parameters (never ambient `window.location`). Before the send commits the
-hash is reload/navigation safe and excluded from pane identity.
+passage ask transfers `{text, selection, quote}` through `ComposeReaderQuestion`.
+its memory-only attachment freezes the observed source selection and inspection
+input; preview creates no authored object. both installed quote-only drafts and
+unclaimed entries are guarded writing. no passage-launch hash or reload recovery
+exists.
 
-reader-to-chat from a selection forks by default (`openAsyncResult`'s
-`disposition: "Fork"`), creating one adjacent pane even when the destination is
-open; source activation uses `Follow`, and shifted activation `Fork`.
-on a successful run the feature
-route-`replace`s to consume the provisional history entry, so Back cannot
-rehydrate a completed intent.
+reader ask forks into an adjacent pane. draft source inspection follows normally
+and forks on shift activation. deferred handoff validates the surviving source
+visit, input and destination before transfer; retired or changed input cannot be
+resurrected. successful transfer consumes only that unchanged input. accepted chat
+commands replace the provisional route through their existing command owner.
+
+stale review carries the original pane, visit, draft owner and attachment identity
+through an adjacent source pane. replacement preserves question/model and needs a
+separate send. the existing source visit memory retains its composer store and
+opening across mobile unmount; retiring the visit retires its writing and prevents
+undispatched sends. visit memory remains ephemeral and is never copied into a fork.

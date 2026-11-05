@@ -1,7 +1,8 @@
-"""Reader roots are native content plus exact neighbors of this media.
+"""Reader roots are native content, quoted messages and exact neighbors of this media.
 
-Canonical refs alone establish identity. Native owners retain their presentation
-and placement; graph facts add membership metadata, never an incoming relationship.
+Native roots use canonical refs; citation occurrences use their edge identities.
+Native owners retain their presentation and placement; graph facts add membership
+metadata, never an incoming relationship.
 Native passage continuation requires nonempty quote text, not a current locator.
 Apparatus producers trim canonical text, so its bounded head preserves emptiness.
 Unanchored continuation uses the group's first fact, while authored placement names
@@ -31,6 +32,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceCountsOut,
     ReaderEvidenceHighlightOut,
     ReaderEvidenceOut,
+    ReaderEvidenceQuotationOut,
     ReaderEvidenceResolutionOut,
     ReaderEvidenceResolvedOut,
     ReaderEvidenceResourceOut,
@@ -43,13 +45,16 @@ from nexus.schemas.reader_document_map import (
 from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import LinkEndpoint, LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.schemas.resource_items import (
+    CitationSourceTargetKey,
     LocatedSourceLocationOut,
+    ReaderQuoteSourceTargetKey,
     ResourceItemOut,
     ResourceSourceTargetKey,
     SourceTargetOut,
     UnavailableSourceLocationOut,
 )
 from nexus.schemas.retrieval import PdfPageLocator
+from nexus.services.chat.quotes import source_quotations
 from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnections
 from nexus.services.reader_evidence_markers import build_markers
@@ -61,7 +66,7 @@ from nexus.services.reader_locations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.evidence import resolve_source_target
+from nexus.services.resource_items.evidence import evidence_items, resolve_source_target
 from nexus.services.resource_items.items import (
     excerpt,
     passage_label,
@@ -98,10 +103,43 @@ def build_reader_evidence(
 ) -> ReaderEvidenceProjection:
     """Merge direct facts by exact far ref after constructing domain-owned roots."""
     highlight_refs = {f"highlight:{highlight.id}" for highlight in highlights}
-    native_refs = set(highlight_refs)
+    quotations = source_quotations(db, viewer_id=viewer_id, media_id=media_id)
+    quotation_items = {
+        item.ref: item
+        for item in evidence_items(
+            db,
+            viewer_id=viewer_id,
+            occurrences=[
+                (ref, evidence, ReaderQuoteSourceTargetKey(message_id=ref.id))
+                for ref, evidence in quotations
+            ],
+            reading_media_ids={ref.uri: media_id for ref, _ in quotations},
+        )
+        if not item.missing
+    }
+    quotation_targets: dict[str, SourceTargetOut] = {}
+    for ref, _ in quotations:
+        if ref.uri not in quotation_items:
+            continue
+        target = resolve_source_target(
+            db,
+            viewer_id=viewer_id,
+            target=ReaderQuoteSourceTargetKey(message_id=ref.id),
+            reading_media_id=media_id,
+        )
+        if (
+            target.source_activation is not None
+            and target.source_activation.resource_ref == f"media:{media_id}"
+        ):
+            quotation_targets[ref.uri] = target
+    native_refs = highlight_refs | quotation_targets.keys()
     if apparatus.status in ("ready", "partial"):
         native_refs.update(item.resource_ref for item in apparatus.items)
-    generic_refs = {connection.other.ref for connection in connections.items} - native_refs
+    generic_refs = {
+        connection.other.ref
+        for connection in connections.items
+        if not (connection.origin == "citation" and connection.ordinal is not None)
+    } - native_refs
     targets: dict[str, SourceTargetOut] = {}
     reading_media_ids = {ref: media_id for ref in highlight_refs}
     for ref in sorted(generic_refs):
@@ -127,7 +165,10 @@ def build_reader_evidence(
         for item in resource_items_out(
             db,
             viewer_id=viewer_id,
-            refs=[assert_resource_ref(ref) for ref in sorted(highlight_refs | generic_refs)],
+            refs=[
+                assert_resource_ref(ref)
+                for ref in sorted(highlight_refs | generic_refs | quotation_targets.keys())
+            ],
             reading_media_ids=reading_media_ids,
             excerpt_mode="full",
         )
@@ -183,6 +224,25 @@ def build_reader_evidence(
                 identity=reading_identity,
                 resolution=resolution,
             ),
+            authored_placement=None,
+        )
+
+    for ref, target in quotation_targets.items():
+        roots[ref] = ReaderEvidenceRootOut(
+            ref=ref,
+            content=ReaderEvidenceQuotationOut(item=items[ref], quotation=quotation_items[ref]),
+            resolution=_resource_resolution(
+                target=target,
+                media_id=media_id,
+                canonical_media_id=canonical_media_id,
+                item=quotation_items[ref],
+                fragment_indexes=fragment_indexes,
+                page_count=page_count,
+                fragment_ranges=fragment_ranges,
+                fragment_times=fragment_times,
+            )
+            or ReaderEvidenceUnavailableOut(reason="Unanchorable"),
+            continuation=None,
             authored_placement=None,
         )
 
@@ -242,17 +302,34 @@ def build_reader_evidence(
     endpoint = LinkResourceEndpoint(ref=f"media:{media_id}")
     for index, connection in enumerate(connections.items):
         ref = connection.other.ref
-        first_facts.setdefault(ref, index)
-        root = roots.get(ref)
+        cited = connection.origin == "citation" and connection.ordinal is not None
+        key = str(connection.edge_id) if cited else ref
+        first_facts.setdefault(key, index)
+        root = roots.get(key)
         if root is None:
-            item = items[ref]
+            item = connection.other if cited else items[ref]
+            target = targets.get(ref)
+            if cited:
+                try:
+                    target = resolve_source_target(
+                        db,
+                        viewer_id=viewer_id,
+                        target=CitationSourceTargetKey(
+                            edge_id=connection.edge_id,
+                            side="source" if connection.direction == "outgoing" else "target",
+                        ),
+                        reading_media_id=media_id,
+                    )
+                except NotFoundError:
+                    # justify-ignore-error: a retired occurrence retains no guessed location.
+                    target = None
             root = ReaderEvidenceRootOut(
                 ref=ref,
                 content=ReaderEvidenceResourceOut(item=item),
                 continuation=None,
                 authored_placement=None,
                 resolution=_resource_resolution(
-                    target=targets.get(ref),
+                    target=target,
                     media_id=media_id,
                     canonical_media_id=canonical_media_id,
                     item=item,
@@ -276,7 +353,7 @@ def build_reader_evidence(
                         resolution=root.resolution,
                     )
                 )
-            roots[ref] = root
+            roots[key] = root
         if (
             root.resolution is None
             and root.authored_placement is None
@@ -312,6 +389,8 @@ def build_reader_evidence(
             facets.add("highlights")
         elif isinstance(root.content, ReaderEvidenceSourceReferenceOut):
             facets.add("citations")
+        elif isinstance(root.content, ReaderEvidenceQuotationOut):
+            facets.add("links")
         for fact in root.direct_facts:
             if fact.origin == "citation" and fact.ordinal is not None:
                 facets.add("citations")
@@ -453,8 +532,11 @@ def _child_continuation(
 def _root_sort_key(
     root: ReaderEvidenceRootOut, first_facts: dict[str, int], owner_order: dict[str, int]
 ) -> tuple[int, str, int, str]:
+    from nexus.services.reader_evidence_markers import evidence_root_key
+
+    key = evidence_root_key(root)
     if isinstance(root.resolution, ReaderEvidenceResolvedOut):
         return (0, root.resolution.order_key, 0, root.ref)
     if root.resolution is None:
-        return (1, "", first_facts[root.ref], root.ref)
-    return (2, root.resolution.sort_order_key or "", owner_order[root.ref], root.ref)
+        return (1, "", first_facts[key], key)
+    return (2, root.resolution.sort_order_key or "", owner_order[key], key)

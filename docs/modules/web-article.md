@@ -54,9 +54,15 @@ by provenance.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
 not fall back to generic web article capture or oEmbed. logical x post identity
-and revision aliases belong to `x_source`; thread identity is proved primary
-membership, not a provider-id string. captures own immutable quoted bodies.
-provider billing, auth, rate-limit,
+and revision aliases belong to `x_source`; proved primary membership owns thread
+identity and saved presentation. captures retain immutable quoted bodies. quoted
+posts and article embeds bind ordinary source-owned citations independently of
+saved media. the extractor separates structurally identified attribution
+permalinks, direct attribution text and footer/cite containers from excerpt bodies.
+a reference without body text or images stays uncaptured; actual image-only
+evidence may retain a capture without a quotation. existing captured fragments
+remain immutable. context availability follows authorized retained bodies,
+independently of the one-hop rendering boundary. provider billing, auth, rate-limit,
 timeout, and post-unavailable failures surface as their mapped API error and a
 `x_provider_failure` warning log.
 

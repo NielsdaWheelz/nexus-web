@@ -16,9 +16,7 @@ import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { remarkCitations } from "@/lib/chat/markdownCitations";
-import type {
-  ReaderCitationData,
-} from "@/lib/resourceGraph/citations";
+import type { Schema } from "@/lib/api/wire";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
@@ -38,7 +36,7 @@ type MdNode = {
 };
 
 const CitationContext = createContext<{
-  byIndex: Map<string, ReaderCitationData>;
+  byIndex: Map<string, Schema<"CitationOut">>;
 } | null>(null);
 
 function Link({
@@ -167,14 +165,14 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   presentation,
 }: {
   content: string;
-  citations?: ReaderCitationData[];
+  citations?: Schema<"CitationOut">[];
   presentation?: "chat";
 }) {
   const cited = useMemo(
     () =>
       citations?.length
         ? {
-            byIndex: new Map(citations.map((c) => [String(c.index), c])),
+            byIndex: new Map(citations.map((c) => [String(c.ordinal), c])),
           }
         : null,
     [citations],

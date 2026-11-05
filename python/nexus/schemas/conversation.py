@@ -5,12 +5,21 @@ Tool audit payloads stay durable; their public frames are projected when read.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
+from decimal import InvalidOperation
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
 from llm_tools import ToolEffect
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
@@ -18,6 +27,7 @@ from nexus.schemas.citation import CitationOut
 from nexus.schemas.llm import GenerationSelection, RunSelectionOut
 from nexus.schemas.resource_evidence import CapturedEvidence
 from nexus.schemas.resource_items import ResourceItemOut
+from nexus.schemas.retrieval import PdfGeometryQuad
 from nexus.services.tools.contract import ERROR_TYPES
 
 MAX_MESSAGE_CONTENT_LENGTH = 20_000
@@ -38,43 +48,159 @@ class Out(BaseModel):
 # Reader quotes
 
 
-class ReaderSelectionKey(Wire):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+Revision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
-    media_id: UUID | None
-    capture_id: UUID | None
-    highlight_id: UUID
+
+def _canonical_uuid(value: object) -> object:
+    if isinstance(value, str) and str(UUID(value)) != value:
+        raise ValueError("a canonical uuid is required")
+    return value
+
+
+CanonicalUuid = Annotated[UUID, BeforeValidator(_canonical_uuid)]
+
+
+class ReaderMediaScope(Wire):
+    kind: Literal["media"]
+    media_id: CanonicalUuid
+    document_identity: str = Field(min_length=1, max_length=256)
+
+
+class ReaderCaptureScope(Wire):
+    kind: Literal["x_capture"]
+    capture_id: CanonicalUuid
+    document_identity: str = Field(min_length=1, max_length=256)
+
+
+ReaderScope = Annotated[ReaderMediaScope | ReaderCaptureScope, Field(discriminator="kind")]
+
+
+class ReaderQuoteText(Wire):
+    exact: str
+    prefix: str | None
+    suffix: str | None
+
+
+class ReaderOffsetLocator(Wire):
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    text_quote_selector: ReaderQuoteText
 
     @model_validator(mode="after")
-    def validate_reading(self) -> ReaderSelectionKey:
-        if (self.media_id is None) == (self.capture_id is None):
-            raise ValueError("exactly one reading identity is required")
+    def validate_offsets(self) -> ReaderOffsetLocator:
+        if self.end_offset <= self.start_offset:
+            raise ValueError("end_offset must be greater than start_offset")
         return self
+
+
+class ReaderWebLocator(ReaderOffsetLocator):
+    type: Literal["web_text_offsets"]
+    media_id: CanonicalUuid
+    fragment_id: CanonicalUuid
+    media_kind: None
+
+
+class ReaderEpubLocator(ReaderOffsetLocator):
+    type: Literal["epub_fragment_offsets"]
+    media_id: CanonicalUuid
+    fragment_id: CanonicalUuid
+    section_id: None
+    media_kind: None
+
+
+class ReaderCaptureLocator(ReaderOffsetLocator):
+    type: Literal["x_capture_offsets"]
+    capture_id: CanonicalUuid
+    fragment_id: CanonicalUuid
+
+
+class ReaderPdfLocator(Wire):
+    type: Literal["pdf_page_geometry"]
+    media_id: CanonicalUuid
+    page_number: int = Field(ge=1)
+    quads: list[PdfGeometryQuad] = Field(min_length=1, max_length=512)
+    exact: str
+    prefix: str | None
+    suffix: str | None
+    text_quote_selector: ReaderQuoteText
+    projection: None
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> ReaderPdfLocator:
+        from nexus.services.pdf_highlight_geometry import (
+            GeometryValidationError,
+            canonicalize_geometry,
+        )
+
+        if (self.exact, self.prefix, self.suffix) != (
+            self.text_quote_selector.exact,
+            self.text_quote_selector.prefix,
+            self.text_quote_selector.suffix,
+        ):
+            raise ValueError("pdf quote fields must agree")
+        try:
+            geometry = canonicalize_geometry(
+                self.page_number, [quad.model_dump() for quad in self.quads]
+            )
+        except (GeometryValidationError, InvalidOperation) as error:
+            raise ValueError("invalid pdf geometry") from error
+        self.quads = [
+            PdfGeometryQuad(**{key: float(value) for key, value in asdict(quad).items()})
+            for quad in geometry.quads
+        ]
+        return self
+
+
+ReaderQuoteLocator = Annotated[
+    ReaderWebLocator | ReaderEpubLocator | ReaderCaptureLocator | ReaderPdfLocator,
+    Field(discriminator="type"),
+]
+
+
+class ReaderSourceSelection(Wire):
+    kind: Literal["source"]
+    scope: ReaderScope
+    locator: ReaderQuoteLocator
+
+
+class ReaderHighlightSelection(Wire):
+    kind: Literal["highlight"]
+    scope: ReaderScope
+    highlight_id: CanonicalUuid
+    expected_capture_revision: Revision
+
+
+ReaderSelection = Annotated[
+    ReaderSourceSelection | ReaderHighlightSelection, Field(discriminator="kind")
+]
+
+
+class ReaderSelectionPreviewRequest(Wire):
+    selection: ReaderSelection
 
 
 class ReaderSelectionSnapshot(Wire):
     """The immutable quote on a user turn; its revision is the sha256 of this JSON."""
 
-    key: ReaderSelectionKey
     evidence: CapturedEvidence
+    highlight_ref: str | None = Field(
+        pattern=r"^highlight:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
 
 
 class ReaderSelectionOut(Out):
-    key: ReaderSelectionKey
     item: ResourceItemOut
 
 
-Revision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-
 class ReaderSelectionPreview(ReaderSelectionOut):
+    selection: ReaderSelection
     revision: Revision
 
 
 class ReaderSelectionInput(Wire):
-    """A send's quote: the durable key plus the compare-on-send revision, never text."""
+    """The observed selection and the complete server preview's compare-on-send hash."""
 
-    key: ReaderSelectionKey
+    selection: ReaderSelection
     revision: Revision
 
 

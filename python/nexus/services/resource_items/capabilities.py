@@ -64,6 +64,7 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
         readable="media",
         inspector=InspectorPolicy("MediaEvidence", None, ("LinkedItems",)),
         citable_result_type="media",
+        citation_output_source=True,
         app_search_scope=True,
         prompt_render="label",
         expansion="media_owned_reader_children",
@@ -101,7 +102,10 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
         adjacency_source=True,
     ),
     "fragment": Capability(
-        link_mode="materialize_passage", embeddable=False, citable_result_type="fragment"
+        link_mode="materialize_passage",
+        embeddable=False,
+        citable_result_type="fragment",
+        citation_output_source=True,
     ),
     "conversation": Capability(
         sharing="CopyOnly",

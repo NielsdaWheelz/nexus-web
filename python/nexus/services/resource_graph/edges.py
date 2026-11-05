@@ -19,7 +19,14 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, Highlight, ResourceEdge, ResourceViewState, XPostMedia
+from nexus.db.models import (
+    Conversation,
+    Fragment,
+    Highlight,
+    ResourceEdge,
+    ResourceViewState,
+    XPostMedia,
+)
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
 from nexus.services import authored
@@ -104,7 +111,7 @@ def _pin_note_owners(db: Session, refs: Sequence[ResourceRef]) -> None:
         db.execute(text("SELECT 1 FROM note_blocks WHERE id = :id FOR KEY SHARE"), {"id": note_id})
 
 
-def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
+def _validate(db: Session, viewer_id: UUID | None, edge: EdgeCreate) -> None:
     """The shape law of every fact, then the endpoint visibility gate."""
     if edge.origin not in _ENDPOINTS:
         _invalid(f"{edge.origin} edges must use their own command")
@@ -125,8 +132,12 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
             _invalid("Only citation edges carry an ordinal >= 1, with a snapshot")
         if edge.snapshot.evidence is None or edge.snapshot.rationale is not None:
             _invalid("Ordinal citations require captured evidence only")
-        if not capability(edge.source.scheme).citation_output_source:
-            _invalid("Citation ordinals must start from a generated output resource")
+        if edge.kind != "context" or not capability(edge.source.scheme).citation_output_source:
+            _invalid("Ordinal citations require a citing source and kind=context")
+        if edge.source.scheme == "fragment" and not db.scalar(
+            select(Fragment.x_post_capture_id).where(Fragment.id == edge.source.id)
+        ):
+            _invalid("A fragment citation source must be an immutable X capture")
     elif rationale:
         if edge.snapshot is None or not (edge.snapshot.rationale or "").strip():
             _invalid(f"{edge.origin} edges require a non-empty rationale excerpt")
@@ -144,8 +155,10 @@ def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
     # External snapshots outlive what they captured; a citation's source is the
     # in-flight output minting it, not yet read-visible.
     if edge.ordinal is None and edge.target.scheme != "external_snapshot":
+        assert viewer_id is not None
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
     if edge.ordinal is None:
+        assert viewer_id is not None
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
 
 
@@ -172,13 +185,13 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
 def replace_edges_for_origin(
     db: Session,
     *,
-    viewer_id: UUID,
+    viewer_id: UUID | None,
     source: ResourceRef,
     origin: EdgeOrigin,
     edges: Sequence[EdgeCreate],
 ) -> list[EdgeOut]:
     """Replace exactly the ``(source, origin)`` set; edges come back in input order. A
-    self-target member is dropped (a machine-extracted set must not fail on one) and a
+    bare self-target member is dropped (a machine-extracted set must not fail on one) and a
     repeated bare target is kept once; a repeated ordinal is invalid."""
     if origin not in _ENDPOINTS:
         _invalid(f"{origin} edges must use their own command")
@@ -188,7 +201,7 @@ def replace_edges_for_origin(
     targets: set[ResourceRef] = set()
     ordinals: set[int] = set()
     for edge in edges:
-        if edge.target == source or (edge.ordinal is None and edge.target in targets):
+        if edge.ordinal is None and (edge.target == source or edge.target in targets):
             continue
         if edge.ordinal in ordinals:
             _invalid(f"Duplicate citation ordinal {edge.ordinal} in replace-set")
@@ -197,10 +210,15 @@ def replace_edges_for_origin(
         else:
             ordinals.add(edge.ordinal)
         members.append(edge)
+    source_owned = origin == "citation" and source.scheme != "conversation"
+    if viewer_id is None and not source_owned:
+        raise RuntimeError("Only ordinal citations have source ownership")
     old = list(
         db.scalars(
             select(ResourceEdge).where(
-                ResourceEdge.user_id == viewer_id, source_is(source), ResourceEdge.origin == origin
+                ResourceEdge.user_id == (None if source_owned else viewer_id),
+                source_is(source),
+                ResourceEdge.origin == origin,
             )
         )
     )
@@ -224,6 +242,15 @@ def replace_edges_for_origin(
         db.flush()
     db.add_all(rows)
     db.flush()
+    if removed:
+        from nexus.services.resource_graph.cleanup import delete_orphaned_external_snapshots
+
+        delete_orphaned_external_snapshots(
+            db,
+            snapshot_ids=[
+                row.target_id for row in removed if row.target_scheme == "external_snapshot"
+            ],
+        )
     if retained_media:
         from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
@@ -232,7 +259,22 @@ def replace_edges_for_origin(
     if retained_media and (removed or any(row not in old for row in rows)):
         from nexus.services.search import projection
 
-        projection.refresh_viewer_contributors(db, [viewer_id])
+        accounts = (
+            [viewer_id]
+            if viewer_id is not None
+            else list(
+                db.scalars(
+                    text("""SELECT c.owner_user_id FROM messages m
+                JOIN conversations c ON c.id=m.conversation_id
+                WHERE :scheme='message' AND m.id=:id
+                UNION SELECT user_id FROM oracle_readings
+                WHERE :scheme='oracle_reading' AND id=:id"""),
+                    {"scheme": source.scheme, "id": source.id},
+                )
+            )
+        )
+        if accounts:
+            projection.refresh_viewer_contributors(db, accounts)
     return [edge_out(row) for row in rows]
 
 
@@ -447,9 +489,9 @@ def _same_fact(row: ResourceEdge, edge: EdgeCreate) -> bool:
     )
 
 
-def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
+def _row(viewer_id: UUID | None, edge: EdgeCreate) -> ResourceEdge:
     row = ResourceEdge(
-        user_id=viewer_id,
+        user_id=None if edge.ordinal is not None else viewer_id,
         kind=edge.kind,
         origin=edge.origin,
         source_scheme=edge.source.scheme,

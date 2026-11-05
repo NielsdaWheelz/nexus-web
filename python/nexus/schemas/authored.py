@@ -223,7 +223,7 @@ class FeedChange(Closed):
 
 
 class DownloadChanges(Closed):
-    annotations_revision: str
+    evidence_revision: str
     changes: list[FeedChange]
     next_cursor: Counter
     head_cursor: Counter

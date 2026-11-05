@@ -56,7 +56,8 @@ function shelfSource(mediaId: string, generation: number): ReaderSource {
       };
       if (copy.document.kind !== "pdf" && (copy.document.x_article_content === undefined || copy.document.x_capture === undefined || copy.document.units.some((unit) => unit.x_post === undefined)))
         throw new Error("this copy predates the current reader format; download it again");
-      const out = copy.document;
+      // Copies retain source content only; private citation inventory belongs to the live reader.
+      const out = { ...copy.document, citation_occurrences: [] };
       const doc = readerDocument(out.kind === "pdf" ? { ...out, publication_generation: generation }
         : out.kind === "web_article" || out.kind === "epub" ? { ...out, publication_generation: out.units.some(unit => unit.x_post) ? null : generation } : out);
       if (doc.kind === "pdf") return { ...doc, file: pdf };

@@ -20,6 +20,7 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { Line, Retract } from "@/components/feedback/stage";
 import Button from "@/components/ui/Button";
+import ReaderCitation from "@/components/ui/ReaderCitation";
 import HostedContents from "./HostedContents";
 import { useShareController } from "@/lib/sharing/controller";
 import { resourceShareTarget } from "@/lib/sharing/targets";
@@ -470,6 +471,14 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
 
   // ---- annotations ----
   const authored = useAuthoredStore();
+  const citationStamp = useChangeStamp("Entries", "Metadata");
+  useEffect(() => readable ? authored.evidence_changed(() => reader.reload()) : undefined, [authored, readable, reader]);
+  useEffect(() => {
+    if (readable && reader.getState().document.status === "ready") reader.reload();
+  }, [citationStamp, readable, reader]);
+  useEffect(() => {
+    if (paneActive && readable && reader.getState().document.status === "ready") reader.reload();
+  }, [paneActive, readable, reader]);
   const [store] = useState(() => createMediaAnnotations(authored, id));
   const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
   const sourceAbsent = documentFailed || !readable;
@@ -644,9 +653,16 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         if (context.mayFocus()) reader.focusSource();
         return "Applied";
       }
-      if (result.kind === "reader_destination") {
+      let destination: ReaderDestination | null = result.kind === "reader_destination" ? result.destination : null;
+      if (result.kind === "source" && result.source.location.kind === "point") {
+        const location = result.source.location;
+        destination = {
+          source_identity: location.source_identity,
+          target: { kind: "point", point: { kind: "text", unit: location.point.unit_id, offset: location.point.offset } },
+        };
+      }
+      if (destination !== null) {
         if (!doc) return "Unavailable";
-        const { destination } = result;
         if (destination.target.kind === "evidence_item") {
           return deliverEvidence(destination.target.item_id, destination.source_identity, context);
         }
@@ -679,6 +695,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         if (context.mayFocus()) reader.focusSource();
         return "Applied";
       }
+      if (result.kind !== "source") return "Unavailable";
       const source = result.source;
       if (source.location.kind === "resource") {
         if (context.mayFocus()) {
@@ -704,8 +721,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       if (!doc || source.location.kind !== "located") return "Unavailable";
       const { locator, precision, source_identity, apparatus_reference_id } = source.location;
       if (locator.type === "x_capture_offsets") {
-        if (source_identity !== locator.capture_id || doc.kind !== "text") return "Unavailable";
-        const unit = doc.units.find(item => item.xPost?.owner?.capture_id === locator.capture_id && item.xPost.owner.fragment_id === locator.fragment_id);
+        if (source_identity !== doc.identity || doc.kind !== "text") return "Unavailable";
+        const unit = doc.units.find(item => {
+          const owner = item.xPost?.owner;
+          return owner != null && owner.capture_id === locator.capture_id && owner.fragment_id === locator.fragment_id;
+        });
         if (!unit || locator.end_offset > unit.length || locator.text_quote_selector && Array.from(unit.text).slice(locator.start_offset, locator.end_offset).join("") !== locator.text_quote_selector.exact) return "Unavailable";
       } else if (source_identity !== doc.identity && source_identity !== doc.identity.split(":", 1)[0]) return "Unavailable";
       if (apparatus_reference_id !== null) {
@@ -775,7 +795,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     : doc?.kind === "text" && doc.units.some(unit => unit.xPost?.owner && `fragment:${unit.xPost.owner.fragment_id}` === sourceRef) ? { kind: "x_capture", label: "post" }
     : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
     : null, [doc, id, media]);
-  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
+  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence,
+    quoteReview: arrival.quoteReview ? { target: arrival.quoteReview, finish: arrival.finishQuoteReview } : null });
   verbsRef.current = { isMobile, verbs };
 
   const decorations = useMemo<Decorations>(
@@ -931,6 +952,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         apparatusDestination={apparatusDestination}
         onSeekTime={transcript ? seek : undefined}
         renderPostActions={(unit) => unit.xPost ? <PostActions key={JSON.stringify([unit.id, unit.xPost.owner?.capture_id ?? null])} post={unit.xPost} hostMediaId={id} state={postSaves} /> : null}
+        renderCitation={citation => <ReaderCitation {...citation} />}
         renderEmbed={(occurrence) => {
           const embed = embeds.find((e) => e.occurrence_key === occurrence);
           return embed ? <EmbedCard embed={embed} reader={reader} /> : null;

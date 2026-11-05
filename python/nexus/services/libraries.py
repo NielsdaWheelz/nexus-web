@@ -445,6 +445,19 @@ def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
         is not None
     )
     if changed:
+        from nexus.services.source_citations import complete_source_citations
+
+        complete_source_citations(
+            db,
+            account_ids=[user_id],
+            capture_ids=captures,
+            media_ids=list(
+                db.scalars(
+                    text("SELECT media_id FROM library_entries WHERE library_id=:id"),
+                    {"id": library.id},
+                )
+            ),
+        )
         projection.refresh_viewer_contributors(db, [user_id])
     return changed
 

@@ -141,11 +141,28 @@ def _activations_from_resolved_passages(
             {"ids": apparatus_ids},
         )
     }
+    empty_capture_routes = {
+        row.id: row.capture_id
+        for row in db.execute(
+            text("""
+            SELECT id,x_post_capture_id AS capture_id FROM fragments
+            WHERE id=ANY(:ids) AND x_post_capture_id IS NOT NULL AND canonical_text=''
+        """),
+            {
+                "ids": [
+                    ref.id for ref in visible if ref.scheme == "fragment" and ref.uri not in scoped
+                ]
+            },
+        )
+    }
     for ref in visible:
         if ref.scheme not in canonical_schemes and ref.scheme != "passage_anchor":
             continue
         passage = scoped.get(ref.uri)
         if passage is None:
+            if ref.scheme == "fragment" and ref.id in empty_capture_routes:
+                routes[ref.uri] = f"/x/captures/{empty_capture_routes[ref.id]}#fragment-{ref.id}"
+                continue
             if ref.scheme in canonical_schemes or routes.get(ref.uri, "").startswith("/media/"):
                 routes.pop(ref.uri, None)
             continue
@@ -232,10 +249,12 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef, missing: bo
 def _external_urls(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str, str]:
     if not refs:
         return {}
+    from nexus.services.resource_graph.citations import external_snapshot_visible_sql
+
     rows = db.execute(
         text(
-            "SELECT id, url FROM resource_external_snapshots"
-            " WHERE id = ANY(:ids) AND user_id = :viewer_id"
+            "SELECT s.id, s.url FROM resource_external_snapshots s"
+            f" WHERE s.id = ANY(:ids) AND {external_snapshot_visible_sql('s')}"
         ),
         {"ids": [ref.id for ref in refs], "viewer_id": viewer_id},
     ).all()

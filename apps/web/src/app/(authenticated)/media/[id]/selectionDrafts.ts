@@ -8,6 +8,7 @@ import { sameBody } from "@nexus/authored/body";
 import type { Capture } from "@/lib/documentReader/annotations";
 import type { Line } from "@/components/feedback/stage";
 import type { ApiError } from "@/lib/api/client";
+import type { ReaderQuote } from "@/lib/chat/readerIntent";
 
 export type NoteEdit = Parameters<NoteEditorProps["onEdit"]>[0];
 type Body = NoteEditorProps["body"];
@@ -42,13 +43,12 @@ export type ChatDestination =
       | { kind: "Loading" | "Failed" | "RefreshRequired" }
       | { kind: "Ready"; tree: ConversationTree } };
 
-export type ReaderChatIssue = (
+export type ReaderChatIssue =
   | { kind: "Model" | "Catalog"; line: Line; destination: "New" | "Existing"; selection: SelectionEditor }
   | { kind: "Recall"; state: "Pending" | "Failed"; destination: "New" | "Existing"; selection: SelectionEditor }
   | { kind: "Changed" | "Missing" | "Passage" | "Source" | "Pending"; line: Line }
   | { kind: "Transport"; error: ApiError; fact: string }
-  | { kind: "Failed"; line: Line }
-) & { /** The submitted chat command was definitively refused after its highlight was saved. */ highlightSaved?: true };
+  | { kind: "Failed"; line: Line };
 
 type ChatAttempt =
   | { kind: "Preparing"; runId: string }
@@ -74,10 +74,12 @@ export interface ComposerDraft {
   referenceActive: boolean;
   linkInputActive: boolean;
   attachmentActive: boolean;
-  sourceMediaId: string;
   sourceHasChats: boolean | null;
   destination: ChatDestination;
   chatSelection: SelectionEditor;
+  quote: ReaderQuote | null;
+  /** Null before the first ask differs from deliberate removal of its attachment. */
+  quoteDetached: boolean;
   chatAttempt: ChatAttempt | null;
   chatIssue: ReaderChatIssue | null;
 }

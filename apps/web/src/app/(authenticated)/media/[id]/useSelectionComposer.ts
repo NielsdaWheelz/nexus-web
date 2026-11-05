@@ -5,7 +5,7 @@ import { ExcerptCaptureError, excerptTextParts } from "@nexus/authored/excerpt";
 // A frozen selection owns one explicit annotation-or-question input. Existing
 // highlight bodies have their own bound editor; this draft then owns questions.
 // Unsubmitted writing survives source publication changes and remote deletion.
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Y from "yjs";
 import {hydrateNote, readBody} from "@nexus/authored/documents";
 import {applyDraftBody} from "@/lib/notes/editorBinding";
@@ -16,12 +16,12 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import type { Line, Verbs } from "@/components/feedback/stage";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { openAsyncResult, type OpenResult } from "@/lib/panes/openResult";
-import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration, getInteractionOwner, type Layer } from "@/lib/ui/overlay";
 import { conversationViewHref } from "@/lib/chat/view";
-import { isApiError } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { getConversationCommands, getNewChatCommands, readConversationTree, recoveryOf, IDLE_COMMAND, type CommandOutcome, type ConversationTree } from "@/lib/chat/commands";
 import { fetchLatestSourceConversation, type ConversationListItem } from "@/lib/chat/conversationIndex";
@@ -31,7 +31,7 @@ import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { chatView } from "@/lib/chat/tree";
 import { assertNever } from "@/lib/assertNever";
 import { readCatalog } from "@/lib/chat/catalog";
-import { assumeReaderSelectionKey, getReaderQuotePreview, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
+import { captureReaderQuote, prepareReaderQuote, replaceReaderQuote, QUOTE_CHANGED, type ReaderQuote, type ReaderQuoteReturn } from "@/lib/chat/readerIntent";
 import { readFailureOf, type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { useReaderState, type DraftAnchor, type Mark, type SelectionCapture } from "@/lib/documentReader/DocumentReader";
@@ -43,14 +43,16 @@ import { createLink, prepareTarget } from "@/lib/resourceGraph/links";
 import type { ReferenceInputHost } from "@/lib/resourceGraph/useReferenceInput";
 import { bodyHasContent, emptyBody } from "@nexus/authored/body";
 import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
-import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
+import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter, usePaneVisitIdentity } from "@/lib/workspace/paneReturnMemento";
 import type { MediaAnnotations } from "./annotations";
-import { createSelectionDrafts, emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue } from "./selectionDrafts";
+import { createSelectionDrafts, emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit, type ReaderChatIssue, type SelectionDrafts } from "./selectionDrafts";
 
 const DEFAULT_VISIT = definePaneVisitDataKey<Visit<{ conversation: ConversationListItem | null }>>("Reader.ChatDefault");
 const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number; mode: "Note" | "Ask" };
+type RetainedComposer = { store: SelectionDrafts; opening: Opening | null };
+const COMPOSER_VISIT = definePaneVisitDataKey<RetainedComposer>("Reader.SelectionComposer");
 type Reselection = { id: string; draftId: string; identity: string; mode: Opening["mode"] };
 type Command =
   | { kind: "Save" }
@@ -60,7 +62,6 @@ type Command =
 export const SOURCE_CHANGED: Line = { fact: "the text changed.", reason: "your words are kept." };
 const HIGHLIGHT_DELETED: Line = { fact: "this highlight was deleted.", reason: "your words are kept." };
 const PENDING_ELSEWHERE: Line = { fact: "another message is still pending in that chat." };
-export const HIGHLIGHT_SAVED: Line = { fact: "question not sent.", reason: "the highlight is saved." };
 
 /** A settled draft cannot claim a later command that happens to use the same chat. */
 function readerRecovery(attempt: ComposerDraft["chatAttempt"]) {
@@ -78,6 +79,7 @@ export function useSelectionComposer(input: {
   isMobile: boolean;
   onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
   onFailure: (line: Line, verbs: Verbs) => void;
+  quoteReview: { target: ReaderQuoteReturn; finish: () => void } | null;
 }) {
   const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError, onFailure } = input;
   const memory = useChatSelection();
@@ -90,34 +92,54 @@ export function useSelectionComposer(input: {
   const catalogRead = useServerValue({ key: "/llm-catalog", stale: "", visit: CATALOG_VISIT, load: readCatalog });
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const refreshCatalog = catalogRead.status === "ready" && !catalogRead.error ? () => catalogRead.revalidate() : catalogRead.refetch;
-  const [store] = useState(createSelectionDrafts);
+  const retained = useRef<RetainedComposer | null>(null);
+  const restored = usePaneVisitData(COMPOSER_VISIT, () => retained.current);
+  const writeComposer = usePaneVisitDataWriter(COMPOSER_VISIT);
+  const [store] = useState(() => restored?.store ?? createSelectionDrafts());
   const workScope = usePaneVisitWorkScope();
+  const workspace = ctx.workspace;
+  const ownsVisit = useCallback(() => workspace().state.panes.some(value => value.id === pane.paneId &&
+    [value.current_visit, ...value.history.back, ...value.history.forward].some(visit => visit.id === visitId && resolvePaneRouteModel(visit.href).routeKey === workScope.routeKey)),
+  [workspace, pane.paneId, visitId, workScope.routeKey]);
   const draftOwner = `selection-composer:${visitId}`;
-  usePaneVisitWorkOwner({id: draftOwner, scope: workScope, subscribe: store.subscribe, read: () => ({changed: store.getSnapshot().some(entry => bodyHasContent(entry.body) || entry.referenceActive || entry.linkInputActive), unconfirmed: false, stopsBrowserWork: store.getSnapshot().some(entry => entry.attachmentActive)}), readCopyText: () => store.getSnapshot().map(entry => entry.body.body_text).join("\n\n")});
+  usePaneVisitWorkOwner({id: draftOwner, scope: workScope, subscribe: store.subscribe, read: () => ({changed: store.getSnapshot().some(entry => bodyHasContent(entry.body) || entry.quote !== null || entry.referenceActive || entry.linkInputActive), unconfirmed: false, stopsBrowserWork: store.getSnapshot().some(entry => entry.attachmentActive)}), readCopyText: () => store.getSnapshot().map(entry => entry.body.body_text).join("\n\n")});
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const publication = useReaderState(reader, state => state.document.status === "ready" ? state.document.doc.identity : null);
   const [reselection, setReselection] = useState<Reselection | null>(null);
   const reselecting = useRef<Reselection | null>(null);
-  const cancelReselection = useCallback(() => { reselecting.current = null; setReselection(null); }, []);
   const [pickerDraftId, setPickerDraftId] = useState<string | null>(null);
-  const [opening, setOpening] = useState<Opening | null>(null);
-  const current = useRef<Opening | null>(null);
-  const interaction = useRef<string | null>(null);
-  const serial = useRef(0);
+  const [opening, setOpening] = useState<Opening | null>(() => restored?.opening ? { ...restored.opening, focus: false, ownsFocus: false } : null);
+  retained.current = { store, opening };
+  const current = useRef<Opening | null>(opening);
+  const interaction = useRef<string | null>(opening?.id ?? null);
+  const serial = useRef(opening?.serial ?? 0);
   const attention = useRef(0);
   const activeRef = useRef(active);
   activeRef.current = active;
   const show = useCallback((next: Opening | null) => {
+    retained.current = { store, opening: next };
+    writeComposer(retained.current);
     current.current = next; interaction.current = next?.id ?? null; setOpening(next);
-  }, []);
-  useEffect(() => { if (!active) setPickerDraftId(null); }, [active]);
+  }, [store, writeComposer]);
+  const cancelReselection = useCallback(() => {
+    const selected = reselecting.current;
+    reselecting.current = null; setReselection(null);
+    if (selected && store.getSnapshot().some(entry => entry.id === selected.draftId))
+      show({ id: createRandomId(), draftId: selected.draftId, focus: true, ownsFocus: true, serial: ++serial.current, mode: selected.mode });
+  }, [show, store]);
+  useEffect(() => {
+    activeRef.current = active;
+    if (!active) setPickerDraftId(null);
+    return () => { activeRef.current = false; };
+  }, [active]);
   useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
   const previousPublication = useRef(publication);
   useEffect(() => {
     if (previousPublication.current === publication) return;
     previousPublication.current = publication;
     setPickerDraftId(null);
-    for (const entry of store.getSnapshot()) if (entry.highlightId === null) store.update(entry.id, value => ({...value, issue: {kind: "Source", line: SOURCE_CHANGED}}));
+    for (const entry of store.getSnapshot()) if (publication !== null && entry.highlightId === null && entry.passage.identity !== publication)
+      store.update(entry.id, value => ({...value, issue: {kind: "Source", line: SOURCE_CHANGED}}));
   }, [publication, show, store]);
   useEffect(() => {
     const retire = () => { if (document.visibilityState === "hidden") cancelReselection(); };
@@ -125,7 +147,19 @@ export function useSelectionComposer(input: {
     window.addEventListener("blur", cancelReselection);
     return () => { document.removeEventListener("visibilitychange", retire); window.removeEventListener("blur", cancelReselection); };
   }, [cancelReselection]);
-  useEffect(() => () => { current.current = null; interaction.current = null; reselecting.current = null; activeRef.current = false; }, []);
+  useEffect(() => {
+    current.current = retained.current?.opening ?? null;
+    interaction.current = current.current?.id ?? null;
+    return () => {
+      const selected = reselecting.current;
+      if (selected && ownsVisit() && store.getSnapshot().some(entry => entry.id === selected.draftId)) {
+        serial.current += 1;
+        retained.current = { store, opening: { id: createRandomId(), draftId: selected.draftId, focus: false, ownsFocus: false, serial: serial.current, mode: selected.mode } };
+        writeComposer(retained.current);
+      }
+      current.current = null; interaction.current = null; reselecting.current = null;
+    };
+  }, [ownsVisit, store, writeComposer]);
   useEffect(() => {
     const moved = (event: Event) => {
       const opened = current.current;
@@ -160,29 +194,38 @@ export function useSelectionComposer(input: {
   const copyQuote = draft?.highlightId ? copyResource?.capture_revision === copyAnnotation?.projection.capture_revision && copyResource?.excerpt?.kind === "content" ? fullCopyText : null : draft?.passage.quote ?? null;
   const copyUnavailable = draft?.highlightId && copyQuote === null ? copyRead.error ? "couldn’t load this passage." : copyRead.data ? "this passage isn’t in this reading." : "loading the passage." : copyQuote?.trim() ? null : "this highlight has no text to copy.";
   const get = (id: string) => store.getSnapshot().find((entry) => entry.id === id);
+  const { delivery, claim } = usePaneEntryDelivery();
+  useLayoutEffect(() => {
+    if (delivery?.entry.kind !== "ReplaceReaderQuote") return;
+    const replacement = delivery.entry;
+    if (!claim(delivery) || replacement.target.draft_owner_id !== draftOwner || replacement.target.visit_id !== pane.visitId) return;
+    const entry = store.getSnapshot().find(entry => entry.quote?.id === replacement.target.attachment_id);
+    if (!entry) return;
+    store.update(entry.id, value => ({ ...value, quote: replacement.quote, quoteDetached: false, chatIssue: null, revision: value.revision + 1 }));
+    show({ id: createRandomId(), draftId: entry.id, focus: true, ownsFocus: true, serial: ++serial.current, mode: "Ask" });
+  }, [delivery, claim, draftOwner, pane.visitId, store, show]);
   const annotationOwners = useRef<readonly string[]>([]);
   const canAbandon = () => {
-    const id = current.current?.draftId;
+    const id = current.current?.draftId ?? reselecting.current?.draftId;
     return id === undefined || guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, draftOwner, noteEditorAttachmentOwnerId(visitId, `reader-draft:${id}`)] });
   };
   const destination = draft?.destination ?? null;
   const defaultId = destination?.kind === "Resolving" ? draft!.id : null;
-  const defaultSource = draft?.sourceMediaId ?? null;
-  const defaultRead = useServerValue({ key: defaultId ? `reader-chat-default:${defaultId}:${defaultSource}` : null,
+  const defaultRead = useServerValue({ key: defaultId ? `reader-chat-default:${defaultId}:${mediaId}` : null,
     stale: "", visit: DEFAULT_VISIT,
-    load: async signal => ({ conversation: await fetchLatestSourceConversation(defaultSource!, signal) }),
+    load: async signal => ({ conversation: await fetchLatestSourceConversation(mediaId, signal) }),
   });
   useEffect(() => {
-    if (!defaultId || !defaultSource || defaultRead.status === "loading") return;
+    if (!defaultId || defaultRead.status === "loading") return;
     store.update(defaultId, entry => {
-      if (entry.destination.kind !== "Resolving" || entry.sourceMediaId !== defaultSource) return entry;
+      if (entry.destination.kind !== "Resolving") return entry;
       if (defaultRead.status === "failed") return { ...entry, destination: { kind: "LookupFailed", error: defaultRead.error } };
       const candidate = defaultRead.data.conversation;
       return { ...entry, sourceHasChats: candidate !== null, destination: candidate
         ? { kind: "Selected", id: candidate.id, title: candidate.title, read: 0, snapshot: { kind: "Loading" } }
         : { kind: "Absent" } };
     });
-  }, [defaultId, defaultRead, defaultSource, store]);
+  }, [defaultId, defaultRead, store]);
   const selectedId = destination?.kind === "Selected" ? destination.id : null;
   const treeReadId = destination?.kind === "Selected" && destination.snapshot.kind === "Loading" ? destination.read : null;
   const treeRead = useServerValue({ key: draft && selectedId && treeReadId !== null ? `reader-chat-tree:${draft.id}:${selectedId}:${treeReadId}` : null,
@@ -284,14 +327,13 @@ export function useSelectionComposer(input: {
       try { capture = captureSelection(shown.doc, mediaId, anchor, selected.excerpt, selected.excerpt_start, selected.excerpt_end); }
       catch (error) { if (error instanceof ExcerptCaptureError) refused = true; else throw error; }
     }
-    const sourceRef = annotation?.sourceRef ?? capture?.sourceRef ?? `media:${mediaId}`;
     const entry: ComposerDraft = {
       id: createRandomId(), passage: annotation ? { ...passage, quote: "" } : passage,
       capture, highlightId, bodyRole: carried?.bodyRole ?? (highlightId ? "question" : "annotation_or_question"), annotationBase: carried?.annotationBase ?? null,
       body: carried?.body ?? emptyBody(), revision: 0, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Capture", line: { fact: refused ? "nexus can’t capture some text in this passage." : "couldn’t capture this passage.", reason: "your words are kept." } },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: sourceRef.startsWith("media:") ? sourceRef.slice("media:".length) : mediaId, sourceHasChats: null, destination: { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, chatAttempt: null, chatIssue: null,
+      sourceHasChats: null, destination: { kind: "Resolving" }, chatSelection: carried?.chatSelection ?? { kind: "Uninitialized" }, quote: null, quoteDetached: false, chatAttempt: null, chatIssue: null,
     };
     store.put(entry);
     return entry;
@@ -299,12 +341,18 @@ export function useSelectionComposer(input: {
   const open = (passage: ComposerDraft["passage"], highlightId: string | null, focus: boolean, carried: ComposerDraft | null, mode: Opening["mode"]) => {
     const previous = current.current && get(current.current.draftId);
     const replacing = previous && (carried !== null || !(highlightId ? previous.highlightId === highlightId : samePassage(previous.passage, passage)));
-    if (replacing && !canAbandon()) return;
+    if (replacing && carried === null && !canAbandon()) return;
     memory.enter();
     refreshCatalog();
     const prepared = prepare(passage, highlightId, carried);
     setPickerDraftId(null);
     show({ id: createRandomId(), draftId: prepared.id, focus, ownsFocus: true, serial: ++serial.current, mode });
+  };
+  const quoteFor = (entry: ComposerDraft): ReaderQuote | null => {
+    const shown = reader.getState().document;
+    if (shown.status !== "ready" || shown.refreshing || shown.doc.identity !== entry.passage.identity) return null;
+    return captureReaderQuote({ doc: shown.doc, scope: { kind: "media", media_id: mediaId }, anchor: entry.passage.anchor,
+      capture: entry.capture, annotation: entry.highlightId ? annotations.annotation(entry.highlightId) : null });
   };
 
   const highlightDeleted = useCallback((id: string) => {
@@ -453,7 +501,7 @@ export function useSelectionComposer(input: {
     const held = readerRecovery(attempt ?? null) ? attempt : null;
     // a closed composer cannot show this refusal; one receipt names it and its way back.
     if (submitted && outcome.kind === "Failed" && current.current?.draftId !== entry.id)
-      onFailure(HIGHLIGHT_SAVED, [{ label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" }]);
+      onFailure({ fact: "question not sent.", reason: "your question is kept." }, [{ label: "open chat", href: entry.destination.kind === "Selected" ? `/conversations/${entry.destination.id}` : "/conversations/new" }]);
     switch (outcome.kind) {
       case "Accepted": {
         store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held, chatIssue: null }));
@@ -470,7 +518,7 @@ export function useSelectionComposer(input: {
         return null;
       case "Failed": {
         const issue: ReaderChatIssue = outcome.rejection === "E_READER_SELECTION_STALE"
-          ? { kind: "Passage", line: SOURCE_CHANGED }
+          ? { kind: "Passage", line: { fact: QUOTE_CHANGED } }
           : outcome.rejection === "E_CONVERSATION_NOT_FOUND"
             ? { kind: "Missing", line: { fact: "this chat isn’t available." } }
             : outcome.rejection === "E_GENERATION_SELECTION_UNAVAILABLE" || outcome.rejection === "E_INVALID_GENERATION_SELECTION"
@@ -479,7 +527,10 @@ export function useSelectionComposer(input: {
         store.update(entry.id, value => ({ ...value, operation: null, chatAttempt: held,
           destination: target === "Existing" && outcome.rejection === "E_CONVERSATION_NOT_FOUND" && value.destination.kind === "Selected"
             ? { ...value.destination, snapshot: { kind: "Failed" } } : value.destination,
-          chatIssue: { ...issue, ...(submitted ? { highlightSaved: true as const } : {}) } }));
+          quote: outcome.rejection === "E_READER_SELECTION_STALE" && value.quote !== null && value.quote.id === entry.quote?.id
+            ? { ...value.quote, state: { kind: "Failed", failure: { kind: "Stale" }, preview: value.quote.state.kind === "Ready" ? value.quote.state.preview : null } }
+            : value.quote,
+          chatIssue: outcome.rejection === "E_READER_SELECTION_STALE" && value.quote !== null ? null : issue }));
         return null;
       }
       case "Settled":
@@ -492,7 +543,7 @@ export function useSelectionComposer(input: {
   const sendChat = async (target: "New" | "Existing", openIntent: OpenIntent, recovery: { selection: SelectionEditor } | null = null) => {
     const opened = current.current;
     const entry = opened && get(opened.draftId);
-    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
+    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue && entry.quote === null && !entry.quoteDetached || entry.quote?.state.kind === "Failed" || entry.quote?.state.kind === "Loading" || entry.chatIssue?.kind === "Passage" || entry.chatIssue?.kind === "Source" || pickerDraftId !== null || hasHeldChat()) return;
     const selected = entry.destination;
     const owner = target === "New" ? newOwner : selected.kind === "Selected" ? getConversationCommands(ctx.accountId, selected.id) : null;
     if (!owner) { chooseChat(); return; }
@@ -536,57 +587,46 @@ export function useSelectionComposer(input: {
         store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Model", line: { fact: "this model isn’t available." }, destination: target, selection } })); return;
       }
     }
+    const quote = entry.quoteDetached ? null : entry.quote ?? quoteFor(entry);
+    if (!quote && !entry.quoteDetached) {
+      store.update(entry.id, value => ({ ...value, chatIssue: { kind: "Source", line: { fact: "couldn’t capture this passage.", reason: "your question is kept." } } }));
+      return;
+    }
+    const submittedEntry = { ...entry, quote };
     const runId = createRandomId();
-    store.update(entry.id, value => ({ ...value, chatAttempt: { kind: "Preparing", runId } }));
+    store.update(entry.id, value => ({ ...value, quote, chatAttempt: { kind: "Preparing", runId } }));
     // The exact acceptance reset still belongs to this submitted input. Later
     // edits and reference queries revoke its authority to move attention.
     const submittedInput: { revision: number; consumedRevision: number | null } = { revision: entry.revision, consumedRevision: null };
-    const owns = () => {
-      const latest = get(entry.id);
-      return activeRef.current && current.current?.id === opened.id && current.current.ownsFocus &&
-        latest !== undefined && !latest.referenceActive && !latest.linkInputActive && !latest.attachmentActive &&
+    const unchanged = () => {
+      const latest = get(submittedEntry.id);
+      return latest !== undefined && (latest.quote?.id === quote?.id || latest.revision === submittedInput.consumedRevision) && !latest.referenceActive && !latest.linkInputActive && !latest.attachmentActive &&
         (latest.revision === submittedInput.revision || latest.revision === submittedInput.consumedRevision);
     };
+    const owns = () => activeRef.current && current.current?.id === opened.id && current.current.ownsFocus && unchanged();
     const account = ctx.sessionSignal();
     const execute = async (): Promise<OpenResult | null> => {
-      const ensured = entry.highlightId ? { id: entry.highlightId } : await submit({ command: { kind: "Ensure" }, opened });
-      if (!ensured || ctx.sessionSignal().aborted) return null;
-      store.update(entry.id, value => ({ ...value, operation: { id: runId, kind: "Chat" }, chatIssue: null }));
-      // The server derives the quote from its own copy of this highlight. Its creation, resize
-      // or recolour may be any committed local command, so wait for the local prefix committed
-      // now (uploads are prefix-ordered); later commits and downloads do not hold the question.
-      // A wait that ends unsent names what it waited on, once, in the field; the highlight stays
-      // saved here and send asks again. Only sign-in and update are transport; the rest is local.
-      try {
-        const committed = (await (await writing!.store).readReplica()).command_seq;
-        await writing!.whenUploaded(committed, account);
-      } catch (error) {
-        if (account.aborted) return null;
-        if (!isApiError(error) && !isAuthoredStorageFailure(error)) throw error;
-        const unsent = (reason: string): ReaderChatIssue => ({ kind: "Failed", line: { fact: "question not sent.", reason } });
-        const issue: ReaderChatIssue = !isApiError(error) ? unsent("local notes aren’t responding.")
-          : error.code === "E_SYNC_REFUSED" ? unsent("notes can’t sync.")
-          : error.code === "E_NETWORK" ? unsent(navigator.onLine === false ? "you’re offline." : "the highlight hasn’t synced yet.")
-          : { kind: "Transport", error, fact: "question not sent." };
-        store.update(entry.id, value => ({ ...value, operation: null, chatIssue: issue }));
-        return null;
-      }
-      const key = assumeReaderSelectionKey({ mediaId: entry.sourceMediaId, highlightId: ensured.id });
-      let preview;
-      try { preview = await getReaderQuotePreview({ key, signal: account }); }
-      catch (error) {
-        if (isApiError(error) && error.status === 404) {
-          store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", line: { fact: "question not sent.", reason: "nexus can’t find the highlight." } } }));
-          return null;
-        }
-        throw error;
-      }
-      const quoteHref = readerHighlightChatIntentHref({ destination: observed ? { kind: "Existing", conversationId: observed.conversation.id } : { kind: "New" }, key });
-      const href = observed ? `${conversationViewHref(observed.conversation.id, observed.active_leaf_message_id)}${quoteHref.slice(quoteHref.indexOf("#"))}` : quoteHref;
+      const entry = submittedEntry;
+      const href = observed ? conversationViewHref(observed.conversation.id, observed.active_leaf_message_id) : "/conversations/new";
       if (question.kind === "Blank" || recovery !== null) {
         store.update(entry.id, value => ({ ...value, operation: null }));
         return { target: { href, labelHint: "chat" }, title: "chat ready", openLabel: "open chat",
-          ...(recovery !== null ? { entry: { kind: "ComposeReaderQuestion" as const, text: question.kind === "Text" ? question.content : "", selection: recovery.selection } } : {}) };
+          entry: { kind: "ComposeReaderQuestion", text: question.kind === "Text" ? question.content : "",
+            selection: recovery?.selection ?? selection ?? { kind: "Uninitialized" }, quote } };
+      }
+      store.update(entry.id, value => ({ ...value, operation: { id: runId, kind: "Chat" }, chatIssue: null,
+        quote: quote && value.quote?.id === quote.id && quote.state.kind !== "Ready" ? { ...quote, state: { kind: "Loading" } } : value.quote }));
+      let preview;
+      try { preview = quote === null ? null : quote.state.kind === "Ready" ? quote.state.preview : await prepareReaderQuote(quote, writing, account); }
+      catch (error) {
+        if (!account.aborted && ownsVisit() && quote) store.update(entry.id, value => value.quote?.id === quote.id && value.chatAttempt?.runId === runId
+          ? { ...value, operation: null, quote: { ...quote, state: { kind: "Failed", failure: { kind: "Read", error }, preview: null } } } : value);
+        return null;
+      }
+      if (account.aborted || !ownsVisit() || get(entry.id)?.quote?.id !== quote?.id || get(entry.id)?.chatAttempt?.runId !== runId) return null;
+      if (quote && preview) {
+        const ready: ReaderQuote = { ...quote, state: { kind: "Ready", preview } };
+        store.update(entry.id, value => ({ ...value, quote: ready }));
       }
       if (!selection || selection.kind !== "Selected") throw new Error("Reader send without an observed selection");
       if (owner.getSnapshot().kind !== "Idle") {
@@ -598,14 +638,14 @@ export function useSelectionComposer(input: {
       const request = { destination: observed && insertion && (insertion.kind === "Empty" || insertion.kind === "Reply")
         ? { kind: "Existing" as const, conversation_id: observed.conversation.id, expected_revision: observed.conversation.branch_revision,
           insertion: insertion.kind === "Empty" ? { kind: "Empty" as const } : { kind: "Reply" as const, parent_message_id: insertion.parentId, branch_anchor: insertion.anchor } }
-        : { kind: "New" as const }, content: question.content, selection: selection.selection, reader_selection: { key: preview.key, revision: preview.revision } };
+        : { kind: "New" as const }, content: question.content, selection: selection.selection, reader_selection: preview ? { selection: preview.selection, revision: preview.revision } : null };
       const sendingResult = owner.execute({ kind: "Send", request, selectionRoute: selection.route, runId, viewId: pane.paneId, openIntent }, () => {
         store.update(entry.id, value => {
           if (value.chatAttempt?.runId !== runId) return value;
-          const consume = value.revision === submittedInput.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
+          const consume = value.revision === submittedInput.revision && value.quote?.id === quote?.id && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
           if (consume) submittedInput.consumedRevision = value.revision + 1;
           return { ...value, chatIssue: null,
-            ...(consume ? { chatSelection: { kind: "Uninitialized" as const }, body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}),
+            ...(consume ? { chatSelection: { kind: "Uninitialized" as const }, quote: null, quoteDetached: true, body: emptyBody(), revision: value.revision + 1, selection: null, history: emptyDraftHistory() } : {}),
             destination: value.destination.kind === "Selected" ? { ...value.destination, snapshot: { kind: "RefreshRequired" } } : value.destination };
         });
       });
@@ -621,7 +661,12 @@ export function useSelectionComposer(input: {
     };
     try {
       await openAsyncResult({ ctx, originPaneId: pane.paneId, intent: openIntent, disposition: "Fork", mayOpen: owns,
-        onOpened: () => { if (owns()) { store.remove(entry.id); show(null); } }, create: execute });
+        entryIsCurrent: () => {
+          const latest = get(entry.id);
+          return ctx.workspace().state.panes.find(value => value.id === pane.paneId)?.current_visit.id === pane.visitId &&
+            unchanged() && (target === "New" || latest?.destination.kind === "Selected" && latest.destination.id === observed?.conversation.id);
+        },
+        onOpened: () => { if (unchanged()) { store.remove(entry.id); show(null); } }, create: execute });
     } catch (error) {
       if (ctx.sessionSignal().aborted) return;
       store.update(entry.id, value => ({ ...value, operation: null, chatIssue: { kind: "Failed", line: { fact: "couldn’t open the chat.", reason: "your question is kept." } } }));
@@ -659,7 +704,45 @@ export function useSelectionComposer(input: {
   };
   return {
     protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
-    draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
+    mediaId, draft, opening, copyQuote, copyUnavailable, chat, branchCue, chatState, chatLocked, readerChatLocked, ownChatCommand,
+    quoteReview: input.quoteReview,
+    replaceQuote() {
+      const review = input.quoteReview;
+      const entry = current.current && get(current.current.draftId);
+      const quote = entry && quoteFor(entry);
+      if (!review || !entry || !quote || !canAbandon()) return;
+      if (!replaceReaderQuote(ctx.workspace(), review.target, quote)) {
+        onFailure({ fact: "the original draft is no longer open." }, [{ label: "cancel review", commandKey: "CancelQuoteReview", run: review.finish }]);
+        return;
+      }
+      review.finish(); close(entry.id);
+    },
+    reviewQuote() {
+      const entry = current.current && get(current.current.draftId);
+      if (!entry?.quote) return;
+      pane.activateTarget({ target: { href: entry.quote.inspection.href }, disposition: { kind: "Fork" },
+        entry: { kind: "ReviewReaderQuote", quote: entry.quote,
+          target: { pane_id: pane.paneId, visit_id: pane.visitId, draft_owner_id: draftOwner, attachment_id: entry.quote.id } } });
+    },
+    removeQuote() {
+      if (draft) store.update(draft.id, entry => ({ ...entry, quote: null, quoteDetached: true, chatIssue: null, revision: entry.revision + 1,
+        chatAttempt: entry.chatAttempt?.kind === "Preparing" ? null : entry.chatAttempt,
+        operation: entry.operation?.kind === "Chat" ? null : entry.operation }));
+      if (current.current) show({ ...current.current, focus: true, serial: ++serial.current });
+    },
+    retryQuote() {
+      if (!draft?.quote || draft.quote.state.kind !== "Failed") return;
+      const quote = draft.quote;
+      const signal = ctx.sessionSignal();
+      store.update(draft.id, entry => ({ ...entry, quote: { ...quote, state: { kind: "Loading" } } }));
+      void prepareReaderQuote(quote, writing, signal).then(preview => {
+        if (!signal.aborted && ownsVisit()) store.update(draft.id, entry => entry.quote?.id === quote.id
+          ? { ...entry, quote: { ...quote, state: { kind: "Ready", preview } } } : entry);
+      }, error => {
+        if (!signal.aborted && ownsVisit()) store.update(draft.id, entry => entry.quote?.id === quote.id
+          ? { ...entry, quote: { ...quote, state: { kind: "Failed", failure: { kind: "Read", error }, preview: null } } } : entry);
+      });
+    },
     hiddenPreparationFailures: drafts.flatMap(entry => entry.id !== draft?.id && entry.issue?.kind === "Failed" && entry.issue.phase === "Preparation"
       ? [{id: entry.id, issue: entry.issue, busy: entry.operation !== null, text: bodyHasContent(entry.body) ? entry.body.body_text : null}] : []),
     annotation: draft?.highlightId ? annotations.annotation(draft.highlightId) : null,

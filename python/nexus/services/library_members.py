@@ -339,6 +339,7 @@ def respond_to_invitation(
             return
         if row.status != "pending":
             raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+        captures: list[UUID] = []
         if accept:
             from nexus.services.x_source import admit_x_captures_for_accounts
 
@@ -364,6 +365,15 @@ def respond_to_invitation(
             )
             resource_grants.invalidate_annotation_visibility(
                 db, resource_grants.library_annotation_visibility(db, row.library_id)
+            )
+            from nexus.services import library_entries
+            from nexus.services.source_citations import complete_source_citations
+
+            complete_source_citations(
+                db,
+                account_ids=[viewer_id],
+                capture_ids=captures,
+                media_ids=library_entries.media_ids_in_library(db, row.library_id),
             )
             projection.refresh_viewer_contributors(db, [viewer_id])
             record_input_change(db, owners=(f"library:{row.library_id}",))

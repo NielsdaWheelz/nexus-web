@@ -16,7 +16,6 @@ import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
 import ResourceOutlineRow from "@/components/resources/ResourceOutlineRow";
 import Dialog from "@/components/ui/Dialog";
 import { useAuthoredStore } from "@/lib/authored/provider";
-import { assumeReaderSelectionKey, readerHighlightChatIntentHref } from "@/lib/chat/readerIntent";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError, isAuthoredStorageFailure } from "@/lib/notes/runtime";
 import { deleteResource } from "@/lib/resourceGraph/links";
@@ -26,8 +25,8 @@ import HighlightAnnotation from "@/components/notes/HighlightAnnotation";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { useEditorDraft } from "@/lib/notes/editorHost";
 import NoteEditor, {type NoteEditorHandle} from "@/components/notes/NoteEditor";
-import { captureSelection, createHighlight, createReaderAnnotations, type Capture, type SourceLabel } from "../annotations";
-import { rejectedSelectionFact, useReaderState, type Decorations, type Mark, type MarkEvent, type SelectionNotice } from "../DocumentReader";
+import { captureSelection, createHighlight, createReaderAnnotations, type Capture, type ReaderAnnotation, type SourceLabel } from "../annotations";
+import { rejectedSelectionFact, useReaderState, type Decorations, type Mark, type MarkAnchor, type MarkEvent, type SelectionNotice } from "../DocumentReader";
 import type { Reader } from "../runtime";
 import {PreparedResourcesContext} from "@/lib/resources/preparedResources";
 import { AnnotationList, AnnotationQuote, PLACEMENT_COPY } from "./ReaderAnnotation";
@@ -36,7 +35,7 @@ import styles from "./chrome.module.css";
 const NO_SUBSCRIPTION = () => () => {};
 
 type Open =
-  | { readonly kind: "selection"; readonly capture: Capture; readonly identity: string }
+  | { readonly kind: "selection"; readonly capture: Capture; readonly identity: string; readonly anchor: MarkAnchor }
   | { readonly kind: "annotation"; readonly id: string; readonly mark: Mark | null }
   | { readonly kind: "choose"; readonly marks: readonly Mark[] };
 
@@ -49,9 +48,21 @@ export interface ReaderAnnotationProps {
   readonly onSelection: (notice: SelectionNotice) => void;
   readonly onMarks: (event: MarkEvent) => void;
 }
+export interface CompactReaderQuestion {
+  readonly identity: string;
+  readonly anchor: MarkAnchor | null;
+  readonly capture: Capture | null;
+  readonly annotation: ReaderAnnotation | null;
+  readonly question: NoteBody;
+}
+export interface CompactReaderChat {
+  readonly reviewing: boolean;
+  submit(input: CompactReaderQuestion): boolean;
+  cancelReview(): void;
+}
 
 /** `available` false: this host has no source text (missing or failed); annotations still list. */
-export function useCompactAnnotations(reader: Reader, mediaId: string, source: SourceLabel, available: boolean, showPlaced = false) {
+export function useCompactAnnotations(reader: Reader, mediaId: string, source: SourceLabel, available: boolean, showPlaced = false, chat: CompactReaderChat | null = null) {
   const store = useAuthoredStore();
   const writing = useWritingRuntime();
   const [annotations] = useState(() => createReaderAnnotations(store, mediaId));
@@ -61,6 +72,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   useEffect(() => { if (doc) annotations.bind(doc); else if (missing) annotations.bind(null); }, [annotations, doc, missing]);
   const state = useSyncExternalStore(annotations.subscribe, annotations.getState, annotations.getState);
   const [open, setOpen] = useState<Open | null>(null);
+  const skipReturn = useRef(false);
   // New selections own ephemeral writing; existing highlights own their body.
   const draft = useEditorDraft<{body: NoteBody; revision: number; attachment: boolean; hyperlink: boolean}>(`Compact.Annotation:${mediaId}`, () => ({body: emptyBody(), revision: 0, attachment: false, hyperlink: false}), value => ({changed: bodyHasContent(value.body) || value.hyperlink, unconfirmed: false, stopsBrowserWork: value.attachment}));
   const note = draft.value, setNoteBody = draft.set;
@@ -129,6 +141,18 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   if (annotation) lastAnnotation.current = annotation;
   const shownAnnotation = annotation ?? (open?.kind === "annotation" && lastAnnotation.current?.id === open.id ? lastAnnotation.current : null);
   const activeMark = open?.kind === "annotation" ? open.mark : null;
+  const ask = () => {
+    if (!chat || !doc || !open || busy || note.hyperlink || note.attachment) return;
+    const anchor = open.kind === "selection" ? open.anchor : annotation?.placement.kind === "placed" ? annotation.placement.anchor : null;
+    if (open.kind === "selection" && open.identity !== doc.identity || open.kind === "annotation" && !annotation?.display) return;
+    // Asking never submits the independent saved-annotation editor as a question.
+    if (!guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, ...(chat.reviewing ? [draft.owner] : [])] })) return;
+    if (chat.submit({ identity: doc.identity, anchor, capture: open.kind === "selection" ? open.capture : null,
+      annotation: open.kind === "annotation" ? annotation : null, question: open.kind === "selection" ? note.body : emptyBody() })) {
+      skipReturn.current = true;
+      setOpen(null); setNote(emptyBody()); setIssue(null); setFocused(null);
+    }
+  };
   const editor = (placeholder: string, onSave: () => void) => <NoteEditor editorKey={`reader-annotation:${mediaId}`} containingNoteRef={null}
     body={note.body} revision={note.revision} label="annotation" placeholder={placeholder} editable={!busy && !blocked && issue?.kind !== "Unsaved"}
     history={null} onEditorReady={selectionReady} onEdit={edit => setNote(edit.after)} onSave={onSave}
@@ -147,13 +171,14 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     <Dialog open={manualCopy !== null} title="copy unsaved writing" onClose={() => setManualCopy(null)} initialFocus={panel => panel.querySelector("textarea")}>
       <textarea aria-label="unsaved writing" readOnly value={manualCopy ?? ""} onFocus={event => event.currentTarget.select()} />
     </Dialog>
-    <Dialog open={open?.kind === "selection"} title="annotate passage" onClose={close}>
+    <Dialog open={open?.kind === "selection"} title={chat ? "selected passage" : "annotate passage"} onClose={close} skipReturnFocus={() => skipReturn.current}>
       {open?.kind === "selection" ? <div className={styles.compactAnnotation}>
-        <ReaderExcerpt excerpt={excerptView(open.capture.selection.excerpt, "full", { kind: "capture" })} color="yellow" full />
+        <ReaderExcerpt excerpt={excerptView(open.capture.selection.excerpt, "full", { kind: "capture" })} color={chat ? null : "yellow"} full />
         {sourceChanged ? <Field id={changedId} line={{ fact: "the text changed.", reason: "your words are kept." }} /> : null}
-        {editor("write an annotation…", () => save(open.capture, true))}
+        {editor(chat ? "write an annotation or ask a question…" : "write an annotation…", () => save(open.capture, true))}
         <div className={styles.compactActions}>
           <Button emphasis="strong" aria-busy={busy} aria-describedby={saveDescribedBy} disabled={sourceChanged || busy || blocked || note.hyperlink || note.attachment} onClick={() => save(open.capture, true)}>{hasNote ? "save annotation" : "save highlight"}</Button>
+          {chat ? <Button disabled={sourceChanged || busy || note.hyperlink || note.attachment} onClick={ask}>{chat.reviewing ? "replace quoted passage" : "ask about this passage"}</Button> : null}
           <Button onClick={close}>cancel</Button>
         </div>
       </div> : null}
@@ -166,7 +191,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         </li>] : []; })}
       </ul> : null}
     </Dialog>
-    <Dialog open={open?.kind === "annotation"} title="highlight" onClose={close}>
+    <Dialog open={open?.kind === "annotation"} title="highlight" onClose={close} skipReturnFocus={() => skipReturn.current}>
       {shownAnnotation ? <div className={styles.compactAnnotation}>
         <AnnotationQuote annotation={shownAnnotation} />
         {activeMark ? <Button onClick={() => { const anchor = activeMark.anchor; if (!close()) return; void reader.inspect({ target: anchor.kind === "text" ? { kind: "range", unit: anchor.unit, start: anchor.start, end: anchor.end } : { kind: "quads", page: anchor.page, quads: anchor.quads }, signal: new AbortController().signal }); }}>view in source</Button> : null}
@@ -175,7 +200,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
           <HighlightAnnotation highlightRef={shownAnnotation.ref} resource={annotation?.display?.projection ?? null} occurrenceKey={`compact:${shownAnnotation.ref}`} onWorkOwners={protectOwners} />
         </PreparedResourcesContext> : null}
         <div className={styles.compactActions}>
-          {shownAnnotation.selection.locator.type === "x_capture_offsets" ? <a href={readerHighlightChatIntentHref({ destination: { kind: "New" }, key: assumeReaderSelectionKey({ captureId: shownAnnotation.selection.locator.capture_id, highlightId: shownAnnotation.id }) })}>ask about this passage</a> : null}
+          {chat ? <Button disabled={!annotation?.display || busy} onClick={ask}>{chat.reviewing ? "replace quoted passage" : "ask about this passage"}</Button> : null}
 
           <Button tone="danger" aria-busy={busy} aria-describedby={!annotation ? changedId : undefined} disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close, "Delete")}>delete highlight</Button>
         </div>
@@ -186,6 +211,8 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   /** Annotations this publication cannot place, or every annotation when its text is unavailable. */
   const unplaced = state.annotations.filter(entry => entry.placement.kind !== "placed");
   const list = <>
+    {chat?.reviewing ? <Fact line={{ fact: "select the passage to use in your question." }}
+      verbs={[{ label: "cancel review", commandKey: "CancelQuoteReview", run: chat.cancelReview }]} /> : null}
     {showPlaced && state.annotations.length ? <ResourceOutlineList scope={`capture-highlights:${mediaId}`} ariaLabel="your highlights">
       {state.annotations.map(entry => entry.display ? <PreparedResourcesContext key={entry.ref} value={entry.display.resources}>
         <ResourceOutlineRow resource={entry.display.projection} incoming={null} occurrenceKey={`capture-highlight:${entry.ref}`} occurrenceLabel="highlight" />
@@ -212,10 +239,11 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
       say({ fact: rejectedSelectionFact("UnsupportedExcerpt", doc) });
       return;
     }
-    if (capture && guard.confirmLoss({scopes: [], ownerIds: [draft.owner, ...annotationOwners.current]})) { setIssue(null); setNoteBody(value => ({...value, body: emptyBody(), revision: value.revision + 1})); setOpen({ kind: "selection", capture, identity: doc.identity }); }
+    if (capture && guard.confirmLoss({scopes: [], ownerIds: [draft.owner, ...annotationOwners.current]})) { skipReturn.current = false; setIssue(null); setNoteBody(value => ({...value, body: emptyBody(), revision: value.revision + 1})); setOpen({ kind: "selection", capture, identity: doc.identity, anchor: notice.selection.anchor }); }
   }, [guard, draft.owner, say, setNoteBody]);
   const onMarks = useCallback((event: MarkEvent) => {
     if (event.kind !== "activate" || !event.marks.length || !guard.confirmLoss({scopes: [], ownerIds: [draft.owner, ...annotationOwners.current]})) return;
+    skipReturn.current = false;
     setIssue(null);
     setNoteBody(value => ({...value, body: emptyBody(), revision: value.revision + 1}));
     if (event.marks.length === 1) { setFocused(event.marks[0]!.id); setOpen({ kind: "annotation", id: event.marks[0]!.id, mark: event.marks[0]! }); }
