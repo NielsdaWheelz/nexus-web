@@ -131,17 +131,21 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
   const refinementId = useId();
   const questionEditor = useRef<NoteEditorHandle | null>(null);
   const editorReady = useCallback((handle: NoteEditorHandle | null) => { questionEditor.current = handle; }, []);
+  const annotationEditor = useRef<NoteEditorHandle | null>(null);
+  const annotationEditorReady = useCallback((handle: NoteEditorHandle | null) => { annotationEditor.current = handle; }, []);
   const [inputRefusal, setInputRefusal] = useState<{ draftId: string; fact: string } | null>(null);
-  const settleInput = (trigger: HTMLElement | null) => {
+  const settleEditor = (editor: NoteEditorHandle | null) => {
     if (!draft) return false;
-    trigger?.focus({ preventScroll: true });
-    const editor = questionEditor.current;
     if (!editor?.settleNativeInput()) {
       setInputRefusal({ draftId: draft.id, fact: editor ? "finish typing, then try again." : "the editor is still opening. try again." });
       return false;
     }
     setInputRefusal(null);
     return true;
+  };
+  const settleInput = (trigger: HTMLElement | null) => {
+    trigger?.focus({ preventScroll: true });
+    return settleEditor(questionEditor.current);
   };
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
@@ -266,6 +270,15 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     }
     if (!event.target.closest("[data-passage-interaction]") || button?.dataset.actionId === "EditHighlightAnnotation") return;
     composer.prepareInteraction();
+  };
+  const click = (event: MouseEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
+    const button = event.target.closest("button"), active = document.activeElement;
+    if (!button || !isTextEntryTarget(active) || !event.currentTarget.contains(active)) return;
+    const editor = active?.closest("[data-highlight-annotation]") ? annotationEditor.current : questionEditor.current;
+    // The press kept the control still; its semantic click now owns native focus.
+    button.focus({ preventScroll: true });
+    if (!settleEditor(editor)) { event.preventDefault(); event.stopPropagation(); }
   };
   const focus = (event: FocusEvent<HTMLDivElement>) => {
     if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return;
@@ -432,6 +445,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
       {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
       {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
         <HighlightAnnotation highlightRef={`highlight:${annotationId}`} resource={annotationResource} occurrenceKey={`selection:highlight:${annotationId}`} onWorkOwners={composer.protectOwners}
+          onEditorReady={annotationEditorReady}
           offerBlank={false} focusRequest={matchingRequest?.serial ?? null}
           onFocused={() => setAnnotationRequest(current => current === matchingRequest ? null : current)}
           mayFocus={() => matchingRequest === null || document.hasFocus() && document.activeElement === matchingRequest.trigger} />
@@ -476,7 +490,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     {composer.hiddenPreparationFailures.map(failure => <HiddenPreparationFailure key={failure.id} failure={failure} copy={copy} />)}
     {draft === null ? copying.notice : null}
     {isMobile ? (draft && opening) || verbs.bounds ? <div ref={mobileSurface} className={styles.mobileComposer} role="group" aria-label="passage composer"
-      data-selection-composer={opening?.id} onPointerDownCapture={pointerDown} onFocusCapture={focus}>
+      data-selection-composer={opening?.id} onPointerDownCapture={pointerDown} onClickCapture={click} onFocusCapture={focus}>
       {draft && opening ? renderComposer(true, false) : <div className={styles.selectionComposer} data-mobile="true"><div className={styles.selectionDetails}>{refinementControls}</div></div>}
     </div> : null : draft && opening ? <FloatingActionSurface open anchor={anchor} subscribeAnchor={reader.subscribe}
       strategy="text-selection" role="group" label="passage annotation" className={styles.composerSurface}
