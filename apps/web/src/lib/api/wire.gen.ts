@@ -733,26 +733,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/extension/library-destinations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Library Destinations
-         * @description The viewer's writable named libraries; the extension cannot create one.
-         */
-        get: operations["list_library_destinations_extension_library_destinations_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/extension/save-target": {
         parameters: {
             query?: never;
@@ -16058,26 +16038,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_library_destinations_extension_library_destinations_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_LibraryDestinationsOut_"];
                 };
             };
         };
