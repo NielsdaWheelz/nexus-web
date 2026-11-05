@@ -2,7 +2,8 @@
 
 ``validate_requested_url`` gates every user- or feed-supplied URL; ``is_public_ip``
 is the predicate the egress applies to every resolved address;
-``normalize_url_for_display`` is the stored form; ``parse_identity_url`` is the
+``normalize_url_for_display`` is the stored form; ``normalize_url_for_identity``
+is the comparison-only web source identity; ``parse_identity_url`` is the
 decomposition the provider classifiers (YouTube, X) match on.
 """
 
@@ -10,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote_plus, urlparse, urlunparse
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
 
@@ -30,6 +31,22 @@ _DENIED_NETWORKS = tuple(
     ).split()
 )
 _GLOBAL_UNICAST_V6 = ip_network("2000::/3")
+_TRACKING_PARAMETERS = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "utm_id",
+        "gclid",
+        "dclid",
+        "fbclid",
+        "msclkid",
+        "mc_cid",
+        "mc_eid",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +91,21 @@ def normalize_url_for_display(url: str) -> str:
     port = parsed.port
     netloc = f"{host}:{port}" if port and port != (80 if scheme == "http" else 443) else host
     return urlunparse((scheme, netloc, parsed.path or "/", parsed.params, parsed.query, ""))
+
+
+def normalize_url_for_identity(url: str) -> str:
+    """Display normalization minus the closed tracking set; never an acquisition URL.
+
+    Match decoded parameter names case-sensitively. Retained query components keep
+    their exact bytes, order and multiplicity, including empty components.
+    """
+    base, _, query = normalize_url_for_display(url).partition("?")
+    query = "&".join(
+        component
+        for component in query.split("&")
+        if unquote_plus(component.partition("=")[0]) not in _TRACKING_PARAMETERS
+    )
+    return f"{base}?{query}" if query else base
 
 
 def parse_identity_url(url: str) -> ParsedIdentityUrl:

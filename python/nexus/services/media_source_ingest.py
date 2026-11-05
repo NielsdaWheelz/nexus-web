@@ -73,7 +73,11 @@ from nexus.services.remote_file import remote_file_kind_from_url
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.transcripts.request_reason import TranscriptRequestReason
-from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.url_normalize import (
+    normalize_url_for_display,
+    normalize_url_for_identity,
+    validate_requested_url,
+)
 from nexus.services.x_identity import (
     canonical_x_article_url,
     canonical_x_post_url,
@@ -180,7 +184,8 @@ def _identity_key(spec: UrlSourceSpec) -> str | None:
         case st.X_ARTICLE:
             return f"x-article:{spec.provider_id}"
         case st.GENERIC_WEB_URL:
-            return f"web:{spec.canonical_source_url}"
+            assert spec.canonical_source_url is not None
+            return f"web:{normalize_url_for_identity(spec.canonical_source_url)}"
     return None
 
 
@@ -217,15 +222,30 @@ def _reusable_media(
                 )
             return db.get(Media, holders[0]) if holders else None
         case st.GENERIC_WEB_URL:
-            # the exact re-add of a page an article already holds as its final url. an
+            # the re-add of a page an article already holds as its final url. an
             # article in teardown is passed over: the new one's run supersedes onto it and
             # converges once the teardown removes it (a video or X media carries its
             # identity from birth, so its re-add is refused until then)
-            where = (
-                Media.kind == MediaKind.web_article.value,
-                Media.canonical_url == spec.canonical_source_url,
-                ~exists().where(MediaTeardownIntent.media_id == Media.id),
-            )
+            assert spec.canonical_source_url is not None
+            identity = normalize_url_for_identity(spec.canonical_source_url)
+            matches = [
+                media
+                for media in db.scalars(
+                    select(Media).where(
+                        Media.kind == MediaKind.web_article.value,
+                        Media.canonical_url.is_not(None),
+                        ~exists().where(MediaTeardownIntent.media_id == Media.id),
+                    )
+                )
+                if media.canonical_url is not None
+                and normalize_url_for_identity(media.canonical_url) == identity
+            ]
+            if len(matches) > 1:
+                raise ConflictError(
+                    ApiErrorCode.E_SOURCE_TARGET_AMBIGUOUS,
+                    "Several saved items have this source.",
+                )
+            return matches[0] if matches else None
         case _:
             return None
     return db.scalars(select(Media).where(*where)).one_or_none()
@@ -527,10 +547,20 @@ def _accept_url(
     owned_web = False
     media = None
     if spec.source_type == st.GENERIC_WEB_URL and library_ids is not None:
-        # The first generic attempt freezes the normalized original admission URL.
-        matches = list(
-            db.scalars(
-                select(Media)
+        # The first generic attempt freezes the original admission URL as provenance.
+        assert spec.canonical_source_url is not None
+        identity = normalize_url_for_identity(spec.canonical_source_url)
+        original_url = (
+            select(MediaSourceAttempt.canonical_source_url)
+            .where(MediaSourceAttempt.media_id == Media.id)
+            .order_by(MediaSourceAttempt.attempt_no)
+            .limit(1)
+            .scalar_subquery()
+        )
+        matches = [
+            media
+            for media, admitted_url in db.execute(
+                select(Media, original_url)
                 .where(
                     Media.created_by_user_id == actor_id,
                     Media.kind == "web_article",
@@ -540,15 +570,12 @@ def _accept_url(
                     text(
                         "(SELECT source_type FROM media_source_attempts a WHERE a.media_id=media.id ORDER BY attempt_no LIMIT 1) = 'generic_web_url'"
                     ),
-                    text(
-                        "(SELECT canonical_source_url FROM media_source_attempts a WHERE a.media_id=media.id ORDER BY attempt_no LIMIT 1) = :original_url"
-                    ),
                     text(f"media.id IN ({visible_media_ids_cte_sql()})"),
                 )
-                .params(original_url=spec.canonical_source_url, viewer_id=actor_id)
-                .limit(2)
-            )
-        )
+                .params(viewer_id=actor_id)
+            ).tuples()
+            if admitted_url is not None and normalize_url_for_identity(admitted_url) == identity
+        ]
         if len(matches) > 1:
             raise ConflictError(
                 ApiErrorCode.E_SOURCE_TARGET_AMBIGUOUS,
