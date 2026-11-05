@@ -27,6 +27,7 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -104,22 +105,19 @@ def delete_edges_for_deleted_resources(
             )
         ),
     )
-    affected_viewers = (
-        db.scalars(
-            select(ResourceEdge.user_id)
-            .where(
-                ResourceEdge.id.in_(dying),
-                ResourceEdge.origin == "citation",
-                ResourceEdge.ordinal.is_not(None),
-                ResourceEdge.snapshot[("evidence", "target", "owner_ref")].astext.in_(
-                    ["media:" + str(media_id) for media_id in retained_media]
-                ),
+    affected_viewers: list[UUID] = []
+    if retained_media:
+        from nexus.services.resource_graph.citations import citation_source_visible_sql
+
+        affected_viewers = list(
+            db.scalars(
+                text(f"""SELECT audience.id FROM users audience WHERE EXISTS (
+                SELECT 1 FROM resource_edges e
+                WHERE e.id=ANY(:ids) AND e.origin='citation' AND e.ordinal IS NOT NULL
+                  AND {citation_source_visible_sql("e", "audience.id")})"""),
+                {"ids": list(db.scalars(dying))},
             )
-            .distinct()
-        ).all()
-        if retained_media
-        else []
-    )
+        )
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(dying)))
     deleted = db.execute(
         delete(ResourceEdge)

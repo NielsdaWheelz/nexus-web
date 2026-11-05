@@ -11,7 +11,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nexus.schemas.citation import CitationOut
 from nexus.schemas.document_embeds import DocumentEmbedOut
+from nexus.schemas.reader_point import ReaderPointOut
 from nexus.schemas.source_issues import SourceIssue
 from nexus.schemas.x_source import XArticleContent, XSourceAuthor
 
@@ -83,9 +85,9 @@ class ReaderUnitOut(_Out):
     x_post: ReaderXPostOut | None = None
 
 
-class ReaderPointOut(_Out):
-    unit_id: str
-    offset: int
+class ReaderCitationOccurrenceOut(_Out):
+    citation: CitationOut
+    at: ReaderPointOut | None
 
 
 class ReaderSectionOut(_Out):
@@ -112,6 +114,7 @@ class ReaderTextBodyOut(_Out):
     toc_nodes: list[ReaderTocNodeOut]
     source_issues: list[SourceIssue]
     embeds: list[DocumentEmbedOut]
+    citation_occurrences: list[ReaderCitationOccurrenceOut]
     x_capture: ReaderXCaptureOut | None = None
     x_article_content: XArticleContent | None
 
@@ -157,6 +160,7 @@ class ReaderPartDocumentOut(_Out):
     provenance: ReaderPartProvenanceOut
     identity: str
     title: str
+    citation_occurrences: list[ReaderCitationOccurrenceOut]
     units: list[ReaderPartUnitOut]
     sections: list[ReaderSectionOut]
     toc_nodes: list[ReaderTocNodeOut]
@@ -204,6 +208,7 @@ class ReaderPdfDocumentOut(_Out):
     identity: str
     publication_generation: int | None = Field(ge=1)
     title: str
+    citation_occurrences: list[ReaderCitationOccurrenceOut]
     page_count: int | None
     file: ReaderPdfFileOut
 

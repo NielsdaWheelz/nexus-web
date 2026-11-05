@@ -18,12 +18,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.schemas.reader_document import (
-    ReaderPointOut,
     ReaderUnitOut,
     TranscriptNavigationOut,
     TranscriptReaderChapterOut,
     TranscriptReaderSearchExtentOut,
 )
+from nexus.schemas.reader_point import ReaderPointOut
 
 
 @dataclass(frozen=True, slots=True)

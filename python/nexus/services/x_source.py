@@ -583,10 +583,49 @@ def x_source_contexts(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, X
     return result
 
 
+def x_evidence_capture_match_sql(evidence: str, fragment: str) -> str:
+    """A captured body, never a supplementary metadata observation's body."""
+    return f"""((({evidence}) #>> '{{target,owner_ref}}'='fragment:' || {fragment}.id
+        AND (({evidence}) #>> '{{target,kind}}'='resource' OR (
+            ({evidence}) #>> '{{target,kind}}'='passage'
+            AND ({evidence}) #>> '{{target,locator,type}}'='x_capture_offsets'
+            AND ({evidence}) #>> '{{target,locator,fragment_id}}'={fragment}.id::text
+            AND ({evidence}) #>> '{{target,locator,capture_id}}'={fragment}.x_post_capture_id::text)))
+        OR (({evidence}) #>> '{{target,owner_ref}}' LIKE 'external_snapshot:%'
+            AND ({evidence}) #>> '{{target,kind}}'='resource'
+            AND ({evidence}) #>> '{{completion_ref}}'='fragment:' || {fragment}.id))"""
+
+
+def x_capture_read_manifest(db: Session, *, capture_ids: Sequence[UUID]) -> set[UUID]:
+    """Roots and their direct captured bodies, including completed quote evidence.
+
+    This describes a reading, not authority. Admission intersects it with the
+    actor's readable captures or the publication's frozen/fresh evidence.
+    """
+    return {
+        *capture_ids,
+        *db.scalars(
+            text(f"""
+            SELECT context.target_capture_id FROM x_post_capture_contexts context
+            WHERE context.capture_id=ANY(:roots) AND context.target_capture_id IS NOT NULL
+            UNION
+            SELECT capture.id FROM x_post_capture_contexts context
+            JOIN resource_edges e ON e.id=context.citation_id
+            JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+            JOIN x_post_captures capture ON capture.id=f.x_post_capture_id
+                AND capture.source_revision_id=context.referenced_revision_id
+            WHERE context.capture_id=ANY(:roots) AND context.relation='quoted'
+        """),
+            {"roots": list(capture_ids)},
+        ),
+    }
+
+
 def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
     """Selected readable roots and their admitted direct context, never recursive context."""
     from nexus.auth.permissions import visible_media_ids_cte_sql
     from nexus.services.resource_grants import highlight_grant_path_exists_sql
+    from nexus.services.resource_graph.citations import generated_citation_source_visible_sql
     from nexus.services.resource_graph.liveness import edge_live_sql
 
     visible_media = visible_media_ids_cte_sql().replace(":viewer_id", viewer_id)
@@ -602,6 +641,15 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
             JOIN visible_media vm ON vm.media_id=de.media_id
             WHERE de.provider='x' AND de.embed_kind='post'
               AND de.canonical_end_offset IS NOT NULL AND de.target_x_post_capture_id IS NOT NULL
+            UNION
+            SELECT f.x_post_capture_id FROM document_embeds de
+            JOIN visible_media vm ON vm.media_id=de.media_id
+            JOIN resource_edges e ON e.id=de.citation_id
+                AND e.source_scheme='media' AND e.source_id=de.media_id
+            JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE de.provider='x' AND de.embed_kind='post'
             UNION
             SELECT f.x_post_capture_id FROM highlights h
             JOIN highlight_fragment_anchors a ON a.highlight_id=h.id
@@ -625,28 +673,24 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
             SELECT f.x_post_capture_id FROM message_retrievals r
             JOIN messages m ON m.id=r.assistant_message_id
             JOIN conversations c ON c.id=m.conversation_id
-            JOIN fragments f ON f.id::text=r.locator->>'fragment_id'
-            JOIN x_post_capture_admissions admission
-              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
-            WHERE c.owner_user_id={viewer_id} AND r.locator->>'type'='x_capture_offsets'
-              AND r.locator->>'capture_id'=f.x_post_capture_id::text
-            UNION
-            SELECT f.x_post_capture_id FROM messages m
-            JOIN conversations c ON c.id=m.conversation_id
-            JOIN fragments f ON f.id::text=m.reader_selection_snapshot #>> '{{evidence,target,locator,fragment_id}}'
+            JOIN fragments f ON {x_evidence_capture_match_sql("r.captured_evidence", "f")}
             JOIN x_post_capture_admissions admission
               ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
             WHERE c.owner_user_id={viewer_id}
-              AND m.reader_selection_snapshot #>> '{{evidence,target,locator,type}}'='x_capture_offsets'
-              AND m.reader_selection_snapshot #>> '{{evidence,target,locator,capture_id}}'=f.x_post_capture_id::text
             UNION
-            SELECT f.x_post_capture_id FROM resource_edges e
-            JOIN fragments f ON f.id::text=e.snapshot #>> '{{evidence,target,locator,fragment_id}}'
+            SELECT f.x_post_capture_id FROM messages m
+            JOIN conversations c ON c.id=m.conversation_id
+            JOIN fragments f ON {x_evidence_capture_match_sql("m.reader_selection_snapshot->'evidence'", "f")}
             JOIN x_post_capture_admissions admission
               ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
-            WHERE e.user_id={viewer_id} AND e.origin='citation' AND {edge_live_sql("e")}
-              AND e.snapshot #>> '{{evidence,target,locator,type}}'='x_capture_offsets'
-              AND e.snapshot #>> '{{evidence,target,locator,capture_id}}'=f.x_post_capture_id::text
+            WHERE c.owner_user_id={viewer_id}
+            UNION
+            SELECT f.x_post_capture_id FROM resource_edges e
+            JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+            JOIN x_post_capture_admissions admission
+              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+            WHERE e.origin='citation' AND e.ordinal IS NOT NULL AND {edge_live_sql("e")}
+              AND {generated_citation_source_visible_sql("e", viewer_id)}
         )
         SELECT capture_id FROM roots
         UNION
@@ -655,6 +699,16 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
         JOIN x_post_capture_admissions admission
           ON admission.capture_id=context.target_capture_id AND admission.user_id={viewer_id}
         WHERE context.target_capture_id IS NOT NULL
+        UNION
+        SELECT f.x_post_capture_id FROM roots
+        JOIN x_post_capture_contexts context ON context.capture_id=roots.capture_id
+        JOIN resource_edges e ON e.id=context.citation_id
+        JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+        JOIN x_post_captures capture ON capture.id=f.x_post_capture_id
+            AND capture.source_revision_id=context.referenced_revision_id
+        JOIN x_post_capture_admissions admission
+          ON admission.capture_id=capture.id AND admission.user_id={viewer_id}
+        WHERE context.relation='quoted'
     """
 
 

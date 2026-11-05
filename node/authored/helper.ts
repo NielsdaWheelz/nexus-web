@@ -226,7 +226,11 @@ async function main(): Promise<void> {
         let excerpt: unknown;
         if (tagged.kind === "selection") { closed(value,"publication locator quote_exact prefix suffix passage_ref excerpt"); excerpt = value.excerpt; }
         else if (tagged.kind === "passage") { closed(value,"quote_exact publication locator excerpt"); excerpt = value.excerpt; }
-        else if (tagged.kind === "evidence") { closed(value,"quote source target"); excerpt = closed(value.quote,"exact prefix suffix color excerpt").excerpt; }
+        else if (tagged.kind === "evidence") {
+          closed(value,"quote source target completion_ref");
+          if (value.completion_ref !== null) text(value.completion_ref);
+          excerpt = closed(value.quote,"exact prefix suffix color excerpt").excerpt;
+        }
         else throw new TypeError("Unknown excerpt capture kind");
         validateExcerpt(excerpt);
         const scope = excerptScope(item.scope);

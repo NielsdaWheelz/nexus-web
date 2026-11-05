@@ -97,7 +97,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work); queue = next.catch(() => undefined); return next; };
   const queries = new Set<(corpusChanged?: boolean) => void>();
-  const annotations = new Set<() => void>();
+  const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
   const changed = (corpusChanged = false) => { for (const listener of statuses) listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); for (const listener of queries) listener(corpusChanged); };
@@ -182,7 +182,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         if (chunk.done) controller.close();
       }, cancel: async () => { await frame("snapshot_cancel"); } });
     },
-  }, serialize, changed, () => { for (const listener of annotations) listener(); });
+  }, serialize, changed, () => { for (const listener of evidence) listener(); });
   sync.facts.ready = replica.provisioning_complete; sync.facts.cursor = replica.server_cursor; sync.facts.pending = (await persistence.pending()).length > 0;
   sync.facts.online = navigator.onLine;
   const wake = () => { sync.facts.online = navigator.onLine; sync.wake(); };
@@ -229,12 +229,12 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
       queries.add(read); read();
       return () => { live = false; queries.delete(read); };
     },
-    annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
+    evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); return () => { statuses.delete(listener); }; },
     close: async () => {
       closed = true; sync.close();
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
-      queries.clear(); statuses.clear(); annotations.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
+      queries.clear(); statuses.clear(); evidence.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
       window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
       await sync.stopped(); await queue;
     },

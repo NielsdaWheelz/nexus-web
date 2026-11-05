@@ -98,6 +98,7 @@ export type TextDocument = {
   readonly toc: readonly TocNode[];
   readonly sourceIssues: readonly SourceIssue[];
   readonly embeds: readonly DocumentEmbed[];
+  readonly citationOccurrences: readonly { readonly citation: Schema<"CitationOut">; readonly at: TextPoint | null }[];
 };
 export type PdfDocument = {
   readonly kind: "pdf";
@@ -274,6 +275,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     })) : out.toc_nodes.map(toc),
     sourceIssues: out.source_issues,
     embeds: out.embeds,
+    citationOccurrences: out.citation_occurrences.map(occurrence => ({ citation: occurrence.citation, at: occurrence.at === null ? null : point(occurrence.at) })),
   };
 }
 

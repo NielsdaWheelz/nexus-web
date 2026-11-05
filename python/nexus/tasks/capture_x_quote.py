@@ -141,6 +141,14 @@ def run_job(*, payload: dict[str, object], context: JobExecutionContext) -> JobR
                 else reuse_manifest
             )
             admit_x_captures_for_accounts(db, account_ids=accounts, capture_ids=authorized_manifest)
+            from nexus.services.source_citations import complete_source_citations
+
+            complete_source_citations(
+                db,
+                account_ids=accounts,
+                capture_ids=authorized_manifest,
+                media_ids=[media_id],
+            )
             extend_public_media_capture_manifests(
                 db, media_id=media_id, capture_ids=authorized_manifest
             )

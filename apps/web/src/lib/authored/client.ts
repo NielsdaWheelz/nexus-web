@@ -74,7 +74,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   let failure: SyncFailure = null;
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   const queries = new Set<(corpusChanged?: boolean) => void>();
-  const annotations = new Set<() => void>();
+  const evidence = new Set<() => void>();
   const closedWaiters = new Set<() => void>();
   const statuses = new Set<(status: SyncStatus, detail: string | null, failure: SyncFailure) => void>();
   function failPort(message: string) {
@@ -105,12 +105,12 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       status = data.status; detail = data.detail ?? null; failure = data.failure;
       for (const listener of statuses) listener(status, detail, failure);
       for (const query of queries) query(data.corpus_changed === true);
-    } else if (data.kind === "annotations_changed") {
-      if (terminalFailure === null) for (const listener of annotations) listener();
+    } else if (data.kind === "evidence_changed") {
+      if (terminalFailure === null) for (const listener of evidence) listener();
     } else if (data.kind === "retired") {
       window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
-      queries.clear(); statuses.clear(); annotations.clear();
+      queries.clear(); statuses.clear(); evidence.clear();
       retireAuthoredAccount(accountId);
       closed = true;
       for (const pending of waiting.values()) pending.reject(new Error("authored account retired"));
@@ -166,7 +166,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       queries.add(read); read();
       return () => { active = false; queries.delete(read); };
     },
-    annotations_changed: listener => { annotations.add(listener); return () => { annotations.delete(listener); }; },
+    evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(status, detail, failure); return () => { statuses.delete(listener); }; },
     close: async () => {
       if (closed) return;
@@ -174,7 +174,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       port.postMessage({ id: ++sequence, op: "close" });
       closed = true;
       for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
-      waiting.clear(); for (const cancel of closedWaiters) cancel(); closedWaiters.clear(); queries.clear(); statuses.clear(); annotations.clear(); port.close();
+      waiting.clear(); for (const cancel of closedWaiters) cancel(); closedWaiters.clear(); queries.clear(); statuses.clear(); evidence.clear(); port.close();
     },
   };
 }

@@ -20,6 +20,10 @@
   margin-block-start: 0;
 }
 
+.literalAttribution {
+  white-space: pre-wrap;
+}
+
 .identity {
   display: flex;
   align-items: baseline;

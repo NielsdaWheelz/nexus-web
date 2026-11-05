@@ -85,7 +85,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
           });
         },
       }, serialize, changed, () => {
-        for (const port of ports) port.postMessage({ kind: "annotations_changed" });
+        for (const port of ports) port.postMessage({ kind: "evidence_changed" });
       });
       const state = await persistence.replica();
       sync.facts.ready = state.provisioning_complete;

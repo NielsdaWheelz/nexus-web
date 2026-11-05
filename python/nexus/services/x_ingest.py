@@ -50,8 +50,10 @@ from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.reader_publication import advance_reader_publications, ensure_reader_publication
 from nexus.services.search import projection
 from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
-from nexus.services.web_article import prepare_article
-from nexus.services.web_article_structure import WebArticlePreparedFragment
+from nexus.services.web_article_structure import (
+    WebArticlePreparedFragment,
+    prepare_web_article_fragment,
+)
 from nexus.services.x_identity import canonical_x_post_url
 from nexus.services.x_rendering import capture_image_urls, normalized_capture_html, render_post
 from nexus.services.x_source import (
@@ -60,6 +62,7 @@ from nexus.services.x_source import (
     post_label,
     readable_x_capture_ids_sql,
     reconcile_x_article_inspections,
+    x_capture_read_manifest,
 )
 
 
@@ -99,7 +102,9 @@ def prepare_x_source(
             PreparedXPost(
                 post,
                 html,
-                prepare_article(html, base_url=url, document_url=url, extract_embeds=False),
+                prepare_web_article_fragment(
+                    html=html, base_url=url, document_url=url, fragment_idx=0
+                ),
             )
         )
     return PreparedXSource(acquired, prior, tuple(posts))
@@ -410,11 +415,11 @@ def _publish_capture(
         if upstream:
             image.set("src", upstream[0])
     url = canonical_x_post_url(revision_id)
-    fragment = prepare_article(
-        serialize_html(document),
+    fragment = prepare_web_article_fragment(
+        html=serialize_html(document),
         base_url=url,
         document_url=url,
-        extract_embeds=False,
+        fragment_idx=0,
         capture_assets=urls,
     )
     row = Fragment(
@@ -428,7 +433,7 @@ def _publish_capture(
     db.add(row)
     db.flush()
     insert_fragment_blocks(db, row.id, fragment.fragment_blocks)
-    db.add_all(
+    context_rows = [
         XPostCaptureContext(
             id=new_uuid7(),
             capture_id=capture.id,
@@ -438,9 +443,32 @@ def _publish_capture(
             target_capture_id=item.target_capture_id,
             outcome=item.outcome,
             error_code=item.error_code,
+            citation_id=None,
         )
         for ordinal, item in enumerate(contexts)
-    )
+    ]
+    quoted = [context for context in context_rows if context.relation == "quoted"]
+    if quoted:
+        from nexus.services.resource_graph.citations import replace_citations_for_source
+        from nexus.services.resource_graph.refs import ResourceRef
+        from nexus.services.source_citations import source_citation_input
+
+        citations = replace_citations_for_source(
+            db,
+            source=ResourceRef("fragment", row.id),
+            citations=[
+                source_citation_input(
+                    db,
+                    revision_id=context.referenced_revision_id,
+                    capture_id=context.target_capture_id,
+                    ordinal=index + 1,
+                )
+                for index, context in enumerate(quoted)
+            ],
+        )
+        for context, citation in zip(quoted, citations, strict=True):
+            context.citation_id = citation.id
+    db.add_all(context_rows)
     if (
         isinstance(payload, XCompletePostCapture)
         and any(item.url or item.preview_image_url for item in payload.content.attachments)
@@ -783,7 +811,7 @@ def publish_prepared_x_source(
         media_audience_account_ids,
     )
 
-    selected_manifest = capture_manifest(db, capture_ids=[item.id for item in primary])
+    selected_manifest = x_capture_read_manifest(db, capture_ids=[item.id for item in primary])
     fresh_manifest = {captures[item.source.source_revision_id].id for item in prepared.posts}
     frozen_manifest = (
         set(capture_input.authorized_capture_ids) if capture_input is not None else set()
@@ -798,6 +826,14 @@ def publish_prepared_x_source(
         db,
         account_ids=[viewer_id, *accounts],
         capture_ids=authorized_manifest,
+    )
+    from nexus.services.source_citations import complete_source_citations
+
+    complete_source_citations(
+        db,
+        account_ids=[viewer_id, *accounts],
+        capture_ids=authorized_manifest,
+        media_ids=[media_id],
     )
     extend_public_media_capture_manifests(db, media_id=media_id, capture_ids=authorized_manifest)
     projection.refresh(db, "media", [media_id])

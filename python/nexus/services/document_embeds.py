@@ -120,10 +120,13 @@ class DocumentEmbedLockSetChanged(Exception):
 
 
 def delete_document_embed_artifacts(db: Session, *, owner_user_id: UUID, media_id: UUID) -> None:
+    from nexus.services.resource_graph.citations import replace_citations_for_source
+
     for viewer_id in sorted({*_edge_viewer_ids(db, media_id=media_id), owner_user_id}):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=[])
     db.execute(delete(DocumentEmbed).where(DocumentEmbed.media_id == media_id))
     db.flush()
+    replace_citations_for_source(db, source=ResourceRef("media", media_id), citations=[])
 
 
 def prepare_document_embed_artifacts_for_fragment_replacement(
@@ -168,6 +171,7 @@ def replace_document_embed_artifact(
     queued_children: list[tuple[UUID, UUID]] = []
     accepted_target_media_ids: set[UUID] = set()
     rows: list[DocumentEmbed] = []
+    attributions: dict[UUID, str | None] = {}
     for occurrence in occurrences:
         target_capture_id: UUID | None = None
         capture_job_id: UUID | None = None
@@ -184,7 +188,7 @@ def replace_document_embed_artifact(
             from nexus.schemas.x_source import XArticleExcerptCapture, XExcerptImage
             from nexus.services.html_tree import serialize_html
             from nexus.services.resource_grants import media_audience_account_ids
-            from nexus.services.web_article import prepare_article
+            from nexus.services.web_article_structure import prepare_web_article_fragment
             from nexus.services.x_identity import canonical_x_post_url
             from nexus.services.x_ingest import publish_excerpt_capture
             from nexus.services.x_source import admit_x_captures_for_accounts
@@ -207,31 +211,33 @@ def replace_document_embed_artifact(
                             )
                         )
                         image.set("src", url)
-                prepared_excerpt = prepare_article(
-                    serialize_html(document),
+                prepared_excerpt = prepare_web_article_fragment(
+                    html=serialize_html(document),
                     base_url=parent_source_url or source_url,
                     document_url=source_url,
-                    extract_embeds=False,
+                    fragment_idx=0,
                 )
-                capture = publish_excerpt_capture(
-                    db,
-                    revision_id=target.revision_id,
-                    payload=XArticleExcerptCapture(
-                        kind="article_excerpt",
-                        attribution_text=target.attribution_text,
-                        parent_source_url=parent_source_url,
-                        parent_title=parent_title,
-                        images=tuple(images),
-                    ),
-                    fragment=prepared_excerpt,
-                )
-                target_capture_id = capture.id
-                admit_x_captures_for_accounts(
-                    db,
-                    account_ids=media_audience_account_ids(db, media_ids=[media_id]),
-                    capture_ids=[capture.id],
-                )
+                if prepared_excerpt.canonical_text or images:
+                    capture = publish_excerpt_capture(
+                        db,
+                        revision_id=target.revision_id,
+                        payload=XArticleExcerptCapture(
+                            kind="article_excerpt",
+                            attribution_text=target.attribution_text,
+                            parent_source_url=parent_source_url,
+                            parent_title=parent_title,
+                            images=tuple(images),
+                        ),
+                        fragment=prepared_excerpt,
+                    )
+                    target_capture_id = capture.id
+                    admit_x_captures_for_accounts(
+                        db,
+                        account_ids=media_audience_account_ids(db, media_ids=[media_id]),
+                        capture_ids=[capture.id],
+                    )
             occurrence_id = new_uuid7()
+            attributions[occurrence_id] = target.attribution_text
             capture_job_id = enqueue_job(
                 db,
                 kind="capture_x_quote",
@@ -311,6 +317,7 @@ def replace_document_embed_artifact(
                 target_media_id=target_media_id,
                 target_x_post_capture_id=target_capture_id,
                 capture_job_id=capture_job_id,
+                citation_id=None,
                 title=occurrence.title,
                 authored_text=None if occurrence.provider == "x" else occurrence.authored_text,
                 placeholder_text=occurrence.placeholder_text,
@@ -324,6 +331,39 @@ def replace_document_embed_artifact(
         )
     db.add_all(rows)
     db.flush()
+
+    from nexus.services.resource_graph.citations import replace_citations_for_source
+    from nexus.services.source_citations import complete_source_citations, source_citation_input
+
+    cited = [
+        row
+        for row in rows
+        if row.provider == "x"
+        and row.embed_kind == "post"
+        and row.provider_target_ref is not None
+        and row.provider_target_ref.isascii()
+        and row.provider_target_ref.isdecimal()
+    ]
+    if cited:
+        citations = replace_citations_for_source(
+            db,
+            source=ResourceRef("media", media_id),
+            citations=[
+                source_citation_input(
+                    db,
+                    revision_id=str(row.provider_target_ref),
+                    capture_id=row.target_x_post_capture_id,
+                    ordinal=index + 1,
+                    title=row.title,
+                    attribution_text=attributions.get(row.id),
+                )
+                for index, row in enumerate(cited)
+            ],
+        )
+        for row, citation in zip(cited, citations, strict=True):
+            row.citation_id = citation.id
+        db.flush()
+        complete_source_citations(db, account_ids=[owner_user_id], media_ids=[media_id])
 
     from nexus.services.resource_grants import extend_public_media_capture_manifests
 
@@ -480,8 +520,9 @@ def _embed_rows(db: Session, *, media_id: UUID) -> list[DocumentEmbed]:
 
 
 def _edge_viewer_ids(db: Session, *, media_id: UUID) -> set[UUID]:
-    return set(
-        db.scalars(
+    return {
+        viewer
+        for viewer in db.scalars(
             select(ResourceEdge.user_id)
             .where(
                 ResourceEdge.source_scheme == "media",
@@ -491,7 +532,8 @@ def _edge_viewer_ids(db: Session, *, media_id: UUID) -> set[UUID]:
             .distinct()
             .order_by(ResourceEdge.user_id)
         )
-    )
+        if viewer is not None
+    }
 
 
 def _replace_graph_edges(
@@ -510,6 +552,7 @@ def _replace_graph_edges(
                 row.target_media_id
                 for row in rows
                 if row.target_media_id is not None
+                and not (row.provider == "x" and row.embed_kind == "post")
                 and can_read_media(db, viewer_id, row.target_media_id)
             }
         )

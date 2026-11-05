@@ -180,7 +180,6 @@ def _message_outs(db: Session, viewer_id: UUID, messages: list[Message]) -> list
     citations = build_citation_outs_for_sources(
         db,
         viewer_id=viewer_id,
-        edge_owner_id=viewer_id,
         sources=[ResourceRef("message", message.id) for message in messages],
     )
     outs: list[MessageOut] = []

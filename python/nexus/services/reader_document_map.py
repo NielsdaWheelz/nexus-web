@@ -104,6 +104,7 @@ def get_reader_document_map(
         total_fragment_chars += char_count
 
     generation = None
+    document = None
     if media_kind in ("epub", "web_article", "pdf", "text_part"):
         generation = read_publication_generation(db, media_id=media_id)
         if generation is None:
@@ -181,6 +182,17 @@ def get_reader_document_map(
         page_count=page_count,
         pdf_page_heights=pdf_page_heights,
     )
+    if document is not None and document.kind != "pdf":
+        from nexus.services.reader_evidence_markers import citation_point_markers
+
+        points = citation_point_markers(
+            occurrences=document.citation_occurrences, units=document.units
+        )
+        point_ids = {marker.item_id for marker in points}
+        projection.markers[:] = [
+            marker for marker in projection.markers if marker.item_id not in point_ids
+        ] + points
+        projection.markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
     apparatus_status = apparatus.status
     del apparatus
 
@@ -192,9 +204,9 @@ def get_reader_document_map(
     return ReaderDocumentMapOut(
         media_id=media_id,
         publication_generation=generation,
-        annotations_version=versions_for_ref(
+        evidence_version=versions_for_ref(
             db, viewer_id=viewer_id, ref=ResourceRef("media", media_id)
-        ).get("annotations", 1),
+        ).get("evidence", 1),
         identity=identity,
         status=status,
         embeds=embed_rows,
@@ -345,8 +357,12 @@ def get_capture_document_map(
             db, viewer_id, edges, {(endpoint.scheme, endpoint.id)}, "both"
         )
         for connection in connections:
+            cited = connection.origin == "citation" and connection.ordinal is not None
+            if cited and owners[fragment_id] != capture_id:
+                continue
             ref = connection.other.ref
-            root = roots.get(ref)
+            key = str(connection.edge_id) if cited else ref
+            root = roots.get(key)
             if root is None:
                 root = ReaderEvidenceRootOut(
                     ref=ref,
@@ -355,7 +371,7 @@ def get_capture_document_map(
                     continuation=None,
                     authored_placement=None,
                 )
-                roots[ref] = root
+                roots[key] = root
             if all(fact.edge_id != connection.edge_id for fact in root.direct_facts):
                 root.direct_facts.append(
                     ReaderDirectFactOut(
@@ -393,12 +409,18 @@ def get_capture_document_map(
         page_count=None,
         pdf_page_heights={},
     )
+    from nexus.services.reader_evidence_markers import citation_point_markers
+
+    markers.extend(
+        citation_point_markers(occurrences=document.citation_occurrences, units=document.units)
+    )
+    markers.sort(key=lambda marker: (marker.position, marker.kind, marker.item_id))
     return ReaderCaptureDocumentMapOut(
         capture_id=capture_id,
         publication_generation=None,
-        annotations_version=sum(
+        evidence_version=sum(
             versions_for_ref(db, viewer_id=viewer_id, ref=ResourceRef("fragment", fragment)).get(
-                "annotations", 1
+                "evidence", 1
             )
             for fragment in owners
         ),

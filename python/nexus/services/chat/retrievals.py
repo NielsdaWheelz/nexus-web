@@ -308,6 +308,7 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
     )
     return RetrievalCitation(
         captured_evidence=CapturedEvidence(
+            completion_ref=None,
             quote=CapturedQuote(
                 excerpt=plain_excerpt(hit["snippet"], None, None),
                 exact=hit["snippet"],
@@ -316,7 +317,12 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
                 color=None,
             ),
             source=CapturedSource(
-                ref=ref, title=hit["title"], media_kind=None, contributors=None, location_label=None
+                attribution_text=None,
+                ref=ref,
+                title=hit["title"],
+                media_kind=None,
+                contributors=None,
+                location_label=None,
             ),
             target=CapturedPassageTarget.model_validate(
                 {

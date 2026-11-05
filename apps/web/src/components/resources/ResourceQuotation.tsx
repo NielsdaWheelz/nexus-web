@@ -41,9 +41,9 @@ export default function ResourceQuotation({ item, renderSourceControl }: {
   const attributedRef = source ? source.ref ? parseResourceRef(source.ref) : null : parseResourceRef(item.ref);
   const type = attributedRef ? resourceType(attributedRef.scheme, itemMediaKind(item)) : null;
   const sourceTitle = source
-    ? source.title?.trim() ? source.title : "untitled"
+    ? source.title?.trim() ? source.title : item.label
     : type ? resourceTypeName(type) : "source";
-  const title = identity ? identity.title.trim() ? identity.title : "untitled" : sourceTitle;
+  const title = identity ? identity.title.trim() ? identity.title : item.label : sourceTitle;
   const authors = selectMediaAuthors(identity ? identity.contributors ?? [] : source?.contributors ?? [])
     .filter(credit => creditName(credit) !== null);
   const distinctSource = identity !== null && source !== null && source.ref !== item.ref;
@@ -61,6 +61,7 @@ export default function ResourceQuotation({ item, renderSourceControl }: {
       ? <blockquote className={styles.body}><ResourceBody body={body} full /></blockquote>
       : <div className={styles.body}><ResourceBody body={body} full /></div> : null}
     <figcaption className={styles.attribution}>
+      {source?.attribution_text ? <div className={styles.literalAttribution}>{source.attribution_text}</div> : null}
       <div className={styles.identity}>
         {!distinctSource ? glyph : null}
         <span className={styles.identityText}>

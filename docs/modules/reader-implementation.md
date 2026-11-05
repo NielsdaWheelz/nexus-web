@@ -92,6 +92,12 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 visit capture projects that owned measurement; it does not recapture transient
 layout during host resize or unmount.
 
+a capture host registers its reader with the same mobile chrome and viewport
+owners as a media host. ready-source annotations and evidence use
+`DocumentReaderView.end` inside that scrollport and its palette; they cannot shrink
+the reader as competing pane children. annotation dialogs remain outside, and
+annotations stay accessible when the source cannot load.
+
 `DocumentReaderView.before` is host content preceding the publication, including
 opening and failure feedback in the existing state scrollport. ready surfaces own
 the same slot; it remains outside text units, find and annotations. the surviving

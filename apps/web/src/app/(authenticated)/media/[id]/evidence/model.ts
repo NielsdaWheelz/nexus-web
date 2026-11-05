@@ -29,6 +29,11 @@ export function factFacet(fact: Schema<"ReaderDirectFactOut">): Filter {
   return fact.origin === "assistant" || fact.origin === "discovery" ? "machine_links" : "links";
 }
 
+/** Distinct citations keep their own evidence even when their real target ref agrees. */
+export function evidenceRootKey(root: Pick<Schema<"ReaderEvidenceRootOut">, "ref" | "direct_facts">): string {
+  return root.direct_facts.find(fact => factFacet(fact) === "citations")?.edge_id ?? root.ref;
+}
+
 export function facets(root: EvidenceRoot): ReadonlySet<Filter> {
   const result = new Set(root.direct_facts.map(factFacet));
   if (root.content.kind === "Highlight") result.add("highlights");

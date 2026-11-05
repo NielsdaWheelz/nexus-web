@@ -20,7 +20,7 @@ import { createReaderAnnotations, sourceUnits, type AnnotationsState, type Reade
 import type { Decorations, Mark, MarkAnchor, NoteRef } from "@/lib/documentReader/DocumentReader";
 import { localPoint, structureOf, type ReaderDocument } from "@/lib/documentReader/model";
 import { localResourceLabel } from "@/lib/resources/localResource";
-import { markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
+import { evidenceRootKey, markerFacet, rootCounts, rootExtent, rootItem, type EvidenceRoot } from "./evidence/model";
 
 type WireDocumentMap = Schema<"ReaderDocumentMapOut">;
 /** The derived server sections, already stripped of authored facts. */
@@ -50,8 +50,7 @@ export interface MediaAnnotationsState {
 const AUTHORED_ORIGINS = new Set<Schema<"ReaderDirectFactOut">["origin"]>(["user", "note_body"]);
 const PAGE = 100;
 
-/** Remote roots keep canonical identity; only proven mounted owner occurrences
- * receive placement. Repeated occurrences share a row, never guessed generations. */
+/** Remote roots keep source identity; only proven mounted occurrences receive placement. */
 function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null, mediaId: string): EvidenceRoot[] {
   const source = { media_id: wire.media_id, identity: wire.identity, apparatus_source: wire.evidence.apparatus_source };
   return wire.evidence.roots.flatMap(root => {
@@ -95,15 +94,16 @@ function remoteRoots(wire: WireDocumentMap, doc: ReaderDocument | null, mediaId:
 function mergeRemoteRoots(occurrences: readonly EvidenceRoot[]): EvidenceRoot[] {
   const roots = new Map<string, EvidenceRoot>(), ranks = new Map<string, number>();
   for (const incoming of occurrences) {
+    const key = evidenceRootKey(incoming);
     const rank = incoming.resolution?.kind === "Resolved" ? incoming.content.kind === "Resource" ? 2 : 3 : incoming.resolution ? 1 : 0;
-    const previous = roots.get(incoming.ref);
-    if (!previous) { roots.set(incoming.ref, incoming); ranks.set(incoming.ref, rank); continue; }
+    const previous = roots.get(key);
+    if (!previous) { roots.set(key, incoming); ranks.set(key, rank); continue; }
     const preferred = previous.content.kind === "Resource" && incoming.content.kind !== "Resource" ? incoming
       : previous.content.kind !== "Resource" && incoming.content.kind === "Resource" ? previous
-      : rank > ranks.get(incoming.ref)! ? incoming : previous;
+      : rank > ranks.get(key)! ? incoming : previous;
     const facts = new Map([...previous.direct_facts, ...incoming.direct_facts].map(fact => [fact.edge_id, fact]));
-    roots.set(incoming.ref, { ...preferred, direct_facts: [...facts.values()] });
-    ranks.set(incoming.ref, Math.max(rank, ranks.get(incoming.ref)!));
+    roots.set(key, { ...preferred, direct_facts: [...facts.values()] });
+    ranks.set(key, Math.max(rank, ranks.get(key)!));
   }
   return [...roots.values()];
 }
@@ -168,17 +168,17 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         }
       }
       for (const root of roots) {
+        const key = evidenceRootKey(root);
         const extent = root.resolution?.kind === "Resolved" ? rootExtent(root.resolution, doc) : null;
-        if (!extent) continue;
-        if (extent.kind === "pdf") {
-          const marker = wire?.identity === doc.identity ? wire.markers.find(item => item.item_id === root.ref) : null;
+        if (!extent || extent.kind === "pdf") {
+          const marker = wire?.identity === doc.identity ? wire.markers.find(item => item.item_id === key && (extent !== null || item.kind === "GeneratedCitation")) : null;
           if (marker) markers.push({ id: marker.item_id, position: marker.position, end: marker.end_position,
             kind: marker.kind, tone: marker.tone, label: marker.label, preview: marker.preview });
           continue;
         }
         const item = rootItem(root), facet = markerFacet(root);
         const body = root.content.kind === "Quotation" ? root.content.quotation.preview.body : item.preview.body;
-        markers.push({ id: root.ref, position: structure.fraction(extent.start), end: structure.fraction(extent.end),
+        markers.push({ id: key, position: structure.fraction(extent.start), end: structure.fraction(extent.end),
           kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" ? root.content.kind
             : facet === "citations" ? "GeneratedCitation" : facet === "links" ? "Link" : "MachineLink",
           tone: facet === "highlights" ? "Highlight" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
@@ -202,6 +202,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
     if (remote.status === "failed") remote = { ...remote, retrying: true };
     project();
     try {
+      const primaryCaptures = new Set(mounted.kind === "text" ? mounted.units.flatMap(unit => unit.xPost?.owner && unit.xPost.relation === "primary" ? [unit.xPost.owner.capture_id] : []) : []);
       const captureIds = mounted.kind === "text" ? [...new Set(mounted.units.flatMap(unit => unit.xPost?.owner && (unit.xPost.relation === "primary" || unit.xPost.relation === "embedded") ? [unit.xPost.owner.capture_id] : []))] : [];
       const [mediaMaps, captureMaps] = await Promise.all([
         Promise.all(remoteMediaIds(mounted).map(async id => {
@@ -210,7 +211,12 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         })),
         Promise.all(captureIds.map(async id => {
           const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/x/captures/{capture_id}/document-map", "get">>(`/api/x/captures/${id}/document-map`, { signal: attempt }), signal);
-          return { ...data, media_id: mediaId, identity: mounted.identity };
+          // An embedded post's annotations belong here; its own citations do not.
+          const roots = primaryCaptures.has(id) ? data.evidence.roots : data.evidence.roots.flatMap(root => {
+            const direct_facts = root.direct_facts.filter(fact => fact.origin !== "citation" || fact.ordinal === null);
+            return root.content.kind === "Resource" && direct_facts.length === 0 ? [] : [{ ...root, direct_facts }];
+          });
+          return { ...data, evidence: { ...data.evidence, roots }, media_id: mediaId, identity: mounted.identity };
         })),
       ]);
       const next = [...mediaMaps, ...captureMaps];
@@ -272,7 +278,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
         stops = [
           local.subscribe(project),
           subscribeAdmission(() => { if (remoteReady() && doc !== null && isCurrentApiAccount(account)) void readRemote(); }),
-          store.annotations_changed(() => { if (doc !== null) void readRemote(); }),
+          store.evidence_changed(() => { if (doc !== null) void readRemote(); }),
           store.subscribe({ kind: "adjacency", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks(), reportError),
           store.subscribe({ kind: "backlinks", ref: sourceRef, cursor: null, limit: 1 }, () => void readLinks(), reportError),
         ];

@@ -63,11 +63,11 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
     return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   }
   if (route.id === "highlight" && url.hash === "#annotation" && route.locator?.kind === "resource_ref") return {kind: "resource", resource_ref: route.locator.ref, field: "annotation"};
-  const match = /^#(quote|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
+  const match = /^#(quote|citation-source|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
   if (match && isCanonicalUuid(match[2])) {
     const [, kind, id] = match;
     if (kind === "quote") return { kind: "reader_quote", message_id: id };
-    if (kind === "citation") return { kind: "citation", edge_id: id };
+    if (kind === "citation" || kind === "citation-source") return { kind: "citation", edge_id: id, side: kind === "citation" ? "target" : "source" };
     if (kind === "retrieval") return { kind: "retrieval", retrieval_id: id };
     // justify-type-assertion: the regex exhausts these keys after occurrence keys return.
     const scheme = SCHEMES[kind as keyof typeof SCHEMES];

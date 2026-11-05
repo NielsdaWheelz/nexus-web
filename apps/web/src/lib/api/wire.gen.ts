@@ -3237,10 +3237,10 @@ export interface paths {
         };
         /**
          * Stream Writing
-         * @description Listen first, then read the authored head and annotation token in every fresh snapshot.
+         * @description Listen first, then read the authored head and independent evidence token.
          *
          *     A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
-         *     refetch document maps whose ``annotations_version`` moved.
+         *     refetch document maps whose ``evidence_version`` moved.
          */
         get: operations["stream_writing_stream_writing_get"];
         put?: never;
@@ -3932,6 +3932,8 @@ export interface components {
         };
         /** CapturedEvidence */
         CapturedEvidence: {
+            /** Completion Ref */
+            completion_ref: string | null;
             quote: components["schemas"]["CapturedQuote"] | null;
             source: components["schemas"]["CapturedSource"];
             /** Target */
@@ -3984,6 +3986,8 @@ export interface components {
         };
         /** CapturedSource */
         CapturedSource: {
+            /** Attribution Text */
+            attribution_text: string | null;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
@@ -4307,11 +4311,6 @@ export interface components {
             item: components["schemas"]["ResourceItemOut"];
             /** Ordinal */
             ordinal: number;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
         };
         /**
          * CitationSnapshot
@@ -4334,6 +4333,11 @@ export interface components {
              * @enum {string}
              */
             kind: "citation";
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "source" | "target";
         };
         /**
          * ClientDefectRequest
@@ -5872,10 +5876,10 @@ export interface components {
         };
         /** DownloadChanges */
         DownloadChanges: {
-            /** Annotations Revision */
-            annotations_revision: string;
             /** Changes */
             changes: components["schemas"]["FeedChange"][];
+            /** Evidence Revision */
+            evidence_revision: string;
             /** Head Cursor */
             head_cursor: string;
             /** Next Cursor */
@@ -10399,6 +10403,17 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PointSourceLocationOut */
+        PointSourceLocationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "point";
+            point: components["schemas"]["ReaderPointOut"];
+            /** Source Identity */
+            source_identity: string;
+        };
         /**
          * Position
          * @description An insertion after one exact link at the source endpoint, or first.
@@ -10684,8 +10699,6 @@ export interface components {
         };
         /** ReaderCaptureDocumentMapOut */
         ReaderCaptureDocumentMapOut: {
-            /** Annotations Version */
-            annotations_version: number;
             /**
              * Capture Id
              * Format: uuid
@@ -10695,6 +10708,8 @@ export interface components {
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Evidence Version */
+            evidence_version: number;
             /** Identity */
             identity: string;
             /** Markers */
@@ -10714,6 +10729,8 @@ export interface components {
              * Format: uuid
              */
             capture_id: string;
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -10787,6 +10804,11 @@ export interface components {
             position: null;
             /** Source */
             source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
+        };
+        /** ReaderCitationOccurrenceOut */
+        ReaderCitationOccurrenceOut: {
+            at: components["schemas"]["ReaderPointOut"] | null;
+            citation: components["schemas"]["CitationOut"];
         };
         /**
          * ReaderCursorEmpty
@@ -10895,15 +10917,15 @@ export interface components {
          * ReaderDocumentMapOut
          * @description Annotations over one publication: ``identity`` is the reader document's identity.
          *     ``publication_generation`` fences canonical owner offsets; null on transcripts.
-         *     ``annotations_version`` moves when the viewer's readable annotations of it change.
+         *     ``evidence_version`` moves when the viewer's readable annotations of it change.
          */
         ReaderDocumentMapOut: {
-            /** Annotations Version */
-            annotations_version: number;
             diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             evidence: components["schemas"]["ReaderEvidenceOut"];
+            /** Evidence Version */
+            evidence_version: number;
             /** Identity */
             identity: string;
             /** Markers */
@@ -11235,6 +11257,8 @@ export interface components {
         };
         /** ReaderPartDocumentOut */
         ReaderPartDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11321,6 +11345,8 @@ export interface components {
          *     public share, which grants no annotation authority.
          */
         ReaderPdfDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             file: components["schemas"]["ReaderPdfFileOut"];
             /** Identity */
             identity: string;
@@ -11595,6 +11621,8 @@ export interface components {
          *     are not canonically addressed (public shares).
          */
         ReaderTextDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -11644,6 +11672,8 @@ export interface components {
         };
         /** ReaderTranscriptDocumentOut */
         ReaderTranscriptDocumentOut: {
+            /** Citation Occurrences */
+            citation_occurrences: components["schemas"]["ReaderCitationOccurrenceOut"][];
             /** Embeds */
             embeds: components["schemas"]["DocumentEmbedOut"][];
             /** Identity */
@@ -13104,6 +13134,8 @@ export interface components {
         /** SourceAttributionOut */
         SourceAttributionOut: {
             activation: components["schemas"]["ResourceActivationOut"] | null;
+            /** Attribution Text */
+            attribution_text: string | null;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][] | null;
             /** Location Label */
@@ -13379,7 +13411,7 @@ export interface components {
         /** SourceTargetOut */
         SourceTargetOut: {
             /** Location */
-            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
+            location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["PointSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
             source_activation: components["schemas"]["ResourceActivationOut"] | null;
         };
         /** Stamp */
@@ -14479,13 +14511,13 @@ export interface components {
         };
         /**
          * WritingState
-         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``annotations_revision`` changes
-         *     whenever any of the viewer's media ``annotations`` lanes is bumped (a peer's or grant's
-         *     highlight change), so a mounted reader refetches its document map. Decimal counters.
+         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``evidence_revision`` changes
+         *     whenever a readable source's ``evidence`` lane changes. Source citations and
+         *     shared highlights refresh independently of authored writing. Decimal counters.
          */
         WritingState: {
-            /** Annotations Revision */
-            annotations_revision: string;
+            /** Evidence Revision */
+            evidence_revision: string;
             /** Revision */
             revision: string;
         };
