@@ -236,7 +236,10 @@ async function run(op: Operation, action: () => Promise<void>): Promise<void> {
       if (op.phase !== "unavailable") op.phase = op.destination === null ? "failed" : "saved";
     } else op.phase = op.unknown ? "unknown" : "failed";
     op.retryable = op.phase === "unavailable" || !TERMINAL.has(shown.code) && !isCaptureDefect(shown.code);
-  } finally { op.running = false; op.sent = false; push(); }
+  } finally {
+    op.running = false; op.sent = false; push();
+    if (op.failure === null && op.phase === "saved") void readReceipt(op);
+  }
 }
 async function requireOrigins(op: Operation, extra: string[] = []): Promise<boolean> {
   const missing: string[] = [];
@@ -304,7 +307,7 @@ async function add(op: Operation, needsPin = false): Promise<void> {
   if (op.write?.kind === "source") {
     op.sent = true;
     const result = await client.source(op.write.request, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
-    accepted(op, result.media_id, result.source_attempt_id); void readReceipt(op); return;
+    accepted(op, result.media_id, result.source_attempt_id); return;
   }
   if (op.bytes === null) {
     const acquired = await acquire(op);
@@ -323,7 +326,7 @@ async function add(op: Operation, needsPin = false): Promise<void> {
     const answer = await client.create(write.request, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
     op.sent = false; op.unknown = false;
     if (answer.kind === "Rejected") throw failure(answer.code, "nexus refused what arrived.", null, 422);
-    if (answer.kind === "Published") { accepted(op, answer.media_id, answer.source_attempt_id); void readReceipt(op); return; }
+    if (answer.kind === "Published") { accepted(op, answer.media_id, answer.source_attempt_id); return; }
     write.upload = answer;
     await putBytes(answer, bytes.blob, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
     write.uploaded = true;
@@ -341,7 +344,7 @@ async function add(op: Operation, needsPin = false): Promise<void> {
       && (error.status === 409 || VERIFICATION_REJECTIONS.has(error.failure.code))) { op.unknown = false; op.sent = false; }
     throw error;
   }
-  accepted(op, result.media_id, result.source_attempt_id); void readReceipt(op);
+  accepted(op, result.media_id, result.source_attempt_id);
 }
 function accepted(op: Operation, mediaId: string, attemptId: string | null): void {
   current(op); op.phase = "saved"; op.write = null; op.bytes = null; op.unknown = false; op.sent = false; op.failure = null;
@@ -444,7 +447,7 @@ function outsideContract(detail: string): CaptureFailureError {
   return failure("E_CAPTURE_CONTENT", "nexus couldn’t read this page.");
 }
 async function readReceipt(op: Operation): Promise<void> {
-  if (operation !== op || op.destination === null || op.reading !== null || op.write !== null || op.phase !== "saved" || !matches(op)) return;
+  if (operation !== op || op.running || op.destination === null || op.reading !== null || op.write !== null || op.phase !== "saved" || !matches(op)) return;
   const identity = session;
   if (identity === null) return;
   const destination = op.destination;
@@ -454,7 +457,7 @@ async function readReceipt(op: Operation): Promise<void> {
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
     const resolved = destination.source_attempt_id === null ? destination : await identity.client.sourceAttempt(destination.source_attempt_id, signal);
     const snapshot = await identity.client.item(resolved.media_id, signal);
-    if (operation !== op || session !== identity || op.destination !== destination || op.phase !== "saved" || op.write !== null || op.reading !== controller) return;
+    if (operation !== op || op.running || session !== identity || op.destination !== destination || op.phase !== "saved" || op.write !== null || op.reading !== controller) return;
     if (snapshot.summary.media_id !== destination.media_id && op.removal_preview !== null) {
       op.phase = "unavailable";
       op.failure = failure("E_CAPTURE_TARGET_CHANGED", "this item’s destination changed. keep the item, then check its current destination.").failure;
@@ -465,15 +468,20 @@ async function readReceipt(op: Operation): Promise<void> {
     op.destination = { media_id: snapshot.summary.media_id, source_attempt_id: resolved.source_attempt_id, settled: resolved.settled };
     op.item = snapshot; op.failure = null; op.retryable = false;
   } catch (error) {
-    if (operation !== op || session !== identity || op.destination !== destination || op.reading !== controller || controller.signal.aborted) return;
-    op.failure = await report(error); op.failure_attempt += 1; op.retryable = true;
+    if (operation !== op || op.running || session !== identity || op.destination !== destination || op.reading !== controller || controller.signal.aborted) return;
+    const shown = await report(error);
+    // Reporting a 401 retires this credential. Any new command still retires
+    // the read before its asynchronous failure can replace the current view.
+    if (operation !== op || op.running || op.destination !== destination || op.reading !== controller || controller.signal.aborted
+      || session !== identity && !(shown.status === 401 && session === null)) return;
+    op.failure = shown; op.failure_attempt += 1; op.retryable = true;
     if (op.failure.status === 404) { op.phase = "unavailable"; op.removal_preview = null; }
   } finally { if (op.reading === controller) op.reading = null; push(); }
   if (operation === op && op.phase === "saved" && op.failure === null && op.destination?.settled === false
     && [...views.values()].some(view => view.operation_id === op.id) && op.poll_index < RECEIPT_POLL_MS.length) {
     const delay = RECEIPT_POLL_MS[op.poll_index++];
     setTimeout(() => {
-      if ([...views.values()].some(view => view.operation_id === op.id)) void readReceipt(op);
+      if (op.failure === null && [...views.values()].some(view => view.operation_id === op.id)) void readReceipt(op);
     }, delay);
   }
 }
@@ -509,7 +517,6 @@ async function sendPlacement(op: Operation): Promise<void> {
   op.unknown = false; op.sent = false; op.write = null; op.failure = null;
   if (write.retaining) accepted(op, mediaId, op.item.source_attempt?.id ?? null);
   else op.phase = "saved";
-  void readReceipt(op);
 }
 async function itemCommand(op: Operation, command: ItemCommand): Promise<void> {
   if (op.running && command.kind === "permission") return;
@@ -581,7 +588,7 @@ async function resume(op: Operation): Promise<void> {
   if (!await requireOrigins(op) || !await ensureSession(op)) return;
   if (op.write?.kind === "removal") await sendRemoval(op);
   else if (op.write?.kind === "placement") await sendPlacement(op);
-  else if (op.destination !== null && op.write === null) { op.phase = "saved"; void readReceipt(op); }
+  else if (op.destination !== null && op.write === null) op.phase = "saved";
   else await add(op);
 }
 async function sendRemoval(op: Operation): Promise<void> {

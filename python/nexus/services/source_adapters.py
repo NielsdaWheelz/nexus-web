@@ -435,7 +435,9 @@ def publish_prepared_browser_article(
     metadata = prepared.article.metadata
     assert metadata is not None
     media.title = (
-        metadata.title.strip() or urlparse(prepared.article.document_url).hostname or "Untitled article"
+        metadata.title.strip()
+        or urlparse(prepared.article.document_url).hostname
+        or "Untitled article"
     )[:255]
     media.description = metadata.excerpt.strip()[:2000] or None
     media.publisher = metadata.site_name.strip()[:255] or None

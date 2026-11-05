@@ -56,6 +56,9 @@ copy, use only the bound observed preview/byline. omit unknown authors. physical
 default retention differs from effective all membership; settlement uses the former.
 library changes are absolute versioned writes through the shared placement owner.
 the picker retains query/focus/scroll while editing is temporarily disabled.
+receipt reads cannot start or publish while a command runs, including its
+preflight. successful commands refresh afterward; refusals retain their frozen
+checks and guards until an explicit read or new choice.
 
 whole-workspace removal fetches its acquisition revision before review. a later
 explicit add/filing, including a no-op, invalidates that review. an unavailable

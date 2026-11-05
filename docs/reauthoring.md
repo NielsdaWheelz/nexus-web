@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-one-click extension against `32b3a763c`: -544 net authored runtime lines
-(2,626 added, 3,170 deleted); migration 0334 adds 285 separately. source identity
+one-click extension against `32b3a763c`: -532 net authored runtime lines
+(2,638 added, 3,170 deleted); migration 0334 adds 285 separately. source identity
 replaces packet deduplication and manual repair bindings; one background operation
 replaces the destination draft/picker. app and extension share versioned filing,
 physical retention and acquisition-guarded removal. published browser imports use
