@@ -12,10 +12,16 @@ interface BoundShare {
   preview: Preview;
   article: boolean;
 }
-let dismiss: (() => void) | null = null;
+let invocation: { target: BoundShare; stop: () => void } | null = null;
+let pendingClick: Element | null = null;
 const SHARE = 'button[aria-label="Share post"],button[aria-label="Share article"],button[aria-label="Share"]';
 const POST = "article";
 const MENU_OPEN_MS = 2_000;
+const style = document.createElement("style");
+// Native focus-visible classes work without Base UI registration. Pointer hover
+// otherwise depends on Base UI's private highlighted-item state.
+style.textContent = '[data-nexus-share][role="menuitem"]:not([aria-disabled="true"]):hover { background-color: var(--x-hover-subtle); }';
+document.head.append(style);
 function own(root: Element, element: Element): boolean {
   if (element.closest(POST) !== root) return false;
   // Quoted posts use a nested link-shaped card, not necessarily another article.
@@ -86,17 +92,20 @@ function unchanged(value: BoundShare): boolean {
   const fresh = bound(value.button);
   return fresh !== null && fresh.owner === value.owner && fresh.target_url === value.target_url;
 }
-function visibleMenus(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('[role="menu"]')].filter(menu => menu.getClientRects().length > 0);
+function controlledMenu(button: Element): HTMLElement | null {
+  if (button.getAttribute("aria-expanded") !== "true") return null;
+  const ids = button.getAttribute("aria-controls")?.trim().split(/\s+/u) ?? [];
+  if (ids.length !== 1 || !ids[0]) return null;
+  const matches = document.querySelectorAll(`#${CSS.escape(ids[0])}`);
+  const menu = matches[0];
+  return matches.length === 1 && menu instanceof HTMLElement && menu.getAttribute("role") === "menu"
+    && menu.getClientRects().length > 0 ? menu : null;
 }
-document.addEventListener("click", event => {
-  if (!event.isTrusted || event.button !== 0 || !(event.target instanceof Element)) return;
-  const button = event.target.closest(SHARE);
-  if (button === null) return;
-  dismiss?.();
+function begin(button: Element): void {
+  if (invocation?.target.button === button && unchanged(invocation.target)) return;
+  invocation?.stop();
   const target = bound(button);
   if (target === null) return;
-  const existing = new Set(visibleMenus());
   let menu: HTMLElement | null = null;
   let row: HTMLElement | null = null;
   let submitted = false;
@@ -110,10 +119,10 @@ document.addEventListener("click", event => {
     window.removeEventListener("popstate", stop);
     window.removeEventListener("pagehide", stop);
     row?.remove();
-    if (dismiss === stop) dismiss = null;
+    if (invocation?.stop === stop) invocation = null;
   }
   function outside(click: MouseEvent): void {
-    if (click === event || !click.isTrusted || !(click.target instanceof Node)) return;
+    if (!click.isTrusted || !(click.target instanceof Node) || button.contains(click.target)) return;
     if (menu === null || !menu.contains(click.target)) stop();
   }
   function keydown(key: KeyboardEvent): void {
@@ -135,7 +144,7 @@ document.addEventListener("click", event => {
   }
   async function submit(): Promise<void> {
     if (submitted || row === null) return;
-    if (!unchanged(target!)) { row.textContent = "this post changed. open its share menu again."; row.setAttribute("aria-disabled", "true"); return; }
+    if (!unchanged(target!) || menu === null || controlledMenu(button) !== menu || !menu.contains(row)) { stop(); return; }
     submitted = true;
     row.setAttribute("aria-disabled", "true"); row.textContent = "saving to nexus…";
     const command: AddXCommand = { kind: "add_x", activation_id: crypto.randomUUID(), source_url: target!.source_url,
@@ -147,12 +156,12 @@ document.addEventListener("click", event => {
   }
   function observe(): void {
     if (!unchanged(target!)) { stop(); return; }
-    if (menu !== null) { if (!menu.isConnected || menu.getClientRects().length === 0) stop(); return; }
-    const candidates = visibleMenus().filter(value => !existing.has(value));
-    if (candidates.length !== 1) { if (candidates.length > 1) stop(); return; }
-    menu = candidates[0];
-    const native = menu.querySelector<HTMLElement>('[role="menuitem"]');
-    if (native === null) { menu = null; return; }
+    const controlled = controlledMenu(button);
+    if (menu !== null) { if (controlled !== menu || row === null || !menu.contains(row)) stop(); return; }
+    if (controlled === null) return;
+    const native = controlled.querySelector<HTMLElement>('[role="menuitem"]');
+    if (native === null) return;
+    menu = controlled;
     row = document.createElement("div");
     row.className = native.className;
     row.setAttribute("role", "menuitem"); row.tabIndex = native.tabIndex;
@@ -171,11 +180,46 @@ document.addEventListener("click", event => {
     });
     native.parentElement!.append(row);
   }
-  dismiss = stop;
+  invocation = { target, stop };
   document.addEventListener("click", outside, true);
   document.addEventListener("keydown", keydown, true);
   window.addEventListener("popstate", stop);
   window.addEventListener("pagehide", stop);
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "hidden", "aria-expanded"] });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true,
+    attributeFilter: ["style", "hidden", "id", "role", "href", "aria-expanded", "aria-controls"] });
   observe();
+}
+// X opens its top-level menu on mousedown or an arrow key, before (or without)
+// click. Pin first; its committed ARIA relation identifies the eventual portal.
+document.addEventListener("pointerdown", event => {
+  if (!event.isTrusted) return;
+  pendingClick = null;
+  if (!event.isPrimary || event.button !== 0 || !(event.target instanceof Element)) return;
+  const button = event.target.closest(SHARE);
+  if (button === null) return;
+  pendingClick = button;
+  begin(button);
 }, true);
+document.addEventListener("keydown", event => {
+  if (!event.isTrusted || event.repeat) return;
+  pendingClick = null;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+    || !["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key) || !(event.target instanceof Element)) return;
+  const button = event.target.closest(SHARE);
+  if (button === null) return;
+  if (event.key === "Enter" || event.key === " ") pendingClick = button;
+  begin(button);
+}, true);
+document.addEventListener("click", event => {
+  if (!event.isTrusted) return;
+  const primed = pendingClick;
+  pendingClick = null;
+  if (event.button !== 0 || !(event.target instanceof Element)) return;
+  const button = event.target.closest(SHARE);
+  // The native follow-up click must not restart an invocation whose owner
+  // changed or whose menu closed between pointerdown/keydown and click.
+  if (button === null || button === primed) return;
+  begin(button);
+}, true);
+document.addEventListener("pointercancel", () => { pendingClick = null; }, true);
+window.addEventListener("blur", () => { pendingClick = null; });
