@@ -21,12 +21,8 @@ stored event ids remain. local upload imports keep their existing ownership.
 old incompatible verified x snapshots require deliberate live repair before a
 native carrier import can attach; migration does not merge/relabel them.
 
-[wheel delivery](extension-popup-pointer-qualification.md)
-remains open by owner decision. [live x menus](extension-current-x-dom.md) support
-anonymous use and still need qualification; synthetic menus do not qualify them. owner targets:
-`https://x.com/ftlsid/status/1967396787544899649`,
-`https://x.com/wolftivy/status/2117900288770347078` and the full reading view at
-`https://x.com/chrislakin/article/2103620465029943764`.
+[wheel delivery](extension-popup-pointer-qualification.md) remains open by owner
+decision.
 
 the stopped qualification action in
 [the prior release issue](release-extension-uncertain-filing-refusal.md) remains
