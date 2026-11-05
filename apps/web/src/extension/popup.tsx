@@ -130,7 +130,8 @@ function Receipt({ op, signedIn }: { op: NonNullable<ViewState["operation"]>; si
   useLayoutEffect(() => {
     if (op.removal === "reviewing" && priorRemoval.current !== "reviewing") keep.current?.focus();
     else if (op.phase === "removed" && priorPhase.current !== "removed") result.current?.focus();
-    else if (op.removal === "idle" && priorRemoval.current === "reviewing") removalTrigger.current?.focus();
+    else if (op.removal === "idle" && priorRemoval.current !== null && priorRemoval.current !== "idle") removalTrigger.current?.focus();
+    else if (op.removal === "unknown" && priorRemoval.current !== null && priorRemoval.current !== "unknown" && document.activeElement === document.body) result.current?.focus();
     priorRemoval.current = op.removal; priorPhase.current = op.phase;
   }, [op.phase, op.removal]);
   const canonical = op.item?.has_readable_copy ? op.item.summary : null;

@@ -480,6 +480,7 @@ async function sendPlacement(op: Operation): Promise<void> {
   const mediaId = op.item.summary.media_id;
   const wasUnknown = op.unknown;
   op.sent = true;
+  push();
   try {
     await client.place(write.library_id, mediaId, write.request, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
   } catch (error) {
@@ -582,6 +583,7 @@ async function resume(op: Operation): Promise<void> {
 async function sendRemoval(op: Operation): Promise<void> {
   if (op.write?.kind !== "removal" || op.item === null) throw new Error("removal requires its frozen item");
   op.sent = true;
+  push();
   try { await account(op).client.removeItem(op.item.summary.media_id, op.write.request, AbortSignal.timeout(REQUEST_TIMEOUT_MS)); }
   catch (error) {
     // A newer acquisition fences this exact removal, including an unanswered
