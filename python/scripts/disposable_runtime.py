@@ -357,6 +357,7 @@ def restore_database(
             restore_path,
         ],
         env=compose_env,
+        timeout=1200,
         log=run_dir / "database-restore.log",
     )
 

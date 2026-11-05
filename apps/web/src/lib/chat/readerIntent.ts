@@ -16,9 +16,8 @@ import { apiFetch, type ApiPath } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { isCanonicalUuid } from "@/lib/validation";
 
-// A reader quote is identified only by its (media, highlight) pair; the server
-// derives the passage from the locked highlight at send. A launch carries the
-// pair in the destination pane's hash: `#mediaId=<uuid>&highlightId=<uuid>`.
+// Saved-highlight links name a key; raw passage launches transfer their capture
+// directly into the destination's retained draft.
 
 export type ReaderSelectionKey = Readonly<{
   mediaId: string | null;
