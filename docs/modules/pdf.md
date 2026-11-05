@@ -22,6 +22,11 @@ PDF source acceptance is owned by `media_source_ingest.py`.
 Retry and refresh create a new source attempt. Routes and UI clients do not
 enqueue source-specific or retrieval jobs directly.
 
+browser publication replaces the source's title, description and complete author
+slice with its reader. an absent title becomes `Untitled PDF`; absent subject and
+author clear the prior values. ordinary imports keep their supplemental metadata
+policy. the caller selects this policy explicitly at `publish_pdf_plan`.
+
 ## Browse
 
 PDF Browse is Nexus-only. The read-only Nexus adapter searches viewer-visible

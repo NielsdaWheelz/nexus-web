@@ -646,7 +646,8 @@ def publish_prepared_file(
     if (fetched := prepared.remote_file) is not None:
         media.canonical_source_url = normalize_url_for_display(fetched.final_url)
         media.updated_at = func.now()
-    if attempt.source_type in (st.BROWSER_PDF_CAPTURE, st.BROWSER_EPUB_CAPTURE):
+    browser_capture = attempt.source_type in (st.BROWSER_PDF_CAPTURE, st.BROWSER_EPUB_CAPTURE)
+    if browser_capture:
         payload = require_browser_publication_base(db, media_id=media_id, attempt=attempt)
         media.browser_capture_sha256 = payload.sha256
         from nexus.services.media_source_ingest import require_unpublished_document
@@ -658,7 +659,9 @@ def publish_prepared_file(
             db,
             media_id=media_id,
             expected_kind="pdf",
-            replace_projection=lambda locked: publish_pdf_plan(db, locked, plan),
+            replace_projection=lambda locked: publish_pdf_plan(
+                db, locked, plan, metadata_policy="replace" if browser_capture else "supplement"
+            ),
             issues=(),
             source_file=source_file,
         )
@@ -667,7 +670,9 @@ def publish_prepared_file(
             db,
             media_id=media_id,
             expected_kind="epub",
-            replace_projection=lambda locked: publish_epub_plan(db, locked, plan),
+            replace_projection=lambda locked: publish_epub_plan(
+                db, locked, plan, metadata_policy="replace" if browser_capture else "supplement"
+            ),
             issues=plan.source_issues,
             source_file=source_file,
         )

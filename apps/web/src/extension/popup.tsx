@@ -134,6 +134,7 @@ function Receipt({ op, signedIn }: { op: NonNullable<ViewState["operation"]>; si
     priorRemoval.current = op.removal; priorPhase.current = op.phase;
   }, [op.phase, op.removal]);
   const canonical = op.item?.has_readable_copy ? op.item.summary : null;
+  const removalPreview = op.removal_preview;
   const title = canonical?.title ?? op.preview.title ?? op.item?.summary.title ?? op.host;
   const authors = canonical === null ? op.preview.byline : selectMediaAuthors(canonical.contributors).map(creditName).filter(value => value !== null).map(value => value.label).join(", ");
   const line = status(op);
@@ -164,8 +165,8 @@ function Receipt({ op, signedIn }: { op: NonNullable<ViewState["operation"]>; si
     {op.item !== null && op.phase !== "removed" ? <Libraries op={op} editable={editable} /> : null}
     {op.phase === "saved" && op.item !== null && op.removal === "idle" ? <Button ref={removalTrigger} disabled={!editable}
       onClick={() => send({ kind: "review_removal" })}>remove from nexus…</Button> : null}
-    {op.removal_preview !== null && op.removal !== "unknown" ? <section className={styles.review} aria-label="review removal">
-      <p className={styles.fine}>{MEDIA_REMOVAL_CONFIRMATION.body.replace("{title}", op.removal_preview.title)}</p>
+    {removalPreview !== null && op.removal !== "unknown" ? <section className={styles.review} aria-label="review removal">
+      <p className={styles.fine}>{MEDIA_REMOVAL_CONFIRMATION.body.replaceAll("{title}", () => removalPreview.title)}</p>
       <div className={styles.actions}><Button ref={keep} disabled={op.busy} onClick={() => send({ kind: "cancel_removal" })}>keep item</Button>
         <Button emphasis="strong" tone="danger" disabled={op.busy || op.phase !== "saved" || !op.account_matches} onClick={() => send({ kind: "remove" })}>{MEDIA_REMOVAL_CONFIRMATION.title}</Button></div>
     </section> : null}

@@ -114,6 +114,12 @@ overlong/ambiguous entities are reported and withheld. more than twenty credits
 in one role leaves the entire role unobserved, rather than publishing an incomplete
 first twenty. ordinary source job results retain these observation issues.
 
+browser publication replaces the source's descriptive/edition fields and always
+observes the complete author slice, including empty. an absent opf title becomes
+`Untitled EPUB`, never a verification-object name. ordinary imports retain their
+supplemental fields and filename fallback. `publish_epub_plan` requires the caller
+to choose the metadata policy; all facts commit with the reader.
+
 ## Bounded Parse
 
 `epub_ingest.py` reads each spine document from the archive twice (staged with its

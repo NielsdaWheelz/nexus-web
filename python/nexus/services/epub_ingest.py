@@ -173,7 +173,7 @@ class EpubContributorIssue:
 
 @dataclass(frozen=True)
 class _OpfMetadata:
-    title: str
+    title: str | None
     publisher: str | None
     language: str | None
     description: str | None
@@ -485,7 +485,7 @@ def _parse(
     if opf is None:
         raise ApiError(ApiErrorCode.E_INVALID_FILE_TYPE, "Failed to parse OPF")
     manifest = _parse_manifest(opf, posixpath.dirname(opf_path))
-    metadata = _extract_opf_metadata(opf, storage_path)
+    metadata = _extract_opf_metadata(opf)
     package = _Package(
         zf=zf,
         media_id=media_id,
@@ -717,7 +717,13 @@ def _parse(
     )
 
 
-def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOutcome:
+def publish_epub_plan(
+    db: Session,
+    media: Media,
+    plan: EpubPlan,
+    *,
+    metadata_policy: Literal["replace", "supplement"],
+) -> SourceRunOutcome:
     """Install the plan's rows and metadata inside the caller's publication.
 
     An epub publishes once (`replace_reader_publication` refuses a second), so there is
@@ -773,17 +779,31 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
         status="ready" if plan.apparatus_items else "empty",
     )
     metadata = plan.metadata
-    media.title = metadata.title
-    if metadata.publisher and not media.publisher:
-        media.publisher = metadata.publisher[:255]
-    if metadata.language and not media.language:
-        media.language = metadata.language[:32]
-    if metadata.description and not media.description:
-        media.description = metadata.description[:2000]
-    if metadata.edition_published_date is not None:
+    title = metadata.title
+    if title is None and metadata_policy == "supplement":
+        base = posixpath.basename(plan.storage_path)
+        if "." in base:
+            name = base.rsplit(".", 1)[0].strip()
+            if name and name.lower() != "original":
+                title = _normalize_title(name)
+    media.title = title or "Untitled EPUB"
+    if metadata_policy == "replace":
+        media.publisher = metadata.publisher[:255] if metadata.publisher else None
+        media.language = metadata.language[:32] if metadata.language else None
+        media.description = metadata.description[:2000] if metadata.description else None
         media.edition_published_date = metadata.edition_published_date
-    if metadata.edition_isbn is not None:
         media.edition_isbn = metadata.edition_isbn
+    else:
+        if metadata.publisher and not media.publisher:
+            media.publisher = metadata.publisher[:255]
+        if metadata.language and not media.language:
+            media.language = metadata.language[:32]
+        if metadata.description and not media.description:
+            media.description = metadata.description[:2000]
+        if metadata.edition_published_date is not None:
+            media.edition_published_date = metadata.edition_published_date
+        if metadata.edition_isbn is not None:
+            media.edition_isbn = metadata.edition_isbn
     db.flush()
     projection.refresh(db, "fragment", [fragment.id for fragment in plan.fragments])
     diagnostics: SourceDiagnostics = {
@@ -791,7 +811,7 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
         "fragment_count": len(plan.fragments),
         "toc_node_count": len(plan.toc_nodes),
         "asset_count": len(plan.assets),
-        "title": metadata.title,
+        "title": media.title,
     }
     for issue in metadata.contributor_issues:
         logger.warning(
@@ -804,10 +824,17 @@ def publish_epub_plan(db: Session, media: Media, plan: EpubPlan) -> SourceRunOut
         diagnostics["contributor_issues"] = [
             {"code": issue.code, "detail": issue.detail} for issue in metadata.contributor_issues
         ]
+    observation = metadata.contributor_observation
+    if metadata_policy == "replace":
+        observation = (
+            ObservedRoleSlices(observation.managed_roles | {"author"}, observation.credits)
+            if isinstance(observation, ObservedRoleSlices)
+            else ObservedRoleSlices(frozenset({"author"}), ())
+        )
     return SourceRunOutcome(
         diagnostics=diagnostics,
         observations=source_contributor_observations(
-            media_id=media.id, observation=metadata.contributor_observation, source="epub_opf"
+            media_id=media.id, observation=observation, source="epub_opf"
         ),
         metadata_enrichment=True,
     )
@@ -990,17 +1017,12 @@ def _parse_spine(opf: ET.Element) -> list[_SpineItem]:
     ]
 
 
-def _resolve_title(opf: ET.Element, storage_path: str) -> str:
+def _resolve_title(opf: ET.Element) -> str | None:
     for path in (".//opf:metadata/dc:title", ".//opf:metadata/title", ".//title"):
         element = opf.find(path, _NS)
         if element is not None and element.text and element.text.strip():
             return _normalize_title(element.text.strip())
-    base = posixpath.basename(storage_path)
-    if "." in base:
-        name = base.rsplit(".", 1)[0].strip()
-        if name and name.lower() != "original":
-            return _normalize_title(name)
-    return "Untitled EPUB"
+    return None
 
 
 def _normalize_title(raw: str) -> str:
@@ -1008,7 +1030,7 @@ def _normalize_title(raw: str) -> str:
     return title[:255] if title else "Untitled EPUB"
 
 
-def _extract_opf_metadata(opf: ET.Element, storage_path: str) -> _OpfMetadata:
+def _extract_opf_metadata(opf: ET.Element) -> _OpfMetadata:
     """Read Dublin Core metadata, keeping only unambiguous dates and ISBNs."""
     observation, issues = _extract_opf_contributors(opf)
     publisher = opf.findtext(".//opf:metadata/dc:publisher", namespaces=_NS)
@@ -1040,7 +1062,7 @@ def _extract_opf_metadata(opf: ET.Element, storage_path: str) -> _OpfMetadata:
     selected = primary_isbns or isbns
 
     return _OpfMetadata(
-        title=_resolve_title(opf, storage_path),
+        title=_resolve_title(opf),
         contributor_observation=observation,
         contributor_issues=issues,
         publisher=publisher.strip() or None if publisher is not None else None,
