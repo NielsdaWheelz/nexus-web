@@ -102,7 +102,9 @@ incomplete owned cleanup turns success into exit 125 and retains recovery inputs
 `--database-backup FILE` restores a supplied postgres custom-format backup into
 the fresh owned database before migrations, api and workers start. restoration
 is transactional and stops on errors; the normal migration/bootstrap/teardown
-path remains authoritative. auth and object storage are separate owners: drivers
+path remains authoritative. restored runs rebuild planner statistics after
+migration and before application writers; [pg15 dumps omit those statistics](https://www.postgresql.org/docs/15/app-pgdump.html#APP-PGDUMP-NOTES).
+auth and object storage are separate owners: drivers
 must establish matching authorized accounts and retained source objects when
 their journey requires them. never overwrite a running lab database to simulate
 an upgrade.

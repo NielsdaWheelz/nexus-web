@@ -1147,6 +1147,30 @@ def main() -> int:
             cwd=ROOT / "migrations",
             log=run_dir / "migration.log",
         )
+        if args.database_backup is not None:
+            phase = "database analyze"
+            message("database analyze: rebuilding planner statistics before application writers")
+            command(
+                compose
+                + [
+                    "exec",
+                    "-T",
+                    "postgres",
+                    "psql",
+                    "-X",
+                    "-U",
+                    "postgres",
+                    "--dbname",
+                    "postgres",
+                    "--set",
+                    "ON_ERROR_STOP=1",
+                    "--command",
+                    "ANALYZE",
+                ],
+                env=compose_env,
+                timeout=1200,
+                log=run_dir / "database-analyze.log",
+            )
         phase = "api"
         start(
             "api",
