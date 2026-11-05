@@ -1,4 +1,4 @@
-"""Exact saved-source identity for extension acquisition and native article discovery.
+"""Saved-source identity for extension acquisition and native article discovery.
 
 Lookup reserves nothing. Admission repeats the same lookup under the source lock,
 then locks the chosen media and checks the frozen latest attempt. Browser bytes
@@ -34,7 +34,7 @@ from nexus.schemas.x_source import XPriorSource
 from nexus.services import library_entries
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
-from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.url_normalize import normalize_url_for_identity, validate_requested_url
 from nexus.services.x_identity import (
     classify_x_article_carrier_url,
     classify_x_article_url,
@@ -135,7 +135,7 @@ def matching_media(
     elif source.x_article_id is not None:
         candidates = article_candidates(db, source.x_article_id)
     else:
-        url = normalize_url_for_display(source_url)
+        url = normalize_url_for_identity(source_url)
         media_by_id = {
             media.id: media
             for media in db.scalars(
@@ -169,7 +169,7 @@ def matching_media(
         candidates = [
             media_by_id[media_id]
             for media_id, urls in provenance.items()
-            if any(value and normalize_url_for_display(value) == url for value in urls)
+            if any(value and normalize_url_for_identity(value) == url for value in urls)
         ]
     visible = [media for media in candidates if media.id in visible_ids]
     if len(visible) > 1:
@@ -209,7 +209,7 @@ def lock_target(
         if target is None and article_candidates(db, source.x_article_id):
             raise changed_target()
     else:
-        sa.lock_identity(db, f"web:{normalize_url_for_display(source_url)}")
+        sa.lock_identity(db, f"web:{normalize_url_for_identity(source_url)}")
     media = matching_media(db, viewer_id=viewer_id, source_url=source_url, source=source)
     if target is None:
         if media is not None:

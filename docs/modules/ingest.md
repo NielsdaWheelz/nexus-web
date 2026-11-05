@@ -149,6 +149,14 @@ job: `ingest_media_source {media_id, attempt_id, actor_user_id, request_id}` (ba
 
 ## invariants
 
+- web source comparison and admission locks use `url_normalize.normalize_url_for_identity`:
+  display normalization minus its closed tracking-parameter set. names are decoded
+  and matched case-sensitively; retained query components keep their bytes, order
+  and duplicates. lookup applies this to existing media, attempt and upload provenance.
+  acquisition urls and stored provenance retain tracking parameters. website admission
+  keeps its first-attempt/final-url selection rules; extension lookup keeps its visible
+  provenance selection. ambiguous matches refuse; existing duplicates are never merged
+  by this identity rule.
 - **I1** a run writes only inside `run_source_publication_phase`: media rows locked ascending, then the attempt, which must be the job's, in flight and latest, with the queue claim live.
 - **I2** only the latest attempt may publish. ordinary url admission can join it; a fresh extension acquisition supersedes unreadable pending work and retires its waiting job. historical nonlatest attempts confer no publication authority.
 - **I3** a terminal failure writes the attempt's `error_code` and the media's `last_error_code` in one transaction (a podcast transcript fails through its transcript owner and leaves the episode readable; a media whose publication is retained stays ready and the attempt alone carries the failure).
