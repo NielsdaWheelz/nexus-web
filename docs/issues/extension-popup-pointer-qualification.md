@@ -12,6 +12,10 @@ they did not establish wheel delivery. this is a tooling limit, not evidence of 
 product scrolling defect. the 2026-11-04 owner decision is to continue headless and
 leave this qualification open; visible/native desktop verification was declined.
 
+2026-11-05 disposition for `191ae44612d22626251a0d17950d3077d89650da`:
+`NOT_RUN`, owner-deferred. the separate waiver of the signed extension's installed
+smoke check does not expand desktop approval or qualify wheel delivery.
+
 owners: `apps/web/src/extension/popup.tsx` and the native firefox qualification
 caller of `python/scripts/lab_firefox.py`. establish the supported wheel input
 context without geometry changes, javascript scrolling or a product seam.
