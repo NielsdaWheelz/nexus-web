@@ -8,7 +8,6 @@ import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceActions from "@/components/resources/ResourceActions";
 import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
 import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
-import { mediaByline } from "@/lib/media/mediaByline";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import { resourceMetadata } from "@/lib/resources/metadata";
 import type { ResourceItem } from "@/lib/resources/items";
@@ -21,7 +20,7 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { itemMediaKind, resourceType, resourceTypeName } from "@/lib/resources/type";
 import { ExcerptText, ResourceIndexBody, type ResourceMatch } from "./ResourceBody";
 import { FullResourceBody } from "./ExcerptDisclosure";
-import IndexBibliography, { type IndexByline } from "./IndexBibliography";
+import IndexBibliography from "./IndexBibliography";
 import ResourceMetadata from "./ResourceMetadata";
 import ContextualActionMenu from "./ContextualActionMenu";
 import { ResourceIndexTitle } from "./ResourceType";
@@ -122,20 +121,20 @@ export default function ResourceIndexRow({
   const menuLabel = `more actions for ${currentLabel}${attention ? `: ${attention}` : ""}`;
   const rowMetadata = presentation.kind === "Search" ? <span className={styles.metadata}>
     {unavailable ? <span className={styles.reason}>{item.missing ? "resource unavailable" : "can’t open here"}</span> : null}
-    {summary ? <MediaIdentity subject={{ kind: "Stored", summary }} returnFocus={returnFocus} /> : <IndexBibliography byline={{ kind: "Authors", contributors }} originalPublishedDate={null} returnFocus={returnFocus} />}
+    {summary ? <MediaIdentity subject={{ kind: "Stored", summary }} returnFocus={returnFocus} /> : <IndexBibliography show={null} contributors={contributors} originalPublishedDate={null} returnFocus={returnFocus} />}
     {parts.length ? <span className={styles.context}><ResourceMetadata parts={parts} linkSource={true} /></span> : null}
   </span> : null;
   const contextParts = metadata.parts.filter(part => part.key === "source" || (status === null && part.key === "role"));
   const locationParts = status === null ? metadata.parts.filter(part => part.key === "location") : [];
   if (parsed.scheme === "note_block" || (status === null && body.kind === "reference")) contextParts.unshift({ kind: "text", key: "identity", text: typeLabel, href: null, date: null });
-  const contextByline: IndexByline | null = status !== null ? { kind: "Authors", contributors: source?.contributors ?? [] }
-    : summary !== null ? mediaByline(summary, null) : { kind: "Authors", contributors };
+  const contextContributors = status !== null ? source?.contributors ?? [] : summary?.contributors ?? contributors;
   const contextReason = item.missing ? "resource unavailable" : item.activation.unavailable_reason === "location_unavailable" ? "quoted location unavailable"
     : item.activation.unavailable_reason === "source_unavailable" ? "source unavailable" : item.activation.kind === "none" ? "can’t open here" : null;
   const contextMetadata = <span className={`${styles.metadata} ${styles.contextMetadata}`}>
     {status === null && contextReason ? <span className={styles.reason}>{contextReason}</span> : null}
     {contextParts.length ? <span className={styles.context}><ResourceMetadata parts={contextParts} linkSource={true} /></span> : null}
-    <IndexBibliography byline={contextByline} originalPublishedDate={status === null ? summary?.original_published_date ?? null : null} returnFocus={returnFocus} />
+    <IndexBibliography show={status === null ? summary?.show ?? null : null} contributors={contextContributors}
+      originalPublishedDate={status === null ? summary?.original_published_date ?? null : null} returnFocus={returnFocus} />
     {locationParts.length ? <span className={styles.context}><ResourceMetadata parts={locationParts} linkSource={true} /></span> : null}
     {status === null && summary?.part_source ? <span className={styles.context}>from {summary.part_source.title}</span> : null}
   </span>;

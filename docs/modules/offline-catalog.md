@@ -12,7 +12,10 @@ no command. hosted reads keep their existing owners.
 the existing bff exposes `/api/offline-catalog`. query parameters are refused.
 responses require the current wire revision and are private/no-store.
 
-format 2 adds the positive decimal-string `consumption_revision`, each episode’s
+format 3 requires every episode summary’s canonical `show` and rejects every
+older format through the existing incompatible/online-rebuild outcome. replacement
+never purges downloads or authored data. it retains the positive decimal-string
+`consumption_revision`, each episode’s
 raw `consumption` and nullable `source_duration_ms`, and each media’s raw nullable
 `remaining_seconds`. source duration may change with feed metadata independently
 of the consumption watermark; a stored listening duration of zero stays unknown.

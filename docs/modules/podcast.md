@@ -336,13 +336,26 @@ alt text and no duplicate accessible name. image delivery retains original bytes
 and the existing private one-day cache. next can report cached failures through
 `onLoad`; readiness requires positive `naturalWidth`.
 
-episode index rows carry no artwork. `MediaSummaryOut.show` (`podcast_id`, `title`,
-`image_url`), null exactly for media without a `podcast_episodes` row, puts the
-show's name where a work's authors stand, as a credit link to its page; the
-show's own page omits it. `mediaByline` decides that byline once: rows draw it,
-list filters (`mediaListFilterFields`) match it, and the live queue capture behind
-their play (`playback_snapshot.py`) matches the same names: the show's, never an
-episode's authors.
+episode collection indexes carry no artwork. `MediaSummaryOut.show` (`podcast_id`,
+`title`, `image_url`) is non-null exactly for episodes; the sole summary constructor
+requires the catalogue identity, independent of following or playback settings.
+indexes and live episode outline entries show linked show, ordered authors and
+the existing publication date. a matching show's own episode list passes
+`containingPodcastId` and omits only its show. same-pane outlines retain it.
+captured citations, passages and highlights gain no live show enrichment.
+
+show observations share the existing accepted-publication effect. its account/show
+title record survives loading, failure and descriptor changes. the first fresh live
+observation and changed titles record before publishing `Podcasts`; equal titles
+and catalog reads never publish it. the existing summary owner then refreshes all
+retained episodes in batches, including episodes outside the displayed selection.
+`Entries` comparison remains descriptor-keyed; transcript retry remains separate.
+there is no new polling clock or targeted invalidation cache.
+
+bibliography and filtering have separate contracts. `mediaListFilterFields` keeps
+released episode matching: title plus show in mixed indexes; title alone on the
+show's own list. authors remain visible without becoming episode filter fields.
+`playback_snapshot.py` uses the same selection semantics.
 
 saved defaults belong to the viewer/show independently of subscriptions. new
 speed choices use `0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3`. player and podcast

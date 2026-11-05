@@ -25,7 +25,6 @@ import { catalogLine } from "@/lib/catalog/copy";
 import { Ruling } from "@/components/feedback/Ruling";
 import PodcastImportProgress from "@/components/podcasts/PodcastImportProgress";
 import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
-import { ShowPage } from "@/components/media/MediaIdentity";
 import { ContributorCreditList, ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -42,7 +41,7 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
-import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { shouldPollTranscriptProvisioning } from "@/lib/media/transcriptView";
 import {
   usePaneIsActive,
@@ -212,7 +211,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     [loaded, summaries],
   );
   const matching = (text: string) => resolved.filter(episode =>
-    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary.title, mediaByline(episode.media_summary, podcastId))));
+    matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, { containingPodcastId: podcastId })));
 
   const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
   const provisioning = episodeItems.some(episode => shouldPollTranscriptProvisioning(episode.transcript_state));
@@ -227,13 +226,20 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     publicationData.podcast.imports.map(operation => [operation.id, operation.updated_at]).sort((a, b) => a[0].localeCompare(b[0])),
   ]), [publicationData]);
   const observedPublication = useRef<{ key: string; signature: string } | null>(null);
+  const showKey = `${ctx.accountId}:${podcastId}`;
+  const showTitle = publicationData?.podcast.podcast.title ?? null;
+  const observedShow = useRef<{ key: string; title: string } | null>(null);
   useEffect(() => {
     if (observedPublication.current?.key !== publicationKey) observedPublication.current = null;
     if (publication === null) return;
     const previous = observedPublication.current;
     observedPublication.current = { key: publicationKey, signature: publication };
     if (previous !== null && previous.signature !== publication) publishChange("Entries");
-  }, [publication, publicationKey]);
+    if (showTitle !== null && (observedShow.current?.key !== showKey || observedShow.current.title !== showTitle)) {
+      observedShow.current = { key: showKey, title: showTitle };
+      publishChange("Podcasts");
+    }
+  }, [publication, publicationKey, showKey, showTitle]);
 
   const { fail } = useOutcome();
   const throwLater = useThrowLater();
@@ -462,7 +468,6 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               return capturePlaybackSource({ source: { kind: "Podcast", podcast_id: podcastId, query: text, state: known, sort: sourceSort }, selected_media_id });
             }}>
             <PaneSection title="episodes">
-            <ShowPage value={podcastId}>
             <CollectionView geometry="UniformIndex"
               surface={false}
               returnScope="PodcastDetail.Episodes"
@@ -472,11 +477,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
               }))}
               status={episodes.status === "loading" ? "loading" : "ready"}
               ariaLabel="Episodes"
+              renderRow={props => <CollectionRow {...props} containingPodcastId={podcastId} />}
               collectionBusy={busy}
               anchorKey={text}
               empty={<Fact line={{ fact: emptyTitle }} />}
             />
-            </ShowPage>
             </PaneSection>
             </PlaybackSourceContext.Provider>
           )}

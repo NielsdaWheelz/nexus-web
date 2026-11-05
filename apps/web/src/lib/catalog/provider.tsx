@@ -47,7 +47,7 @@ function createOwner(accountId: string) {
         }
         const envelope: { data: OfflineCatalog } | null = response.status === 204 ? null : await response.json();
         if (controller.signal.aborted || generation !== epoch || stopped) return;
-        if (envelope !== null && (envelope.data.account_id !== accountId || envelope.data.wire_revision !== WIRE_REVISION || envelope.data.format_version !== 2))
+        if (envelope !== null && (envelope.data.account_id !== accountId || envelope.data.wire_revision !== WIRE_REVISION || envelope.data.format_version !== 3))
           throw new ApiError(0, "E_CATALOG_INCOMPATIBLE", "saved catalog needs an online rebuild");
         const data = envelope === null ? null : indexCatalog(envelope.data);
         publish({ ...state, data, loading: false, error: null });

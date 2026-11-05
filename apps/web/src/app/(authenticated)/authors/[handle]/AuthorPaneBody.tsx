@@ -38,7 +38,7 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
-import { mediaByline, mediaListFilterFields } from "@/lib/media/mediaByline";
+import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import {
   usePaneIsActive,
   usePaneParam,
@@ -172,13 +172,13 @@ function AuthorPane({ handle }: { readonly handle: string }) {
   const matches = useCallback(
     (text: string) =>
       rows.filter((row) => {
-        // A stored work's row draws its line from the summary; any other row, from its authors.
+        // Stored media keep queue capture's filter contract; external works match authors.
         const subject = row.resourceActions?.kind === "Media" ? row.resourceActions.subject : null;
         return matchesPaneFilterQuery(
           text,
           subject?.kind === "Stored"
-            ? mediaListFilterFields(subject.summary.title, mediaByline(subject.summary, null))
-            : mediaListFilterFields(row.title.text, { kind: "Authors", contributors: row.contributors }),
+            ? mediaListFilterFields(subject.summary)
+            : mediaListFilterFields({ title: row.title.text, contributors: row.contributors, show: null }),
         );
       }),
     [rows],

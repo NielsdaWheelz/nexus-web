@@ -183,7 +183,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
     }
     chat_rows = _ranked(db, conversation_index_rows_sql(), updated_plans, params)
     return wire.OfflineCatalogOut(
-        format_version=2,
+        format_version=3,
         wire_revision=WIRE_REVISION,
         account_id=viewer_id,
         snapshot_id=uuid4(),
