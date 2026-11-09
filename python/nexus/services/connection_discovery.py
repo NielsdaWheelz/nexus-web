@@ -8,8 +8,8 @@ or anchor counts as its media): the source's own work and works it already
 relates to. Removing an edge does not prevent a later scan from proposing it.
 Only publication retries, as one fresh serializable database attempt with its
 claim fence and source clock; generation stays outside that retry boundary.
-Only observed admission contention refunds an attempt. Setup and computation expiry
-spend the queue's ordinary failure budget.
+Admission waits keep the execution count and do not spend the failure allowance.
+Publication commits its exact queue completion beside the replacement edges.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ from nexus.services.suggestion_changes import record_input_change
 
 logger = get_logger(__name__)
 
-ScanStatus = Literal["idle", "pending", "running", "failed"]
+ScanStatus = Literal["idle", "pending", "running", "failed", "held"]
 ScanResult = Literal["ok", "skipped", "terminal_failed"]
 _MAX_CANDIDATES = 12
 _MAX_EDGES = 4
@@ -180,6 +180,8 @@ def scan_state(
     if row is None:
         return "idle", None
     status, result = row
+    if status == "held":
+        return "held", None
     if status in ("pending", "failed"):
         return "pending", None
     if status == "running":
@@ -220,7 +222,13 @@ def connection_discovery_scan_job(
 
             async with open_control_async_session() as control:
                 return await control.run_sync(defer)
-        return {"status": status, "error_code": error_code, "ref": ref.uri}
+        result = {"status": status, "error_code": error_code, "ref": ref.uri}
+
+        def finish() -> queue.JobResult:
+            queue.finish_job(db, context=context, result=result)
+            return result
+
+        return retry_serializable(db, "connection_discovery.finish", finish)
 
     return run_generation_job("connection_discovery_scan", context, handle)
 
@@ -323,6 +331,11 @@ def _publish(
             ],
         )
         record_input_change(db, owners=[ref.uri])
+        queue.finish_job(
+            db,
+            context=context,
+            result={"status": "ok", "error_code": None, "ref": ref.uri},
+        )
         return "ok", None
 
     return retry_serializable(db, "connection_discovery.publish", attempt)
@@ -339,6 +352,10 @@ def _source_context(
     kin: frozenset[ResourceRef] = frozenset()
     if ref.scheme == "media":
         unit = get_media_unit(db, media_id=ref.id)
+        if unit == NotReady.Held:
+            raise queue.JobFailure(
+                "E_CONNECTION_SOURCE_HELD", "the source summary needs a repair", "hold"
+            )
         if isinstance(unit, NotReady):
             return None
         claims = "\n".join(f"- {claim.claim_text}" for claim in unit.claims)

@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 19;
+export const WIRE_REVISION = 20;
 
 export interface paths {
     "/assistant-writes": {
@@ -2116,26 +2116,6 @@ export interface paths {
          * @description A resend after the job landed answers that job (it is newer than ``expected_job_id``).
          */
         post: operations["enrich_media_metadata_media__media_id__metadata_enrichment_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_id}/metadata-enrichment/{job_id}/review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Review Media Metadata Result
-         * @description Idempotent: an existing review stands.
-         */
-        post: operations["review_media_metadata_result_media__media_id__metadata_enrichment__job_id__review_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4562,7 +4542,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "idle" | "pending" | "running" | "failed";
+            status: "idle" | "pending" | "running" | "held" | "failed";
         };
         /** ConnectionDiscoveryScanRequest */
         ConnectionDiscoveryScanRequest: {
@@ -4775,21 +4755,6 @@ export interface components {
             activity: components["schemas"]["ActivityStatsSectionOut"];
             completion: components["schemas"]["CompletionStatsSectionOut"];
             retained_artifacts: components["schemas"]["RetainedArtifactsOut"];
-        };
-        /** ContainerDiscrepancy */
-        ContainerDiscrepancy: {
-            /** Explanation */
-            explanation: string;
-            field: components["schemas"]["ContainerDiscrepancyField"];
-        };
-        /** @enum {string} */
-        ContainerDiscrepancyField: "title" | "contributors" | "original_published_date" | "edition_published_date" | "edition_isbn" | "publisher" | "language";
-        /** ContainerReport */
-        ContainerReport: {
-            /** Discrepancies */
-            discrepancies: components["schemas"]["ContainerDiscrepancy"][];
-            /** Source Title */
-            source_title: string;
         };
         /** ContentsPart */
         ContentsPart: {
@@ -8289,7 +8254,6 @@ export interface components {
              * Format: date-time
              */
             completed_at: string;
-            container_report: components["schemas"]["ContainerReport"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8301,9 +8265,6 @@ export interface components {
              * @constant
              */
             status: "completed";
-            /** Unresolved Fields */
-            unresolved_fields: components["schemas"]["MetadataField"][];
-            web_search: components["schemas"]["MetadataWebSearch"] | null;
         };
         /** MetadataCompletedOperation */
         MetadataCompletedOperation: {
@@ -8399,17 +8360,12 @@ export interface components {
             status: "failed";
         };
         /** @enum {string} */
-        MetadataFailureCode: "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "source_context_missing" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed";
+        MetadataFailureCode: "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "source_context_missing" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed" | "superseded" | "no_result" | "memory_exhausted" | "execution_timeout" | "invalid_configuration";
         /** @enum {string} */
         MetadataField: "title" | "contributors" | "original_published_date" | "edition_published_date" | "edition_isbn" | "publisher" | "language" | "description";
-        /** MetadataNoFindingsOperation */
-        MetadataNoFindingsOperation: {
-            /**
-             * Completed At
-             * Format: date-time
-             */
-            completed_at: string;
-            container_report: components["schemas"]["ContainerReport"] | null;
+        /** MetadataHeldOperation */
+        MetadataHeldOperation: {
+            code: components["schemas"]["MetadataFailureCode"];
             /**
              * Created At
              * Format: date-time
@@ -8418,17 +8374,16 @@ export interface components {
             /** Generation Id */
             generation_id: string | null;
             /**
+             * Held At
+             * Format: date-time
+             */
+            held_at: string;
+            /**
              * Job Id
              * Format: uuid
              */
             job_id: string;
-            /**
-             * Purpose
-             * @constant
-             */
-            purpose: "bibliography";
-            /** Reviewed At */
-            reviewed_at: string | null;
+            purpose: components["schemas"]["MetadataPurpose"];
             selection: components["schemas"]["MetadataSelection"] | null;
             /** Started At */
             started_at: string | null;
@@ -8436,8 +8391,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            status: "no_findings";
-            web_search: components["schemas"]["MetadataWebSearch"] | null;
+            status: "held";
         };
         /**
          * MetadataOperationFacts
@@ -8451,7 +8405,7 @@ export interface components {
             kind: "MetadataOperation";
             operation: components["schemas"]["MetadataOperationOut"];
         };
-        MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataNoFindingsOperation"] | components["schemas"]["MetadataFailedOperation"];
+        MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataHeldOperation"] | components["schemas"]["MetadataFailedOperation"];
         /** @enum {string} */
         MetadataPurpose: "bibliography" | "title";
         /** MetadataQueuedOperation */
@@ -8590,7 +8544,7 @@ export interface components {
              */
             status: "completed";
         };
-        MetadataUnfinishedOperation: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"];
+        MetadataUnfinishedOperation: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataHeldOperation"];
         /** MetadataWaitingOperation */
         MetadataWaitingOperation: {
             /**
@@ -8622,8 +8576,6 @@ export interface components {
             /** Until */
             until: string | null;
         };
-        /** @enum {string} */
-        MetadataWebSearch: "not_available" | "not_used" | "succeeded" | "failed" | "mixed";
         /** MeteredApiBilling */
         MeteredApiBilling: {
             /**
@@ -9050,7 +9002,7 @@ export interface components {
             status: components["schemas"]["OracleReadingStatus"];
         };
         /** @enum {string} */
-        OracleReadingStatus: "pending" | "streaming" | "complete" | "failed";
+        OracleReadingStatus: "pending" | "streaming" | "complete" | "failed" | "held";
         /** OracleReadingSummaryOut */
         OracleReadingSummaryOut: {
             /** Folio Motto */
@@ -9312,7 +9264,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "pending" | "running" | "failed" | "succeeded" | "dead";
+            status: "pending" | "running" | "failed" | "succeeded" | "dead" | "held";
             /** Total Sections */
             total_sections: number;
         };
@@ -12187,7 +12139,7 @@ export interface components {
          */
         ResourceActionsOut: {
             /** Actions */
-            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["ReviewMetadataResultAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["OpenPodcastFeedAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"])[];
+            actions: (components["schemas"]["SimpleAction"] | components["schemas"]["RefreshSourceAction"] | components["schemas"]["RetryMetadataAction"] | components["schemas"]["RecoveryAction"] | components["schemas"]["DownloadAction"] | components["schemas"]["OpenSourceAction"] | components["schemas"]["OpenPodcastFeedAction"] | components["schemas"]["PlaybackAction"] | components["schemas"]["ConsumptionAction"] | components["schemas"]["TranscriptAction"] | components["schemas"]["LecternMembershipAction"])[];
             activation: components["schemas"]["ResourceActivationOut"];
             /** Label */
             label: string;
@@ -12404,24 +12356,6 @@ export interface components {
              * Format: uuid
              */
             expected_job_id: string;
-        };
-        /**
-         * ReviewMetadataResultAction
-         * @description Acknowledge the exact no-findings metadata job the viewer has not reviewed.
-         */
-        ReviewMetadataResultAction: {
-            /** Blocked */
-            blocked: ("PermissionDenied" | "Locked" | "Processing" | "TemporarilyUnavailable" | "PodcastSubscription") | null;
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "ReviewMetadataResult";
         };
         /** RunSelectionOut */
         RunSelectionOut: {
@@ -18865,36 +18799,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_MetadataEnrichmentAccepted_"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    review_media_metadata_result_media__media_id__metadata_enrichment__job_id__review_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

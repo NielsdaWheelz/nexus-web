@@ -30,7 +30,8 @@ from nexus.services import reader_publication
 from nexus.services.html_tree import inner_html
 from nexus.services.image_placeholder import replace_image_with_placeholder
 from nexus.services.reader_document import build_reader_document
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 
 
 def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Path) -> int:

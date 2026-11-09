@@ -52,7 +52,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_job
+from nexus.jobs.queue import JobExecutionContext, JobResult, enqueue_job, lock_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas import podcast as wire
 from nexus.schemas.media import MediaRemovalPreviewOut
@@ -61,7 +61,7 @@ from nexus.services import (
     libraries,
     library_entries,
     media_intelligence_lifecycle,
-    metadata_operations,
+    media_locks,
     resource_grants,
     source_attempts,
     users,
@@ -77,7 +77,8 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
 from nexus.services.source_types import stored_artifact_path
 from nexus.services.suggestion_changes import record_input_change
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 
 logger = get_logger(__name__)
 
@@ -103,7 +104,7 @@ def _run(db: Session, sql: str, **params: object) -> None:
 
 
 def _lock_kind(db: Session, media_id: UUID) -> str | None:
-    library_entries.lock_media_rows_in_order(db, [media_id])
+    media_locks.lock_media_rows_in_order(db, [media_id])
     return db.scalar(text("SELECT kind FROM media WHERE id = :m"), {"m": media_id})
 
 
@@ -126,7 +127,7 @@ def _references(db: Session, media_id: UUID) -> bool:
     return bool(
         db.scalar(
             text(f"SELECT EXISTS (SELECT 1 FROM ({retained}) held WHERE media_id = ANY(:family))"),
-            {"family": library_entries.media_family_ids(db, [media_id])},
+            {"family": media_locks.media_family_ids(db, [media_id])},
         )
     )
 
@@ -142,7 +143,7 @@ def _claim_teardown(db: Session, media_id: UUID) -> None:
     # waiting on this row. Touch the tuple so it restarts and sees the intent.
     db.execute(
         text("UPDATE media SET updated_at = updated_at WHERE id = ANY(:ids)"),
-        {"ids": library_entries.media_family_ids(db, [media_id])},
+        {"ids": media_locks.media_family_ids(db, [media_id])},
     )
     db.execute(
         text("UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m"), {"m": media_id}
@@ -188,7 +189,7 @@ def lock_highlight_sources(db: Session, highlight_ids: Sequence[UUID]) -> list[U
         ),
         {"ids": list(highlight_ids)},
     ).all()
-    return library_entries.lock_media_rows_in_order(db, list(media_ids)) if media_ids else []
+    return media_locks.lock_media_rows_in_order(db, list(media_ids)) if media_ids else []
 
 
 def release_highlight_sources(db: Session, media_ids: Sequence[UUID]) -> None:
@@ -303,7 +304,7 @@ def remove_episode(
                 ),
                 {"id": podcast_id},
             )
-        library_entries.lock_media_rows_in_order(db, [media_id])
+        media_locks.lock_media_rows_in_order(db, [media_id])
         before = episode_removal_preview(db, viewer_id, media_id)
         selected = [destination.library_id for destination in before.destinations]
         libraries.lock_library_rows_in_order(db, selected)
@@ -435,7 +436,7 @@ def _remove(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND, "Podcast episode removal requires a reviewed scope"
         )
-    family_ids = library_entries.media_family_ids(db, [media_id])
+    family_ids = media_locks.media_family_ids(db, [media_id])
     if not db.scalar(
         text(f"SELECT {personal_media_removal_allowed_sql(':m')}"),
         {"viewer_id": viewer_id, "m": media_id},
@@ -489,13 +490,7 @@ def _remove(
     reject_removed_part(db, viewer_id=viewer_id, media_id=media_id)
     remaining_scope = any(can_read_media(db, viewer_id, member) for member in family_ids)
     if not remaining_scope:
-        # The viewer's own reviews and retrieval references; the media may live on for
-        # other holders. Authored highlights and passages are independent writing that
-        # keeps its literal quotes without the source, so they stay.
-        for family_id in family_ids:
-            metadata_operations.delete_viewer_media_reviews(
-                db, viewer_id=viewer_id, media_id=family_id
-            )
+        # Retrieval references retire with access; authored quotes remain independent writing.
         _run(
             db,
             """
@@ -542,7 +537,7 @@ def delete_duplicate_document_media(
     source), so they are revoked first. Public manifests come from before the
     caller transferred holdings, so a new placement cannot widen an old token.
     """
-    library_entries.lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
+    media_locks.lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
     resource_grants.repoint_media_subjects(
         db,
         loser_media_id=loser_media_id,
@@ -606,7 +601,6 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     if part_source_id is not None:
         projection.refresh_source_highlights(db, part_source_id)
     _run(db, "UPDATE podcast_episodes SET chapters_job_id=NULL WHERE media_id=:m", m=media_id)
-    metadata_operations.delete_media_reviews(db, media_id=media_id)
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
     _run(db, "DELETE FROM document_embeds WHERE media_id = :m", m=media_id)
     # Embeds elsewhere that resolved to this media now fail: their target is gone.
@@ -728,8 +722,23 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
 
         def op() -> tuple[str, list[str]]:
             from nexus.services.consumption import lectern
+            from nexus.services.generation.ledger import lock_generation_owner
 
-            family_ids = library_entries.media_family_ids(db, [media_id])
+            family_ids = media_locks.media_family_ids(db, [media_id])
+            discovery_jobs = text("""SELECT id FROM background_jobs
+                WHERE kind='discover_document_parts'
+                  AND payload->>'source_media_id'=ANY(:media_ids) ORDER BY id""")
+            params = {"media_ids": [str(id_) for id_ in family_ids]}
+            job_ids = list(db.scalars(discovery_jobs, params))
+            # As in chat deletion, owner locks prevent a late opener between this
+            # row-set lock and deletion. All generations precede media and job locks.
+            for job_id in job_ids:
+                lock_generation_owner(db, kind="part_discovery", id=job_id)
+            db.execute(
+                text("""SELECT id FROM llm_calls
+                WHERE job_id=ANY(:ids) AND outcome IS NULL ORDER BY id FOR UPDATE"""),
+                {"ids": job_ids},
+            ).all()
             viewer_ids = lectern.lock_viewers_for_media_in_txn(db, media_ids=family_ids)
             candidates = list(
                 db.scalars(
@@ -741,12 +750,14 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
                     {"m": media_id},
                 )
             )
-            library_entries.lock_media_rows_in_order(db, candidates)
+            media_locks.lock_media_rows_in_order(db, candidates)
             intent = db.scalar(
                 text("SELECT id FROM media_teardown_intents WHERE media_id = :m"), {"m": media_id}
             )
-            if intent != intent_id:
+            if intent != intent_id or lock_running_job_claim(db, context=context) is None:
                 return "Stale", []
+            if list(db.scalars(discovery_jobs, params)) != job_ids:
+                raise TransactionRestart
             if _references(db, media_id):
                 _run(db, "DELETE FROM media_teardown_intents WHERE id = :i", i=intent_id)
                 record_input_change(db, owners=(f"media:{member}" for member in family_ids))

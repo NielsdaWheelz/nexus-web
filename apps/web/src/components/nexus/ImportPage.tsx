@@ -403,7 +403,8 @@ function shelfLine(item: ImportItem): string {
       case "search": return `${kind} · search indexing stopped`;
       case "metadata": {
         const operation = item.obligations.metadata?.operation ?? null;
-        return operation?.status === "failed" ? `${kind} · ${metadataOperationName(operation.purpose)} stopped` : `${kind} · no metadata found`;
+        return operation === null ? `${kind} · metadata update needs attention`
+          : `${kind} · ${metadataOperationName(operation.purpose)} ${operation.status === "held" ? "needs a repair" : "stopped"}`;
       }
       case "source": case null: {
         const source = item.obligations.source;

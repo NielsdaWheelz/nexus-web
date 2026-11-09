@@ -185,11 +185,6 @@ export const ACTION_CATALOG = {
     icon: null,
     group: "Manage",
   },
-  ReviewMetadataResult: {
-    label: "Mark reviewed",
-    icon: null,
-    group: "Manage",
-  },
   LeaveLibrary: { label: "Leave library…", icon: null, group: "Manage", confirmation: {
     title: "leave library?", body: "leave “{title}”? its contents remain in the library. you may lose access to items held only here.",
   } },

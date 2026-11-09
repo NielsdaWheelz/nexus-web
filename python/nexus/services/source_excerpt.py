@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from lxml.etree import Element
+from lxml.etree import Comment, Element
 from lxml.html import HtmlElement, fragment_fromstring
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.reader_excerpts import FrozenExcerpt
 from nexus.services.authored import helper
 from nexus.services.canonicalize import NativeCanonicalTarget, generate_canonical_text
-from nexus.services.html_tree import inner_html
+from nexus.services.html_tree import inner_html, normalize_html5_shape
 from nexus.services.reader_excerpts import scope_excerpts
 
 _BRANCHES = set(
@@ -70,6 +70,7 @@ def direction(node: HtmlElement, inherited: str | None) -> str | None:
 
 def _tree(html: str) -> tuple[dict[str, Any], set[tuple[int, ...]], set[tuple[int, ...]]]:
     root = fragment_fromstring(html, create_parent=True)
+    normalize_html5_shape(root)
     unsupported: set[int] = set()
     incomplete: set[int] = set()
 
@@ -139,6 +140,48 @@ def _tree(html: str) -> tuple[dict[str, Any], set[tuple[int, ...]], set[tuple[in
             "dir": resolved,
             "children": content,
         }
+        if tag in ("span", "a", "xref"):
+            # These wrappers add no literal formatting. Flow children retain the
+            # resolved language/direction, while adjacent inline runs keep theirs.
+            output = []
+            inline: list[dict[str, Any]] = []
+            for child in content:
+                if child["kind"] in (
+                    "text",
+                    "br",
+                    "media_gap",
+                    "span",
+                    "strong",
+                    "em",
+                    "b",
+                    "i",
+                    "u",
+                    "s",
+                    "cite",
+                    "sup",
+                    "sub",
+                    "code",
+                    "a",
+                    "xref",
+                ):
+                    inline.append(child)
+                else:
+                    if inline:
+                        output.append({**value, "children": inline})
+                        inline = []
+                    output.append(child)
+            if inline or not output:
+                output.append({**value, "children": inline})
+            return output
+        if tag == "table" and any(
+            child["kind"] not in ("thead", "tbody", "tfoot", "tr")
+            and not (child["kind"] == "text" and not child["text"].strip("\t\n\f\r "))
+            for child in content
+        ):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "This passage contains text that can’t be captured faithfully yet.",
+            )
         if tag == "table" and node.get("data-nexus-incomplete-table") == "true":
             incomplete.add(id(value))
         if tag == "ol":
@@ -421,23 +464,20 @@ def _source_windows(
         )
         step = -1 if "reversed" in node.attrib else 1
         for child in node:
-            if not isinstance(child.tag, str):
-                continue
-            retained = copy(child, resolved, full_table)
+            retained = copy(child, resolved, full_table) if isinstance(child.tag, str) else None
             if node.tag == "ol" and child.tag == "li":
                 counter = _html_integer(child.get("value"), counter)
                 if retained is not None:
                     retained.set("value", str(counter))
                 counter += step
             tail = literal(child, "tail")
+            if retained is None and tail:
+                # A neutral comment preserves this text slot: merging it with
+                # the preceding slot changes canonical whitespace normalization.
+                retained = Comment("")
             if retained is not None:
                 retained.tail = tail
                 clone.append(retained)
-            elif tail:
-                if len(clone):
-                    clone[-1].tail = (clone[-1].tail or "") + tail
-                else:
-                    clone.text = (clone.text or "") + tail
         return clone
 
     output = []

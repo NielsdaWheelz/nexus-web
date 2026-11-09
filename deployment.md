@@ -304,8 +304,11 @@ off-host, postgres prerequisites converge, and only then does the schema move.
 
 before releasing, commit/sync device writing, close clients and stop operator,
 maintenance and configuration publishers. the controller cannot prevent an operator from opening
-a new writer outside its ownership. the all-jobs census deliberately also refuses
-unrelated unfinished work. historical running tool receipts on terminal calls are
+a new writer outside its ownership. the queue census also refuses unrelated pending, retrying or running jobs.
+held commands remain durable for owner repair; they have no executing claim.
+open generations and nonterminal chats must still be settled. each hard-cut migration
+must convert or refuse retained payloads and results, including held work.
+historical running tool receipts on terminal calls are
 not active generations and are never rewritten by this procedure.
 
 after refusal or controller loss before candidate mutation, deliberately run:

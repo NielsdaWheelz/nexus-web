@@ -24,7 +24,7 @@ from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.schemas import podcast as wire
-from nexus.services import libraries, library_entries, users
+from nexus.services import libraries, library_entries, media_locks, users
 from nexus.services.browse.targets import PodcastIndexPodcastTarget, ResolvedPodcast, unseal_target
 from nexus.services.podcasts import imports, sync
 from nexus.services.podcasts.provider import PROVIDER
@@ -447,7 +447,7 @@ def stop(
             if body.episodes == "remove"
             else []
         )
-        library_entries.lock_media_rows_in_order(db, media)
+        media_locks.lock_media_rows_in_order(db, media)
         libraries.lock_library_rows_in_order(db, selected)
         current = removal_preview(
             db,

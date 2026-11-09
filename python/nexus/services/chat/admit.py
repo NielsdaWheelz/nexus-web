@@ -32,7 +32,7 @@ from nexus.db.session import (
     get_session_factory,
 )
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.jobs.queue import enqueue_job, jobs_for_payload
+from nexus.jobs.queue import cancel_held_job, enqueue_job, jobs_for_payload
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     AcceptedChatAdmission,
@@ -213,10 +213,19 @@ def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
             run = events.lock_run(db, run_id)
             if run is None or run.owner_user_id != viewer_id:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-            if run.status not in events.TERMINAL and jobs_for_payload(
-                db, kind="chat_run", match={"run_id": str(run.id)}, statuses=("dead",), lock=True
-            ):
-                # Its dead-letter projection skipped this then-locked run.
+            if run.status in events.TERMINAL:
+                return
+            jobs = jobs_for_payload(
+                db,
+                kind="chat_run",
+                match={"run_id": str(run.id)},
+                statuses=("dead", "held"),
+                lock=True,
+            )
+            if jobs:
+                for job in jobs:
+                    if job.status == "held":
+                        assert cancel_held_job(db, job_id=job.id)
                 events.finalize_dead(db, run)
 
         retry_serializable(db, "cancel_chat_run_finalize", finalize_dead)

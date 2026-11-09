@@ -11,7 +11,7 @@ compare frozen guards before desired-state equality and advance accepted no-op r
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -33,7 +33,7 @@ from nexus.schemas.library import (
     LibraryPlacementOut,
     LibraryPlacementsOut,
 )
-from nexus.services import libraries, resource_grants, users
+from nexus.services import libraries, media_locks, resource_grants, users
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -275,60 +275,6 @@ def library_anchor_facts(
 # Locks and primitives.
 
 
-def media_family_ids(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
-    """complete root/piece families for one ordered media barrier; no access is granted."""
-    if not media_ids:
-        return []
-    return list(
-        db.scalars(
-            text("""
-        WITH roots AS (
-            SELECT m.id FROM media m WHERE m.id=ANY(:ids)
-            UNION
-            SELECT source_media_id FROM media_parts WHERE media_id=ANY(:ids)
-        )
-        SELECT id FROM roots
-        UNION
-        SELECT p.media_id FROM media_parts p JOIN roots r ON r.id=p.source_media_id
-        ORDER BY id
-    """),
-            {"ids": list(set(media_ids))},
-        )
-    )
-
-
-def lock_media_rows_in_order(
-    db: Session,
-    media_ids: Sequence[UUID],
-    *,
-    lock_mode: Literal["update", "no_key_update"] = "update",
-) -> list[UUID]:
-    """lock complete source families in uuid order; return requested existing identities.
-
-    re-enumeration after locking prevents a new lower-id child from escaping a
-    read-committed barrier. the transaction owner restarts when the family changed.
-    no_key_update serializes writers while admitting foreign-key key-share locks.
-    """
-    from nexus.db.retries import TransactionRestart
-
-    requested = set(media_ids)
-    ordered = media_family_ids(db, media_ids)
-    if not ordered:
-        return []
-    locked = list(
-        db.scalars(
-            text(
-                "SELECT id FROM media WHERE id = ANY(:ids) ORDER BY id "
-                + ("FOR UPDATE" if lock_mode == "update" else "FOR NO KEY UPDATE")
-            ),
-            {"ids": ordered},
-        )
-    )
-    if media_family_ids(db, media_ids) != ordered:
-        raise TransactionRestart
-    return [media_id for media_id in locked if media_id in requested]
-
-
 def lock_media_for_reference(db: Session, media_id: UUID) -> None:
     """reference admission takes the same complete family barrier as source teardown."""
     lock_media_for_references(db, [media_id])
@@ -349,9 +295,9 @@ def lock_media_for_references(db: Session, media_ids: Sequence[UUID]) -> None:
     """Acquire one complete reference barrier, including the teardown collector fence."""
     if not media_ids:
         return
-    if set(lock_media_rows_in_order(db, media_ids)) != set(media_ids):
+    if set(media_locks.lock_media_rows_in_order(db, media_ids)) != set(media_ids):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    family = media_family_ids(db, media_ids)
+    family = media_locks.media_family_ids(db, media_ids)
     if db.scalar(
         text("""
         SELECT 1 FROM media_teardown_intents WHERE media_id=ANY(:ids) LIMIT 1
@@ -563,7 +509,7 @@ def transfer_current_media_references(
     loser-only entries retain identity, position and time; duplicates retain the
     winner position and earliest time. admission payloads never participate.
     """
-    lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
+    media_locks.lock_media_rows_in_order(db, [loser_media_id, winner_media_id])
     lock_media_for_reference(db, winner_media_id)
     advance_acquisition_revision(db, winner_media_id)
     library_ids = sorted(
@@ -845,7 +791,7 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
     from nexus.services.media_deletion import clear_user_media_deletion
 
     lock_parent_podcast(db, media_id)
-    lock_media_rows_in_order(db, [media_id])
+    media_locks.lock_media_rows_in_order(db, [media_id])
     if not (
         can_restore_media(db, viewer_id, media_id)
         or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
@@ -902,7 +848,7 @@ def assign_libraries_for_media_in_current_transaction(
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:
     """Automatically acquire into All unless the viewer explicitly removed this media."""
     # Removal locks this same row before changing placements and its marker.
-    lock_media_rows_in_order(db, [media_id])
+    media_locks.lock_media_rows_in_order(db, [media_id])
     if db.scalar(
         text(
             "SELECT 1 FROM user_media_deletions WHERE user_id = :u AND media_id = :m "
@@ -952,7 +898,7 @@ def remove_media_from_library_in_current_transaction(
     caller owns the viewer lock and the complete ordered lock set.
     """
     lock_parent_podcast(db, media_id)
-    lock_media_rows_in_order(db, [media_id])
+    media_locks.lock_media_rows_in_order(db, [media_id])
     default_id = libraries.default_library_id(db, viewer_id)
     libraries.lock_library_rows_in_order(db, [default_id, library_id])
     library = libraries.access(db, viewer_id, library_id, lock=False)
@@ -980,7 +926,7 @@ def _lock_placement_target(
 ) -> None:
     libraries.access(db, viewer_id, library_id, lock=False)
     lock_parent_podcast(db, target.id)
-    lock_media_rows_in_order(db, [target.id])
+    media_locks.lock_media_rows_in_order(db, [target.id])
     libraries.lock_library_rows_in_order(
         db, [libraries.default_library_id(db, viewer_id), library_id]
     )

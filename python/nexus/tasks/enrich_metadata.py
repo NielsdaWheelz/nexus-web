@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from typing import Any
-from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import select, text
@@ -26,24 +25,21 @@ from nexus.db.retries import retry_serializable
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
+    JobFailure,
     TerminalJobFailure,
     finish_job,
     lock_running_job_claim,
 )
 from nexus.schemas.metadata_enrichment import (
-    METADATA_FIELDS,
     BibliographyMetadataJobPayload,
-    ContainerReport,
     MetadataBibliographyCompletedOutcome,
     MetadataFailedOutcome,
     MetadataFailureCode,
     MetadataFindings,
     MetadataJobPayload,
-    MetadataNoFindingsOutcome,
     MetadataOutcome,
     MetadataPurpose,
     MetadataTitleCompletedOutcome,
-    MetadataWebSearch,
     TitleMetadataJobPayload,
 )
 from nexus.services.contributor_writes import MediaTarget
@@ -72,7 +68,6 @@ from nexus.services.metadata_enrichment import (
     contributor_observation,
     merge_findings,
     research_intent_definition,
-    unresolved_fields,
 )
 from nexus.services.metadata_operations import is_metadata_enrichment_eligible, metadata_purpose
 from nexus.services.reader_publication import (
@@ -105,6 +100,8 @@ _FAILURE_CODES: dict[FailureCode, MetadataFailureCode] = {
     "runtime_unavailable": "model_unavailable",
     "interrupted": "worker_interrupted",
     "defect": "execution_failed",
+    "invalid_configuration": "invalid_configuration",
+    "uncertain_effect": "execution_failed",
 }
 type _Settled = dict[str, object] | TerminalJobFailure
 _CLAIM_LOST: _Settled = {"status": "skipped", "reason": "claim_lost_before_publication"}
@@ -115,17 +112,15 @@ def _now(db: Session) -> Any:
 
 
 def _settlement(outcome: MetadataOutcome) -> _Settled:
-    """Completed succeeds; no findings and failures dead-letter with the outcome kept."""
+    """Keep the factual owner outcome with the queue settlement."""
     result = outcome.model_dump(mode="json")
     if outcome.status == "completed":
         return result
-    reason = "no_findings" if outcome.status == "no_findings" else outcome.reason
+    reason = outcome.reason
     return TerminalJobFailure(
         result_payload=result,
         error_code=f"E_METADATA_{reason.upper()}",
-        error_message="no metadata found"
-        if outcome.status == "no_findings"
-        else f"metadata {outcome.purpose} failed: {reason}",
+        error_message=f"metadata {outcome.purpose} failed: {reason}",
     )
 
 
@@ -138,7 +133,15 @@ def _refusal(
         from nexus.services.media_parts import part_definition_version
 
         if payload.part_definition_version != part_definition_version(db, media_id=media.id):
-            return "stale_input"
+            return "superseded"
+    else:
+        from nexus.services.x_source import x_source_attempt_ids
+
+        if (
+            x_source_attempt_ids(db, media_ids=[media.id]).get(media.id)
+            != payload.source_attempt_id
+        ):
+            return "superseded"
     if not is_metadata_enrichment_eligible(
         kind=media.kind,
         provider=media.provider,
@@ -203,9 +206,6 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Set
         if isinstance(research, str):
             return _settle_refusal(context, job.purpose, research)
         owner = Owner("media_enrichment", media_id, requester, context)
-        web_search_available = isinstance(research, MetadataResearchInput) and (
-            "web.search" in runtime.tools.plans["MetadataResearch"].tools.profile.grants
-        )
         if isinstance(research, XTitleInput):
             title_input = research
             terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle] = await generate(
@@ -236,7 +236,6 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Set
                     out,
                     handles=handles,
                     container=research.container,
-                    private_values=research.private_values,
                 ),
                 tools=Tools("MetadataResearch", frozenset({f"media:{media_id}"})),
             )
@@ -250,7 +249,6 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> _Set
                     job,
                     research,
                     terminal,
-                    web_search_available=web_search_available,
                 ),
             )
 
@@ -279,12 +277,10 @@ def _publish(
     job: MetadataJobPayload,
     research: MetadataResearchInput | XTitleInput,
     terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle],
-    *,
-    web_search_available: bool,
 ) -> _Settled:
     # The complete source family precedes publication/definition/set and claim.
     from nexus.db.models import MediaPart
-    from nexus.services.library_entries import lock_media_rows_in_order
+    from nexus.services.media_locks import lock_media_rows_in_order
     from nexus.services.media_parts import advance_part_definition, lock_source_parts
 
     lock_media_rows_in_order(db, [job.media_id])
@@ -346,30 +342,13 @@ def _publish(
         )
     lock_publication_generation(db, media_id=media.id)
     if (code := _stale(db, media, job, research)) is not None:
-        return failed(code)
+        raise JobFailure(
+            code="E_METADATA_STALE_INPUT",
+            message="metadata input changed; research will restart with current facts",
+            disposition="retry",
+        )
     findings = terminal.value
     assert isinstance(research, MetadataResearchInput)
-    unresolved = unresolved_fields(findings, is_part=research.container is not None)
-    report = None
-    if findings.container_discrepancies:
-        assert research.container is not None
-        source_title = research.container["title"]
-        assert isinstance(source_title, str)
-        report = ContainerReport(
-            source_title=source_title, discrepancies=findings.container_discrepancies
-        )
-    applicable_count = len(METADATA_FIELDS) - (3 if research.container is not None else 0)
-    if len(unresolved) == applicable_count:
-        return finish(
-            MetadataNoFindingsOutcome(
-                purpose="bibliography",
-                completed_at=_now(db),
-                container_report=report,
-                web_search=_web_search_observation(
-                    db, terminal.generation_id, web_search_available
-                ),
-            )
-        )
     try:
         credits = prepare_observed_role_slices_in_current_transaction(
             db,
@@ -378,8 +357,11 @@ def _publish(
             source="metadata_enrichment",
         )
     except ContributorObservationRejected:
-        return failed("invalid_output")
-    web_search = _web_search_observation(db, terminal.generation_id, web_search_available)
+        raise JobFailure(
+            code="E_GENERATION_INVALID_OUTPUT",
+            message="metadata contributor identity violated its contract",
+            disposition="resample",
+        ) from None
     # Every rejection precedes every write; a writer failure rolls back the whole attempt.
     changed = merge_findings(db, media, findings)
     if apply_prepared_role_slices_in_current_transaction(db, prepared=credits):
@@ -391,31 +373,8 @@ def _publish(
             purpose="bibliography",
             completed_at=_stamp(db, media),
             changed_fields=changed,
-            unresolved_fields=unresolved,
-            container_report=report,
-            web_search=web_search,
         )
     )
-
-
-def _web_search_observation(db: Session, generation_id: UUID, available: bool) -> MetadataWebSearch:
-    """Host evidence for this settled generation; result prose cannot assert coverage."""
-    statuses = set(
-        db.scalars(
-            text("""SELECT DISTINCT status FROM tool_calls
-                WHERE generation_id=:id AND tool_id='web.search'"""),
-            {"id": generation_id},
-        )
-    )
-    if not statuses:
-        return "not_used" if available else "not_available"
-    if not available or not statuses <= {"complete", "error", "cancelled"}:
-        # justify-service-invariant-check: stored receipts must agree with this
-        # frozen plan and terminal generation; neither fact is type-provable.
-        raise AssertionError("metadata search receipts violate the settled tool plan")
-    if statuses == {"complete"}:
-        return "succeeded"
-    return "mixed" if "complete" in statuses else "failed"
 
 
 def _stamp(db: Session, media: Media) -> Any:

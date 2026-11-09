@@ -334,8 +334,8 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
         .scalars()
         .all()
     )
-    from nexus.services.library_entries import lock_media_rows_in_order
     from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
+    from nexus.services.media_locks import lock_media_rows_in_order
 
     runs = db.scalars(
         text("SELECT id FROM chat_runs WHERE assistant_message_id = ANY(:ids) ORDER BY id"),

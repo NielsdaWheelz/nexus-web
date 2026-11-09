@@ -71,6 +71,13 @@ class BlockedFeedPage:
     requested_url: str
 
 
+class FeedPageRejected(ApiError):
+    """The publisher returned a source this feed reader cannot use."""
+
+    def __init__(self) -> None:
+        super().__init__(ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed cannot be read")
+
+
 def fetch_page(url: str) -> FeedPage | BlockedFeedPage:
     """Fetch one page. Policy rejection is a coverage gap; other fetch/parse failures retry."""
     try:
@@ -83,14 +90,24 @@ def fetch_page(url: str) -> FeedPage | BlockedFeedPage:
     except ApiError as exc:
         if exc.code == ApiErrorCode.E_SSRF_BLOCKED:
             return BlockedFeedPage(url)
+        if exc.code in (
+            ApiErrorCode.E_SOURCE_GONE,
+            ApiErrorCode.E_SOURCE_ACCESS_DENIED,
+            ApiErrorCode.E_SOURCE_TOO_LARGE,
+            ApiErrorCode.E_INVALID_CONTENT_TYPE,
+            ApiErrorCode.E_SOURCE_NOT_READABLE,
+        ):
+            raise FeedPageRejected() from exc
+        if exc.code not in (ApiErrorCode.E_INGEST_TIMEOUT, ApiErrorCode.E_SOURCE_FETCH_FAILED):
+            raise
         logger.warning("podcast_feed_page_failed", url=url, error=str(exc))
         raise ApiError(
-            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed is unavailable"
+            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+            "Podcast feed is unavailable",
+            retry_at=exc.retry_at,
         ) from exc
     except etree.XMLSyntaxError as exc:
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed is unavailable"
-        ) from exc
+        raise FeedPageRejected() from exc
     base = result.final_url
     if root.tag == "rss" and root.find("channel") is not None:
         items = root.xpath("./channel/item")
@@ -99,7 +116,7 @@ def fetch_page(url: str) -> FeedPage | BlockedFeedPage:
         items = root.xpath("./atom:entry", namespaces=_ATOM)
         language = _language(root.get("{http://www.w3.org/XML/1998/namespace}lang"))
     else:
-        raise ApiError(ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Unsupported podcast feed")
+        raise FeedPageRejected()
     links = [
         urljoin(node.base or base, node.get("href"))
         for node in root.xpath(

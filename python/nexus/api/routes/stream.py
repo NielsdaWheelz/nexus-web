@@ -306,7 +306,6 @@ async def stream_metadata_operation_events(
             )
         return operation.model_dump(mode="json"), operation.status in (
             "completed",
-            "no_findings",
             "failed",
         )
 

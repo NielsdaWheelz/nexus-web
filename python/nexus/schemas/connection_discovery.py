@@ -14,5 +14,5 @@ class ConnectionDiscoveryScanRequest(BaseModel):
 class ConnectionDiscoveryScanOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["idle", "pending", "running", "failed"]
+    status: Literal["idle", "pending", "running", "held", "failed"]
     outcome: Literal["ok", "skipped", "terminal_failed"] | None

@@ -30,7 +30,6 @@ from nexus.schemas.resource_items import (
     ResourceActionOut,
     ResourceActionsOut,
     RetryMetadataAction,
-    ReviewMetadataResultAction,
     SimpleAction,
     SimpleActionKind,
     TranscriptAction,
@@ -152,13 +151,6 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
     retry = media.metadata.retry
     blocked = None if isinstance(retry, MetadataRetryAllowed) else _METADATA_BLOCKED[retry.reason]
     actions.append(RetryMetadataAction(blocked=blocked, retry=retry))
-    operation = media.metadata.operation
-    if (
-        operation is not None
-        and operation.status == "no_findings"
-        and operation.reviewed_at is None
-    ):
-        actions.append(ReviewMetadataResultAction(blocked=None, job_id=operation.job_id))
     if kind == "podcast_episode":
         membership = library_entries.list_item_libraries(
             db, viewer_id=viewer_id, target=library_entries.media_target(media_id)

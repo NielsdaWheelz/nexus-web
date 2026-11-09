@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from nexus.db.retries import DatabaseBusyError, is_transient_database_error, retry_read_committed
 from nexus.db.session import get_control_session_factory
 from nexus.jobs import queue
 from nexus.jobs.process_executor import (
@@ -21,10 +22,12 @@ from nexus.jobs.process_executor import (
     Lost,
     Outcome,
     Released,
+    failure_of,
     run_in_process,
 )
 from nexus.jobs.registry import JobDefinition, Lane, registry, resolve
 from nexus.logging import get_logger
+from nexus.services.generation.ledger import interrupt_locked_generations, lock_job_generations
 
 logger = get_logger(__name__)
 
@@ -58,7 +61,9 @@ class JobWorker:
             try:
                 self.schedule_periodic()
                 worked = self.run_once()
-            except SQLAlchemyError:
+            except (SQLAlchemyError, DatabaseBusyError) as error:
+                if not is_transient_database_error(error):
+                    raise
                 # justify-retry-schedule: an outage retries at the heartbeat cadence;
                 # health goes stale meanwhile, which is the operator's signal.
                 logger.exception("worker_database_failed", worker_id=self.worker_id)
@@ -89,18 +94,21 @@ class JobWorker:
             db.commit()
 
     def run_once(self) -> bool:
-        """Dead-letter one expired job whose budget is spent, else claim and run one."""
+        """Recover one expired execution, else claim and run one due job."""
         with self.session_factory() as db:
-            if expired := queue.dead_letter_expired_job(db, kinds=self.kinds):
-                db.commit()
-                logger.warning(
-                    "worker_job_dead_lettered", job_id=str(expired.id), kind=expired.kind
+
+            def claim_or_recover() -> queue.JobRow | queue.Claim | None:
+                expired = queue.recover_expired_job(db, kinds=self.kinds)
+                if expired is not None:
+                    return expired
+                return queue.claim_next_job(
+                    db, worker_id=self.worker_id, kinds=self.kinds, heavy_kinds=self.heavy_kinds
                 )
-                return True
-            claim = queue.claim_next_job(
-                db, worker_id=self.worker_id, kinds=self.kinds, heavy_kinds=self.heavy_kinds
-            )
-            db.commit()
+
+            claim = retry_read_committed(db, "worker.claim_or_recover", claim_or_recover)
+        if isinstance(claim, queue.JobRow):
+            logger.warning("worker_job_recovery_scheduled", job_id=str(claim.id), kind=claim.kind)
+            return True
         if claim is None:
             return False
         self._run(claim)
@@ -110,8 +118,11 @@ class JobWorker:
         job, context = claim.job, claim.context
         d = self.definitions[job.kind]
         lost, done = threading.Event(), threading.Event()
+        heartbeat_failures: list[Failed] = []
         heartbeat = threading.Thread(
-            target=self._heartbeat, args=(context, d.heavy, lost, done), daemon=True
+            target=self._heartbeat,
+            args=(context, d.heavy, lost, done, heartbeat_failures),
+            daemon=True,
         )
         heartbeat.start()
         try:
@@ -122,9 +133,13 @@ class JobWorker:
                 outcome = self.executor.run(
                     d.handler, job.payload, context, shutdown=self.stop, lost=lost, parser_temp=temp
                 )
+        except Exception as error:
+            outcome = failure_of(error)
         finally:
             done.set()
             heartbeat.join()  # no renewal races the settlement
+        if heartbeat_failures:
+            outcome = heartbeat_failures[0]
         self._settle(d, job, context, outcome)
 
     def _heartbeat(
@@ -133,15 +148,20 @@ class JobWorker:
         heavy: bool,
         lost: threading.Event,
         done: threading.Event,
+        failures: list[Failed],
     ) -> None:
         while not done.wait(HEARTBEAT_SECONDS):
             try:
                 with get_control_session_factory()() as db, db.begin():
                     renewed = queue.renew_running_job_claim(db, context=context, heavy=heavy)
                     stored = None if renewed else queue.get_job(db, context.job_id)
-            except SQLAlchemyError:
+            except Exception as error:
                 logger.exception("worker_heartbeat_failed", job_id=str(context.job_id))
-                continue
+                if is_transient_database_error(error):
+                    continue
+                failures.append(failure_of(error))
+                lost.set()  # stop and join the child before settling the typed defect.
+                return
             if not renewed:
                 if not (
                     stored is not None
@@ -161,48 +181,64 @@ class JobWorker:
         outcome: Outcome,
     ) -> None:
         """Commit how one attempt ended, and its hooks, in one transaction."""
+        if isinstance(outcome, Lost):
+            return
         with self.session_factory() as db:
-            stored = queue.get_job(db, context.job_id)
-            if (
-                stored is not None
-                and stored.execution_id == context.execution_id
-                and stored.status in {"succeeded", "dead"}
-            ):
-                return
-            if isinstance(outcome, Lost):
-                return
-            if (
-                isinstance(outcome, Failed)
-                and d.on_failure
-                and queue.lock_running_job_claim(db, context=context)
-            ):
-                finished: Mapping[str, Any] | None = resolve(d.on_failure)(db, job)
-                if finished is not None:
-                    logger.info("worker_failure_finished", job_id=str(job.id), failure=outcome)
-                    outcome = finished
-            match outcome:
-                case Released():
-                    row = queue.reschedule_running_job(db, context=context, at=None)
-                case queue.RescheduleRequested(at=at, payload=payload):
-                    row = queue.reschedule_running_job(db, context=context, at=at, payload=payload)
-                case queue.TerminalJobFailure():
-                    row = queue.finish_job(db, context=context, result=outcome)
-                case Failed(code=code, message=message, dimension=dimension):
-                    resource = {"kind": "ResourceFailure", "dimension": dimension}
-                    row = queue.fail_job(
-                        db,
-                        context=context,
-                        error_code=code,
-                        message=message,
-                        result=resource if dimension else None,
-                        dead=dimension is not None,
-                    )
-                case _:
-                    row = queue.finish_job(db, context=context, result=outcome)
-            if row is None:
-                logger.warning("worker_settle_lost", job_id=str(job.id), kind=job.kind)
-                return
-            db.commit()
+
+            def settle() -> queue.JobRow | None:
+                generations = lock_job_generations(db, job_id=job.id)
+                if d.lock_owner is not None:
+                    resolve(d.lock_owner)(db, job)
+                owned = queue.lock_running_job_claim(db, context=context)
+                if owned is None:
+                    stored = queue.get_job(db, context.job_id)
+                    if (
+                        stored is not None
+                        and stored.execution_id == context.execution_id
+                        and stored.status in {"succeeded", "dead"}
+                    ):
+                        # The owner published its outcome and queue receipt atomically.
+                        return stored
+                    return None
+                interrupt_locked_generations(db, generations, detail="its execution stopped")
+                settled = outcome
+                if isinstance(settled, Failed) and d.on_failure:
+                    finished: Mapping[str, Any] | None = resolve(d.on_failure)(db, owned)
+                    if finished is not None:
+                        settled = finished
+                match settled:
+                    case Released():
+                        return queue.fail_job(
+                            db,
+                            context=context,
+                            error_code="E_WORKER_INTERRUPTED",
+                            message="Worker stopped; waiting to retry.",
+                            disposition="retry",
+                        )
+                    case queue.RescheduleRequested(at=at, payload=payload):
+                        return queue.reschedule_running_job(
+                            db, context=context, at=at, payload=payload
+                        )
+                    case queue.TerminalJobFailure():
+                        return queue.finish_job(db, context=context, result=settled)
+                    case Failed(code=code, message=message, dimension=dimension):
+                        resource = {"kind": "ResourceFailure", "dimension": dimension}
+                        return queue.fail_job(
+                            db,
+                            context=context,
+                            error_code=code,
+                            message=message,
+                            result=resource if dimension else settled.result_payload,
+                            disposition=settled.disposition,
+                            retry_at=settled.retry_at,
+                        )
+                    case _:
+                        return queue.finish_job(db, context=context, result=settled)
+
+            row = retry_read_committed(db, "worker.settle", settle)
+        if row is None:
+            logger.warning("worker_settle_lost", job_id=str(job.id), kind=job.kind)
+            return
         logger.info(
             "worker_job_settled",
             job_id=str(job.id),
@@ -233,7 +269,9 @@ class JobWorker:
                                 return
                 finally:
                     db.execute(text("UNLISTEN nexus_background_jobs"))
-        except (SQLAlchemyError, psycopg.Error):
+        except (SQLAlchemyError, psycopg.Error) as error:
+            if not is_transient_database_error(error):
+                raise
             logger.exception("worker_wait_failed", worker_id=self.worker_id)
             self.stop.wait(HEARTBEAT_SECONDS)
 

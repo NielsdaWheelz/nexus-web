@@ -34,7 +34,7 @@ from nexus.schemas.library import (
     LibraryRole,
     RenameLibraryRequest,
 )
-from nexus.services import resource_grants
+from nexus.services import media_locks, resource_grants
 from nexus.services.collection_keyset import KeysetValueKind, SortKey, order_by_sql
 from nexus.services.search import projection
 
@@ -211,7 +211,7 @@ def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> 
             )
             if held != podcast_ids:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
-        library_entries.lock_media_rows_in_order(db, media_ids)
+        media_locks.lock_media_rows_in_order(db, media_ids)
         for media_id in media_ids:
             if not (
                 can_restore_media(db, viewer_id, media_id)
@@ -329,7 +329,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                 {"ids": show_ids},
             )
         media_ids = library_entries.media_ids_in_library(db, library_id)
-        if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
+        if media_locks.lock_media_rows_in_order(db, media_ids) != media_ids:
             raise TransactionRestart("library media set changed")
         default_id = default_library_id(db, viewer_id)
         lock_library_rows_in_order(db, [library_id, default_id])
