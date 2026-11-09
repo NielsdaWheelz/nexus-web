@@ -312,15 +312,6 @@ def metadata_operations_for_jobs(
     return _operations(db, rows)
 
 
-def metadata_enrichment_for_viewer(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> MetadataEnrichmentView:
-    """The metadata stream's frame; an unreadable media is ``E_MEDIA_NOT_FOUND``."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=[media_id])[media_id]
-
-
 def metadata_operation_for_viewer(
     db: Session, *, viewer_id: UUID, media_id: UUID, job_id: UUID
 ) -> MetadataOperationOut:
@@ -512,7 +503,6 @@ def review_metadata_result(db: Session, *, viewer_id: UUID, media_id: UUID, job_
                 """),
                 {"id": new_uuid7(), "viewer": viewer_id, "job": job_id},
             )
-            db.execute(text("SELECT pg_notify('media_events', :m)"), {"m": str(media_id)})
 
     retry_read_committed(db, "metadata_result.review", review)
 

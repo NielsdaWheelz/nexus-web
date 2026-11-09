@@ -229,6 +229,7 @@ export class Persistence {
   }
   async scopeRefs(after: string | null): Promise<string[]> { return (await this.db.all(SCOPE_SQL.scope_active_refs, [after, after])).map(row => String(row.scope_ref)); }
   async scopeRepairRefs(refs: string[]): Promise<string[]> { return (await this.db.all(SCOPE_SQL.scope_repair_refs, [JSON.stringify(refs)])).map(row => String(row.scope_ref)); }
+  async scopeNeedsRepair(): Promise<boolean> { const [row] = await this.db.all(SCOPE_SQL.scope_needs_repair); return Number(row.needed) === 1; }
   async scopeReset(revision: string, repair = false) {
     await this.db.transaction(async () => {
       const state = await this.scopeProgress();
@@ -307,7 +308,7 @@ export class Persistence {
       await this.db.run(SCOPE_SQL.scope_normalized_chunks, [revision, readingRef, intervalKey, JSON.stringify(chunks)]);
       if (normalizedLength !== null) {
         const [coverage] = await this.db.all(SCOPE_SQL.scope_normalized_coverage, [revision, readingRef, intervalKey, normalizedLength]);
-        if (Number(coverage.accepted) !== 1) return false;
+        if (Number(coverage.accepted) !== 1) throw new Error("scope normalization coverage is incomplete");
         await this.db.run(SCOPE_SQL.scope_normalized_done, [revision, readingRef, intervalKey]);
       }
       return true;

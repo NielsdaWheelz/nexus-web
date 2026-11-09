@@ -302,14 +302,15 @@ reads. there is no transcript behavior or cost-estimation change.
 acknowledged state changes publish `Podcasts` and `Consumption`; acknowledged
 transcript batches publish `PodcastEpisodes` and invalidate imports. unknown
 outcomes, conflicts and inspection invalidate reads without announcing a commit.
-episode lists and retained summaries observe `PodcastEpisodes`. an active visible
-pane polls queued/running transcripts; each changed current id/transcript-state
+episode lists and retained summaries observe `PodcastEpisodes`. a presented foreground
+pane polls queued/running transcripts every 10 seconds; each changed current id/transcript-state
 signature invalidates retained summaries after that observation. stale in-flight
 summary replies are discarded. unchanged observations end the refresh chain;
 one complete episode response owns show detail and episodes under the same
-repeatable-read snapshot. one active/visible observation lane rereads that
-aggregate:3 seconds while work or transcript provisioning runs,60 seconds while
-followed and idle, otherwise off. refresh transfers the complete index.
+repeatable-read snapshot. one presented foreground observation lane rereads that
+aggregate every 10 seconds while work or transcript provisioning runs, 30 seconds
+while followed and idle, otherwise off. hiding retires optional reads/retries;
+return revalidates retained state. refresh transfers the complete index.
 publication notifications compare accepted observations within one account/query;
 there is no head-to-episode fingerprint reconciliation.
 

@@ -248,8 +248,6 @@ def changed(db: Session, *, viewer_id: UUID, message_ids: Sequence[UUID]) -> Non
         )
     for ref in sorted(refs, key=lambda ref: ref.uri):
         bump_version(db, viewer_id=viewer_id, ref=ref, lane="evidence")
-    if refs:
-        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
 
 
 def preview(

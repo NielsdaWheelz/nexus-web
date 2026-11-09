@@ -780,7 +780,6 @@ def _publish(
         )
     updated = payload.model_copy(update={"cursor": batch.next_cursor})
     queue.update_running_job_payload(db, context=context, payload=updated.model_dump(mode="json"))
-    db.execute(text("SELECT pg_notify('media_events',:id)"), {"id": str(source.id)})
     if updated.cursor == len(capture.sections):
         return _finish(db, context, updated, "completed")
     queue.reschedule_running_job(

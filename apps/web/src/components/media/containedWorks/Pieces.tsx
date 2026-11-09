@@ -14,7 +14,7 @@ import { ReaderLink } from "@/lib/documentReader/navigation";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { useChangeStamp } from "@/lib/api/changes";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { usePaneIsActive } from "@/lib/panes/paneRuntime";
+import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 import type { Schema } from "@/lib/api/wire";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { Hold, useResendFeedback, useOutcome } from "@/components/feedback/Feedback";
@@ -24,6 +24,8 @@ import { Ruling } from "@/components/feedback/Ruling";
 import { isAbortError } from "@/lib/errors";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { sourceContents, partDefinition, discoverParts, decidePart } from "@/lib/media/parts";
 import PartEditor, { partBlockMessage, partFailure, unsure, UNSURE } from "./PartEditor";
 import CandidateReview from "./CandidateReview";
@@ -37,8 +39,9 @@ type Command = { kind: "discover"; body: Schema<"PartDiscovery"> }
   | { kind: "restore"; candidate: string; body: Schema<"PartCandidateDecision"> };
 
 export function SourcePieces({ source, reader, onNavigate }: { readonly source: string; readonly reader: Reader; readonly onNavigate?: (destination: ReaderDestination) => void }) {
-  const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(usePaneIsActive(), 0)}`;
-  const contents = usePaneFreeServerValue({ key: `/media/${source}/parts`, stale, load: signal => sourceContents(source, signal) });
+  const observing = useObservationDemand(usePaneIsPresented());
+  const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(observing, 0)}`;
+  const contents = usePaneFreeServerValue({ key: `/media/${source}/parts`, stale, enabled: observing, load: signal => sourceContents(source, signal) });
   const speak = useActiveRegion();
   const page = contents.status === "ready" ? contents.data : null;
   const navigation = page?.navigation ?? null;
@@ -78,9 +81,9 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   }, [navigation]);
   const current = matched && mounted.status === "ready" && viewport?.identity === mounted.doc.identity && viewport.primary.kind === "text" ? snapshot?.sectionAt(viewport.primary)?.id ?? null : null;
   const preparationActive = page?.capabilities.create.reason === "preparing_structure" && (page.preparation?.status === "Queued" || page.preparation?.status === "Processing");
-  const operationActive = page?.operation?.status === "pending" || page?.operation?.status === "running" || page?.operation?.status === "failed";
+  const operationActive = page?.operation?.status === "pending" || page?.operation?.status === "running";
   const active = operationActive || preparationActive;
-  useIntervalPoll({ enabled: active, pollIntervalMs: 1500, onPoll: () => {
+  useIntervalPoll({ enabled: observing && active, pollIntervalMs: WORK_OBSERVATION_MS, onPoll: () => {
     if (!(contents.status === "ready" && contents.refreshing || contents.status === "failed" && contents.retrying)) contents.revalidate();
   } });
   const refresh = useCallback(async () => {
@@ -241,11 +244,12 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
 }
 
 export function PieceDetails({ id, sourceHref }: { readonly id: string; readonly sourceHref: string | null }) {
-  const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(usePaneIsActive(), 0)}`;
-  const detail = usePaneFreeServerValue({ key: `/media/${id}/part`, stale, load: signal => partDefinition(id, signal) });
+  const observing = useObservationDemand(usePaneIsPresented());
+  const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(observing, 0)}`;
+  const detail = usePaneFreeServerValue({ key: `/media/${id}/part`, stale, enabled: observing, load: signal => partDefinition(id, signal) });
   const definition = detail.status === "ready" ? detail.data : null;
   const source = definition?.source_media_id ?? null;
-  const contents = usePaneFreeServerValue({ key: definition?.capabilities.edit_bounds.allowed && source !== null ? `/media/${source}/parts` : null, stale,
+  const contents = usePaneFreeServerValue({ key: definition?.capabilities.edit_bounds.allowed && source !== null ? `/media/${source}/parts` : null, stale, enabled: observing,
     load: signal => sourceContents(source!, signal) });
   const [editing, setEditing] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);

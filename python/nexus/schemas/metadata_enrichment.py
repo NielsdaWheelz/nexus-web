@@ -340,7 +340,7 @@ type MetadataOperationOut = Annotated[
 
 class MetadataEnrichmentView(_Frozen):
     """The latest operation, the oldest unfinished one, and whether the viewer may start one;
-    the metadata stream ends once ``unfinished_count`` is 0 (only a new run changes it)."""
+    ``unfinished_count`` distinguishes active observation from passive freshness."""
 
     operation: MetadataOperationOut | None
     unfinished_count: Annotated[int, Field(ge=0)]

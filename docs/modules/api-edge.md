@@ -219,20 +219,11 @@ framework upgrades must inspect both outputs before rebasing or removing it.
 - `responses.py` (the envelope), `errors.py` (the closed taxonomy; each code
   carries its status), `logging.py`, `api/deps.py` (`DeviceId`: the
   `X-Nexus-Device` header; absent → 400).
-- `api/routes/stream.py`: `GET /stream/...` authenticated like every route.
-  The chat run stream is a cursor stream (`id: <seq>`, `?after=<seq>`, closes
-  after `done`); oracle readings, media processing, metadata
-  (done once nothing is unfinished) and podcast subscriptions are snapshot streams (`state` on
-  change, `done` when terminal, the whole snapshot again on reconnect).
-  writing is an account revision stream: initial/changed `state {revision}`,
-  with a fresh committed revision read on each existing 15-second timeout even
-  if a postgres notification was lost. the browser probes only watched lanes.
-  snapshot setup acquires LISTEN before its initial read and accepts that snapshot
-  before response construction, so refusal is structured json. the first wake
-  consumes that snapshot; later wakes re-read committed state in a fresh session.
-  a keepalive comment follows 15 s of quiet; an entity gone
-  mid-stream closes it cleanly. `db/listen.py` owns one autocommit LISTEN socket
-  per api database scope, registers all five channels before consumption, and
+- `api/routes/stream.py`: only chat has an incremental stream, authenticated
+  like every route. `id: <seq>` and `?after=<seq>` support replay; `done` closes
+  it. the existing 15-second reconciliation repairs missed notifications and
+  quiet comments retain the transport. `db/listen.py` owns one autocommit LISTEN
+  socket per api database scope for chat events only, and
   fans hints out to at most64 local subscriptions. setup owns a subscription
   until response construction; the response's `__call__` finally owns it afterward,
   including failed header sends. unsubscribe is idempotent and leaves the shared
@@ -260,10 +251,13 @@ updated; the extension shows "update the nexus extension to keep importing."
 - I4 a defect (`E_INTERNAL`, `E_UNKNOWN`, `E_INVALID_RESPONSE`, a non-ApiError)
   is never shown as a modeled failure.
 - I5 only read operations retry automatically: GETs and the explicitly read-only
-  suggestions `/view`. 401 and same-system defects never do.
+  suggestions `/view` and media `/observations/resolve` adapters. the media batch
+  freezes its body across attempts under one aggregate 30-second deadline;
+  retiring demand cancels retries. unsafe `apiFetch` methods gain no read policy.
+  401 and same-system defects never retry.
 - I6 a stream's cursor advances only after the consumer accepted the event.
 - I7 no client names a device; the bff does, from its httpOnly cookie.
-- I8 at most 64 LISTEN connections per api process; one more answers 429.
+- I8 at most 64 local chat subscriptions share the scope's LISTEN socket; one more answers 429.
 - I9 session-lane answers are `private, no-store` with `Vary: Cookie`, except
   an asset answer that writes no cookie, which keeps FastAPI's own policy.
 - I10 a wire mismatch is refused with 426 before routing, on every lane that
@@ -285,5 +279,14 @@ ascending prefix, never a cursor past unapplied commands.
 `maxDuration=300`, no buffering and no-store/no-transform. its ndjson header and
 footer repeat the same repeatable-read head/lamport; the footer includes exact
 counts. cancellation closes its server transaction even if the iterator is
-suspended. the existing 280-second stream deadline still applies. writing-stream
-`state {revision}` now carries the account feed head and is only a catch-up hint.
+suspended. the existing 280-second stream deadline still applies.
+
+passive observations use finite reads: 30 seconds for presented settled state,
+10 seconds for accepted unfinished work. document hide/pagehide stops successors;
+return revalidates immediately. native observation additionally requires admitted
+foreground. a read may settle after retirement, but cannot publish into its successor.
+chat alone takes the bff's stream lifetime. unknown or retired stream paths use
+ordinary finite json forwarding, preserving session, wire and structured 404 errors.
+`useServerValue` and `usePaneFreeServerValue` accept explicit observation `enabled`:
+false retains the accepted snapshot and retires only that consumer's flight/retries;
+true revalidates it. another admitted consumer keeps its shared read alive.

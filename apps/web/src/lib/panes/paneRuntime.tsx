@@ -103,11 +103,13 @@ export type PaneHostCommands = Pick<
 const RuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
 const ActiveContext = createContext<boolean | null>(null);
 const VisibleContext = createContext<boolean | null>(null);
+const PresentedContext = createContext<boolean | null>(null);
 
 export function PaneRuntimeProvider(props: {
   pane: WorkspacePane;
   isActive: boolean;
   isVisible: boolean;
+  isPresented: boolean;
   host: PaneHostCommands;
   children: ReactNode;
 }) {
@@ -202,7 +204,9 @@ export function PaneRuntimeProvider(props: {
     <PaneReturnVisitScope paneId={pane.id} visitId={visitId} routeKey={route.routeKey}>
       <ActiveContext value={props.isActive}>
         <VisibleContext value={props.isVisible}>
-          <RuntimeContext value={value}><NavigationIdentity value={`${pane.id}:${visitId}:${href}`}>{props.children}</NavigationIdentity></RuntimeContext>
+          <PresentedContext value={props.isPresented}>
+            <RuntimeContext value={value}><NavigationIdentity value={`${pane.id}:${visitId}:${href}`}>{props.children}</NavigationIdentity></RuntimeContext>
+          </PresentedContext>
         </VisibleContext>
       </ActiveContext>
     </PaneReturnVisitScope>
@@ -233,6 +237,13 @@ export function usePaneIsVisible(): boolean {
   const visible = useContext(VisibleContext);
   if (visible === null) throw new Error("usePaneIsVisible requires a pane runtime");
   return visible;
+}
+
+/** Active or intersecting the canvas; retained editors stay mounted outside presentation. */
+export function usePaneIsPresented(): boolean {
+  const presented = useContext(PresentedContext);
+  if (presented === null) throw new Error("usePaneIsPresented requires a pane runtime");
+  return presented;
 }
 
 export function usePaneRouter(): PaneScopedRouter {

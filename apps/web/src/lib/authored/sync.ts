@@ -1,5 +1,6 @@
 /** Foreground replication. Upload and download fail independently. Every retry
  * sends the same durable source bytes; only verified acceptance removes pending.
+ * The foreground host requests every finite unit; this owner has no timer.
  * Scope hydration advances bounded pages beside writing replication. Its durable
  * staging and final fence never expand authored snapshot time or local readiness. */
 import { mergeChanges } from "@nexus/authored/merge";
@@ -18,150 +19,183 @@ export interface Transport {
 /** A later attempt can answer these differently. 409 is here because the api answers a busy
  * row lock with it, and no wire field separates that from a permanent conflict. */
 const TRANSIENT_4XX: ReadonlySet<number> = new Set([409, 429]);
+export interface SyncStep { more: boolean; retry_after_ms: number | null }
+type Lane = "setup" | "upload" | "download" | "scope";
+type Failure = { error: unknown; attempts: number; since: number; retry_at: number | null };
+
 export class Sync {
   private readonly abort = new AbortController();
-  private completion: Promise<void> = Promise.resolve();
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private running = false;
-  private rerun = false;
+  private running: Promise<SyncStep> | null = null;
   private retired = false;
-  private foreground = true;
-  private failures = 0;
+  private registered = false;
+  private refreshRequested = false;
+  private pullNeeded = false;
+  private pullTarget: string | null = null;
+  private scopeCheck = false;
+  private sweep: { after: string | null; revision: string; repair: boolean } | null = null;
+  private readonly failures = new Map<Lane, Failure>();
   private evidenceRevision: string | null = null;
-  private scopeCheckedAt = 0;
   private normalization: {revision: string; reading: string; interval: ScopeNormalizationInterval; normalizer: ScopeTextNormalizer; after: number | null; nextRaw: number} | null = null;
   last_error: string | null = null;
   readonly facts: SyncFacts = { local_error: false, saving: false, ready: false, admission: "ready", failure: null, online: true, pending: false, scope_pending: true, scope_progress: null, cursor: "0", head: null };
   get detail(): string | null { return syncDetail(this.facts, this.last_error); }
-  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly evidenceChanged: () => void) {}
-  wake() {
-    if (this.retired || !this.foreground) return;
-    if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
-    if (this.running) { this.rerun = true; return; }
-    this.completion = this.run();
+  constructor(readonly persistence: Pick<Persistence, "replica" | "pending" | "acknowledge" | "applyRemote" | "resetProvisioning" | "stage" | "finishProvisioning" | "scopeProgress" | "scopeRefs" | "scopeRepairRefs" | "scopeNeedsRepair" | "scopeReset" | "scopeRevoke" | "scopeMetadata" | "scopeText" | "scopeReuse" | "scopeNormalizationNext" | "scopeNormalizationRead" | "scopeNormalizationObservation" | "scopeNormalizationReset" | "scopeNormalized" | "scopeTextComplete" | "scopePublish">, readonly transport: Transport, readonly serialize: <T>(operation: () => Promise<T>) => Promise<T>, readonly changed: (corpusChanged?: boolean) => void, readonly evidenceChanged: () => void) {}
+  step({ refresh }: { refresh: boolean }): Promise<SyncStep> {
+    if (refresh) {
+      this.refreshRequested = true;
+      // Only an admitted host calls again after repairing the account session.
+      if (this.facts.admission === "auth") {
+        this.facts.admission = "ready";
+        for (const [lane, failure] of this.failures) {
+          const status = this.status(failure.error);
+          if (status === 401 || status === 403) this.failures.delete(lane);
+        }
+      }
+    }
+    if (this.retired) return Promise.resolve({ more: false, retry_after_ms: null });
+    if (this.running) return this.running;
+    this.running = this.run().catch(error => {
+      if (!this.retired) {
+        this.facts.local_error = error !== null && typeof error === "object" && "code" in error && error.code === "E_AUTHORED_LOCAL";
+        this.facts.failure = { kind: "Refused", since: Date.now() };
+        this.last_error = this.facts.local_error ? "couldn’t prepare your notes on this device. check available storage and retry." : this.facts.ready ? null : "your notes couldn’t finish preparing.";
+        this.changed();
+      }
+      return { more: false, retry_after_ms: null };
+    }).finally(() => { this.running = null; });
+    return this.running;
   }
-  setForeground(active: boolean) { this.foreground = active; if (!active && this.timer !== null) { clearTimeout(this.timer); this.timer = null; } if (active) this.wake(); }
-  stopped(): Promise<void> { return this.completion; }
+  stopped(): Promise<unknown> { return this.running ?? Promise.resolve(); }
   private local<T>(operation: () => Promise<T>): Promise<T> { return this.serialize(() => { if (this.retired) throw new DOMException("authored synchronization stopped", "AbortError"); return operation(); }); }
-  close() { this.retired = true; this.abort.abort(); if (this.timer !== null) clearTimeout(this.timer); }
-  /** `facts.online` is the platform's word, reported by the page; a turn's outcome never sets it. */
-  private async run() {
-    this.running = true;
-    this.rerun = false;
-    let failed = false;
+  close() { this.retired = true; this.abort.abort(); }
+  private status(error: unknown): number | null { return error !== null && typeof error === "object" && "status" in error ? Number(error.status) : null; }
+  private due(lane: Lane): boolean {
+    const failure = this.failures.get(lane);
+    return failure === undefined || failure.retry_at !== null && failure.retry_at <= Date.now();
+  }
+  private async attempt(lane: Lane, operation: () => Promise<void>) {
+    if (!this.due(lane)) return;
+    try { await operation(); this.failures.delete(lane); }
+    catch (error) {
+      if (this.retired) return;
+      const status = this.status(error);
+      const previous = this.failures.get(lane);
+      const attempts = (previous?.attempts ?? 0) + 1;
+      const retry = status !== null && (status === 0 || status >= 500 || TRANSIENT_4XX.has(status));
+      this.failures.set(lane, { error, attempts, since: previous?.since ?? Date.now(), retry_at: retry ? Date.now() + Math.min(30_000, 1000 * 2 ** Math.min(attempts - 1, 5)) * (0.75 + Math.random() * 0.25) : null });
+      if (status === 401 || status === 403) this.facts.admission = "auth";
+      if (status === 426) this.facts.admission = "format";
+    }
+  }
+  private async run(): Promise<SyncStep> {
     try {
       const state = await this.local(() => this.persistence.replica());
       this.facts.ready = state.provisioning_complete;
       this.facts.cursor = state.server_cursor;
-      if (!state.provisioning_complete) await this.provision();
-      const registration = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/replicas", { replica_id: state.replica_id, format_revision: FORMAT_REVISION }, this.abort.signal);
-      if (this.retired) return;
-      this.facts.admission = "ready";
-      this.facts.head = registration.data.head_cursor;
-      await this.local(() => this.persistence.acknowledge(registration.data.accepted_command_seq));
-      const [upload, download, scope] = await Promise.allSettled([this.upload(), this.download(), this.scopeStep()]);
-      const progress = await this.local(() => this.persistence.scopeProgress());
-      this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
-      this.facts.scope_progress = progress.staging_revision === null ? null : progress;
-      const writing = upload.status === "rejected" ? upload : download.status === "rejected" ? download : null;
-      failed = writing !== null || scope.status === "rejected";
-      if (writing !== null) this.fail(writing.reason);
-      else { this.facts.local_error = false; this.last_error = null; this.facts.failure = null; }
-      if (!failed) this.failures = 0;
-    } catch (error) { failed = true; this.fail(error); }
-    finally {
-      this.running = false;
-      this.changed();
-      if (!this.retired && this.foreground) {
-        if (this.rerun) this.wake();
-        else if (this.facts.admission === "ready") {
-          const delay = failed ? Math.min(30_000, 1000 * 2 ** Math.min(this.failures++, 5)) * (0.75 + Math.random() * 0.25) : this.facts.scope_pending ? 0 : 30_000;
-          this.timer = setTimeout(() => { this.timer = null; this.wake(); }, delay);
+      if (this.facts.admission !== "ready") return { more: false, retry_after_ms: null };
+      if (!this.registered) {
+        await this.attempt("setup", async () => {
+          const { data } = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/replicas", { replica_id: state.replica_id, format_revision: FORMAT_REVISION }, this.abort.signal);
+          await this.local(() => this.persistence.acknowledge(data.accepted_command_seq));
+          this.facts.head = data.head_cursor;
+          this.registered = true;
+        });
+      } else if (!state.provisioning_complete) {
+        await this.attempt("setup", () => this.provision());
+      } else {
+        if (this.refreshRequested && !this.pullNeeded) {
+          this.refreshRequested = false; this.pullNeeded = true; this.pullTarget = null;
+          if (this.sweep === null) this.scopeCheck = true;
         }
+        const pending = await this.local(() => this.persistence.pending());
+        await Promise.all([
+          pending.length ? this.attempt("upload", () => this.upload()) : Promise.resolve(),
+          this.pullNeeded ? this.attempt("download", () => this.download()) : Promise.resolve(),
+          this.scopeCheck || this.sweep !== null || this.facts.scope_pending ? this.attempt("scope", () => this.scopeStep()) : Promise.resolve(),
+        ]);
       }
-    }
+      return await this.finishStep();
+    } finally { this.changed(); }
   }
-  /** One writing turn failed. Sign-in and update wait on admission, and disconnection is no
-   * failure; anything else is a `SyncFailure`, Refused unless another attempt could answer
-   * differently. Scope hydration never reaches here: it retries on the same schedule and
-   * leaves writing status alone. */
-  private fail(error: unknown) {
-    if (this.retired) return;
-    const code = error && typeof error === "object" && "code" in error ? error.code : null;
-    const status = error && typeof error === "object" && "status" in error ? Number(error.status) : null;
-    if (status === 401 || code === "E_ACCOUNT_MISMATCH") { this.facts.admission = "auth"; this.facts.failure = null; this.last_error = SIGN_IN_SYNC_DETAIL; return; }
-    if (status === 426) { this.facts.admission = "format"; this.facts.failure = null; this.last_error = UPDATE_SYNC_DETAIL; return; }
-    const kind = status === null || status >= 400 && status < 500 && !TRANSIENT_4XX.has(status) ? "Refused" : "Retrying";
-    this.facts.failure = status === 0 && !this.facts.online ? null : { kind, since: this.facts.failure?.kind === kind ? this.facts.failure.since : Date.now() };
-    if (code === "E_AUTHORED_LOCAL") { this.facts.local_error = true; this.last_error = "couldn’t prepare your notes on this device. check available storage and retry."; return; }
-    this.last_error = this.facts.ready ? null : status === 0 && !this.facts.online ? "connect to finish preparing your notes." : status === 503 ? "nexus is busy. preparing your notes will retry." : "your notes couldn’t finish preparing.";
+  /** Publish durable progress and lane failures after every admitted unit. */
+  private async finishStep(): Promise<SyncStep> {
+    if (this.retired) return { more: false, retry_after_ms: null };
+    const progress = await this.local(() => this.persistence.scopeProgress());
+    this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
+    this.facts.scope_progress = progress.staging_revision === null ? null : progress;
+    this.facts.pending = (await this.local(() => this.persistence.pending())).length > 0;
+    const failure = [...this.failures.values()].sort((a, b) => a.since - b.since)[0];
+    this.facts.local_error = failure !== undefined && failure.error !== null && typeof failure.error === "object" && "code" in failure.error && failure.error.code === "E_AUTHORED_LOCAL";
+    this.facts.failure = failure === undefined || this.facts.admission !== "ready" || this.status(failure.error) === 0 && !this.facts.online ? null : { kind: failure.retry_at === null ? "Refused" : "Retrying", since: failure.since };
+    this.last_error = this.facts.admission === "auth" ? SIGN_IN_SYNC_DETAIL : this.facts.admission === "format" ? UPDATE_SYNC_DETAIL : this.facts.local_error ? "couldn’t prepare your notes on this device. check available storage and retry." : !this.facts.ready && failure ? "your notes couldn’t finish preparing." : null;
+    if (this.facts.admission !== "ready") return { more: false, retry_after_ms: null };
+    const more = !this.registered || !this.facts.ready ? this.due("setup") :
+      this.facts.pending && this.due("upload") || this.pullNeeded && this.due("download") ||
+      (this.scopeCheck || this.sweep !== null || this.facts.scope_pending) && this.due("scope") ||
+      this.refreshRequested && !this.pullNeeded;
+    const retries = [...this.failures.values()].flatMap(value => value.retry_at === null ? [] : [Math.max(1, value.retry_at - Date.now())]);
+    return { more, retry_after_ms: more || !retries.length ? null : Math.min(...retries) };
   }
   private async upload() {
-    while (!this.retired && this.foreground) {
-      const { changes, replica } = await this.local(async () => ({ changes: await this.persistence.pending(), replica: await this.persistence.replica() }));
-      this.facts.pending = changes.length > 0;
-      this.changed();
-      if (!changes.length) return;
-      const { data } = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/changes", { replica_id: replica.replica_id, format_revision: FORMAT_REVISION, changes }, this.abort.signal);
-      if (this.retired) return;
-      if (BigInt(data.accepted_command_seq) < BigInt(changes.at(-1)!.command_seq)) throw Object.assign(new Error("incomplete authored acknowledgement"), { status: 500 });
-      this.facts.head = max(this.facts.head, data.head_cursor);
-      await this.local(() => this.persistence.acknowledge(data.accepted_command_seq));
-    }
+    const { changes, replica } = await this.local(async () => ({ changes: await this.persistence.pending(), replica: await this.persistence.replica() }));
+    if (!changes.length) return;
+    const { data } = await this.transport.json<{ data: { accepted_command_seq: string; head_cursor: string } }>("/api/authored/changes", { replica_id: replica.replica_id, format_revision: FORMAT_REVISION, changes }, this.abort.signal);
+    if (this.retired) return;
+    if (BigInt(data.accepted_command_seq) < BigInt(changes.at(-1)!.command_seq)) throw Object.assign(new Error("incomplete authored acknowledgement"), { status: 500 });
+    this.facts.head = max(this.facts.head, data.head_cursor);
+    await this.local(() => this.persistence.acknowledge(data.accepted_command_seq));
   }
   private async download() {
-    while (!this.retired && this.foreground) {
-      const replica = await this.local(() => this.persistence.replica());
-      const { data } = await this.transport.json<{ data: { changes: FeedChange[]; next_cursor: string; head_cursor: string; evidence_revision: string } }>(`/api/authored/changes?after=${replica.server_cursor}`, null, this.abort.signal);
-      if (this.retired) return;
-      this.facts.head = max(this.facts.head, data.head_cursor);
-      // This opaque remote-evidence token has no relation to the applied cursor.
-      if (typeof data.evidence_revision !== "string") throw new Error("authored feed omitted its evidence revision");
-      if (data.evidence_revision !== this.evidenceRevision) {
-        this.evidenceRevision = data.evidence_revision;
-        this.evidenceChanged();
-      }
-      await this.local(async () => {
-        const current = await this.persistence.applyRemote(data.changes, data.next_cursor);
-        this.facts.cursor = current.server_cursor;
-        this.changed(data.changes.some(change => BigInt(change.server_seq) > BigInt(replica.server_cursor)));
-      });
-      if (BigInt(this.facts.cursor) >= BigInt(data.head_cursor)) return;
-      if (!data.changes.length) throw new Error("authored feed did not advance");
-    }
+    const replica = await this.local(() => this.persistence.replica());
+    const { data } = await this.transport.json<{ data: { changes: FeedChange[]; next_cursor: string; head_cursor: string; evidence_revision: string } }>(`/api/authored/changes?after=${replica.server_cursor}`, null, this.abort.signal);
+    if (this.retired) return;
+    this.pullTarget ??= data.head_cursor;
+    this.facts.head = max(this.facts.head, data.head_cursor);
+    if (typeof data.evidence_revision !== "string") throw new Error("authored feed omitted its evidence revision");
+    if (data.evidence_revision !== this.evidenceRevision) { this.evidenceRevision = data.evidence_revision; this.evidenceChanged(); }
+    await this.local(async () => {
+      const current = await this.persistence.applyRemote(data.changes, data.next_cursor);
+      this.facts.cursor = current.server_cursor;
+      this.changed(data.changes.some(change => BigInt(change.server_seq) > BigInt(replica.server_cursor)));
+    });
+    if (BigInt(this.facts.cursor) >= BigInt(this.pullTarget)) { this.pullNeeded = false; this.pullTarget = null; }
+    else if (!data.changes.length) throw new Error("authored feed did not advance");
   }
   /** Bulk reading inputs never extend the authored snapshot or delay its local
    * admission. One hydration/normalization page shares each upload/pull turn. */
   private async scopeStep() {
-    let progress = await this.local(() => this.persistence.scopeProgress());
+    const progress = await this.local(() => this.persistence.scopeProgress());
     const revoke = async (refs: string[]) => {
       if (!refs.length) return;
       if (!await this.local(() => this.persistence.scopeRevoke(refs)).catch(error => { this.normalization = null; throw error; })) return;
       this.normalization = null;
       this.changed(true);
     };
-    if (Date.now() - this.scopeCheckedAt >= 30_000) {
-      let after: string | null = null;
-      let revision = progress.staging_revision ?? progress.active_revision;
-      let repair = false;
-      do {
-        const refs = await this.local(() => this.persistence.scopeRefs(after));
-        const repairRefs = await this.local(() => this.persistence.scopeRepairRefs(refs));
-        const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"status",revision,active_refs:refs}, this.abort.signal);
-        repair ||= repairRefs.some(ref => !data.revoked_refs.includes(ref));
-        await revoke(data.revoked_refs);
-        revision = data.revision;
-        after = refs.length === 100 ? refs.at(-1)! : null;
-      } while (after !== null && !this.retired && this.foreground);
-      if (this.retired || !this.foreground) return;
-      if (this.normalization?.revision !== revision) this.normalization = null;
-      await this.local(() => this.persistence.scopeReset(revision!, repair)).catch(error => { this.normalization = null; throw error; });
-      this.scopeCheckedAt = Date.now();
-      progress = await this.local(() => this.persistence.scopeProgress());
+    if (this.scopeCheck) {
+      const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"status",revision:progress.staging_revision ?? progress.active_revision,active_refs:[]}, this.abort.signal);
+      const repair = progress.staging_revision === null && await this.local(() => this.persistence.scopeNeedsRepair());
+      if (data.revision !== (progress.staging_revision ?? progress.active_revision) || repair)
+        this.sweep = { after: null, revision: data.revision, repair: false };
+      this.scopeCheck = false;
+      return;
+    }
+    if (this.sweep !== null) {
+      const sweep = this.sweep;
+      const refs = await this.local(() => this.persistence.scopeRefs(sweep.after));
+      const repairRefs = await this.local(() => this.persistence.scopeRepairRefs(refs));
+      const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"status",revision:sweep.revision,active_refs:refs}, this.abort.signal);
+      await revoke(data.revoked_refs);
+      if (data.revision !== sweep.revision) { this.sweep = {after:null,revision:data.revision,repair:false}; return; }
+      sweep.repair ||= repairRefs.some(ref => !data.revoked_refs.includes(ref));
+      if (refs.length === 100) { sweep.after = refs.at(-1)!; return; }
+      if (this.normalization?.revision !== sweep.revision) this.normalization = null;
+      await this.local(() => this.persistence.scopeReset(sweep.revision, sweep.repair));
+      this.sweep = null;
+      return;
     }
     this.facts.scope_pending = progress.active_revision === null || progress.staging_revision !== null;
     this.facts.scope_progress = progress.staging_revision === null ? null : progress;
-    if (progress.staging_revision === null || this.retired || !this.foreground) return;
+    if (progress.staging_revision === null || this.retired) return;
     const revision = progress.staging_revision;
     if (!progress.metadata_complete) {
       const {data} = await this.transport.json<{data: ScopeInputsPage}>("/api/authored/scope-inputs", {kind:"metadata",revision,cursor:progress.metadata_cursor}, this.abort.signal);

@@ -1,7 +1,7 @@
 """The stored work as each viewer sees it: one visibility-joined row, projected four ways.
 
 Summaries feed every list, facts the action menu and Imports, the detail the media pane and
-overlay, the processing snapshot the live stream; a media the viewer cannot read is in none
+overlay, processing and metadata the finite observation; unreadable media is in none
 (I1). The displayed processing status is ``suspended`` while the latest source attempt is
 repairable and no publication is readable (``publication_readable``), whatever the source:
 a readable document stays ready, and downloadable, beside its source remedy. The displayed
@@ -37,6 +37,7 @@ from nexus.schemas.media import (
     ExtensionItemOut,
     ExtensionSourceAttemptOut,
     ListeningStateOut,
+    MediaObservationOut,
     MediaOut,
     MediaProcessingSnapshotOut,
     PartSourceEditionOut,
@@ -589,51 +590,62 @@ def _in_flight(row: Row[Any], status: str, retrieval: str) -> bool:
     )
 
 
-def read_processing_snapshot(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> MediaProcessingSnapshotOut:
-    """The mounted media's current work and publication; unreadable: not found."""
-    rows = _rows(db, viewer_id, [media_id])
+def media_observations(
+    db: Session, *, viewer_id: UUID, media_ids: Sequence[UUID]
+) -> dict[UUID, MediaObservationOut]:
+    """Authorized processing and metadata in the caller's repeatable-read snapshot."""
+    rows = _rows(db, viewer_id, media_ids)
     if not rows:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    row = rows[media_id]
-    status, retrieval = _status(row), _retrieval_status(row)
-    quote_retrievals = [
-        XQuoteProcessingOut(
-            occurrence_id=occurrence.id, retrieval=quote_retrieval(db, occurrence.capture_job_id)
-        )
-        for occurrence in db.execute(
-            text("""
-            SELECT id,capture_job_id FROM document_embeds
-            WHERE media_id=:id AND capture_job_id IS NOT NULL ORDER BY id
+        return {}
+    ids = list(rows)
+    pdf_ready = _pdf_readiness(db, rows)
+    articles = x_article_content_facts(db, media_ids=ids)
+    metadata = metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=ids)
+    occurrences = db.execute(
+        text("""
+            SELECT media_id,id,capture_job_id FROM document_embeds
+            WHERE media_id=ANY(:ids) AND capture_job_id IS NOT NULL ORDER BY media_id,id
         """),
-            {"id": media_id},
+        {"ids": ids},
+    ).all()
+    jobs = {
+        job_id: quote_retrieval(db, job_id)
+        for job_id in dict.fromkeys(occurrence.capture_job_id for occurrence in occurrences)
+    }
+    quotes: dict[UUID, list[XQuoteProcessingOut]] = {media_id: [] for media_id in ids}
+    for occurrence in occurrences:
+        quotes[occurrence.media_id].append(
+            XQuoteProcessingOut(
+                occurrence_id=occurrence.id, retrieval=jobs[occurrence.capture_job_id]
+            )
         )
-    ]
-    return MediaProcessingSnapshotOut(
-        processing_status=status,
-        last_error_code=row.last_error_code,
-        retrieval_status=retrieval,
-        retrieval_status_reason=row.index_reason,
-        text_search_ready=row.text_search_ready,
-        capabilities=_capabilities(
-            row,
-            _pdf_readiness(db, rows),
-            x_article_content_facts(db, media_ids=[media_id]).get(media_id),
-        ),
-        transcript_state=row.transcript_state,
-        transcript_coverage=row.transcript_coverage,
-        reader_generation=row.reader_generation,
-        transcript_reader_key=read_transcript_navigation_source(db, media_id=media_id).key
-        if row.kind in _TRANSCRIPT_KINDS
-        and row.transcript_state in ("ready", "partial")
-        and row.transcript_coverage in ("full", "partial")
-        else None,
-        quote_retrievals=quote_retrievals,
-        work_in_flight=_in_flight(row, status, retrieval)
-        or any(
-            quote.retrieval is not None
-            and quote.retrieval.status in ("queued", "running", "recovering")
-            for quote in quote_retrievals
-        ),
-    )
+    observations: dict[UUID, MediaObservationOut] = {}
+    for media_id, row in rows.items():
+        status, retrieval = _status(row), _retrieval_status(row)
+        observations[media_id] = MediaObservationOut(
+            processing=MediaProcessingSnapshotOut(
+                processing_status=status,
+                last_error_code=row.last_error_code,
+                retrieval_status=retrieval,
+                retrieval_status_reason=row.index_reason,
+                text_search_ready=row.text_search_ready,
+                capabilities=_capabilities(row, pdf_ready, articles.get(media_id)),
+                transcript_state=row.transcript_state,
+                transcript_coverage=row.transcript_coverage,
+                reader_generation=row.reader_generation,
+                transcript_reader_key=read_transcript_navigation_source(db, media_id=media_id).key
+                if row.kind in _TRANSCRIPT_KINDS
+                and row.transcript_state in ("ready", "partial")
+                and row.transcript_coverage in ("full", "partial")
+                else None,
+                quote_retrievals=quotes[media_id],
+                work_in_flight=_in_flight(row, status, retrieval)
+                or any(
+                    quote.retrieval is not None
+                    and quote.retrieval.status in ("queued", "running", "recovering")
+                    for quote in quotes[media_id]
+                ),
+            ),
+            metadata_enrichment=metadata[media_id],
+        )
+    return observations

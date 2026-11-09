@@ -19,20 +19,20 @@ export function useIntervalPoll(args: {
 }): void {
   const { enabled, pollIntervalMs } = args;
   const onPollRef = useRef(args.onPoll);
+  const inFlight = useRef(false);
   onPollRef.current = args.onPoll;
 
   useEffect(() => {
     if (!enabled || pollIntervalMs <= 0) return;
     let cancelled = false;
-    let inFlight = false;
     const tick = () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
+      if (cancelled || inFlight.current) return;
+      inFlight.current = true;
       void (async () => {
         try {
           await onPollRef.current();
         } finally {
-          inFlight = false;
+          inFlight.current = false;
         }
       })();
     };

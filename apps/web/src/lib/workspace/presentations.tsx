@@ -13,6 +13,7 @@ import { useCatalogState } from "@/lib/catalog/provider";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { creditName, selectMediaAuthors } from "@/lib/contributors/credits";
 import { useImports } from "@/lib/imports/ImportsProvider";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { mediaKindLabel, type MediaKind } from "@/lib/media/kind";
 import { panePresentationLocatorKey, resolvePaneRouteModel, type PanePresentationLocator } from "@/lib/panes/paneRouteModel";
 import { pageTitle } from "@nexus/authored/queries";
@@ -55,7 +56,8 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
   const catalog = useCatalogState().data;
   const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
   const { observation } = useImports();
-  const foreground = useRefreshStamp(true, 0);
+  const observing = useObservationDemand(true);
+  const foreground = useRefreshStamp(observing, 0);
   const locators = useMemo(() => {
     const result = new Map<string, PanePresentationLocator>();
     for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
@@ -88,14 +90,14 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     .filter(entry => entry.target.kind !== "preview" && entry.target.kind !== "x_capture" && !authored(entry.target))
     .map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort();
   const remoteKey = JSON.stringify([accountId, remoteLocators, recentRemoteRevisions, changes, observation, foreground]);
-  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${accountId}`, stale: remoteKey,
+  const remote = usePaneFreeServerValue({ key: `workspace-presentations:${accountId}`, enabled: observing, stale: remoteKey,
     initialRead: initial === null ? undefined : initial.status === "failure" ? initial : {
       ...initial, acceptedStale: remoteLocators.every(locator => initial.data.has(panePresentationLocatorKey(locator))) ? remoteKey : null,
     },
     load: signal => readPresentationFacts(remoteLocators, signal, accountId),
   });
   const captureKey = JSON.stringify([accountId, captureLocators, (recent.snapshot?.entries ?? []).filter(entry => entry.target.kind === "x_capture").map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort(), changes, foreground]);
-  const captures = usePaneFreeServerValue({ key: captureLocators.length ? `capture-presentations:${accountId}` : null, stale: captureKey, load: async signal => {
+  const captures = usePaneFreeServerValue({ key: captureLocators.length ? `capture-presentations:${accountId}` : null, enabled: observing, stale: captureKey, load: async signal => {
     while (!signal.aborted) {
       const { command_seq } = await store.readReplica();
       try { await store.whenUploaded(command_seq, signal); } catch (error) {

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, RootModel, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.consumption import Closed
@@ -96,25 +96,6 @@ class SuggestionViewOut(Closed):
     observed_at: datetime
     state: SuggestionStateOut
     items: list[SuggestionItemOut] = Field(max_length=80)
-
-
-class SuggestionCurrentOut(Closed):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    kind: Literal["Current"] = "Current"
-    state: SuggestionStateOut
-
-
-class SuggestionWithdrawnOut(Closed):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    kind: Literal["Withdrawn"] = "Withdrawn"
-
-
-class SuggestionObservationOut(
-    RootModel[Annotated[SuggestionCurrentOut | SuggestionWithdrawnOut, Field(discriminator="kind")]]
-):
-    pass
 
 
 class QuickReadsOut(Closed):

@@ -206,18 +206,6 @@ internal class NexusOriginClient(
     }
     suspend fun authoredScopeInputs(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "scope-inputs")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
     suspend fun authoredScopeText(account: UUID, body: JSONObject): JSONObject = data(Request.Builder().url(api("authored", "scope-text")).header("X-Nexus-Account", account.toString()).post(body.toString().toRequestBody(JSON)))
-    suspend fun authoredHints(account: UUID, onHint: () -> Unit) {
-        var lineBytes = 0
-        val sink = object : OutputStream() {
-            override fun write(value: Int) {
-                if (value == 10) { if (lineBytes == 0) onHint(); lineBytes = 0 }
-                else if (value != 13) { lineBytes++; require(lineBytes <= 256 * 1024) }
-            }
-            override fun write(bytes: ByteArray, offset: Int, count: Int) { for (index in offset until offset + count) write(bytes[index].toInt() and 255) }
-        }
-        val hintsClient = client.newBuilder().callTimeout(280, TimeUnit.SECONDS).readTimeout(280, TimeUnit.SECONDS).build()
-        checkStatus(execute(Request.Builder().url(api("stream", "writing")).header("X-Nexus-Account", account.toString()).get(), hintsClient, destination = sink, destinationLimit = Long.MAX_VALUE))
-    }
     suspend fun authoredSnapshot(account: UUID, destination: OutputStream) {
         val snapshotClient = client.newBuilder().callTimeout(280, TimeUnit.SECONDS).readTimeout(280, TimeUnit.SECONDS).build()
         checkStatus(execute(Request.Builder().url(api("authored", "snapshot")).header("X-Nexus-Account", account.toString()).get(), snapshotClient, destination = destination, destinationLimit = Long.MAX_VALUE))
@@ -294,7 +282,7 @@ internal class NexusOriginClient(
         base.newBuilder().addPathSegment("api").apply { segments.forEach { addPathSegment(it) } }.build()
 
     private suspend fun data(request: Request.Builder, http: OkHttpClient = client): JSONObject =
-        call(request, http) ?: throw IOException("origin answered without data")
+        call(request, http) ?: throw NexusNetworkError(IOException("origin answered without data"))
 
     /** The envelope's `data`, or null for an empty 2xx; any other status throws [NexusOriginError]. */
     private suspend fun call(request: Request.Builder, http: OkHttpClient = client): JSONObject? {
@@ -313,7 +301,7 @@ internal class NexusOriginClient(
             }
             return if (response.body.isEmpty()) null else JSONObject(response.body).getJSONObject("data")
         } catch (error: JSONException) {
-            throw IOException("origin answered a malformed body", error)
+            throw NexusNetworkError(IOException("origin answered a malformed body", error))
         }
     }
 
@@ -381,14 +369,15 @@ internal class NexusOriginClient(
     private suspend fun decodeResponse(response: Response, current: (() -> Boolean)?, unlimited: Boolean, destination: OutputStream?, destinationLimit: Long): NexusOriginResponse {
         val setCookies = if (current != null) response.headers("Set-Cookie") else emptyList()
         for (setCookie in setCookies) {
-            if (current?.invoke() != true) throw IOException("retired credential operation")
-            cookies.install(origin, setCookie, current)
+            if (current?.invoke() != true) throw NexusNetworkError(IOException("retired credential operation"))
+            try { cookies.install(origin, setCookie, current) }
+            catch (error: IOException) { throw NexusNetworkError(error) }
         }
         if (setCookies.isNotEmpty()) {
             cookies.flush()
         }
         if (destination != null && response.isSuccessful) {
-            val body = response.body ?: throw IOException("origin answered without content")
+            val body = response.body ?: throw NexusNetworkError(IOException("origin answered without content"))
             val limitCode = if (destinationLimit == MAX_CATALOG_BYTES) "E_CATALOG_TOO_LARGE" else "E_EPISODE_TRANSCRIPT_TOO_LARGE"
             if (body.contentLength() > destinationLimit) throw LocalStateError(limitCode, "saved content exceeds this device’s size limit")
             body.byteStream().use { input ->
@@ -401,7 +390,7 @@ internal class NexusOriginClient(
                     if (bytes > destinationLimit) throw LocalStateError(limitCode, "saved content exceeds this device’s size limit")
                     destination.write(buffer, 0, count)
                 }
-                if (body.contentLength() >= 0 && bytes != body.contentLength()) throw IOException("origin content length mismatch")
+                if (body.contentLength() >= 0 && bytes != body.contentLength()) throw NexusNetworkError(IOException("origin content length mismatch"))
             }
             return NexusOriginResponse(response.code, "")
         }

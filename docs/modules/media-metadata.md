@@ -5,7 +5,7 @@ grounded x titles. each owns bounded input and strict generated-output acceptanc
 `tasks/enrich_metadata.py` composes them with
 the contributor owner and generation service. `services/metadata_operations.py`
 owns the operation: admission and enqueue, the setwise projection of existing jobs
-for detail, streams, imports and history (no shadow activity state), and personal
+for detail, finite observations, imports and history (no shadow activity state), and personal
 review of an exact no-findings result with its removal with viewer/media state.
 
 ## bibliography
@@ -177,7 +177,7 @@ player descriptor is renamed and chapter presentation is owned there as describe
 [reader module](reader-implementation.md); requested-media identity stays checked until
 the pane drops it ([leftovers](../issues/media-pane-contract-leftovers.md)).
 
-the displayed `processing_status` (summaries, media facts, detail and the processing frame
+the displayed `processing_status` (summaries, media facts, detail and the processing observation
 alike) is the stored status, except `suspended` while the latest source attempt is
 repairable (in flight, its exact job dead) and no publication is readable
 (`capabilities.publication_readable`: a ready reader publication, a pdf's file too). the
@@ -185,16 +185,20 @@ rule has no source branch: a readable article, x or not, reads `ready_for_readin
 Download while the menu offers its source remedy (`RepairSource`); an unreadable one reads
 `suspended`.
 
-- `/stream/media/{id}/events` emits the processing frame (status, failure code,
-  retrieval status and reason, capabilities, transcript state and coverage) and ends
-  (`done`) once nothing it shows is in flight: source work (an unsettled latest attempt
-  that is not repairable, also while a refresh keeps an x article readable), a requested
-  transcript, or a readable media's index whose job is not dead. an episode or video waiting on a
-  transcript nobody requested answers one frame. the pane opens it when it first shows
-  the media processing and again on each in-tab Imports invalidation: an Imports action,
-  an add or upload, a transcript request (menus, a podcast's batch). so a transcript
-  requested away from the pane still reaches it. each invalidation costs every mounted
-  media pane one short processing read and, when that ends, one metadata read.
+- `POST /media/observations/resolve` accepts 1–100 unique media ids and returns
+  ordered `{media_id, observation}` items. an observation combines processing
+  (including canonical reader generation, transcript key and quote recovery) and
+  metadata enrichment in one authorized repeatable-read snapshot. missing and
+  unreadable ids return null; malformed, duplicate, empty and oversized inputs
+  return structured 400. no read admits work.
+  one document/account owner batches due presented main/child/inspector interests:
+  10 seconds for unfinished processing or metadata, 30 otherwise. busy siblings
+  never accelerate settled ids. aligned boundaries batch coincident due subjects;
+  attention joins an active read and wakes only its omitted interests. first or
+  renewed demand reads immediately, so the next shared boundary may follow soon.
+  hiding suspends reads and retains snapshots;
+  authoritative null clears private state. reader invalidation compares publication
+  facts, coalescing changed children; unchanged status does not reload prose.
 
 - `POST /media/{id}/metadata-enrichment`: creator-only admission; body
   `{expected_job_id: UUID | null}` (any other key is 400); 202 returns
@@ -219,15 +223,12 @@ Download while the menu offers its source remedy (`RepairSource`); an unreadable
   `E_MEDIA_NOT_FOUND`; a job that is not this media's metadata job is 404
   `E_NOT_FOUND` ("Metadata result not found"); another result is 409
   `E_RESOURCE_CONFLICT`.
-- `/stream/media/{id}/metadata/events` emits the same typed view, authorizes each
-  snapshot and ends (`done`) once `unfinished_count` is 0: an idle media answers
-  one frame.
-- `/stream/media/{media_id}/metadata-enrichment/{job_id}/events` emits the exact
-  generated `MetadataOperationOut` directly as `state`/`done`, authorizing media
-  access and exact job membership on every snapshot. completed/no-findings/failed
-  is terminal; retry waiting is not. initial inaccessible media is
-  `404 E_MEDIA_NOT_FOUND`; a missing/wrong job is `404 E_NOT_FOUND`. later access
-  loss closes observation; it never fabricates research failure.
+- `GET /media/{media_id}/metadata-enrichment/{job_id}` reads the immutable exact
+  `MetadataOperationOut`. inaccessible media is `404 E_MEDIA_NOT_FOUND`; a
+  missing/wrong job is `404 E_NOT_FOUND`. a foreground exact-job interest survives
+  pane closure, checks unfinished work every 10 seconds and settles a terminal
+  receipt once. newer work never replaces that identity. background retains the
+  interest without requests; return checks the same job.
 
 admission locks the media row only (never job rows: they are read through
 `ix_metadata_jobs_media_created`); the lock serializes it with automatic enqueues.
@@ -260,23 +261,18 @@ input and require a deliberate rerun. chapters/transcript source mechanics retai
 their existing owners.
 
 media detail and the resource actions read share the same projection. detail
-and each stream snapshot use repeatable read. existing `media_events`
-notifications announce semantic job changes and committed reviews; heartbeats do
-not. client admission and review receipts also invalidate imports so an idle
+and finite composite/exact-job reads use repeatable read. client admission and
+review receipts also invalidate imports so an idle
 workspace wakes. the successful timestamp independently
 invalidates facts when an older job publishes behind a newer latest job.
 
 one view per account/media id per tab (`lib/media/mediaMetadataOperations.ts`) serves
 the media pane and the `metadata…` overlay; imports renders its rows from its own
-read. no collection-row subscriptions or browser polling. the tab follows a
-media's stream while research can change it: on a mount (one short read when
-idle), an admission (answered or lost: a lost answer may hide a landed run), a review, a
-reconnect, and when the media's processing stream settles (a successful import
-may have started research). a followed run is followed to its end even after its
-pane closes, so lists still learn its title. an automatic run that starts while a
-settled pane stays visible shows on the next mount, visibility change or overlay
-open. bibliographic rereads preserve reader locator, selection and playback. a
-frame whose stamp moved past the tab's known stamp publishes `Metadata`
+read. collection rows acquire no observation interest. admissions and reviews
+invalidate presented consumers; an automatic run appears on the next passive
+check. only a deliberate exact-job interest outlives its pane. bibliographic
+rereads preserve reader locator, selection and playback. an observation whose
+stamp moved past the tab's known stamp publishes `Metadata`
 (architecture §8.12) when its run changed any metadata field or its fields are
 unknown. row menus use their inspected action expectation.
 
@@ -285,7 +281,7 @@ uncertainty guard. an exact observer per account/media/job serves both deliberat
 notification interest and pinned inspection. inspection creates no notification
 interest. terminal interest is taken once before feedback/invalidation effects;
 all terminal outcomes invalidate canonical metadata reads, even an already-complete
-receipt whose stamp equals the first frame. pane closure retains interest; account
+receipt whose stamp equals the first read. pane closure retains interest; account
 retirement aborts it; reload forgets it. there is no notification history.
 
 “update metadata” acknowledges requesting immediately through the existing stage.
@@ -301,7 +297,7 @@ second detail copy or unobserved metadata fetch; same-body title reload preserve
 reader identity, position, selection and playback.
 
 the authenticated admission provider owns metadata observation lifetime; exact
-account teardown aborts its streams and clears only that account's entries.
+account teardown aborts its reads and clears only that account's entries.
 reopening the account attaches a fresh observer, including development effect
 replay. pane closure alone does not stop admitted work's observation. late review
 or admission replies cannot invalidate the next account's views.

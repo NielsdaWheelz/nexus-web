@@ -8,21 +8,35 @@ import type { ScopeInputsPage, ScopeProgress, ScopeTextPage, ScopeNormalizationI
 import { selectionFor } from "./persistence";
 import { nativeQueryPlan, nativeSearchPlan } from "./nativeQuery";
 import { Sync } from "./sync";
+import { scheduleReplication } from "./schedule";
+import { setNativeForeground } from "@/lib/native/foreground";
+import { ApiError } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
+import { observeWorkerUpdate } from "@/lib/native/admission";
 import { syncStatus, uploadStall } from "./status";
 type Port = { postMessage(frame: string): void; onmessage: ((event: { data: string }) => void) | null };
 let nextId = 0;
 let installedPort: Port | null = null;
-const hints = new Set<() => void>();
-const foregroundListeners = new Set<(active: boolean) => void>();
-let nativeForeground = false;
+let protocolFailure: ApiError | null = null;
 let foregroundRevision = BigInt(-1);
 function receiveForeground(active: boolean, revision: string) {
   if (BigInt(revision) < foregroundRevision) return;
-  foregroundRevision = BigInt(revision); nativeForeground = active;
-  for (const listener of foregroundListeners) listener(active);
+  foregroundRevision = BigInt(revision); setNativeForeground(active);
 }
 const pending = new Map<number, { resolve(value: Record<string, unknown>): void; reject(error: Error): void }>();
+/** protocol refusal retires this document's channel, never native storage. */
+function refuseNativeProtocol(): ApiError {
+  const failure = protocolFailure ?? new ApiError(426, "E_WIRE_MISMATCH", "update nexus to open local writing");
+  protocolFailure = failure;
+  if (installedPort !== null) installedPort.onmessage = null;
+  installedPort = null;
+  for (const waiting of pending.values()) waiting.reject(failure);
+  pending.clear();
+  observeWorkerUpdate();
+  return failure;
+}
 function nativePort(): Port {
+  if (protocolFailure !== null) throw protocolFailure;
   const port = (window as Window & { nexusAuthored?: Port }).nexusAuthored;
   if (!port) throw new Error("native authored storage unavailable");
   if (installedPort !== port) {
@@ -30,15 +44,12 @@ function nativePort(): Port {
   port.onmessage = ({ data }) => {
     const reply = JSON.parse(data);
     if (reply.kind === "authored_foreground") { receiveForeground(reply.active, reply.revision); return; }
-    if (reply.kind === "authored_hint") { for (const wake of hints) wake(); return; }
     const waiting = pending.get(reply.id); pending.delete(reply.id);
-    if (reply.ok) { waiting?.resolve(reply.result); return; }
+    if (waiting === undefined) return;
+    if (reply.ok) { waiting.resolve(reply.result); return; }
     const { message, status, code } = reply.error;
-    // the bridge answers 500 and its own code for every throw it cannot name, so the message is
-    // all that is left: `origin ` keeps its status, and any other reads as a local invariant.
-    // that is wrong for a few throws both ways: docs/issues/native-authored-throws-classed-by-message.md.
-    const invariant = code === "E_AUTHORED" && status === 500 && !message.startsWith("origin ");
-    waiting?.reject(Object.assign(new Error(message), invariant ? { code } : { status, code: message === "origin 403 E_ACCOUNT_MISMATCH" ? "E_ACCOUNT_MISMATCH" : code }));
+    const invariant = code === "E_AUTHORED" && status === 500;
+    waiting.reject(Object.assign(new Error(message), invariant ? { code } : { status, code }));
   };
   }
   return port;
@@ -89,9 +100,7 @@ async function call<T>(op: string, input: Record<string, unknown> = {}, signal?:
   } finally { if (signal?.aborted) void frame("discard_transfer", { transfer_id }).catch(reportError); }
 }
 export async function openNativeAuthoredStore(accountId: string): Promise<AuthoredStore> {
-  const replica = await call<ReplicaState & { foreground: boolean; foreground_revision: string }>("hello");
-  receiveForeground(replica.foreground, replica.foreground_revision);
-  if (replica.account_id !== accountId || replica.format_revision !== FORMAT_REVISION) throw new Error("native authored account or format mismatch");
+  const replica = await nativeHello(accountId);
   let lease: string | null = null;
   let closed = false;
   let queue: Promise<unknown> = Promise.resolve();
@@ -150,6 +159,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     scopeProgress: () => call<ScopeProgress>("scope_progress"),
     scopeRefs: async (after: string | null) => (await call<{refs: string[]}>("scope_refs", {after})).refs,
     scopeRepairRefs: async (refs: string[]) => (await call<{refs: string[]}>("scope_repair_refs", {refs})).refs,
+    scopeNeedsRepair: async () => (await call<{needed: boolean}>("scope_needs_repair")).needed,
     scopeReset: async (revision: string, repair = false) => { await call("scope_reset", {revision,repair}); },
     scopeRevoke: async (refs: string[]) => (await call<{changed: boolean}>("scope_revoke", {refs})).changed,
     scopeMetadata: async (page: ScopeInputsPage, requestedCursor: string | null) => (await call<{accepted: boolean}>("scope_metadata", {page,requested_cursor:requestedCursor})).accepted,
@@ -185,13 +195,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
   }, serialize, changed, () => { for (const listener of evidence) listener(); });
   sync.facts.ready = replica.provisioning_complete; sync.facts.cursor = replica.server_cursor; sync.facts.pending = (await persistence.pending()).length > 0;
   sync.facts.online = navigator.onLine;
-  const wake = () => { sync.facts.online = navigator.onLine; sync.wake(); };
-  const foreground = () => { sync.facts.online = navigator.onLine; sync.setForeground(nativeForeground && document.visibilityState === "visible"); };
-  const nativeVisibility = (active: boolean) => sync.setForeground(active && document.visibilityState === "visible");
-  foregroundListeners.add(nativeVisibility);
-  hints.add(wake);
-  window.addEventListener("online", wake); window.addEventListener("offline", wake); document.addEventListener("visibilitychange", foreground);
-  sync.setForeground(nativeForeground && document.visibilityState === "visible");
+  const replication = scheduleReplication(refresh => { sync.facts.online = navigator.onLine; return sync.step({ refresh }); }, reportError);
   return {
     withCommand: async work => {
       if (closed) throw new Error("authored account closed");
@@ -220,7 +224,7 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
         const states = await changeStates([frame.change]);
         await validateBindings(accountId, states, [frame.change]);
         frame = { ...frame, states: mergeChanges(states, [frame.change]) };
-        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.facts.pending = true; if (result.kind === "committed") changed(true); sync.wake(); return result; }
+        const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease }); sync.facts.pending = true; if (result.kind === "committed") changed(true); replication.wake(); return result; }
       finally { sync.facts.saving = false; changed(); }
     }),
     subscribe: (query, listener, failed) => {
@@ -232,13 +236,25 @@ export async function openNativeAuthoredStore(accountId: string): Promise<Author
     evidence_changed: listener => { evidence.add(listener); return () => { evidence.delete(listener); }; },
     sync_status: listener => { statuses.add(listener); listener(syncStatus(sync.facts), sync.detail, sync.facts.failure); return () => { statuses.delete(listener); }; },
     close: async () => {
-      closed = true; sync.close();
+      closed = true; replication.close(); sync.close();
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
-      queries.clear(); statuses.clear(); evidence.clear(); hints.delete(wake); foregroundListeners.delete(nativeVisibility);
-      window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
+      queries.clear(); statuses.clear(); evidence.clear();
       await sync.stopped(); await queue;
     },
   };
 }
 /** Shelf derives the provider identity from native authority, never its URL. */
-export async function readNativeAuthoredAccount(): Promise<string> { return (await call<ReplicaState>("hello")).account_id; }
+export async function readNativeAuthoredAccount(): Promise<string> { return (await nativeHello(null)).account_id; }
+async function nativeHello(accountId: string | null): Promise<ReplicaState> {
+  let replica: ReplicaState & {wire_revision: number; foreground: boolean; foreground_revision: string};
+  try { replica = await call<typeof replica>("hello", {wire_revision:WIRE_REVISION,format_revision:FORMAT_REVISION,account_id:accountId}); }
+  catch (error) {
+    if (error !== null && typeof error === "object" && "status" in error && error.status === 426) throw refuseNativeProtocol();
+    if (error !== null && typeof error === "object" && "status" in error && error.status === 403) throw new ApiError(403, "E_ACCOUNT_MISMATCH", "sign in with the account saved on this device");
+    throw error;
+  }
+  if (replica.wire_revision !== WIRE_REVISION || replica.format_revision !== FORMAT_REVISION) throw refuseNativeProtocol();
+  if (accountId !== null && replica.account_id !== accountId) throw new ApiError(403, "E_ACCOUNT_MISMATCH", "sign in with the account saved on this device");
+  receiveForeground(replica.foreground, replica.foreground_revision);
+  return replica;
+}

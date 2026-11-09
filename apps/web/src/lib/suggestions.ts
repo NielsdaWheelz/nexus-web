@@ -13,7 +13,6 @@ export type SuggestionTarget = SuggestionItem["target"];
 export type Suggestions = Schema<"SuggestionsOut">;
 export type SuggestionPublication = Schema<"SuggestionPublicationOut">;
 export type SuggestionState = Schema<"SuggestionStateOut">;
-export type SuggestionObservation = Schema<"SuggestionObservationOut">;
 export type QuickReads = Schema<"QuickReadsOut">;
 export type SuggestionsDestination =
   | { kind: "Lectern" }

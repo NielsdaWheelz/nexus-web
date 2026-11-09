@@ -344,6 +344,7 @@ export default function WorkspaceHost() {
                     isActive={pane.id === activeId}
                     isMobile={isMobile}
                     isVisible={isVisible}
+                    isPresented={isVisible && (pane.id === activeId || canvas.inViewPaneIds.has(pane.id))}
                     isMaximized={maximized}
                     availableWidthPx={canvas.availableWidthPx}
                     columnWidthPx={columnWidthPx}

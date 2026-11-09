@@ -3,6 +3,9 @@
  * obtains explicit discard, then retires before purge. Cancel resumes deferred
  * preparation unchanged. A durable retirement marker owns interrupted cleanup. */
 import { FORMAT_REVISION } from "@nexus/authored/types";
+import { ApiError } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
+import { observeWorkerUpdate } from "@/lib/native/admission";
 import { openAuthoredStore, retireAuthoredAccount } from "./client";
 import { markBrowserRetiring, readBrowserRetiring, clearBrowserRetiring } from "./binding";
 import { closeWritingRuntime, discardWritingRuntime, hasUncommittedWriting } from "@/lib/notes/runtime";
@@ -12,11 +15,15 @@ async function control(accountId: string, op: "pause_commands" | "retire", pause
     const close = () => { clearTimeout(timer); worker.port.postMessage({ id: 3, op: "close" }); worker.port.close(); };
     const timer = setTimeout(() => { close(); reject(new Error("couldn’t close local writing owners. close other nexus tabs and retry sign out.")); }, 30_000);
     worker.port.onmessage = ({ data }) => {
-      if (data.kind === "retired" || data.id === 2 && data.ok) { if (op === "retire") retireAuthoredAccount(accountId); close(); resolve(); }
-      else if (data.id === 1 && data.ok) worker.port.postMessage({ id: 2, op, paused, account_id: accountId, format_revision: FORMAT_REVISION });
-      else if (data.ok === false) { close(); reject(new Error(data.error)); }
+      if (data.kind === "retired" || data.id === 1 && data.ok) {
+        if ((data.kind === "retired" ? data.wire_revision : data.result.wire_revision) !== WIRE_REVISION) { close(); observeWorkerUpdate(); reject(new ApiError(426, "E_WIRE_MISMATCH", "close all nexus tabs to update local writing")); return; }
+        if (data.kind === "retired") { retireAuthoredAccount(accountId); close(); resolve(); }
+        else worker.port.postMessage({ id: 2, op, paused, account_id: accountId, format_revision: FORMAT_REVISION, wire_revision: WIRE_REVISION });
+      }
+      else if (data.id === 2 && data.ok) { close(); resolve(); }
+      else if (data.ok === false) { close(); if (data.status === 426) { observeWorkerUpdate(); reject(new ApiError(426, "E_WIRE_MISMATCH", data.error)); } else reject(new Error(data.error)); }
     };
-    worker.port.start(); worker.port.postMessage(op === "retire" ? { id: 2, op, account_id: accountId, format_revision: FORMAT_REVISION } : { id: 1, op: "hello", account_id: accountId, format_revision: FORMAT_REVISION });
+    worker.port.start(); worker.port.postMessage(op === "retire" ? { id: 2, op, account_id: accountId, format_revision: FORMAT_REVISION, wire_revision: WIRE_REVISION } : { id: 1, op: "hello", account_id: accountId, format_revision: FORMAT_REVISION, wire_revision: WIRE_REVISION });
   });
 }
 export type BrowserRetirementPending = "another_tab" | "blocked_database";

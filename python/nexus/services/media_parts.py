@@ -366,8 +366,6 @@ def advance_part_definition(db: Session, *, media_id: UUID) -> None:
     assert part_set is not None
     part_set.revision += 1
     db.flush()
-    for changed_id in (media_id, part.source_media_id):
-        db.execute(text("SELECT pg_notify('media_events',:id)"), {"id": str(changed_id)})
 
 
 def part_definition_version(db: Session, *, media_id: UUID) -> int | None:
@@ -531,8 +529,6 @@ def publish_part(
 
     reconcile_media_section_bounds(db, media_id=extent.source_media_id)
     projection.refresh_source_highlights(db, extent.source_media_id)
-    for changed_id in (part_id, extent.source_media_id):
-        db.execute(text("SELECT pg_notify('media_events',:id)"), {"id": str(changed_id)})
     projection.refresh(db, "media", [part_id])
     record_input_change(
         db, owners=(f"media:{owner}" for owner in (extent.source_media_id, part_id))

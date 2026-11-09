@@ -20,8 +20,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -37,7 +35,7 @@ import java.util.UUID
  * settlement. Retirement releases its document lease; an already admitted SQL
  * operation still finishes under the commands mutex before a new owner can read
  * its source clock. Main-thread adoption rechecks document generation. Same-account
- * remote admission resumes hints and synchronization without reopening writing. */
+ * remote admission and foreground publication do not reopen local writing. */
 private class AuthoredStorageError(cause: java.io.IOException) : java.io.IOException("couldn’t prepare notes on this device", cause)
 
 internal class AuthoredBridge(private val webView: WebView, private val session: DeviceSession) {
@@ -51,26 +49,13 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     private val outputs = mutableMapOf<String, ByteArray>()
     private var snapshot: File? = null
     private var lease: String? = null
-    private var hintJob: Job? = null
-    private var hintOwner: Pair<OwnedWebMessage, UUID>? = null
+    private var documentOwner: Pair<OwnedWebMessage, UUID>? = null
     private var closed = false
     private var boundAccount: UUID? = null
     private val unsubscribeAccount = session.subscribe {
         if (!closed && boundAccount != null && boundAccount != session.accountId()) {
             onPageStarted()
             webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
-        } else if (!closed) {
-            // Publications read current admission; Checking may already be Ready.
-            // Retire the old credential request before opening its replacement.
-            hintJob?.cancel(); hintJob = null
-            if (foreground && session.remotelyAdmitted()) {
-                hintOwner?.let { (message, account) ->
-                    if (boundAccount == account && current(message, account)) {
-                        startHints()
-                        message.replyProxy.postMessage(JSONObject().put("kind", "authored_hint").toString())
-                    }
-                }
-            }
         }
     }
     private var foreground = false
@@ -82,25 +67,8 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
     }
     private fun publishForeground(active: Boolean) {
         foreground = active; foregroundRevision++
-        hintOwner?.first?.replyProxy?.postMessage(JSONObject().put("kind", "authored_foreground").put("active", active).put("revision", foregroundRevision.toString()).toString())
-        if (active) startHints() else { hintJob?.cancel(); hintJob = null }
-    }
-    private fun startHints() {
-        if (!foreground || hintJob?.isActive == true) return
-        val (message, account) = hintOwner ?: return
-        hintJob = scope.launch {
-            var failures = 0
-            while (isActive && current(message, account)) {
-                try {
-                    withContext(Dispatchers.IO) { origin.authoredHints(account) { webView.post { if (current(message, account)) message.replyProxy.postMessage(JSONObject().put("kind", "authored_hint").toString()) } } }
-                    failures = 0
-                } catch (error: kotlinx.coroutines.CancellationException) { throw error }
-                catch (error: Exception) {
-                    if (error is NexusOriginError && error.status in setOf(401, 403, 426)) return@launch
-                    failures++
-                }
-                delay(if (failures == 0) 250 else minOf(30_000L, 1000L shl minOf(5, failures)) * (75..100).random() / 100)
-            }
+        documentOwner?.let { (message, account) ->
+            if (current(message, account)) message.replyProxy.postMessage(JSONObject().put("kind", "authored_foreground").put("active", active).put("revision", foregroundRevision.toString()).toString())
         }
     }
     fun install() = framing.install()
@@ -108,7 +76,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
         for (request in requests.values.toList()) request.cancel()
         requests.clear()
         boundAccount = null
-        hintJob?.cancel(); hintJob = null; hintOwner = null
+        documentOwner = null
         framing.onDocumentStarted(); uploads.clear(); outputs.clear()
         snapshot?.delete(); snapshot = null
         lease?.let { if (preparations.holdsLock(it)) preparations.unlock(it) }; lease = null
@@ -168,6 +136,13 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                             JSONObject(pending.toString("UTF-8"))
                         }
                         val operation = request.getString("op")
+                        if (operation == "hello") {
+                            if (request.opt("wire_revision") != BuildConfig.NEXUS_WIRE || request.opt("format_revision") != 4)
+                                throw NexusOriginError(426, "E_WIRE_MISMATCH")
+                            require(request.has("account_id"))
+                            if (!request.isNull("account_id") && request.getString("account_id") != account.toString())
+                                throw NexusOriginError(403, "E_ACCOUNT_MISMATCH")
+                        }
                         remoteOperation = operation in setOf("register", "push", "pull", "snapshot", "scope_inputs", "scope_text_remote")
                         if (remoteOperation && foreground && session.remoteAdmission == "Unavailable") {
                             // The foreground sync retry owns reachability retry too: a server
@@ -208,7 +183,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                             }
                         }
                         require(current(message, account))
-                        if (operation == "hello") { boundAccount = account; hintOwner = message to account; result.put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()); startHints() }
+                        if (operation == "hello") { boundAccount = account; documentOwner = message to account; result.put("wire_revision", BuildConfig.NEXUS_WIRE).put("foreground", foreground).put("foreground_revision", foregroundRevision.toString()) }
                         val bytes = result.toString().toByteArray(Charsets.UTF_8)
                         require(bytes.size <= 16 * 1024 * 1024 && outputs.size < 8)
                         if (inlineRequest && bytes.size <= 24 * 1024) {
@@ -239,7 +214,17 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                 }
                 JSONObject().put("ok", true).put("result", result)
             } catch (error: Exception) {
-                JSONObject().put("ok", false).put("error", JSONObject().put("message", error.message ?: "couldn’t save on this device").put("code", if (error is AuthoredStorageError || error is androidx.sqlite.SQLiteException || error is java.io.IOException && !remoteOperation) "E_AUTHORED_LOCAL" else "E_AUTHORED").put("status", if (error is NexusOriginError) error.status else if (error is NexusNetworkError) { if (error.cause is java.io.InterruptedIOException) 504 else 0 } else 500))
+                val code = when {
+                    error is NexusOriginError -> error.code ?: JSONObject.NULL
+                    error is AuthoredStorageError || error is androidx.sqlite.SQLiteException || error is java.io.IOException && !remoteOperation -> "E_AUTHORED_LOCAL"
+                    else -> "E_AUTHORED"
+                }
+                val status = when (error) {
+                    is NexusOriginError -> error.status
+                    is NexusNetworkError -> if (error.cause is java.io.InterruptedIOException) 504 else 0
+                    else -> 500
+                }
+                JSONObject().put("ok", false).put("error", JSONObject().put("message", error.message ?: "couldn’t save on this device").put("code", code).put("status", status))
             }
             if (current(message, account)) message.replyProxy.postMessage(reply.put("id", id).toString())
             } finally { if (requests[id] === job) requests.remove(id) }
@@ -258,6 +243,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "scope_progress" -> store!!.scopeProgress()
             "scope_refs" -> store!!.scopeRefs(if (request.isNull("after")) null else request.getString("after"))
             "scope_repair_refs" -> store!!.scopeRepairRefs(request.getJSONArray("refs"))
+            "scope_needs_repair" -> store!!.scopeNeedsRepair()
             "scope_reset" -> { store!!.scopeReset(request.getString("revision"), request.getBoolean("repair")); JSONObject() }
             "scope_revoke" -> JSONObject().put("changed", store!!.scopeRevoke(request.getJSONArray("refs")))
             "scope_metadata" -> JSONObject().put("accepted", store!!.scopeMetadata(request.getJSONObject("page"), if (request.isNull("requested_cursor")) null else request.getString("requested_cursor")))

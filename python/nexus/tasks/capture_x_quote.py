@@ -204,7 +204,6 @@ def retry_quote(
         row.capture_job_id = enqueue_job(
             db, id=successor_id, kind="capture_x_quote", payload=job.payload
         ).id
-        db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
         answer = retrieval(db, row.capture_job_id)
         assert answer is not None
         return answer

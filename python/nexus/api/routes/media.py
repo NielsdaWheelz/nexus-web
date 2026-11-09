@@ -9,13 +9,24 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.logging import get_request_id
 from nexus.responses import Data
-from nexus.schemas.media import MediaOut, MediaRemovalPreviewOut, RemoveMediaRequest
+from nexus.schemas.media import (
+    MediaObservationResolutionOut,
+    MediaOut,
+    MediaRemovalPreviewOut,
+    RemoveMediaRequest,
+    ResolvedMediaObservationsOut,
+    ResolveMediaObservationsIn,
+)
 from nexus.schemas.media_summary import (
     MediaSummaryResolutionOut,
     ResolvedMediaSummariesOut,
     ResolveMediaSummariesIn,
 )
-from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
+from nexus.schemas.metadata_enrichment import (
+    MetadataEnrichmentAccepted,
+    MetadataEnrichmentRequest,
+    MetadataOperationOut,
+)
 from nexus.services import media, media_deletion, metadata_operations
 
 router = APIRouter(tags=["media"])
@@ -36,10 +47,37 @@ def resolve_media_summaries(
     return Data(data=ResolvedMediaSummariesOut(items=items))
 
 
+@router.post("/media/observations/resolve")
+def resolve_media_observations(
+    body: ResolveMediaObservationsIn, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[ResolvedMediaObservationsOut]:
+    """Input order; absent and unreadable media both resolve to null."""
+    found = media.media_observations(db, viewer_id=viewer.user_id, media_ids=body.media_ids)
+    return Data(
+        data=ResolvedMediaObservationsOut(
+            items=[
+                MediaObservationResolutionOut(media_id=media_id, observation=found.get(media_id))
+                for media_id in body.media_ids
+            ]
+        )
+    )
+
+
 @router.get("/media/{media_id}")
 def get_media(media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[MediaOut]:
     """404 when the media does not exist or the viewer cannot read it."""
     return Data(data=media.get_media_for_viewer(db, viewer.user_id, media_id))
+
+
+@router.get("/media/{media_id}/metadata-enrichment/{job_id}")
+def get_media_metadata_operation(
+    media_id: UUID, job_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[MetadataOperationOut]:
+    return Data(
+        data=metadata_operations.metadata_operation_for_viewer(
+            db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
+        )
+    )
 
 
 @router.post("/media/{media_id}/metadata-enrichment", status_code=202)

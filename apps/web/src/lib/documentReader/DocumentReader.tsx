@@ -173,37 +173,41 @@ export interface DocumentReaderViewProps {
   readonly end?: ReactNode;
 }
 
-/** A new reader per key; hosted readers wait until their publication is readable. */
+/** A new reader per key; readability owns mounting and progress commits.
+ * observationDemand separately admits passive repair and foreground catch-up. */
 export function useDocumentReader(
   key: string,
   options: ReaderOptions,
   enabled = true,
+  observationDemand = enabled,
 ): Reader {
   const current = useRef<{ key: string; runtime: ReaderRuntime } | null>(null);
   if (current.current?.key !== key) {
     current.current = { key, runtime: createReaderRuntime(options) };
   }
   const { runtime } = current.current;
+  const observing = enabled && observationDemand;
+  const liveObservation = useRef(observing);
+  liveObservation.current = observing;
+  const observedOnce = useRef(false);
   const publication = useReaderState(runtime, state => state.document);
   const progress = useReaderState(runtime, state => state.progress);
-  useFailedReadRepair(enabled && (publication.status === "failed" || publication.status === "ready" && publication.refreshFailed),
-    publication.status === "loading" || (publication.status === "failed" ? publication.retrying : publication.refreshing), runtime.retryLoad);
-  useFailedReadRepair(enabled && (progress?.kind === "LoadFailed" || progress?.kind === "Ready" && progress.observation !== null),
-    progress?.kind === "Loading" || !!progress && (progress.kind === "LoadFailed" || progress.kind === "Ready") && progress.retrying, runtime.revalidate);
+  useFailedReadRepair(observing && (publication.status === "failed" || publication.status === "ready" && publication.refreshFailed),
+    publication.status === "loading" || (publication.status === "failed" ? publication.retrying : publication.refreshing), () => {
+      if (liveObservation.current && document.visibilityState === "visible") runtime.retryLoad();
+    });
+  useFailedReadRepair(observing && (progress?.kind === "LoadFailed" || progress?.kind === "Ready" && progress.observation !== null),
+    progress?.kind === "Loading" || !!progress && (progress.kind === "LoadFailed" || progress.kind === "Ready") && progress.retrying, () => {
+      if (liveObservation.current && document.visibilityState === "visible") runtime.revalidate();
+    });
   useEffect(() => {
     if (!enabled) return;
+    observedOnce.current = false;
     const unmount = runtime.mount();
-    const revalidate = () => {
-      if (document.visibilityState === "visible") runtime.revalidate();
-    };
     const blur = () => runtime.away(false);
     const hide = () => runtime.away(true);
-    const visibility = () =>
-      document.visibilityState === "hidden" ? hide() : revalidate();
+    const visibility = () => { if (document.visibilityState === "hidden") hide(); };
     const events: [Window | Document, string, () => void][] = [
-      [window, "focus", revalidate],
-      [window, "pageshow", revalidate],
-      [window, "online", revalidate],
       [window, "blur", blur],
       [window, "pagehide", hide],
       [document, "visibilitychange", visibility],
@@ -216,6 +220,27 @@ export function useDocumentReader(
       unmount();
     };
   }, [enabled, runtime]);
+  useEffect(() => {
+    if (!observing) return;
+    const revalidate = () => {
+      if (!liveObservation.current || document.visibilityState !== "visible") return;
+      const state = runtime.getState();
+      if (state.document.status === "failed" || state.document.status === "ready" && state.document.refreshFailed
+        || state.progress?.kind === "LoadFailed" && state.progress.recovery === "ReloadDocument") runtime.retryLoad();
+      else runtime.revalidate();
+    };
+    // Mount/start owns the first position read; renewed demand checks it once.
+    if (observedOnce.current) revalidate();
+    observedOnce.current = true;
+    const events: [Window | Document, string, () => void][] = [
+      [window, "focus", revalidate],
+      [window, "pageshow", revalidate],
+      [window, "online", revalidate],
+      [document, "visibilitychange", revalidate],
+    ];
+    for (const [target, name, listener] of events) target.addEventListener(name, listener);
+    return () => { for (const [target, name, listener] of events) target.removeEventListener(name, listener); };
+  }, [observing, runtime]);
   return runtime;
 }
 

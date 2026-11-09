@@ -1,6 +1,6 @@
 """One scope-owned LISTEN socket, local subscriptions and coalesced hint delivery.
 
-All five channels are registered before the sole notification consumer starts.
+The chat channel is registered before the sole notification consumer starts.
 Subscribers subscribe before reading, wake initially and on idle, and reread committed
 state. A failed socket wakes every affected subscriber and ends their stream; existing
 client retries register on a new socket. The API database scope closes and joins the
@@ -23,13 +23,8 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 
 MAX_LISTENERS = 64
-_CHANNELS = (
-    "nexus_writing",
-    "nexus_suggestions",
-    "chat_run_events",
-    "oracle_readings",
-    "media_events",
-)
+_CHANNELS = ("chat_run_events",)
+
 logger = get_logger(__name__)
 _hub: _Hub | None = None
 

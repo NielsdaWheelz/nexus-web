@@ -40,10 +40,6 @@ from nexus.schemas.conversation import (
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
-from nexus.schemas.media import MediaProcessingSnapshotOut
-from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.schemas.suggestions import SuggestionObservationOut
-from nexus.schemas.writing import WritingState
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.search.query import DiscoveryKind
 
@@ -57,16 +53,12 @@ SSE_PAYLOADS = (
     SnapshotPassage,
     SnapshotSourceStub,
     SnapshotFooter,
-    WritingState,
-    MediaProcessingSnapshotOut,
-    MetadataEnrichmentView,
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunDoneEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
-    SuggestionObservationOut,
 )
 
 

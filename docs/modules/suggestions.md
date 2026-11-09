@@ -156,13 +156,12 @@ both `/lectern/suggestions` and `/libraries/{library_id}/suggestions` expose:
   later work only when the then-current publication is due. ordinary ui refresh
   calls GET; only the observer requests background freshness.
 
-`/stream/lectern/suggestions` and
-`/stream/libraries/{library_id}/suggestions` expose `Current {state}` or terminal
-`Withdrawn`. each reread reauthorizes. the global `nexus_suggestions` / `changed`
-notification is a wakeup hint; durable revisions are truth. the comparison
-payload excludes the moving observation clock. queue history hooks notify for
-retry, reclaim and dead transitions; first claim is observed at the next existing
-15-second stream reconciliation.
+presented foreground consumers read every 30 seconds, or every 10 seconds while
+state is `Queued`, `Running` or `Recovering`; `Suspended` does not poll fast.
+before pool adoption they use GET; afterward read-only `/view` preserves the
+adopted pool and ranking while reconciling current eligibility and server time.
+return and local actions revalidate immediately. polls never request `Refresh`.
+there is no suggestions stream or notification producer.
 
 library deletion and loss of admin delete shortlist then feed. orphaned jobs
 finish superseded. non-admin/system libraries expose no publication. a full lectern

@@ -1,11 +1,11 @@
-"""Import-light queue projections and parent notifications for capture work."""
+"""Import-light queue projections for capture work."""
 
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import JobRow, get_job
+from nexus.jobs.queue import get_job
 from nexus.schemas.x_captures import QuoteRetrieval
 
 
@@ -46,10 +46,3 @@ def retrieval(db: Session, job_id: UUID | None) -> QuoteRetrieval | None:
         message=message,
         can_retry=job.status == "dead",
     )
-
-
-def on_history(db: Session, job: JobRow, execution_id: UUID) -> None:
-    del execution_id
-    media_id = job.payload.get("media_id")
-    if media_id is not None:
-        db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})

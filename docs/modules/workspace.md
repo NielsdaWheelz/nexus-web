@@ -14,6 +14,12 @@ tasks are mounted.
 Frontend owners live under `apps/web/src/components/workspace/*` and
 `apps/web/src/lib/workspace/*`.
 
+`WorkspaceHost` publishes `isPresented` through pane runtime: stored-visible and
+either active or intersecting the canvas. `usePaneIsPresented` exposes that fact
+without unmounting retained editors. it includes partially visible and side-by-side
+panes; keyboard focus and the feedback fully-in-view set are separate concepts.
+optional observation combines this demand with document/native foreground.
+
 ## failure containment
 
 the composition owner places each failure boundary around the capability that

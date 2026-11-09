@@ -90,7 +90,7 @@ follow from a failure code alone. the inspector omits an absent explanation.
 - **I5** a History row carries its matched event only when a newer event follows it; match evidence belongs to one ref under one applied query.
 - **I6** the first view is chosen once from the counts; restoring a url never opens the inspector; explicit activation (a title, the Inspector control, Add's "view import") does.
 - **I7** one command per import and command is in flight on its owner. refresh/research use the account's media-admission entry; other verbs use the action runtime (`media:<id>|<offer>`, `upload:<id>|RetryUpload|RemoveUpload`). the row, inspector and menu read that same busy state. upload refusals stay beside their originating control.
-- **I8** list/history use the shared collection owner at 50 rows/page, publish each page and continue to source exhaustion while their pane is active and the document visible. history mounts only while open; a later match never reopens a collapsed history. reopening a restored history requests one coalesced reread when a summary observation exists, since the clock may have advanced while it was shut; a fresh first page does not schedule that extra read. polling runs every 5 s only while the newest summary succeeded, no summary read is running, work is unfinished, the tab is visible and an Imports pane is open or a wake is under 15 minutes old; a failed summary stops it until a wake. history reads only while open.
+- **I8** list/history use the shared collection owner at 50 rows/page, publish each page and continue to source exhaustion while presented and foreground. history mounts only while open; a later match never reopens a collapsed history. reopening a restored history requests one coalesced reread when a summary observation exists; a fresh first page schedules no extra read. the visible shell owns one shared summary every 30 seconds. a presented busy consumer accelerates it to 10 seconds. hiding retires optional reads/retries while retaining accepted rows; return reads immediately. a failed summary stops until a wake. history reads only while open.
 - **I9** a failed same-query reread keeps the last data beside its error (list, detail, history); a changed list/history query clears old rows and metadata. collection ids use first-occurrence-wins; refresh replaces the loaded prefix atomically and rereads complete collections to exhaustion. list `matched_count` is metadata from the latest committed page, including an empty page: it is an independent server observation, never a completion signal. the toolbar has no visible loaded/matched counters. qualified matched evidence stays inside the input’s described element and is never live-announced per page. actual import progress and recovery remain visible.
 - **I10** a disappearing list control hands focus to the same row's title, else the next surviving row's, else the query input, only while focus was lost and the pane is active.
 
@@ -133,7 +133,7 @@ an authoritative filing refusal retires uncertainty but retains the same file an
 generation for explicit review. that retry reads a fresh guard; a failed guard read retains
 the command without claiming uncertainty. neither a read nor a restored view sends a command.
 
-every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also restart the media's metadata stream. departed accounts cannot publish those effects into their successors.
+every attempted source or metadata admission wakes imports, including an unknown response. metadata admission and personal review also invalidate the media's existing finite observation. departed accounts cannot publish those effects into their successors.
 
 ## intake
 
@@ -253,7 +253,8 @@ an exact dead source job settles identity without declaring content usable or su
 explicit repair, retry or refresh can reopen identity work.
 that passive replacement preserves the active pane and its open controls. the
 poll returns its read promise, so a slow source read completes before another starts.
-the read's busy state gates polling across pane visibility changes as well.
+unfinished presented source attempts use the shared 10-second cadence; demand
+retirement cancels optional retries and preserves the accepted identity.
 missing or invalid attempts show their refusal and `all imports`; other read failures
 compose the import fact with the shared transport reason and actionable remedy.
 the body publishes a pointer title role. the shell uses the current visit's retained

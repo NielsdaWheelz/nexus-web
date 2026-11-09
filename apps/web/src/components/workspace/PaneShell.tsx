@@ -96,6 +96,7 @@ interface PaneShellProps {
   readonly isActive: boolean;
   readonly isMobile: boolean;
   readonly isVisible: boolean;
+  readonly isPresented: boolean;
   readonly isMaximized: boolean;
   readonly availableWidthPx: number | null;
   readonly columnWidthPx: number;
@@ -149,7 +150,7 @@ export default function PaneShell(props: PaneShellProps) {
     [chrome, pane.id, requestSecondarySurface, updateSecondaryPane],
   );
   return (
-    <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} host={controller}>
+    <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} isPresented={props.isPresented} host={controller}>
 
         <PaneChromeContext value={chrome}>
           <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />

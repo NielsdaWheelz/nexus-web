@@ -1,10 +1,10 @@
-"""The media detail wire and the processing stream's frame."""
+"""Media detail and finite processing/metadata observations."""
 
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
@@ -173,7 +173,7 @@ class XQuoteProcessingOut(BaseModel):
 
 
 class MediaProcessingSnapshotOut(BaseModel):
-    """One processing stream frame: the facts source work, transcripts and indexing change."""
+    """The current source work, transcript and indexing facts."""
 
     processing_status: MediaProcessingStatus
     last_error_code: str | None
@@ -187,3 +187,35 @@ class MediaProcessingSnapshotOut(BaseModel):
     transcript_reader_key: str | None
     work_in_flight: bool
     quote_retrievals: list[XQuoteProcessingOut]
+
+
+class ResolveMediaObservationsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_ids(self) -> "ResolveMediaObservationsIn":
+        if len(set(self.media_ids)) != len(self.media_ids):
+            raise ValueError("media_ids must not contain duplicates")
+        return self
+
+
+class MediaObservationOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    processing: MediaProcessingSnapshotOut
+    metadata_enrichment: MetadataEnrichmentView
+
+
+class MediaObservationResolutionOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: UUID
+    observation: MediaObservationOut | None
+
+
+class ResolvedMediaObservationsOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[MediaObservationResolutionOut]

@@ -91,8 +91,6 @@ Hooks (by path in the registry):
   reschedule: `import_history.on_source_job_outcome` and `on_index_job_outcome`.
   History is total (`queue_failure_code`), skips an attempt its owner already
   settled, and records nothing for deleted media.
-  `suggestion_changes.on_suggestion_job_history` publishes an import-light wakeup for the
-  [suggestions observer](suggestions.md); durable queue state remains truth.
 
 Dead rows of `keep_dead` kinds are never pruned; the source import and the
 search index repair theirs with `requeue_dead_job` (same row, fresh budget).
@@ -183,8 +181,8 @@ failures use ordinary queue retries and the fenced terminal dead-letter reaction
 manual `POST /podcasts/refresh` answers 202 `{data:{requested_count}}` after
 admission, counting selected subscriptions including already-active checks.
 podcast scope requires following; library scope selects filed shows, with the
-default library selecting all followed shows. lifecycle streams observe active
-work; settled detail panes recheck their head while visible.
+default library selecting all followed shows. presented foreground panes observe
+unfinished work every 10 seconds and settled state every 30 seconds.
 
 `podcast_backfill_subscription` takes `{backfill_id, expected_step_no}`, deduped
 per step. each job fetches one page outside a transaction, then locks its queue

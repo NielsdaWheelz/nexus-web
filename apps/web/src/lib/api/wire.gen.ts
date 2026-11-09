@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 19;
+export const WIRE_REVISION = 20;
 
 export interface paths {
     "/assistant-writes": {
@@ -1796,6 +1796,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/observations/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Media Observations
+         * @description Input order; absent and unreadable media both resolve to null.
+         */
+        post: operations["resolve_media_observations_media_observations_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/source-attempts/{source_attempt_id}": {
         parameters: {
             query?: never;
@@ -2116,6 +2136,23 @@ export interface paths {
          * @description A resend after the job landed answers that job (it is newer than ``expected_job_id``).
          */
         post: operations["enrich_media_metadata_media__media_id__metadata_enrichment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{media_id}/metadata-enrichment/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Media Metadata Operation */
+        get: operations["get_media_metadata_operation_media__media_id__metadata_enrichment__job_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3169,146 +3206,6 @@ export interface paths {
          *     the stream after ownership or visibility is revoked.
          */
         get: operations["stream_chat_run_events_stream_chat_runs__run_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/lectern/suggestions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Stream Lectern Suggestions */
-        get: operations["stream_lectern_suggestions_stream_lectern_suggestions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/libraries/{library_id}/suggestions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Stream Library Suggestions */
-        get: operations["stream_library_suggestions_stream_libraries__library_id__suggestions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/media/{media_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Media Events
-         * @description Work and publication changes while mounted; access loss ends the stream.
-         */
-        get: operations["stream_media_events_stream_media__media_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/media/{media_id}/metadata-enrichment/{job_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Metadata Operation Events
-         * @description Follow the accepted job, independently of newer operations on its media.
-         */
-        get: operations["stream_metadata_operation_events_stream_media__media_id__metadata_enrichment__job_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/media/{media_id}/metadata/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Metadata Events
-         * @description Metadata enrichment state until nothing is unfinished (an idle media: one frame).
-         *
-         *     Only a new run changes the view then; the client reopens the stream on admission and
-         *     on every read that can follow one.
-         */
-        get: operations["stream_metadata_events_stream_media__media_id__metadata_events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/oracle-readings/{reading_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Oracle Reading Events
-         * @description The reading on each change; ``done`` once complete or failed.
-         */
-        get: operations["stream_oracle_reading_events_stream_oracle_readings__reading_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/stream/writing": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Stream Writing
-         * @description Listen first, then read the authored head and independent evidence token.
-         *
-         *     A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
-         *     refetch document maps whose ``evidence_version`` moved.
-         */
-        get: operations["stream_writing_stream_writing_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5441,6 +5338,10 @@ export interface components {
         Data_MetadataEnrichmentAccepted_: {
             data: components["schemas"]["MetadataEnrichmentAccepted"];
         };
+        /** Data[MetadataOperationOut] */
+        Data_MetadataOperationOut_: {
+            data: components["schemas"]["MetadataOperationOut"];
+        };
         /** Data[NexusUsageMapOut] */
         Data_NexusUsageMapOut_: {
             data: components["schemas"]["NexusUsageMapOut"];
@@ -5588,6 +5489,10 @@ export interface components {
         /** Data[RemoteChildrenOut] */
         Data_RemoteChildrenOut_: {
             data: components["schemas"]["RemoteChildrenOut"];
+        };
+        /** Data[ResolvedMediaObservationsOut] */
+        Data_ResolvedMediaObservationsOut_: {
+            data: components["schemas"]["ResolvedMediaObservationsOut"];
         };
         /** Data[ResolvedMediaSummariesOut] */
         Data_ResolvedMediaSummariesOut_: {
@@ -7971,6 +7876,20 @@ export interface components {
             /** Toc Nodes */
             toc_nodes: components["schemas"]["ReaderNavigationTocNodeOut"][];
         };
+        /** MediaObservationOut */
+        MediaObservationOut: {
+            metadata_enrichment: components["schemas"]["MetadataEnrichmentView"];
+            processing: components["schemas"]["MediaProcessingSnapshotOut"];
+        };
+        /** MediaObservationResolutionOut */
+        MediaObservationResolutionOut: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            observation: components["schemas"]["MediaObservationOut"] | null;
+        };
         /** MediaOrder */
         MediaOrder: {
             /** Creator Asc */
@@ -8091,7 +8010,7 @@ export interface components {
         };
         /**
          * MediaProcessingSnapshotOut
-         * @description One processing stream frame: the facts source work, transcripts and indexing change.
+         * @description The current source work, transcript and indexing facts.
          */
         MediaProcessingSnapshotOut: {
             capabilities: components["schemas"]["CapabilitiesOut"];
@@ -8357,7 +8276,7 @@ export interface components {
         /**
          * MetadataEnrichmentView
          * @description The latest operation, the oldest unfinished one, and whether the viewer may start one;
-         *     the metadata stream ends once ``unfinished_count`` is 0 (only a new run changes it).
+         *     ``unfinished_count`` distinguishes active observation from passive freshness.
          */
         MetadataEnrichmentView: {
             /** Last Enriched At */
@@ -12162,6 +12081,11 @@ export interface components {
              */
             parent_message_id: string;
         };
+        /** ResolveMediaObservationsIn */
+        ResolveMediaObservationsIn: {
+            /** Media Ids */
+            media_ids: string[];
+        };
         /** ResolveMediaSummariesIn */
         ResolveMediaSummariesIn: {
             /** Media Ids */
@@ -12173,6 +12097,11 @@ export interface components {
             reading_media_id: string | null;
             /** Target */
             target: components["schemas"]["ResourceSourceTargetKey"] | components["schemas"]["ReaderQuoteSourceTargetKey"] | components["schemas"]["CitationSourceTargetKey"] | components["schemas"]["RetrievalSourceTargetKey"] | components["schemas"]["XPostSourceTargetKey"];
+        };
+        /** ResolvedMediaObservationsOut */
+        ResolvedMediaObservationsOut: {
+            /** Items */
+            items: components["schemas"]["MediaObservationResolutionOut"][];
         };
         /** ResolvedMediaSummariesOut */
         ResolvedMediaSummariesOut: {
@@ -13419,22 +13348,11 @@ export interface components {
              */
             label: "Codex subscription";
         };
-        /** SuggestionCurrentOut */
-        SuggestionCurrentOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Current";
-            state: components["schemas"]["SuggestionStateOut"];
-        };
         /** SuggestionItemOut */
         SuggestionItemOut: {
             /** Target */
             target: components["schemas"]["MediaSuggestionTargetOut"] | components["schemas"]["PodcastSuggestionTargetOut"];
         };
-        /** SuggestionObservationOut */
-        SuggestionObservationOut: components["schemas"]["SuggestionCurrentOut"] | components["schemas"]["SuggestionWithdrawnOut"];
         /** SuggestionPublicationMetaOut */
         SuggestionPublicationMetaOut: {
             /**
@@ -13511,14 +13429,6 @@ export interface components {
              */
             observed_at: string;
             state: components["schemas"]["SuggestionStateOut"];
-        };
-        /** SuggestionWithdrawnOut */
-        SuggestionWithdrawnOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Withdrawn";
         };
         /** SuggestionsOut */
         SuggestionsOut: {
@@ -14435,18 +14345,6 @@ export interface components {
             active_primary_pane_id: string;
             /** Panes */
             panes: components["schemas"]["WorkspacePane-Output"][];
-        };
-        /**
-         * WritingState
-         * @description ``revision`` is the account's ``authored_heads.head_seq``; ``evidence_revision`` changes
-         *     whenever a readable source's ``evidence`` lane changes. Source citations and
-         *     shared highlights refresh independently of authored writing. Decimal counters.
-         */
-        WritingState: {
-            /** Evidence Revision */
-            evidence_revision: string;
-            /** Revision */
-            revision: string;
         };
         /** @enum {string} */
         XArticleCompleteness: "unknown" | "incomplete";
@@ -18251,6 +18149,39 @@ export interface operations {
             };
         };
     };
+    resolve_media_observations_media_observations_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveMediaObservationsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ResolvedMediaObservationsOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_source_attempt_media_source_attempts__source_attempt_id__get: {
         parameters: {
             query?: never;
@@ -18864,6 +18795,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_MetadataEnrichmentAccepted_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_media_metadata_operation_media__media_id__metadata_enrichment__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_MetadataOperationOut_"];
                 };
             };
             /** @description Validation Error */
@@ -21024,202 +20987,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_lectern_suggestions_stream_lectern_suggestions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    stream_library_suggestions_stream_libraries__library_id__suggestions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                library_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_media_events_stream_media__media_id__events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_metadata_operation_events_stream_media__media_id__metadata_enrichment__job_id__events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_metadata_events_stream_media__media_id__metadata_events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_oracle_reading_events_stream_oracle_readings__reading_id__events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                reading_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stream_writing_stream_writing_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };

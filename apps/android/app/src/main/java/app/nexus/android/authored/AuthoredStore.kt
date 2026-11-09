@@ -219,6 +219,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         val records = rows(sql("scope_repair_refs"), refs.toString())
         return JSONObject().put("refs", JSONArray().apply { for (index in 0 until records.length()) put(records.getJSONObject(index).getString("scope_ref")) })
     }
+    fun scopeNeedsRepair(): JSONObject = JSONObject().put("needed", rows(sql("scope_needs_repair")).getJSONObject(0).getInt("needed") == 1)
     private fun pruneScope() {
         for (table in listOf("scope_facts", "scope_readings", "scope_intervals", "scope_text", "scope_normalized", "scope_normalized_complete", "scope_text_complete", "scope_text_progress")) run(sql("${table}_prune"))
     }
@@ -291,7 +292,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         run(sql("scope_normalized_chunks"), revision, reading, interval, request.getJSONArray("chunks").toString())
         if (!request.isNull("normalized_length")) {
             val coverage = rows(sql("scope_normalized_coverage"), revision, reading, interval, request.getLong("normalized_length"))
-            if (coverage.getJSONObject(0).getInt("accepted") != 1) return@transaction false
+            check(coverage.getJSONObject(0).getInt("accepted") == 1) { "scope normalization coverage is incomplete" }
             run(sql("scope_normalized_done"), revision, reading, interval)
         }
         true

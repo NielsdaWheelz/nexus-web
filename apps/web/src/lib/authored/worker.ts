@@ -6,7 +6,6 @@
  * An already admitted SQL commit finishes before the next queued preparation read.
  * This needs no cross-port ordering assumption or durable mutation ledger. */
 import { FORMAT_REVISION, type CommitFrame, type AuthoredQuery, type StateSelection } from "@nexus/authored/types";
-import { writingHints } from "./hints";
 import { ApiError, readResponse } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { isAbortError } from "@/lib/errors";
@@ -20,7 +19,6 @@ const scope = self as unknown as WorkerScope;
 const ports = new Set<MessagePort>();
 let persistence: Persistence | null = null;
 let sync: Sync | null = null;
-let hints: ReturnType<typeof writingHints> | null = null;
 let account: string | null = null;
 let retired = false;
 let commandsPaused = false;
@@ -50,11 +48,13 @@ async function response(path: string, body: unknown | null, signal: AbortSignal)
   return result;
 }
 async function operation(port: MessagePort, op: string, input: Record<string, unknown>) {
+  if ((op === "hello" || op === "retire") && (input.wire_revision !== WIRE_REVISION || input.format_revision !== FORMAT_REVISION))
+    throw new ApiError(426, "E_WIRE_MISMATCH", "close all nexus tabs to update local writing");
   if (op === "retire") {
     if (input.format_revision !== FORMAT_REVISION || typeof input.account_id !== "string" || account !== null && account !== input.account_id) throw new Error("authored retirement account or format mismatch");
-    retired = true; sync?.close(); hints?.close();
+    retired = true; sync?.close();
     await persistence?.db.close();
-    for (const current of ports) current.postMessage({ kind: "retired" });
+    for (const current of ports) current.postMessage({ kind: "retired", wire_revision: WIRE_REVISION });
     for (const current of ports) current.close();
     ports.clear(); scope.close(); return null;
   }
@@ -91,13 +91,8 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       sync.facts.ready = state.provisioning_complete;
       sync.facts.cursor = state.server_cursor;
       sync.facts.pending = (await persistence.pending()).length > 0;
-      // Run after hello leaves the SQL queue.
-      setTimeout(() => {
-        sync?.wake();
-        hints = writingHints(account!, () => sync?.wake()); hints.start();
-      }, 0);
     }
-    return { format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
+    return { wire_revision: WIRE_REVISION, format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
   if (!persistence || retired) throw new Error("authored account is closed");
   switch (op) {
@@ -135,11 +130,14 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
         const result = await persistence.commit(input.frame as unknown as CommitFrame);
         if (result.kind === "committed") changed(true);
         sync!.facts.pending = (await persistence.pending()).length > 0;
-        setTimeout(() => sync?.wake(), 0);
         return result;
       } finally { sync!.facts.saving = false; changed(); }
     }
-    case "wake": sync!.facts.online = input.online !== false; sync!.wake(); hints?.start(); return null;
+    case "sync_step": {
+      if (typeof input.refresh !== "boolean" || typeof input.online !== "boolean") throw new Error("invalid authored synchronization request");
+      sync!.facts.online = input.online;
+      return sync!.step({ refresh: input.refresh });
+    }
     case "close": ports.delete(port); port.close(); return null;
     default: throw new Error("unknown authored operation");
   }
@@ -150,13 +148,16 @@ scope.onconnect = event => {
   port.onmessage = ({ data }) => {
     if (!data || typeof data.id !== "number" || typeof data.op !== "string") return;
     const submit = () => {
-      void serialize(async () => {
+      const answer = async () => {
         if (commandsPaused && (data.op === "command_begin" || data.op === "commit")) { deferred.push(submit); return; }
         try {
           const result = await operation(port, data.op, data);
           if (data.op !== "close" && data.op !== "retire") port.postMessage({ id: data.id, ok: true, result });
-        } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", code: error instanceof Error && "code" in error && error.code === "E_AUTHORED_LOCAL" ? error.code : null }); }
-      });
+        } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", status: error instanceof ApiError ? error.status : null, code: error instanceof ApiError ? error.code : error instanceof Error && "code" in error && error.code === "E_AUTHORED_LOCAL" ? error.code : null }); }
+      };
+      // Network work reacquires the SQL queue for each local transaction.
+      if (data.op === "sync_step") void answer();
+      else void serialize(answer);
     };
     submit();
   };

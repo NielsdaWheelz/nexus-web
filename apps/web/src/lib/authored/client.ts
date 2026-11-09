@@ -4,10 +4,14 @@
  * holds the account WebLock through preparation, uncertain commit and exact retry;
  * the worker independently fences its clientId and ephemeral lease. Closing a tab
  * never retires the account or discards committed pending changes. */
-import { observeShellWaiting, observeWorkerUpdate } from "@/lib/native/admission";
+import { observeShellWaiting, observeWorkerUpdate, observeRemoteFailure } from "@/lib/native/admission";
+import { ApiError } from "@/lib/api/client";
+import { WIRE_REVISION } from "@/lib/api/wire.gen";
 import { observeShellUpdate, prepareShell } from "./shell";
 import { openNativeAuthoredStore } from "./native";
 import { uploadStall } from "./status";
+import { scheduleReplication } from "./schedule";
+import type { SyncStep } from "./sync";
 import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncFailure, type SyncStatus } from "@nexus/authored/types";
 
 /** Existing host admission refusals are recoverable setup conditions. */
@@ -52,7 +56,7 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
 }
 /** A 426 the sync transport met is this document's update state too. It never reloads:
  * a reload cannot replace a shared worker another tab holds. */
-function observeSyncUpdate(status: SyncStatus) { if (status === "update_required") observeWorkerUpdate(); }
+function observeSyncUpdate(status: SyncStatus) { if (status === "update_required") observeWorkerUpdate(); else if (status === "sign_in_required") observeRemoteFailure(401); }
 let shellObserved = false;
 async function openStore(accountId: string): Promise<AuthoredStore> {
   if ("nexusAuthored" in window) return openNativeAuthoredStore(accountId);
@@ -72,6 +76,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
   let detail: string | null = null;
   let status: SyncStatus = "preparing";
   let failure: SyncFailure = null;
+  let replication: ReturnType<typeof scheduleReplication> | null = null;
   const waiting = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   const queries = new Set<(corpusChanged?: boolean) => void>();
   const evidence = new Set<() => void>();
@@ -94,7 +99,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
         waiting.delete(id); unresponsive++;
         if (unresponsive >= 2) failPort("the local notes store isn’t responding. keep this page open and copy unfinished writing before restarting nexus.");
         reject(terminalFailure ?? Object.assign(new Error("local notes did not acknowledge completion. keep this page open and retry saving."), {code: "E_AUTHORED_LOCAL"}));
-      }, 30_000);
+      }, op === "sync_step" ? 300_000 : 30_000);
       waiting.set(id, { resolve: value => { clearTimeout(timer); unresponsive = 0; resolve(value as T); }, reject: error => { clearTimeout(timer); reject(error); } });
       port.postMessage({ id, op, ...input });
     });
@@ -108,7 +113,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     } else if (data.kind === "evidence_changed") {
       if (terminalFailure === null) for (const listener of evidence) listener();
     } else if (data.kind === "retired") {
-      window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
+      replication?.close();
       for (const cancel of closedWaiters) cancel(); closedWaiters.clear();
       queries.clear(); statuses.clear(); evidence.clear();
       retireAuthoredAccount(accountId);
@@ -119,19 +124,22 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
       const pending = waiting.get(data.id);
       waiting.delete(data.id);
       if (data.ok) pending?.resolve(data.result);
-      else pending?.reject(Object.assign(new Error(data.error), {code: data.code}));
+      else pending?.reject(typeof data.status === "number" ? new ApiError(data.status, data.code, data.error) : Object.assign(new Error(data.error), {code: data.code}));
     }
   };
   worker.onerror = () => failPort("the local notes store stopped. keep this page open and copy unfinished writing before restarting nexus.");
   port.start();
-  const hello = await call<{ status: SyncStatus; detail: string | null; failure: SyncFailure }>("hello", { account_id: accountId, format_revision: FORMAT_REVISION });
+  let hello: { wire_revision: number; format_revision: number; status: SyncStatus; detail: string | null; failure: SyncFailure };
+  try {
+    hello = await call<typeof hello>("hello", { account_id: accountId, format_revision: FORMAT_REVISION, wire_revision: WIRE_REVISION });
+    if (hello.wire_revision !== WIRE_REVISION || hello.format_revision !== FORMAT_REVISION) throw new ApiError(426, "E_WIRE_MISMATCH", "close all nexus tabs to update local writing");
+  } catch (error) {
+    port.postMessage({ id: ++sequence, op: "close" }); port.close();
+    if (error instanceof ApiError && error.status === 426) observeWorkerUpdate();
+    throw error;
+  }
   status = hello.status; detail = hello.detail; failure = hello.failure;
-  function wake() { void call("wake", { online: navigator.onLine }).catch(reportError); }
-  function foreground() { if (document.visibilityState === "visible") wake(); }
-  window.addEventListener("online", wake);
-  window.addEventListener("offline", wake);
-  document.addEventListener("visibilitychange", foreground);
-  wake();
+  replication = scheduleReplication(refresh => call<SyncStep>("sync_step", { refresh, online: navigator.onLine }), () => failPort("the local notes store stopped responding. keep this page open and copy unfinished writing before restarting nexus."));
   return {
     withCommand: work => navigator.locks.request(`nexus-authored-command-${accountId}`, async () => {
       if (closed) throw new Error("authored store closed");
@@ -158,7 +166,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     readReplica: () => call("replica"),
     readStates: selection => call("states", { selection }),
     query: query => call("query", { query }),
-    commit: frame => call("commit", { frame, lease: commandLease }),
+    commit: async frame => { const result = await call<Awaited<ReturnType<AuthoredStore["commit"]>>>("commit", { frame, lease: commandLease }); if (result.kind === "committed") replication?.wake(); return result; },
     subscribe: (query, listener, failed) => {
       let active = true;
       let generation = 0;
@@ -170,7 +178,7 @@ async function openStore(accountId: string): Promise<AuthoredStore> {
     sync_status: listener => { statuses.add(listener); listener(status, detail, failure); return () => { statuses.delete(listener); }; },
     close: async () => {
       if (closed) return;
-      window.removeEventListener("online", wake); window.removeEventListener("offline", wake); document.removeEventListener("visibilitychange", foreground);
+      replication?.close();
       port.postMessage({ id: ++sequence, op: "close" });
       closed = true;
       for (const pending of waiting.values()) pending.reject(new Error("authored store closed"));
