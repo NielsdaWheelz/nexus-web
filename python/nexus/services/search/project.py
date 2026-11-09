@@ -54,6 +54,7 @@ SCHEMES = {
     "episode": "media",
     "video": "media",
     "web_result": "external_snapshot",
+    "highlight_annotation": "highlight",
 }
 
 
