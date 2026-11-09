@@ -344,7 +344,7 @@ export class OutlineHistory {
         source: {document: args.source, update: Y.encodeStateAsUpdate(clone, vector)}, retiring: null});
     } finally {clone.destroy();}
   }
-  /** Charge the newborn and independent baseline, and the source's retained deletion history, before admission. */
+  /** Charge the newborn, independent baseline and initial capture, and the source's retained deletion history, before admission. */
   async splitCharge(source: WritingDocument, displayed: DisplayedSplit, placement: OutlinePlacement): Promise<number | null> {
     const from = Math.min(displayed.from, displayed.to), to = Math.max(displayed.from, displayed.to);
     const suffix = splitBody(displayed.body_state, to).suffix;
@@ -388,7 +388,7 @@ export class OutlineHistory {
       const restores: Intent[] = retiring ? [{kind: "restore_link", link_id: retiring.link_id}] : [];
       const undo = prepareChange(context, {kind: "batch", intents: [...undoEdits, {kind: "delete_resource", ref, observed_touch: {[replica.replica_id]: context.command_seq}},
         {kind: "unlink", link_id: link.link_id, observed_add: {[replica.replica_id]: context.command_seq}}, ...restores]}, mergeChanges(states, [forward]));
-      return new TextEncoder().encode(JSON.stringify(undo)).byteLength <= MAX_COMMAND_BYTES ? 2 * newborn : null;
+      return new TextEncoder().encode(JSON.stringify(undo)).byteLength <= MAX_COMMAND_BYTES ? 3 * newborn : null;
     } catch (error) {if (error instanceof CommandTooLargeError) return null; throw error;}
   }
   replaceWithNote(args: {placement: OutlinePlacement; retiring: OccurrenceBookmark & {link: LinkState}; change: OutlineBirthChange}): AdmittedNote {

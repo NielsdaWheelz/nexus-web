@@ -48,3 +48,15 @@ terminated peers and reinitialized (`containers.log:68–90`). api request
 cgroup counters were retained, so the kill's cause remains unproved. the later
 `highlight_annotation` resource-scheme failure occurred after recovery and is a
 separate deterministic defect.
+
+focused run `20261108-212904-4b9af5559229` establishes a current cgroup oom on
+native aarch64 postgres15.19/pg_search0.26.2 at the unchanged512-mib/no-swap
+limit. the first ordinary annotation-only picker request returned500;
+`memory.events` changed `oom:0→1`, `oom_kill:0→1`, `max:0→276`, with
+`memory.peak=536870912`. baseline demand was about220mb, with two ordinary api
+database backends each retaining about96mb rss. after recovery, baseline was
+about100mb and the same query returned200 on a fresh backend, sampled at
+432552kib rss and506535936 cgroup bytes without another oom. both search backends
+were explicitly retired. private snapshots retain limits, settings, backend
+identities, per-pid samples and both responses. aggregate retained demand plus
+large query demand is established; the responsible allocator is not.
