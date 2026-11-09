@@ -28,3 +28,14 @@ also preserved in
 `.nexus-local/pr866-e219-doc-contract-before.private/e219/docs/issues/production-search-postgres-oom.md`.
 its old timer failures remain failures; current capacity/progress acceptance is
 owned by the reliability contract, not those retired latency cutoffs.
+
+disposable outline qualification reproduced backend death on `ca942ac6d`, schema
+0335, with the unchanged 512-mib database limit. run
+`20261108-195829-b21d847c360a` records four signal-9 backend terminations at
+2026-11-09 03:59:55, 04:00:17, 04:00:52 and 04:01:02 utc in its private
+`containers.log`; api `search.database.disconnected` events name
+`/resource-items/targets/search`. writing streams and replica registration then
+fail during recovery. local reference results remain usable. this run retained
+no fresh cgroup oom counters, so it proves recurring backend death and recovery,
+not a new allocator attribution. outline insertion changes no backend or budgets;
+remote-search capacity remains unresolved here.

@@ -86,7 +86,7 @@ interface TextHistory {
 interface FocusOwner {
   capture(): InputBookmark;
   lease(): () => boolean;
-  prepare?(target: readonly OccurrenceBookmark[], source: readonly OccurrenceBookmark[], mayFocus: () => boolean, visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void;
+  prepare?(target: readonly OccurrenceBookmark[], mayFocus: () => boolean, visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void;
   publish(documents: readonly WritingDocument[], target: InputBookmark, source: InputBookmark, mayFocus: () => boolean, committed: Promise<LocalCommit>, action: "undo" | "redo"): void;
 }
 
@@ -213,7 +213,7 @@ export class OutlineHistory {
       from.splice(from.indexOf(group), 1); to.push(group);
       return;
     }
-    const acknowledge = owner?.prepare?.(redo ? group.placements_after : group.placements_before, redo ? group.placements_before : group.placements_after, mayFocus, {show: redo ? group.added : group.removed, hide: redo ? group.removed : group.added});
+    const acknowledge = owner?.prepare?.(redo ? group.placements_after : group.placements_before, mayFocus, {show: redo ? group.added : group.removed, hide: redo ? group.removed : group.added});
     const lower = group.settled;
     try {
       const admission = group.apply(redo, lower);

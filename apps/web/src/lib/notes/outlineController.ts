@@ -202,7 +202,7 @@ export class OutlineController {
       this.publishWriting(documents, committed, target, source, mayFocus);
       if (mayFocus()) void committed.then(() => {if (this.active && !this.blockRange) {this.announce(action === "undo" ? "outline change undone" : "outline change redone"); this.notify();}}, () => {});
     },
-      capture: () => this.capture(), prepare: (targets, sources, mayFocus, visibility) => this.prepare(targets, sources, mayFocus, visibility),
+      capture: () => this.capture(), prepare: (targets, mayFocus, visibility) => this.prepare(targets, mayFocus, visibility),
       lease: () => this.lease()});
   }
   lease = () => {const at = this.intent; return () => this.active && at === this.intent;};
@@ -413,10 +413,10 @@ export class OutlineController {
     if (!field || field.kind === "reference" || !document) return;
     this.pending.freeze(field, document);
   }
-  private prepare(targets: readonly OccurrenceBookmark[], sources: readonly OccurrenceBookmark[], _mayFocus: () => boolean,
+  private prepare(targets: readonly OccurrenceBookmark[], _mayFocus: () => boolean,
     visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void {
     const acknowledgements: ((committed: Promise<LocalCommit>) => void)[] = [];
-    const shown = [...targets, ...visibility.show], hidden = [...sources, ...visibility.hide].filter(source => !shown.some(target => target.row_id === source.row_id));
+    const shown = [...targets, ...visibility.show], hidden = visibility.hide.filter(source => !shown.some(target => target.row_id === source.row_id));
     for (const target of [...hidden, ...shown]) {
       const row = this.rows.get(target.row_id) ?? this.occurrences.get(target.row_id);
       if (!row || row.root || !row.ref) continue;
