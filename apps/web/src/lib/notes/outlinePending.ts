@@ -6,7 +6,7 @@ import {readBody} from "@nexus/authored/documents";
 import {bodyText, emptyBody, type NoteBody} from "@nexus/authored/body";
 import {isVisible} from "@nexus/authored/merge";
 import type {LinkState, ResourceProjection} from "@nexus/authored/types";
-import type {NoteEdit, FocusSelection} from "./editorTypes";
+import type {DisplayedSplit, NoteEdit, FocusSelection} from "./editorTypes";
 import type {AdmittedLink, AdmittedStructure, DisplayedWriting, OccurrenceBookmark, OutlineBirthChange, OutlineHistory, OutlinePlacement, RangePublication} from "./structure";
 import {advanceRelationship} from "./structure";
 import type {LocalCommit, WritingDocument} from "./runtime";
@@ -244,6 +244,48 @@ export class OutlinePendingInput {
     const at = this.order.indexOf(row_id); this.order = [...this.order.slice(0, at + 1), successor, ...this.order.slice(at + 1)];
     owner.prepared(field, admitted.document); owner.publish([bound.document], admitted.committed);
     this.watch([row_id, successor], admitted, new Map([[successor, admitted.link]])); return successor;
+  }
+  splitChild(args: {source: WritingDocument; displayed: DisplayedSplit; row: PendingOutlineField; placement: OutlinePlacement; before: InputBookmark}): {row_id: string; committed: Promise<LocalCommit>} {
+    const owner = this.current(), row = args.row;
+    const original = args.before?.kind === "text" ? owner.occurrence(args.before.row_id) : null;
+    const placement = original ? this.placementBookmark(original) : null;
+    const admitted = owner.history.split({source: args.source, displayed: args.displayed, placement: args.placement,
+      change: {before: args.before, after: document => this.bookmark({...row, ref: document.ref}, {anchor: 1, head: 1}),
+        placements_before: placement ? [placement] : [],
+        placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}});
+    this.installNewborn({row, admitted, sources: [args.source], retired: []});
+    return {row_id: row.row_id, committed: admitted.committed};
+  }
+  replaceWithNote(row_id: string, before: InputBookmark): {row_id: string; committed: Promise<LocalCommit>} {
+    const owner = this.current(), original = this.row(row_id);
+    if (!original.link || !original.ref) throw new Error("reference conversion needs its frozen relationship");
+    const row: PendingOutlineField = {...original, row_id: crypto.randomUUID(), after_id: null, before_id: row_id, ref: null, link: null, kind: "body", resource: null,
+      body: emptyBody(), hidden: false, pending: true, origin: owner.history.typingOrigin(), receiptOwner: undefined, settledRevision: undefined};
+    const retiring = {...this.placementBookmark(original)!, link: original.link};
+    const admitted = owner.history.replaceWithNote({placement: this.placement(row.parent_id, row.parent_ref, null, row_id), retiring,
+      change: {before, placements_before: [retiring], after: document => this.bookmark({...row, ref: document.ref}, {anchor: 1, head: 1}),
+        placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}});
+    this.fields.set(row_id, {...original, hidden: true});
+    this.installNewborn({row, admitted, sources: [], retired: [row_id]});
+    return {row_id: row.row_id, committed: admitted.committed};
+  }
+  private installNewborn(args: {row: PendingOutlineField; admitted: import("./structure").AdmittedNote; sources: readonly WritingDocument[]; retired: readonly string[]}): void {
+    const {row, admitted, sources, retired} = args;
+    const owner = this.current(), field = {...row, ref: admitted.document.ref, body: readBody(admitted.document.doc)};
+    this.fields.set(row.row_id, field); this.place(row.row_id, row.after_id, row.before_id ?? null);
+    this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
+    owner.prepared(field, admitted.document); owner.publish(sources, admitted.committed);
+    this.watch([...retired, row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
+  }
+  replaceReference(args: {original: PendingOutlineField; replacement: PendingOutlineField; admission: AdmittedStructure; link: Promise<LinkState>; document: WritingDocument | null}): void {
+    const {original, replacement, admission, link, document} = args;
+    this.fields.set(original.row_id, {...original, hidden: true});
+    this.fields.set(replacement.row_id, replacement); this.place(replacement.row_id, null, original.row_id);
+    if (document) {
+      this.bound.set(replacement.row_id, {document, link, release: document.retain(), settled: false, captureBytes: 0});
+      this.current().prepared(replacement, document);
+    }
+    this.watch([original.row_id, replacement.row_id], admission, new Map([[replacement.row_id, link]]));
   }
   join(destination: string, source: string, before: InputBookmark, displayed: {source: DisplayedWriting; destination: DisplayedWriting}): (document: WritingDocument) => FocusSelection {
     const owner = this.current(), to = this.row(destination), from = this.row(source), a = this.bound.get(destination), b = this.bound.get(source);

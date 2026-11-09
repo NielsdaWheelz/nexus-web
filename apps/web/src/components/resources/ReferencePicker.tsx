@@ -36,6 +36,6 @@ export default function ReferencePicker({ input, onReviewPosition, returnFocus }
     <AuthoredReadFailure error={search.localError} pending={search.localPending} retry={search.retryLocal} noun="notes"/>
     {!search.localComplete ? <Button aria-busy={search.localPending} onClick={search.moreLocal}>show more notes</Button> : null}
     {state.message ? <Fact line={{ fact: state.message, reason: "your search is kept." }} speak
-      verbs={[{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }]} /> : null}
+      verbs={state.context.replacement === null ? [{ label: "use new destination", commandKey: "Reference.reviewDestination", run: onReviewPosition }] : undefined} /> : null}
   </div>;
 }

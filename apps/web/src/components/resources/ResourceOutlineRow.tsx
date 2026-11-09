@@ -30,6 +30,7 @@ import type {Schema} from "@/lib/api/wire";
 import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
 import {useAuthoredQuery, useWritingRuntime} from "@/lib/notes/hooks";
 import {isAuthoredStorageFailure} from "@/lib/notes/runtime";
+import type {OutlineAnnotationCapability, OutlineController} from "@/lib/notes/outlineController";
 import {usePaneRuntime} from "@/lib/panes/paneRuntime";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
 import { useTouchCapable } from "@/lib/renderEnvironment/provider";
@@ -113,6 +114,7 @@ interface Presentation {
   /** A local highlight's id; its annotation body remains distinct from related resources. */
   highlightId: string | null;
   status: ReactNode;
+  annotation?: {resource: ResourceProjection; editable: boolean};
 }
 
 /** A server fact's removal, when its owner offers one; local links unlink through their outline. */
@@ -232,7 +234,6 @@ function AuthoredRow({resource, answered, status, ...props}: Shared & {subject: 
   const heldSource = sourceRef !== null && (prepared?.has(sourceRef) ?? false);
   const source = useAuthoredQuery(sourceRef && !heldSource ? {kind: "resource", ref: sourceRef} : null);
   const branch = useContext(ResourceBranch);
-  const outline = useContext(ResourceOutlineContext);
   const parsed = parseResourceRef(props.subject)!;
   const type = resourceTypeName(resourceType(parsed.scheme, null));
   const label = resource ? localResourceLabel(resource) : type;
@@ -250,19 +251,19 @@ function AuthoredRow({resource, answered, status, ...props}: Shared & {subject: 
         {sourceLabel || href ? <PrimaryLink href={href} label={label}>{sourceLabel ? localResourceLabel(sourceLabel) : "highlight"}</PrimaryLink> : null}
         <FullResourceBody item={authoredItem(resource, props.readingRef ?? null, href)} />
       </>}
-      <HighlightAnnotation highlightRef={props.subject} resource={resource} rest={outline?.settled(props.occurrenceKey) ?? true} occurrenceKey={props.occurrenceKey} editable={editable} offerBlank={!props.inSource} focusRequest={props.annotationFocusRequest} onFocused={props.onAnnotationClose}/>
     </div>
     : <span data-resource-primary className={factualStyles.named}>{label}</span>;
   return <Occurrence {...props} presentation={{
     ref: props.subject, label, href, item: null, primary,
     highlightId: resource?.kind === "highlight" ? parsed.id : null,
+    ...(resource?.kind === "highlight" ? {annotation: {resource, editable}} : {}),
     status,
   }}/>;
 }
 
 function Occurrence({presentation, occurrenceKey, incoming, connection, onChanged,
   sourceContent, resourceDetails, details, rootProps, rowRef,
-  historical = false, editable: _editable = true, annotationFocusRequest: _annotationFocusRequest = null, onAnnotationClose: _onAnnotationClose, rowActions, inRow = false, ...props}: Shared & {presentation: Presentation}) {
+  historical = false, editable: _editable = true, annotationFocusRequest = null, onAnnotationClose, rowActions, inRow = false, ...props}: Shared & {presentation: Presentation}) {
   const {ref, href, item, highlightId} = presentation;
   const parsed = parseResourceRef(ref);
   // justify-defect: every occurrence names a canonical displayed resource.
@@ -284,6 +285,18 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     edgeIds: enteringEdgeId === null ? [] : [enteringEdgeId]}),
     [branch, ref, occurrenceKey, enteringEdgeId]);
   const [localOpen, setLocalOpen] = useState<boolean | null>(null);
+  const [annotationActive, setAnnotationActive] = useState(false);
+  const [annotationOutline, setAnnotationOutline] = useState<OutlineAnnotationCapability | null>(null);
+  const showChildren = useRef<() => void>(() => {});
+  showChildren.current = () => {if (outline) outline.toggle(occurrenceKey, true); else setLocalOpen(true);};
+  const childController = useCallback((controller: OutlineController | null) => {
+    const capability = controller?.annotation(controller.pending.root_id) ?? null;
+    setAnnotationOutline(capability === null ? null : {...capability, split: async (document, displayed) => {
+      const admitted = await capability.split(document, displayed);
+      if (admitted) showChildren.current();
+      return admitted;
+    }});
+  }, []);
   const removals = useContext(FactRemovalsContext);
   const pendingRemoval = removals?.pending.get(occurrenceKey);
   const busy = pendingRemoval?.running ?? false;
@@ -329,6 +342,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   const childrenId = useId();
   // one way, so a row flown past reads none of its children.
   const rested = useRef(false); rested.current ||= outline?.settled(occurrenceKey) ?? true;
+  const childrenStarted = useRef(false);
+  childrenStarted.current ||= annotationActive || open && hasChildren && rested.current;
   const removal = incoming?.kind === "edge" && writing !== null && !historical ? factRemoval(incoming) : null;
   async function toggle() {
     if (disclosureDisabled) return;
@@ -390,6 +405,10 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
         {inRow ? null : anchor}
         <div className={styles.content}>
           {presentation.primary}
+          {presentation.annotation ? <HighlightAnnotation highlightRef={ref} resource={presentation.annotation.resource}
+            rest={rested.current} occurrenceKey={occurrenceKey} editable={presentation.annotation.editable}
+            focusRequest={annotationFocusRequest} onFocused={onAnnotationClose} outline={annotationOutline}
+            onPrepareOutline={() => setAnnotationActive(true)}/> : null}
           {sourceContent}
           {presentation.status}
           {resourceDetails}
@@ -408,8 +427,9 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
           sections={rowActions ? [{id: "Occurrence", actions: rowActions}] : []} label={`more actions for ${label}`}/>
           {inRow ? anchor : null}{disclosure}</div>
       </div>
-      {open ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
-        {rested.current ? <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
+      {childrenStarted.current ? <div className={styles.children} data-outline-children="true"><section id={childrenId} aria-label="linked resources">
+        <LocalOutline rootRef={ref} occurrencePrefix={occurrenceKey} onControllerReady={presentation.annotation?.editable ? childController : undefined} childrenVisible={open}/>
+        {open && rested.current ? <Children ownerRef={ref} localOwnerRef={compatible?.local_ref??null} occurrenceKey={occurrenceKey}/> : null}</section></div> : null}
     </li>
   </ResourceBranch>;
 }
@@ -419,7 +439,6 @@ function Children({ownerRef, localOwnerRef, occurrenceKey}: {ownerRef: string; l
   const branch=useContext(ResourceBranch);
   const remote = useRemoteConnections(ownerRef, occurrenceKey, useChangeStamp("Metadata"));
   return <>
-    <LocalOutline rootRef={ownerRef} occurrencePrefix={occurrenceKey}/>
     {localOwnerRef&&localOwnerRef!==ownerRef?<ResourceBranch value={enterOutlineOccurrence({branch,ref:localOwnerRef,target:{kind:"occurrence",key:occurrenceKey},edgeIds:[]})}><LocalOutline rootRef={localOwnerRef} occurrencePrefix={`${occurrenceKey}/owner`}/></ResourceBranch>:null}
     <RemoteConnections ownerRef={ownerRef} occurrencePrefix={occurrenceKey} list={remote}
       onChanged={() => void remote.refetch().catch(() => undefined)}/>

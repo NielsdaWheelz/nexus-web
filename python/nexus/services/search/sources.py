@@ -341,7 +341,8 @@ SOURCES: dict[str, str] = {
         LEFT JOIN fragments f ON f.id=a.fragment_id AND (f.media_id=source_m.id OR (h.anchor_media_id IS NULL AND f.x_post_capture_id IS NOT NULL))
         LEFT JOIN x_post_captures c ON c.id=f.x_post_capture_id
         LEFT JOIN highlight_pdf_anchors pa ON pa.highlight_id=h.id AND pa.media_id=source_m.id
-        CROSS JOIN LATERAL (SELECT ({_HIGHLIGHT_OWNER}) AS media_id) reading
+        -- keep the scalar reading owner outside projection pull-up.
+        CROSS JOIN LATERAL (SELECT ({_HIGHLIGHT_OWNER}) AS media_id OFFSET 0) reading
         LEFT JOIN media m ON m.id=reading.media_id
         CROSS JOIN LATERAL (SELECT min(bounded.start_offset) AS lo,max(bounded.end_offset) AS hi
             FROM ({_HIGHLIGHT_INTERVAL}) bounded WHERE bounded.fragment_id=a.fragment_id) bounds

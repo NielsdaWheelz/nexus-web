@@ -52,7 +52,7 @@ import {
   type OutlineBranch,
 } from "@/lib/resources/outlineProjection";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
-import { DOMParser as PMDOMParser, Fragment, Slice, type Node as PMNode, type ParseOptions, type Schema } from "prosemirror-model";
+import { DOMParser as PMDOMParser, Fragment, Slice, type Node as PMNode, type ParseOptions, type ParseRule, type Schema } from "prosemirror-model";
 import {
   AllSelection,
   NodeSelection,
@@ -85,6 +85,7 @@ import {
   bodyText,
   docFromBody,
   hrefFromInput,
+  parseBody,
   noteBodySchema as canonicalSchema,
   sameBody,
   type NoteBody,
@@ -156,12 +157,13 @@ function flushNativeDOM(view: EditorView): void {
   observer.flush();
 }
 
-/** Native code edits parse inside the existing body, bypassing its outer pre
- * rule. Preserve their literal whitespace. Clipboard parsing uses parseSlice,
- * which retains the schema's existing prose and HTML import policy. */
+/** Native code and the captured IME Return keep literal whitespace until the
+ * input engine consumes the delimiter. Clipboard parsing retains the schema's
+ * existing prose and HTML import policy. */
 class NativeNoteParser extends PMDOMParser {
+  constructor(schema: Schema, rules: readonly ParseRule[], private readonly literalComposition: () => boolean) {super(schema, rules);}
   override parse(dom: Node, options: ParseOptions = {}): PMNode {
-    return super.parse(dom, options.topNode?.attrs.presentation === "code"
+    return super.parse(dom, options.topNode?.attrs.presentation === "code" || this.literalComposition()
       ? {...options, preserveWhitespace: "full"} : options);
   }
 }
@@ -255,6 +257,7 @@ interface CompositionInput {
   body: NoteBody;
   selection: {anchor: number; head: number};
   reference: boolean;
+  returning: {packet: number; active: boolean} | null;
   editBase: TextEditBase | null;
 }
 
@@ -351,7 +354,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const [toolbar, setToolbar] = useState(false);
   const inputMode = useRef<"text" | "blocks" | "controls">("text");
   const [active, setActive] = useState<ReadonlySet<Format>>(new Set());
-  const [presentation, setPresentation] = useState<"title" | "prose" | "code">("prose");
+  const [presentation, setPresentation] = useState<"title" | "reference" | "prose" | "code">("prose");
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const { say, fail } = useOutcome();
   const [referenceFocused, setReferenceFocused] = useState(false);
@@ -373,17 +376,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       const view = viewRef.current;
       if (!view) return;
       if (compositionBase.current?.row_id === row_id) compositionBase.current = null;
-      // Acceptance consumes query history and restores its field BEFORE a new
-      // input packet can type into transient query text. Other fields stay put.
-      view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
-      const binding = bindingRef.current;
-      const body = binding?.document(row_id ?? undefined) ? binding.body(row_id ?? undefined) : base;
-      replaceDoc(view, docFromBody(body), row_id ?? undefined);
-      binding?.refresh();
+      restoreReference(view, row_id, base);
     },
   });
-  const referenceReady = reference.isReady();
-  latest.current = { ...props, platform, editable: props.editable && referenceReady };
+  latest.current = { ...props, platform, editable: props.editable };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const activeReference = (state: EditorState) => {
@@ -417,10 +413,52 @@ function NoteEditorContent(props: NoteEditorProps) {
   }, [placeToolbar]);
   const referenceFor = (field: EditingField) => field.row_id !== null
     ? latest.current.projection?.reference(field.row_id) ?? null : latest.current.reference ?? null;
+  function restoreReference(view: EditorView, row_id: string | null, base: NoteBody) {
+    // A replacement may have changed or retired the edge while preparing. Use
+    // its current projection, never put the frozen old token back into the view.
+    const projection = latest.current.projection?.doc() ?? null;
+    const projected = row_id !== null && projection ? fieldById(projection, row_id) : null;
+    const binding = bindingRef.current;
+    const body = projected?.kind === "reference" ? fieldBody(projected)
+      : binding?.document(row_id ?? undefined) ? binding.body(row_id ?? undefined) : base;
+    view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
+    if (projection && row_id !== null && projected === null)
+      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, projection.content)
+        .setMeta(SOURCE, "external").setMeta(outlineTransactionSource, "projection").setMeta("addToHistory", false));
+    else replaceDoc(view, docFromBody(body), row_id ?? undefined);
+    binding?.refresh();
+  }
+  const cancelReference = (view: EditorView) => {
+    const intent = referenceRef.current.getState();
+    if (!intent || intent.context.replacement === null) return false;
+    referenceRef.current.close();
+    restoreReference(view, intent.row_id, intent.base);
+    return true;
+  };
+  const beginTokenQuery = (view: EditorView, field: EditingField, text: string): boolean => {
+    if (field.kind !== "reference" || !field.node.attrs.token_active || field.row_id === null) return false;
+    const host = referenceFor(field), token = latest.current.projection && fieldById(latest.current.projection.doc(), field.row_id);
+    if (!host || host.replacement === null || !token || token.kind !== "reference") return false;
+    const raw = text.startsWith("@") ? text : `@${text}`;
+    latest.current.history?.boundary();
+    view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
+    referenceRef.current.begin(fieldBody(token), field.row_id, host);
+    referenceRef.current.edit(raw);
+    replaceDoc(view, docFromBody(bodyText(raw)), field.row_id);
+    const query = editingRow(view.state.doc, field.row_id);
+    if (query) view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, query.to)));
+    setReferenceVisible(true);
+    return true;
+  };
   const suspended = useRef(false);
   const literalSuppressed = useRef<{row_id: string | null} | null>(null);
   const compositionBase = useRef<CompositionInput | null>(null);
   const notifySelection = (state: EditorState) => {
+    const query = referenceRef.current.getState();
+    if (query?.context.replacement && query.row_id !== editingField(state)?.row_id && viewRef.current) {
+      cancelReference(viewRef.current);
+      state = viewRef.current.state;
+    }
     const field = editingField(state);
     if (!field) return;
     const at = fieldSelection(state, field);
@@ -454,7 +492,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       },
     }, field.row_id)) return false;
     if (referenceRef.current.getState() === intent) {
-      referenceRef.current.literal();
+      referenceRef.current.close();
       literalSuppressed.current = {row_id: field.row_id};
       view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
     }
@@ -484,7 +522,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   };
   const refreshMarks = useCallback((state: EditorState) => {
     const field = editingField(state);
-    setPresentation(field?.kind === "title" ? "title" : field?.node.attrs.presentation === "code" ? "code" : "prose");
+    setPresentation(field?.kind === "title" ? "title" : field?.kind === "reference" ? "reference" : field?.node.attrs.presentation === "code" ? "code" : "prose");
     const stored = state.storedMarks ?? state.selection.$from.marks();
     const { from, to, empty } = state.selection;
     const on = FORMATS.filter(([name]) => {
@@ -514,7 +552,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       warn(ACROSS_FIELDS);
       return true;
     }
-    if (field.kind === "title" || $from.parent.attrs.presentation === "code") return false;
+    if (field.kind !== "body" || $from.parent.attrs.presentation === "code") return false;
     latest.current.history?.boundary();
     const type = schema.marks[name]!;
     const tr = view.state.tr.setMeta(SOURCE, "format");
@@ -543,7 +581,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     flushNativeDOM(view);
     syncNativeSelection(view);
     if (activeReference(view.state) !== null) return false;
-    if (editingField(view.state)?.kind === "title") return false;
+    if (editingField(view.state)?.kind !== "body") return false;
     if (!(view.state.selection instanceof TextSelection)) return false;
     const field = editingField(view.state);
     if (!field) return false;
@@ -597,7 +635,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       });
     const field = link.row_id === null ? editingField(view.state) : editingRow(view.state.doc, link.row_id);
     if (
-      !field || field.kind === "title" || link.to > field.node.content.size ||
+      !field || field.kind !== "body" || link.to > field.node.content.size ||
       field.node.textBetween(link.from, link.to, " ", " ") !== link.text
     ) {
       return setLink({ ...link, error: { fact: "the selected text changed. select it again; your address is kept." } });
@@ -629,7 +667,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         return;
       if (view.composing || compositionBase.current !== null) return refuse({ fact: NOT_ATTACHED, reason: "finish typing first." });
       const field = editingField(view.state);
-      if (!field || field.kind === "title") return;
+      if (!field || field.kind !== "body") return;
       if (!replaceable(view)) return refuse({ fact: "couldn’t attach this file here.", reason: "select the note body or empty it first." });
       if (editorHost.uploads === null) return refuse({ fact: NOT_ATTACHED, reason: "uploads aren’t available in this reader." });
       if (!navigator.onLine) return refuse({ fact: NOT_ATTACHED, reason: "you’re offline." });
@@ -707,26 +745,21 @@ function NoteEditorContent(props: NoteEditorProps) {
     const task = attachmentValue;
     if (!task?.body) return;
     const view = viewRef.current, field = view && editingField(view.state);
-    if (!props.editable || !referenceReady || view?.composing || compositionBase.current !== null || !field || field.row_id !== task.row_id || !sameBody(fieldBody(field), task.base)) {
+    if (!props.editable || view?.composing || compositionBase.current !== null || !field || field.row_id !== task.row_id || !sameBody(fieldBody(field), task.base)) {
       setDeclined(task.body);
       return;
     }
     reportEdit({ before: fieldBody(field), after: task.body, selectionBefore: task.selection, selectionAfter: { anchor: 1, head: 1 }, source: "attachment" }, task.row_id);
     setAttachment(null);
-  }, [attachmentValue, setAttachment, props, referenceReady, reportEdit]);
+  }, [attachmentValue, setAttachment, props, reportEdit]);
 
   useLayoutEffect(() => {
-    // Fresh reference ownership is installed by the hook's preceding layout
-    // effect. Read it before any view update; the earlier render's false value
-    // would briefly disable and blur this body during canonical binding.
-    latest.current = { ...latest.current, editable: props.editable && referenceRef.current.isReady() };
+    latest.current = { ...latest.current, editable: props.editable };
     viewRef.current?.setProps({
       editable: () => latest.current.editable && !busy.current && inputMode.current === "text",
     });
-    const view = viewRef.current;
-    if (view) notifySelection(view.state);
     if (!props.editable) setLinkVisible(false);
-  }, [props.editable, describedBy, referenceReady, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
+  }, [props.editable, describedBy, reference.state?.raw, reference.selected, referenceFocused, referenceVisible]);
 
   useLayoutEffect(() => {
     const element = host.current;
@@ -750,6 +783,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     ) => {
       if (!latest.current.editable || busy.current) return false;
       const field = editingField(state);
+      if (field?.kind === "reference") return true;
       if (field?.kind === "title") {
         if (referenceRef.current.getState() !== null) warn(LINK_OPEN);
         else structuralKeys(state)?.enter?.();
@@ -768,6 +802,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     bindingRef.current = binding;
     nativeInputOpen.current = false;
     let nativePacket = 0;
+    let shiftedReturn = false;
     let deletionKey: string | null = null;
     let keylessDeletion: {row_id: string; backward: boolean} | null = null;
     let reconciling = false;
@@ -826,6 +861,20 @@ function NoteEditorContent(props: NoteEditorProps) {
       if (!latest.current.editable || busy.current || current.composing) return false;
       commandSelection(current, inputType === "deleteContentBackward" || inputType === "deleteContentForward");
       if (current.isDestroyed) return false;
+      const referenceField = editingField(current.state);
+      if (referenceField?.kind === "reference" && activeReference(current.state) === null) {
+        const host = referenceFor(referenceField);
+        if (!referenceField.node.attrs.token_active || !host || host.replacement === null) return true;
+        const selection = current.state.selection, keys = structuralKeys(current.state);
+        if (inputType === "insertParagraph") {keys?.enter?.(); return true;}
+        if (inputType === "insertLineBreak") return true;
+        if (inputType === "deleteContentBackward" || inputType === "deleteContentForward") {
+          const backward = inputType === "deleteContentBackward";
+          if (!selection.empty || (backward ? selection.from > referenceField.from : selection.to < referenceField.to))
+            keys?.emptyDelete?.(backward ? "backward" : "forward");
+          return true;
+        }
+      }
       const selected = current.state.selection;
       if ((inputType === "deleteContentBackward" || inputType === "deleteContentForward") &&
         selected instanceof NodeSelection && selected.node.isInline && selected.node.isAtom) {
@@ -894,17 +943,37 @@ function NoteEditorContent(props: NoteEditorProps) {
       flushNativeDOM(current);
       if (current.isDestroyed || compositionBase.current !== original) return;
       let transferred = false;
+      let returning = false;
       try {
         if (!latest.current.editable) { transferred = true; return; }
-        const field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
+        let field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
         if (!field) throw new Error("a composing outline field was withdrawn");
+        const selection = current.state.selection;
+        if (original.returning?.active && original.returning.packet === nativePacket && current.hasFocus() && !suspended.current && selection.empty && editingField(current.state)?.row_id === original.row_id &&
+          selection.from >= field.from + Math.min(original.selection.anchor, original.selection.head) && selection.from <= field.to) {
+          const marker = current.state.doc.slice(selection.from - 1, selection.from).content.firstChild;
+          // This packet preserved the literal delimiter while parsing. A space
+          // in the composed writing can never stand in for its final newline.
+          if (marker?.type === schema.nodes.hard_break || marker?.isText && marker.text === "\n") {
+            current.dispatch(current.state.tr.delete(selection.from - 1, selection.from)
+              .setMeta(SOURCE, "external").setMeta(outlineTransactionSource, "projection").setMeta("addToHistory", false));
+            field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
+            if (!field) throw new Error("a committed composition field was withdrawn");
+            returning = true;
+          }
+        }
         const block = field.node, committed = fieldBody(field);
         const query = referenceRef.current.getState();
+        if (field.kind === "reference" && query === null) {
+          if (block.textContent) transferred = beginTokenQuery(current, field, block.textContent);
+          else {restoreReference(current, field.row_id, original.body); transferred = true;}
+          return;
+        }
         if (query !== null && query.row_id === original.row_id) {
           const raw = clipboardPlainText(block.content);
           referenceRef.current.edit(raw);
-          if (raw.startsWith("@")) {
-            if (referenceRef.current.getState()?.raw !== raw) throw new Error("the reference query could not be retained");
+          if (raw.startsWith("@") || query.context.replacement !== null) {
+            if (referenceRef.current.getState()?.raw !== (query.context.replacement !== null && !raw.startsWith("@") ? `@${raw}` : raw)) throw new Error("the reference query could not be retained");
             transferred = true;
           } else transferred = literal(current);
           return;
@@ -928,6 +997,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         if (transferred && !current.isDestroyed && compositionBase.current === original) {
           compositionBase.current = null;
           if (packet !== null && packet === nativePacket) nativeInputOpen.current = false;
+          if (suspended.current) cancelReference(current);
+          if (returning && original.returning?.active && original.returning.packet === nativePacket && current.hasFocus() && !suspended.current) structuralInput(current, "insertParagraph");
           notifySelection(current.state);
           binding?.refresh();
         }
@@ -935,7 +1006,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
-      domParser: new NativeNoteParser(schema, PMDOMParser.fromSchema(schema).rules),
+      domParser: new NativeNoteParser(schema, PMDOMParser.fromSchema(schema).rules,
+        () => compositionBase.current !== null && compositionBase.current.returning !== null),
       state: EditorState.create({
         doc: latest.current.projection?.doc() ?? docFromBody(
           restoredReference
@@ -992,12 +1064,10 @@ function NoteEditorContent(props: NoteEditorProps) {
             : latest.current.projection && latest.current.editable && !busy.current
               ? {tabindex: inputMode.current !== "text" || nativeEntry ? "0" : "-1"}
               : {}),
-          "aria-label": latest.current.label,
+          "aria-label": field?.kind === "reference" && field.node.attrs.token_active ? `edit reference to ${referenceFor(field)?.label ?? ""}` : latest.current.label,
           "aria-describedby": latest.current["aria-describedby"] ?? "",
           "aria-multiline": "true",
-          "data-placeholder":
-            latest.current.placeholder ??
-            (latest.current.reference ? "write a note, or @ link something" : ""),
+          "data-placeholder": latest.current.placeholder ?? "",
           "data-empty": String(
             !latest.current.projection && editingField(state)?.node.content.size === 0,
           ),
@@ -1007,6 +1077,16 @@ function NoteEditorContent(props: NoteEditorProps) {
         resource_embed(node, current, getPos) {
           const position = getPos();
           const field = current.state.doc.type.name === "outline_doc" && position !== undefined ? fieldAt(current.state.doc, position) : editingField(current.state);
+          if (field?.kind === "reference") {
+            const dom = document.createElement("span");
+            dom.contentEditable = "false";
+            dom.className = cx("note-object-embed", styles.referenceToken);
+            dom.setAttribute("role", "img");
+            // The atom has one native extent. A readonly label text node lets
+            // Android move its composing caret inside and retire the keyboard.
+            dom.setAttribute("aria-label", `@${embedDisplayLabel(node.attrs.resource_ref, null, node.attrs.label)}`);
+            return {dom, stopEvent: () => true, ignoreMutation: () => true};
+          }
           const standalone = field?.node.childCount === 1;
           const dom = document.createElement(standalone ? "div" : "span");
           dom.contentEditable = "false";
@@ -1034,6 +1114,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         ? slice : (oneBlock(slice, schema) ?? slice),
       handleTextInput(current, _from, _to, text) {
         const field = editingField(current.state), body = field?.node;
+        if (field?.kind === "reference" && !current.composing && referenceRef.current.getState() === null)
+          return beginTokenQuery(current, field, text);
         if (
           text !== "@" ||
           current.composing ||
@@ -1089,6 +1171,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           )
             return true;
           if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
+          shiftedReturn = event.key === "Enter" && event.shiftKey;
           if ((event.key === "Backspace" || event.key === "Delete") && !current.composing && !event.isComposing && event.keyCode !== 229) deletionKey = event.key;
           else if (!event.isComposing && event.keyCode !== 229 && event.key !== "Unidentified") {deletionKey = null; keylessDeletion = null;}
           beginNativeInput(current, event);
@@ -1127,6 +1210,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           return false;
         },
         keyup(current, event) {
+          if (event.key === "Enter") shiftedReturn = false;
           if (event.key === deletionKey) {deletionKey = null; keylessDeletion = null;}
           releaseNativeInput(current); return false;
         },
@@ -1137,6 +1221,12 @@ function NoteEditorContent(props: NoteEditorProps) {
         // the browser's own undo (a menu, or Cmd-Z while no editor has focus) goes to ours.
         beforeinput(current, event) {
           beginNativeInput(current, event);
+          const composition = compositionBase.current;
+          if (composition && event.inputType === "insertCompositionText") {
+            const field = editingField(current.state), keys = structuralKeys(current.state);
+            composition.returning = !shiftedReturn && !latest.current.onSave && event.data?.endsWith("\n") === true &&
+              !!field && !!(keys?.split || keys?.enter) && (field.kind !== "body" || field.node.attrs.presentation !== "code") ? {packet: nativePacket, active: true} : null;
+          }
           if (!current.composing && !event.isComposing)
             commandSelection(current, event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward");
           const deleting = event.inputType.startsWith("delete") && /(?:Backward|Forward)$/u.test(event.inputType);
@@ -1195,16 +1285,18 @@ function NoteEditorContent(props: NoteEditorProps) {
               editBase: latest.current.editBase ?? null,
               reference: Boolean(referenceFor(field)) && literalSuppressed.current?.row_id !== field.row_id &&
                 referenceRef.current.getState() === null && block.type === schema.nodes.body && block.content.size === 0,
+              returning: null,
               selection: fieldSelection(current.state, field),
             };
           latest.current.history?.boundary();
           notifySelection(current.state);
           return false;
         },
-        compositionend(current) {
+        compositionend(current, event) {
           latest.current.history?.boundary();
           const packet = nativePacket;
           const original = compositionBase.current;
+          if (original && !event.data.endsWith("\n")) original.returning = null;
           window.setTimeout(() => {
             if (!current.isDestroyed && !current.composing && original) finishComposition(current, original, packet);
           }, 0);
@@ -1226,6 +1318,16 @@ function NoteEditorContent(props: NoteEditorProps) {
         },
         paste(current, event) {
           if (!current.composing) commandSelection(current, true);
+          const field = editingField(current.state);
+          if (field?.kind === "reference") {
+            event.preventDefault();
+            if (current.composing || compositionBase.current !== null) return true;
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+            if (!text) return true;
+            if (referenceRef.current.getState() === null) beginTokenQuery(current, field, text);
+            else current.dispatch(current.state.tr.insertText(text).setMeta("uiEvent", "paste"));
+            return true;
+          }
           if (editingField(current.state)?.kind === "title" && event.clipboardData?.types.includes("text/plain")) {
             event.preventDefault();
             latest.current.history?.boundary();
@@ -1354,8 +1456,18 @@ function NoteEditorContent(props: NoteEditorProps) {
         const changed = first && typeof first.from === "number" && view.state.doc.type.name === "outline_doc" ? fieldAt(view.state.doc, first.from) : editingField(view.state);
         const query = referenceRef.current.getState();
         const editingQuery = query !== null && changed?.row_id === query.row_id;
-        const composingField = compositionBase.current !== null && changed?.row_id === compositionBase.current.row_id;
-        if (binding && tr.docChanged && !external && !editingQuery && !(composingField && compositionBase.current?.reference)) {
+        const composition = compositionBase.current;
+        const composingField = composition !== null && changed?.row_id === composition.row_id;
+        const referenceField = changed?.kind === "reference";
+        if (referenceField && tr.docChanged && !external) {
+          const host = referenceFor(changed);
+          if (!changed.node.attrs.token_active || !host || host.replacement === null) {view.updateState(view.state); return;}
+          if (tr.steps.some((step, index) => {
+            const edit = step.toJSON(), field = typeof edit.from === "number" ? fieldAt(tr.docs[index]!, edit.from) : null;
+            return edit.stepType !== "replace" || !field || field.row_id !== changed.row_id || edit.from < field.from || edit.to > field.to;
+          })) {view.updateState(view.state); warn(ACROSS_FIELDS); return;}
+        }
+        if (binding && tr.docChanged && !external && !referenceField && !editingQuery && !(composingField && (composition.reference || composition.returning !== null))) {
           try { binding.apply(tr); }
           catch { warn({ fact: "couldn’t apply that edit.", reason: "your writing is kept." }); return; }
         }
@@ -1373,14 +1485,23 @@ function NoteEditorContent(props: NoteEditorProps) {
                 ? "composition"
                 : "input");
           const intent = editingQuery ? referenceRef.current.getState() : null;
-          if (intent !== null && !composingField) {
+          if (referenceField && intent === null && !composingField) {
+            const field = changed.row_id === null ? editingField(after) : editingRow(after.doc, changed.row_id);
+            if (field?.node.textContent) beginTokenQuery(view, changed, field.node.textContent);
+            else if (field?.node.content.size === 0) {
+              // Noncancelable native deletion has already changed the DOM.
+              // Restore the token before admitting its structural conversion.
+              view.updateState(before);
+              structuralKeys(before)?.emptyDelete?.("backward");
+            }
+          } else if (intent !== null && !composingField) {
             const field = intent.row_id === null ? editingField(after) : fieldById(after.doc, intent.row_id);
             if (!field) throw new Error("a reference input field was withdrawn");
             const raw = clipboardPlainText(field.node.content);
             referenceRef.current.edit(raw);
-            if (!raw.startsWith("@"))
+            if (!raw.startsWith("@") && intent.context.replacement === null)
               literal(view);
-          } else if (!composingField) {
+          } else if (!composingField && !referenceField) {
             const editedRow = tr.getMeta(outlineEditedField);
             const row_id = typeof editedRow === "string" ? editedRow : null;
             const edited = row_id ? fieldById(before.doc, row_id) : changed;
@@ -1398,16 +1519,18 @@ function NoteEditorContent(props: NoteEditorProps) {
             literalSuppressed.current = null;
         } else if (!before.selection.eq(after.selection))
           latest.current.history?.boundary();
-        if ((!compositionBase.current || editingField(after)?.row_id !== compositionBase.current.row_id) && (!before.selection.eq(after.selection) || editingField(before)?.row_id !== editingField(after)?.row_id))
-          notifySelection(after);
-        refreshMarks(after);
-        if (view.hasFocus()) {setToolbar(!after.selection.empty); placeToolbar();}
+        if ((!compositionBase.current || editingField(view.state)?.row_id !== compositionBase.current.row_id) && (!before.selection.eq(view.state.selection) || editingField(before)?.row_id !== editingField(view.state)?.row_id))
+          notifySelection(view.state);
+        refreshMarks(view.state);
+        if (view.hasFocus()) {setToolbar(!view.state.selection.empty); placeToolbar();}
         if (binding && !external) queueMicrotask(() => binding.refresh());
       },
     });
     viewRef.current = view;
-    const releaseDeletionKey = () => {deletionKey = null;};
+    const revokeReturn = () => {const returning = compositionBase.current?.returning; if (returning) returning.active = false;};
+    const releaseDeletionKey = () => {deletionKey = null; revokeReturn();};
     window.addEventListener("blur", releaseDeletionKey);
+    document.addEventListener("pointerdown", revokeReturn, true);
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
       encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
@@ -1496,6 +1619,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     latest.current.onEditorReady?.(handle);
     return () => {
       window.removeEventListener("blur", releaseDeletionKey);
+      document.removeEventListener("pointerdown", revokeReturn, true);
       latest.current.projection?.onViewReady(null);
       latest.current.onEditorReady?.(null);
       editorHandle.current = null;
@@ -1529,7 +1653,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     if (!view || !focus || !view.editable || consumedFocus.current === focus.serial) return;
     editorHandle.current?.focus(focus.selection, focus.preventScroll);
     consumedFocus.current = focus.serial;
-  }, [visitId, bodyViewKey, props.editable, referenceReady, focusSerial]);
+  }, [visitId, bodyViewKey, props.editable, focusSerial]);
 
   const { inspection } = props;
   useEffect(() => {
@@ -1586,15 +1710,23 @@ function NoteEditorContent(props: NoteEditorProps) {
         event.preventDefault();
         event.stopPropagation();
         view.focus();
-        literal(view);
+        if (!cancelReference(view)) literal(view);
       }}
       onBlurCapture={() =>
         window.requestAnimationFrame(() => {
-          if (shell.current?.contains(document.activeElement)) return;
+          const focused = document.activeElement, view = viewRef.current;
+          if (shell.current?.contains(focused)) {
+            if (view && focused !== view.dom && focused?.closest("[data-reference-chooser]")?.closest("[data-reference-editor]") !== shell.current) {
+              suspended.current = true;
+              if (!view.composing && compositionBase.current === null) cancelReference(view);
+            }
+            return;
+          }
           const owner = getInteractionOwner();
           const opener = owner?.opener instanceof HTMLElement ? owner.opener : owner?.opener?.element;
           if (owner?.options.current.kind === "modal" && opener && shell.current?.contains(opener)
             && owner.element?.contains(document.activeElement)) return;
+          if (view && !view.composing && compositionBase.current === null) cancelReference(view);
           suspended.current = true;
           setReferenceFocused(false);
           setToolbar(false);
@@ -1634,7 +1766,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
       })}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
-        <div data-collection-constrained={props.header || undefined}>
+        <div data-reference-chooser data-collection-constrained={props.header || undefined}>
           <ReferencePicker
             input={reference}
             returnFocus={() => viewRef.current?.dom ?? null}
@@ -1642,7 +1774,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           />
         </div>
       ) : null}
-      {props.editable && inputMode.current === "text" && toolbar && presentation !== "title" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
+      {props.editable && inputMode.current === "text" && toolbar && presentation !== "title" && presentation !== "reference" && !(link && linkVisible) && (reference.state === null || reference.state.row_id !== activeRowId) ? (
         <div
           ref={toolbarRef}
           className={styles.toolbar}
@@ -1740,7 +1872,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   );
 }
 
-interface EditingField { row_id: string | null; kind: "body" | "title"; from: number; to: number; node: PMNode }
+interface EditingField { row_id: string | null; kind: "body" | "title" | "reference"; from: number; to: number; node: PMNode }
 function editingField(state: EditorState): EditingField | null {
   if (state.doc.type.name === "outline_doc") return fieldAt(state.doc, state.selection.anchor);
   const node = state.doc.firstChild;
@@ -1752,7 +1884,8 @@ function editingRow(doc: PMNode, row_id: string): EditingField | null {
   return field;
 }
 function fieldBody(field: EditingField): NoteBody {
-  return field.kind === "title" ? bodyText(field.node.textContent) : bodyFromNode(field.node);
+  return field.kind === "title" ? bodyText(field.node.textContent)
+    : field.kind === "reference" ? parseBody({type: "body", content: field.node.content.toJSON() ?? []}) : bodyFromNode(field.node);
 }
 function fieldSelection(state: EditorState, field: EditingField): NoteEdit["selectionAfter"] {
   return {anchor: state.selection.anchor - field.from + 1, head: state.selection.head - field.from + 1};
@@ -1832,7 +1965,7 @@ function oneBlock(slice: Slice, schema = canonicalSchema): Slice | null {
 function replaceable(view: EditorView): boolean {
   const field = editingField(view.state), body = field?.node;
   const { selection } = view.state;
-  if (!field || !body || field.kind === "title" || selection.from < field.from || selection.to > field.to) return false;
+  if (!field || !body || field.kind !== "body" || selection.from < field.from || selection.to > field.to) return false;
   if (body.content.size === 0 && !body.textContent.trim()) return true;
   return (
     !selection.empty &&

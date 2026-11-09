@@ -187,7 +187,7 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
         containingNoteRef={null} editable={writing !== null && !frozen} focus={value.focus}
         history={{ undo: () => step(false), redo: () => step(true), boundary: () => draft.set(current => ({ ...current, history: { ...current.history, group: current.history.group + 1 } })) }}
         onEdit={edit} onSave={save}
-        reference={{ source_ref: destinationRef, label,
+        reference={{ source_ref: destinationRef, replacement: null, label,
           onActiveChange: active => { draft.set(current => ({ ...current, searching: active })); onActiveChange?.(active); },
           onSelected: linkReference }} />
       <Button className={styles.textButton} aria-busy={saving} onClick={save}

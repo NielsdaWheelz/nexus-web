@@ -3,7 +3,7 @@ import type {FocusSelection} from "./editorTypes";
 import type {WritingDocument} from "./runtime";
 
 export type BlockRange = {anchor_id: string; head_id: string; row_ids: readonly string[]};
-export type InputBookmark = {kind: "text"; row_id: string; ref: string; range: FocusSelection; root?: true;
+export type InputBookmark = {kind: "text"; row_id: string; ref: string; range: FocusSelection; root?: true; annotation?: true;
   resolveBefore?: (document: WritingDocument) => FocusSelection;
   resolve: ((document: WritingDocument) => FocusSelection) | null} | ({kind: "blocks"} & BlockRange) | null;
 export type Placement = {row_id: string; ref: string; parent_id: string; parent_ref: string; after_id: string | null; before_id: string | null};
@@ -16,7 +16,7 @@ export type RangePlan = {command: RangeCommand; changes: readonly PlacementDelta
 export type RangeReason = "unavailable" | "gap" | "scope" | "no_preceding" | "top_level" | "invalid_parent" | "shared_edge" | "collision" | "changed" | "capacity" | "retired" | "edge_first" | "edge_last";
 export interface SelectionRow {
   row_id: string; ref: string | null; link_id: string | null; parent_id: string | null; parent_ref: string; scope_id: string;
-  kind: "body" | "title" | "reference"; root: boolean; tail: boolean; selectable: boolean; eligible_parent: boolean; ready: boolean; gap: boolean;
+  kind: "body" | "title" | "reference"; root: boolean; seed: boolean; selectable: boolean; eligible_parent: boolean; ready: boolean; gap: boolean;
 }
 export type RangeSnapshot = {rows: readonly SelectionRow[]};
 type Refusal = {kind: "refusal"; reason: RangeReason};
@@ -150,7 +150,7 @@ export function planRange(command: RangeCommand, snapshot: RangeSnapshot, select
     const first = snapshot.rows.indexOf(roots[0]!), last = snapshot.rows.reduce((at, row, index) => row.root || survives(row) ? at : index, first);
     const following = snapshot.rows.slice(last + 1).find(row => row.scope_id === members[0]!.scope_id && row.selectable && survives(row));
     const previous = snapshot.rows.slice(0, first).reverse().find(row => row.scope_id === members[0]!.scope_id && row.selectable && survives(row));
-    const fallback = snapshot.rows.find(row => row.scope_id === members[0]!.scope_id && row.tail && row.parent_id === row.scope_id && row.ready && survives(row))
+    const fallback = snapshot.rows.find(row => row.scope_id === members[0]!.scope_id && row.seed && row.parent_id === row.scope_id && row.ready && survives(row))
       ?? snapshot.rows.find(row => row.scope_id === members[0]!.scope_id && row.root && row.ready);
     const target = following ?? previous ?? fallback;
     selection_after = target ? target.kind === "reference" ? {kind: "blocks", anchor_id: target.row_id, head_id: target.row_id, row_ids: [target.row_id]}

@@ -1,0 +1,11 @@
+.inline {
+  display: block;
+  width: 100%;
+  min-block-size: 1lh;
+}
+
+.target {
+  width: 100%;
+  min-block-size: 1lh;
+  cursor: text;
+}

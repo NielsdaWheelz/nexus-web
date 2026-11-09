@@ -39,11 +39,19 @@ quote strings locate text; they do not own display.
 
 new selections save explicitly. blank input saves a highlight; authored input
 saves its annotation in the same local command. first annotation or reannotation
-of an existing highlight stages a clone of its actual permanent body. saving
+of an existing highlight in an explicit-save reader composer stages a clone of
+its actual permanent body. saving
 admits only its incremental delta; cancel commits nothing. bound annotation
 editing autosaves through the ordinary writing runtime keyed by `highlight:<id>`.
-annotation editing has no note split/join behavior. desktop creation enter saves,
-shift-enter inserts a break; bound enter inserts a break and tab stays native.
+inline outline annotations autosave from the first keystroke and share their
+outline's history. enter keeps the displayed prefix, replaces the selection and
+moves the rich suffix to a new actual first child; blank/end creates an empty
+child, and start moves the whole body. source delta, newborn and relationship
+form one local command and undo group. undo restores source and removes the
+newborn/link; redo reuses their ids. unseen source inserts remain, and outgoing
+explicit links stay with the highlight. annotations never join or outdent.
+shift-enter and whole-body code retain line breaks; inline code marks split.
+desktop creation enter saves; other bound enter inserts a break and tab stays native.
 the mobile passage thought/question editor inserts a newline on return.
 
 explicit save closes only after local durability and only for the unchanged
@@ -131,8 +139,13 @@ capture and never loads a live authored resource to replace it.
 
 ## presentation and access
 
-reader, compact/downloaded reader, outline and detail surfaces share one annotation
-editor. blank highlights offer `annotate`; existing bodies offer `edit annotation`.
+reader, compact/downloaded reader, outline and detail surfaces share the native
+annotation engine. outline annotations offer one full-width ordinary line below
+the quote, including when blank, named `annotation`, without placeholder or
+save/cancel. activation installs the owning outline history before typing; a
+resource-list occurrence retains that scope across branch collapse, while untouched
+rows open no writing document. successful splitting opens the branch and focuses
+the child's start. other blank highlights offer `annotate`; existing bodies offer `edit annotation`.
 the saved-highlight popup and mobile composer put that command in their action row,
 after highlight and before chat. only a completed, owned highlight projection
 offers it; chat capability does not control annotation access. the command opens
@@ -147,7 +160,7 @@ the selection dock admits delivery only while the exact invoked button retains
 focus in the active document; blur cancels the handoff. removing a focused opener
 uses the shared action-focus recovery rather than replacing newer focus.
 
-blank has one look. an emptied field stays mounted, with its undo, only while focus
+outside outlines, an emptied field stays mounted, with its undo, only while focus
 or open input is inside it. `HighlightAnnotation` receives its resource from the
 host and unmounts its bound editor once that projection and the document both read
 absent, focus has left, native input has settled, no reference,

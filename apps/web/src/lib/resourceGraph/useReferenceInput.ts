@@ -19,14 +19,16 @@ import {
 } from "./useLinkTargets";
 import { useEditorDraft } from "@/lib/notes/editorHost";
 
-export interface ReferenceInputHost {
+export type ReferenceInputHost = {
   source_ref: string | null;
-  onSelected(target: LinkTarget, item: ResourceItem): void;
   label: string;
   onActiveChange?(active: boolean): void;
-}
-type ReferenceContext = { source_ref: string | null };
-function referenceContext(host: ReferenceInputHost): ReferenceContext { return { source_ref: host.source_ref }; }
+} & (
+  | {replacement: null; onSelected(target: LinkTarget, item: ResourceItem): void}
+  | {replacement: {occurrence_key: string; link_id: string}; onSelected(target: LinkTarget, item: ResourceItem): Promise<boolean>}
+);
+type ReferenceContext = Pick<ReferenceInputHost, "source_ref" | "replacement">;
+function referenceContext(host: ReferenceInputHost): ReferenceContext { return { source_ref: host.source_ref, replacement: host.replacement }; }
 type State = {
   row_id: string | null;
   context: ReferenceContext;
@@ -49,15 +51,14 @@ export function useReferenceInput(
   },
 ) {
   const row_id = input.row_id;
-  const paneActive = pickerOpen;
   const draft = useEditorDraft<State | null>(
     `Resources.ReferenceDraft:${editorKey}`,
     () => null,
   );
   const state = draft.value;
+  const accepting = useRef<State | null>(null);
   const listId = `reference-${useId().replaceAll(":", "")}`;
   const active = state !== null;
-  const paused = false;
   const hasHost = host !== null;
   const set = draft.set;
   const sourceRef = state?.host.source_ref ?? null;
@@ -65,11 +66,11 @@ export function useReferenceInput(
     state?.raw ?? "",
     sourceRef,
     state !== null,
-    paneActive && pickerOpen,
+    pickerOpen,
     sourceRef,
   );
   const context = JSON.stringify([draft.owner, state?.context, state?.raw]);
-  const admitted = pickerOpen && state !== null && state.row_id === row_id && !paused && search.querySettled && !search.minimum && search.current;
+  const admitted = pickerOpen && state !== null && state.row_id === row_id && search.querySettled && !search.minimum && search.current;
   const options = admitted ? search.items.map(item => ({ key: targetKey(item), disabledReason: state.message })) : [];
   const reconciled = reconcileSearchActive({ context, admitted, options,
     initialKey: options[0]?.key ?? null, active: state?.active ?? null });
@@ -96,6 +97,7 @@ export function useReferenceInput(
     return () => report?.(false);
   }, [active, draft.owner, hasHost]);
   function accept(target: LinkTargetResult | undefined) {
+    if (accepting.current !== null) return;
     if (!input.prepareAccept()) return;
     const value = draft.read();
     if (
@@ -115,14 +117,26 @@ export function useReferenceInput(
       set({ ...value, message: "the link destination changed." });
       return;
     }
-    const owner = host;
     const selectedTarget =
       target.kind === "resource"
         ? { kind: "resource" as const, ref: target.item.ref }
         : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target, capture: { ...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref) } };
+    const owner = value.host;
+    if (owner.replacement !== null) {
+      accepting.current = value;
+      // The frozen occurrence owns admission. A refusal keeps the exact query
+      // and native selection; preparation never queues another acceptance.
+      void owner.onSelected(selectedTarget, target.item).then(accepted => {
+        const current = draft.read();
+        if (!accepted || current?.host !== value.host || current.raw !== value.raw) return;
+        set(null);
+        input.accepted(value.row_id, value.base);
+      }).finally(() => {if (accepting.current === value) accepting.current = null;});
+      return;
+    }
     set(null);
     input.accepted(value.row_id, value.base);
-    owner.onSelected(selectedTarget, target.item);
+    host.onSelected(selectedTarget, target.item);
   }
 
   return {
@@ -132,11 +146,10 @@ export function useReferenceInput(
     selected,
     bindings,
     acceptSelected() { if (selected !== null) accept(search.items.find(item => targetKey(item) === selected)); },
-    isReady: () => true,
     reviewPosition() {
       const value = draft.read();
       const context = host ? referenceContext(host) : null;
-      if (value && context && host) {
+      if (value && value.context.replacement === null && context && host) {
         set({ ...value, row_id, context, host, message: null });
       }
     },
@@ -151,9 +164,9 @@ export function useReferenceInput(
     },
     edit(raw: string) {
       const value = draft.read();
-      if (value) set({ ...value, raw });
+      if (value) set({ ...value, raw: value.context.replacement !== null && !raw.startsWith("@") ? `@${raw}` : raw });
     },
-    literal() {
+    close() {
       if (draft.read() === null) return false;
       set(null);
       return true;

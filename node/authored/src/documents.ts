@@ -63,9 +63,13 @@ export function readBody(doc: Y.Doc): NoteBody {
   }
   return parseBody({ type: "body", attrs: { presentation: attrs.presentation ?? "prose" }, content });
 }
-export function createNote(body: NoteBody): string {
+export function createNote(body: NoteBody): string {return encodeNote(body, null);}
+/** A full initializer's byte bound, including maximum-width Yjs identities. */
+export function noteEncodingBound(body: NoteBody): number {return decodeBytes(encodeNote(body, 0xffffffff)).byteLength;}
+function encodeNote(body: NoteBody, clientId: number | null): string {
   const valid = parseBody(body.body_pm_json);
   const doc = new Y.Doc();
+  if (clientId !== null) doc.clientID = clientId;
   try {
     doc.transact(() => {
       const element = new Y.XmlElement("body");
