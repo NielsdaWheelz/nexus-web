@@ -288,6 +288,9 @@ owned direct-reference occurrences in standalone page/note outlines keep their
 resource presentation at rest. a completed press in nonlink row space activates
 one native `@label` atom; resource links, controls, quote selection, annotations
 and descendants keep their own events. the atom has no authored prose document.
+its label is generated paint plus an accessible name; native input sees one
+indivisible object, without readonly label-text positions for an ime to enter.
+plain and rich copying use the model's resource identity and label.
 typing, committed composition and textual paste use the existing reference
 chooser; its query stays ephemeral. enter with an open chooser only accepts;
 without a query it births one sibling even when the target is expanded. escape
@@ -580,7 +583,7 @@ composition and incoming growth remain protected and stop additional loads when
 over budget. inactive windows and whole old history groups release through their
 existing owners first. manual paging replaces a bounded window and exposes earlier
 items. a failed admission explains the
-limit at the requested action. absolute-tail input resolves the current tail at
+limit at the requested action. absolute-tail append resolves the current tail at
 command preparation, rather than retaining a relationship that an earlier
 accepted unlink may remove. explicit insert-after retains its chosen anchor.
 if history retirement needs settlement, a new gesture requests insertion after
