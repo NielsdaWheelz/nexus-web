@@ -608,7 +608,7 @@ export function useSelectionComposer(input: {
     reference(): ReferenceInputHost | null {
       if (!draft || !writing) return null;
       const id = draft.id;
-      return { source_ref: draft.highlightId ? `highlight:${draft.highlightId}` : null, label: "selected passage",
+      return { source_ref: draft.highlightId ? `highlight:${draft.highlightId}` : null, replacement: null, label: "selected passage",
         onActiveChange(referencing) { store.update(id, entry => entry.referenceActive === referencing ? entry : { ...entry, referenceActive: referencing }); },
         onSelected(target, item) {
           store.update(id, entry => ({ ...entry, referenceActive: false }));

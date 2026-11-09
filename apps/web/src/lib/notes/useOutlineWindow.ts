@@ -33,32 +33,37 @@ export function useOutlineWindow(query: OutlineQuery, branch: OutlineBranch, run
   const key = JSON.stringify([accountId, effective, [...branch.ancestors]]);
   const window = useMemo((): OutlineWindow | null => {
     if (!runtime || !read.data) return null;
-    const data = read.data, proof = data.outline_window;
-    // justify-service-invariant-check: the closed query owns proof completeness and raw-row alignment.
-    if (proof === null) throw new Error("outline window proof is missing");
-    if (data.children.length !== data.rows.length) throw new Error("outline availability result length mismatch");
-    const captured = branch;
-    const resources = new Map(data.rows.map(row => [row.resource.ref, row.resource]));
-    for (const resource of proof.resources) resources.set(resource.ref, resource);
-    const rawChildren = new Map<string, boolean | null>();
-    for (const [index, row] of data.rows.entries()) {
-      if (row.link === null) throw new Error("outline row is missing its link");
-      rawChildren.set(row.link.link_id, data.children[index]!);
-    }
-    const rows = data.rows.filter(row => classifyOutlineOccurrence({branch: captured, targetRef: row.resource.ref, edgeId: row.link!.link_id}).kind !== "omit");
-    const edges = [proof.before, proof.after, proof.tail].map(link => {
-      if (!link) return null;
-      const resource = resources.get(link.endpoint_a === query.ref ? link.endpoint_b : link.endpoint_a);
-      if (!resource) throw new Error("outline neighbour is missing from its proven revision");
-      return {link, resource};
-    });
-    const childAvailability = new Map(rows.map(row => [row.link!.link_id, rawChildren.get(row.link!.link_id)!]));
-    const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
-      .filter(({link, resource}) => (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch: captured, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
-    return {ref: query.ref, branch: captured, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!,
-      childAvailability, resources, rootResource: resources.get(query.ref) ?? null, editableRefs};
+    return projectOutlineWindow(read.data, query.ref, branch);
     // The serialized account/query/branch key owns the captured projection identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, key, branch, read.data]);
   return {window, loading: read.pending || window === null && read.error === null, error: read.error, occurrence: read.occurrence, retry: read.retry};
+}
+
+/** Decode the same bounded proof for a reactive read and an explicit destination admission. */
+export function projectOutlineWindow(data: QueryResult, ref: string, branch: OutlineBranch): OutlineWindow {
+  const proof = data.outline_window;
+  // justify-service-invariant-check: the closed query owns proof completeness and raw-row alignment.
+  if (proof === null) throw new Error("outline window proof is missing");
+  if (data.children.length !== data.rows.length) throw new Error("outline availability result length mismatch");
+  const captured = branch;
+  const resources = new Map(data.rows.map(row => [row.resource.ref, row.resource]));
+  for (const resource of proof.resources) resources.set(resource.ref, resource);
+  const rawChildren = new Map<string, boolean | null>();
+  for (const [index, row] of data.rows.entries()) {
+    if (row.link === null) throw new Error("outline row is missing its link");
+    rawChildren.set(row.link.link_id, data.children[index]!);
+  }
+  const rows = data.rows.filter(row => classifyOutlineOccurrence({branch: captured, targetRef: row.resource.ref, edgeId: row.link!.link_id}).kind !== "omit");
+  const edges = [proof.before, proof.after, proof.tail].map(link => {
+    if (!link) return null;
+    const resource = resources.get(link.endpoint_a === ref ? link.endpoint_b : link.endpoint_a);
+    if (!resource) throw new Error("outline neighbour is missing from its proven revision");
+    return {link, resource};
+  });
+  const childAvailability = new Map(rows.map(row => [row.link!.link_id, rawChildren.get(row.link!.link_id)!]));
+  const editableRefs = new Set([...rows.map(row => ({link: row.link!, resource: row.resource})), ...edges.filter((edge): edge is OutlineEdge => edge !== null)]
+    .filter(({link, resource}) => (resource.kind === "note" || resource.kind === "page") && classifyOutlineOccurrence({branch: captured, targetRef: resource.ref, edgeId: link.link_id}).kind === "resource").map(({resource}) => resource.ref));
+  return {ref, branch: captured, data, rows, beforeEdge: edges[0]!, afterEdge: edges[1]!, tailEdge: edges[2]!,
+    childAvailability, resources, rootResource: resources.get(ref) ?? null, editableRefs};
 }

@@ -43,6 +43,7 @@ export interface LocalOutlineHandle {
 }
 type Props = {rootRef: string; rootField?: RootField; prelude?: readonly Intent[]; apiRef?: React.RefObject<LocalOutlineHandle | null>;
   filter?: string; occurrencePrefix?: string;
+  onControllerReady?(controller: OutlineController | null): void; childrenVisible?: boolean;
   /** The link the pane was opened through; the outline omits it, so the parent is not listed as a child. */
   entering?: string};
 const EMPTY_INTENTS: readonly Intent[] = [];
@@ -78,7 +79,7 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
 
 /** The route and editing host consume one root read; descendants retain their
  * own collectors. Canonical root metadata survives paging and refresh failure. */
-export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef, entering}: Props): LocalOutlineRoot {
+export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef, entering, onControllerReady, childrenVisible = true}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
   const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
@@ -124,14 +125,17 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtime, input, rootRef, branch, notify, changed, guard]);
   const presentation = useAuthoredPaneRoot(current?.controller ?? null, configuredField);
+  const controller = current?.controller ?? null;
+  useLayoutEffect(() => {onControllerReady?.(controller); return () => onControllerReady?.(null);}, [controller, onControllerReady]);
+  useLayoutEffect(() => {controller?.refresh();}, [controller, childrenVisible]);
   const wrap = (node: ReactNode) => <SharedOutline value={current?.controller ?? null}><ResourceBranch value={branch}>{node}</ResourceBranch></SharedOutline>;
   const rootEditor = presentation.rootEditor;
   const published = rootEditor === null ? null : rootEditor.kind === "Inline"
     ? {...rootEditor, content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)}
     : {...rootEditor, control: wrap(rootEditor.control), content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)};
-  const view = current ? <MountedOutline key={current.id} controller={current.controller} pending={pending}
+  const view = current ? <div hidden={!childrenVisible}><MountedOutline key={current.id} controller={current.controller} pending={pending}
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
-    rootRead={read} onReady={setEditor}/>
+    rootRead={read} onReady={setEditor}/></div>
     : <Ruling/>;
   if (current && painted !== current.controller && editor === current.controller &&
     [...current.controller.requests.keys()].every(id => current.controller.windows.has(id) || current.controller.branchRead(id).error !== null)) setPainted(current.controller);
@@ -167,7 +171,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       controller.revealTouchCommands(event);
       if (event instanceof KeyboardEvent && event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.isComposing)
         controller.armNativeEntry();
-      if (event.type === "pointerdown" && event.target instanceof Element && !event.target.closest(`[data-outline-session="${pending.value.input.root_id}"]`) && !event.target.closest("[data-outline-commands]")) controller.withdraw();
+      if (event.type === "pointerdown" && !controller.ownsInteraction(event.target)) controller.withdraw();
     };
     document.addEventListener("pointerdown", intent, true); document.addEventListener("keydown", intent, true); document.addEventListener("beforeinput", intent, true);
     return () => {document.removeEventListener("pointerdown", intent, true); document.removeEventListener("keydown", intent, true); document.removeEventListener("beforeinput", intent, true);};
@@ -226,7 +230,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
       {[...controller.requests.values()].filter(request => request.parent_id !== pending.value.input.root_id).map(request => <BranchCollector key={request.parent_id} controller={controller} request={request}/>)}
       <NoteEditor editorKey={`outline:${occurrencePrefix}`} occurrenceKey={`outline:${occurrencePrefix}`} containingNoteRef={rootRef}
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items" wordsAtRisk={wordsAtRisk || pendingError !== null}
-        placeholder="write or @ to link" history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
+        history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} onEditorReady={editorReady}/>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>

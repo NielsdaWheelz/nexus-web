@@ -68,7 +68,7 @@
   height: 1lh;
 }
 
-/* tail and gap rows keep the column, so their text starts with their siblings'. */
+/* gap rows keep the column, so their text starts with their siblings'. */
 .leading[hidden] {
   visibility: hidden;
 }
@@ -87,6 +87,11 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* a wrapped reference still leaves one ordinary nonlink target for native editing. */
+.row[data-reference-editable] > .head {
+  padding-inline-end: var(--space-6);
 }
 
 .content[data-gap] {

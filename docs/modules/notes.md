@@ -161,12 +161,13 @@ removed in that exact prestate. this command’s removals cannot supply that pro
 it never imports other prestate lanes or covers a live intervening same-replica
 edit merely because text is unchanged.
 
-ordinary note and bound highlight annotation editing autosave locally. annotation creation retains
-its explicit-save composer; unsubmitted composer text is ephemeral. uncommitted
+ordinary notes and inline outline annotations autosave locally from the first
+keystroke. selection and reader annotation creation retain their explicit-save
+composers; unsubmitted composer text is ephemeral. uncommitted
 writing retains the loss guard and retry/copy affordance. committed unsynchronized
 writing survives app termination and does not acquire an exit warning.
 
-a first annotation save locks its submitted clone until the reserved command
+a first explicit annotation save locks its submitted clone until the reserved command
 settles. the existing retained draft owns that lock through navigation; durability
 clears the same clone and revision even while its editor is absent. subsequent
 body editing uses the ordinary autosave owner.
@@ -282,6 +283,36 @@ records the semantic occurrence placement, so a surviving independent relation
 cannot acquire the moved occurrence's identity. newer user intent cancels delayed
 focus and targeted window changes; programmatic selection does not cancel its
 own operation. append uses the proven absolute tail.
+
+owned direct-reference occurrences in standalone page/note outlines keep their
+resource presentation at rest. a completed press in nonlink row space activates
+one native `@label` atom; resource links, controls, quote selection, annotations
+and descendants keep their own events. the atom has no authored prose document.
+typing, committed composition and textual paste use the existing reference
+chooser; its query stays ephemeral. enter with an open chooser only accepts;
+without a query it births one sibling even when the target is expanded. escape
+cancels the query to the atom, then exits editing. leaving cancels an unaccepted
+query; the chooser overlay remains part of the interaction.
+
+replacement retains the original edge until admission, revalidates the frozen
+occurrence and edge under the account lease, and allocates before that live edge
+before unlinking it in the same command. the current target is a no-op; self,
+duplicate and stale targets refuse. deleting the committed atom uses the same
+birth admission to replace the edge with a deliberate empty note. each command
+has one structural undo group and observes only its owned membership; referenced
+resources and their children survive. subtree loss guards precede retirement.
+filtered/read-only scopes, connections and indexes gain no token capability.
+
+outline annotations use the same history from their first keystroke. enter
+splits the displayed rich yjs range into a new actual first child, replacing the
+selection and preserving unseen source inserts. source delta, newborn and link
+share one authored command; undo restores the source and retires the newborn,
+and redo reuses its identities. destination, budget and current command authority
+are proved before synchronous birth. shift-enter and whole-body code retain
+line breaks; inline code marks retain structural splitting. annotation bookmarks
+use the highlight ref and occurrence, with the mounted annotation/root handle.
+resource-list occurrences activate their child scope before input and retain it
+across disclosure; untouched collapsed rows open no documents or controllers.
 
 within the descendant outline, return splits prose at the selection. at the
 item's start it births an empty item above and the text keeps its identity; at
@@ -468,7 +499,8 @@ a count pill trails an item linked
 under more than one loaded parent. notes and uncommitted drafts use dots, other
 resources the canonical scheme glyph, terminal occurrences the earlier-occurrence
 arrow; a halo behind the marker says the row hides children. currently unmarked
-roots, tail and continuation rows stay unmarked. markers remain noneditable chrome
+roots and continuation rows stay unmarked. the root seed has one decorative dot.
+markers remain noneditable chrome
 outside `contentDOM`; glyphs never enter authored bodies, history or clipboard
 serialization. opening and relationship
 menus retain the same native control and focus target. retaining an open empty
@@ -498,7 +530,7 @@ graph proofs share a store revision; unknown data
 never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
 a cold append keeps its existing focus intent through initial prefix admission,
-then requests the bounded absolute-tail window before focusing the field.
+proves the absolute tail and births one real empty note on demand.
 compatible child proofs refresh independently of raw field admission. each
 proof identifies its resource, relationship, parent and traversal context;
 relocation discards availability but retains its revision watermark, so an
@@ -510,34 +542,42 @@ embedded targets render rich read-only previews; editing opens their resource.
 their disclosed descendants enter the containing flat session rather than
 constructing nested editors.
 
-reserved blank inputs use the editor's existing placeholder treatment. the hint
-is generated presentation, clears with field content, and never enters authored
-writing or clipboard data.
+only a standalone page/note pane with an admitted complete empty child window,
+no filter and no unresolved membership change has a provisional first bullet.
+root title/body content does not affect eligibility. this seed has presentation
+identity only: focus, blur and empty enter write nothing. `bodyHasContent` admits
+first writing, including whitespace, breaks, atoms and empty code; accepting `@`
+creates its direct relationship. the exact hint is `write or @ to link`, with
+editor name `edit linked items`. deleting the last actual child restores the seed
+after membership settles. deliberate empty notes survive. populated/nested,
+embedded, loading, failed, filtered and windowed outlines reserve no input or gap.
 
 one session admits at most 64 unique document identities and 16 mib of encoded
-state across root, disclosed branches, neighbors, tail, pending input and history.
+state across root, disclosed branches, neighbors, pending input and history.
 the byte charge includes each canonical y encoding once, every independently
 retained occurrence baseline (including hidden history occurrences), retained
 history metadata and unresolved independent frozen encodings. baseline and
-history owners report their charges through their existing maps; there is no
+history owners report their charges through their existing maps; held highlight
+documents and independent annotation baselines are included. history exposes
+actual retained writing documents; relationship refs consume no document slots.
+there is no
 second inventory. visual anchor ids alone retain no writing. the same owned
 snapshot is counted once; different causal baselines count separately even when
 their ref or bytes match. prosemirror model, dom
 and general heap allocations are outside this encoded-state contract. new aliases
 reserve their baseline and initial capture even when their canonical document is
-already held, so repeated large aliases admit fewer fields. provisional fields
-reserve capacity before they become editable. this is a
+already held, so repeated large aliases admit fewer fields. the seed reserves no
+document; first content uses ordinary newborn admission. this is a
 new-admission bound, not a heap guarantee or an authoring quota: accepted typing,
 composition and incoming growth remain protected and stop additional loads when
 over budget. inactive windows and whole old history groups release through their
-existing owners first. manual paging replaces a bounded window, exposes earlier
-items and retains “write at end” beside show-more. a failed admission explains the
+existing owners first. manual paging replaces a bounded window and exposes earlier
+items. a failed admission explains the
 limit at the requested action. absolute-tail input resolves the current tail at
 command preparation, rather than retaining a relationship that an earlier
 accepted unlink may remove. explicit insert-after retains its chosen anchor.
 if history retirement needs settlement, a new gesture requests insertion after
 it finishes; a delayed split is not replayed.
-the proven tail retains a manual entry even when it cannot reserve a blank field.
 no account-wide status or recovery inventory is
 introduced. the runtime's unpinned document cache remains a separate owner.
 
