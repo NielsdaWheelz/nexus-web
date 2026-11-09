@@ -301,6 +301,8 @@ duplicate and stale targets refuse. deleting the committed atom uses the same
 birth admission to replace the edge with a deliberate empty note. each command
 has one structural undo group and observes only its owned membership; referenced
 resources and their children survive. subtree loss guards precede retirement.
+an owned note or page target immediately adopts its ordinary body/title editor,
+including after reload; removing that relationship uses the existing row menu.
 filtered/read-only scopes, connections and indexes gain no token capability.
 
 outline annotations use the same history from their first keystroke. enter
@@ -412,6 +414,11 @@ field's edit. the packet fence stays held through canonical handoff or
 query-draft admission; only then may
 selection notification refresh from canonical data. a failed literal handoff
 retains the existing query draft and its canonical base.
+software return may arrive as committed composition text ending in a newline.
+in structurally capable prose and reference fields, the engine preserves that
+literal delimiter until handoff and consumes it for the ordinary return command
+only while the captured input still owns command authority. code, shift-return
+and explicit-save composers retain their own newline/save rules.
 consuming a reconciled semantic key grants no permission to refresh or adopt
 remote state. a field without an admitted document stays
 read-only until synchronous admission binds its real initializer.

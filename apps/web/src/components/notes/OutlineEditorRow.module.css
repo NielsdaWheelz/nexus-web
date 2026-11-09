@@ -79,7 +79,7 @@
 }
 
 /* the portal's event boundary takes no box; the bullet sizes itself whatever its menu anchor's layout. */
-.leading > span {
+.leading > span:not([data-seed-bullet]) {
   display: contents;
 }
 
@@ -176,6 +176,7 @@
 /* the bullet is the slot's own one-line box. the note marker is drawn as a 6px dot over its transparent text;
    glyph markers draw themselves. the 16px halo behind either says the row hides children. */
 .bullet {
+  position: relative;
   display: flex;
   width: calc(var(--outline-text-start) - var(--outline-disclose));
   height: 1lh;

@@ -851,7 +851,7 @@ export class OutlineHistory {
     }); return {result: admitted.result, committed};
   }
   replaceReference(args: {source: OccurrenceBookmark & {link: LinkState}; parent: WritingDocument | null; target: import("@/lib/resourceGraph/links").LinkTarget; label: string;
-    row_id: string; before: InputBookmark; active(): boolean; mayRetire(): boolean;
+    row_id: string; before: InputBookmark; document: WritingDocument | null; active(): boolean; mayRetire(): boolean; canRetain(): boolean;
     accepted(ref: string, resource: import("@nexus/authored/types").ResourceProjection | null, admission: AdmittedStructure, link: Promise<LinkState>): void;
     refused(reason: RangeReason): void}): Promise<boolean> {
     this.boundary();
@@ -881,6 +881,7 @@ export class OutlineHistory {
         if (positions.kind === "refusal") return {kind: "refusal", reason: positions.reason === "capacity" ? "capacity" : "changed"};
         const prepared = await prepareLink(this.runtime, {source_ref: placement.parent_ref, target_ref: endpoint.ref, source_label: null, target_label: args.label, after: null, before: source.link.link_id}, {value: positions.values.get(id)!, moves: [...positions.moves]});
         if (!prepared.intents.some(intent => intent.kind === "add_link")) return {kind: "refusal", reason: "collision"};
+        if (!args.canRetain()) return {kind: "refusal", reason: "capacity"};
         if (!args.mayRetire()) return {kind: "refusal", reason: "guarded"};
         relationship = prepared.link_id;
         // justify-invariant-cast: target and link preparation return graph intents only; neither edits or creates authored bodies.
@@ -888,6 +889,7 @@ export class OutlineHistory {
         return {kind: "ready", intents, selection: {refs: [placement.parent_ref, source.ref, endpoint.ref]}, preflight_revision: null,
           accepted: states => {
             accepted = true; group.suspended--;
+            this.hold(group, [args.document]);
             for (const prior of future) {prior.suspended--; this.release(prior);}
             const committed = admission.committed.then(receipt => {if (!receipt) throw new Error("accepted replacement has no receipt"); return receipt;});
             const result = admission.result.then(value => {if (value.kind !== "committed") throw new Error("accepted replacement was refused"); return value.receipt;});

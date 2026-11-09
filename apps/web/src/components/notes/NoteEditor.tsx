@@ -52,7 +52,7 @@ import {
   type OutlineBranch,
 } from "@/lib/resources/outlineProjection";
 import { resolveResourceItem, type ResourceItem } from "@/lib/resources/items";
-import { DOMParser as PMDOMParser, Fragment, Slice, type Node as PMNode, type ParseOptions, type Schema } from "prosemirror-model";
+import { DOMParser as PMDOMParser, Fragment, Slice, type Node as PMNode, type ParseOptions, type ParseRule, type Schema } from "prosemirror-model";
 import {
   AllSelection,
   NodeSelection,
@@ -157,12 +157,13 @@ function flushNativeDOM(view: EditorView): void {
   observer.flush();
 }
 
-/** Native code edits parse inside the existing body, bypassing its outer pre
- * rule. Preserve their literal whitespace. Clipboard parsing uses parseSlice,
- * which retains the schema's existing prose and HTML import policy. */
+/** Native code and the captured IME Return keep literal whitespace until the
+ * input engine consumes the delimiter. Clipboard parsing retains the schema's
+ * existing prose and HTML import policy. */
 class NativeNoteParser extends PMDOMParser {
+  constructor(schema: Schema, rules: readonly ParseRule[], private readonly literalComposition: () => boolean) {super(schema, rules);}
   override parse(dom: Node, options: ParseOptions = {}): PMNode {
-    return super.parse(dom, options.topNode?.attrs.presentation === "code"
+    return super.parse(dom, options.topNode?.attrs.presentation === "code" || this.literalComposition()
       ? {...options, preserveWhitespace: "full"} : options);
   }
 }
@@ -256,6 +257,7 @@ interface CompositionInput {
   body: NoteBody;
   selection: {anchor: number; head: number};
   reference: boolean;
+  returning: {packet: number; active: boolean} | null;
   editBase: TextEditBase | null;
 }
 
@@ -800,6 +802,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     bindingRef.current = binding;
     nativeInputOpen.current = false;
     let nativePacket = 0;
+    let shiftedReturn = false;
     let deletionKey: string | null = null;
     let keylessDeletion: {row_id: string; backward: boolean} | null = null;
     let reconciling = false;
@@ -940,10 +943,25 @@ function NoteEditorContent(props: NoteEditorProps) {
       flushNativeDOM(current);
       if (current.isDestroyed || compositionBase.current !== original) return;
       let transferred = false;
+      let returning = false;
       try {
         if (!latest.current.editable) { transferred = true; return; }
-        const field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
+        let field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
         if (!field) throw new Error("a composing outline field was withdrawn");
+        const selection = current.state.selection;
+        if (original.returning?.active && original.returning.packet === nativePacket && current.hasFocus() && !suspended.current && selection.empty && editingField(current.state)?.row_id === original.row_id &&
+          selection.from >= field.from + Math.min(original.selection.anchor, original.selection.head) && selection.from <= field.to) {
+          const marker = current.state.doc.slice(selection.from - 1, selection.from).content.firstChild;
+          // This packet preserved the literal delimiter while parsing. A space
+          // in the composed writing can never stand in for its final newline.
+          if (marker?.type === schema.nodes.hard_break || marker?.isText && marker.text === "\n") {
+            current.dispatch(current.state.tr.delete(selection.from - 1, selection.from)
+              .setMeta(SOURCE, "external").setMeta(outlineTransactionSource, "projection").setMeta("addToHistory", false));
+            field = original.row_id === null ? editingField(current.state) : editingRow(current.state.doc, original.row_id);
+            if (!field) throw new Error("a committed composition field was withdrawn");
+            returning = true;
+          }
+        }
         const block = field.node, committed = fieldBody(field);
         const query = referenceRef.current.getState();
         if (field.kind === "reference" && query === null) {
@@ -980,6 +998,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           compositionBase.current = null;
           if (packet !== null && packet === nativePacket) nativeInputOpen.current = false;
           if (suspended.current) cancelReference(current);
+          if (returning && original.returning?.active && original.returning.packet === nativePacket && current.hasFocus() && !suspended.current) structuralInput(current, "insertParagraph");
           notifySelection(current.state);
           binding?.refresh();
         }
@@ -987,7 +1006,8 @@ function NoteEditorContent(props: NoteEditorProps) {
     };
     const restoredReference = referenceRef.current.getState();
     const view = new EditorView(element, {
-      domParser: new NativeNoteParser(schema, PMDOMParser.fromSchema(schema).rules),
+      domParser: new NativeNoteParser(schema, PMDOMParser.fromSchema(schema).rules,
+        () => compositionBase.current !== null && compositionBase.current.returning !== null),
       state: EditorState.create({
         doc: latest.current.projection?.doc() ?? docFromBody(
           restoredReference
@@ -1148,6 +1168,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           )
             return true;
           if (["Shift", "Control", "Meta", "Alt", "AltGraph"].includes(event.key)) return false;
+          shiftedReturn = event.key === "Enter" && event.shiftKey;
           if ((event.key === "Backspace" || event.key === "Delete") && !current.composing && !event.isComposing && event.keyCode !== 229) deletionKey = event.key;
           else if (!event.isComposing && event.keyCode !== 229 && event.key !== "Unidentified") {deletionKey = null; keylessDeletion = null;}
           beginNativeInput(current, event);
@@ -1186,6 +1207,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           return false;
         },
         keyup(current, event) {
+          if (event.key === "Enter") shiftedReturn = false;
           if (event.key === deletionKey) {deletionKey = null; keylessDeletion = null;}
           releaseNativeInput(current); return false;
         },
@@ -1196,6 +1218,12 @@ function NoteEditorContent(props: NoteEditorProps) {
         // the browser's own undo (a menu, or Cmd-Z while no editor has focus) goes to ours.
         beforeinput(current, event) {
           beginNativeInput(current, event);
+          const composition = compositionBase.current;
+          if (composition && event.inputType === "insertCompositionText") {
+            const field = editingField(current.state), keys = structuralKeys(current.state);
+            composition.returning = !shiftedReturn && !latest.current.onSave && event.data?.endsWith("\n") === true &&
+              !!field && !!(keys?.split || keys?.enter) && (field.kind !== "body" || field.node.attrs.presentation !== "code") ? {packet: nativePacket, active: true} : null;
+          }
           if (!current.composing && !event.isComposing)
             commandSelection(current, event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward");
           const deleting = event.inputType.startsWith("delete") && /(?:Backward|Forward)$/u.test(event.inputType);
@@ -1254,16 +1282,18 @@ function NoteEditorContent(props: NoteEditorProps) {
               editBase: latest.current.editBase ?? null,
               reference: Boolean(referenceFor(field)) && literalSuppressed.current?.row_id !== field.row_id &&
                 referenceRef.current.getState() === null && block.type === schema.nodes.body && block.content.size === 0,
+              returning: null,
               selection: fieldSelection(current.state, field),
             };
           latest.current.history?.boundary();
           notifySelection(current.state);
           return false;
         },
-        compositionend(current) {
+        compositionend(current, event) {
           latest.current.history?.boundary();
           const packet = nativePacket;
           const original = compositionBase.current;
+          if (original && !event.data.endsWith("\n")) original.returning = null;
           window.setTimeout(() => {
             if (!current.isDestroyed && !current.composing && original) finishComposition(current, original, packet);
           }, 0);
@@ -1423,7 +1453,8 @@ function NoteEditorContent(props: NoteEditorProps) {
         const changed = first && typeof first.from === "number" && view.state.doc.type.name === "outline_doc" ? fieldAt(view.state.doc, first.from) : editingField(view.state);
         const query = referenceRef.current.getState();
         const editingQuery = query !== null && changed?.row_id === query.row_id;
-        const composingField = compositionBase.current !== null && changed?.row_id === compositionBase.current.row_id;
+        const composition = compositionBase.current;
+        const composingField = composition !== null && changed?.row_id === composition.row_id;
         const referenceField = changed?.kind === "reference";
         if (referenceField && tr.docChanged && !external) {
           const host = referenceFor(changed);
@@ -1433,7 +1464,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             return edit.stepType !== "replace" || !field || field.row_id !== changed.row_id || edit.from < field.from || edit.to > field.to;
           })) {view.updateState(view.state); warn(ACROSS_FIELDS); return;}
         }
-        if (binding && tr.docChanged && !external && !referenceField && !editingQuery && !(composingField && compositionBase.current?.reference)) {
+        if (binding && tr.docChanged && !external && !referenceField && !editingQuery && !(composingField && (composition.reference || composition.returning !== null))) {
           try { binding.apply(tr); }
           catch { warn({ fact: "couldn’t apply that edit.", reason: "your writing is kept." }); return; }
         }
@@ -1493,8 +1524,10 @@ function NoteEditorContent(props: NoteEditorProps) {
       },
     });
     viewRef.current = view;
-    const releaseDeletionKey = () => {deletionKey = null;};
+    const revokeReturn = () => {const returning = compositionBase.current?.returning; if (returning) returning.active = false;};
+    const releaseDeletionKey = () => {deletionKey = null; revokeReturn();};
     window.addEventListener("blur", releaseDeletionKey);
+    document.addEventListener("pointerdown", revokeReturn, true);
     binding?.attach(view, () => nativeInputOpen.current || compositionBase.current !== null || referenceRef.current.getState() !== null);
     const handle: NoteEditorHandle = {
       encodedBytes: () => binding?.baseline ? Y.encodeStateAsUpdate(binding.baseline).byteLength : 0,
@@ -1583,6 +1616,7 @@ function NoteEditorContent(props: NoteEditorProps) {
     latest.current.onEditorReady?.(handle);
     return () => {
       window.removeEventListener("blur", releaseDeletionKey);
+      document.removeEventListener("pointerdown", revokeReturn, true);
       latest.current.projection?.onViewReady(null);
       latest.current.onEditorReady?.(null);
       editorHandle.current = null;

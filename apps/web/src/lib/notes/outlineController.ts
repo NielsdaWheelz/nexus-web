@@ -98,7 +98,7 @@ export class OutlineController {
   private seedMembership: {revision: string | null} | null = null;
   private referenceRow: string | null = null;
   private annotationRow: string | null = null;
-  private readonly annotations = new Map<string, {capability: OutlineAnnotationCapability; document: WritingDocument | null; history: EditorHistory | null; attachment: OutlineRootAttachment | null; before: ((document: WritingDocument) => FocusSelection) | null}>();
+  private readonly annotations = new Map<string, {capability: OutlineAnnotationCapability; document: WritingDocument | null; attachment: OutlineRootAttachment | null; before: ((document: WritingDocument) => FocusSelection) | null}>();
   private preparing: {row_id: string; ref: string} | null = null;
   private readonly opened: Set<string>;
   private readonly embedded = new Map<string, EmbeddedBranch>();
@@ -223,7 +223,7 @@ export class OutlineController {
   attachRoot(attachment: OutlineRootAttachment | null): void {this.rootAttachment = attachment; this.tryFocus();}
   annotation(row_id: string): OutlineAnnotationCapability {
     const existing = this.annotations.get(row_id); if (existing) return existing.capability;
-    const value: {capability: OutlineAnnotationCapability; document: WritingDocument | null; history: EditorHistory | null; attachment: OutlineRootAttachment | null; before: ((document: WritingDocument) => FocusSelection) | null} = {
+    const value: {capability: OutlineAnnotationCapability; document: WritingDocument | null; attachment: OutlineRootAttachment | null; before: ((document: WritingDocument) => FocusSelection) | null} = {
       capability: {
         editor: document => {
           if (!this.active || this.filter.trim()) return null;
@@ -234,11 +234,10 @@ export class OutlineController {
           if (!this.documents.has(document.ref)) this.documents.set(document.ref, {document, captureBytes: 0, release: document.retain()});
           value.document = document;
           const history = this.history.editor(document, this.origin(row_id));
-          value.history = {...history, record: (edit, admission) => history.record(edit, admission, {
+          return {...history, record: (edit, admission) => history.record(edit, admission, {
             kind: "text", annotation: true, ...(row_id === this.pending.root_id ? {root: true} : {}), row_id, ref: document.ref,
             range: edit?.selectionAfter ?? this.selection, resolve: value.attachment?.handle.captureSelection() ?? null, resolveBefore: value.before ?? undefined,
           })};
-          return value.history;
         },
         attach: attachment => {value.attachment = attachment; if (row_id === this.pending.root_id) this.rootAttachment = attachment; this.tryFocus();},
         selection: at => {
@@ -256,7 +255,7 @@ export class OutlineController {
           const admitted = this.history.insertReference({placement: {parent_ref: document.ref, parent: document, after_ref: null, before_ref: null}, target, label, change: {before, after: before}});
           void admitted.result.catch(error => {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify();});
         },
-      }, document: null, history: null, attachment: null, before: null,
+      }, document: null, attachment: null, before: null,
     };
     this.annotations.set(row_id, value); return value.capability;
   }
@@ -879,20 +878,30 @@ export class OutlineController {
     const source = this.pending.placementBookmark({...original, link: row.link});
     if (!source) return false;
     const lease = this.lease(), replacement_id = crypto.randomUUID();
+    let release: (() => void) | null = null;
     try {
-      return await this.history.replaceReference({source: {...source, link: row.link}, parent: this.writing(row.parent_ref), target, label, row_id: replacement_id, before: this.capture(),
+      const writing = target.kind === "resource" && /^(note_block|page):/u.test(target.ref) && !row.branch.ancestors.has(target.ref) ? await this.runtime.openDocument(target.ref) : null;
+      release = writing?.retain() ?? null;
+      if (!lease()) return false;
+      return await this.history.replaceReference({source: {...source, link: row.link}, parent: this.writing(row.parent_ref), target, label, row_id: replacement_id, before: this.capture(), document: writing,
+        canRetain: () => writing === null || this.admitNew(this.documents.has(writing.ref) ? 0 : 1, (this.documents.has(writing.ref) ? 2 : 3) * Y.encodeStateAsUpdate(writing.doc).byteLength),
         mayRetire: () => !this.removalBlocked(new Set([row.row_id])),
         active: () => lease() && this.rows.get(row.row_id)?.link?.link_id === row.link!.link_id && this.rows.get(row.row_id)?.ref === row.ref,
         refused: this.refused,
         accepted: (ref, resource, admission, link) => {
+          const kind = row.branch.ancestors.has(ref) ? "reference" : ref.startsWith("note_block:") ? "body" : ref.startsWith("page:") ? "title" : "reference";
+          const body = writing === null ? emptyBody() : kind === "title" ? bodyText(writing.doc.getText("title").toString()) : readBody(writing.doc);
           const replacement: PendingOutlineField = {row_id: replacement_id, ref, resource, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null, before_id: row.row_id,
-            link: null, kind: "reference", body: emptyBody(), hidden: false, pending: true, origin: this.history.typingOrigin()};
-          this.pending.replaceReference({...original, link: row.link}, replacement, admission, link);
+            link: null, kind, body, hidden: false, pending: true, origin: this.history.typingOrigin()};
+          this.pending.replaceReference({original: {...original, link: row.link}, replacement, admission, link, document: writing});
           this.referenceRow = replacement.kind === "reference" ? replacement_id : null;
-          this.selectionRow = replacement_id; this.selection = {anchor: 2, head: 2};
+          const end = kind === "reference" ? 2 : docFromBody(body).firstChild!.content.size + 1;
+          this.selectionRow = replacement_id; this.annotationRow = null; this.selection = {anchor: end, head: end};
           this.changed("semantic");
+          if (writing) void this.focus(replacement_id, "end", lease);
         }});
     } catch (error) {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify(); return false;}
+    finally {release?.();}
   }
   private retireWithdrawnPlacements(): void {
     const entered = new Set<string>(), actual = this.reachable(this.windows, entered), protectedWriting = this.protectedRows(false);
@@ -1626,7 +1635,6 @@ export class OutlineController {
       childrenAvailable: row.children?.available === true || this.requests.has(row.row_id), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
       annotation: row.resource?.kind === "highlight" && !row.terminal && !this.filter.trim() ? this.annotation(row.row_id) : null,
-      editorReady: editor => {const mount = this.mounts.get(row.row_id); if (mount) mount.input = editor;},
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id),
       extend: this.blockRange ? () => this.select(row.row_id, true) : null, unlink: () => this.unlink(row.row_id), reveal: () => {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
@@ -1669,7 +1677,11 @@ export class OutlineController {
         event.preventDefault(); event.stopPropagation(); this.select(id, true);
       } else if (this.view?.editable === false && (this.editableItem(row) || row.seed && !this.blockedRows.has(id) && this.editableReady(row))) {
         if (!this.handle?.settleNativeInput()) {event.preventDefault(); return;}
-        this.blockRange = null; this.announcement = ""; this.handle.setInputMode("text"); this.selectionRow = id; this.syncMetadata(); this.notify();
+        this.blockRange = null; this.announcement = ""; this.handle.setInputMode("text"); this.selectionRow = id;
+        // The standing block range is ours. Retire it before this press starts a new native text gesture.
+        const view = this.view, field = fieldById(view.state.doc, id);
+        if (view.state.selection instanceof NodeSelection && field) view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, field.from)));
+        this.syncMetadata(); this.notify();
       }
     }, true);
     dom.addEventListener("pointermove", event => {if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press = null;}, true);
@@ -1748,7 +1760,7 @@ export class OutlineController {
         content.setAttribute("aria-label", `edit reference to ${this.label(row)}`);
       } else {content.hidden = false; presentation.hidden = true; content.removeAttribute("contenteditable");}
     };
-    const mount: OutlineRowMount & {sync(): void} = {row_id: id, dom, leading, disclose, trailing, content, presentation, annotation, input: null, openMenu: null, sync};
+    const mount: OutlineRowMount & {sync(): void} = {row_id: id, dom, leading, disclose, trailing, content, presentation, annotation, openMenu: null, sync};
     sync(); this.mounts.set(id, mount); this.notify();
     return {dom, contentDOM: content, update: next => {if (next.type !== node.type || next.attrs.row_id !== id) return false; node = next; sync(); return true;},
       stopEvent: event => event.target instanceof Node && (leading.contains(event.target) || trailing.contains(event.target) || guides.contains(event.target) || presentation.contains(event.target) || annotation.contains(event.target) || this.rows.get(id)?.kind === "reference" && (this.referenceRow !== id || !content.contains(event.target))),

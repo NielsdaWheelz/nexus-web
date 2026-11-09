@@ -116,9 +116,11 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
           press.current = { key, pointerId: event.pointerId, pointerType: event.pointerType, x: event.clientX, y: event.clientY, moved: false };
         },
         onMouseDown(event: MouseEvent<HTMLElement>) {
-          // Cancel focus here; Firefox extension pages ignore pointerdown cancellation.
+          // Preserve input focus on mousedown, including touch's compatibility
+          // event. Firefox extension pages ignore pointerdown cancellation;
+          // leaving pointerdown alone also preserves native touch scrolling.
           const start = press.current;
-          if (event.button === 0 && start?.key === key && start.pointerType !== "touch") event.preventDefault();
+          if (event.button === 0 && start?.key === key) event.preventDefault();
         },
         onPointerCancel() { press.current = null; },
         onClick(event: MouseEvent<HTMLElement>) {

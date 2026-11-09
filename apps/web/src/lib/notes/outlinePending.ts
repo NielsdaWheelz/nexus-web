@@ -276,9 +276,14 @@ export class OutlinePendingInput {
     owner.prepared(field, admitted.document); owner.publish(sources, admitted.committed);
     this.watch([...retired, row.row_id], admitted, new Map([[row.row_id, admitted.link]]));
   }
-  replaceReference(original: PendingOutlineField, replacement: PendingOutlineField, admission: AdmittedStructure, link: Promise<LinkState>): void {
+  replaceReference(args: {original: PendingOutlineField; replacement: PendingOutlineField; admission: AdmittedStructure; link: Promise<LinkState>; document: WritingDocument | null}): void {
+    const {original, replacement, admission, link, document} = args;
     this.fields.set(original.row_id, {...original, hidden: true});
     this.fields.set(replacement.row_id, replacement); this.place(replacement.row_id, null, original.row_id);
+    if (document) {
+      this.bound.set(replacement.row_id, {document, link, release: document.retain(), settled: false, captureBytes: 0});
+      this.current().prepared(replacement, document);
+    }
     this.watch([original.row_id, replacement.row_id], admission, new Map([[replacement.row_id, link]]));
   }
   join(destination: string, source: string, before: InputBookmark, displayed: {source: DisplayedWriting; destination: DisplayedWriting}): (document: WritingDocument) => FocusSelection {

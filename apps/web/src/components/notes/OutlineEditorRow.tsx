@@ -3,7 +3,6 @@
 /** React owns native controls and passive reference bodies in stable node-view
  * slots. Editable prose remains ProseMirror's contentDOM. */
 import HighlightAnnotation from "./HighlightAnnotation";
-import type {TextEditorHandle} from "./NoteEditor";
 import {createPortal} from "react-dom";
 import {useRef, type MouseEvent as ReactMouseEvent} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
@@ -72,7 +71,6 @@ export interface OutlineRowChrome {
   mirrors: number;
   workOwners(owners: readonly string[]): void;
   annotation: OutlineAnnotationCapability | null;
-  editorReady(editor: TextEditorHandle | null): void;
   toggle(): void;
   select(): void;
   /** extends the standing item selection to this row; null while nothing is selected. */
@@ -81,7 +79,7 @@ export interface OutlineRowChrome {
   reveal(): void;
 }
 /** `openMenu` is the bullet menu's opener while the bullet is mounted; a touch hold released in place calls it. */
-export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTMLElement; disclose: HTMLElement; trailing: HTMLElement; content: HTMLElement; presentation: HTMLElement; annotation: HTMLElement; input: TextEditorHandle | null; openMenu: (() => void) | null}
+export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTMLElement; disclose: HTMLElement; trailing: HTMLElement; content: HTMLElement; presentation: HTMLElement; annotation: HTMLElement; openMenu: (() => void) | null}
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
@@ -135,6 +133,6 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(<>
         {row.resource?.kind === "highlight" ? <FullResourceBody item={authoredItem(row.resource, null, row.href)}/> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
         {scheme === "media" ? <EpisodeBibliography mediaId={parsed!.id} returnFocus={() => mount.leading.querySelector<HTMLElement>("[data-row-focusable]")}/> : null}
-      </>, mount.presentation, `${row.row_id}:content`), ...(row.resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
+      </>, mount.presentation, `${row.row_id}:content`), ...(row.resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
   });
 }
