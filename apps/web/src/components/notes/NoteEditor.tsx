@@ -1080,8 +1080,11 @@ function NoteEditorContent(props: NoteEditorProps) {
           if (field?.kind === "reference") {
             const dom = document.createElement("span");
             dom.contentEditable = "false";
-            dom.className = "note-object-embed";
-            dom.textContent = `@${embedDisplayLabel(node.attrs.resource_ref, null, node.attrs.label)}`;
+            dom.className = cx("note-object-embed", styles.referenceToken);
+            dom.setAttribute("role", "img");
+            // The atom has one native extent. A readonly label text node lets
+            // Android move its composing caret inside and retire the keyboard.
+            dom.setAttribute("aria-label", `@${embedDisplayLabel(node.attrs.resource_ref, null, node.attrs.label)}`);
             return {dom, stopEvent: () => true, ignoreMutation: () => true};
           }
           const standalone = field?.node.childCount === 1;

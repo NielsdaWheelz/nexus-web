@@ -108,6 +108,10 @@
   white-space: normal;
 }
 
+.referenceToken::before {
+  content: attr(aria-label);
+}
+
 .view :global(.nexus-note-inspection) {
   outline: 1px solid var(--ink-muted);
   background: var(--accent-muted);

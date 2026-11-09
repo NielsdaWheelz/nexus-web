@@ -251,8 +251,10 @@ export class OutlineController {
         split: (document, displayed) => this.splitAnnotation(row_id, document, displayed),
         link: (target, label) => {
           const document = value.document; if (!document || !this.active) return;
-          const before = this.annotationBookmark(row_id);
-          const admitted = this.history.insertReference({placement: {parent_ref: document.ref, parent: document, after_ref: null, before_ref: null}, target, label, change: {before, after: before}});
+          const before = this.annotationBookmark(row_id), child_id = crypto.randomUUID();
+          const admitted = this.history.insertReference({placement: {parent_ref: document.ref, parent: document, after_ref: null, before_ref: null},
+            occurrence: {row_id: child_id, parent_id: row_id, after_id: null, before_id: null}, target, label, change: {before, after: before}});
+          void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, row_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
           void admitted.result.catch(error => {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify();});
         },
       }, document: null, attachment: null, before: null,
@@ -1896,10 +1898,12 @@ export class OutlineController {
         return {source_ref: parent_ref, label: this.label(row), replacement: {occurrence_key: row.row_id, link_id: row.link.link_id}, onSelected: (target, item) => this.replaceReference(frozen, target, item.label)};
       }
       return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: (target, item) => {
-        const bookmark = this.capture();
+        const bookmark = this.capture(), child_id = crypto.randomUUID(), parent_id = row.root ? this.pending.root_id : row.parent_id!;
         const admitted = this.history.insertReference({placement: {parent_ref, parent: this.writing(parent_ref),
           after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
+          occurrence: {row_id: child_id, parent_id, after_id: row.root || row.seed ? null : row.row_id, before_id: null},
           change: {before: bookmark, after: bookmark}});
+        void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, parent_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
         void admitted.result.catch(error => {this.error = error; this.notify();});
         if (row.seed) this.consumeSeed(admitted.committed);
       }};
@@ -1959,10 +1963,16 @@ export class OutlineController {
     if (!this.active) return;
     const skipped = roots.length - fresh.length;
     if (!fresh.length) {this.refuse(skipped === 1 ? "already here" : `all ${skipped} already here`); return;}
-    const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref};
+    const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref}, rows = fresh.map(() => crypto.randomUUID());
     const admitted = this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
-      parents: [this.writing(parent_ref)], change: {before, after: () => before}});
+      parents: [this.writing(parent_ref)], change: {before, after: () => before, placements_after: (_documents, links) => fresh.map((ref, index) => ({row_id: rows[index]!, ref, link: links[index]!,
+        placement: {row_id: rows[index]!, ref, parent_id: at.parent_id!, parent_ref, after_id: index ? rows[index - 1]! : block ? at.row_id : null, before_id: !index && !block && !at.seed ? at.row_id : null}}))}});
     if (at.seed) this.consumeSeed(admitted.committed);
+    void Promise.all(admitted.links).then(links => {
+      if (!this.active) return;
+      for (const [index, link] of links.entries()) this.transfer(rows[index]!, at.parent_id!, link.link_id, this.origin(rows[index]!));
+      this.changed();
+    }, () => {});
     void admitted.committed.then(() => {
       if (!this.active) return;
       this.announce(`${fresh.length === 1 ? "linked" : `linked ${fresh.length} items`}${skipped ? `; ${skipped} already here` : ""}`); this.notify();

@@ -9,7 +9,7 @@ import {canonicalSerialization} from "@nexus/authored/canonical";
 import {prepareChange, type Intent} from "@nexus/authored/commands";
 import {linkId} from "@nexus/authored/identity";
 import {advanceCoverage, isVisible, mergeChanges, mergeVector} from "@nexus/authored/merge";
-import {MAX_COMMAND_BYTES, type LinkState, type MergeResult, type Vector} from "@nexus/authored/types";
+import {CommandTooLargeError, MAX_COMMAND_BYTES, type LinkState, type MergeResult, type Vector} from "@nexus/authored/types";
 import {preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/links";
 import {lowerGraph, LocalCommitError, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
 import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
@@ -381,13 +381,15 @@ export class OutlineHistory {
     const context = {replica_id: replica.replica_id, command_seq: "9223372036854775807", lamport: "9223372036854775807"};
     const edits: Intent[] = source?.forward ? [{kind: "edit_body", ref: source.ref, body_update: source.forward}] : [];
     const unlinks: Intent[] = retiring ? [{kind: "unlink", link_id: retiring.link_id, observed_add: {...retiring.add_vv}}] : [];
-    const forward = prepareChange(context, {kind: "batch", intents: [{kind: "create_note", ref, body_update: initializer}, ...edits, ...link.intents, ...unlinks]}, states);
-    if (new TextEncoder().encode(JSON.stringify(forward)).byteLength + Math.ceil(newborn * 4 / 3) - initializer.length > MAX_COMMAND_BYTES) return null;
-    const undoEdits: Intent[] = source?.inverse ? [{kind: "edit_body", ref: source.ref, body_update: source.inverse}] : [];
-    const restores: Intent[] = retiring ? [{kind: "restore_link", link_id: retiring.link_id}] : [];
-    const undo = prepareChange(context, {kind: "batch", intents: [...undoEdits, {kind: "delete_resource", ref, observed_touch: {[replica.replica_id]: context.command_seq}},
-      {kind: "unlink", link_id: link.link_id, observed_add: {[replica.replica_id]: context.command_seq}}, ...restores]}, mergeChanges(states, [forward]));
-    return new TextEncoder().encode(JSON.stringify(undo)).byteLength <= MAX_COMMAND_BYTES ? 2 * newborn : null;
+    try {
+      const forward = prepareChange(context, {kind: "batch", intents: [{kind: "create_note", ref, body_update: initializer}, ...edits, ...link.intents, ...unlinks]}, states);
+      if (new TextEncoder().encode(JSON.stringify(forward)).byteLength + Math.ceil(newborn * 4 / 3) - initializer.length > MAX_COMMAND_BYTES) return null;
+      const undoEdits: Intent[] = source?.inverse ? [{kind: "edit_body", ref: source.ref, body_update: source.inverse}] : [];
+      const restores: Intent[] = retiring ? [{kind: "restore_link", link_id: retiring.link_id}] : [];
+      const undo = prepareChange(context, {kind: "batch", intents: [...undoEdits, {kind: "delete_resource", ref, observed_touch: {[replica.replica_id]: context.command_seq}},
+        {kind: "unlink", link_id: link.link_id, observed_add: {[replica.replica_id]: context.command_seq}}, ...restores]}, mergeChanges(states, [forward]));
+      return new TextEncoder().encode(JSON.stringify(undo)).byteLength <= MAX_COMMAND_BYTES ? 2 * newborn : null;
+    } catch (error) {if (error instanceof CommandTooLargeError) return null; throw error;}
   }
   replaceWithNote(args: {placement: OutlinePlacement; retiring: OccurrenceBookmark & {link: LinkState}; change: OutlineBirthChange}): AdmittedNote {
     return this.birth({...args, body: emptyBody(), source: null});
@@ -825,11 +827,12 @@ export class OutlineHistory {
       if (!accepted) {refused = true; releaseRedo(false); this.release(group); args.publication.refused();}
     });
   }
-  insertReference(args: {placement: OutlinePlacement; target: import("@/lib/resourceGraph/links").LinkTarget; label: string; change: OutlineChange}): AdmittedStructure {
+  insertReference(args: {placement: OutlinePlacement; occurrence: Omit<Placement, "ref" | "parent_ref">; target: import("@/lib/resourceGraph/links").LinkTarget; label: string; change: OutlineChange}): AdmittedStructure & {link: Promise<LinkState | null>} {
     this.boundary();
     const group = this.reserve(args.change), origin = Symbol("outline reference");
     this.hold(group, [args.placement.parent]);
     let relationship = "", added = false;
+    let link: Promise<LinkState> | null = null;
     const eligible = this.groups();
     const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [], mutate: () => {},
       prepare: async () => {
@@ -837,7 +840,13 @@ export class OutlineHistory {
         if (!group.refs.includes(endpoint.ref)) group.refs.push(endpoint.ref);
         const prepared = await prepareLink(this.runtime, {source_ref: args.placement.parent_ref, target_ref: endpoint.ref, source_label: null, target_label: args.label, ...position});
         relationship = prepared.link_id; added = prepared.intents.some(intent => intent.kind === "add_link");
-        if (added) group.coverage.links.set(relationship, {});
+        if (added) {
+          group.coverage.links.set(relationship, {});
+          link = this.createdLink(committed, () => relationship);
+          group.placements_after = [{row_id: args.occurrence.row_id, ref: endpoint.ref, link,
+            placement: {...args.occurrence, ref: endpoint.ref, parent_ref: args.placement.parent_ref}}];
+          group.added = group.placements_after;
+        }
         return [...endpoint.intents, ...prepared.intents];
       }});
     group.apply = (redo, lower) => {
@@ -850,7 +859,8 @@ export class OutlineHistory {
     const committed = this.track(group, admitted.result, eligible, receipt => {
       added = receipt.change.links.some(link => link.link_id === relationship && Object.keys(link.add_vv).length > 0);
       if (!added) group.coverage.links.delete(relationship);
-    }); return {result: admitted.result, committed};
+    });
+    return {result: admitted.result, committed, link: committed.then(() => link)};
   }
   replaceReference(args: {source: OccurrenceBookmark & {link: LinkState}; parent: WritingDocument | null; target: import("@/lib/resourceGraph/links").LinkTarget; label: string;
     row_id: string; before: InputBookmark; document: WritingDocument | null; active(): boolean; mayRetire(): boolean; canRetain(): boolean;
