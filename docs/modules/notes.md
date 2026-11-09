@@ -227,8 +227,9 @@ an already active query retains its local history commands.
 item text means an occurrence’s own note body or inline page title.
 item text is entered by pointer or f2, not sequential tab. each occurrence's
 read-only head is its native navigation target; f2 from that target or its own
-head controls enters editable item text at the end. text, embedded content,
-terminal references and an open query never borrow that command. escape selects
+head controls enters editable item text at the end. a reference head with token
+editing enters its token instead. text, embedded content, terminal references
+without that capability and an open query never borrow that command. escape selects
 an item; a second escape returns to its bullet. native traversal skips item
 text in either direction and can return to the admitted root or insertion field.
 root text, insertion fields and annotation bodies retain native tab behavior.

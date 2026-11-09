@@ -19,8 +19,10 @@ hierarchy observation or outline journey. later drivers may admit a separately
 read, fresh, fully parsed snapshot only while retaining the exact teardown
 failure as a distinct fact. incomplete xml and other failures still fail.
 
-evidence is private under the native checkout's
-`apps/web/.nexus-lab/native-logs/dump137-{guest,events}.log` and the run's
-`artifacts/outline-native-failure-native.txt` / final image. resolved when the
+evidence is private in the sibling archive
+`/Users/nnandal/Documents/code/.nexus-outline-insertion-evidence-20261108`:
+`android-uiautomator-original/dump137-{guest,events}.log` and original run
+`20261108-200610-1e655ee9aeb2/artifacts/outline-native-{failure-native.txt,final.png,release.json}`.
+the temporary native checkout has been removed. resolved when the
 existing owned adb/uiautomator invocation reliably completes cleanly, or its
 upstream teardown defect has an explicit qualified observation contract.
