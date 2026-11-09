@@ -39,3 +39,12 @@ fail during recovery. local reference results remain usable. this run retained
 no fresh cgroup oom counters, so it proves recurring backend death and recovery,
 not a new allocator attribution. outline insertion changes no backend or budgets;
 remote-search capacity remains unresolved here.
+
+native outline run `20261108-205529-8dfcf1c51390` on `5d9de5a8d`
+records postgres backend pid277 killed by signal9 at
+`2026-11-09 04:57:16.403 UTC` while running the first target search; postgres
+terminated peers and reinitialized (`containers.log:68–90`). api request
+`e9128287-8e5a-42ae-b074-12a26bf57b8e` records the broken connection. no fresh
+cgroup counters were retained, so the kill's cause remains unproved. the later
+`highlight_annotation` resource-scheme failure occurred after recovery and is a
+separate deterministic defect.

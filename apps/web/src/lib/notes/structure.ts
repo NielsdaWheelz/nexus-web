@@ -331,7 +331,7 @@ export class OutlineHistory {
   }
 
   create(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange}): AdmittedNote {
-    return this.birth(args.placement, args.body, args.change, null);
+    return this.birth({...args, source: null, retiring: null});
   }
   split(args: {source: WritingDocument; displayed: DisplayedSplit; placement: OutlinePlacement; change: OutlineBirthChange}): AdmittedNote {
     const clone = hydrateNote(args.displayed.body_state);
@@ -340,7 +340,8 @@ export class OutlineHistory {
       const suffix = parseBody({type: "body", attrs: readBody(clone).body_pm_json.attrs, content: sliceInline(clone, to, inline.length)});
       const vector = Y.encodeStateVector(clone);
       applyBodyEdits(clone, [{kind: "replace", from, to: inline.length, content: []}]);
-      return this.birth(args.placement, suffix, args.change, {document: args.source, update: Y.encodeStateAsUpdate(clone, vector)}, null);
+      return this.birth({placement: args.placement, body: suffix, change: args.change,
+        source: {document: args.source, update: Y.encodeStateAsUpdate(clone, vector)}, retiring: null});
     } finally {clone.destroy();}
   }
   /** Charge the newborn and independent baseline, and the source's retained deletion history, before admission. */
@@ -389,9 +390,10 @@ export class OutlineHistory {
     return new TextEncoder().encode(JSON.stringify(undo)).byteLength <= MAX_COMMAND_BYTES ? 2 * newborn : null;
   }
   replaceWithNote(args: {placement: OutlinePlacement; retiring: OccurrenceBookmark & {link: LinkState}; change: OutlineBirthChange}): AdmittedNote {
-    return this.birth(args.placement, emptyBody(), args.change, null, args.retiring);
+    return this.birth({...args, body: emptyBody(), source: null});
   }
-  private birth(placement: OutlinePlacement, body: NoteBody, change: OutlineBirthChange, source: {document: WritingDocument; update: Uint8Array} | null, retiring: (OccurrenceBookmark & {link: LinkState}) | null = null): AdmittedNote {
+  private birth(args: {placement: OutlinePlacement; body: NoteBody; change: OutlineBirthChange; source: {document: WritingDocument; update: Uint8Array} | null; retiring: (OccurrenceBookmark & {link: LinkState}) | null}): AdmittedNote {
+    const {placement, body, change, source, retiring} = args;
     this.boundary();
     const group = this.reserve({before: change.before, after: null, placements_before: change.placements_before}), origin = Symbol("outline birth");
     const manager = source ? new Y.UndoManager(scope(source.document), {trackedOrigins: new Set([origin]), captureTimeout: 0}) : null;

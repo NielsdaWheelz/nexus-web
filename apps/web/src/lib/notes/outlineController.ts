@@ -474,7 +474,8 @@ export class OutlineController {
     return fallback ? this.focus(fallback.row_id, {anchor: 1, head: 1}, mayFocus) : Promise.resolve();
   }
   private writing(ref: string): WritingDocument | null {
-    return this.documents.get(ref)?.document ?? [...this.pending.fields.values()].filter(row => row.ref === ref).map(row => this.pending.document(row.row_id)).find(document => document !== null) ?? null;
+    return this.documents.get(ref)?.document ?? [...this.pending.fields.values()].filter(row => row.ref === ref).map(row => this.pending.document(row.row_id)).find(document => document !== null)
+      ?? this.history.retainedDocuments().find(document => document.ref === ref) ?? null;
   }
   private retained(id: string): import("./outlinePending").PendingOutlineField | null {
     const pending = this.pending.fields.get(id); if (pending) return pending;
@@ -523,7 +524,7 @@ export class OutlineController {
   private protectedRows(includePlacements = true): Set<string> {
     const protectedRows = new Set([...this.pending.fields.values()].filter(row => row.pending || includePlacements && row.relocating && !this.detached(row.parent_id ?? row.row_id)).map(row => row.row_id));
     for (const id of this.selected) if (this.rows.has(id)) protectedRows.add(id);
-    if (this.view?.hasFocus() && this.selectionRow) protectedRows.add(this.selectionRow);
+    if (this.view?.hasFocus() && this.selectionRow && !(this.seedMembership && this.rows.get(this.selectionRow)?.seed)) protectedRows.add(this.selectionRow);
     if (this.preparing) protectedRows.add(this.preparing.row_id);
     if (this.annotationRow && this.annotations.get(this.annotationRow)?.attachment?.ownsFocus()) protectedRows.add(this.annotationRow);
     for (const id of [...protectedRows]) {let parent = this.parent(id); while (parent) {protectedRows.add(parent); parent = this.parent(parent);}}
@@ -841,7 +842,7 @@ export class OutlineController {
       else if (element.getAttribute("contenteditable") === "false") element.removeAttribute("contenteditable");
     }
   }
-  private editableReady(row: OutlineRow): boolean {return row.kind !== "reference" && (row.seed || this.pending.fields.get(row.row_id)?.pending === true || row.ref !== null && this.documents.has(row.ref));}
+  private editableReady(row: OutlineRow): boolean {return row.kind !== "reference" && (row.seed ? this.seedMembership === null : this.pending.fields.get(row.row_id)?.pending === true || row.ref !== null && this.documents.has(row.ref));}
   private canEditReference(row: OutlineRow): boolean {return this.rootField !== undefined && !this.filter.trim() && row.kind === "reference" && !row.gap && row.ref !== null && row.link !== null && !this.pending.fields.get(row.row_id)?.hidden;}
   private activateReference(row_id: string): void {
     const row = this.rows.get(row_id);
@@ -884,7 +885,11 @@ export class OutlineController {
       release = writing?.retain() ?? null;
       if (!lease()) return false;
       return await this.history.replaceReference({source: {...source, link: row.link}, parent: this.writing(row.parent_ref), target, label, row_id: replacement_id, before: this.capture(), document: writing,
-        canRetain: () => writing === null || this.admitNew(this.documents.has(writing.ref) ? 0 : 1, (this.documents.has(writing.ref) ? 2 : 3) * Y.encodeStateAsUpdate(writing.doc).byteLength),
+        canRetain: () => {
+          if (writing === null) return true;
+          const retained = this.refs().has(writing.ref);
+          return this.admitNew(retained ? 0 : 1, (retained ? 2 : 3) * Y.encodeStateAsUpdate(writing.doc).byteLength);
+        },
         mayRetire: () => !this.removalBlocked(new Set([row.row_id])),
         active: () => lease() && this.rows.get(row.row_id)?.link?.link_id === row.link!.link_id && this.rows.get(row.row_id)?.ref === row.ref,
         refused: this.refused,
@@ -1860,6 +1865,16 @@ export class OutlineController {
     }
   };
   private syncMetadata(): void {for (const mount of this.mounts.values()) mount.sync(); this.syncReadOnly();}
+  private consumeSeed(committed: Promise<LocalCommit>): void {
+    this.seedId = crypto.randomUUID();
+    const membership: {revision: string | null} = {revision: null}; this.seedMembership = membership;
+    this.syncReadOnly();
+    void committed.then(receipt => {
+      if (this.seedMembership === membership) {membership.revision = receipt.store_revision; this.changed();}
+    }, () => {
+      if (this.seedMembership === membership) {this.seedMembership = null; this.changed();}
+    });
+  }
   readonly projection: NoteEditorProjection = {
     schema: outlineEditorSchema, doc: () => this.doc(), binding: this.binding,
     nodeViews: {note_row: this.nodeView, title_row: this.nodeView, reference_row: this.nodeView},
@@ -1886,11 +1901,7 @@ export class OutlineController {
           after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
           change: {before: bookmark, after: bookmark}});
         void admitted.result.catch(error => {this.error = error; this.notify();});
-        if (row.seed) {
-          this.seedId = crypto.randomUUID();
-          const membership: {revision: string | null} = {revision: null}; this.seedMembership = membership;
-          void admitted.committed.then(receipt => {if (this.seedMembership === membership) {membership.revision = receipt.store_revision; this.changed();}}, () => {});
-        }
+        if (row.seed) this.consumeSeed(admitted.committed);
       }};
     },
   };
@@ -1951,6 +1962,7 @@ export class OutlineController {
     const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref};
     const admitted = this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
       parents: [this.writing(parent_ref)], change: {before, after: () => before}});
+    if (at.seed) this.consumeSeed(admitted.committed);
     void admitted.committed.then(() => {
       if (!this.active) return;
       this.announce(`${fresh.length === 1 ? "linked" : `linked ${fresh.length} items`}${skipped ? `; ${skipped} already here` : ""}`); this.notify();
@@ -1961,6 +1973,7 @@ export class OutlineController {
   private pasteLines(lines: readonly Extract<ClipItem, {kind: "note"}>[], at: OutlineRow, block: boolean, before: InputBookmark): void {
     const fill = !block && !at.seed ? this.writing(at.ref!)! : null;
     if (!this.admitNew(lines.length - (fill ? 1 : 0))) return;
+    const lease = this.lease();
     // line i is birth i, or i - 1 when the empty item takes line 0; a born line anchors by its birth index, the filled one by its ref.
     const birth = (index: number) => fill ? index - 1 : index, anchor = (index: number): string | number => fill && index === 0 ? at.ref! : birth(index);
     const rows = lines.map((_, index) => fill && index === 0 ? at.row_id : crypto.randomUUID());
@@ -1978,6 +1991,7 @@ export class OutlineController {
           parent_ref: parent === null ? at.parent_ref : fill && parent === 0 ? at.ref! : documents[birth(parent)]!.ref,
           after_id: earlier >= 0 ? rows[earlier]! : parent === null && block ? at.row_id : null, before_id: null}};
       })}});
+    if (at.seed) this.consumeSeed(admitted.committed);
     if (fill) this.publishWriting([fill], admitted.committed);
     for (const index of lines.keys()) if (lines.some(line => line.parent === index)) this.opened.add(rows[index]!);
     // the occurrences paint from their windows; their rows take the ids the history group retains.
@@ -1986,7 +2000,7 @@ export class OutlineController {
       for (const index of born) this.transfer(rows[index]!, parentRow(index), links[birth(index)]!.link_id, this.history.typingOrigin());
       this.announce(births.length === 1 ? "added" : `added ${births.length} items`);
       this.changed();
-      if (!block) void this.focus(rows.at(-1)!, "end");
+      if (!block && lease()) void this.focus(rows.at(-1)!, "end", lease);
     }, () => {});
   }
   close(): void {

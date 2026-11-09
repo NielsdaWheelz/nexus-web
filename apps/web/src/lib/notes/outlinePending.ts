@@ -253,7 +253,7 @@ export class OutlinePendingInput {
       change: {before: args.before, after: document => this.bookmark({...row, ref: document.ref}, {anchor: 1, head: 1}),
         placements_before: placement ? [placement] : [],
         placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}});
-    this.installNewborn(row, admitted, [args.source]);
+    this.installNewborn({row, admitted, sources: [args.source], retired: []});
     return {row_id: row.row_id, committed: admitted.committed};
   }
   replaceWithNote(row_id: string, before: InputBookmark): {row_id: string; committed: Promise<LocalCommit>} {
@@ -266,10 +266,11 @@ export class OutlinePendingInput {
       change: {before, placements_before: [retiring], after: document => this.bookmark({...row, ref: document.ref}, {anchor: 1, head: 1}),
         placements_after: document => [this.placementBookmark({...row, ref: document.ref}, true)!]}});
     this.fields.set(row_id, {...original, hidden: true});
-    this.installNewborn(row, admitted, [], [row_id]);
+    this.installNewborn({row, admitted, sources: [], retired: [row_id]});
     return {row_id: row.row_id, committed: admitted.committed};
   }
-  private installNewborn(row: PendingOutlineField, admitted: import("./structure").AdmittedNote, sources: readonly WritingDocument[], retired: readonly string[] = []): void {
+  private installNewborn(args: {row: PendingOutlineField; admitted: import("./structure").AdmittedNote; sources: readonly WritingDocument[]; retired: readonly string[]}): void {
+    const {row, admitted, sources, retired} = args;
     const owner = this.current(), field = {...row, ref: admitted.document.ref, body: readBody(admitted.document.doc)};
     this.fields.set(row.row_id, field); this.place(row.row_id, row.after_id, row.before_id ?? null);
     this.bound.set(row.row_id, {document: admitted.document, link: admitted.link, release: admitted.document.retain(), settled: false, captureBytes: 0});
