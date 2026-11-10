@@ -25,6 +25,10 @@ activation reveals; back/resume restore the saved visit. workspace labels and
 recents describe the arrival date without title
 reads or rewriting the destination to a standalone page.
 
+programmatic scroll positions reach the date virtualizer through its offset
+observer before range planning. geometry and admission use the same scroll
+position; ordinary scroll events keep the library's existing observer.
+
 date headings stay separate from authored titles. inline journal titles use the
 existing content editor's six-line extent; empty titles hide only after settled
 blur. day reading controls reveal on focus, without adding pointer-scroll chrome.
@@ -175,6 +179,15 @@ acknowledges saved writing. uncertain replies reconcile the same source sequence
 stale revisions remerge the frozen intent without allocating another touch.
 local acceptance, server acceptance and availability to server tools are distinct
 facts; a local save alone promises neither of the latter two.
+
+browser sqlite reports indexeddb aborts as failed local commits. the pinned vfs
+patch waits for the actual abort, releases locks and restores its operation
+chain. sqlite autocommit decides whether rollback remains necessary. if failed
+rollback leaves a transaction active, that connection stops serving reads and
+writes; provisional state cannot become an acknowledged save. ordinary aborts
+retain retry. a stopped connection requires copying or deliberately discarding
+uncommitted writing before restarting its owner.
+
 before returning a local receipt, the runtime merges its committed state into
 already open writing documents. subsequent edits therefore see the shared-text
 identities they reference; subscription delivery is not a commit barrier. incoming

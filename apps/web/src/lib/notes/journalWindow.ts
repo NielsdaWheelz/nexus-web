@@ -3,7 +3,7 @@
 /** Date geometry and admission only. Outline sessions own their writing and rows. */
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
-import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, observeElementOffset, useVirtualizer } from "@tanstack/react-virtual";
 import { usePaneBeforeLayout, type AnchorGeometry, type AnchorGeometryFrame } from "@/lib/workspace/paneReturnMemento";
 
 export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLDivElement | null>, indexState: "pending" | "ready" | "failed", overscan: 0 | 1) {
@@ -15,6 +15,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   const admissions = useRef(new Map<string, "pending" | "ready" | "failed">());
   const demands = useRef(new Map<symbol, string>());
   const observer = useRef<ResizeObserver | null>(null);
+  const syncOffset = useRef<(() => void) | null>(null);
   const frame = useRef<AnchorGeometryFrame | null>(null);
   const committed = useRef({ dates, tops: [] as number[], port: null as HTMLElement | null, origin: 0, revision: 0 });
   const scrollport = useCallback(() => root.current?.closest<HTMLElement>("[data-pane-content]") ?? null, [root]);
@@ -26,6 +27,12 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
     scrollMargin: committed.current.origin,
     rangeExtractor: range => [...new Set([...defaultRangeExtractor(range), ...[...demands.current.values()]
       .map(date => dates.indexOf(date)).filter(index => index >= 0)])].sort((a, b) => a - b),
+    observeElementOffset: (instance, receive) => {
+      const release = observeElementOffset(instance, receive);
+      const sync = () => { const element = instance.scrollElement; if (element !== null) receive(element.scrollTop, false); };
+      syncOffset.current = sync;
+      return () => { if (syncOffset.current === sync) syncOffset.current = null; release?.(); };
+    },
     // All explicit positioning and size compensation belong to the pane memento.
     scrollToFn: () => {},
   });
@@ -70,7 +77,8 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
       return () => { if (demands.current.delete(owner)) changed(value => value + 1); };
     },
     element: date => elements.current.get(date) ?? null,
-    refreshRange: () => changed(value => value + 1),
+    // The pane writes before scroll delivery; admit dates from its actual offset.
+    refreshRange: () => { syncOffset.current?.(); changed(value => value + 1); },
   }), []);
 
   useLayoutEffect(() => {
