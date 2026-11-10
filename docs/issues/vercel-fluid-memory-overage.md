@@ -16,7 +16,8 @@ suggestion streams. the finite-observation change removes those lifetimes and
 qualifies a bounded foreground profile locally. local qualification does not
 unblock the provider or establish production billing.
 
-hosting, billing changes and quota recovery remain outside this change. follow
-[the paired release procedure](release-finite-observation.md) after service is
-available. resolve when the team is unblocked, ordinary deployed web/native
-journeys work, and measured usage for the declared profile fits its allowance.
+nexus now uses the devbox frontend; its vercel project is retired. this does not
+establish recovery of the remaining projects' shared team allowance. nexus
+application releases use [the paired release procedure](../../deployment.md).
+resolve the provider issue when the affected remaining projects work and their
+measured usage fits the team allowance.

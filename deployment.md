@@ -266,8 +266,7 @@ atomically selects the candidate and proves local h2/identity. the final check
 proves selected bytes/configuration/process identity and public `/version` with
 `Cache-Control: no-store`, alongside backend identity. only then does the
 coordinator print `released`. this command does not establish installed-client
-journeys. the first complete paired live run remains a gate in
-`docs/issues/release-finite-observation.md` until actually qualified.
+journeys.
 
 ### web candidates and host ownership
 

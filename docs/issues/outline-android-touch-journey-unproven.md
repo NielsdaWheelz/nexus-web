@@ -1,6 +1,9 @@
 # outline android touch journey is unproven
 
-priority: deferred to the next android apk: one focused touch/typing/back journey remains required before regular phone editing; no broad device matrix is required for this prototype.
+the owner explicitly waived the physical touch/typing/back, held-backspace,
+annotation and linked-row checks for android0.3.12/source422dc2596, accepting live
+repair. this permits regular phone use; it does not qualify those checks or the
+emulator journey below. no broad device matrix is required for this prototype.
 
 problem: the outline's emulator journey has never run green. on the owned api 34
 avd it must sign in through the real handoff, then: hold a bullet 250 ms to lift
