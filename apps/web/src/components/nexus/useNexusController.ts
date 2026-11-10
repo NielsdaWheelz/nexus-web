@@ -450,7 +450,7 @@ export function useNexusController() {
     };
     const ownerIds = [...discardOwnerIds];
     if (request.entry?.kind === "ComposeChat" || request.entry?.kind === "ComposePage") {
-      const plan = planWorkspaceTarget(state, workspace.dailyPageByPaneId, request);
+      const plan = planWorkspaceTarget(state, request);
       if (plan.kind !== "CreatedPane") {
         if (request.entry.kind === "ComposeChat") ownerIds.push(chatDraftOwnerId(accountId, plan.paneId, "new"));
         else if (plan.kind === "Unchanged" || plan.kind === "ActivatedExisting") {

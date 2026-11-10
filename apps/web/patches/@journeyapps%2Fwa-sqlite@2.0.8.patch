@@ -1,0 +1,142 @@
+diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
+index 4b9193705ba5e5525f3e77af64c47b4507200503..52d1c9cdef540cd730384006918bfff1c667b5dc 100644
+--- a/src/examples/IDBBatchAtomicVFS.js
++++ b/src/examples/IDBBatchAtomicVFS.js
+@@ -427,39 +427,47 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+     // Call the actual lock implementation.
+     const file = this.mapIdToFile.get(fileId);
+     const result = await super.jLock(fileId, lockType);
++    if (result !== VFS.SQLITE_OK) return result;
+ 
+-    if (lockType === VFS.SQLITE_LOCK_SHARED) {
+-      // Update metadata.
+-      file.metadata = await this.#idb.q(async ({ metadata, blocks }) => {
+-        // @ts-ignore
+-        /** @type {Metadata} */ const m = await metadata.get(file.path);
+-        if (m.pendingVersion) {
+-          console.warn(`removing failed transaction ${m.pendingVersion}`);
+-          await new Promise((resolve, reject) => {
+-            const range = IDBKeyRange.bound([m.name, -Infinity], [m.name, Infinity]);
+-            const request = blocks.openCursor(range);
+-            request.onsuccess = () => {
+-              const cursor = request.result;
+-              if (cursor) {
+-                const block = cursor.value;
+-                if (block.version < m.version) {
+-                  cursor.delete();
++    try {
++      if (lockType === VFS.SQLITE_LOCK_SHARED) {
++        // Update metadata.
++        file.metadata = await this.#idb.q(async ({ metadata, blocks }) => {
++          // @ts-ignore
++          /** @type {Metadata} */ const m = await metadata.get(file.path);
++          if (m.pendingVersion) {
++            console.warn(`removing failed transaction ${m.pendingVersion}`);
++            await new Promise((resolve, reject) => {
++              const range = IDBKeyRange.bound([m.name, -Infinity], [m.name, Infinity]);
++              const request = blocks.openCursor(range);
++              request.onsuccess = () => {
++                const cursor = request.result;
++                if (cursor) {
++                  const block = cursor.value;
++                  if (block.version < m.version) {
++                    cursor.delete();
++                  }
++                  cursor.continue();
++                } else {
++                  resolve();
+                 }
+-                cursor.continue();
+-              } else {
+-                resolve();
+-              }
+-            };
+-            request.onerror = () => reject(request.error);
+-          })
++              };
++              request.onerror = () => reject(request.error);
++            })
+ 
+-          delete m.pendingVersion;
+-          metadata.put(m);
+-        }
+-        return m;
+-      }, 'rw', file.txOptions);
++            delete m.pendingVersion;
++            metadata.put(m);
++          }
++          return m;
++        }, 'rw', file.txOptions);
++      }
++      return result;
++    } catch (e) {
++      this.lastError = e;
++      await this.#idb.sync(true).catch(() => {});
++      await super.jUnlock(fileId, VFS.SQLITE_LOCK_NONE);
++      return VFS.SQLITE_IOERR_LOCK;
+     }
+-    return result;
+   }
+ 
+   /**
+@@ -468,13 +476,20 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+    * @returns {Promise<number>}
+    */
+   async jUnlock(fileId, lockType) {
+-    if (lockType === VFS.SQLITE_LOCK_NONE) {
+-      const file = this.mapIdToFile.get(fileId);
+-      await this.#idb.sync(file.synchronous === 'full');
++    let failed = false;
++    try {
++      if (lockType === VFS.SQLITE_LOCK_NONE) {
++        const file = this.mapIdToFile.get(fileId);
++        await this.#idb.sync(file.synchronous === 'full');
++      }
++    } catch (e) {
++      this.lastError = e;
++      failed = true;
+     }
+ 
+     // Call the actual unlock implementation.
+-    return super.jUnlock(fileId, lockType);
++    const result = await super.jUnlock(fileId, lockType);
++    return failed ? VFS.SQLITE_IOERR_UNLOCK : result;
+   }
+ 
+   /**
+@@ -769,7 +784,7 @@ export class IDBContext {
+           });
+           tx.addEventListener('abort', () => {
+             this.#txPending.delete(tx);
+-            reject(new Error('transaction aborted'));
++            reject(tx.error ?? new Error('transaction aborted'));
+           });
+         });
+       }
+@@ -847,13 +862,20 @@ export class IDBContext {
+    */
+   async sync(durable) {
+     if (this.#chain) {
+-      // This waits for all IndexedDB calls to be made.
+-      await this.#chain;
+-      if (durable) {
+-        // This waits for the final transaction to commit.
+-        await this.#txComplete;
++      try {
++        // This waits for all IndexedDB calls to be made.
++        await this.#chain;
++        if (durable) {
++          // This waits for the final transaction to commit.
++          await this.#txComplete;
++        }
++      } catch (e) {
++        // A failed request can precede its transaction's abort event.
++        await this.#txComplete.catch(() => {});
++        throw e;
++      } finally {
++        this.reset();
+       }
+-      this.reset();
+     }
+   }
+ 

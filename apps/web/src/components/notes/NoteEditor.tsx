@@ -96,6 +96,7 @@ import { outlineFoldCommand, outlineHistoryCommand, outlineStructuralCommand, us
 import { inspectionDecorations } from "@/lib/notes/inspection";
 import { fieldAt, fieldById, inlinePaste, outlineEditedField, outlineTransactionSource } from "@/lib/notes/outlineEditorModel";
 import { clipboardPlainText } from "@/lib/notes/clipboard";
+import { ACROSS_FIELDS } from "@/lib/notes/outlineSelection";
 import "prosemirror-view/style/prosemirror.css";
 import {cx} from "@/lib/ui/cx";
 import styles from "./NoteEditor.module.css";
@@ -176,6 +177,7 @@ export interface NoteEditorProjection {
   nodeViews?: DirectEditorProps["nodeViews"];
   plugins?: readonly Plugin[];
   onViewReady(view: EditorView | null): void;
+  allowTransaction(transaction: Transaction): boolean;
   onFocus(): void;
   reference(row_id: string): ReferenceInputHost | null;
   context(row_id: string): {branch: OutlineBranch; occurrenceKey: string; containingNoteRef: string | null; beforeCollapse?(scope: string): Promise<boolean>};
@@ -266,7 +268,6 @@ export const noteEditorAttachmentOwnerId = (visitId: string, editorKey: string) 
   resourceDraftOwnerId(visitId, `Notes.Attachment:${editorKey}`);
 
 const NOT_INSERTED: Line = { fact: "couldn’t insert this.", reason: "your writing is kept." };
-const ACROSS_FIELDS: Line = { fact: "couldn’t change text across fields.", reason: "select the items to change them together." };
 const LINK_OPEN: Line = { fact: "couldn’t do that while a link is open.", reason: "your writing is kept." };
 const NOT_ATTACHED = "couldn’t attach this file.";
 const NOT_ADDED = "couldn’t add this attachment.";
@@ -1451,6 +1452,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       dispatchTransaction(tr) {
         const projectionSource = tr.getMeta(outlineTransactionSource);
         const external = tr.getMeta(SOURCE) === "external" || projectionSource === "projection" || projectionSource === "semantic";
+        if (!external && latest.current.projection?.allowTransaction(tr) === false) {view.updateState(view.state); return;}
         if (inputMode.current !== "text" && !external && (tr.docChanged || tr.selectionSet && !(tr.selection instanceof NodeSelection && typeof tr.selection.node.attrs.row_id === "string"))) return;
         const first = tr.steps[0]?.toJSON();
         const changed = first && typeof first.from === "number" && view.state.doc.type.name === "outline_doc" ? fieldAt(view.state.doc, first.from) : editingField(view.state);
@@ -1623,7 +1625,8 @@ function NoteEditorContent(props: NoteEditorProps) {
       latest.current.projection?.onViewReady(null);
       latest.current.onEditorReady?.(null);
       editorHandle.current = null;
-      binding?.close(); bindingRef.current = null;
+      if (latest.current.projection) binding?.detach(); else binding?.close();
+      bindingRef.current = null;
       viewRef.current = null;
       view.destroy();
     };

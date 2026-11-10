@@ -60,7 +60,7 @@ forward}, secondary}` with its inspector embedded. `primary_width_px: null` mean
 column changes, and only a user resize stores a number. each visit stores
 `{id, href, title_hint}`; its nullable hint is settled display evidence, not a
 canonical title. recently closed panes, mementos, visit data, the transient
-inspector and daily-page publications are not persisted.
+inspector are not persisted.
 
 python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),
@@ -270,18 +270,20 @@ until the new read settles. catalog projections supply their existing titles
 and media contributor bylines when remote facts are not present; they are not
 a second metadata writer.
 
-current authored locators retain singular resource and semantic daily subscriptions.
+current authored resource locators retain singular resource subscriptions.
 each locator has a keyed subscription lifetime; sibling pane changes do not restart
 its read.
 the title projection publishes only changed ref, caption or local date; unchanged
 read replies do not invalidate pane chrome. missing rows remain distinct from unread titles.
 
-`POST /me/workspace-presentations` resolves the distinct current locators,
-including minimized panes, in ordered batches of at most 100. batches run
+`POST /me/workspace-presentations` resolves resource, contributor and capture
+locators, including minimized panes, in ordered batches of at most 100. journal
+dates are local recent targets, outside this lookup contract. batches run
 sequentially under one cancellable read. this bounds concurrency without capping
 panes; large workspaces pay serial request latency. history and closed visits use
-their hints without starting reads. daily dates have their own title locator;
-the existing daily-page publication connects live text to that locator.
+their hints without starting reads. journal dates derive `journal` plus the
+arrival date locally; neither visible-day changes nor authored titles retarget
+their labels, recent destinations or inspector identity.
 
 the existing text owner supplies live and acknowledged note/page titles. live
 unacknowledged notes survive a missing canonical row as `unsaved`; dirty writing
@@ -888,11 +890,11 @@ the current target. root pane results expose direct close;
 held enter cannot close surviving rows repeatedly. its inline open-pane list
 and recently-closed recovery work at every pane count.
 
-the daily page is one explicit rule: a page body publishes its
-`PaneDailyPage {localDate, pageId}` (layout phase, `usePaneDailyPage`), and a
-`/daily/{date}` target matches a pane of another route whose publication names
-that date, a `/pages/{id}` target one naming that page. Today, quick note and
-add to Today therefore reuse an open daily pane under either href.
+`/daily/{date}` identifies a journal visit; `/pages/{id}` identifies a standalone
+page. explicit daily activation supplies `RevealDailyDate` unless a more specific
+entry exists. the delivered visit supplies its date; same-route activation
+reveals again, while back/resume restore that visit's saved eye line. passive
+scrolling and sequential day movement create no history.
 
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
@@ -1203,6 +1205,14 @@ measurement, including sibling lists sharing this scrollport. logical ranks
 locate unmounted anchors and choose the next full-order survivor after removal;
 bounded row demand mounts a needed target before focus recovery. a connected
 unrelated focus destination wins over a pending return.
+
+`AnchorGeometry` is the common committed-frame contract for uniform collections
+and variable journal days/rows: ordered identities, visible anchor, position
+proof, mounted element and owner-safe demand. pending differs from missing and
+failed. nested geometry refines only its actual enclosing logical anchor.
+`usePaneBeforeLayout` captures before imperative editor/binding mutations;
+placement waits until measured extents reach the committed frame. geometry
+owners never compete with the memento by writing scroll offsets.
 
 `CollectionView` keeps the most recently interacted row and its neighbours
 mounted in a large index; an active menu or drag adds scoped demand. this preserves

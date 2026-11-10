@@ -1,5 +1,10 @@
 /** The account's sole browser SQL connection. FULL sync reaches the VFS's strict
- * IndexedDB transaction completion before COMMIT acknowledges local writing. */
+ * IndexedDB transaction completion before COMMIT acknowledges local writing.
+ * A failed rollback that leaves an active transaction stops this connection:
+ * its provisional rows cannot prove a durable commit. Copy/drain unsaved input
+ * before restarting that owner; ordinary SQLite auto-aborts remain retryable. */
+// The pinned VFS patch returns SQLite error codes after an IndexedDB abort;
+// rejected Asyncify callbacks otherwise strand the account's SQL queue.
 import * as SQLite from "@journeyapps/wa-sqlite";
 import SQLiteFactory from "@journeyapps/wa-sqlite/dist/wa-sqlite-async.mjs";
 import { IDBBatchAtomicVFS } from "@journeyapps/wa-sqlite/src/examples/IDBBatchAtomicVFS.js";
@@ -20,7 +25,9 @@ export async function openDatabase(accountId: string): Promise<Database> {
   const vfs = await factory.create(`nexus-authored-${accountId}`, sqliteModule);
   sqlite.vfs_register(vfs, true);
   const handle = await sqlite.open_v2("authored.sqlite3");
+  let unavailable: Error | null = null;
   const all = async (sql: string, params: SqlValue[] = []) => {
+    if (unavailable !== null) throw unavailable;
     const rows: Record<string, SqlValue>[] = [];
     try {
     for await (const stmt of sqlite.statements(handle, sql)) {
@@ -45,7 +52,17 @@ export async function openDatabase(accountId: string): Promise<Database> {
     transaction: async operation => {
       await all("BEGIN IMMEDIATE");
       try { const result = await operation(); await all("COMMIT"); return result; }
-      catch (error) { await all("ROLLBACK"); throw error; }
+      catch (error) {
+        if (!sqlite.get_autocommit(handle)) {
+          try { await all("ROLLBACK"); }
+          catch (rollbackError) {
+            const failure = Object.assign(new AggregateError([error, rollbackError], "couldn’t finish or roll back notes on this device"), { code: "E_AUTHORED_LOCAL" });
+            if (!sqlite.get_autocommit(handle)) unavailable = failure;
+            throw failure;
+          }
+        }
+        throw error;
+      }
     },
     close: async () => { await sqlite.close(handle); await vfs.close(); },
   };

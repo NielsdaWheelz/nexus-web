@@ -1,6 +1,6 @@
 // Where a link lands: one pure planner over the open panes. The store
 // executes the plan; callers never choose or create panes themselves.
-import { matchWorkspaceTargetHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { matchWorkspaceTargetHref } from "@/lib/panes/paneRouteModel";
 import type { SourceArrivalTarget } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceState } from "@/lib/workspace/model";
@@ -25,6 +25,7 @@ export type WorkspaceTargetDisposition =
 export type WorkspacePaneEntry =
   | { readonly kind: "ComposeChat"; readonly text: string }
   | { readonly kind: "ComposePage"; readonly title: string }
+  | { readonly kind: "RevealDailyDate" }
   | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget; readonly purpose: "Open" | "RestoreVisit" }
   | { readonly kind: "ReviewReaderQuote"; readonly quote: ReaderQuote; readonly target: ReaderQuoteReturn }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
@@ -64,12 +65,6 @@ export interface PaneEntryDelivery {
   entry: WorkspacePaneEntry;
 }
 
-/** A daily page pane's identity, published by its body (under either href). */
-export interface PaneDailyPage {
-  localDate: string;
-  pageId: string | null;
-}
-
 type Landed =
   | "Unchanged"
   | "ActivatedExisting"
@@ -85,14 +80,13 @@ export function paneEntryWorkOwnerId(delivery: PaneEntryDelivery): string {
 export type WorkspaceTargetPlan = { kind: Landed; paneId: string; href: string };
 
 /**
- * An open pane matches on resource and material view, or as the same daily
- * page under its other href. Preference: origin, first visible, first. Fork
+ * An open pane matches on resource and material view. Preference: origin,
+ * first visible, first. Fork
  * always creates; without a match Follow navigates the origin. Creation never
  * evicts an existing pane.
  */
 export function planWorkspaceTarget(
   state: WorkspaceState,
-  dailyPages: ReadonlyMap<string, { routeKey: string; value: PaneDailyPage }>,
   request: WorkspaceTargetActivationRequest,
 ): WorkspaceTargetPlan {
   const href = normalizeWorkspaceHref(request.target.href);
@@ -101,19 +95,9 @@ export function planWorkspaceTarget(
     // justify-defect: callers pass same-origin hrefs from a live pane.
     throw new Error(`Invalid workspace target: ${request.target.href}`);
   }
-  const target = resolvePaneRouteModel(href);
-  const sameDay = (paneId: string, route: { id: string; routeKey: string }) => {
-    const daily = dailyPages.get(paneId);
-    if (route.id === target.id || daily?.routeKey !== route.routeKey) return false;
-    return target.id === "dailyDate"
-      ? daily.value.localDate === target.params.localDate
-      : target.id === "page" && daily.value.pageId === target.params.pageId;
-  };
   const matches = state.panes.flatMap((pane) => {
-    const route = resolvePaneRouteModel(pane.current_visit.href);
     const landingHref = matchWorkspaceTargetHref(pane.current_visit.href, href);
-    if (landingHref !== null) return [{ pane, href: landingHref }];
-    return sameDay(pane.id, route) ? [{ pane, href: pane.current_visit.href }] : [];
+    return landingHref === null ? [] : [{pane, href: landingHref}];
   });
   const match =
     matches.find((m) => m.pane === origin) ??

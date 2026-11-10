@@ -444,7 +444,12 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
   checks.current = { stable, invalidate, close, surface, publish, settleMobile };
   // Source and invocation are read after every commit; callback identity is not
   // a lifecycle boundary or permission to publish.
-  useLayoutEffect(() => { checks.current.publish(); });
+  // Layout finishers settle in microtasks before this geometry is certified.
+  useLayoutEffect(() => {
+    if (!requested) return;
+    const frame = requestAnimationFrame(() => checks.current.publish());
+    return () => cancelAnimationFrame(frame);
+  });
 
   // Capture checks precede custom handlers and native/shifted/auxiliary defaults.
   useLayoutEffect(() => {

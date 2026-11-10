@@ -5,6 +5,7 @@
  * plus an ephemeral port lease; a delayed retired port cannot borrow a new holder.
  * An already admitted SQL commit finishes before the next queued preparation read.
  * This needs no cross-port ordering assumption or durable mutation ledger. */
+import { changesDailyIndex } from "@nexus/authored/queries";
 import { FORMAT_REVISION, type CommitFrame, type AuthoredQuery, type StateSelection } from "@nexus/authored/types";
 import { ApiError, readResponse } from "@/lib/api/client";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
@@ -30,7 +31,7 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   queue = next.catch(() => undefined);
   return next;
 }
-function changed(corpusChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null }); }
+function changed(corpusChanged = false, dailyIndexChanged = false) { for (const port of ports) port.postMessage({ kind: "changed", corpus_changed: corpusChanged, daily_index_changed: dailyIndexChanged, status: sync ? syncStatus(sync.facts) : "preparing", detail: sync?.detail ?? null, failure: sync?.facts.failure ?? null }); }
 /** `readResponse` takes any abort for its caller's, and here the caller may not have aborted:
  * Firefox rejects `text()` with AbortError when `response`'s deadline passes mid-body. That is
  * a body that died, as it is in Chromium, so it reads as one. */
@@ -127,8 +128,9 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       if (!(await persistence.replica()).provisioning_complete) throw new Error("authored corpus is still preparing");
       sync!.facts.saving = true; changed();
       try {
-        const result = await persistence.commit(input.frame as unknown as CommitFrame);
-        if (result.kind === "committed") changed(true);
+        const frame = input.frame as unknown as CommitFrame;
+        const result = await persistence.commit(frame);
+        if (result.kind === "committed") changed(true, changesDailyIndex(frame.change));
         sync!.facts.pending = (await persistence.pending()).length > 0;
         return result;
       } finally { sync!.facts.saving = false; changed(); }

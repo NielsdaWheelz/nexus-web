@@ -5,6 +5,61 @@ one account-scoped authored graph. the same local query and commit owners serve
 writing online and offline. source downloads, chat, imports and account operations
 retain their separate owners.
 
+## journal
+
+`/daily` resolves the account's current civil date; `/daily/:date` opens the
+continuous journal at that date. newest dates precede older dates; writing keeps
+each page's own relationship order. `/pages/:id` is a separate standalone view.
+the compact local `daily_index` contains visible persisted date/ref pairs,
+including empty pages. only the requested unwritten date adds a presentation
+section. reading, focus and scrolling create or restore nothing; canonical daily
+bindings, including historical refs, remain authoritative.
+
+one pane coordinates dates, one controller owns each day, and one memento owns
+programmatic scrolling. the journal's variable-height date geometry composes
+immutable outline row frames. resize, projection and binding reconciliation
+capture the prior eye line before publishing geometry; user input cancels stale
+restoration. a child frame refines only its enclosing logical date; placement
+waits for measured extents to reach the committed geometry. explicit date
+activation reveals; back/resume restore the saved visit. workspace labels and
+recents describe the arrival date without title
+reads or rewriting the destination to a standalone page.
+
+programmatic scroll positions reach the date virtualizer through its offset
+observer before range planning. geometry and admission use the same scroll
+position; ordinary scroll events keep the library's existing observer.
+day heights include their spacing, but trailing inter-day spacing is not readable
+content when choosing the eye line or visible date.
+
+a cold journal day first admits one row and its existing boundary proof, then
+fills through ordinary viewport demand. standalone roots keep their 32-row
+bootstrap. boundary resources remain complete; the row limit is not a byte cap.
+
+date headings stay separate from authored titles. inline journal titles use the
+existing content editor's six-line extent; empty titles hide only after settled
+blur. day reading controls reveal on focus, without adding pointer-scroll chrome.
+
+scrolling attaches views on demand while retaining a day's pending owner and
+finite undo history. commands, selection and history remain day-local. native
+selection and clipboard ingress refuse unloaded gaps before partial edits or
+clipboard publication. a focused nonediting day article holds a stable reading
+interval; earlier/later-writing controls advance it explicitly. editing admits
+fresh local proof before releasing the hold. deliberate departure never waits
+for a read. the same renderer serves reading and writing.
+
+the hold freezes the displayed contiguous interval and its exact neighboring
+proofs. viewport prefetch cannot move those continuation boundaries. advancing
+may revisit a live preview. fresh admission follows the captured neighbor's
+identity, or its surviving order after deletion. concurrent insertions or moves
+may require revisiting the day; a reading hold is not an archive snapshot.
+
+the complete index and visited geometry cost `o(days)`. unseen heights are
+estimates; active selections and rich bodies have no hard total-memory bound.
+android's existing 16-mib result cap applies to the compact index and compound
+windows. wire 21 pairs the ui, worker and packaged native plan arrays; storage
+format and database schema are unchanged. provisioning and dated-page patches
+invalidate the index; note/link/status changes do not.
+
 ## ownership
 
 - `node/authored` owns the closed body grammar, literal projections, identity,
@@ -34,7 +89,7 @@ accepted rows on refresh failure and publish recovery outside the content flow;
 retry retains the incident, action and accepted same-query prefix until settlement.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
-all authored pane locators retain their canonical title subscriptions. the active
+standalone authored pane locators retain their canonical title subscriptions. the active
 root separately publishes its literal display label through pane chrome; previews
 and unfinished input never become acknowledged workspace hints.
 `useAuthoredPrefix` owns one revision-consistent paginated read for both the
@@ -101,9 +156,10 @@ text and selection offsets derive from the shared projection.
 
 ordinary resources use fresh client uuids. daily identity is account plus local
 date; known bindings preserve seeded page ids, unseen days derive uuid5. opening
-a day writes nothing. an empty stored title displays its date-derived default
-without inserting that default into the title crdt. title storage has no display
-length ceiling.
+a day writes nothing. standalone captions and list labels use a date-derived
+default for an empty stored title without inserting it into the title crdt.
+the journal keeps its date heading separate and hides the blank authored title.
+title storage has no display length ceiling.
 
 links are relationships, never ownership. explicit unlink preserves endpoints;
 deleting a page, note or highlight never consumes an independent related note.
@@ -135,6 +191,15 @@ acknowledges saved writing. uncertain replies reconcile the same source sequence
 stale revisions remerge the frozen intent without allocating another touch.
 local acceptance, server acceptance and availability to server tools are distinct
 facts; a local save alone promises neither of the latter two.
+
+browser sqlite reports indexeddb aborts as failed local commits. the pinned vfs
+patch waits for the actual abort, releases locks and restores its operation
+chain. sqlite autocommit decides whether rollback remains necessary. if failed
+rollback leaves a transaction active, that connection stops serving reads and
+writes; provisional state cannot become an acknowledged save. ordinary aborts
+retain retry. a stopped connection requires copying or deliberately discarding
+uncommitted writing before restarting its owner.
+
 before returning a local receipt, the runtime merges its committed state into
 already open writing documents. subsequent edits therefore see the shared-text
 identities they reference; subscription delivery is not a commit barrier. incoming
@@ -150,6 +215,10 @@ canonical mutation never does. participant captures and pins follow eventual
 settlement, while the returned result reports the first failure. a partial
 mutation fault retains unsaved writing for copy or deliberate discard and blocks
 later commands. unsaved-copy includes open documents queued behind that fault.
+
+an explicit document reopen can supply a fresh nonempty initializer to the same
+cached cell; an empty open preserves its pending initializer. the next admitted
+command consumes it once. an already admitted command retains its frozen bytes.
 
 local receipts also retain `before`: touch/delete or add/remove vectors per
 changed resource or relationship from the successful compare-and-swap prestate. a stale result
@@ -518,9 +587,12 @@ menus retain the same native control and focus target. retaining an open empty
 input does not establish child
 availability. they disclose authored local links, excluding relationships
 already traversed by that occurrence. a bounded batched local query proves child
-availability. one `outline_window` query reads a bounded raw page, root and
+availability. one `outline_windows` query reads a coherent set of bounded raw
+pages, root and
 boundary projections, adjacent and absolute tail relationships, and aligned child
-proofs in one indexed sql statement. sql emits ordered graph records and each
+proofs through indexed sql statements in one serialized store operation. every
+slice has the same outer revision and scope availability; a failed slice fails
+the whole read. sql emits ordered graph records and each
 bounded resource projection once; host adapters assemble the closed response.
 projection construction never feeds back into graph or cursor derivation.
 each endpoint arm selects a bounded range;
@@ -529,7 +601,7 @@ precede traversal omission; neighbors surround the first and last remaining
 rows, while the absolute tail excludes only the entering relationship. full
 resource projections retain literal rendering, filtering and copy behavior.
 the native bridge's existing 16 mib aggregate output cap also applies to this
-complete window. an extreme window may fail where separate reads previously
+complete set. an extreme set may fail where separate reads previously
 fit; the existing read error and explicit retry retain writing without truncating,
 shrinking or partially publishing the proof. the root admits and retains all
 note/title documents together. its admission snapshot also supplies the actual
@@ -542,6 +614,10 @@ never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
 a cold append keeps its existing focus intent through initial prefix admission,
 proves the absolute tail and births one real empty note on demand.
+journal append and title entries demand their date through the memento before
+entering the editor, retaining an offscreen day after its delivery is claimed.
+explicit note focus reveals its canonical occurrence through the same memento
+before the existing editor selects its text.
 compatible child proofs refresh independently of raw field admission. each
 proof identifies its resource, relationship, parent and traversal context;
 relocation discards availability but retains its revision watermark, so an
@@ -553,7 +629,7 @@ embedded targets render rich read-only previews; editing opens their resource.
 their disclosed descendants enter the containing flat session rather than
 constructing nested editors.
 
-only a standalone page/note pane with an admitted complete empty child window,
+only a standalone page/note or journal day with an admitted complete empty child window,
 no filter and no unresolved membership change has a provisional first bullet.
 root title/body content does not affect eligibility. this seed has presentation
 identity only: focus, blur and empty enter write nothing. `bodyHasContent` admits
@@ -563,28 +639,27 @@ editor name `edit linked items`. deleting the last actual child restores the see
 after membership settles. deliberate empty notes survive. populated/nested,
 embedded, loading, failed, filtered and windowed outlines reserve no input or gap.
 
-one session admits at most 64 unique document identities and 16 mib of encoded
-state across root, disclosed branches, neighbors, pending input and history.
-the byte charge includes each canonical y encoding once, every independently
-retained occurrence baseline (including hidden history occurrences), retained
-history metadata and unresolved independent frozen encodings. baseline and
-history owners report their charges through their existing maps; held highlight
-documents and independent annotation baselines are included. history exposes
-actual retained writing documents; relationship refs consume no document slots.
-there is no
-second inventory. visual anchor ids alone retain no writing. the same owned
-snapshot is counted once; different causal baselines count separately even when
-their ref or bytes match. prosemirror model, dom
-and general heap allocations are outside this encoded-state contract. new aliases
-reserve their baseline and initial capture even when their canonical document is
-already held, so repeated large aliases admit fewer fields. the seed reserves no
-document; first content uses ordinary newborn admission. this is a
-new-admission bound, not a heap guarantee or an authoring quota: accepted typing,
-composition and incoming growth remain protected and stop additional loads when
-over budget. inactive windows and whole old history groups release through their
-existing owners first. manual paging replaces a bounded window and exposes earlier
-items. a failed admission explains the
-limit at the requested action. absolute-tail append resolves the current tail at
+one mounted journal shares a 64-document/16-mib history allowance across its
+day sessions; a standalone root has one member. canonical encodings count once;
+actual undo/redo groups, independent occurrence baselines and causal captures
+count separately. an allowance-local stamp orders whole groups across days.
+only accepted local editing or settlement retires the oldest eligible groups;
+reads, remote updates and refused commands never consume undo. history is
+visit-local and leaves with the mounted journal. presentation frontiers do not
+consume history. one retiring group stays charged until its actual settlement;
+the allowance recomputes usage before retiring another.
+
+presentation has a separate soft 64-ref/16-mib target. automatic sparse branch
+windows keep viewport, overscan and protected writing; distant disposable views
+detach while their semantic session and bounded history survive. visible content,
+native packets, composition, selection and unresolved writing are never evicted
+to satisfy a heap target. a single rich body is not virtualized. pressure is
+shared across journal dates. after pressure, that visit keeps reduced
+prefetch to avoid alternating eviction and reload; the next visit starts afresh.
+viewport leases cannot make structural commands fail merely because of scrolling. visual anchor
+ids and measurements retain no writing. the seed reserves no document; first
+content uses ordinary newborn admission. a failed command admission explains its
+actual limit at the requested action. absolute-tail append resolves the current tail at
 command preparation, rather than retaining a relationship that an earlier
 accepted unlink may remove. explicit insert-after retains its chosen anchor.
 if history retirement needs settlement, a new gesture requests insertion after
@@ -599,6 +674,12 @@ firefox ports share the stable `/_nexus/authored/worker.js` worker named
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
+the version-locked vfs patch settles aborted indexeddb transactions before resetting
+its queue and returns sqlite error codes from lock callbacks. a rejected callback
+must never strand asyncify. the connection checks sqlite autocommit before cleanup;
+if rollback also fails and leaves a transaction active, it refuses further reads
+and writes rather than acknowledging provisional command state. unsaved writing
+remains owned for copy and owner restart; ordinary quota failures remain retryable.
 
 android uses bundled sqlite 2.7.1 on one serialized connection off the main thread.
 that connection lazily reuses compiled statements only for validated packaged

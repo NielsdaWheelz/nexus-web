@@ -4,7 +4,7 @@
  * return separate literal evidence without rewriting canonical resource content.
  * Adjacency uses the exact (position,link_id) tuple, including prefix/equal keys. */
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
-import type { AuthoredQuery, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
+import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
@@ -330,10 +330,8 @@ function eligibleChildren(endpoint: string, excluded: string): string {
 
 /** One bounded graph proof. Pagination precedes branch omission; the only
  * materialized incident sets contain the selected page or two endpoint limits. */
-function outlineWindow(query: Extract<AuthoredQuery, {kind: "outline_window"}>): CompiledQuery {
-  if (!Number.isFinite(query.limit) || query.excluded_link_ids.length > 1000) throw new RangeError("Outline window exceeds bound");
-  if (query.entering_link_id !== null && !query.excluded_link_ids.includes(query.entering_link_id)) throw new TypeError("Outline entering edge is not traversed");
-  const limit = Math.max(1, Math.min(48, Math.floor(query.limit)));
+function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_windows"}>, "ranges"> & OutlineRange): CompiledQuery {
+  const limit = query.limit;
   const cursor = readAdjacencyCursor(query.cursor);
   const around = cursor === null && query.anchor_link_id !== null;
   const before = "CAST(?5/2 AS INTEGER)", after = "(?5-CAST(?5/2 AS INTEGER))";
@@ -380,10 +378,23 @@ function outlineWindow(query: Extract<AuthoredQuery, {kind: "outline_window"}>):
     params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id]};
 }
 
-export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>): CompiledQuery {
+/** Membership depends only on dated page patches, including title-only touches. */
+export function changesDailyIndex(change: Change): boolean {
+  return change.resources.some(resource => resource.kind === "page" && resource.local_date !== null);
+}
+
+/** Every compiled slice is executed in one host store turn, under one revision. */
+export function compileOutlineWindows(query: Extract<AuthoredQuery, {kind: "outline_windows"}>): CompiledQuery[] {
+  if (query.ranges.length === 0 || query.excluded_link_ids.length > 1000 ||
+    query.ranges.some(range => !Number.isInteger(range.limit) || range.limit < 1 || range.limit > 48)) throw new RangeError("Outline windows exceed bound");
+  if (query.entering_link_id !== null && !query.excluded_link_ids.includes(query.entering_link_id)) throw new TypeError("Outline entering edge is not traversed");
+  return query.ranges.map(range => outlineWindow({...query, ...range}));
+}
+
+export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission" | "outline_windows"}>): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
-    case "outline_window": return outlineWindow(query);
+    case "daily_index": return {sql: "SELECT local_date, ref FROM resources WHERE kind = 'page' AND visible = 1 AND local_date IS NOT NULL ORDER BY local_date DESC", params: []};
     case "outline_children": {
       if(query.occurrences.length>100||query.occurrences.some(item=>item.refs.length>2||item.excluded_link_ids.length>1000))throw new RangeError("Child occurrence batch exceeds bound");
       const eligible=eligibleChildren("endpoint.value", "EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id)");
@@ -417,16 +428,6 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
       const where=cursor===null?'':`WHERE (position,link_id)>(?,?)`;
       return {sql:`WITH bound(ref,exclude_link_id) AS (VALUES(?,NULL)),incident AS NOT MATERIALIZED (${INCIDENT}),selected AS MATERIALIZED (SELECT * FROM incident ${where} ORDER BY position,link_id LIMIT ?),wanted(ref) AS (SELECT other_ref FROM selected),readable AS NOT MATERIALIZED (${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,...cursor?[cursor[0],cursor[1]]:[],limit]};
     }
-    case "adjacency_window": {
-      // Removing the focused relationship retains its place among live neighbors.
-      const cursor=readAdjacencyCursor(query.cursor);
-      if(cursor!==null)return compileQuery({kind:'adjacency',ref:query.ref,cursor:query.cursor,limit});
-      const before=Math.floor(limit/2),after=limit-before;
-      const earlier=orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM anchor),(SELECT link_id FROM anchor))","DESC","?3","NULL");
-      const later=orderedIncident("AND(POSITION,l.link_id)>=((SELECT position FROM anchor),(SELECT link_id FROM anchor))","ASC","?4","NULL");
-      const previous=orderedIncident("AND(POSITION,l.link_id)<((SELECT position FROM first),(SELECT link_id FROM first))","DESC","1","NULL");
-      return {sql:`WITH anchor AS MATERIALIZED(${anchor("?2",false)}),before_candidates AS(${earlier}),after_candidates AS(${later}),earlier AS(SELECT * FROM before_candidates ORDER BY position DESC,link_id DESC LIMIT ?3),later AS(SELECT * FROM after_candidates ORDER BY position,link_id LIMIT ?4),selected AS MATERIALIZED(SELECT * FROM earlier UNION ALL SELECT * FROM later),first AS(SELECT position,link_id FROM selected ORDER BY position,link_id LIMIT 1),previous_candidates AS(${previous}),wanted(ref) AS(SELECT other_ref FROM selected),readable AS NOT MATERIALIZED(${BOUNDED_READABLE}) SELECT r.projection_json,s.position_json AS link_json,json_array(s.position,s.link_id) AS cursor_json,CASE WHEN EXISTS(SELECT 1 FROM previous_candidates) THEN (SELECT link_id FROM first) ELSE NULL END AS previous_cursor FROM selected s JOIN readable r ON r.ref=s.other_ref ORDER BY s.position,s.link_id`,params:[query.ref,query.link_id,before,after]};
-    }
   }
 }
 
@@ -438,12 +439,12 @@ type PassageMembership = { activation_ref: string | null } | false;
 /** Active published source identity only; this proves no reading permission. */
 export async function sourceAliasQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "source_alias"}>): Promise<Omit<QueryResult, "store_revision">> {
   const rows = await read(compileQuery(query));
-  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, outline_window: null};
+  return {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: rows[0] ? String(rows[0].canonical_source_ref) : null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null};
 }
 
 /** Exact capture identity is loaded first. Reading aliases prove admission only, never substitute a capture. */
 export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery,{kind:"excerpt"}>): Promise<Omit<QueryResult,"store_revision">> {
-  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,outline_window:null};
+  const result: Omit<QueryResult,"store_revision"> = {rows:[],next_cursor:null,previous_cursor:null,binding_id:null,canonical_source_ref:null,positions:[],children:[],scope_available:true,daily_index:null,outline_windows:null};
   const rows = await read({sql:EXCERPT_ROW_SQL,params:[query.ref]});
   if (!rows.length) return result;
   const row = rows[0]!, resource: ResourceProjection = JSON.parse(String(row.projection_json));
@@ -540,7 +541,7 @@ export async function excerptQuery(read: QueryRead, query: Extract<AuthoredQuery
  * derived scope inputs never replace the canonical authored projection. */
 export async function searchQuery(read: QueryRead, query: Extract<AuthoredQuery, {kind: "search" | "search_preview" | "search_admission"}>,
   score: (text: string, expression: string) => Promise<number | null>): Promise<Omit<QueryResult, "store_revision">> {
-  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, outline_window: null};
+  const result: Omit<QueryResult, "store_revision"> = {rows: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null};
   const preview = query.kind !== "search";
   const admission = query.kind === "search_admission";
   if (query.kind === "search_preview" && !Number.isFinite(query.limit)

@@ -463,13 +463,13 @@ export class WritingRuntime {
     return [...texts.values()];
   }
   async openDocument(ref: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
-    return this.getOrOpenDocument(ref, () => this.loadDocument(ref, prelude));
+    return this.getOrOpenDocument(ref, prelude, () => this.loadDocument(ref, prelude));
   }
   /** Actual state from this account's atomic snapshot; an existing owner wins. */
   async openDocumentFromState(resource: ResourceState, loadedRevision: string, prelude: readonly Intent[] = []): Promise<WritingDocument> {
-    return this.getOrOpenDocument(resource.ref, async () => this.hydrateDocument(resource, prelude, await this.store, loadedRevision));
+    return this.getOrOpenDocument(resource.ref, prelude, async () => this.hydrateDocument(resource, prelude, await this.store, loadedRevision));
   }
-  private getOrOpenDocument(ref: string, load: () => Promise<CachedDocument>): Promise<CachedDocument> {
+  private async getOrOpenDocument(ref: string, prelude: readonly Intent[], load: () => Promise<CachedDocument>): Promise<CachedDocument> {
     if (this.retired) throw new Error("Writing account is closed");
     let entry = this.documents.get(ref);
     if (!entry) {
@@ -479,7 +479,10 @@ export class WritingRuntime {
       const owner=entry;
       void owner.promise.then(value=>{owner.value=value;},()=>{if(this.documents.get(ref)===owner)this.documents.delete(ref);});
     }
-    return entry.promise;
+    const document = await entry.promise;
+    // An explicit reopen can restore a latent page even while its cell is cached.
+    if (prelude.length > 0) document.prelude = prelude;
+    return document;
   }
   openBody(ref:string):NoteBody|null {
     const document=this.documents.get(ref)?.value;

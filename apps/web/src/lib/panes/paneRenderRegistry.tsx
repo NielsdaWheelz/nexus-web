@@ -2,6 +2,7 @@
 
 import { Suspense, useDeferredValue, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
+import JournalPaneBody from "@/app/(authenticated)/daily/JournalPaneBody";
 import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
 import { Ruling } from "@/components/feedback/Ruling";
 import { ServerArrivalsSpent } from "@/lib/api/serverState";
@@ -103,7 +104,8 @@ function load(id: LazyPaneRouteId): ModuleEntry {
 
 function PaneBody({ id }: { readonly id: Exclude<PaneRouteId, "pageNew"> }) {
   if (id === "note") return <><NotePaneBody /><ServerArrivalsSpent /></>;
-  if (id === "page" || id === "dailyDate") return <><PagePaneBody /><ServerArrivalsSpent /></>;
+  if (id === "page") return <><PagePaneBody /><ServerArrivalsSpent /></>;
+  if (id === "dailyDate") return <><JournalPaneBody /><ServerArrivalsSpent /></>;
   return <LazyPaneBody id={id} />;
 }
 

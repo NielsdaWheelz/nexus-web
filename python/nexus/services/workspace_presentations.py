@@ -5,11 +5,10 @@ its existing visibility rule; missing and invisible identities have no fact.
 """
 
 from collections import defaultdict
-from datetime import date
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -18,11 +17,9 @@ from nexus.auth.permissions import (
     visible_contributor_ids_cte_sql,
     visible_conversation_ids_cte_sql,
 )
-from nexus.db.models import DailyPageBinding, MediaKind
+from nexus.db.models import MediaKind
 from nexus.schemas.workspace_presentations import (
-    WorkspaceCaptureLocator,
     WorkspaceContributorLocator,
-    WorkspaceDailyLocator,
     WorkspacePresentationItemOut,
     WorkspacePresentationOut,
     WorkspacePresentationsOut,
@@ -46,7 +43,6 @@ def read_presentations(
 
     ids: dict[str, set[UUID]] = defaultdict(set)
     handles: set[str] = set()
-    dates: set[date] = set()
     captures: set[UUID] = set()
     for locator in request.locators:
         if isinstance(locator, WorkspaceResourceLocator):
@@ -54,21 +50,8 @@ def read_presentations(
             ids[ref.scheme].add(ref.id)
         elif isinstance(locator, WorkspaceContributorLocator):
             handles.add(locator.handle)
-        elif isinstance(locator, WorkspaceDailyLocator):
-            dates.add(locator.local_date)
         else:
             captures.add(locator.capture_id)
-
-    daily_bindings: dict[date, UUID] = {}
-    if dates:
-        rows = db.execute(
-            select(DailyPageBinding.local_date, DailyPageBinding.page_id).where(
-                DailyPageBinding.user_id == viewer_id,
-                DailyPageBinding.local_date.in_(dates),
-            )
-        )
-        daily_bindings = {row.local_date: row.page_id for row in rows}
-        ids["page"].update(daily_bindings.values())
 
     facts: dict[str, WorkspacePresentationOut] = {}
     if ids["media"]:
@@ -222,17 +205,11 @@ def read_presentations(
         elif isinstance(locator, WorkspaceContributorLocator):
             ref = author_refs.get(locator.handle)
             presentation = facts.get(ref) if ref is not None else None
-        elif isinstance(locator, WorkspaceCaptureLocator):
+        else:
             presentation = (
                 WorkspacePresentationOut(resource_ref=None, title="post")
                 if locator.capture_id in readable_captures
                 else None
-            )
-        else:
-            # an unbound or deleted day presents latently; opening it writes nothing.
-            page_id = daily_bindings.get(locator.local_date)
-            presentation = facts.get(f"page:{page_id}") or WorkspacePresentationOut(
-                resource_ref=None, title=notes.daily_page_title(locator.local_date)
             )
         items.append(WorkspacePresentationItemOut(locator=locator, presentation=presentation))
     return WorkspacePresentationsOut(items=items)

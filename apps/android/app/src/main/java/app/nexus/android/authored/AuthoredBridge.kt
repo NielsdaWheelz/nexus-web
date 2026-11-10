@@ -237,7 +237,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             "hello", "replica" -> store!!.replica()
             "read_snapshot" -> store!!.readSnapshot(request.getJSONObject("selection"))
             "states" -> store!!.states(request.getJSONObject("selection"))
-            "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("params"), request.getString("plan_key"))
+            "query" -> store!!.query(request.getJSONObject("query"), request.getJSONArray("plans"))
             "search_read" -> store!!.searchRead(request.getJSONArray("params"), request.getString("plan_key"))
             "search_match" -> store!!.searchMatch(request.getString("text"), request.getString("expression"))
             "scope_progress" -> store!!.scopeProgress()

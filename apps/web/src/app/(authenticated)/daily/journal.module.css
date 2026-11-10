@@ -1,0 +1,54 @@
+.feed {
+  position: relative;
+  overflow-anchor: none;
+}
+
+.day {
+  position: absolute;
+  inset-inline: 0;
+  padding-block: var(--space-4) var(--space-8);
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-block-end: var(--space-3);
+}
+
+.heading,
+.title {
+  padding-inline: var(--space-6);
+}
+
+.heading h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.navigation,
+.continuation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.day:focus-within > .continuation {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: var(--space-4) 0 0;
+  padding-inline: var(--space-6);
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+}
+
+.picker {
+  display: grid;
+  gap: var(--space-3);
+}

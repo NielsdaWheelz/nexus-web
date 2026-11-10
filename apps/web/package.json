@@ -28,6 +28,7 @@
     "@nexus/authored": "file:../../node/authored",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.108.2",
+    "@tanstack/react-virtual": "3.14.26",
     "fractional-indexing": "4.0.0",
     "lucide-react": "^1.8.0",
     "next": "15.5.28",
@@ -74,6 +75,7 @@
   "patchedDependencies": {
     "minimatch@3.1.5": "patches/minimatch@3.1.5.patch",
     "@dnd-kit/core@6.3.1": "patches/@dnd-kit%2Fcore@6.3.1.patch",
-    "next@15.5.28": "patches/next@15.5.28.patch"
+    "next@15.5.28": "patches/next@15.5.28.patch",
+    "@journeyapps/wa-sqlite@2.0.8": "patches/@journeyapps%2Fwa-sqlite@2.0.8.patch"
   }
 }

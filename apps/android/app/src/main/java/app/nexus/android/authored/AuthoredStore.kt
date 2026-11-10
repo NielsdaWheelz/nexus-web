@@ -324,42 +324,67 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             JSONObject().put("score", if (found.length() == 0) JSONObject.NULL else found.getJSONObject(0).getDouble("score"))
         } finally { run(sql("search_match_clear")) }
     }
-    fun query(query: JSONObject, params: JSONArray, planKey: String): JSONObject {
-        require(replica().getBoolean("provisioning_complete"))
+    private fun outlineWindow(records: JSONArray): JSONObject {
+        val resources = linkedMapOf<String, JSONObject>()
+        var metadata: JSONObject? = null
+        for (index in 0 until records.length()) {
+            val record = records.getJSONObject(index)
+            if (record.getString("part") == "resource") {
+                val resource = JSONObject(record.getString("value_json")); resources[resource.getString("ref")] = resource
+            } else if (record.getString("part") == "meta") metadata = record
+        }
+        val meta = metadata ?: error("outline window metadata is missing")
+        val output = JSONArray(); val children = JSONArray(); val rawRefs = mutableSetOf<String>()
+        val proof = JSONObject().put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
+        for (index in 0 until records.length()) {
+            val record = records.getJSONObject(index); val part = record.getString("part")
+            if (part == "resource" || part == "meta") continue
+            val resource = resources[record.getString("ref")] ?: error("outline edge peer is missing from its proven revision")
+            val link = JSONObject(record.getString("value_json"))
+            when (part) {
+                "raw" -> {
+                    output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
+                    rawRefs.add(resource.getString("ref"))
+                    children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
+                }
+                "before", "after", "tail" -> proof.put(part, link)
+                else -> error("unknown outline window record")
+            }
+        }
+        proof.put("resources", JSONArray().apply { for ((ref, resource) in resources) if (ref !in rawRefs) put(resource) })
+        return JSONObject().put("rows", output).put("children", children).put("proof", proof)
+            .put("next_cursor", meta.get("next_cursor")).put("previous_cursor", meta.get("previous_cursor"))
+    }
+    fun query(query: JSONObject, plans: JSONArray): JSONObject {
+        val replica = replica()
+        require(replica.getBoolean("provisioning_complete"))
         val kind = query.getString("kind")
-        require(planKey.startsWith("$kind:") && queries.containsKey(planKey) && params.length() <= 100)
-        val records = readPlan(planKey, *Array(params.length()) { params.opt(it) })
-        if (kind == "outline_window") {
-            val resources = linkedMapOf<String, JSONObject>()
-            var metadata: JSONObject? = null
+        val count = if (kind == "outline_windows") query.getJSONArray("ranges").length() else 1
+        require(count > 0 && plans.length() == count)
+        fun read(index: Int): JSONArray {
+            val plan = plans.getJSONObject(index)
+            val key = plan.getString("plan_key"); val params = plan.getJSONArray("params")
+            require(key.startsWith("$kind:") && queries.containsKey(key) && params.length() <= 100)
+            return readPlan(key, *Array(params.length()) { params.opt(it) })
+        }
+        val result = JSONObject().put("store_revision", replica.getString("store_revision"))
+            .put("rows", JSONArray()).put("children", JSONArray()).put("positions", JSONArray())
+            .put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL)
+            .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL)
+            .put("scope_available", true).put("daily_index", JSONObject.NULL).put("outline_windows", JSONObject.NULL)
+        if (kind == "outline_windows") {
+            val windows = JSONArray()
+            for (index in 0 until count) windows.put(outlineWindow(read(index)))
+            return result.put("outline_windows", windows)
+        }
+        val records = read(0)
+        if (kind == "daily_index") {
+            val dates = JSONArray()
             for (index in 0 until records.length()) {
                 val record = records.getJSONObject(index)
-                if (record.getString("part") == "resource") {
-                    val resource = JSONObject(record.getString("value_json")); resources[resource.getString("ref")] = resource
-                } else if (record.getString("part") == "meta") metadata = record
+                dates.put(JSONObject().put("local_date", record.getString("local_date")).put("ref", record.getString("ref")))
             }
-            val meta = metadata ?: error("outline window metadata is missing")
-            val output = JSONArray(); val children = JSONArray(); val rawRefs = mutableSetOf<String>()
-            val proof = JSONObject().put("before", JSONObject.NULL).put("after", JSONObject.NULL).put("tail", JSONObject.NULL)
-            for (index in 0 until records.length()) {
-                val record = records.getJSONObject(index); val part = record.getString("part")
-                if (part == "resource" || part == "meta") continue
-                val resource = resources[record.getString("ref")] ?: error("outline edge peer is missing from its proven revision")
-                val link = JSONObject(record.getString("value_json"))
-                when (part) {
-                    "raw" -> {
-                        output.put(JSONObject().put("resource", resource).put("link", link).put("match_text", JSONObject.NULL).put("activation_ref", JSONObject.NULL).put("matched_field", JSONObject.NULL).put("activation_field", JSONObject.NULL))
-                        rawRefs.add(resource.getString("ref"))
-                        children.put(if (record.isNull("child_available")) JSONObject.NULL else record.getInt("child_available") == 1)
-                    }
-                    "before", "after", "tail" -> proof.put(part, link)
-                    else -> error("unknown outline window record")
-                }
-            }
-            proof.put("resources", JSONArray().apply { for ((ref, resource) in resources) if (ref !in rawRefs) put(resource) })
-            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("children", children)
-                .put("next_cursor", meta.get("next_cursor")).put("previous_cursor", meta.get("previous_cursor"))
-                .put("binding_id", JSONObject.NULL).put("canonical_source_ref", JSONObject.NULL).put("positions", JSONArray()).put("scope_available", true).put("outline_window", proof)
+            return result.put("daily_index", dates)
         }
         if (kind == "outline_children") {
             val children = JSONArray()
@@ -367,17 +392,15 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 val row = records.getJSONObject(index)
                 children.put(if (row.isNull("child_available")) JSONObject.NULL else row.getInt("child_available") == 1)
             }
-            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray())
-                .put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL)
-                .put("binding_id", JSONObject.NULL).put("positions", JSONArray()).put("children", children).put("scope_available", true).put("outline_window", JSONObject.NULL)
+            return result.put("children", children)
         }
-        if (kind == "binding") return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("children", JSONArray()).put("next_cursor", JSONObject.NULL).put("previous_cursor", JSONObject.NULL).put("positions", JSONArray()).put("binding_id", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).getString("binding_id")).put("scope_available", true).put("outline_window", JSONObject.NULL)
+        if (kind == "binding") return result.put("binding_id", if (records.length() == 0) JSONObject.NULL else records.getJSONObject(0).getString("binding_id"))
         if (kind == "positions") {
             val positions = JSONArray()
             for (index in 0 until records.length()) positions.put(JSONObject(records.getJSONObject(index).getString("position_json")))
             val at = query.getJSONObject("at")
             val cursor: Any = if (at.getString("kind") == "tie" && positions.length() == minOf(100, at.getInt("limit")) && positions.length() > 0) records.getJSONObject(records.length() - 1).getString("cursor_json") else JSONObject.NULL
-            return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", JSONArray()).put("children", JSONArray()).put("positions", positions).put("next_cursor", cursor).put("previous_cursor", JSONObject.NULL).put("binding_id", JSONObject.NULL).put("scope_available", true).put("outline_window", JSONObject.NULL)
+            return result.put("positions", positions).put("next_cursor", cursor)
         }
         val output = JSONArray()
         for (index in 0 until records.length()) {
@@ -390,7 +413,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             val record = records.getJSONObject(records.length() - 1)
             cursor = if (record.has("cursor_json")) record.getString("cursor_json") else last.getJSONObject("resource").getString("ref")
         }
-        return JSONObject().put("store_revision", replica().getString("store_revision")).put("rows", output).put("children", JSONArray()).put("next_cursor", cursor).put("previous_cursor", if (records.length() > 0 && records.getJSONObject(0).has("previous_cursor")) records.getJSONObject(0).opt("previous_cursor") else JSONObject.NULL).put("positions", JSONArray()).put("binding_id", JSONObject.NULL).put("scope_available", true).put("outline_window", JSONObject.NULL)
+        return result.put("rows", output).put("next_cursor", cursor)
     }
     fun close() {
         var failure: Throwable? = null

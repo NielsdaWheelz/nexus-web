@@ -16,6 +16,7 @@ export interface EditorBinding {
   bodyState(row_id?: string): string | null;
   body(row_id?: string): NoteBody;
   attach(view: EditorView, deferred: () => boolean): void;
+  detach(): void;
   apply(transaction: Transaction): void;
   handoff(before: NoteBody, after: NoteBody, row_id?: string): void;
   refresh(): void;
@@ -32,9 +33,11 @@ export class InlineBinding implements EditorBinding {
   bodyState():string {return encodeBytes(Y.encodeStateAsUpdate(this.baseline));}
   body(): NoteBody { return readBody(this.baseline); }
   attach(view: EditorView, deferred: () => boolean): void {
+    this.detach();
     this.view = view; this.deferred = deferred;
     this.writing.doc.on("update", this.receive);
   }
+  detach(): void {this.writing.doc.off("update", this.receive); this.view = null;}
   apply(transaction: Transaction): void {
     this.updating = true;
     try {
@@ -72,7 +75,7 @@ export class InlineBinding implements EditorBinding {
     if (a && b) transaction.setSelection(TextSelection.create(transaction.doc, a.index + 1, b.index + 1));
     view.dispatch(transaction);
   }
-  close(): void { this.writing.doc.off("update", this.receive); this.view = null; this.baseline.destroy(); }
+  close(): void {this.detach(); this.baseline.destroy();}
 }
 function inlineContent(fragment: Fragment): Fragment {
   const nodes: import("prosemirror-model").Node[] = [];

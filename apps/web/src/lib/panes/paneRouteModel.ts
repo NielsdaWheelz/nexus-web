@@ -7,6 +7,7 @@ import type { Schema } from "@/lib/api/wire";
 import { conversationEndpoint } from "@/lib/chat/view";
 import { isContributorHandle } from "@/lib/contributors/credits";
 import { isLocalDate } from "@/lib/localDate";
+import { pageTitle } from "@nexus/authored/queries";
 import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
 import {
   formatResourceRef,
@@ -42,7 +43,7 @@ const ROUTES = {
   notes: ["notes", "Notes", Icon.Note],
   pageNew: ["pages/new", "New page", Icon.Page],
   page: ["pages/:pageId", "Page", resourceIconForScheme("page")],
-  dailyDate: ["daily/:localDate", "Daily Page", resourceIconForScheme("page")],
+  dailyDate: ["daily/:localDate", "journal", resourceIconForScheme("page")],
   highlight: ["highlights/:id", "Highlight", resourceIconForScheme("highlight")],
   note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
   imports: ["imports", "Imports", Icon.Upload],
@@ -167,7 +168,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
   locator: PaneResourceLocator | null;
   /** e.g. `resource_ref:media:<id>`; null when the route names no resource. */
   resourceKey: string | null;
-  /** Title reads include latent daily pages without changing Inspector identity. */
+  /** Resource title reads never give a journal resource identity. */
   titleLocator: PanePresentationLocator | null;
   /** Canonical locator identity, or a preview's exact sealed target. */
   titleKey: string | null;
@@ -181,7 +182,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
   const traits: PaneRouteTraits = {
     defaultLabel,
     labelMode:
-      RESOURCE[id] || id === "browsePreview" || id === "dailyDate"
+      RESOURCE[id] || id === "browsePreview"
         ? "dynamic"
         : "static",
     icon,
@@ -195,12 +196,12 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
     bodyMode: BODY_MODE[returnKind],
     queryNavigation: IN_PLACE.has(id) ? "in-place" : null,
     width: returnKind === "Reader" ? READER_WIDTH : STANDARD_WIDTH,
-    // Resource panes (but the oracle reading) and the latent daily page offer
-    // the Resource Inspector; imports offers its own.
+    // Resource panes (but the oracle reading) offer the Resource Inspector;
+    // imports offers its own.
     groups:
       id === "imports"
         ? ["imports-inspector"]
-        : (RESOURCE[id] && id !== "oracleReading") || id === "dailyDate"
+        : RESOURCE[id] && id !== "oracleReading"
           ? ["resource-inspector"]
           : [],
     shareByRoute: !RESOURCE[id] && !UNSHARED.has(id) && pattern[0] !== "settings",
@@ -270,8 +271,7 @@ export function paneResourceLocatorKey(
 }
 
 export function panePresentationLocatorKey(locator: PanePresentationLocator): string {
-  return locator.kind === "daily_date" ? `daily_date:${locator.local_date}`
-    : locator.kind === "x_capture" ? `x_capture:${locator.capture_id}`
+  return locator.kind === "x_capture" ? `x_capture:${locator.capture_id}`
     : paneResourceLocatorKey(locator)!;
 }
 
@@ -282,7 +282,7 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
   const segments = pathname.split("/").filter(Boolean);
   for (const { id, pattern, traits } of TABLE) {
     const params = matchPattern(pattern, segments);
-    if (!params) continue;
+    if (!params || id === "dailyDate" && !isLocalDate(params.localDate!)) continue;
     const locator = locatorFor(id, params);
     // A reading id must be a resource ref, so retired literal paths stay
     // unsupported.
@@ -293,17 +293,13 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     const viewSearch = query.size ? `?${query}` : "";
     const routeKey = `${id}:${pathname}${viewSearch}`;
     const resourceKey = paneResourceLocatorKey(locator);
-    const titleLocator: PanePresentationLocator | null =
-      id === "dailyDate" && isLocalDate(params.localDate!)
-        ? { kind: "daily_date", local_date: params.localDate! }
-        : locator;
+    const titleLocator: PanePresentationLocator | null = locator;
     const previewTarget = id === "browsePreview" ? url?.searchParams.get("target") : null;
     const titleKey = titleLocator
       ? panePresentationLocatorKey(titleLocator)
       : previewTarget ? `preview:${previewTarget}` : null;
-    const defaultLabel = id === "stats" && url?.searchParams.get("view") === "year"
-      ? "Year in Reading"
-      : traits.defaultLabel;
+    const defaultLabel = id === "dailyDate" ? `journal · ${pageTitle("", params.localDate!)}`
+      : id === "stats" && url?.searchParams.get("view") === "year" ? "Year in Reading" : traits.defaultLabel;
     return { ...traits, defaultLabel, id, pathname, params, routeKey, locator, resourceKey, titleLocator, titleKey };
   }
   return {
@@ -406,7 +402,8 @@ export function recentValueForHref(href: string, titleHint: string | null = null
   const url = parseWorkspaceHref(normalized)!;
   const route = resolvePaneRouteModel(normalized);
   let target: RecentValue["target"] | null = route.titleLocator;
-  if (route.id === "browsePreview") {
+  if (route.id === "dailyDate") target = {kind: "daily_date", local_date: route.params.localDate!};
+  else if (route.id === "browsePreview") {
     const preview = url.searchParams.get("target");
     if (preview && isDiscoveryTarget(preview)) target = { kind: "preview", target: preview };
   } else if (route.id === "xCapture" && isCanonicalUuid(route.params.id)) target = { kind: "x_capture", capture_id: route.params.id };

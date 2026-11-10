@@ -1,5 +1,5 @@
 "use client";
-/** Header presentation of the outline's retained root. Disclosure never owns a
+/** Presentation of the outline's retained root. Disclosure never owns a
  * document, save boundary, query draft or undo chronology. */
 import {useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type ReactNode} from "react";
 import {noteBodySchema} from "@nexus/authored/body";
@@ -15,7 +15,10 @@ import AuthoredNoteEditor from "./AuthoredNoteEditor";
 import BoundPageTitleEditor from "./BoundPageTitleEditor";
 import styles from "./AuthoredPaneRoot.module.css";
 
-export function useAuthoredPaneRoot(controller: OutlineController | null, field: RootField | undefined) {
+export type RootPresentation = "header" | "inline";
+
+export function useAuthoredPaneRoot(controller: OutlineController | null, field: RootField | undefined, presentation: RootPresentation) {
+  const inline = presentation === "inline";
   const regionId = useId();
   const region = useRef<HTMLDivElement>(null), disclosure = useRef<HTMLButtonElement>(null);
   const [visit, setVisit] = useState({controller, expanded: false, opened: false});
@@ -23,6 +26,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   const expanded = visit.controller === controller && visit.expanded;
   const visitRef = useRef(visit); visitRef.current = visit;
   const root = controller?.rootDocument ?? null;
+  const readingFrame = controller?.readingFrame() ?? null;
   const [bound, setBound] = useState<{controller: OutlineController; document: WritingDocument; handle: TextEditorHandle} | null>(null);
   const handle = bound?.controller === controller && bound.document === root ? bound.handle : null;
   const history = controller?.rootHistory() ?? null;
@@ -59,13 +63,14 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
     return editor?.getAttribute("data-reference-editor") === controller?.rootRef || editor === null;
   }, [controller]);
   const attemptCollapse = useCallback(() => {
-    if (!pendingCollapse.current || active() || !handle?.settleNativeInput()) return;
+    if (!pendingCollapse.current || active() || !handle?.settleNativeInput() || inline && root?.hasPendingEdits()) return;
     pendingCollapse.current = false;
     setVisit(current => ({...current, expanded: false}));
     ownedFocus.current = false;
     if (returnFocus.current) disclosure.current?.focus({preventScroll: true});
     returnFocus.current = false;
-  }, [handle, active]);
+  }, [handle, active, inline, root]);
+  useEffect(() => root?.subscribePendingEdits(attemptCollapse), [root, attemptCollapse]);
   const collapse = useCallback((focus: boolean) => {
     pendingCollapse.current = true; returnFocus.current = focus; attemptCollapse();
   }, [attemptCollapse]);
@@ -79,6 +84,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   const selectionChanged = useCallback((at: {anchor: number; head: number}) => {
     if (ownsFocus()) ownedFocus.current = true;
     controller?.onRootSelectionChange(at); attemptCollapse();
+    if (controller !== null && controller.readingFrame() !== null) changed(value => value + 1);
   }, [controller, attemptCollapse, ownsFocus]);
   const visible = useCallback((editor: TextEditorHandle) => {
     if (controller && inspection && !inspection.signal.aborted) shownInspection.current = {controller, activationId: inspection.activationId};
@@ -112,20 +118,32 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
     if (expanded && ownedFocus.current && region.current && document.hasFocus() && document.activeElement !== document.body &&
       !region.current.contains(document.activeElement) && !ownsOverlayFocus(region.current, document.activeElement)) collapse(false);
   }, [interaction, expanded, collapse]);
-  const focus = () => {if (ownsFocus()) controller?.setFocused(true);};
+  const focus = () => {
+    if (!ownsFocus()) return;
+    if (controller !== null && controller.readingFrame() !== null) {void controller.focusRoot(); return;}
+    ownedFocus.current = true; controller?.setFocused(true);
+  };
   const blur = (event: ReactFocusEvent<HTMLDivElement>) => {
     if (within(event.relatedTarget)) return;
-    if (!active()) queueMicrotask(() => controller?.blurRoot());
+    if (!active()) queueMicrotask(() => {controller?.blurRoot(); if (inline && root?.doc.getText("title").length === 0) collapse(false);});
   };
   useEffect(() => {if (inspection && !inspection.restored && !inspection.signal.aborted) reveal();}, [inspection, reveal]);
-  if (!controller || !field || !root || !history) return {rootEditor: null, rootTitle: null, rootReady: false};
+  if (!controller || !field || !root || !history) return {rootEditor: null, rootTitle: null, rootReady: false, showTitle: reveal};
   const page = controller.rootRef.startsWith("page:");
 
-  if (page) return {rootTitle: root.doc.getText("title").toString() || field.placeholder || "untitled page", rootReady: handle !== null,
-    rootEditor: {kind: "Inline", feedback: null, content: <RootAttachment controller={controller} handle={handle} visible ownsFocus={ownsFocus} reveal={reveal}><div ref={region} className={styles.title} data-outline-session={controller.pending.root_id} onFocusCapture={focus} onBlurCapture={blur}>
-      <BoundPageTitleEditor header pageRef={controller.rootRef} document={root} history={history} label="page title" placeholder={field.placeholder}
-        onEnter={() => controller.focusFirst()} onEditorReady={ready} onSelectionChange={selectionChanged}/>
+  if (page) {
+    const titleText = readingFrame !== null && handle ? handle.readText() : root.doc.getText("title").toString();
+    const pageVisible = !inline || titleText.length > 0 || expanded || ownedFocus.current || root.hasPendingEdits();
+    // Click follows pointer/touch attention capture; pointerdown only suppresses premature native focus.
+    return {showTitle: reveal, rootTitle: titleText || field.placeholder || "untitled page", rootReady: handle !== null,
+    rootEditor: {kind: "Inline", feedback: null, content: <RootAttachment controller={controller} handle={handle} visible={pageVisible} ownsFocus={ownsFocus} reveal={reveal}><div ref={region} hidden={!pageVisible} className={styles.title} data-outline-session={controller.pending.root_id}
+      onPointerDownCapture={event => {if (event.button === 0 && controller.readingFrame() !== null && event.target instanceof HTMLTextAreaElement) event.preventDefault();}}
+      onClick={event => {if (event.button === 0 && controller.readingFrame() !== null && event.target instanceof HTMLTextAreaElement) void controller.focusRoot();}}
+      onFocusCapture={focus} onBlurCapture={blur}>
+      <BoundPageTitleEditor header={inline ? undefined : true} pageRef={controller.rootRef} document={root} history={history} label="page title" placeholder={field.placeholder}
+        readingFrame={readingFrame} onEnter={() => controller.focusFirst()} onEditorReady={ready} onSelectionChange={selectionChanged}/>
     </div></RootAttachment>} satisfies PaneHeaderEditor};
+  }
   const saved = readBody(root.doc).body_pm_json;
   const body = noteBodySchema.nodeFromJSON(saved);
   const text = bodyDisplayText(saved);
@@ -135,7 +153,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
   body.descendants(node => {if (node.type.name === "image" || node.type.name === "resource_embed") omitted = true;});
   const title = blank ? body.content.size ? "note" : "empty note" : line;
   const preview = title + (omitted || line.length < text.length ? "…" : "");
-  return {rootTitle: title, rootReady: handle !== null, rootEditor: {kind: "Expandable", feedback: null, regionId, expanded,
+  return {showTitle: reveal, rootTitle: title, rootReady: handle !== null, rootEditor: {kind: "Expandable", feedback: null, regionId, expanded,
     control: <button ref={disclosure} type="button" className={styles.disclosure} data-outline-session={controller.pending.root_id} aria-label={expanded ? "collapse note" : `edit note: ${title}`}
       aria-controls={regionId} aria-expanded={expanded} onClick={() => {
         if (expandedRef.current) collapse(true);

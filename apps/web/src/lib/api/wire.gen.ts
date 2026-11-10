@@ -14804,19 +14804,6 @@ export interface components {
              */
             kind: "contributor_handle";
         };
-        /** WorkspaceDailyLocator */
-        WorkspaceDailyLocator: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "daily_date";
-            /**
-             * Local Date
-             * Format: date
-             */
-            local_date: string;
-        };
         /** WorkspacePane */
         "WorkspacePane-Input": {
             current_visit: components["schemas"]["PaneVisit"];
@@ -14850,7 +14837,7 @@ export interface components {
         /** WorkspacePresentationItemOut */
         WorkspacePresentationItemOut: {
             /** Locator */
-            locator: components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"] | components["schemas"]["WorkspaceCaptureLocator"];
+            locator: components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceCaptureLocator"];
             presentation: components["schemas"]["WorkspacePresentationOut"] | null;
         };
         /** WorkspacePresentationOut */
@@ -14873,7 +14860,7 @@ export interface components {
         /** WorkspacePresentationsRequest */
         WorkspacePresentationsRequest: {
             /** Locators */
-            locators: (components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceDailyLocator"] | components["schemas"]["WorkspaceCaptureLocator"])[];
+            locators: (components["schemas"]["WorkspaceResourceLocator"] | components["schemas"]["WorkspaceContributorLocator"] | components["schemas"]["WorkspaceCaptureLocator"])[];
         };
         /** WorkspaceResourceLocator */
         WorkspaceResourceLocator: {
