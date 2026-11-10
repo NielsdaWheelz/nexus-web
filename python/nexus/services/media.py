@@ -135,7 +135,7 @@ _ROWS_SQL = f"""
         CASE WHEN native_x.media_id IS NULL THEN mcis.status_reason END AS index_reason,
         native_x.media_id IS NOT NULL AS is_x_capture_source,
         (SELECT dead.id FROM background_jobs dead
-         WHERE dead.kind = 'media_content_reindex_job' AND dead.status = 'dead'
+         WHERE dead.kind = 'media_content_reindex_job' AND dead.status IN ('dead', 'held')
            AND dead.payload @> jsonb_build_object(
                'media_id', COALESCE(part_definition.source_media_id,m.id)::text,
                'revision', mcis.revision)

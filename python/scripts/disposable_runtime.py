@@ -37,6 +37,8 @@ Fake mode owns verified HTTPS Responses SSE/WebSocket and embedding wires plus
 separate real pinned Codex hosts for the host API and Linux workers. Replies
 prove transport, never model quality, tools or structured generation. The short
 private host socket directory is recovery-recorded and removed after host drain.
+Docker's restarting state is supervised recovery, not a terminal process exit.
+Readiness and each driver's bounded checks still establish availability.
 
 Driver exit passes through; usage is 2, setup/runtime failure 125, interruption
 130/143. Cleanup failure turns success into 125. Private logs remain; secrets
@@ -553,10 +555,17 @@ def main() -> int:
             if name != "driver" and process.poll() is not None:
                 raise RuntimeError(f"owned {name} process exited ({process.returncode})")
         if container_ids:
-            running = command(
-                ["docker", "inspect", "--format", "{{.State.Running}}", *container_ids], timeout=10
+            states = command(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{or .State.Running .State.Restarting}}",
+                    *container_ids,
+                ],
+                timeout=10,
             )
-            if any(line != "true" for line in running.splitlines()):
+            if any(line != "true" for line in states.splitlines()):
                 raise RuntimeError("owned service container exited")
 
     def ready(name: str, check: Callable[[], bool]) -> None:

@@ -12,7 +12,7 @@ const SEARCH: Record<string, Line | null> = {
   pending: { fact: "preparing text search." },
   indexing: { fact: "preparing text search." },
   failed: { fact: "text search stopped." },
-  suspended: { fact: "text search stopped." },
+  suspended: { fact: "search preparation needs a repair." },
   no_text: { fact: "this copy has no searchable text." },
   ocr_required: { fact: "this copy needs text recognition before it can be searched." },
 };
@@ -25,15 +25,23 @@ export function mediaSearchLine(retrievalStatus: string | null, textSearchReady:
     // justify-defect: retrieval status is same-system data.
     throw new Error(`Unsupported media retrieval status: ${retrievalStatus}`);
   if (textSearchReady && line !== null && retrievalStatus !== "no_text" && retrievalStatus !== "ocr_required")
-    return { fact: retrievalStatus === "failed" || retrievalStatus === "suspended"
-      ? "text search is ready. related matches aren’t." : "text search is ready. related matches are still preparing." };
+    return { fact: retrievalStatus === "suspended"
+      ? "text search is ready. related matches need a repair."
+      : retrievalStatus === "failed" ? "text search is ready. related matches aren’t."
+        : "text search is ready. related matches are still preparing." };
   return line;
 }
 
 /** A stopped or failed import; null while processing runs or after it succeeded. */
 export function mediaSourceLine(processingStatus: MediaDetail["processing_status"], lastErrorCode: string | null): Line | null {
-  if (processingStatus === "suspended")
-    return { fact: "this import stopped before it finished.", reason: "automatic retries are used up." };
+  if (processingStatus === "suspended") {
+    const fact = "this import needs a repair.";
+    if (lastErrorCode === null) return { fact };
+    if (!isSafeFailureCode(lastErrorCode))
+      // justify-defect: last_error_code is same-system source state.
+      throw new Error(`Unsupported media source error code: ${lastErrorCode}`);
+    return { fact, reason: `${FAILURE_COPY[lastErrorCode].reason}.` };
+  }
   if (processingStatus !== "failed") return null;
   // A failure with no recorded code says only what the catalog says of a stopped import.
   const code = lastErrorCode ?? "E_INGEST_FAILED";

@@ -51,7 +51,7 @@ _EMBED_ATTRS = frozenset("data-nexus-document-embed-id data-nexus-document-embed
 
 _WEB_TAGS = frozenset(
     "p br strong em b i u s cite blockquote pre code ul ol li h1 h2 h3 h4 h5 h6 hr a img"
-    " table thead tbody tr th td sup sub xref"
+    " table caption thead tbody tr th td sup sub xref"
     " div span section article header footer nav aside figure figcaption".split()
 )
 _WEB_DROPPED = frozenset(
@@ -66,7 +66,7 @@ _WEB_ATTRS = {
 
 _EPUB_TAGS = frozenset(
     "p br strong em b i u s blockquote pre code ul ol li dl dt dd h1 h2 h3 h4 h5 h6 hr a"
-    " img table thead tbody tfoot tr th td sup sub xref div span section article header"
+    " img table caption thead tbody tfoot tr th td sup sub xref div span section article header"
     " footer nav aside figure figcaption main".split()
 )
 _EPUB_DROPPED = frozenset(

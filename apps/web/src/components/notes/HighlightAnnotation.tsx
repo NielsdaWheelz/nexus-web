@@ -1,12 +1,14 @@
 "use client";
 
-/** A highlight's permanent body. First writing stays in an opening clone until
- * explicit save; subsequent writing uses the ordinary durable document owner. */
-import {useCallback, useEffect, useRef, useState} from "react";
+/** Outline annotations bind their permanent body from the first keystroke.
+ * Explicit-save reader composers retain their submitted opening clone. */
+import {useCallback, useEffect, useLayoutEffect, useRef, useState} from "react";
 import * as Y from "yjs";
-import {bodyHasContent, noteBodySchema, rawBodyText, type NoteBody} from "@nexus/authored/body";
+import {bodyHasContent, emptyBody, noteBodySchema, rawBodyText, type NoteBody} from "@nexus/authored/body";
 import type {EditorHistory} from "@/lib/notes/structure";
 import type {WritingDocument} from "@/lib/notes/runtime";
+import type {OutlineAnnotationCapability} from "@/lib/notes/outlineController";
+import type {FocusSelection} from "@/lib/notes/editorTypes";
 import {bodyInline, readBody} from "@nexus/authored/documents";
 import {assertNever} from "@/lib/assertNever";
 import Button from "@/components/ui/Button";
@@ -20,17 +22,18 @@ import {applyDraftBody} from "@/lib/notes/editorBinding";
 import {useEditorDraft} from "@/lib/notes/editorHost";
 import {LocalCommitError, isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {useWorkGuard} from "@/lib/unsavedWork";
-import {getInteractionGeneration, interactionOwnedElsewhere, useInteractionOwner} from "@/lib/ui/overlay";
+import {getInteractionGeneration, interactionOwnedElsewhere, ownsOverlayFocus, useInteractionOwner} from "@/lib/ui/overlay";
 import {usePointerGesture} from "@/lib/ui/pointerGesture";
 import {createLink, prepareLink, prepareTarget, LinkInputRefusal, type LinkTarget} from "@/lib/resourceGraph/links";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
 import type {ResourceProjection} from "@nexus/authored/types";
 import BoundNoteEditor from "./BoundNoteEditor";
 import NoteEditor, {type NoteEditorHandle, type NoteInspection} from "./NoteEditor";
+import styles from "./HighlightAnnotation.module.css";
 
 type Draft = {committing: boolean; doc: Y.Doc; vector: Uint8Array; body: NoteBody; revision: number; reference: boolean; hyperlink: boolean; attachment: boolean; links: {target: LinkTarget; label: string}[]};
 const risk = (value: Draft | null) => ({changed: value !== null && (bodyHasContent(value.body) || value.reference || value.hyperlink || value.links.length > 0), unconfirmed: false, stopsBrowserWork: value?.attachment === true});
-export default function HighlightAnnotation({highlightRef, resource, rest = true, occurrenceKey, editable = true, offerBlank = true, focusRequest = null, onFocused, inspection = null, onEditorReady, mayFocus, onWorkOwners}: {
+type Props = {
   onWorkOwners?: (owners: readonly string[]) => void;
   /** The host's read of the highlight; null is read and absent, so hosts mount this only once their read has data. */
   resource: ResourceProjection | null;
@@ -38,7 +41,14 @@ export default function HighlightAnnotation({highlightRef, resource, rest = true
   rest?: boolean;
   highlightRef: string; occurrenceKey: string; editable?: boolean; offerBlank?: boolean; focusRequest?: number | null; onFocused?: () => void;
   mayFocus?: () => boolean; inspection?: NoteInspection | null; onEditorReady?: (handle: NoteEditorHandle | null) => void;
-}) {
+  /** Omission selects the explicit-save reader composer; null is a preparing outline. */
+  outline?: OutlineAnnotationCapability | null;
+  onPrepareOutline?: () => void;
+};
+export default function HighlightAnnotation(props: Props) {
+  return props.outline === undefined ? <AnnotationComposer {...props}/> : <InlineAnnotation {...props} outline={props.outline}/>;
+}
+function AnnotationComposer({highlightRef, resource, rest = true, occurrenceKey, editable = true, offerBlank = true, focusRequest = null, onFocused, inspection = null, onEditorReady, mayFocus, onWorkOwners}: Props) {
   const writing = useWritingRuntime();
   const owned = useRef<string | null>(null);
   if (resource?.authored_by_viewer && resource.kind === "highlight") owned.current = highlightRef;
@@ -216,13 +226,13 @@ export default function HighlightAnnotation({highlightRef, resource, rest = true
       verbs={[{label: "copy text", commandKey: "CopyAnnotation", copied: copied.occurrence ?? undefined, run: copyWriting}]}/> : null}
     {value ? <>
       <NoteEditor editorKey={`annotation-draft:${occurrenceKey}`} containingNoteRef={highlightRef} body={value.body} revision={value.revision} label="annotation" placeholder="write an annotation…" editable={!value.committing} history={null}
-        reference={{source_ref: highlightRef, label: "annotation", onActiveChange: reference => draft.set(current => current && {...current, reference}), onSelected: (target, item) => draft.set(current => current && {...current, reference: false, links: [...current.links, {target, label: item.label}], revision: current.revision + 1})}}
+        reference={{source_ref: highlightRef, replacement: null, label: "annotation", onActiveChange: reference => draft.set(current => current && {...current, reference}), onSelected: (target, item) => draft.set(current => current && {...current, reference: false, links: [...current.links, {target, label: item.label}], revision: current.revision + 1})}}
         onEditorReady={ready} onSave={() => queueMicrotask(save)} onEdit={edit => {const current = draft.read(); if (!current || current.committing) return; applyDraftBody(current.doc, edit.before, edit.after); draft.set({...current, body: edit.after, revision: current.revision + 1});}}
         onLinkInputActiveChange={hyperlink => draft.set(current => current && {...current, hyperlink})}
         onAttachmentActiveChange={attachment => draft.set(current => current && {...current, attachment})}/>
       <Button emphasis="strong" aria-busy={busy} disabled={!resource || busy || value.committing || value.reference || value.hyperlink || value.attachment} onClick={save}>save annotation</Button>
       <Button disabled={busy || value.committing} onClick={cancel}>cancel</Button>
-    </> : (hasBody || editing) && ownHistory ? <BoundNoteEditor noteRef={highlightRef} history={ownHistory} label="edit annotation" editable={resource !== null} onAttachmentActiveChange={attachment => input.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => input.set(value => ({...value, hyperlink}))} document={opened.document ?? undefined} onEditorReady={ready} inspection={inspection} reference={writing ? {source_ref: highlightRef, label: "annotation", onActiveChange: reference => input.set(value => ({...value, reference})), onSelected: (target, item) => link(target, item.label)} : null}/>
+    </> : (hasBody || editing) && ownHistory ? <BoundNoteEditor noteRef={highlightRef} history={ownHistory} label="edit annotation" editable={resource !== null} onAttachmentActiveChange={attachment => input.set(value => ({...value, attachment}))} onLinkInputActiveChange={hyperlink => input.set(value => ({...value, hyperlink}))} document={opened.document ?? undefined} onEditorReady={ready} inspection={inspection} reference={writing ? {source_ref: highlightRef, replacement: null, label: "annotation", onActiveChange: reference => input.set(value => ({...value, reference})), onSelected: (target, item) => link(target, item.label)} : null}/>
     : resource?.body_pm_json ? (
       // the bound editor's height at first commit, until its document opens. a click on it asks for the document,
       // and `ready` then places the caret. only a completed press counts: a touch that becomes a scroll never
@@ -234,5 +244,80 @@ export default function HighlightAnnotation({highlightRef, resource, rest = true
         <NoteEditor editorKey={`annotation-preview:${occurrenceKey}`} containingNoteRef={highlightRef} body={{body_pm_json: resource.body_pm_json, body_text: resource.body_text!}} revision={0} label="annotation" editable={false} history={null} onEdit={() => {}}/>
       </div>
     ) : editing ? null : <Button onClick={() => opened.document ? begin() : setAsked(true)}>annotate</Button>}
+  </section>;
+}
+
+function InlineAnnotation(props: Props & {outline: OutlineAnnotationCapability | null}) {
+  const {highlightRef, resource, occurrenceKey, editable = true, focusRequest = null, outline, inspection, onWorkOwners} = props;
+  const latest = useRef(props); latest.current = props;
+  const [activation, setActivation] = useState(0);
+  const owned = useRef<string | null>(null);
+  if (resource?.authored_by_viewer && resource.kind === "highlight") owned.current = highlightRef;
+  const opened = useWritingDocument(editable && owned.current === highlightRef && activation > 0 ? highlightRef : null);
+  const section = useRef<HTMLElement>(null), preview = useRef<NoteEditorHandle | null>(null), editor = useRef<NoteEditorHandle | null>(null);
+  const pendingFocus = useRef<{generation: number; token: number | null; selection: FocusSelection} | null>(null);
+  const consumed = useRef<{ref: string; token: number} | null>(null);
+  const input = useEditorDraft(`Highlight.Input:${occurrenceKey}`, () => ({reference: false, hyperlink: false, attachment: false}), value => ({changed: value.reference || value.hyperlink, unconfirmed: false, stopsBrowserWork: value.attachment}));
+  useEffect(() => {onWorkOwners?.([input.owner]);}, [onWorkOwners, input.owner]);
+  const [binding, setBinding] = useState<{document: WritingDocument; outline: OutlineAnnotationCapability; history: EditorHistory} | null>(null);
+  useLayoutEffect(() => {
+    if (!opened.document || !outline) return;
+    const history = outline.editor(opened.document);
+    if (!history) return;
+    setBinding({document: opened.document, outline, history});
+    return history.retain();
+  }, [opened.document, outline, activation]);
+  const history = binding?.document === opened.document && binding.outline === outline ? binding.history : null;
+  const activate = useCallback((token: number | null = null) => {
+    if (latest.current.editable === false) return;
+    pendingFocus.current = {generation: getInteractionGeneration(), token, selection: token === null ? preview.current?.readSelection() ?? "end" : "end"};
+    setActivation(value => value + 1);
+    latest.current.onPrepareOutline?.();
+  }, []);
+  const deliver = useCallback((handle: NoteEditorHandle) => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    pendingFocus.current = null;
+    const current = latest.current;
+    if (pending.token !== null) {
+      if (pending.token !== (current.focusRequest ?? null)) return;
+      consumed.current = {ref: current.highlightRef, token: pending.token};
+    }
+    if (pending.generation === getInteractionGeneration() && (current.mayFocus?.() ?? true)) handle.focus(pending.selection);
+    if (pending.token !== null) current.onFocused?.();
+  }, []);
+  const ready = useCallback((handle: NoteEditorHandle | null) => {
+    editor.current = handle;
+    latest.current.outline?.attach(handle ? {handle, visible: true,
+      ownsFocus: () => section.current !== null && (section.current.contains(document.activeElement) || ownsOverlayFocus(section.current, document.activeElement)),
+      reveal: () => activate()} : null);
+    latest.current.onEditorReady?.(handle);
+    if (handle) deliver(handle);
+  }, [activate, deliver]);
+  const previewReady = useCallback((handle: NoteEditorHandle | null) => {preview.current = handle;}, []);
+  useEffect(() => {
+    if (focusRequest === null || consumed.current?.ref === highlightRef && consumed.current.token === focusRequest) return;
+    activate(focusRequest);
+    if (editor.current) deliver(editor.current);
+  }, [focusRequest, highlightRef, activate, deliver]);
+  const body = resource?.body_pm_json ? {body_pm_json: resource.body_pm_json, body_text: resource.body_text!} : emptyBody();
+  if ((!resource?.authored_by_viewer || resource.kind !== "highlight") && owned.current !== highlightRef) return null;
+  if (!editable && !bodyHasContent(body)) return null;
+  return <section ref={section} className={styles.inline} aria-label="annotation" data-highlight-annotation={highlightRef} onBlur={() => outline?.blur()}>
+    <AuthoredReadFailure error={opened.error} pending={opened.pending} retry={opened.retry} noun="this annotation"/>
+    {opened.document && history ? <BoundNoteEditor noteRef={highlightRef} document={opened.document} history={history} label="annotation" editable={editable && resource !== null}
+      inspection={inspection} onEditorReady={ready} onSelectionChange={outline?.selection}
+      onSplit={displayed => {void outline?.split(opened.document!, displayed);}}
+      onAttachmentActiveChange={attachment => input.set(value => ({...value, attachment}))}
+      onLinkInputActiveChange={hyperlink => input.set(value => ({...value, hyperlink}))}
+      reference={outline ? {source_ref: highlightRef, replacement: null, label: "annotation",
+        onActiveChange: reference => input.set(value => ({...value, reference})), onSelected: (target, item) => outline.link(target, item.label)} : null}/>
+      : <div className={styles.target} tabIndex={editable ? 0 : undefined} onFocus={event => {
+        if (editable && event.target === event.currentTarget && event.currentTarget.matches(":focus-visible")) activate();
+      }} onClick={event => {
+        if (!editable || event.target instanceof Element && event.target.closest("a[href], button") || window.getSelection()?.isCollapsed === false) return;
+        activate();
+      }}><NoteEditor editorKey={`annotation-preview:${occurrenceKey}`} containingNoteRef={highlightRef} body={body} revision={0}
+        label="annotation" editable={false} history={null} onEdit={() => {}} onEditorReady={previewReady}/></div>}
   </section>;
 }

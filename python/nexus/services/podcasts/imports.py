@@ -19,16 +19,17 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from nexus.schemas import podcast as wire
-
+    from nexus.services import media_locks
+from nexus.schemas import podcast as wire
 
 _ROW_SQL = """
     SELECT l.name AS library_name,l.is_default AS library_is_default,i.id,i.library_id,i.run_id,i.added_count,i.already_present_count,i.created_at,
            p.title AS podcast_title,r.podcast_id,r.attempt_version,r.updated_at,r.started_at,r.completed_at,
-           r.failed_at,r.cancelled_at,r.error_code,r.error_detail,
+           r.failed_at,r.cancelled_at,r.error_code,r.error_detail,j.status AS job_status,
            (SELECT s.id FROM library_podcast_subscriptions s
             WHERE s.initial_import_id=i.id) AS subscription_id
     FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id = i.run_id
+    LEFT JOIN background_jobs j ON j.id=r.job_id
     JOIN podcasts p ON p.id=r.podcast_id
     JOIN libraries l ON l.id=i.library_id
 """
@@ -64,6 +65,8 @@ def import_from_row(
         run_id=row["run_id"],
         subscription_id=row["subscription_id"],
         state=state,
+        work_in_flight=state in ("pending", "running")
+        and row["job_status"] in ("pending", "failed", "running"),
         attempt_version=row["attempt_version"],
         added_count=row["added_count"],
         already_present_count=row["already_present_count"],
@@ -174,7 +177,7 @@ def publish_episodes(
         )
     )
     media = sorted(set(media_ids) | set(new_media_ids))
-    held_media = library_entries.lock_media_rows_in_order(db, media)
+    held_media = media_locks.lock_media_rows_in_order(db, media)
     held_media = list(
         db.scalars(
             text("""

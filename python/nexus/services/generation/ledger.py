@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from nexus.db.models import LLMCall
-from nexus.jobs.queue import JobRow
+from nexus.jobs.queue import JobExecutionContext, JobFailure, lock_running_job_claim
 from nexus.services.generation.contract import (
     Cancelled,
     Failed,
@@ -46,6 +46,8 @@ def open_generation(db: Session, owner: Owner, spec: GenerationSpec) -> Generati
     """Stage the open row at the owner's next position."""
 
     lock_generation_owner(db, kind=owner.kind, id=owner.id)
+    if lock_running_job_claim(db, context=owner.job) is None:
+        raise JobFailure("E_WORKER_INTERRUPTED", "The generation no longer owns its job.", "retry")
     seq = db.scalar(
         select(func.coalesce(func.max(LLMCall.generation_seq), 0) + 1).where(
             LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id
@@ -91,22 +93,45 @@ def close_generation(
     _settle_running_tools(db, closed, cancelled=isinstance(terminal, Cancelled))
 
 
-def interrupt_job_generations(db: Session, *, job_id: UUID, detail: str) -> None:
-    """Close every open row of one job: the attempt that opened it is gone."""
+def lock_job_generations(db: Session, *, job_id: UUID) -> list[UUID]:
+    """Lock a stopped job's open rows before any domain or queue settlement lock."""
+    return list(
+        db.scalars(
+            select(LLMCall.id)
+            .where(LLMCall.job_id == job_id, LLMCall.outcome.is_(None))
+            .order_by(LLMCall.id)
+            .with_for_update()
+        )
+    )
 
-    closed = db.scalars(
-        text("""
-            UPDATE llm_calls SET outcome = 'Failed', failure_code = 'interrupted',
-                completed_at = now(),
-                terminal = jsonb_build_object('kind', 'Failed', 'failure_code', 'interrupted',
-                    'detail', CAST(:detail AS text),
-                    'route', generation_spec #>> '{selection,route}', 'evidence', '{}'::jsonb)
-            WHERE job_id = :job_id AND outcome IS NULL
-            RETURNING id
-        """),
-        {"job_id": job_id, "detail": detail},
-    ).all()
-    _settle_running_tools(db, closed, cancelled=False)
+
+def interrupt_locked_generations(db: Session, ids: Collection[UUID], *, detail: str) -> None:
+    """Close exactly the rows the caller locked; never acquire a generation after a job."""
+    if not ids:
+        return
+    db.execute(
+        text("""UPDATE llm_calls SET outcome='Failed', failure_code='interrupted',
+            completed_at=now(), terminal=jsonb_build_object('kind','Failed',
+                'failure_code','interrupted','detail',CAST(:detail AS text),
+                'route',generation_spec #>> '{selection,route}','evidence','{}'::jsonb)
+            WHERE id=ANY(:ids) AND outcome IS NULL"""),
+        {"ids": list(ids), "detail": detail},
+    )
+    _settle_running_tools(db, ids, cancelled=False)
+
+
+def interrupt_job_generations(db: Session, *, job_id: UUID, detail: str) -> None:
+    """Owner revocation: lock generations before domain and queue rows."""
+    interrupt_locked_generations(db, lock_job_generations(db, job_id=job_id), detail=detail)
+
+
+def recover_job_generations(db: Session, *, context: JobExecutionContext) -> bool:
+    """The replacement attempt closes stale audit rows only under its exact live claim."""
+    ids = lock_job_generations(db, job_id=context.job_id)
+    if lock_running_job_claim(db, context=context) is None:
+        return False
+    interrupt_locked_generations(db, ids, detail="a later attempt of its job started")
+    return True
 
 
 def _settle_running_tools(
@@ -122,11 +147,6 @@ def _settle_running_tools(
         ),
         {"ids": list(generation_ids), "status": "cancelled" if cancelled else "error"},
     )
-
-
-def on_dead_letter(db: Session, job: JobRow) -> None:
-    """A dead job's open generation closes; its domain row stays (a rerun starts afresh)."""
-    interrupt_job_generations(db, job_id=job.id, detail="its job died")
 
 
 def generation_exists(db: Session, *, kind: OwnerKind, id: UUID) -> bool:

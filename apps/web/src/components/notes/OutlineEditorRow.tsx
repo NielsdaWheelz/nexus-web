@@ -3,7 +3,6 @@
 /** React owns native controls and passive reference bodies in stable node-view
  * slots. Editable prose remains ProseMirror's contentDOM. */
 import HighlightAnnotation from "./HighlightAnnotation";
-import type {TextEditorHandle} from "./NoteEditor";
 import {createPortal} from "react-dom";
 import {useRef, type MouseEvent as ReactMouseEvent} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
@@ -19,7 +18,7 @@ import {catalogMedia} from "@/lib/catalog/selectors";
 import {catalogLine} from "@/lib/catalog/copy";
 import {useActionFocusRecovery} from "@/lib/ui/useActionFocusRecovery";
 import * as Icon from "@/lib/ui/icons";
-import type {BranchRead} from "@/lib/notes/outlineController";
+import type {BranchRead, OutlineAnnotationCapability} from "@/lib/notes/outlineController";
 import AuthoredReadFailure from "./AuthoredReadFailure";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import {ResourceTypeIcon} from "@/components/resources/ResourceType";
@@ -71,7 +70,7 @@ export interface OutlineRowChrome {
   /** visible links on the row's resource; 1 when unknown. */
   mirrors: number;
   workOwners(owners: readonly string[]): void;
-  editorReady(editor: TextEditorHandle | null): void;
+  annotation: OutlineAnnotationCapability | null;
   toggle(): void;
   select(): void;
   /** extends the standing item selection to this row; null while nothing is selected. */
@@ -80,7 +79,7 @@ export interface OutlineRowChrome {
   reveal(): void;
 }
 /** `openMenu` is the bullet menu's opener while the bullet is mounted; a touch hold released in place calls it. */
-export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTMLElement; disclose: HTMLElement; trailing: HTMLElement; content: HTMLElement; input: TextEditorHandle | null; openMenu: (() => void) | null}
+export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTMLElement; disclose: HTMLElement; trailing: HTMLElement; content: HTMLElement; presentation: HTMLElement; annotation: HTMLElement; openMenu: (() => void) | null}
 
 export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
   const runtime = usePaneRuntime();
@@ -132,8 +131,8 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
     </>;
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(<>
-        {row.resource?.kind === "highlight" ? <div contentEditable={false}><FullResourceBody item={authoredItem(row.resource, null, row.href)} /><HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={!row.terminal} onWorkOwners={row.workOwners} onEditorReady={row.editorReady}/></div> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.label}
+        {row.resource?.kind === "highlight" ? <FullResourceBody item={authoredItem(row.resource, null, row.href)}/> : row.resource?.excerpt ? <FullResourceBody item={authoredItem(row.resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
         {scheme === "media" ? <EpisodeBibliography mediaId={parsed!.id} returnFocus={() => mount.leading.querySelector<HTMLElement>("[data-row-focusable]")}/> : null}
-      </>, mount.content, `${row.row_id}:content`)] : [])];
+      </>, mount.presentation, `${row.row_id}:content`), ...(row.resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={row.resource.ref} resource={row.resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
   });
 }

@@ -47,7 +47,7 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
   }, [document]);
   const wordsAtRisk = useWordsAtRisk([document.ref]);
   if(!history && own?.document!==document)return null;
-  return <NoteEditor wordsAtRisk={wordsAtRisk} embedding={embedding} header={header} placeholder="write or @ to link" focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
+  return <NoteEditor wordsAtRisk={wordsAtRisk} embedding={embedding} header={header} focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable}
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}
     keys={{ ...structuralKeys, ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoin ? { join: direction => onJoin(direction,document.capture()) } : {}) }}

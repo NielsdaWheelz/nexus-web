@@ -3,8 +3,8 @@
 ``generate`` takes an owner, an operation, an intent and a decode, writes one
 ``llm_calls`` row, and returns ``Succeeded | Failed | Cancelled``. Expected
 failures are values with one code from ``FailureCode``, with one exception: a
-background generation that never reached its model raises ``RouteUnavailable``
-while its job has attempts left, so the queue retries it. Nothing here survives a
+classified retry/repair disposition raises ``JobFailure`` before an owner can
+settle it as a permanent domain failure. Nothing here survives a
 process: a dead worker's open row is closed ``interrupted`` by whoever comes next.
 """
 
@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.llm import GenerationSelection, SelectionPresentation
 
 if TYPE_CHECKING:
@@ -57,6 +57,8 @@ type FailureCode = Literal[
     "runtime_unavailable",
     "interrupted",
     "defect",
+    "invalid_configuration",
+    "uncertain_effect",
 ]
 
 _MAX_INSTRUCTIONS_BYTES = 32 * 1024
@@ -207,13 +209,6 @@ class InvalidOutput(ValueError):
     """The one exception a decode may raise: the output broke its contract."""
 
 
-class RouteUnavailable(ApiError):
-    """A background generation never reached its model; its job retries with backoff."""
-
-    def __init__(self, detail: str) -> None:
-        super().__init__(ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE, detail)
-
-
 @dataclass(frozen=True, slots=True)
 class Succeeded[T]:
     generation_id: UUID
@@ -266,3 +261,4 @@ class RouteResult:
     detail: str
     evidence: dict[str, JsonValue]
     sent: bool = True
+    retry_at: datetime | None = None

@@ -29,6 +29,7 @@ from nexus.services.media import media_summaries
 from nexus.services.reader_excerpts import plain_excerpt
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.capabilities import capability
+from nexus.services.resource_items.evidence import canonical_source_quote
 from nexus.services.resource_items.items import source_attributions
 from nexus.services.resource_items.locations import (
     MediaPassageContext,
@@ -54,6 +55,7 @@ SCHEMES = {
     "episode": "media",
     "video": "media",
     "web_result": "external_snapshot",
+    "highlight_annotation": "highlight",
 }
 
 
@@ -248,8 +250,6 @@ def project(
     source_metadata = source_attributions(
         db, viewer_id=viewer_id, refs=list({owner for *_, owner in placed})
     )
-    from nexus.services.source_excerpt import SourceExcerptRequest, source_excerpts
-
     authored_refs = [
         ref
         for row, _, locator, ref, _ in placed
@@ -267,30 +267,6 @@ def project(
             if ref in authored_refs and row.get("reading_media_id") is not None
         },
     )
-    rich_subjects = [
-        (index, row, locator, ref, owner)
-        for index, (row, _, locator, ref, owner) in enumerate(placed)
-        if ref.scheme not in ("highlight", "passage_anchor")
-        and locator is not None
-        and locator["type"] in ("web_text_offsets", "epub_fragment_offsets", "x_capture_offsets")
-    ]
-    rich = source_excerpts(
-        db,
-        [
-            SourceExcerptRequest(
-                reading_id=owner.id
-                if locator["type"] == "x_capture_offsets"
-                else UUID(str(row.get("reading_media_id") or owner.id)),
-                fragment_id=UUID(str(locator["fragment_id"])),
-                start=locator["start_offset"],
-                end=locator["end_offset"],
-            )
-            for _, row, locator, _, owner in rich_subjects
-        ],
-    )
-    rich_by_ref = {
-        ref.uri: excerpt for (_, _, _, ref, _), excerpt in zip(rich_subjects, rich, strict=True)
-    }
     results = []
     for row, score, locator, ref, owner in placed:
         t = row["type"]
@@ -381,8 +357,16 @@ def project(
         )
         if quote is not None and field is None and ref.uri in authored:
             quote = captured_quote(authored[ref.uri])
-        elif quote is not None and ref.uri in rich_by_ref:
-            quote = quote.model_copy(update={"excerpt": rich_by_ref[ref.uri]})
+        if (
+            quote is not None
+            and locator is not None
+            and ref.scheme not in ("highlight", "passage_anchor")
+        ):
+            canonical = canonical_source_quote(quote, locator)
+            if canonical is None:
+                continue
+            quote, locator = canonical
+            values["locator"] = locator
         precision = (
             "approximate"
             if locator and locator.get("projection") == "proportional_text_offsets"
@@ -430,3 +414,29 @@ def project(
         model = RESULT_MODELS[t]
         results.append(model(**{k: v for k, v in values.items() if k in model.model_fields}))
     return cast("list[SearchResultOut]", results)
+
+
+def capture_project(
+    db: Session,
+    viewer_id: UUID,
+    hits: Sequence[Hit],
+    terms: str,
+    *,
+    evidence_span_ids: Sequence[UUID] | None = None,
+) -> list[SearchResultOut]:
+    """Freeze native presentation inside the canonical projection's read snapshot."""
+    from nexus.services.resource_items.evidence import capture_source_excerpts
+
+    results = project(db, viewer_id, hits, terms, evidence_span_ids=evidence_span_ids)
+    captures = capture_source_excerpts(
+        db,
+        [result.captured_evidence for result in results],
+        retained=[
+            result.type == "highlight" or result.resource_ref.startswith("passage_anchor:")
+            for result in results
+        ],
+    )
+    return [
+        result.model_copy(update={"captured_evidence": evidence})
+        for result, evidence in zip(results, captures, strict=True)
+    ]

@@ -303,16 +303,20 @@ acknowledged state changes publish `Podcasts` and `Consumption`; acknowledged
 transcript batches publish `PodcastEpisodes` and invalidate imports. unknown
 outcomes, conflicts and inspection invalidate reads without announcing a commit.
 episode lists and retained summaries observe `PodcastEpisodes`. a presented foreground
-pane polls queued/running transcripts every 10 seconds; each changed current id/transcript-state
+pane polls queued/running transcripts every 10 seconds unless their canonical media summary is suspended; each changed current id/transcript-state
 signature invalidates retained summaries after that observation. stale in-flight
 summary replies are discarded. unchanged observations end the refresh chain;
 one complete episode response owns show detail and episodes under the same
 repeatable-read snapshot. one presented foreground observation lane rereads that
-aggregate every 10 seconds while work or transcript provisioning runs, 30 seconds
+aggregate every 10 seconds while a feed's `work_in_flight` or transcript provisioning runs, 30 seconds
 while followed and idle, otherwise off. hiding retires optional reads/retries;
 return revalidates retained state. refresh transfers the complete index.
 publication notifications compare accepted observations within one account/query;
 there is no head-to-episode fingerprint reconciliation.
+
+`PodcastImportOut.work_in_flight` and `PodcastRecurringOut.work_in_flight` describe
+the exact feed run's pending, retryable failed or running queue job. held jobs
+keep their truthful pending/running domain state but do not accelerate reads.
 
 The subscription `filter`/`library_id`/`sort` and episode `state`/`sort` view
 is URL-owned (defaults omitted) and sent to the API as given, defaults included;
@@ -402,7 +406,7 @@ exactness guard, not vestigial. A video's request imports its YouTube captions.
 
 the episode's transcript admission area displays only `transcribe` before admission,
 then truthful queued, running, failed or unavailable states. its mounted processing
-stream owns updates.
+observation owns updates.
 readable full/partial text mounts the shared reader and tools; failed document reads
 remain reader retries. available publisher notes occupy one expanded `show notes`
 section before transcript content, including document loading and failure. absent notes

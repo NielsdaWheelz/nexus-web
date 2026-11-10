@@ -9,10 +9,10 @@ from tempfile import TemporaryFile
 from typing import Literal
 from urllib.parse import unquote, urlparse
 
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.services.file_ingest_validation import CONTENT_TYPES, has_valid_file_signature
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream, source_fetch_error
-from nexus.storage.client import StorageClient, StorageError
+from nexus.storage.client import StorageClient
 
 type RemoteFileKind = Literal["pdf", "epub"]
 
@@ -89,10 +89,7 @@ def fetch_remote_file(
                 ApiErrorCode.E_INVALID_FILE_TYPE, "Remote URL did not return a non-empty file."
             )
         spool.seek(0)
-        try:
-            storage.put_object(storage_path, spool, content_type)
-        except StorageError as exc:
-            raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to store remote file.") from exc
+        storage.put_object(storage_path, spool, content_type)
     return RemoteFile(
         content_type=content_type,
         size_bytes=size,

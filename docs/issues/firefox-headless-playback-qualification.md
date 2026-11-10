@@ -18,4 +18,4 @@ stock-firefox playback through a real trusted visibility transition, or by
 establishing the exact headless platform limitation. preserve production playback
 and certificate policy; do not infer ordinary firefox playback failure from this
 headless timeout. private diagnostics remain under
-`/Users/nnandal/Documents/code/nexus-finite-observation/.nexus-local/lab/20261109-143538-0d60c6ef7ef3/`.
+`/Users/nnandal/.local/state/nexus-task-archives/finite-observation-20261109/private/lab/20261109-143538-0d60c6ef7ef3/`.

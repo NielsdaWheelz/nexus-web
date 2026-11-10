@@ -24,9 +24,9 @@ export const outlineEditorSchema = new Schema({
       toDOM: node => ["div", {"data-outline-row": node.attrs.row_id, "data-outline-kind": "title", "data-depth": node.attrs.depth}, 0],
     },
     reference_row: {
-      atom: true, selectable: true,
-      attrs: {row_id: {}, depth: {default: 0}},
-      toDOM: node => ["div", {"data-outline-row": node.attrs.row_id, "data-outline-kind": "reference", "data-depth": node.attrs.depth, contenteditable: "false"}],
+      content: "inline*", marks: "", whitespace: "pre", isolating: true,
+      attrs: {row_id: {}, depth: {default: 0}, token_active: {default: false}},
+      toDOM: node => ["div", {"data-outline-row": node.attrs.row_id, "data-outline-kind": "reference", "data-depth": node.attrs.depth, contenteditable: String(node.attrs.token_active)}, 0],
     },
   }),
   marks: noteBodySchema.spec.marks,
@@ -34,15 +34,15 @@ export const outlineEditorSchema = new Schema({
 
 export interface OutlineField {
   row_id: string;
-  kind: "body" | "title";
+  kind: "body" | "title" | "reference";
   /** Global positions of the inline content, excluding its wrapping node. */
   from: number;
   to: number;
   node: PMNode;
 }
 
-/** At a row boundary association chooses the preceding or following row. A
- * read-only reference is a barrier; this never searches past it for text. */
+/** At a row boundary association chooses the preceding or following row.
+ * References remain ephemeral fields, independent of authored body binding. */
 export function fieldAt(doc: PMNode, position: number, assoc: -1 | 1 = 1): OutlineField | null {
   if (position < 0 || position > doc.content.size) return null;
   let field: OutlineField | null = null;
@@ -52,8 +52,8 @@ export function fieldAt(doc: PMNode, position: number, assoc: -1 | 1 = 1): Outli
     if (row.type.name === "note_row") {
       const body = row.firstChild!;
       field = {row_id: row.attrs.row_id, kind: "body", from: at + 2, to: at + 2 + body.content.size, node: body};
-    } else if (row.type.name === "title_row") {
-      field = {row_id: row.attrs.row_id, kind: "title", from: at + 1, to: at + 1 + row.content.size, node: row};
+    } else if (row.type.name === "title_row" || row.type.name === "reference_row") {
+      field = {row_id: row.attrs.row_id, kind: row.type.name === "title_row" ? "title" : "reference", from: at + 1, to: at + 1 + row.content.size, node: row};
     }
   });
   return field;
@@ -95,6 +95,7 @@ export function routeInlineStep(before: PMNode, step: Transaction["steps"][numbe
   const field = fieldAt(before, json.from, 1), end = fieldAt(before, json.to, json.to === json.from ? 1 : -1);
   if (!field || !end || field.row_id !== end.row_id || json.from < field.from || json.to > field.to)
     return {kind: "refused", reason: "text editing must stay within one field"};
+  if (field.kind === "reference") return {kind: "refused", reason: "reference queries are not authored writing"};
   const from = json.from - field.from, to = json.to - field.from;
   if (json.stepType === "replace") {
     const slice = Slice.fromJSON(outlineEditorSchema, json.slice);

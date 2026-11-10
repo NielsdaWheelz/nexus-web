@@ -105,7 +105,7 @@ export default function OutlineDrag({controller, children}: {controller: Outline
     const row = id ? controller.rows.get(id) : undefined, mount = id ? controller.mounts.get(id) : undefined;
     const port = root.current?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]');
     // only the row's own bullet in its leading slot lifts it; an embed's bullet inside the row's text does not.
-    if (held.current || active.current || !bullet || !id || !row || !mount || !mount.leading.contains(bullet) || row.gap || row.tail || !port || !visible() ||
+    if (held.current || active.current || !bullet || !id || !row || !mount || !mount.leading.contains(bullet) || row.gap || row.seed || !port || !visible() ||
       event.defaultPrevented || !event.isPrimary || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey ||
       (event.pointerType !== "mouse" && event.pointerType !== "touch") || !controller.canArrange()) return null;
     held.current = {row_id: id, bullet, ...liftedRows(controller, id), pointerId: event.pointerId, pointerType: event.pointerType, port, epoch: controller.epoch, invalidated: false};
@@ -135,7 +135,7 @@ export default function OutlineDrag({controller, children}: {controller: Outline
       const dom = controller.mounts.get(row.row_id)?.dom; if (!dom) return null;
       const box = dom.getBoundingClientRect();
       if (session.lifted.has(row.row_id)) {if (at.y >= box.top && at.y < box.bottom) return null; continue;}
-      if (row.tail || row.gap) continue;
+      if (row.seed || row.gap) continue;
       if (at.y < box.top + box.height / 2) {below = {row, box}; break;}
       above = {row, box};
     }
@@ -158,7 +158,7 @@ export default function OutlineDrag({controller, children}: {controller: Outline
       let preceding: string | null = null;
       for (const row of controller.rows.values()) {
         if (row.row_id === session.roots[0]) break;
-        if (row.parent_id === parent_id && !row.tail && !row.gap && !session.lifted.has(row.row_id)) preceding = row.row_id;
+        if (row.parent_id === parent_id && !row.seed && !row.gap && !session.lifted.has(row.row_id)) preceding = row.row_id;
       }
       if (after_id === preceding) return null;
     }

@@ -66,7 +66,7 @@ from nexus.schemas.media_parts import (
     SourceContentsOut,
 )
 from nexus.schemas.reader import NavigationTextPointOut, NavigationTextRangeOut
-from nexus.services import library_entries, users
+from nexus.services import library_entries, media_locks, users
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.reader_structure import DocumentPoint, DomCut, NavigationProof
 from nexus.services.reader_text_slice import (
@@ -173,7 +173,7 @@ def part_source_block_reason(
 
 def lock_source_parts(db: Session, source_id: UUID) -> MediaPartSet:
     library_entries.lock_media_for_reference(db, source_id)
-    family = library_entries.media_family_ids(db, [source_id])
+    family = media_locks.media_family_ids(db, [source_id])
     db.execute(
         select(ReaderPublication)
         .where(ReaderPublication.media_id.in_(family))
@@ -579,7 +579,7 @@ def create_part(
     db: Session, *, viewer_id: UUID, source_media_id: UUID, request: PartCreate
 ) -> PartReceipt:
     def create() -> PartReceipt:
-        library_entries.lock_media_rows_in_order(db, [source_media_id])
+        media_locks.lock_media_rows_in_order(db, [source_media_id])
         existing = db.get(Media, request.id)
         if existing is not None:
             part = db.get(MediaPart, request.id)
@@ -624,7 +624,7 @@ def update_part(
     db: Session, *, viewer_id: UUID, media_id: UUID, request: PartUpdate
 ) -> PartReceipt:
     def update() -> PartReceipt:
-        library_entries.lock_media_rows_in_order(db, [media_id])
+        media_locks.lock_media_rows_in_order(db, [media_id])
         if not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
         media = db.get(Media, media_id)
@@ -710,7 +710,7 @@ def decide_candidate(
 ) -> CandidateReceipt:
     def decide() -> CandidateReceipt:
         users.lock_viewer(db, viewer_id)
-        library_entries.lock_media_rows_in_order(db, [source_media_id])
+        media_locks.lock_media_rows_in_order(db, [source_media_id])
         source = _source(db, viewer_id, source_media_id, creator=True)
         part_set = lock_source_parts(db, source_media_id)
         candidate = db.scalar(

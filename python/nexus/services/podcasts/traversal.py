@@ -22,6 +22,7 @@ from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobResult,
+    TerminalJobFailure,
     enqueue_unique_job,
     lock_running_job_claim,
 )
@@ -29,7 +30,7 @@ from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 
 from . import imports, sync
-from .feed import BlockedFeedPage, fetch_page, is_safe_url
+from .feed import BlockedFeedPage, FeedPageRejected, fetch_page, is_safe_url
 from .ingest import aliases_of, ingest_episodes, lock_aliases
 
 JOB_KIND = "podcast_feed_page"
@@ -101,10 +102,8 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
     run_id = UUID(str(payload["run_id"]))
     attempt, step = int(payload["expected_attempt_version"]), int(payload["expected_step_no"])
     with transaction(db):
-        if lock_running_job_claim(db, context=context) is None:
-            return {"status": "Stale"}
         head = _lock_run(db, run_id=run_id, attempt=attempt, step=step, job_id=context.job_id)
-        if head is None:
+        if head is None or lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         assert head["pending_urls"]
         db.execute(
@@ -114,7 +113,14 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
         """),
             {"id": run_id},
         )
-    page = fetch_page(head["pending_urls"][0])
+    try:
+        page = fetch_page(head["pending_urls"][0])
+    except FeedPageRejected as rejection:
+        return TerminalJobFailure(
+            result_payload={"status": "Rejected"},
+            error_code=rejection.code.value,
+            error_message=rejection.message,
+        )
     aliases = (
         []
         if isinstance(page, BlockedFeedPage)
@@ -122,11 +128,9 @@ def run_step(db: Session, payload: Mapping[str, Any], *, context: JobExecutionCo
     )
 
     def publish() -> JobResult:
-        if lock_running_job_claim(db, context=context) is None:
-            return {"status": "Stale"}
         lock_aliases(db, f"{head['provider']}:{head['provider_podcast_id']}", aliases)
         row = _lock_run(db, run_id=run_id, attempt=attempt, step=step, job_id=context.job_id)
-        if row is None:
+        if row is None or lock_running_job_claim(db, context=context) is None:
             return {"status": "Stale"}
         visited = [*row["visited_urls"], normalize_url_for_display(page.requested_url)]
         pending = list(row["pending_urls"][1:])

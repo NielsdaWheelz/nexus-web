@@ -72,6 +72,9 @@ def enqueue_authored_text_reindex(
         "revision": revision,
         "reason": reason,
     }
+    for obsolete in jobs:
+        if obsolete.status == "held":
+            queue.supersede_unclaimed_job(db, job_id=obsolete.id, kind=JOB_KIND)
     waiting = [job for job in jobs if job.status in ("pending", "failed")]
     for obsolete in waiting[1:]:
         queue.supersede_unclaimed_job(db, job_id=obsolete.id, kind=JOB_KIND)
@@ -180,6 +183,7 @@ def run_authored_text_reindex_job(
                         chunks=read_spool(chunks_spool),
                         reason=reason,
                     )
+                    queue.record_job_checkpoint(db, context=context)
                     if published.status != "indexing":
                         completion_effects(db, snapshot[0].user_id)
                     else:
@@ -205,12 +209,13 @@ def run_authored_text_reindex_job(
             if not index_phase("snapshot_note_chunks", snapshot_chunks):
                 return result | {"status": "superseded"}
             spool_embeddings(chunks_spool, embedding_spool)
-        except CredentialMissing:
-            return queue.TerminalJobFailure(
+        except CredentialMissing as error:
+            raise queue.JobFailure(
+                ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
+                "No embedding provider credential is configured.",
+                "hold",
                 result_payload=result | {"status": "embedding_not_configured"},
-                error_code=ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
-                error_message="No embedding provider credential is configured.",
-            )
+            ) from error
         except EnvelopeExceeded:
             return queue.TerminalJobFailure(
                 result_payload=result | {"status": "too_large"},

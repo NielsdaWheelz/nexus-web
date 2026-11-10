@@ -114,6 +114,7 @@ type ScanState = {
   operation: { command: ScanCommand } | null;
   held: { kind: "Unsure" | "Waiting"; attempt: number } | null;
   deadline: number;
+  repairRequired: boolean;
   defect: { error: unknown } | null;
 };
 
@@ -131,7 +132,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   const workspace = useLatestWorkspace();
   const owned = () => !account.aborted && workspace().state.panes.some(pane => [pane.current_visit, ...pane.history.back, ...pane.history.forward]
     .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
-  const owner = useResourceDraft<ScanState>(`Connections.Scan:${selfRef}`, () => ({ phase: "idle", operation: null, held: null, deadline: 0, defect: null }),
+  const owner = useResourceDraft<ScanState>(`Connections.Scan:${selfRef}`, () => ({ phase: "idle", operation: null, held: null, deadline: 0, repairRequired: false, defect: null }),
     value => ({ changed: false, unconfirmed: value.operation?.command === "StartScan" || value.held?.kind === "Unsure", stopsBrowserWork: false }));
   const observing = useObservationDemand(usePaneIsPresented() && enabled);
   const observation = useRef({ observing, generation: 0 });
@@ -139,13 +140,14 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     observation.current = { observing, generation: observation.current.generation + 1 };
   const mounted = useRef(false);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const { phase, held } = owner.value;
+  const { phase, held, repairRequired } = owner.value;
   const hold = (kind: "Unsure" | "Waiting") => owner.set(current => ({ ...current, phase: "idle", operation: null,
     held: { kind, attempt: current.held?.kind === kind ? current.held.attempt + 1 : 0 } }));
   const controls = useRef({ start: false, check: false });
   const verb = (command: ScanCommand): CommandVerb => ({
     label: command === "StartScan" ? "retry" : "check", commandKey: `Connections.Scan:${selfRef}:${command}`,
     run: () => void begin(command), busy: phase !== "idle",
+    disabledReason: command === "StartScan" && repairRequired ? "scan needs a repair" : undefined,
   });
   const start = verb("StartScan");
   const check = verb("ScanStatus");
@@ -160,8 +162,9 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   const settle = (state: DiscoveryScanStatus) => {
     if (state.status === "pending" || state.status === "running") return false;
     const unsure = owner.read().held?.kind === "Unsure";
-    owner.set(current => ({ ...current, phase: "idle", operation: null, held: unsure ? current.held : null }));
-    if (!unsure && mounted.current) {
+    owner.set(current => ({ ...current, phase: "idle", operation: null,
+      held: unsure ? current.held : null, repairRequired: state.status === "held" }));
+    if (state.status !== "held" && !unsure && mounted.current) {
       if (state.status === "failed" || state.outcome === "terminal_failed") say({ fact: "the scan didn’t finish." }, [verb("StartScan")]);
       else if (state.outcome === "skipped") say({ fact: "the scan ended without changes." });
       else if (state.outcome === null) say({ fact: "no scan result is available." });
@@ -188,7 +191,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
       if (!current()) return;
       if (command === "StartScan") owner.set(value => ({ ...value, held: null }));
       if (settle(state)) return;
-      owner.set(value => ({ ...value, operation: null, phase: "polling", deadline: Date.now() + DISCOVERY_SCAN_TIMEOUT_MS }));
+      owner.set(value => ({ ...value, repairRequired: false, operation: null, phase: "polling", deadline: Date.now() + DISCOVERY_SCAN_TIMEOUT_MS }));
     } catch (error) { if (current()) failed(error, command); }
   }
   // An auxiliary read resumes only an active job; old outcomes are no news and cannot answer a
@@ -198,8 +201,17 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     let cancelled = false;
     const snapshot = owner.read();
     void fetchDiscoveryScanStatus(selfRef).then(state => {
-      if (cancelled || !owned() || owner.read() !== snapshot || state.status === "idle" || state.status === "failed") return;
-      owner.set(current => ({ ...current, phase: "polling", deadline: Date.now() + DISCOVERY_SCAN_TIMEOUT_MS }));
+      if (cancelled || !owned() || owner.read() !== snapshot) return;
+      if (state.status === "held") {
+        owner.set(current => ({ ...current, repairRequired: true,
+          held: current.held?.kind === "Unsure" ? current.held : null }));
+        return;
+      }
+      if (state.status === "idle" || state.status === "failed") {
+        if (snapshot.repairRequired) owner.set(current => ({ ...current, repairRequired: false }));
+        return;
+      }
+      owner.set(current => ({ ...current, repairRequired: false, phase: "polling", deadline: Date.now() + DISCOVERY_SCAN_TIMEOUT_MS }));
     }, (error: unknown) => { if (!cancelled && owned()) modeledApiError(error, defect); });
     return () => { cancelled = true; };
     // The retained cell and exact source belong to this mount; updates must not restart its read.
@@ -228,8 +240,11 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   return {
     start: () => void begin("StartScan"), blocked: !controls.current.start,
     busy: phase !== "idle" || primary?.busy === true,
-    reason: primary?.disabledReason ?? (!controls.current.start ? admissionReason() : null),
-    held: held && <Hold id={`Connections.Scan:${selfRef}:${held.kind}`} attempt={held.attempt}
-      {...(held.kind === "Unsure" ? startFeedback : checkFeedback)} />,
+    reason: repairRequired ? "scan needs a repair" : primary?.disabledReason ?? (!controls.current.start ? admissionReason() : null),
+    held: <>
+      {repairRequired ? <Fact line={{ fact: "scan needs a repair." }} verbs={[check]} /> : null}
+      {held ? <Hold id={`Connections.Scan:${selfRef}:${held.kind}`} attempt={held.attempt}
+        {...(held.kind === "Unsure" ? startFeedback : checkFeedback)} /> : null}
+    </>,
   };
 }

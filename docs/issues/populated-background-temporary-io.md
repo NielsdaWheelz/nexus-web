@@ -1,42 +1,27 @@
-# populated background temporary io
+# queue claim io qualification after recovery cutover
 
-normal creation of 100,000 notes leaves approximately 100,000 accepted
-`authored_text_reindex_job` jobs. claiming this backlog repeatedly spills about
-25.27 mib of temporary data. this is existing indexing work, separate from finite
-observation; the observation request/memory/cpu gates pass.
+historical qualification at `28070c420` against `990d16f66` observed about
+25.27 mib of temporary data per claim while processing roughly 100,000 accepted
+`authored_text_reindex_job` jobs. this was backlog work, separate from finite
+observation. the scope/media observation plans wrote no temporary data.
 
-evidence: `.nexus-local/lab/20261109-133948-92224e73c855/artifacts/resource-observation.private.json`,
-`measurements.samples` and `observed.start`; compare database counters at offsets
-300 and 420 seconds. the corpus has 100,000 notes, eight actual yjs edits each,
-1,800 accepted commands, 128 media and 1,000 note embeds. the complete run wrote
-10.72 gib of temporary data; the 120-second hidden interval wrote 910.49 mib with
-zero new application requests. no oom, restart or deadlock occurred.
+proof: private archive
+`/Users/nnandal/.local/state/nexus-task-archives/finite-observation-20261109/private/lab/20261109-142527-d77f910ac1b1/artifacts/`
+contains `background-baseline.private.json`, `postgres-temporary-io.private.log`
+and `observation-query-plans.private.json`: 19 completed jobs and 19 temporary
+files / 503,521,280 bytes in 60 seconds without a browser. the wider original run
+is `20261109-133948-92224e73c855`.
 
-canonical restore proof:
-`.nexus-local/lab/20261109-142527-d77f910ac1b1/artifacts/` contains
-`background-baseline.private.json`, `postgres-temporary-io.private.log` and
-`observation-query-plans.private.json`. in 60 seconds without a browser, the
-background supervisor completed 19 jobs (99,707 pending became 99,688), and wrote
-exactly 19 temporary files / 503,521,280 bytes. each claim cycle wrote 26,501,120
-bytes. slow-statement logs show the due-job `SELECT * ... ORDER BY ... LIMIT 1
-FOR UPDATE SKIP LOCKED` taking 141–157 ms, followed by its claim update, at
-`python/nexus/jobs/queue.py:205`. temporary-file deletion is logged under that
-update; a future fix must obtain the exact claim plan before attributing its
-internal sort. this is backlog processing, not empty-queue polling.
+upstream recovery (`e6ef89a08`, integrated from `d855bf190`) changed the claim:
+`python/nexus/jobs/queue.py` now selects pending/failed rows and orders directly by
+available_at/id. the expired-running branch and computed sort are removed; the
+existing `idx_background_jobs_due_claim` partial index matches that ordering.
+the historical spill is NOT an established defect in the integrated source.
 
-the exact observation plans are separate: scope revision sql processed 905 fact rows in
-17.13 ms with zero temporary blocks; every media-batch statement also had zero
-temporary blocks. shared-buffer reads are not a measurement of physical-device io.
-
-impact: a large one-time import causes substantial queue-claim disk amplification
-on the fixed 512 mib database. leave repair outside the observation cutover.
-
-proposed investigation: obtain the claim plan on the retained populated backup;
-test sorting/locking only the candidate's needed scalar fields, obtaining its full
-payload from the existing update's `RETURNING *`. preserve exact priority/due/time/id
-ordering, skip-locked behavior, heavy-capacity admission, expired-claim recovery,
-execution fencing and transaction ownership. do not raise work memory or change
-schema/infrastructure to conceal the query shape.
-
-resolved when the same backlog/lock-contention cases choose and fence the same
-jobs, claim temporary io is bounded, and a drained queue has negligible idle io.
+resolve with a current populated-backlog claim plan and bounded no-browser
+sample proving acceptable temporary io and unchanged priority, skip-locked,
+capacity, execution fencing and ownership. do not tune work memory to conceal
+a query defect. the retained original dump records the former0336 finite-cleanup
+schema; it cannot be restored as proof of the different0336 metadata migration.
+new replay data must follow the current migration chain. no queue edit belongs
+to this observation change without current evidence.

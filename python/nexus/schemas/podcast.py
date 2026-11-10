@@ -162,6 +162,7 @@ class PodcastImportOut(BaseModel):
     run_id: UUID
     subscription_id: UUID | None
     state: PodcastImportState
+    work_in_flight: bool
     attempt_version: int
     added_count: int = Field(ge=0)
     already_present_count: int = Field(ge=0)
@@ -235,6 +236,7 @@ class PodcastDestinationOut(BaseModel):
 
 class PodcastRecurringOut(BaseModel):
     state: Literal["pending", "running", "idle"]
+    work_in_flight: bool
     last_checked_at: datetime | None
     had_coverage_gaps: bool | None
     error_code: str | None

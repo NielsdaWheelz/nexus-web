@@ -378,6 +378,9 @@ export default function OracleReadingPaneBody() {
             </>
           )}
 
+          {reading?.status === "held" ? <section className={styles.errorPanel}>
+            <Fact line={{ fact: "this reading needs a repair." }} />
+          </section> : null}
           {reading?.status === "failed" && reading.error_code !== null && (
             <section className={styles.errorPanel}>
               {/* A newly observed terminal failure is news; a cold result is not. */}

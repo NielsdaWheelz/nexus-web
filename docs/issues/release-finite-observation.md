@@ -3,8 +3,9 @@
 the hard cutover removes passive stream endpoints, changes the authored
 worker/native hello contract and removes obsolete notification triggers. activation
 requires a paired api/web/android build under the existing release owner and the
-wire revision's once-per-release rule: candidate wire 20/schema 0336 follows
-deployed wire 19/schema 0335. authored format stays 4. preserve local corpus,
+wire revision's once-per-release rule: candidate wire 20/schema 0337 follows
+metadata recovery's schema 0336 and shares its unreleased wire 20 bump. freshly
+inspect the deployed release vector before activation. authored format stays 4. preserve local corpus,
 pending source bytes and feed cursors.
 
 before activation, qualify the notification cleanup migration against the existing

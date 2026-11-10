@@ -81,7 +81,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   }, [navigation]);
   const current = matched && mounted.status === "ready" && viewport?.identity === mounted.doc.identity && viewport.primary.kind === "text" ? snapshot?.sectionAt(viewport.primary)?.id ?? null : null;
   const preparationActive = page?.capabilities.create.reason === "preparing_structure" && (page.preparation?.status === "Queued" || page.preparation?.status === "Processing");
-  const operationActive = page?.operation?.status === "pending" || page?.operation?.status === "running";
+  const operationActive = page?.operation?.status === "pending" || page?.operation?.status === "running" || page?.operation?.status === "failed";
   const active = operationActive || preparationActive;
   useIntervalPoll({ enabled: observing && active, pollIntervalMs: WORK_OBSERVATION_MS, onPoll: () => {
     if (!(contents.status === "ready" && contents.refreshing || contents.status === "failed" && contents.retrying)) contents.revalidate();
@@ -204,7 +204,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   const operation = page?.operation;
   const operationText = preparationActive ? "preparing text." : operation?.status === "pending" ? "waiting to start."
     : operation?.status === "running" ? `checking ${operation.completed_sections} of ${operation.total_sections} sections.`
-    : operation?.status === "failed" ? "retrying automatically." : operation?.status === "dead" ? "couldn’t extract independent works."
+    : operation?.status === "held" ? "extraction needs a repair." : operation?.status === "failed" ? "waiting to retry." : operation?.status === "dead" ? "couldn’t extract independent works."
     : operation?.outcome === "superseded" ? "the source changed. run extraction again." : completed ? "extraction complete." : null;
   return <section ref={root} className={styles.panel} aria-label="contents" tabIndex={-1}>
     {contents.status === "loading" ? <Ruling /> : null}

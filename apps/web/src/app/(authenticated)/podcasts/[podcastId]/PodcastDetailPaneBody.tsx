@@ -206,8 +206,8 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const matching = (text: string) => resolved.filter(episode =>
     matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, { containingPodcastId: podcastId })));
 
-  const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
-  const provisioning = episodeItems.some(episode => shouldPollTranscriptProvisioning(episode.transcript_state));
+  const working = history.some(operation => operation.work_in_flight) || recurring?.work_in_flight === true;
+  const provisioning = episodeItems.some(episode => episode.media_summary.processing_status !== "suspended" && shouldPollTranscriptProvisioning(episode.transcript_state));
   // justify-polling: one visible observation lane owns header and episode publication.
   useIntervalPoll({ enabled: live && remoteReady() && observing && (following || working || provisioning),
     pollIntervalMs: working || provisioning ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS, onPoll: () => episodes.revalidate({ passive: true }) });

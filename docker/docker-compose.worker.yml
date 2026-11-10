@@ -50,6 +50,7 @@ x-worker: &worker
     - ../node/ingest/article_extraction.mjs:/app/node/ingest/article_extraction.mjs:ro
     - ../node/authored/helper.mjs:/app/node/authored/helper.mjs:ro
   init: true
+  restart: unless-stopped
   stop_grace_period: 30s
 
 services:

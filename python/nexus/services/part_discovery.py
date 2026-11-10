@@ -47,7 +47,7 @@ from nexus.schemas.part_discovery import (
 )
 from nexus.schemas.reader import ReaderSectionSource
 from nexus.schemas.source_issues import MissingImage, TooManyNotes, UnresolvedNavigationTarget
-from nexus.services import library_entries
+from nexus.services import media_locks
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.generation.contract import (
     Failed,
@@ -223,7 +223,9 @@ def operation_for_job(job: queue.JobRow) -> PartOperation:
     result = job.result or {}
     return PartOperation(
         job_id=job.id,
-        status=cast(Literal["pending", "running", "failed", "succeeded", "dead"], job.status),
+        status=cast(
+            Literal["pending", "running", "failed", "held", "succeeded", "dead"], job.status
+        ),
         completed_sections=payload.cursor,
         total_sections=0 if capture is None else len(capture.sections),
         error_code=job.error_code,
@@ -242,7 +244,7 @@ def discover_parts(
     db: Session, *, viewer_id: UUID, source_media_id: UUID, request: PartDiscovery
 ) -> PartOperation:
     def admit() -> PartOperation:
-        library_entries.lock_media_rows_in_order(db, [source_media_id])
+        media_locks.lock_media_rows_in_order(db, [source_media_id])
         source = _source(db, viewer_id, source_media_id)
         existing = queue.get_job(db, request.id, lock=False)
         if existing is not None:
@@ -283,7 +285,7 @@ def discover_parts(
                 "these discovery inputs changed; reload them",
                 details={"reason": "source_changed"},
             )
-        if any(job.status in ("pending", "running", "failed") for job in jobs):
+        if any(job.status in ("pending", "running", "failed", "held") for job in jobs):
             raise ConflictError(
                 ApiErrorCode.E_PART_CONFLICT,
                 "pieces are already being found",
@@ -597,7 +599,7 @@ def _snapshot(
     if initial is None:
         return {"disposition": "claim_lost"}
     payload = PartDiscoveryJob.model_validate(initial.payload)
-    library_entries.lock_media_rows_in_order(db, [payload.source_media_id])
+    media_locks.lock_media_rows_in_order(db, [payload.source_media_id])
     try:
         source = _source(db, payload.requester_user_id, payload.source_media_id)
     except ApiError:
@@ -709,7 +711,7 @@ def _publish(
     batch: DiscoveryBatch,
     terminal: Terminal[PartDiscoveryOutput],
 ) -> queue.JobResult:
-    library_entries.lock_media_rows_in_order(db, [payload.source_media_id])
+    media_locks.lock_media_rows_in_order(db, [payload.source_media_id])
     try:
         source = _source(db, payload.requester_user_id, payload.source_media_id)
     except ApiError:
@@ -778,6 +780,7 @@ def _publish(
             candidate=candidate,
             decision=None,
         )
+    queue.record_job_checkpoint(db, context=context)
     updated = payload.model_copy(update={"cursor": batch.next_cursor})
     queue.update_running_job_payload(db, context=context, payload=updated.model_dump(mode="json"))
     if updated.cursor == len(capture.sections):
@@ -816,7 +819,7 @@ def run_discovery_job(
             )
 
         def settle(db: Session) -> queue.JobResult:
-            library_entries.lock_media_rows_in_order(db, [pending.source_media_id])
+            media_locks.lock_media_rows_in_order(db, [pending.source_media_id])
             try:
                 source = _source(db, pending.requester_user_id, pending.source_media_id)
             except ApiError:
@@ -837,6 +840,12 @@ def run_discovery_job(
             )
             preparation_job = queue.get_job(db, preparation.job_id)
             ready = prepared_key == section_witness_key(proof.navigation.generation, proof.sections)
+            if not ready and preparation_job is not None and preparation_job.status == "held":
+                raise queue.JobFailure(
+                    "E_PART_STRUCTURE_PREPARATION_HELD",
+                    "section preparation needs a repair",
+                    "hold",
+                )
             if (
                 not ready
                 and preparation_job is not None
@@ -905,7 +914,7 @@ def delete_source_discovery(db: Session, *, source_media_id: UUID) -> None:
     from nexus.services.generation.ledger import interrupt_job_generations
 
     jobs = queue.jobs_for_payload(
-        db, kind=JOB_KIND, match={"source_media_id": str(source_media_id)}, lock=True
+        db, kind=JOB_KIND, match={"source_media_id": str(source_media_id)}, lock=False
     )
     for job in jobs:
         interrupt_job_generations(db, job_id=job.id, detail="its source was physically collected")

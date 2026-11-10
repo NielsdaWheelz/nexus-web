@@ -187,8 +187,12 @@ def _catalog[T: (wire.PodcastListItemOut, wire.PodcastIndexItemOut)](
     rows = (
         db.execute(
             text(f"""
-        SELECT {", ".join(sorted(columns))},r.started_at AS run_started_at FROM podcasts p
+        SELECT {", ".join(sorted(columns))},r.started_at AS run_started_at,
+            (r.completed_at IS NULL AND r.failed_at IS NULL AND r.cancelled_at IS NULL
+                AND COALESCE(j.status IN ('pending', 'failed', 'running'), FALSE)) AS work_in_flight
+        FROM podcasts p
         LEFT JOIN podcast_feed_runs r ON r.id=p.sync_run_id
+        LEFT JOIN background_jobs j ON j.id=r.job_id
         WHERE p.id=ANY(CAST(:ids AS uuid[]))
     """),
             {"ids": ids},
@@ -208,6 +212,7 @@ def _catalog[T: (wire.PodcastListItemOut, wire.PodcastIndexItemOut)](
             state=("running" if row["run_started_at"] else "pending")
             if row["sync_run_id"]
             else "idle",
+            work_in_flight=row["work_in_flight"],
             last_checked_at=row["last_checked_at"],
             had_coverage_gaps=row["last_check_had_coverage_gaps"],
             error_code=row["last_check_error_code"],
@@ -241,8 +246,9 @@ def _snapshot(db: Session, viewer_id: UUID, library_id: UUID):
                 FROM library_podcast_subscriptions s JOIN destinations d ON d.id=s.library_id),'[]') AS rules,
             COALESCE((SELECT jsonb_agg(to_jsonb(r)||to_jsonb(i)||jsonb_build_object(
                 'podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',d.name,'library_is_default',d.is_default,'updated_at',r.updated_at,
-                'can_manage',d.can_manage,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id)))
+                'can_manage',d.can_manage,'job_status',j.status,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id)))
                 FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
+                LEFT JOIN background_jobs j ON j.id=r.job_id
                 JOIN podcasts p ON p.id=r.podcast_id JOIN destinations d ON d.id=i.library_id
                 WHERE r.completed_at IS NULL AND r.cancelled_at IS NULL),'[]') AS imports
         FROM root
@@ -336,8 +342,9 @@ def read_library_podcast(
                 OR (NOT l.is_default AND lm.role='admin')) AS can_manage,
             (SELECT to_jsonb(s) FROM library_podcast_subscriptions s
                 WHERE s.library_id=l.id AND s.podcast_id=:podcast_id) AS subscription,
-            (SELECT to_jsonb(r)||to_jsonb(i)||jsonb_build_object('podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',l.name,'library_is_default',l.is_default,'updated_at',r.updated_at,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id))
+            (SELECT to_jsonb(r)||to_jsonb(i)||jsonb_build_object('podcast_id',r.podcast_id,'podcast_title',p.title,'library_name',l.name,'library_is_default',l.is_default,'updated_at',r.updated_at,'job_status',j.status,'subscription_id',(SELECT bound.id FROM library_podcast_subscriptions bound WHERE bound.initial_import_id=i.id))
                 FROM podcast_library_imports i JOIN podcast_feed_runs r ON r.id=i.run_id
+                LEFT JOIN background_jobs j ON j.id=r.job_id
                 WHERE i.library_id=l.id AND r.podcast_id=:podcast_id
                 AND r.completed_at IS NULL AND r.cancelled_at IS NULL) AS import,
             (SELECT count(*) FROM library_entries e JOIN podcast_episodes pe ON pe.media_id=e.media_id

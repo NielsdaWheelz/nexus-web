@@ -3,7 +3,7 @@
 The media lock owns source, freshness and exact queue identity. Changed sources and
 inline observations supersede earlier jobs, including a→b→a. Failed retrieval keeps
 published rows; an exact dead letter releases ownership for a later observation.
-Workers lock queue→media and fetch outside transactions. No permanent queue dedupe.
+Workers lock media→queue and fetch outside transactions. No permanent queue dedupe.
 Every publisher chapter occurrence survives publication. Supplied invalid ends refuse
 an observation; only confirmed source absence permits a derived reader interval.
 """
@@ -132,8 +132,6 @@ def replace_rows(db: Session, *, media_id: UUID, rows: list[dict[str, Any]]) -> 
 
 
 def _lock_owner(db: Session, *, context: JobExecutionContext, media_id: UUID, url: str) -> bool:
-    if lock_running_job_claim(db, context=context) is None:
-        return False
     row = db.execute(
         text("""
         SELECT pe.chapters_job_id, pe.chapters_source_url
@@ -143,7 +141,10 @@ def _lock_owner(db: Session, *, context: JobExecutionContext, media_id: UUID, ur
         {"id": media_id},
     ).first()
     return (
-        row is not None and row.chapters_job_id == context.job_id and row.chapters_source_url == url
+        row is not None
+        and row.chapters_job_id == context.job_id
+        and row.chapters_source_url == url
+        and lock_running_job_claim(db, context=context) is not None
     )
 
 

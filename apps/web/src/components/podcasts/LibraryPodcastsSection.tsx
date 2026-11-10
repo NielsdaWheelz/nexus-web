@@ -36,7 +36,7 @@ export default function LibraryPodcastsSection({ library, source }: { readonly l
   const live = source.status === "ready" && source.source.kind === "live";
   const manage = live && remoteReady();
   const blocked = !manage || source.status !== "ready" || source.error !== null || source.refreshing || !source.fresh ? "TemporarilyUnavailable" : null;
-  const busy = data !== null && (data.imports.some(operation => operation.state === "pending" || operation.state === "running") || data.subscriptions.some(show => show.recurring.state !== "idle" || show.imports.some(operation => operation.state === "pending" || operation.state === "running")));
+  const busy = data !== null && (data.imports.some(operation => operation.work_in_flight) || data.subscriptions.some(show => show.recurring.work_in_flight || show.imports.some(operation => operation.work_in_flight)));
   // justify-polling: imports and recurring publication have no client event stream.
   useIntervalPoll({ enabled: manage && observing, pollIntervalMs: busy ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS, onPoll: () => {
     if (document.visibilityState === "visible") source.revalidate({ passive: true });

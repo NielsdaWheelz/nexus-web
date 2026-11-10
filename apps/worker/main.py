@@ -52,7 +52,7 @@ def main() -> None:
     )
     # Hooks run in this process: import them now, and keep a supervisor lean.
     for d in worker.definitions.values():
-        for hook in (d.on_failure, d.on_dead, d.on_history):
+        for hook in (d.lock_owner, d.on_failure, d.on_dead, d.on_history):
             if hook is not None:
                 resolve(hook)
     if executor is not None and (loaded := _CHILD_ONLY_MODULES & sys.modules.keys()):

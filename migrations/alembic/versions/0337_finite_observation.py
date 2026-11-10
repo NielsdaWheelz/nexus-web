@@ -7,8 +7,8 @@ queue notifications. Downgrade requires the matched pre-release backup and binar
 
 from alembic import op
 
-revision = "0336"
-down_revision = "0335"
+revision = "0337"
+down_revision = "0336"
 branch_labels = None
 depends_on = None
 
@@ -23,4 +23,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("0336 is a hard cutover; restore the matched backup")
+    raise RuntimeError("0337 is a hard cutover; restore the matched backup")

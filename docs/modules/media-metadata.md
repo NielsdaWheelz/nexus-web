@@ -1,370 +1,111 @@
 # media metadata
 
-`services/metadata_enrichment.py` owns bibliography; `services/x_titles.py` owns
-grounded x titles. each owns bounded input and strict generated-output acceptance.
-`tasks/enrich_metadata.py` composes them with
-the contributor owner and generation service. `services/metadata_operations.py`
-owns the operation: admission and enqueue, the setwise projection of existing jobs
-for detail, finite observations, imports and history (no shadow activity state), and personal
-review of an exact no-findings result with its removal with viewer/media state.
+`metadata_enrichment.py` owns bibliography input, prompt and acceptance;
+`x_titles.py` owns grounded x naming. `tasks/enrich_metadata.py` composes generation,
+contributor resolution and atomic publication. `metadata_operations.py` owns admission
+and projections of retained queue jobs. jobs are the operation store; there is no
+quality-review workflow.
 
-## bibliography
+## bibliography contract
 
-- `original_published_date`: a book's first **book** publication, excluding prior
-  serialization, broadcasts and lectures; a collection's own first book
-  publication; a separately saved essay's first publication, including periodicals.
-  other media use the identified item's first public release.
-- `edition_published_date`: the encountered edition/version's publication.
-- `edition_isbn`: canonical checksum-valid isbn-13. source adapters may normalize
-  isbn-10; generated output must already be canonical.
+the model uses its best judgment, saved context, learned knowledge and useful
+available tools. its closed result has exactly eight required nullable keys:
+`title`, `contributors`, `original_published_date`, `edition_published_date`,
+`edition_isbn`, `publisher`, `language`, `description`.
 
-translations and reprints retain the work's original date. container format does
-not establish work type. preserve year/month/day precision through
-`schemas/publication_dates.py`; never infer publication from file or acquisition
-times. lists, search, author chronology and recency use the original date without
-an edition fallback. source edition observations retain their own ingestion rules.
-original and edition dates require independent evidence. matching values are
-valid only when both facts are supported; a first-publication statement alone
-leaves the edition finding unresolved.
-row formatting and retained-summary freshness belong to the
-[library presentation contract](library.md); the metadata overlay keeps full dates
-and all credits.
+non-null scalars replace; null preserves storage. each listed contributor role
+replaces its complete ordered credits; omitted roles preserve. empty lists,
+duplicate roles, duplicate identities within a role, unknown keys and unoffered
+handles reject the result. one person may hold several roles. existing handles
+identify the same person, including changed credited spelling; they cannot rename
+a placeholder into an unrelated author. contributor resolution remains owned by
+`contributors.py`. there is no clearing. all-null succeeds unchanged and stamps
+completion. an execution success certifies no bibliographic fact.
 
-generated json has eight required nullable fields: title, contributors,
-original date, edition date, edition isbn, publisher, language and description,
-plus required `clear_fields` and `container_discrepancies` arrays.
-`schemas/metadata_enrichment.py` owns the closed schema. malformed output rejects
-the entire result; there is no repair generation. an accepted null is an absent
-finding unless explicitly listed for clearing. a clear requires evidence that the
-claim is wrong; an explicit clear of an already-null field confirms absence.
-all-null output without clears is `no_findings`, not success. partial findings,
-clears and unchanged non-null confirmation are successful research.
+original date means a book's first BOOK publication, a collection's own first
+book publication, or a separately saved essay's first publication, including
+periodicals. translations and reprints retain the original work date. edition
+date, isbn and publisher describe the encountered edition. preserve supported
+calendar precision; do not borrow a container date or invent a month/day. generated
+isbn must be checksum-valid isbn-13. language is lowercase iso 639-1. descriptions
+are neutral, factual, 1–3 sentences, without marketing, markup or uncertainty reports.
+a piece cannot publish edition date/isbn/publisher or publisher credits.
 
-for a piece, edition date, isbn and publisher belong to its source, and are not
-applicable findings. source facts and credits form bounded context, not authority
-to mutate the source or read siblings. the frozen input includes both complete
-credit rosters, the source facts, child definition and exact text scope. only
-handles offered by that snapshot may be returned. a nonempty discrepancy list
-against supplied source facts produces a historical report with the captured source
-title; a report alone is `no_findings` and does not stamp success. stale or failed
-runs publish neither findings nor reports. report explanations reject exact captured
-private identifiers as tokens; ordinary words can coincide with those identifiers
-and cause conservative rejection. this check does not prove that generated prose
-contains no other private material.
+## research
 
-contributors are complete ordered observations of specified roles, not one
-authors list. admitted handles preserve person identity across credited-name
-changes; a piece may also reuse its source's handles. unbound names use the
-contributor owner's exact resolver. pieces cannot carry publisher credits. observed
-spellings remain nonresolving aliases. duplicate identity within one role rejects
-the result. an explicit empty role slice may clear that role; unresolved roles
-remain untouched. author slices follow the same publication policy as other
-roles; credit origin does not prevent a supported observation from replacing it.
+the existing policy selects codex personal `gpt-6-luna`, `xhigh`, 300 seconds,
+32,768 utf-8 input bytes. no substitution. input includes complete credit rosters
+and offered handles, identifying source facts and up to 1,000 opening words.
+source reads are bounded; descriptive current values are explicitly shortened
+hints, never complete replacement values. the private fingerprint covers complete
+facts and current publication identity, including values beyond shown hints.
 
-## research input and capability
+`MetadataResearch` exposes scoped `nexus.document.search` and
+`nexus.resource.read`, public page reads, and configured public search. absent
+search is not advertised. optional search/read refusals, unavailability and timeout
+are typed tool results: continue with available context or return null. internal
+conversion, database and claim failures are not successful research. public queries
+contain necessary public identifying strings, never private passages or ids.
+canonical background retrieval does not materialize source html/native excerpts.
+rich citation consumers retain their separate capture contract and read snapshot.
 
-metadata policy selects codex personal, `gpt-6-luna`, `xhigh`: 300 seconds and
-32,768 utf-8 input bytes. the generation owner runs that selection or fails
-visibly. no model substitution. stock 0.160 has no native hard context/output
-token-cap field, so no token budget is recorded for it.
+## admission and publication
 
-input includes current metadata, complete ordered credits/handles, source and
-provider identifiers, media reference and up to 1,000 normalized opening words.
-`metadata_enrichment_max_content_words` configures that allocation. raw reads are
-bounded to 64,000 characters total; source order is plain text, canonical
-fragments, podcast notes, then description. all serialized content fits the
-utf-8 budget. descriptive hints are
-clamped, then the excerpt shrinks to fit. identifiers, dates and credit rosters
-are never silently truncated. oversized fixed context fails before dispatch.
+`POST /media/{media_id}/metadata-enrichment` requires
+`{expected_job_id: uuid | null}` and returns 202 with
+`{data:{media_id,job_id,last_enriched_at}}`. media locking serializes admission.
+a lost-response resend joins the latest accepted request. queued/running/retry work
+blocks duplicate admission. an explicit update replaces held metadata with one new
+job, atomically superseding the held result while retaining its failure diagnostics.
+if reviewed repair resumed first, the command joins that active job.
 
-the prompt requests `nexus.document.search`, `nexus.resource.read`, `web.search`
-and `web.read`; public queries use identifying strings, not private passages.
-source text is evidence, never instructions. the `MetadataResearch` plan grants
-the local reads and `web.read`, with configured `web.search`; local reads use the admitted media scope.
-`CodexCallbacks` executes that plan through the shared generation owner.
-public search is optional: only a configured brave binding grants `web.search`.
-missing configuration does not prevent evidenced corrections from supplied text
-or the remaining tools. model memory is not evidence; unsupported findings remain
-null and preserve storage. declared tool failure does not imply that all evidence
-is unusable. local document search
-retains lexical capability without an embedding credential.
-see [llms.md](llms.md). metadata owns no provider adapter or second context builder.
-completed/no-findings bibliography records required `web_search`: `not_available`
-without a grant, `not_used` without calls, `succeeded` with only complete calls,
-`failed` with only error/cancelled calls, or `mixed` with both groups. successful
-empty results count as complete requests. availability comes from the frozen
-plan; receipts belong only to the terminal generation. unfinished or ungranted
-receipts violate settlement. this host observation is not generated by the model
-and does not certify factual truth. historical null means not recorded.
-real isolated live receipts qualify model/tool execution; constructed responses
-qualify domain behavior only.
+bibliography admission freezes media, purpose and part-definition version, not
+reader generation. changed admitted part definition or x-title source attempt
+settles superseded. current bibliography/source drift discards the candidate and
+reruns fresh research in the same job. every publication rechecks access,
+eligibility, purpose, frozen constraints, full fingerprint and exact execution.
+source-family/media/publication locks precede the queue claim. validate all credits
+before publishing facts. facts, invalidations, completion stamp and queue result
+commit in one fresh transaction, without network calls. unchanged credits cause no
+churn; unchanged title causes no reader-title write. successful stamps increase
+strictly even when no field changes.
 
-## operation and publication
+x titles remain grounded in the captured primary authored text and supplied image
+descriptions, with the existing missing-source and source-label policies. a naming
+job freezes the exact source attempt. metadata never owns source text, provider
+identity, urls, reader generations or containing-work metadata.
 
-one `enrich_metadata` job freezes `purpose=bibliography|title`; title jobs also freeze
-the published x source's successful `source_attempt_id`. every attempt builds its
-input, generates once and publishes. the purpose's decoder (`accept_findings`: the one
-`MetadataFindings` model, and only handles the input offered; `accept_x_title` for a
-title) accepts the output or fails the generation `invalid_output`; the queue stores the
-settled outcome as the job's result.
+## observation and repair
 
-publication starts from a fresh session, locks media before the exact job claim,
-and rechecks authorization, eligibility and the frozen source/bibliographic
-fingerprint. document publication generation and transcript content revision
-fence source replacement; index lifecycle never changes research identity.
-publication commits changed facts, collection invalidations, successful timestamp
-and the queue's terminal outcome/reactions together. it performs
-no network call or nested transaction. contributor identity validation precedes
-all writes. stale context, lost claim or revoked access cannot publish.
+operation wire variants are queued, running, recovering, waiting, held, completed,
+failed. held includes a typed reason and held_at, has no completion time, and is
+unfinished but neither executing nor claimable. completed bibliography contains
+only purpose, completed_at and changed_fields. generic generation/tool audit remains.
 
-successful timestamps use database time, strictly later than the previous stamp;
-the outcome uses the same instant. accepted unchanged values do not replace
-identical credit rows or republish the reader title.
+`POST /media/observations/resolve` accepts 1–100 unique media ids and returns
+ordered `{media_id, observation}` items. each authorized repeatable-read observation
+combines processing and metadata; missing/unreadable ids return null. invalid,
+duplicate, empty and oversized inputs return structured 400. reads admit no work.
+one document/account owner batches due presented main/child/inspector interests
+on aligned 10/30-second boundaries. processing `work_in_flight` or metadata
+`work_in_flight` selects 10 seconds; settled or held-only subjects use 30.
+metadata derives that boolean from active queue work, not `unfinished_count`,
+which truthfully includes held work. a busy sibling never accelerates settled ids.
+attention joins current reads and wakes omitted interests; immediate demand can
+precede the next shared boundary closely. hiding suspends observation and retains
+accepted snapshots; successful null clears private state. reader invalidation
+compares publication facts and coalesces changed children, never operation phase.
 
-accepted findings settle `succeeded`. no findings, invalid output and terminal
-research/domain failures return `TerminalJobFailure` and settle `dead` without
-retrying paid research; a generation that never reached codex (host or
-configuration unavailable) takes the job's one immediate retry, then settles a
-terminal `model_unavailable`. a worker that dies mid-research reruns the whole operation
-from scratch on the job's retry. metadata failures never
-write source-processing error fields. successful and dead metadata jobs are
-retained indefinitely so pruning cannot revive an older failure as latest.
+`GET /media/{media_id}/metadata-enrichment/{job_id}` returns the exact authorized
+accepted job, even after newer work. deliberate interest survives pane closure
+while foreground; background retains it without requests and return checks it.
+one held notice releases that interest; mounted inspection keeps observing held
+work every 30 seconds. supersession is silent. account teardown cancels reads and
+clears only its entries. no recovery inventory or passive stream is introduced.
+an operator resume with every pane closed need not toast; reopening reads durable state.
 
-## x titles
-
-native x web articles use `media_title`: the same generation owner, `gpt-6-luna`,
-`low`, strict `{title:string|null}`, no tools, 120 seconds and 256 kib utf-8 input.
-`services/x_source.py` owns the current normalized snapshot and immediate source
-label. the title input retains complete captured primary/direct context, attribution,
-supplied alt text and coverage; it excludes image urls and generated child labels.
-oversized complete input fails before dispatch; there is no prefix summary or model
-substitution. [imports](imports.md) owns acquisition and source replacement.
-
-preserve the primary author's language, stance, negation, uncertainty and quantities.
-one usable primary language hint guides naming; primary prose overrides it, and
-quoted/reply language never selects it. absent/conflicting hints imply no default.
-quoted claims are context, never assumed endorsement. absent context and undescribed
-images do not supply a subject. source instructions are untrusted evidence.
-labels preserve actor, speaker and listener roles as well as names; any possessive
-for reported speech identifies the speaker, with recipient/work relations distinct.
-accepted
-generated labels are trimmed, nonblank, one line and at most 120 unicode code points;
-a standalone literal `null` string is invalid. actual json null successfully
-restores the source excerpt/author label; it creates no attention
-or review obligation. generated/source-label completions write only title and the
-successful stamp. explicit rerun may restore an excerpt over an earlier model title.
-
-missing snapshots block manual admission with `source_context_missing` and ordinary
-source refresh. actual source publication admits one title job even with older jobs
-unfinished; manual admission retains its active-work barrier. evidence version is the
-snapshot's attempt, not a pending refresh attempt. replaced evidence rejects before
-generation; publication rechecks source, current title, access and exact queue claim.
-both generated and source-label output use these fences. title changes preserve
-reader content generation, saved positions and selection.
-
-every operation/retry dto carries purpose, including pre-dispatch and historical
-entries. title completion has `changed_fields=[]|[title]` and
-`disposition=generated|source_label`; bibliography retains its fields/no-findings
-review. history reports that run's disposition, never current-title provenance.
-
-## api and observation
-
-`GET /media/{id}` owns the generated `Data[MediaOut]` contract: the keys the web reads,
-the viewer's `consumption {state, progress}` and four capabilities (`can_read`,
-`can_highlight`, `can_quote`, `can_retry`). the pane loader and metadata overlay share
-one media-detail ingress (`mediaDetailFromResponse`): wire facts keep their values, the
-player descriptor is renamed and chapter presentation is owned there as described in the
-[reader module](reader-implementation.md); requested-media identity stays checked until
-the pane drops it ([leftovers](../issues/media-pane-contract-leftovers.md)).
-
-the displayed `processing_status` (summaries, media facts, detail and the processing observation
-alike) is the stored status, except `suspended` while the latest source attempt is
-repairable (in flight, its exact job dead) and no publication is readable
-(`capabilities.publication_readable`: a ready reader publication, a pdf's file too). the
-rule has no source branch: a readable article, x or not, reads `ready_for_reading` and keeps
-Download while the menu offers its source remedy (`RepairSource`); an unreadable one reads
-`suspended`.
-
-- `POST /media/observations/resolve` accepts 1–100 unique media ids and returns
-  ordered `{media_id, observation}` items. an observation combines processing
-  (including canonical reader generation, transcript key and quote recovery) and
-  metadata enrichment in one authorized repeatable-read snapshot. missing and
-  unreadable ids return null; malformed, duplicate, empty and oversized inputs
-  return structured 400. no read admits work.
-  one document/account owner batches due presented main/child/inspector interests:
-  10 seconds for unfinished processing or metadata, 30 otherwise. busy siblings
-  never accelerate settled ids. aligned boundaries batch coincident due subjects;
-  attention joins an active read and wakes only its omitted interests. first or
-  renewed demand reads immediately, so the next shared boundary may follow soon.
-  hiding suspends reads and retains snapshots;
-  authoritative null clears private state. reader invalidation compares publication
-  facts, coalescing changed children; unchanged status does not reload prose.
-
-- `POST /media/{id}/metadata-enrichment`: creator-only admission; body
-  `{expected_job_id: UUID | null}` (any other key is 400); 202 returns
-  `{media_id, job_id, last_enriched_at}` in the data envelope. retry rule: an
-  `expected_job_id` older than the latest job (or null while one exists) answers
-  202 with the latest job. this confirms the request without necessarily naming
-  its original first job; intervening same-purpose research may be newer. the
-  browser always resends the original expectation. the latest answers only a request of its own purpose: an
-  `expected_job_id` that is no job of this media, or a latest job of another
-  purpose than the media's (an x article's bibliography run from before 0278), is
-  409 `E_RESOURCE_CONFLICT`; the latest with unfinished work, an ineligible media,
-  a title without its x source context (`source_context_missing`) or a non-creator
-  is 409 `E_RETRY_NOT_ALLOWED` (403 for a non-creator first).
-- `GET /media/{id}` includes `metadata_enrichment`: latest operation, precise
-  retry permission, `last_enriched_at`, unfinished count and oldest unfinished
-  operation. latest and oldest use `(created_at, id)`; a newer terminal result
-  does not hide older live work.
-- `POST /media/{media_id}/metadata-enrichment/{job_id}/review`: any current
-  reader may mark that exact no-findings result reviewed for themselves; no
-  body; 204. retry rule: an existing review stands (204, one row). review never
-  changes the immutable outcome or bibliography. an inaccessible media is 404
-  `E_MEDIA_NOT_FOUND`; a job that is not this media's metadata job is 404
-  `E_NOT_FOUND` ("Metadata result not found"); another result is 409
-  `E_RESOURCE_CONFLICT`.
-- `GET /media/{media_id}/metadata-enrichment/{job_id}` reads the immutable exact
-  `MetadataOperationOut`. inaccessible media is `404 E_MEDIA_NOT_FOUND`; a
-  missing/wrong job is `404 E_NOT_FOUND`. a foreground exact-job interest survives
-  pane closure, checks unfinished work every 10 seconds and settles a terminal
-  receipt once. newer work never replaces that identity. background retains the
-  interest without requests; return checks the same job.
-
-admission locks the media row only (never job rows: they are read through
-`ix_metadata_jobs_media_created`); the lock serializes it with automatic enqueues.
-no `client_mutation_id` and no replay ledger. successful source publication
-commits its automatic metadata obligation in the same transaction. jobs are not
-coalesced with stale work. every enqueue locks the media and stamps a strictly
-ordered database creation time. successful playable video ingestion requests
-research even without a provider snippet.
-
-review locks the media, reauthorizes and inserts at most one row per (viewer,
-job). removing media from one viewer clears only their reviews; physical teardown
-clears all reviews while retaining jobs. operator deletion of a user or retained
-job must remove dependent reviews first.
-
-imports exposes metadata independently of source/search. its latest failure or
-unreviewed no-findings result needs attention; any unfinished job keeps observation
-alive and blocks fresh research. completed, partial and unchanged findings are
-success. “mark reviewed” removes this result from needs attention for this viewer;
-it stays in history and does not dismiss a newer result. each retained job supplies
-one history entry, with its own latest generation, and review decorates that entry.
-no-findings carries no failure code. safe metadata reasons never expose raw errors.
-
-rss ingestion stores one nullable `rss_metadata_fingerprint` on its episode row.
-new/changed normalized bibliography enqueues fresh research, including supplied
-authors; identical feed replay preserves model corrections and creates no job.
-old rows initialize from the first actual feed observation and may enqueue once.
-diagnostic alias promotion remains independent: it spends no research and does
-not restore feed bibliography. promotion during a turn may invalidate its frozen
-input and require a deliberate rerun. chapters/transcript source mechanics retain
-their existing owners.
-
-media detail and the resource actions read share the same projection. detail
-and finite composite/exact-job reads use repeatable read. client admission and
-review receipts also invalidate imports so an idle
-workspace wakes. the successful timestamp independently
-invalidates facts when an older job publishes behind a newer latest job.
-
-one view per account/media id per tab (`lib/media/mediaMetadataOperations.ts`) serves
-the media pane and the `metadata…` overlay; imports renders its rows from its own
-read. collection rows acquire no observation interest. admissions and reviews
-invalidate presented consumers; an automatic run appears on the next passive
-check. only a deliberate exact-job interest outlives its pane. bibliographic
-rereads preserve reader locator, selection and playback. an observation whose
-stamp moved past the tab's known stamp publishes `Metadata`
-(architecture §8.12) when its run changed any metadata field or its fields are
-unknown. row menus use their inspected action expectation.
-
-manual admission retains the full accepted job identity before retiring its
-uncertainty guard. an exact observer per account/media/job serves both deliberate
-notification interest and pinned inspection. inspection creates no notification
-interest. terminal interest is taken once before feedback/invalidation effects;
-all terminal outcomes invalidate canonical metadata reads, even an already-complete
-receipt whose stamp equals the first read. pane closure retains interest; account
-retirement aborts it; reload forgets it. there is no notification history.
-
-“update metadata” acknowledges requesting immediately through the existing stage.
-terminal feedback opens that accepted job; its result remains inspectable when
-the independent current-detail read fails. current metadata/retry facts remain
-separate from the historical result/review. reviewing refreshes both exact and
-summary projections. metadata status itself is non-live; the stage owns deliberate
-announcements. transport/read failure never implies that the job failed.
-
-the media route's canonical shared read includes observed stamps/title admissions
-in its stale token. it owns detail refresh and read retry. the reader holds no
-second detail copy or unobserved metadata fetch; same-body title reload preserves
-reader identity, position, selection and playback.
-
-the authenticated admission provider owns metadata observation lifetime; exact
-account teardown aborts its reads and clears only that account's entries.
-reopening the account attaches a fresh observer, including development effect
-replay. pane closure alone does not stop admitted work's observation. late review
-or admission replies cannot invalidate the next account's views.
-
-`lib/media/admissions.tsx` owns live research admission, separately from job
-observation and review. it freezes `expected_job_id` (including null) in account
-memory. retry sends that same request; a new expectation requires a new action.
-every sent attempt wakes imports and metadata observation; the existing deadline
-includes body consumption. accepted replies and definitive first-attempt refusals
-retire their exact entry. a refusal after response loss preserves uncertainty
-about the earlier attempt. the common work guard protects account/document
-departure; tucking the notice does not discard the request. only the captured
-current entry may settle local feedback. reload forgets local requests and posts
-nothing; canonical job reads still show accepted work.
-[imports](imports.md#source-refresh) describes the shared two-command boundary.
-personal review durability is unchanged.
-
-each successful stamp rereads media and reloads the reader through its source port.
-title-job admission also rereads: source publication and its new naming obligation
-commit together, so mounted content updates even if generation later fails. a
-same-content-identity response replaces only the current ready document's title;
-units, structure, viewport, surface dom, selection and exploration origin remain.
-changed content uses the ordinary reload, then reads its remapped cursor. the first
-open keeps parallel source/cursor reads; a metadata-only pdf reload keeps learned
-page count and viewer state. each title admission costs one detail read, including
-manual admission. there is no additional subscription or poller.
-
-the metadata overlay remains available for readable, pending and failed media.
-it reads the media through the shared server-state hook (`useServerValue`, keyed
-by media id, refetched on each new enrichment stamp or latest title-job id), so reopening it shows the
-last values at once while it rereads. it separates reading status from research,
-preserves existing facts during reread, and shows safe outcomes/model activity
-(`selection`: the generation's route, model, or a provider route's `model_ref`,
-and reasoning) without prompts or tracebacks.
-live-disconnected and detail-reread failures have distinct reconnect/reread
-actions. neither action starts new research.
-
-the publication description displays `Media.description`; retained podcast
-notes remain in their listening/source view and never replace this bibliographic
-field.
-
-piece detail derives required `part_source_edition` from its actual source, even
-when every edition fact is unknown. readable-child authority permits these citation
-facts; the source link still requires independent source readability. public sharing
-keeps title-only attribution. the overlay separates piece publication from source
-edition and renders the run's captured report as history, never a proposed source
-edit. imports and the overlay share the result renderer.
-
-overlay open/foreground reconnects the existing operation observer and rereads
-detail; metadata invalidation also refreshes source-edition facts. a report-only run
-replaces the observed operation without requiring a changed success stamp. piece
-drafts retain their original definition version and exact uncertain command;
-conflicts preserve input until the user explicitly adopts the reviewed saved version.
-
-for other media, the same detail response exposes stored `provider`, `provider_id`, `requested_url`
-and `canonical_url` as required nullable fields. the overlay's source group shows the
-exact provider identity and distinct stored urls alongside `canonical_source_url`;
-it reconstructs no identifier or url and adds no reads. an absent provider says
-`not recorded`; absent provider ids/urls are omitted. identical requested and
-canonical urls distinct from the source url share one descriptive label.
-
-## history
-
-`0256` (typed job outcomes, 2026-10-13 release) and `0278` (current x snapshots;
-every settled old metadata payload tagged `purpose=bibliography`, by 2026-10-15)
-ran in production and are now part of the 0306 baseline. the archived legacy
-metadata jobs survive only in those releases' backups. no runtime legacy decoder
-remains; unavailable saved x copies stay readable through a refresh. the old
-publication-date backfill and metadata arm of `/media/{id}/retry` are removed;
-ordinary metadata admission is the research path.
+copy distinguishes `metadata updated`, `metadata unchanged`, `waiting to retry`
+and `metadata update needs a repair`. failures retain exact update/status actions.
+reason copy comes from typed causes, never parsed trace text. routine waiting
+preserves focus and geometry. the nullable model contract deliberately cannot clear
+a last wrong value without a replacement; another update can repeat a model mistake.

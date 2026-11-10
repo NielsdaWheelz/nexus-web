@@ -829,6 +829,27 @@ pdf roots stay page-space quads, never reader points: the surface measures
 their alignment; canonical document-map markers, normalized by page height,
 give their rail position and order.
 
+## reviewed html repair
+
+`reader_publication.repair_reader_html` owns representation repair in one
+serializable publication transaction. the operator supplies the exact media,
+publication generation and every fragment's reviewed html hash. pinned pieces
+and unconverted structural navigation refuse repair. unchanged html preserves
+its generation. changed html must preserve full canonical text, fragment ids and
+order, named anchors, apparatus and embed slots; table paths are rebuilt and the
+ordinary publication generation advances atomically.
+the same transaction requests ordinary index reconciliation for the new generation;
+old-generation bounds and structural witnesses cannot remain current.
+
+the owner inventories retained highlights, saved passages, retrievals, citations,
+reader quotes and cursors. every previously resolving reference must still resolve
+through its existing public resolver after the new generation, with the same
+words, coordinates and activation. historical captured bytes and identities stay
+immutable; current locations report the new publication. saved cursor coordinates
+remain valid and unchanged. any failed proof rolls back the entire repair.
+`python/scripts/repair_reader_html.py` is its maintenance entrypoint, with no reimport or
+generation alias.
+
 ## around the reader
 
 - **mobile chrome.** the host's `ReaderHost.scrollport` registers the surface's

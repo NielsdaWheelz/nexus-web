@@ -583,11 +583,19 @@ retains existing identity/quote/locator guards without a new readiness gate.
 
 ## strict consumers and retained limits
 
-strict `SearchKind` stays the existing six kinds. `service.search`, multi-scope
-chat/document search, citation reopen, connection discovery, browse, oracle and
-picker retain their evidence admission and frozen-context contracts. strict sql
-location guards and final `project.py` checks remain; browser visibility changes
-do not weaken citation eligibility.
+strict `SearchKind` stays the existing six kinds. `search_scopes_async` returns
+canonical words and proven locations without fetching native source html.
+`capture_search_scopes_async` adds native excerpts inside that same authorized
+snapshot. both share admission, ranking and projection; citation reopening retains
+rich capture. browser discovery and pickers retain their existing presentations.
+strict sql location guards and frozen-context admission remain unchanged.
+
+native web/epub/x evidence excludes outer whitespace before either port constructs
+its quote and locator. internal whitespace and poem breaks remain exact; full
+resource reads retain every requested character. surrounding whitespace is context,
+including canonical block separators which have no native selected text token.
+a whitespace-only passage supplies no citable result. authored captures remain
+immutable and keep their existing selections.
 
 strict ranking retains s1: case-insensitive label tier, then lexical rank ahead
 of semantic-only cosine, with label/id ties. its offset cursor and selection

@@ -69,7 +69,7 @@ from nexus.schemas.import_history import (
 from nexus.schemas.media_parts import PartPrepare
 from nexus.schemas.media_sources import SearchRepairAdmission
 from nexus.schemas.reader_apparatus import NoteRegion
-from nexus.services import library_entries, media_intelligence_lifecycle
+from nexus.services import media_intelligence_lifecycle, media_locks
 from nexus.services.content_chunking import (
     CHUNKER_CONTRACT_VERSION,
     Chunk,
@@ -121,7 +121,7 @@ ReindexReason = Literal[
     "section_bounds",
 ]
 _TRANSCRIPT_KINDS = ("podcast_episode", "video")
-_LIVE = ("pending", "failed", "running")
+_LIVE = ("pending", "failed", "running", "held")
 
 
 @dataclass(frozen=True)
@@ -790,10 +790,12 @@ def _request(
         for job in queue.jobs_for_payload(
             db, kind=JOB_KIND, match={"media_id": str(media_id)}, lock=True
         )
-        if job.status in ("pending", "failed")
+        if job.status in ("pending", "failed", "held")
     ]
     reused = (
-        [job for job in waiting if job.payload["request"] is None][:1] if client is None else []
+        [job for job in waiting if job.payload["request"] is None and job.status != "held"][:1]
+        if client is None
+        else []
     )
     for obsolete in waiting:
         if obsolete not in reused:
@@ -830,7 +832,7 @@ def request_stale_media_content_reindex(
         ):
             return False
         job = _current_job(db, media_id, state.revision)
-        if job is not None and job.status in ("pending", "failed", "running"):
+        if job is not None and job.status in _LIVE:
             return False
     request_media_content_reindex(db, media_id=media_id, reason=reason)
     return True
@@ -1106,7 +1108,7 @@ def run_media_reindex_job(
             def attach(db: Session) -> bool:
                 # Family writers serialize before the index/job fence; key-share
                 # remains available to queue history's media foreign key.
-                if not library_entries.lock_media_rows_in_order(
+                if not media_locks.lock_media_rows_in_order(
                     db, [media_id], lock_mode="no_key_update"
                 ):
                     return False
@@ -1164,6 +1166,7 @@ def run_media_reindex_job(
                         ),
                         {"key": frozen[1], "id": media_id},
                     ).one()
+                    queue.record_job_checkpoint(db, context=context)
                     if published.status != "indexing":
                         record(db, IndexSucceeded)
                     record_input_change(db, owners=(f"media:{media_id}",))
@@ -1191,12 +1194,13 @@ def run_media_reindex_job(
             if not index_phase("snapshot_media_chunks", snapshot):
                 return result
             spool_embeddings(chunks_spool, embedding_spool)
-        except CredentialMissing:
-            return queue.TerminalJobFailure(
+        except CredentialMissing as error:
+            raise queue.JobFailure(
+                ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
+                "No embedding provider credential is configured.",
+                "hold",
                 result_payload=result | {"status": "embedding_not_configured"},
-                error_code=ApiErrorCode.E_EMBEDDING_NOT_CONFIGURED.value,
-                error_message="No embedding provider credential is configured.",
-            )
+            ) from error
         except EnvelopeExceeded:
             return queue.TerminalJobFailure(
                 result_payload=result | {"status": "too_large"},
@@ -1277,15 +1281,18 @@ def repair_dead_media_reindex(
         job = _current_job(db, media_id, state.revision)
         if job is None or (state.revision, job.id) != (expected_revision, expected_job_id):
             current: dict[str, object] = {"revision": state.revision}
-            if job is not None and job.status == "dead":
+            if job is not None and job.status in ("dead", "held"):
                 current["job_id"] = str(job.id)
             raise ConflictError(
                 ApiErrorCode.E_RESOURCE_CONFLICT,
                 "The inspected search index execution is no longer current.",
                 details={"current": current},
             )
-        if job.status == "dead":
-            queue.requeue_dead_job(db, job_id=job.id)
+        if job.status in ("dead", "held"):
+            if job.status == "held":
+                queue.resume_held_job(db, job_id=job.id)
+            else:
+                queue.requeue_dead_job(db, job_id=job.id)
             _event(db, media_id, IndexRecoveryAccepted(revision=state.revision))
         return SearchRepairAdmission(media_id=media_id, revision=state.revision, job_id=job.id)
 

@@ -95,7 +95,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const ready = summary.status === "ready" ? summary : null;
   useIntervalPoll({
     enabled: demand && ready !== null && ready.error === null && !ready.refreshing,
-    pollIntervalMs: observers > 0 && ready !== null && ready.data.unfinished_work_count > 0 ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS,
+    pollIntervalMs: observers > 0 && ready !== null && ready.data.work_in_flight ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS,
     onPoll: () => summary.refetch().catch(() => { /* The read owner retains its failure. */ }),
   });
 

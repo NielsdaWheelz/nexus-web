@@ -116,6 +116,7 @@ class ImportSummary(_Wire):
     needs_attention_count: int
     active_count: int
     unfinished_work_count: int
+    work_in_flight: bool
 
 
 class RelatedImport(_Wire):

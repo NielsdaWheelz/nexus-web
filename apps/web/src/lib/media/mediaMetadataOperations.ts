@@ -12,7 +12,6 @@ import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import type { Retract } from "@/components/feedback/stage";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { publishImportsInvalidation } from "@/lib/imports/api";
 import { installedApp, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { nativeIsForeground, subscribeNativeForeground } from "@/lib/native/foreground";
 import { isAbortError } from "@/lib/errors";
@@ -125,7 +124,7 @@ function run(scope: AccountScope): void {
             if (held.entry.interests === 0 || held.entry.generation !== held.generation || entries.get(`${scope.accountId}:${held.id}`) !== held.entry) continue;
             const value = response.data.items[index].observation;
             receive(held.entry, value);
-            if (held.entry.due !== 0) held.entry.due = nextDue(acceptedAt, value !== null && (value.processing.work_in_flight || value.metadata_enrichment.unfinished_count > 0) ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS);
+            if (held.entry.due !== 0) held.entry.due = nextDue(acceptedAt, value !== null && (value.processing.work_in_flight || value.metadata_enrichment.work_in_flight) ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS);
           }
         } catch (error) {
           if (!current() || isAbortError(error)) return;
@@ -146,7 +145,7 @@ function run(scope: AccountScope): void {
         if (!current() || exactEntries.get(`${entry.accountId}:${entry.mediaId}:${entry.jobId}`) !== entry || entry.interest === null && (entry.presented === 0 || entry.generation !== entryGeneration)) return;
         entry.defect = null;
         showExact(entry, isSettled(operation) ? { status: "settled", operation } : { status: "following", operation });
-        if (entry.due !== 0) entry.due = nextDue(Date.now(), WORK_OBSERVATION_MS);
+        if (entry.due !== 0) entry.due = nextDue(Date.now(), operation.status === "held" ? PASSIVE_OBSERVATION_MS : WORK_OBSERVATION_MS);
         pruneExact(entry);
       } catch (error) {
         if (!current() || isAbortError(error) || entry.interest === null && (entry.presented === 0 || entry.generation !== entryGeneration)) return;
@@ -161,9 +160,10 @@ function run(scope: AccountScope): void {
     const finishedAt = Date.now();
     for (const { entry } of media) if (entry.due === Infinity) {
       const value = entry.snapshot.status === "ready" ? entry.snapshot.observation : null;
-      entry.due = nextDue(finishedAt, value !== null && (value.processing.work_in_flight || value.metadata_enrichment.unfinished_count > 0) ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS);
+      entry.due = nextDue(finishedAt, value !== null && (value.processing.work_in_flight || value.metadata_enrichment.work_in_flight) ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS);
     }
-    for (const entry of jobs) if (entry.due === Infinity && entry.snapshot.status !== "interrupted") entry.due = nextDue(finishedAt, WORK_OBSERVATION_MS);
+    for (const entry of jobs) if (entry.due === Infinity && entry.snapshot.status !== "interrupted")
+      entry.due = nextDue(finishedAt, observedOperation(entry)?.status === "held" ? PASSIVE_OBSERVATION_MS : WORK_OBSERVATION_MS);
     scope.reading = null; scope.controller = null;
     if (scope.pendingWake) { scope.pendingWake = false; wake(scope); }
     else arm(scope);
@@ -256,7 +256,7 @@ export interface MetadataPresentation {
   readonly purpose: Schema<"MetadataRetryAllowed">["purpose"];
   readonly originPaneId: string | null;
 }
-export type SettledMetadataOperation = Extract<MetadataOperation, { status: "completed" | "no_findings" | "failed" }>;
+export type SettledMetadataOperation = Extract<MetadataOperation, { status: "completed" | "failed" }>;
 export type MetadataOperationObservation =
   | { readonly status: "loading" }
   | { readonly status: "following"; readonly operation: Exclude<MetadataOperation, SettledMetadataOperation> }
@@ -286,6 +286,7 @@ export type MetadataFeedback = MetadataPresentation & {
   readonly retract: Retract;
 } & (
   | { readonly kind: "Terminal"; readonly operation: SettledMetadataOperation }
+  | { readonly kind: "Held"; readonly operation: Extract<MetadataOperation, { status: "held" }> }
   | { readonly kind: "Interrupted"; readonly error: ApiError }
 );
 const EMPTY_EXACT: MetadataOperationObservation = { status: "loading" };
@@ -326,7 +327,7 @@ function observedOperation(entry: ExactEntry): MetadataOperation | null {
 }
 
 function isSettled(operation: MetadataOperation): operation is SettledMetadataOperation {
-  return operation.status === "completed" || operation.status === "no_findings" || operation.status === "failed";
+  return operation.status === "completed" || operation.status === "failed";
 }
 
 /** Explicit status repair reads the same job; it never admits work. */
@@ -406,36 +407,17 @@ export function presentMetadataFeedback(present: (feedback: MetadataFeedback) =>
       mediaId: entry.mediaId, jobId: entry.jobId, retract: interest.retract };
     if (snapshot.status === "settled") {
       entry.interest = null;
-      present({ ...identity, kind: "Terminal", operation: snapshot.operation });
+      if (snapshot.operation.status === "failed" && snapshot.operation.code === "superseded")
+        interest.retract();
+      else present({ ...identity, kind: "Terminal", operation: snapshot.operation });
+      pruneExact(entry);
+    } else if (snapshot.status === "following" && snapshot.operation.status === "held") {
+      entry.interest = null;
+      present({ ...identity, kind: "Held", operation: snapshot.operation });
       pruneExact(entry);
     } else if (snapshot.status === "interrupted") {
       interest.reported = snapshot;
       present({ ...identity, kind: "Interrupted", error: snapshot.error });
     }
   }
-}
-
-/** Mark one no-findings result reviewed for this viewer; a repeat is a no-op. */
-export async function submitMetadataResultReview(
-  mediaId: string,
-  jobId: string,
-  onAccepted?: () => void,
-): Promise<void> {
-  const scope = account;
-  if (scope === null) return;
-  try {
-    await apiFetch(
-      `/api/media/${encodeURIComponent(mediaId)}/metadata-enrichment/${encodeURIComponent(jobId)}/review`,
-      { method: "POST" },
-    );
-  } catch (error) {
-    if (account !== scope) return;
-    throw error;
-  }
-  if (account !== scope) return;
-  onAccepted?.();
-  publishImportsInvalidation();
-  reconnectMetadataOperations(mediaId);
-  const exact = exactEntries.get(`${scope.accountId}:${mediaId}:${jobId}`);
-  if (exact !== undefined) reconnectMetadataOperation(mediaId, jobId);
 }

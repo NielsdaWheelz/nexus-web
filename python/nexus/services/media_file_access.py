@@ -12,7 +12,8 @@ from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
-from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.errors import StorageError
 
 logger = get_logger(__name__)
 

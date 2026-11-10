@@ -4,6 +4,7 @@ Every code carries its HTTP status, so the envelope (``nexus.responses``) derive
 status from the code and a client branches on the code alone.
 """
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -214,11 +215,17 @@ class ApiError(Exception):
     """A modeled failure: its code (and so its status), a message and optional details."""
 
     def __init__(
-        self, code: ApiErrorCode, message: str, *, details: dict[str, Any] | None = None
+        self,
+        code: ApiErrorCode,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        retry_at: datetime | None = None,
     ) -> None:
         self.code = code
         self.message = message
         self.details = details
+        self.retry_at = retry_at
         self.status_code = code.status
         super().__init__(message)
 

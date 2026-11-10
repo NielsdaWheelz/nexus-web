@@ -144,11 +144,12 @@ WITH visible_media AS (
         index_job.error_code AS index_job_error_code,
         metadata_latest.needs_attention AS metadata_needs_attention,
         metadata_latest.failure_code AS metadata_failure_code,
-        metadata_latest.completed_at AS metadata_attention_at,
+        COALESCE(metadata_latest.completed_at, metadata_latest.updated_at) AS metadata_attention_at,
         metadata_summary.first_created_at AS metadata_accepted_at,
         metadata_summary.unfinished_count AS metadata_unfinished_count,
         metadata_summary.updated_at AS metadata_updated_at,
         live_jobs.unfinished_count AS unfinished_job_count,
+        live_jobs.active_count AS active_job_count,
         live_jobs.updated_at AS live_jobs_updated_at,
         CASE WHEN capacity.lease_expires_at > now() OR holder.lease_expires_at > now()
             THEN capacity.job_id END AS capacity_job_id
@@ -178,17 +179,19 @@ WITH visible_media AS (
         FROM metadata_jobs WHERE media_id = m.id
     ) metadata_summary ON TRUE
     LEFT JOIN LATERAL (
-        SELECT count(*) AS unfinished_count, max(updated_at) AS updated_at
+        SELECT count(*) AS unfinished_count,
+            count(*) FILTER (WHERE status IN {_LIVE}) AS active_count,
+            max(updated_at) AS updated_at
         FROM background_jobs
         WHERE kind IN ('ingest_media_source', 'media_content_reindex_job', 'enrich_metadata')
-          AND status IN {_LIVE} AND payload @> jsonb_build_object('media_id', m.id::text)
+          AND status IN ('pending', 'failed', 'running', 'held') AND payload @> jsonb_build_object('media_id', m.id::text)
     ) live_jobs ON TRUE
     LEFT JOIN background_job_capacity_leases capacity ON capacity.resource_class = 'Heavy'
     LEFT JOIN background_jobs holder ON holder.id = capacity.job_id
 ), media_classified AS (
     SELECT media_work.*,
         CASE WHEN attempt_id IS NULL THEN NULL
-            WHEN attempt_status <> 'succeeded' AND source_job_status = 'dead'
+            WHEN attempt_status <> 'succeeded' AND source_job_status IN ('dead', 'held')
                 THEN 'NeedsAttention'
             WHEN attempt_status = 'failed'
                 AND (source_job_status IS NULL OR source_job_status NOT IN {_LIVE})
@@ -198,7 +201,7 @@ WITH visible_media AS (
         CASE WHEN index_revision IS NULL OR processing_status <> 'ready_for_reading' THEN NULL
             WHEN index_status IN ('no_text', 'ocr_required')
                 OR (index_status = 'ready' AND text_search_ready) THEN 'Complete'
-            WHEN index_job_status = 'dead' THEN 'NeedsAttention'
+            WHEN index_job_status IN ('dead', 'held') THEN 'NeedsAttention'
             WHEN index_status IN ('pending', 'indexing') OR index_job_status IN {_LIVE}
                 THEN 'Active'
             ELSE 'Complete' END AS search_classification,
@@ -275,7 +278,7 @@ WITH visible_media AS (
             WHEN w.media_id IS NULL THEN
                 CASE r.derived_state WHEN 'VerificationFailed' THEN r.verification_failed_at
                     WHEN 'CapabilityExpired' THEN r.upload_url_expires_at END
-            WHEN w.source_job_status = 'dead'
+            WHEN w.source_job_status IN ('dead', 'held')
                 THEN COALESCE(w.source_job_finished_at, w.source_job_updated_at)
             ELSE COALESCE(w.attempt_finished_at, w.attempt_updated_at) END AS source_failed_at,
         CASE WHEN w.media_id IS NULL THEN r.session_created_at
@@ -439,7 +442,12 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                     + (SELECT count(*) FROM obligations
                        WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
                     + (SELECT count(*) FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))::integer
-                    AS unfinished_work_count
+                    AS unfinished_work_count,
+                (EXISTS (SELECT 1 FROM import_media WHERE active_job_count > 0)
+                    OR EXISTS (SELECT 1 FROM obligations
+                       WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
+                    OR EXISTS (SELECT 1 FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))
+                    AS work_in_flight
             FROM imports"""),
             _params(viewer_id),
         )

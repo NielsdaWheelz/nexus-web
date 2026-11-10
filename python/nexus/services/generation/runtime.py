@@ -14,9 +14,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.config import get_settings
 from nexus.db.engine import async_database_scope
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import JobFailure
 from nexus.logging import get_logger
-from nexus.services.generation.contract import RouteUnavailable
-from nexus.services.generation.ledger import interrupt_job_generations
+from nexus.services.generation.ledger import recover_job_generations
 
 if TYPE_CHECKING:
     from provider_runtime import ProviderRuntime
@@ -83,13 +83,12 @@ def run_generation_job[R](
 
     db = get_session_factory()()
     try:
-        interrupt_job_generations(
-            db, job_id=context.job_id, detail="a later attempt of its job started"
-        )
+        if not recover_job_generations(db, context=context):
+            raise JobFailure("E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry")
         db.commit()
         return asyncio.run(call())
-    except RouteUnavailable as error:
-        logger.warning(f"{label}_route_unavailable", detail=error.message)
+    except JobFailure as error:
+        logger.warning(f"{label}_execution_failed", detail=error.message)
         raise
     # justify-ignore-error: the queue's retry and dead-letter policy owns every
     # unexpected defect once this boundary has logged it.

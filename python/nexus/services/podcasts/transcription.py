@@ -6,9 +6,9 @@ attempt is enqueued. The run prefers the publisher's rss sidecar, else Deepgram.
 raises to the source-attempt owner, which publishes it (transcription_failure.py).
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -27,7 +27,7 @@ from nexus.services.content_indexing import request_stale_media_content_reindex
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.suggestion_changes import record_input_change
-from nexus.services.transcript_segments import normalize_transcript_segments
+from nexus.services.transcript_segments import TranscriptSegmentInput, normalize_transcript_segments
 from nexus.services.transcripts.current import publish_source_transcript, write_current_transcript
 from nexus.services.transcripts.request_reason import (
     TranscriptRequestReason,
@@ -43,10 +43,14 @@ from nexus.services.youtube import fetch_youtube_transcript
 from .episodes import selection_fingerprint, selection_ids
 
 
-@dataclass(frozen=True)
-class PodcastTranscriptionCompleted:
-    segment_count: int
-    status: Literal["completed"] = "completed"
+@dataclass(frozen=True, slots=True)
+class PreparedTranscriptSource:
+    """Acquired transcript data; the source runner owns its atomic publication."""
+
+    segments: Sequence[TranscriptSegmentInput]
+    origin: TranscriptOrigin
+    reason: TranscriptRequestReason
+    diagnostic: str | None
 
 
 def _out(
@@ -198,12 +202,12 @@ def reset_podcast_transcription_job(
     )
 
 
-def run_podcast_transcription_now(
+def prepare_podcast_transcript(
     session_factory: sessionmaker[Session],
     *,
     media_id: UUID,
     publication_fence: SourcePublicationFence,
-) -> PodcastTranscriptionCompleted:
+) -> PreparedTranscriptSource:
     """One source attempt: the publisher's sidecar if it yields text, else Deepgram in the
     episode's language. Failure raises; the source-attempt owner publishes it."""
     from .deepgram_adapter import get_deepgram_client
@@ -244,38 +248,36 @@ def run_podcast_transcription_now(
         segments = normalize_transcript_segments(raw)
         if not segments:
             raise ApiError(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE, "Transcript unavailable")
-    now = datetime.now(UTC)
+    return PreparedTranscriptSource(tuple(segments), origin, reason, diagnostic)
 
-    def publish(db: Session, _attempt: object) -> None:
-        publish_source_transcript(
-            db,
-            media_id=media_id,
-            request_reason=reason,
-            transcript_coverage="full",
-            transcript_segments=segments,
-            transcript_origin=origin,
-            now=now,
-        )
-        db.execute(
-            text("""
-                UPDATE podcast_transcription_jobs
-                SET status = 'completed', error_code = :diagnostic, completed_at = now(),
-                    started_at = COALESCE(started_at, now()), updated_at = now(),
-                    attempts = attempts + CASE WHEN :publisher THEN 1 ELSE 0 END
-                WHERE media_id = :id
-            """),
-            {"id": media_id, "diagnostic": diagnostic, "publisher": origin == "Publisher"},
-        )
-        record_input_change(db, owners=(f"media:{media_id}",))
 
-    run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_podcast_transcript",
-        fence=publication_fence,
-        media_ids=(media_id,),
-        mutate=publish,
+def publish_prepared_transcript(
+    db: Session, *, media_id: UUID, prepared: PreparedTranscriptSource
+) -> None:
+    """Publish acquired rows and status in the source runner's fenced transaction."""
+    publish_source_transcript(
+        db,
+        media_id=media_id,
+        request_reason=prepared.reason,
+        transcript_coverage="full",
+        transcript_segments=prepared.segments,
+        transcript_origin=prepared.origin,
+        now=datetime.now(UTC),
     )
-    return PodcastTranscriptionCompleted(segment_count=len(segments))
+    db.execute(
+        text("""
+            UPDATE podcast_transcription_jobs
+            SET status = 'completed', error_code = :diagnostic, completed_at = now(),
+                started_at = COALESCE(started_at, now()), updated_at = now(),
+                attempts = attempts + CASE WHEN :publisher THEN 1 ELSE 0 END
+            WHERE media_id = :id RETURNING media_id
+        """),
+        {
+            "id": media_id,
+            "diagnostic": prepared.diagnostic,
+            "publisher": prepared.origin == "Publisher",
+        },
+    ).one()
 
 
 def _mark_running(db: Session, media_id: UUID, reason: str) -> None:

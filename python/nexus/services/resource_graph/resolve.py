@@ -23,7 +23,11 @@ from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
 )
-from nexus.services.media_read_map import load_media_document_summary
+from nexus.services.media_read_map import (
+    READ_DOCUMENT_MAX_CHARS,
+    DocumentTooLarge,
+    load_media_document_summary,
+)
 from nexus.services.notes import page_title_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.items import ref_visible, visible_refs
@@ -133,6 +137,55 @@ def load_resource_batch(
     visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
     out.update(_load_visible(db, [ref for ref in refs if ref.uri in visible], viewer_id=viewer_id))
     return out
+
+
+def read_resource(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResolvedResource:
+    """An exact tool body, authorized and measured before its loader hydrates it."""
+    if not ref_visible(db, viewer_id=viewer_id, ref=ref):
+        return ResolvedResource(ref.uri, "(resource unavailable)", "", missing=True)
+    if ref.scheme == "highlight":
+        size_sql = "SELECT char_length(exact) FROM highlights WHERE id=:id"
+    elif ref.scheme == "page":
+        size_sql = f"SELECT char_length({page_title_sql('p')}) FROM pages p WHERE id=:id"
+    elif ref.scheme == "oracle_reading":
+        size_sql = """SELECT char_length('Question: '||question_text
+            ||CASE WHEN folio_motto IS NOT NULL AND folio_motto<>'' THEN E'\\nMotto: '||folio_motto
+                ||CASE WHEN folio_motto_gloss IS NOT NULL AND folio_motto_gloss<>'' THEN ' — '||folio_motto_gloss ELSE '' END ELSE '' END
+            ||CASE WHEN argument_text IS NOT NULL AND argument_text<>'' THEN E'\\nArgument: '||argument_text ELSE '' END
+            ||CASE WHEN interpretation_text IS NOT NULL AND interpretation_text<>'' THEN E'\\n\\nInterpretation:\\n'||interpretation_text ELSE '' END) FROM oracle_readings WHERE id=:id"""
+    else:
+        sql, _ = _LOADERS[ref.scheme]
+        body = "exact" if ref.scheme == "passage_anchor" else "body"
+        size_sql = f"SELECT char_length({body}) FROM ({sql}) resource"
+    size = db.scalar(
+        text(size_sql),
+        {"id": ref.id, "ids": [ref.id], "viewer_id": viewer_id, "identity_only": False},
+    )
+    if size is not None and size > READ_DOCUMENT_MAX_CHARS:
+        raise DocumentTooLarge(ref.uri)
+    if ref.scheme == "highlight":
+        from nexus.schemas.resource_evidence import CapturedQuote
+        from nexus.services.reader_excerpts import quote_parts, read_captures
+        from nexus.services.resource_items.evidence import read_evidence
+
+        author_id = db.scalar(text("SELECT user_id FROM highlights WHERE id=:id"), {"id": ref.id})
+        if author_id == viewer_id:
+            raw = read_captures(db, [ref.uri])[ref.uri]["capture"]["value"]
+            quote = CapturedQuote(
+                excerpt=raw["excerpt"],
+                exact=raw["quote_exact"],
+                prefix=raw["prefix"],
+                suffix=raw["suffix"],
+                color=None,
+            )
+        else:
+            evidence = read_evidence(db, viewer_id=viewer_id, ref=ref)
+            assert evidence.quote is not None
+            quote = evidence.quote
+        parts = quote_parts(quote)
+        resolved = ResolvedQuote(parts.exact, parts.prefix, parts.suffix, None, None)
+        return ResolvedResource(ref.uri, "Highlight", parts.exact, quote=resolved)
+    return _load_visible(db, [ref], viewer_id=viewer_id)[ref.uri]
 
 
 def _load_visible(

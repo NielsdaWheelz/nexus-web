@@ -26,6 +26,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, ConflictError
+from nexus.jobs.queue import JobFailure
 from nexus.logging import get_logger
 from nexus.schemas.x_source import (
     RevisionId,
@@ -42,7 +43,7 @@ from nexus.schemas.x_source import (
     XSourceUrl,
     XUnavailableObservation,
 )
-from nexus.services.net.http_retry import get_json_with_retry
+from nexus.services.net.http_retry import RETRYABLE_STATUSES, get_json_with_retry
 from nexus.services.x_identity import classify_x_article_url
 
 logger = get_logger(__name__)
@@ -242,7 +243,7 @@ class _Capture:
         observed_at = datetime.now(UTC)
         includes = payload.get("includes", {})
         if not isinstance(includes, dict):
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, operation)
+            raise _protocol_failure(operation)
         for user in _decode(_User, includes.get("users")):
             self.users[user.id] = user
         for media in _decode(_Media, includes.get("media")):
@@ -250,7 +251,7 @@ class _Capture:
         posts = [*_decode(_Post, includes.get("tweets")), *_decode(_Post, payload.get("data"))]
         unavailable = _unavailable_ids(payload)
         if unavailable.intersection(post.id for post in posts):
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "contradictory_availability")
+            raise _protocol_failure("contradictory_availability")
         for post in posts:
             try:
                 article_id = _article_identity(post)
@@ -270,7 +271,7 @@ class _Capture:
                     or set(previous.attachments.media_keys if previous.attachments else ())
                     != set(post.attachments.media_keys if post.attachments else ())
                 ):
-                    raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "conflicting_revision")
+                    raise _protocol_failure("conflicting_revision")
                 post = post.model_copy(
                     update={
                         "edit_history_tweet_ids": _merge_history(previous.history, post.history)
@@ -290,7 +291,7 @@ class _Capture:
             if payload is None:
                 return False
             if not set(ids) <= self.posts.keys() | self.unavailable.keys():
-                raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, operation)
+                raise _protocol_failure(operation)
         return True
 
     def resolve_edits(self, revision_ids: set[str] | None = None) -> None:
@@ -364,13 +365,13 @@ class _Capture:
                     "these saved posts share revision aliases. repair is required.",
                 )
             if len(author_ids) != 1:
-                raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "resolve_identity")
+                raise _protocol_failure("resolve_identity")
             if history is not None:
                 if any(
                     (post.id if isinstance(post, _Post) else post.source_revision_id) not in history
                     for post in values
                 ):
-                    raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "resolve_identity")
+                    raise _protocol_failure("resolve_identity")
                 # Raw observations win a tie; prior bodies remain when a newer revision is absent.
                 ordered_history = history
                 values.sort(
@@ -389,7 +390,7 @@ class _Capture:
                 and node.parent_author_id is not None
                 and node.parent_author_id != nodes[parent].author_id
             ):
-                raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "conflicting_reply_author")
+                raise _protocol_failure("conflicting_reply_author")
         return nodes, owners
 
     def normalize(self, node: _Node) -> XSourcePost:
@@ -399,7 +400,7 @@ class _Capture:
         author = self.users.get(post.author_id)
         media_keys = post.attachments.media_keys if post.attachments is not None else ()
         if author is None or any(key not in self.media for key in media_keys):
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "missing_expansion")
+            raise _protocol_failure("missing_expansion")
         entities = post.note_tweet.entities if post.note_tweet is not None else post.entities
         return XSourcePost(
             source_revision_id=post.id,
@@ -468,7 +469,7 @@ def lookup_x_carrier(*, requested_revision_id: str, prior: XPriorSource) -> XCar
     try:
         article_id = _article_identity(post)
     except ValueError as exc:
-        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "inspect_article") from exc
+        raise _protocol_failure("inspect_article") from exc
     return XCarrierLookup(requested_revision_id, post.id, article_id, capture)
 
 
@@ -518,7 +519,7 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
         and requested.conversation_id is None
         and isinstance(requested.post, _Post)
     ):
-        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "missing_conversation")
+        raise _protocol_failure("missing_conversation")
     if scope == "author_thread" and requested.conversation_id is not None:
         params = {
             **_FIELDS,
@@ -537,7 +538,7 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
                 post.author_id != author.id or post.conversation_id != requested.conversation_id
                 for post in data
             ):
-                raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "search_identity")
+                raise _protocol_failure("search_identity")
             candidates.update(post.id for post in data)
             meta = page.get("meta")
             if (
@@ -545,10 +546,10 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
                 or type(meta.get("result_count")) is not int
                 or meta["result_count"] != len(data)
             ):
-                raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "search_author_thread")
+                raise _protocol_failure("search_author_thread")
             token = meta.get("next_token")
             if token is not None and (not isinstance(token, str) or not token or token in tokens):
-                raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "search_author_thread")
+                raise _protocol_failure("search_author_thread")
             exhausted = token is None
             if token is None:
                 break
@@ -755,7 +756,7 @@ def _order(nodes: Mapping[str, _Node], aliases: Mapping[str, str], selected: set
     while pending:
         ready = [key for key in pending if aliases.get(nodes[key].parent or "") not in pending]
         if not ready:
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "cyclic_reply_graph")
+            raise _protocol_failure("cyclic_reply_graph")
         key = min(ready, key=lambda identity: nodes[identity].order)
         ordered.append(key)
         pending.remove(key)
@@ -802,7 +803,7 @@ def _merge_history(
     if right is None:
         return left
     if left[: min(len(left), len(right))] != right[: min(len(left), len(right))]:
-        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "conflicting_edit_history")
+        raise _protocol_failure("conflicting_edit_history")
     return left if len(left) >= len(right) else right
 
 
@@ -827,21 +828,21 @@ def _decode[M: _Model](model: type[M], value: Any) -> list[M]:
         return []
     items = [value] if isinstance(value, dict) else value
     if not isinstance(items, list):
-        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "decode")
+        raise _protocol_failure("decode")
     try:
         return [model.model_validate_json(json.dumps(item)) for item in items]
     except (ValidationError, TypeError, ValueError) as exc:
-        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "decode") from exc
+        raise _protocol_failure("decode") from exc
 
 
 def _unavailable_ids(payload: Mapping[str, Any]) -> set[str]:
     errors = payload.get("errors", [])
     if not isinstance(errors, list):
-        raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "decode_errors")
+        raise _protocol_failure("decode_errors")
     ids = set()
     for error in errors:
         if not isinstance(error, dict):
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "decode_errors")
+            raise _protocol_failure("decode_errors")
         identity = error.get("resource_id", error.get("value"))
         problem = error.get("type")
         if (
@@ -851,7 +852,7 @@ def _unavailable_ids(payload: Mapping[str, Any]) -> set[str]:
             or not identity.isascii()
             or not identity.isdecimal()
         ):
-            raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, "decode_errors")
+            raise _protocol_failure("decode_errors")
         ids.add(identity)
     return ids
 
@@ -876,8 +877,10 @@ def _get(path: str, params: Mapping[str, str], operation: str) -> dict[str, Any]
         cause = exc.__cause__
         if isinstance(cause, httpx.TimeoutException):
             raise _error(ApiErrorCode.E_X_PROVIDER_TIMEOUT, operation) from exc
-        if not isinstance(cause, httpx.HTTPStatusError):
+        if isinstance(cause, httpx.NetworkError | httpx.RemoteProtocolError):
             raise _error(ApiErrorCode.E_X_PROVIDER_UNAVAILABLE, operation) from exc
+        if not isinstance(cause, httpx.HTTPStatusError):
+            raise _protocol_failure(operation) from exc
         status = cause.response.status_code
         if status in {403, 404}:
             try:
@@ -897,9 +900,20 @@ def _get(path: str, params: Mapping[str, str], operation: str) -> dict[str, Any]
             code = ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED
         elif status == 429:
             code = ApiErrorCode.E_X_PROVIDER_RATE_LIMITED
-        else:
+        elif status in RETRYABLE_STATUSES:
             code = ApiErrorCode.E_X_PROVIDER_UNAVAILABLE
-        raise _error(code, operation, status=status) from exc
+        else:
+            raise _protocol_failure(operation) from exc
+        error = _error(code, operation, status=status)
+        error.retry_at = exc.retry_at
+        raise error from exc
+
+
+def _protocol_failure(operation: str) -> JobFailure:
+    logger.warning("x_provider_protocol_failed", operation=operation)
+    return JobFailure(
+        "E_X_PROVIDER_PROTOCOL", "The X provider returned an invalid response.", "hold"
+    )
 
 
 def _error(code: ApiErrorCode, operation: str, *, status: int | None = None) -> ApiError:

@@ -4,7 +4,8 @@ import * as Y from "yjs";
 import {type Node as PMNode} from "prosemirror-model";
 import {Plugin, TextSelection, NodeSelection, type Transaction} from "prosemirror-state";
 import type {EditorView, NodeView} from "prosemirror-view";
-import {bodyText, docFromBody, emptyBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
+import {bodyHasContent, bodyText, docFromBody, emptyBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
+import {canonicalSerialization} from "@nexus/authored/canonical";
 import {decodeBytes, readBody} from "@nexus/authored/documents";
 import {isVisible} from "@nexus/authored/merge";
 import type {Intent} from "@nexus/authored/commands";
@@ -18,22 +19,24 @@ import {outlineFoldCommand, outlineHistoryCommand, outlineStructuralCommand, use
 import {planRange, rangeSelection, rangeReasonMessage, type BlockRange, type Destination, type InputBookmark, type RangePlan, type RangeReason, type RangeSnapshot, type RangeCommand, type SelectionRow} from "./outlineSelection";
 import rowStyles from "@/components/notes/OutlineEditorRow.module.css";
 import {isTextEntryTarget} from "@/lib/ui/eventTarget";
+import {ownsOverlayFocus} from "@/lib/ui/overlay";
+import {LinkInputRefusal, type LinkTarget} from "@/lib/resourceGraph/links";
 import type {WorkGuard} from "@/lib/unsavedWork";
 import {OutlineBinding, type OutlineBindingField} from "./outlineBinding";
 import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
 import {OutlinePendingInput, type PendingOutlineField} from "./outlinePending";
 import {OutlineHistory, type Birth, type EditorHistory, type DisplayedWriting, type OccurrenceBookmark, type OutlineVisibility} from "./structure";
 import type {LocalCommit, WritingDocument, WritingRuntime} from "./runtime";
-import type {OutlineWindow, OutlineEdge} from "./useOutlineWindow";
-import type {FocusSelection, NoteEdit, OutlineCommand} from "./editorTypes";
+import {projectOutlineWindow, type OutlineWindow, type OutlineEdge} from "./useOutlineWindow";
+import type {DisplayedSplit, FocusSelection, NoteEdit, OutlineCommand} from "./editorTypes";
 import {clipboardPlainText, readOutlineClipboard, writeOutlineClipboard, type ClipItem} from "./clipboard";
 
 interface ChildProof {descriptor: string; store_revision: string; available: boolean | null}
 export interface OutlineRow {
   row_id: string; ref: string | null; link: LinkState | null; parent_id: string | null; parent_ref: string;
   depth: number; branch: OutlineBranch; resource: ResourceProjection | null; kind: "body" | "title" | "reference";
-  children: ChildProof | null; open: boolean; terminal: boolean; root: boolean; tail: boolean;
-  gap?: "before" | "after" | "tail";
+  children: ChildProof | null; open: boolean; terminal: boolean; root: boolean; seed: boolean;
+  gap?: "before" | "after";
   origin: unknown;
 }
 export interface BranchRead {pending: boolean; error: unknown | null; occurrence: object | null; retry(): void}
@@ -51,6 +54,14 @@ interface EmbeddedBranch {owner: string; projection: {ref: string; branch: Outli
 export interface RootField {label: string; placeholder?: string; initialTitle?: string; inspection?: import("@/components/notes/NoteEditor").NoteInspection | null}
 export interface OutlineRootAttachment {
   handle: TextEditorHandle; visible: boolean; ownsFocus(): boolean; reveal(): void;
+}
+export interface OutlineAnnotationCapability {
+  editor(document: WritingDocument): EditorHistory | null;
+  attach(attachment: OutlineRootAttachment | null): void;
+  selection(at: {anchor: number; head: number}): void;
+  blur(): void;
+  split(document: WritingDocument, displayed: DisplayedSplit): Promise<boolean>;
+  link(target: LinkTarget, label: string): void;
 }
 type ProjectionReason = "initial" | "projection" | "semantic";
 const MAX_REFS = 64, MAX_BYTES = 16 * 1024 * 1024;
@@ -83,7 +94,12 @@ export class OutlineController {
   private removalKey: string | null = null;
   private removalPress: string | null = null;
   private readonly identities: Map<string, {id: string; origin: unknown}>;
-  private readonly tailIds = new Map<string, string>();
+  private seedId = crypto.randomUUID();
+  private seedMembership: {revision: string | null} | null = null;
+  private referenceRow: string | null = null;
+  private annotationRow: string | null = null;
+  private readonly annotations = new Map<string, {capability: OutlineAnnotationCapability; document: WritingDocument | null; attachment: OutlineRootAttachment | null; before: ((document: WritingDocument) => FocusSelection) | null}>();
+  private preparing: {row_id: string; ref: string} | null = null;
   private readonly opened: Set<string>;
   private readonly embedded = new Map<string, EmbeddedBranch>();
   private readonly historyLeases = new Map<string, () => void>();
@@ -109,7 +125,7 @@ export class OutlineController {
   private rootSelectionBefore: ((document: WritingDocument) => FocusSelection) | null = null;
   private disconnect: (() => void) | null = null;
   private unbindFocus: (() => void) | null = null;
-  private waiting: {row_id: string; selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection); lease: () => boolean; resolve(): void; native?: {ref: string | null; kind: "body" | "title"}} | null = null;
+  private waiting: {row_id: string; selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection); lease: () => boolean; resolve(): void; annotation?: true; native?: {ref: string | null; kind: "body" | "title" | "reference"}} | null = null;
   private deferred = false;
   private initialTitleApplied = false;
   private titleEdited = false;
@@ -186,7 +202,7 @@ export class OutlineController {
       this.publishWriting(documents, committed, target, source, mayFocus);
       if (mayFocus()) void committed.then(() => {if (this.active && !this.blockRange) {this.announce(action === "undo" ? "outline change undone" : "outline change redone"); this.notify();}}, () => {});
     },
-      capture: () => this.capture(), prepare: (targets, sources, mayFocus, visibility) => this.prepare(targets, sources, mayFocus, visibility),
+      capture: () => this.capture(), prepare: (targets, mayFocus, visibility) => this.prepare(targets, mayFocus, visibility),
       lease: () => this.lease()});
   }
   lease = () => {const at = this.intent; return () => this.active && at === this.intent;};
@@ -200,12 +216,89 @@ export class OutlineController {
     const selection = view.state.selection;
     if (!(selection instanceof TextSelection)) return;
     const field = fieldAt(view.state.doc, selection.anchor), row = field ? this.rows.get(field.row_id) : null;
-    if (!field || !row || !row.tail || !this.editableReady(row) || selection.from < field.from || selection.to > field.to) return;
+    if (!field || !row || !row.seed || !this.editableReady(row) || selection.from < field.from || selection.to > field.to) return;
     this.waiting = {row_id: row.row_id, selection: {anchor: selection.anchor - field.from + 1, head: selection.head - field.from + 1},
       lease: this.lease(), resolve() {}, native: {ref: row.ref, kind: field.kind}};
   }
   attachRoot(attachment: OutlineRootAttachment | null): void {this.rootAttachment = attachment; this.tryFocus();}
-  get rootDocument(): WritingDocument | null {return this.rootField ? this.documents.get(this.rootRef)?.document ?? null : null;}
+  annotation(row_id: string): OutlineAnnotationCapability {
+    const existing = this.annotations.get(row_id); if (existing) return existing.capability;
+    const value: {capability: OutlineAnnotationCapability; document: WritingDocument | null; attachment: OutlineRootAttachment | null; before: ((document: WritingDocument) => FocusSelection) | null} = {
+      capability: {
+        editor: document => {
+          if (!this.active || this.filter.trim()) return null;
+          const added = this.documents.has(document.ref) ? 0 : 1;
+          if (!this.admitNew(added, (added ? 2 : 1) * Y.encodeStateAsUpdate(document.doc).byteLength)) {
+            this.error = new OutlineActionRefusal({fact: "couldn’t open more writing here.", reason: AT_LIMIT}); this.notify(); return null;
+          }
+          if (!this.documents.has(document.ref)) this.documents.set(document.ref, {document, captureBytes: 0, release: document.retain()});
+          value.document = document;
+          const history = this.history.editor(document, this.origin(row_id));
+          return {...history, record: (edit, admission) => history.record(edit, admission, {
+            kind: "text", annotation: true, ...(row_id === this.pending.root_id ? {root: true} : {}), row_id, ref: document.ref,
+            range: edit?.selectionAfter ?? this.selection, resolve: value.attachment?.handle.captureSelection() ?? null, resolveBefore: value.before ?? undefined,
+          })};
+        },
+        attach: attachment => {value.attachment = attachment; if (row_id === this.pending.root_id) this.rootAttachment = attachment; this.tryFocus();},
+        selection: at => {
+          if (!value.attachment?.ownsFocus()) return;
+          if (this.annotationRow !== row_id) this.history.boundary();
+          this.annotationRow = row_id; this.referenceRow = null; this.selectionRow = row_id; this.selection = at; this.blockRange = null;
+          this.focused = true; this.touchCommandsDismissed = false; this.handle?.setInputMode("text");
+          value.before = value.attachment.handle.captureSelection(); this.syncMetadata(); this.notify();
+        },
+        blur: () => {queueMicrotask(() => {if (!value.attachment?.ownsFocus() && this.annotationRow === row_id && !(document.activeElement instanceof Element && document.activeElement.closest("[data-outline-commands]"))) this.setFocused(false);});},
+        split: (document, displayed) => this.splitAnnotation(row_id, document, displayed),
+        link: (target, label) => {
+          const document = value.document; if (!document || !this.active) return;
+          const before = this.annotationBookmark(row_id), child_id = crypto.randomUUID();
+          const admitted = this.history.insertReference({placement: {parent_ref: document.ref, parent: document, after_ref: null, before_ref: null},
+            occurrence: {row_id: child_id, parent_id: row_id, after_id: null, before_id: null}, target, label, change: {before, after: before}});
+          void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, row_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
+          void admitted.result.catch(error => {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify();});
+        },
+      }, document: null, attachment: null, before: null,
+    };
+    this.annotations.set(row_id, value); return value.capability;
+  }
+  private annotationBookmark(row_id: string): InputBookmark {
+    const value = this.annotations.get(row_id);
+    return value?.document ? {kind: "text", annotation: true, ...(row_id === this.pending.root_id ? {root: true} : {}), row_id, ref: value.document.ref,
+      range: this.selection, resolve: value.attachment?.handle.captureSelection() ?? null} : null;
+  }
+  private async splitAnnotation(row_id: string, source: WritingDocument, displayed: DisplayedSplit): Promise<boolean> {
+    if (this.preparing || !this.active || this.filter.trim() || this.annotations.get(row_id)?.document !== source || !this.annotations.get(row_id)?.attachment) return false;
+    const lease = this.lease(), preparation = {row_id, ref: source.ref}, before = this.annotationBookmark(row_id);
+    this.preparing = preparation;
+    try {
+      await this.runtime.committedPrefix();
+      const store = await this.runtime.store;
+      const admitted = await store.withCommand(async () => {
+        if (!lease() || this.runtime.snapshot().saving || this.annotations.get(row_id)?.document !== source) return null;
+        const row = this.rows.get(row_id), parentBranch = row ? enterOutlineOccurrence({branch: row.branch, ref: source.ref, target: {kind: "occurrence", key: row_id}, edgeIds: row.link ? [row.link.link_id] : []}) : this.rootBranch;
+        const boundary = await store.query({kind: "outline_window", ref: source.ref, cursor: null, anchor_link_id: null, limit: 1, excluded_link_ids: [...parentBranch.traversedEdgeIds], entering_link_id: row?.link?.link_id ?? null});
+        if (!boundary.scope_available || boundary.previous_cursor !== null || !boundary.outline_window || boundary.outline_window.before !== null) {this.refuse("the first linked item is not available"); return null;}
+        const first = boundary.rows[0], placement = {parent_ref: source.ref, parent: source, after_ref: null, before_ref: first?.resource.ref ?? null};
+        const charge = await this.history.splitCharge(source, displayed, placement);
+        if (charge === null) {this.refuse("this split exceeds the local writing limit"); return null;}
+        if (!lease() || this.runtime.snapshot().saving) {this.refuse("finish the current writing before adding a child"); return null;}
+        if (!this.admitNew(1, charge)) return null;
+        const first_id = first?.link ? this.id(row_id, first.link.link_id) : undefined;
+        const target: PendingOutlineField = {row_id: crypto.randomUUID(), parent_id: row_id, parent_ref: source.ref, after_id: null, before_id: first_id,
+          ref: null, link: null, kind: "body", body: emptyBody(), resource: null, hidden: false, pending: true, origin: this.history.typingOrigin()};
+        return this.pending.splitChild({source, displayed, row: target,
+          placement, before});
+      });
+      if (!admitted) return false;
+      if (row_id !== this.pending.root_id) this.opened.add(row_id);
+      this.changed("semantic");
+      await admitted.committed;
+      if (lease()) void this.focus(admitted.row_id, {anchor: 1, head: 1}, lease);
+      return true;
+    } catch (error) {this.error = error; this.notify(); return false;}
+    finally {if (this.preparing === preparation) this.preparing = null;}
+  }
+  get rootDocument(): WritingDocument | null {return this.documents.get(this.rootRef)?.document ?? null;}
   rootHistory(): EditorHistory | null {
     const document = this.rootDocument; if (!document) return null;
     if (this.rootHistoryEntry?.document === document) return this.rootHistoryEntry.history;
@@ -222,7 +315,7 @@ export class OutlineController {
   onRootSelectionChange = (at: {anchor: number; head: number}): void => {
     if (this.rootAttachment?.ownsFocus()) {
       if (this.selectionRow !== this.pending.root_id) this.history.boundary();
-      this.selectionRow = this.pending.root_id; this.selection = at; this.blockRange = null; this.handle?.setInputMode("text"); this.announcement = ""; this.focused = true;
+      this.selectionRow = this.pending.root_id; this.annotationRow = null; this.referenceRow = null; this.selection = at; this.blockRange = null; this.handle?.setInputMode("text"); this.announcement = ""; this.focused = true;
       this.rootSelectionBefore = this.rootAttachment.handle.captureSelection(); this.syncMetadata(); this.notify();
     }
     this.tryFocus();
@@ -252,8 +345,10 @@ export class OutlineController {
   withdraw(): void {
     // the retained header settles a departure after its pointer activation.
     if (this.selectionRow === this.pending.root_id && this.rootAttachment?.ownsFocus()) return;
+    this.referenceRow = null;
     this.releaseRemoval(); this.announcement = ""; this.focused = false; this.blockRange = null; this.handle?.setInputMode("text"); this.refresh(); this.syncMetadata(); this.notify();
   }
+  ownsInteraction(target: EventTarget | null): boolean {return target instanceof Element && (target.closest(`[data-outline-session="${this.pending.root_id}"]`) !== null || target.closest("[data-outline-commands]") !== null || this.view !== null && ownsOverlayFocus(this.view.dom, target));}
   onSelectionChange = (row_id: string, at: {anchor: number; head: number}) => {
     // Keyup and composition/query release retry the same certified entry. Its
     // dispatch notifies with the settled selection; this call's old args do not.
@@ -261,6 +356,8 @@ export class OutlineController {
     if (this.blockRange === null) {
       if (this.selectionRow !== row_id) this.history.boundary();
       this.selectionRow = row_id; this.selection = at;
+      this.annotationRow = null;
+      if (this.referenceRow !== null && this.referenceRow !== row_id) {this.referenceRow = null; this.changed("semantic");}
     }
     this.focused = this.view?.hasFocus() ?? false; this.syncMetadata(); this.notify(); if (this.deferred) this.refresh(); else this.project();
     this.tryFocus();
@@ -317,10 +414,10 @@ export class OutlineController {
     if (!field || field.kind === "reference" || !document) return;
     this.pending.freeze(field, document);
   }
-  private prepare(targets: readonly OccurrenceBookmark[], sources: readonly OccurrenceBookmark[], _mayFocus: () => boolean,
+  private prepare(targets: readonly OccurrenceBookmark[], _mayFocus: () => boolean,
     visibility: OutlineVisibility): (committed: Promise<LocalCommit>) => void {
     const acknowledgements: ((committed: Promise<LocalCommit>) => void)[] = [];
-    const shown = [...targets, ...visibility.show], hidden = [...sources, ...visibility.hide].filter(source => !shown.some(target => target.row_id === source.row_id));
+    const shown = [...targets, ...visibility.show], hidden = visibility.hide.filter(source => !shown.some(target => target.row_id === source.row_id));
     for (const target of [...hidden, ...shown]) {
       const row = this.rows.get(target.row_id) ?? this.occurrences.get(target.row_id);
       if (!row || row.root || !row.ref) continue;
@@ -370,16 +467,17 @@ export class OutlineController {
           head_id: row_ids.includes(bookmark.head_id) ? bookmark.head_id : row_ids[row_ids.length - 1]!, row_ids});
         return Promise.resolve();
       }
+    } else if (bookmark?.annotation) {
+      this.waiting?.resolve();
+      return new Promise(resolve => {this.waiting = {row_id: bookmark.row_id, selection: bookmark.resolve ?? bookmark.range, annotation: true, lease: mayFocus, resolve}; this.tryFocus();});
     } else if (bookmark && this.rows.has(bookmark.row_id) && !this.pending.fields.get(bookmark.row_id)?.hidden) return this.focus(bookmark.row_id, bookmark.resolve ?? bookmark.range, mayFocus);
     this.blockRange = null; this.handle?.setInputMode("text");
-    const fallback = [...this.rows.values()].find(row => row.tail && row.parent_id === this.pending.root_id) ?? this.rows.get(this.pending.root_id);
+    const fallback = [...this.rows.values()].find(row => row.seed && row.parent_id === this.pending.root_id) ?? this.rows.get(this.pending.root_id);
     return fallback ? this.focus(fallback.row_id, {anchor: 1, head: 1}, mayFocus) : Promise.resolve();
   }
-  private tailId(parent: string): string {
-    let id = this.tailIds.get(parent); if (!id) {id = crypto.randomUUID(); this.tailIds.set(parent, id);} return id;
-  }
   private writing(ref: string): WritingDocument | null {
-    return this.documents.get(ref)?.document ?? [...this.pending.fields.values()].filter(row => row.ref === ref).map(row => this.pending.document(row.row_id)).find(document => document !== null) ?? null;
+    return this.documents.get(ref)?.document ?? [...this.pending.fields.values()].filter(row => row.ref === ref).map(row => this.pending.document(row.row_id)).find(document => document !== null)
+      ?? this.history.retainedDocuments().find(document => document.ref === ref) ?? null;
   }
   private retained(id: string): import("./outlinePending").PendingOutlineField | null {
     const pending = this.pending.fields.get(id); if (pending) return pending;
@@ -389,10 +487,10 @@ export class OutlineController {
   }
   private publishWriting(documents: readonly WritingDocument[], committed: Promise<LocalCommit>, target?: InputBookmark, source?: InputBookmark, mayFocus = this.lease()): void {
     if (!this.active || !this.view) return;
-    const active = this.selectionRow ? this.rows.get(this.selectionRow) : null, resolve = active && (active.root ? this.rootAttachment?.handle : this.handle)?.captureSelection();
+    const active = this.selectionRow ? this.rows.get(this.selectionRow) : null, resolve = this.annotationRow ? null : active && (active.root ? this.rootAttachment?.handle : this.handle)?.captureSelection();
     for (const document of documents) {
       if (!this.documents.has(document.ref)) this.documents.set(document.ref, {document, captureBytes: 0, release: document.retain()});
-      for (const [id, field] of this.pending.fields) if (field.ref === document.ref) {
+      for (const [id, field] of this.pending.fields) if (field.ref === document.ref && field.kind !== "reference") {
         if (!this.pending.document(id) && field.pending) this.pending.freeze(field, document);
         this.binding.prepare(id, this.field(id, document));
         this.pending.fields.set(id, {...field, body: field.kind === "title" ? bodyText(document.doc.getText("title").toString()) : readBody(document.doc)});
@@ -428,7 +526,9 @@ export class OutlineController {
   private protectedRows(includePlacements = true): Set<string> {
     const protectedRows = new Set([...this.pending.fields.values()].filter(row => row.pending || includePlacements && row.relocating && !this.detached(row.parent_id ?? row.row_id)).map(row => row.row_id));
     for (const id of this.selected) if (this.rows.has(id)) protectedRows.add(id);
-    if (this.view?.hasFocus() && this.selectionRow) protectedRows.add(this.selectionRow);
+    if (this.view?.hasFocus() && this.selectionRow && !(this.seedMembership && this.rows.get(this.selectionRow)?.seed)) protectedRows.add(this.selectionRow);
+    if (this.preparing) protectedRows.add(this.preparing.row_id);
+    if (this.annotationRow && this.annotations.get(this.annotationRow)?.attachment?.ownsFocus()) protectedRows.add(this.annotationRow);
     for (const id of [...protectedRows]) {let parent = this.parent(id); while (parent) {protectedRows.add(parent); parent = this.parent(parent);}}
     return protectedRows;
   }
@@ -445,18 +545,15 @@ export class OutlineController {
     return false;
   }
   private hasPendingWriting(): boolean {return [...this.pending.fields.values()].some(row => row.pending);}
-  private refs(windows?: ReadonlyMap<string, OutlineWindow>, historyRefs = this.history.retainedRefs()): Set<string> {
+  private refs(windows?: ReadonlyMap<string, OutlineWindow>, historyRefs: ReadonlySet<string> = new Set(this.history.retainedDocuments().map(document => document.ref))): Set<string> {
     const current = windows ?? this.reservedWindows ?? this.windows;
     return new Set([...this.binding.capturedDocuments().map(document => document.ref), ...[...this.documents].filter(([, held]) => held.captureBytes > 0).map(([ref]) => ref), ...(this.rootField ? [this.rootRef] : []), ...[...current.values()].flatMap(window => [...window.editableRefs]),
       ...[...this.pending.retainedRefs()].filter(ref => /^(note_block|page):/u.test(ref)), ...[...this.protectedRows()].flatMap(id => {const ref = this.rows.get(id)?.ref; return ref && /^(note_block|page):/u.test(ref) ? [ref] : [];}),
-      ...[...historyRefs].filter(ref => /^(note_block|page):/u.test(ref)), ...(windows === undefined ? [...this.documents.keys(), ...this.settlingRefs] : [])]);
+      ...[...this.annotations.values()].flatMap(value => value.attachment && value.document ? [value.document.ref] : []), ...(this.preparing ? [this.preparing.ref] : []),
+      ...historyRefs, ...(windows === undefined ? [...this.documents.keys(), ...this.settlingRefs] : [])]);
   }
   private slots(windows?: ReadonlyMap<string, OutlineWindow>, historyRefs?: ReadonlySet<string>): number {
-    const owned = this.refs(windows, historyRefs).size + this.pending.provisionalCount();
-    const tails = [...(windows ?? this.reservedWindows ?? this.windows).values()].filter(window => window.afterEdge === null).length;
-    const visibleTails = windows ? [...this.rows.values()].filter(row => row.tail && !this.pending.fields.has(row.row_id) && !this.blockedRows.has(row.row_id) && windows.has(row.parent_id!) &&
-      (!this.requests.get(row.parent_id!)?.navigation || windows.get(row.parent_id!) === this.windows.get(row.parent_id!))).length : 0;
-    return owned + Math.max(visibleTails, Math.min(tails, Math.max(0, MAX_REFS - owned)));
+    return this.refs(windows, historyRefs).size + this.pending.provisionalCount();
   }
   private baselineRefs(windows: ReadonlyMap<string, OutlineWindow>): Map<string, string> {
     const fields = new Map<string, string>();
@@ -480,7 +577,9 @@ export class OutlineController {
   private bytes(wanted = this.refs(), historyBytes = this.history.retainedBytes(), baselines?: ReadonlyMap<string, number>): number {
     const captured = this.binding.capturedDocuments();
     return [...wanted].reduce((bytes, ref) => {const document = this.writing(ref) ?? captured.find(document => document.ref === ref); return bytes + (document ? Y.encodeStateAsUpdate(document.doc).byteLength : 0);},
-      this.reservedBytes + (this.rootAttachment?.handle.encodedBytes() ?? (this.rootDocument ? Y.encodeStateAsUpdate(this.rootDocument.doc).byteLength : 0)) + this.binding.encodedBytes(baselines) + this.capturedBytes() + historyBytes);
+      this.reservedBytes + (this.rootAttachment?.handle.encodedBytes() ?? (this.rootDocument ? Y.encodeStateAsUpdate(this.rootDocument.doc).byteLength : 0)) +
+      [...this.annotations].reduce((bytes, [id, value]) => bytes + (id === this.pending.root_id ? 0 : value.attachment?.handle.encodedBytes() ?? 0), 0) +
+      this.binding.encodedBytes(baselines) + this.capturedBytes() + historyBytes);
   }
   private denied(parent: string): void {if (this.attempted.has(parent)) {this.error = new OutlineActionRefusal({fact: "couldn’t open more here.", reason: AT_LIMIT}); this.notify();}}
   private navigationValid(parent: string): boolean {
@@ -490,18 +589,18 @@ export class OutlineController {
     this.requests.set(parent, request.navigation.previous); this.versions.set(parent, (this.versions.get(parent) ?? 0) + 1); this.proposals.delete(parent); this.notify();
     return false;
   }
-  private admitNew(count = 1): boolean {
-    if (this.slots() + count <= MAX_REFS && this.bytes() <= MAX_BYTES) {this.error = null; return true;}
+  private admitNew(count = 1, extraBytes = 0): boolean {
+    if (this.slots() + count <= MAX_REFS && this.bytes() + extraBytes <= MAX_BYTES) {this.error = null; return true;}
     const windows = this.reservedWindows ?? this.windows;
     const withoutHistory = new Set<string>();
     // The hypothetical estimate drops only baselines owned solely by history.
     // Outstanding captures remain protected; actual admission still checks all charge.
     const visibleBaselines = new Map([...this.baselineRefs(windows).keys()].map(id => [id, 0]));
-    if (this.slots(windows, withoutHistory) + count > MAX_REFS || this.bytes(this.refs(windows, withoutHistory), 0, visibleBaselines) > MAX_BYTES) {
+    if (this.slots(windows, withoutHistory) + count > MAX_REFS || this.bytes(this.refs(windows, withoutHistory), 0, visibleBaselines) + extraBytes > MAX_BYTES) {
       this.error = new OutlineActionRefusal({fact: "couldn’t add more writing here.", reason: AT_LIMIT}); this.notify(); return false;
     }
-    while ((this.slots(windows) + count > MAX_REFS || this.bytes(this.refs(windows)) > MAX_BYTES) && this.history.releaseOldest()) {}
-    if (this.slots() + count <= MAX_REFS && this.bytes() <= MAX_BYTES) {this.error = null; return true;}
+    while ((this.slots(windows) + count > MAX_REFS || this.bytes(this.refs(windows)) + extraBytes > MAX_BYTES) && this.history.releaseOldest()) {}
+    if (this.slots() + count <= MAX_REFS && this.bytes() + extraBytes <= MAX_BYTES) {this.error = null; return true;}
     const fact = "couldn’t add writing yet.";
     const finishing = this.error instanceof OutlineActionRefusal && this.error.message === fact ? this.error : new OutlineActionRefusal({fact, reason: "older edits are still finishing."});
     this.error = finishing; this.notify();
@@ -635,7 +734,9 @@ export class OutlineController {
       };
       const proposed = (opened?: ReadonlyMap<string, Held>) => new Map([...baselineRefs].map(([id, ref]) => [id, size(ref, opened)]));
       const charge = (opened?: ReadonlyMap<string, Held>) => [...this.refs(next)].reduce((bytes, ref) => bytes + size(ref, opened),
-        this.history.retainedBytes() + this.capturedBytes() + (this.rootField ? this.rootAttachment?.handle.encodedBytes() ?? size(this.rootRef, opened) : 0) + this.binding.encodedBytes(proposed(opened), this.history.retainedOccurrences()));
+        this.history.retainedBytes() + this.capturedBytes() + (this.rootAttachment?.handle.encodedBytes() ?? (this.rootField ? size(this.rootRef, opened) : 0)) +
+        [...this.annotations].reduce((bytes, [id, value]) => bytes + (id === this.pending.root_id ? 0 : value.attachment?.handle.encodedBytes() ?? 0), 0) +
+        this.binding.encodedBytes(proposed(opened), this.history.retainedOccurrences()));
       while (charge() > MAX_BYTES && this.history.releaseOldest()) {await this.history.settleRetired();}
       const newRefs = [...this.refs(next)].filter(ref => !this.documents.has(ref));
       const newBindings = [...baselineRefs.keys()].some(id => this.binding.document(id) === null);
@@ -737,12 +838,78 @@ export class OutlineController {
   private syncReadOnly(): void {
     for (const element of this.view?.dom.querySelectorAll<HTMLElement>("[data-outline-field]") ?? []) {
       const row = this.rows.get(element.dataset.outlineField!);
-      const unbound = row && row.kind !== "reference" && !row.tail && !this.pending.fields.get(row.row_id)?.pending && this.binding.document(row.row_id) !== this.documents.get(row.ref ?? "")?.document;
-      if (this.blockRange !== null || this.blockedRows.has(element.dataset.outlineField!) || row && !this.editableReady(row) || unbound) element.contentEditable = "false";
-      else if (element.getAttribute("contenteditable") === "false" && row?.kind !== "reference") element.removeAttribute("contenteditable");
+      const unbound = row && row.kind !== "reference" && !row.seed && !this.pending.fields.get(row.row_id)?.pending && this.binding.document(row.row_id) !== this.documents.get(row.ref ?? "")?.document;
+      const ready = row?.kind === "reference" ? this.canEditReference(row) && this.referenceRow === row.row_id : row ? this.editableReady(row) : false;
+      if (this.blockRange !== null || this.blockedRows.has(element.dataset.outlineField!) || !ready || unbound) element.contentEditable = "false";
+      else if (element.getAttribute("contenteditable") === "false") element.removeAttribute("contenteditable");
     }
   }
-  private editableReady(row: OutlineRow): boolean {return row.kind !== "reference" && (row.tail || this.pending.fields.get(row.row_id)?.pending === true || row.ref !== null && this.documents.has(row.ref));}
+  private editableReady(row: OutlineRow): boolean {return row.kind !== "reference" && (row.seed ? this.seedMembership === null : this.pending.fields.get(row.row_id)?.pending === true || row.ref !== null && this.documents.has(row.ref));}
+  private canEditReference(row: OutlineRow): boolean {return this.rootField !== undefined && !this.filter.trim() && row.kind === "reference" && !row.gap && row.ref !== null && row.link !== null && !this.pending.fields.get(row.row_id)?.hidden;}
+  private activateReference(row_id: string): void {
+    const row = this.rows.get(row_id);
+    if (!row || !this.canEditReference(row) || !this.activeInput()?.settleNativeInput() || !this.handle?.canArrange()) return;
+    this.referenceRow = row_id; this.annotationRow = null; this.blockRange = null; this.handle.setInputMode("text"); this.changed("semantic");
+    void this.focus(row_id, "end");
+  }
+  private async convertReference(row: OutlineRow): Promise<void> {
+    if (this.preparing || !this.canEditReference(row) || !row.link || !row.ref || this.removalBlocked(new Set([row.row_id]))) return;
+    const lease = this.lease(), original = structuredClone(row.link), preparation = {row_id: row.row_id, ref: row.ref}, before = this.capture();
+    this.preparing = preparation;
+    try {
+      await this.runtime.committedPrefix();
+      const store = await this.runtime.store;
+      const admitted = await store.withCommand(async () => {
+        const current = (await store.readStates({refs: [], link_ids: [original.link_id], anchor_ids: [], source_refs: []})).links[0];
+        if (!current || canonicalSerialization(current) !== canonicalSerialization(original) || !isVisible(current.add_vv, current.remove_vv) || this.rows.get(row.row_id)?.link?.link_id !== original.link_id) {this.refuse(rangeReasonMessage("changed")); return null;}
+        const charge = await this.history.replaceWithNoteCharge({placement: {parent_ref: row.parent_ref, parent: this.writing(row.parent_ref), after_ref: null, before_ref: row.ref}, retiring: original});
+        if (charge === null) {this.refuse("this replacement exceeds the local writing limit"); return null;}
+        if (!lease() || this.runtime.snapshot().saving || !this.admitNew(1, charge)) return null;
+        return this.pending.replaceWithNote(row.row_id, before);
+      });
+      if (!admitted) {this.project("semantic"); return;}
+      this.referenceRow = null; this.changed("semantic");
+      if (lease()) void this.focus(admitted.row_id, {anchor: 1, head: 1}, lease);
+      await admitted.committed;
+    } catch (error) {this.error = error; this.notify();}
+    finally {if (this.preparing === preparation) this.preparing = null;}
+  }
+  private async replaceReference(row: OutlineRow, target: LinkTarget, label: string): Promise<boolean> {
+    if (!this.canEditReference(row) || !row.link || !row.ref) return false;
+    const original = this.retained(row.row_id);
+    if (!original || original.ref !== row.ref || original.link?.link_id !== row.link.link_id) {this.refuse(rangeReasonMessage("changed")); return false;}
+    const source = this.pending.placementBookmark({...original, link: row.link});
+    if (!source) return false;
+    const lease = this.lease(), replacement_id = crypto.randomUUID();
+    let release: (() => void) | null = null;
+    try {
+      const writing = target.kind === "resource" && /^(note_block|page):/u.test(target.ref) && !row.branch.ancestors.has(target.ref) ? await this.runtime.openDocument(target.ref) : null;
+      release = writing?.retain() ?? null;
+      if (!lease()) return false;
+      return await this.history.replaceReference({source: {...source, link: row.link}, parent: this.writing(row.parent_ref), target, label, row_id: replacement_id, before: this.capture(), document: writing,
+        canRetain: () => {
+          if (writing === null) return true;
+          const retained = this.refs().has(writing.ref);
+          return this.admitNew(retained ? 0 : 1, (retained ? 2 : 3) * Y.encodeStateAsUpdate(writing.doc).byteLength);
+        },
+        mayRetire: () => !this.removalBlocked(new Set([row.row_id])),
+        active: () => lease() && this.rows.get(row.row_id)?.link?.link_id === row.link!.link_id && this.rows.get(row.row_id)?.ref === row.ref,
+        refused: this.refused,
+        accepted: (ref, resource, admission, link) => {
+          const kind = row.branch.ancestors.has(ref) ? "reference" : ref.startsWith("note_block:") ? "body" : ref.startsWith("page:") ? "title" : "reference";
+          const body = writing === null ? emptyBody() : kind === "title" ? bodyText(writing.doc.getText("title").toString()) : readBody(writing.doc);
+          const replacement: PendingOutlineField = {row_id: replacement_id, ref, resource, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null, before_id: row.row_id,
+            link: null, kind, body, hidden: false, pending: true, origin: this.history.typingOrigin()};
+          this.pending.replaceReference({original: {...original, link: row.link}, replacement, admission, link, document: writing});
+          this.referenceRow = replacement.kind === "reference" ? replacement_id : null;
+          const end = kind === "reference" ? 2 : docFromBody(body).firstChild!.content.size + 1;
+          this.selectionRow = replacement_id; this.annotationRow = null; this.selection = {anchor: end, head: end};
+          this.changed("semantic");
+          if (writing) void this.focus(replacement_id, "end", lease);
+        }});
+    } catch (error) {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify(); return false;}
+    finally {release?.();}
+  }
   private retireWithdrawnPlacements(): void {
     const entered = new Set<string>(), actual = this.reachable(this.windows, entered), protectedWriting = this.protectedRows(false);
     for (const [id, field] of this.pending.fields) {
@@ -771,9 +938,9 @@ export class OutlineController {
     }
     this.rows.clear();
     const root = this.pending.root_id;
+    if (this.seedMembership?.revision && BigInt(this.windows.get(root)?.data.store_revision ?? "0") >= BigInt(this.seedMembership.revision)) this.seedMembership = null;
     if (this.rootField && (this.documents.has(this.rootRef) || this.pending.fields.get(root)?.pending)) this.rows.set(root, {row_id: root, ref: this.rootRef, link: null, parent_id: null, parent_ref: this.rootRef,
-      depth: 0, branch: this.rootBranch, resource: this.windows.get(root)?.rootResource ?? null, kind: this.rootRef.startsWith("page:") ? "title" : "body", children: null, open: true, terminal: false, root: true, tail: false, origin: this.origin(root)});
-    let tailSlots = Math.max(0, MAX_REFS - this.refs().size - this.pending.provisionalCount());
+      depth: 0, branch: this.rootBranch, resource: this.windows.get(root)?.rootResource ?? null, kind: this.rootRef.startsWith("page:") ? "title" : "body", children: null, open: true, terminal: false, root: true, seed: false, origin: this.origin(root)});
     const collect = (parent_id: string, ref: string, branch: OutlineBranch, depth: number) => {
       const window = this.windows.get(parent_id), parent = this.rows.get(parent_id);
       const siblings: OutlineRow[] = (window?.rows ?? []).flatMap<OutlineRow>(item => {
@@ -789,7 +956,7 @@ export class OutlineController {
         if (moving) this.identities.set(`${parent_id}/${link.link_id}`, {id, origin: moving.origin});
         const row: OutlineRow = {row_id: id, ref: item.resource.ref, link, parent_id, parent_ref: ref, depth, branch, resource: item.resource,
           kind: terminal || item.resource.kind !== "note" && item.resource.kind !== "page" ? "reference" : item.resource.kind === "page" ? "title" : "body",
-          children: null, open: this.opened.has(id), terminal, root: false, tail: false, origin: this.origin(id)};
+          children: null, open: this.opened.has(id), terminal, root: false, seed: false, origin: this.origin(id)};
         row.children = this.childProof(row, window);
         return row;
       });
@@ -801,14 +968,14 @@ export class OutlineController {
         const after = pending.after_id === null ? siblings.length - 1 : siblings.findIndex(row => row.row_id === pending.after_id);
         const before = pending.before_id ? siblings.findIndex(row => row.row_id === pending.before_id) : -1;
         siblings.splice(before >= 0 ? before : after >= 0 ? after + 1 : siblings.length, 0, {row_id: pending.row_id, ref: pending.ref, link: pending.link, parent_id, parent_ref: pending.parent_ref, depth, branch,
-          resource: pending.resource ?? existing?.resource ?? null, kind: pending.kind, children: existing?.children ?? null, open: this.opened.has(pending.row_id), terminal: existing?.terminal ?? false, root: false, tail: false, origin: pending.origin});
+          resource: pending.resource ?? existing?.resource ?? null, kind: pending.kind, children: existing?.children ?? null, open: this.opened.has(pending.row_id), terminal: existing?.terminal ?? false, root: false, seed: false, origin: pending.origin});
       }
       if ([...this.pending.fields.values()].some(row => row.parent_id === parent_id && row.relocating)) {
         const rank = new Map(this.pending.order.map((id, index) => [id, index]));
         siblings.sort((a, b) => (rank.get(a.row_id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.row_id) ?? Number.MAX_SAFE_INTEGER));
       }
       if (window?.beforeEdge) this.rows.set(`before:${parent_id}`, {row_id: `before:${parent_id}`, ref: null, link: null, parent_id, parent_ref: ref, depth, branch,
-        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, tail: false, gap: "before", origin: null});
+        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, seed: false, gap: "before", origin: null});
       for (const row of siblings) {
         if (this.filter.trim() && !this.bodyMatches(row) && !protectedRows.has(row.row_id)) continue;
         this.rows.set(row.row_id, row);
@@ -828,14 +995,12 @@ export class OutlineController {
         }
       }
       if (window?.afterEdge) this.rows.set(`after:${parent_id}`, {row_id: `after:${parent_id}`, ref: null, link: null, parent_id, parent_ref: ref, depth, branch,
-        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, tail: false, gap: "after", origin: null});
-      else if (window && !this.filter.trim() && tailSlots > 0) {
-        const id = this.tailId(parent_id);
-        if (!this.pending.fields.has(id)) {tailSlots--; this.rows.set(id, {row_id: id, ref: null, link: null, parent_id, parent_ref: ref, depth, branch, resource: null,
-          kind: "body", children: null, open: false, terminal: false, root: false, tail: true, origin: this.origin(id)});}
-      }
-      else if (window && !this.filter.trim()) this.rows.set(`tail:${parent_id}`, {row_id: `tail:${parent_id}`, ref: null, link: null, parent_id, parent_ref: ref, depth, branch,
-        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, tail: false, gap: "tail", origin: null});
+        resource: null, kind: "reference", children: null, open: false, terminal: false, root: false, seed: false, gap: "after", origin: null});
+      else if (parent_id === root && this.rootField && window?.data.scope_available && !window.beforeEdge && window.rows.length === 0 && siblings.length === 0 &&
+        !this.filter.trim() && !this.branchRead(root).pending && this.branchRead(root).error === null && this.seedMembership === null && !this.pending.fields.has(this.seedId) &&
+        ![...this.pending.fields.values()].some(field => field.parent_id === root && (field.pending || field.relocating)) && this.slots() < MAX_REFS && this.bytes() < MAX_BYTES)
+        this.rows.set(this.seedId, {row_id: this.seedId, ref: null, link: null, parent_id, parent_ref: ref, depth, branch, resource: null,
+          kind: "body", children: null, open: false, terminal: false, root: false, seed: true, origin: this.origin(this.seedId)});
     };
     collect(root, this.rootRef, this.rootBranch, 0);
     for (const [id, embedded] of this.embedded) if (embedded.projection !== null && embedded.owner === root) collect(id, embedded.projection.ref, embedded.projection.branch, 1);
@@ -893,7 +1058,7 @@ export class OutlineController {
     const placing = this.placing;
     if (placing && this.windows.has(placing.destination.parent_id)) {
       this.placing = null;
-      const first = [...this.rows.values()].find(row => row.parent_id === placing.destination.parent_id && !row.tail && !row.gap);
+      const first = [...this.rows.values()].find(row => row.parent_id === placing.destination.parent_id && !row.seed && !row.gap);
       const plan = this.plan("place", {kind: "blocks", anchor_id: placing.rows[0]!, head_id: placing.rows[placing.rows.length - 1]!, row_ids: placing.rows}, {...placing.destination, before_id: first?.row_id ?? null});
       if (plan) this.submitRange(plan);
     } else if (placing && (this.epoch !== placing.epoch || !this.rows.get(placing.destination.parent_id)?.open)) this.placing = null;
@@ -901,19 +1066,19 @@ export class OutlineController {
   private bodyMatches(row: OutlineRow): boolean {return [row.resource?.title, row.resource?.body_text, row.resource?.selection?.quote_exact].some(text => text?.toLocaleLowerCase().includes(this.filter.trim().toLocaleLowerCase()));}
   private doc(): PMNode {
     return outlineEditorSchema.topNodeType.create(null, [...this.rows.values()].filter(row => !row.root).map(row => {
-      const attrs = {row_id: row.row_id, depth: row.depth};
-      if (row.kind === "reference") return outlineEditorSchema.nodes.reference_row!.create(attrs);
-      const preserve = this.blockedRows.has(row.row_id) || !this.pending.fields.get(row.row_id)?.pending && !row.tail && (!this.editableReady(row) || this.binding.document(row.row_id) === null);
+      const attrs = {row_id: row.row_id, depth: row.depth, token_active: this.referenceRow === row.row_id && this.canEditReference(row)};
+      if (row.kind === "reference") return outlineEditorSchema.nodes.reference_row!.create(attrs, row.ref && !row.gap ? outlineEditorSchema.nodes.resource_embed!.create({resource_ref: row.ref, field: null, label: this.label(row)}) : null);
+      const preserve = this.blockedRows.has(row.row_id) || !this.pending.fields.get(row.row_id)?.pending && !row.seed && (!this.editableReady(row) || this.binding.document(row.row_id) === null);
       const displayed = preserve && this.view ? fieldById(this.view.state.doc, row.row_id) : null;
       const body = displayed ? displayed.kind === "body" ? canonicalBody(displayed) : bodyText(plainTitle(displayed)) : this.pending.fields.get(row.row_id)?.pending ? this.body(row.row_id) : this.binding.body(row.row_id);
       return row.kind === "title" ? outlineEditorSchema.nodes.title_row!.create(attrs, clipboardPlainText(noteBodySchema.nodeFromJSON(body.body_pm_json).content) ? outlineEditorSchema.text(clipboardPlainText(noteBodySchema.nodeFromJSON(body.body_pm_json).content)) : null)
         : outlineEditorSchema.nodes.note_row!.create(attrs, outlineEditorSchema.nodeFromJSON(body.body_pm_json));
     }));
   }
-  /** The descendant host supplies its tail tab entry; item text is entered explicitly.
+  /** An eligible empty pane supplies its provisional tab entry; item text is entered explicitly.
    * Changing this hidden selection never focuses or creates another host. */
   private setNativeEntry(tr: Transaction): boolean {
-    const row = [...this.rows.values()].find(row => row.tail && row.parent_id === this.pending.root_id && this.editableReady(row));
+    const row = [...this.rows.values()].find(row => row.seed && row.parent_id === this.pending.root_id && this.editableReady(row));
     const field = row ? fieldById(tr.doc, row.row_id) : null;
     if (!field) return false;
     this.selectionRow = field.row_id; this.selection = {anchor: 1, head: 1};
@@ -962,10 +1127,11 @@ export class OutlineController {
   onEdit = (row_id: string, edit: NoteEdit): void => {
     const row = this.rows.get(row_id); if (!row) throw new Error("edited occurrence is not owned by this outline");
     this.titleEdited = true;
-    if (row.tail && !this.pending.fields.has(row_id)) {
+    if (row.seed && !this.pending.fields.has(row_id)) {
+      if (!bodyHasContent(edit.after)) return;
       this.pending.create({row_id, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null,
         ref: null, link: null, kind: "body", body: edit.after, hidden: false, pending: true, origin: row.origin});
-      this.tailIds.delete(row.parent_id!);
+      this.seedId = crypto.randomUUID();
       return;
     }
     if (this.pending.fields.get(row_id)?.pending) this.pending.edit(row_id, edit);
@@ -977,22 +1143,27 @@ export class OutlineController {
   };
   itemText = (row_id: string): boolean => {
     const row = this.rows.get(row_id);
-    return !!row && !row.root && !row.tail && !row.gap && !row.terminal && row.kind !== "reference";
+    if (row?.kind === "reference") return this.referenceRow === row_id && this.canEditReference(row);
+    return !!row && !row.root && !row.seed && !row.gap && !row.terminal;
   };
   private editableItem(row: OutlineRow): boolean {
+    if (this.canEditReference(row)) return !this.blockedRows.has(row.row_id) && !!this.handle?.canArrange();
     return this.itemText(row.row_id) && !this.blockedRows.has(row.row_id) && !!this.handle?.canArrange() && this.editableReady(row) &&
       (this.pending.fields.get(row.row_id)?.pending === true || this.binding.document(row.row_id) === this.documents.get(row.ref ?? "")?.document);
   }
   keys = (row_id: string): StructuralKeys | null => {
     const row = this.rows.get(row_id); if (!row || row.root || row.gap || this.filter.trim() || this.blockedRows.has(row_id)) return null;
-    const arranging = () => this.pending.busy();
-    const arrangement: StructuralKeys = row.tail ? {arranging} : {arranging, indent: () => this.runRange("indent", row_id), outdent: () => this.runRange("outdent", row_id),
+    const arranging = () => this.pending.busy() || this.preparing !== null;
+    const arrangement: StructuralKeys = row.seed ? {arranging} : {arranging, indent: () => this.runRange("indent", row_id), outdent: () => this.runRange("outdent", row_id),
       move: direction => this.runRange(direction === "up" ? "move_up" : "move_down", row_id), selectBlock: () => this.selectPrepared(row_id),
       collapse: open => {if (this.hasChildren(row)) this.toggle(row_id, open);}, extendBlock: direction => this.extendBlock(row_id, direction)};
-    if (row.kind === "reference") return arrangement;
+    if (row.kind === "reference") return this.canEditReference(row) ? {...arrangement,
+      enter: () => {if (this.admitNew()) {const id = this.born(row.parent_id!, row.parent_ref, row.row_id, {beside: row.row_id}); void this.focus(id, {anchor: 1, head: 1});}},
+      emptyDelete: () => {void this.convertReference(row);}, selectBlock: () => {this.referenceRow = null; this.changed("semantic"); this.selectPrepared(row_id);}}
+      : arrangement;
     return {...arrangement, split: (left, right, displayed) => {
       if (!this.admitNew()) return;
-      if (row.tail && !this.pending.fields.has(row_id)) return;
+      if (row.seed && !this.pending.fields.has(row_id)) return;
       const size = docFromBody(this.binding.body(row_id)).firstChild!.content.size;
       const from = displayed?.from ?? docFromBody(left).firstChild!.content.size, to = displayed?.to ?? size - docFromBody(right).firstChild!.content.size;
       // Flat order: the text keeps its identity. A caret at the start births an empty item above and stays; one at the end births after.
@@ -1020,7 +1191,7 @@ export class OutlineController {
     if (row.open && this.windows.has(row.row_id)) {
       if (this.pending.busy()) {this.refuse("finish moving the items before adding a child"); return;}
       if (this.windows.get(row.row_id)!.beforeEdge) {this.refuse(rangeReasonMessage("gap")); return;}
-      const first = [...this.rows.values()].find(child => child.parent_id === row.row_id && !child.gap && !child.tail);
+      const first = [...this.rows.values()].find(child => child.parent_id === row.row_id && !child.gap && !child.seed);
       id = this.born(row.row_id, row.ref!, null, {before: first?.row_id});
     } else id = this.born(row.parent_id!, row.parent_ref, row.row_id, {beside: row.row_id});
     await this.focus(id, {anchor: 1, head: 1});
@@ -1029,14 +1200,14 @@ export class OutlineController {
   private hasChildren(row: OutlineRow): boolean {
     return row.children?.available === true || (this.windows.get(row.row_id)?.rows.length ?? 0) > 0 || [...this.pending.fields.values()].some(field => field.parent_id === row.row_id && !field.hidden);
   }
-  /** The row above in document order, past the tails; a gap row returns as itself for its refusal. */
+  /** The preceding actual occurrence; a gap row returns as itself for its refusal. */
   private previousVisible(row: OutlineRow): OutlineRow | null {
     const order = [...this.rows.values()];
-    for (let at = order.indexOf(row) - 1; at >= 0; at--) {const candidate = order[at]!; if (!candidate.tail && !candidate.root) return candidate;}
+    for (let at = order.indexOf(row) - 1; at >= 0; at--) {const candidate = order[at]!; if (!candidate.seed && !candidate.root) return candidate;}
     return null;
   }
   private peer(row: OutlineRow): OutlineRow | OutlineEdge | null {
-    const siblings = [...this.rows.values()].filter(item => item.parent_id === row.parent_id && !item.gap && !item.tail && !item.root), at = siblings.findIndex(item => item.row_id === row.row_id);
+    const siblings = [...this.rows.values()].filter(item => item.parent_id === row.parent_id && !item.gap && !item.seed && !item.root), at = siblings.findIndex(item => item.row_id === row.row_id);
     return siblings[at + 1] ?? this.windows.get(row.parent_id!)?.afterEdge ?? null;
   }
   /** The next sibling; one just past the window edge is shown first so a join can address it. */
@@ -1067,13 +1238,13 @@ export class OutlineController {
       return this.pending.root_id;
     };
     const rows = [...this.rows.values()].map(row => ({row_id: row.row_id, ref: row.ref, link_id: row.link?.link_id ?? null,
-      parent_id: row.parent_id, parent_ref: row.parent_ref, scope_id: scope(row), kind: row.kind, root: row.root, tail: row.tail,
-      selectable: !row.root && !row.tail && !row.gap, eligible_parent: row.kind === "body" && !row.terminal && !row.gap,
+      parent_id: row.parent_id, parent_ref: row.parent_ref, scope_id: scope(row), kind: row.kind, root: row.root, seed: row.seed,
+      selectable: !row.root && !row.seed && !row.gap, eligible_parent: row.kind === "body" && !row.terminal && !row.gap,
       ready: !this.filter.trim() && !this.blockedRows.has(row.row_id) && (row.kind === "reference" || this.editableReady(row)), gap: row.gap === "before" || row.gap === "after"}));
     if (!this.rows.has(this.pending.root_id)) rows.push({row_id: this.pending.root_id, ref: this.rootRef, link_id: null, parent_id: null,
-      parent_ref: this.rootRef, scope_id: this.pending.root_id, kind: "reference", root: true, tail: false, selectable: false, eligible_parent: false, ready: false, gap: false});
+      parent_ref: this.rootRef, scope_id: this.pending.root_id, kind: "reference", root: true, seed: false, selectable: false, eligible_parent: false, ready: false, gap: false});
     for (const [id, embedded] of this.embedded) if (embedded.projection) rows.push({row_id: id, ref: embedded.projection.ref, link_id: null,
-      parent_id: embedded.owner, parent_ref: embedded.projection.ref, scope_id: id, kind: "reference", root: true, tail: false, selectable: false, eligible_parent: false, ready: false, gap: false});
+      parent_id: embedded.owner, parent_ref: embedded.projection.ref, scope_id: id, kind: "reference", root: true, seed: false, selectable: false, eligible_parent: false, ready: false, gap: false});
     return {rows};
   }
   select(row_id: string, extend = false): void {
@@ -1082,8 +1253,8 @@ export class OutlineController {
     this.selectPrepared(row_id, extend);
   }
   private activeInput(): TextEditorHandle | null {
-    const active = document.activeElement;
-    return [...this.mounts.values()].find(mount => mount.input && active !== null && mount.content.contains(active))?.input
+    return [...this.annotations.values()].find(value => value.attachment?.ownsFocus())?.attachment?.handle
+      ?? (this.annotationRow ? this.annotations.get(this.annotationRow)?.attachment?.handle : null)
       ?? (this.rootAttachment?.ownsFocus() ? this.rootAttachment.handle : this.handle);
   }
   private selectPrepared(row_id: string, extend = false): void {
@@ -1167,7 +1338,7 @@ export class OutlineController {
     this.refuse(rangeReasonMessage(result.reason)); return null;
   }
   private removeEmpty(row_id: string, direction: "backward" | "forward"): void {
-    const row = this.rows.get(row_id); if (!row?.ref || row.root || row.tail || row.gap) return;
+    const row = this.rows.get(row_id); if (!row?.ref || row.root || row.seed || row.gap) return;
     if (this.hasChildren(row)) {this.refuse("remove its children first"); return;}
     const above = this.previousVisible(row), previous = above && !above.gap ? above : null, following = this.following(row);
     const next = direction === "backward" ? previous ?? following : following ?? previous;
@@ -1187,7 +1358,7 @@ export class OutlineController {
   private refused = (reason: RangeReason): void => {if (this.active) this.handle?.refuse(rangeReasonMessage(reason));};
   private unlink(row_id: string): void {
     const row = this.rows.get(row_id);
-    if (!row || row.root || row.tail || !row.link && !this.pending.fields.has(row_id)) return;
+    if (!row || row.root || row.seed || !row.link && !this.pending.fields.has(row_id)) return;
     if (this.removalBlocked(new Set([row_id]))) return;
     this.pending.unlink(row_id, this.refused);
   }
@@ -1307,9 +1478,10 @@ export class OutlineController {
   }
   capture(): InputBookmark {
     if (this.blockRange) return {kind: "blocks", ...this.blockRange};
+    if (this.annotationRow) return this.annotationBookmark(this.annotationRow);
     if (this.selectionRow === this.pending.root_id && this.rootAttachment) return {kind: "text", root: true, row_id: this.pending.root_id, ref: this.rootRef, range: this.selection, resolve: this.rootAttachment.handle.captureSelection()};
     const row = this.selectionRow ? this.retained(this.selectionRow) : null;
-    return row?.ref ? {kind: "text", row_id: row.row_id, ref: row.ref, range: this.selection, resolve: this.handle?.captureSelection() ?? null} : null;
+    return row?.ref ? {kind: "text", row_id: row.row_id, ref: row.ref, range: this.selection, resolve: row.kind === "reference" ? null : this.handle?.captureSelection() ?? null} : null;
   }
 
   focus(row_id: string, selection: FocusSelection | null | ((document: WritingDocument) => FocusSelection) = "end", lease = this.lease()): Promise<void> {
@@ -1319,15 +1491,23 @@ export class OutlineController {
     const request = this.waiting; if (!request || !this.view) return;
     if (!request.lease()) {this.waiting = null; request.resolve(); return;}
     const row = this.rows.get(request.row_id);
-    if (request.row_id === this.pending.root_id && this.rootField) {
+    if (request.annotation) {
+      const value = this.annotations.get(request.row_id), attachment = value?.attachment;
+      if (!value || !attachment?.visible || !value.document) {attachment?.reveal(); return;}
+      const selection = typeof request.selection === "function" ? request.selection(value.document) : request.selection ?? "end";
+      this.waiting = null; this.selectionRow = request.row_id; this.annotationRow = request.row_id; this.referenceRow = null; this.blockRange = null;
+      attachment.reveal(); attachment.handle.focus(selection); request.resolve(); this.notify(); return;
+    }
+    if (request.row_id === this.pending.root_id && this.rootAttachment) {
       const root = this.rootAttachment;
       if (!root?.visible || !this.rootDocument) {root?.reveal(); return;}
       this.waiting = null; this.selectionRow = request.row_id; this.blockRange = null; this.announcement = ""; this.handle?.setInputMode("text");
       root.handle.focus(request.selection ?? "end"); request.resolve(); this.notify(); return;
     }
+    if (this.view.dom.getClientRects().length === 0) return;
     if (request.native) {
       const field = fieldById(this.view.state.doc, request.row_id);
-      if (!row || !row.tail || row.ref !== request.native.ref || field?.kind !== request.native.kind) {
+      if (!row || !row.seed || row.ref !== request.native.ref || field?.kind !== request.native.kind) {
         this.waiting = null; request.resolve(); return;
       }
       if (!this.view.hasFocus() || !this.handle?.canArrange()) return;
@@ -1338,21 +1518,16 @@ export class OutlineController {
       if (!document) return;
       request.selection = request.selection(document);
     }
-    if (row && row.kind !== "reference" && (!this.editableReady(row) || !row.tail && !this.pending.fields.get(row.row_id)?.pending && this.binding.document(row.row_id) !== this.documents.get(row.ref ?? "")?.document)) return;
-    if (request.selection === null || row?.kind === "reference") {
+    if (row && row.kind !== "reference" && (!this.editableReady(row) || !row.seed && !this.pending.fields.get(row.row_id)?.pending && this.binding.document(row.row_id) !== this.documents.get(row.ref ?? "")?.document)) return;
+    if (request.selection === null || row?.kind === "reference" && !this.canEditReference(row)) {
       let at: number | null = null;
       this.view.state.doc.forEach((node, offset) => {if (node.attrs.row_id === request.row_id) at = offset;});
       if (at === null) return;
       this.waiting = null; this.setRange({anchor_id: request.row_id, head_id: request.row_id, row_ids: [request.row_id]}); request.resolve(); return;
     }
-    const field = fieldById(this.view.state.doc, request.row_id);
-    if (!field) {
-      const parent = [...this.tailIds].find(([, id]) => id === request.row_id)?.[0], window = parent ? this.windows.get(parent) : null;
-      const branch = parent ? this.requests.get(parent) : null;
-      if (branch && window?.afterEdge && window.tailEdge && branch.anchor !== window.tailEdge.link.link_id) {this.request({...branch, cursor: null, anchor: window.tailEdge.link.link_id}, request.lease); this.notify();}
-      return;
-    }
-    if (!row || !this.editableReady(row)) return;
+    if (row?.kind === "reference" && this.referenceRow !== row.row_id) {this.referenceRow = row.row_id; this.annotationRow = null; this.changed("semantic"); return;}
+    const field = fieldById(this.view.state.doc, request.row_id); if (!field) return;
+    if (!row || !this.editableReady(row) && !(row.kind === "reference" && this.referenceRow === row.row_id && this.canEditReference(row))) return;
     this.blockRange = null; this.handle?.setInputMode("text"); this.syncReadOnly();
     const at = request.selection === "end" ? {anchor: field.to, head: field.to} : {anchor: field.from + request.selection.anchor - 1, head: field.from + request.selection.head - 1};
     this.waiting = null; this.selectionRow = request.row_id; this.selection = request.selection === "end" ? {anchor: field.to - field.from + 1, head: field.to - field.from + 1} : request.selection;
@@ -1369,12 +1544,26 @@ export class OutlineController {
     this.revealRoot(); await this.focus(this.pending.root_id, resolve ?? "end", () => lease() && (mayFocus?.() ?? true));
   }
   async append(parent_id = this.pending.root_id): Promise<void> {
-    const window = this.windows.get(parent_id), request = this.requests.get(parent_id), lease = this.lease();
-    if (!request) return;
-    if (!window) {await this.focus(this.tailId(parent_id), {anchor: 1, head: 1}, lease); return;}
-    if (window.afterEdge && window.tailEdge) {this.request({...request, cursor: null, anchor: window.tailEdge.link.link_id}, true); this.notify();}
-    if (!this.rows.has(this.tailId(parent_id)) && !window.afterEdge) {if (!this.admitNew()) return; this.changed("semantic");}
-    await this.focus(this.tailId(parent_id), {anchor: 1, head: 1}, lease);
+    let window = this.windows.get(parent_id);
+    const request = this.requests.get(parent_id), lease = this.lease();
+    if (!request || !window || this.preparing || this.filter.trim()) return;
+    try {
+      if (window.afterEdge) {
+        if (!window.tailEdge) {this.refuse(rangeReasonMessage("gap")); return;}
+        const at = {...request, cursor: null, anchor: window.tailEdge.link.link_id};
+        const data = await (await this.runtime.store).query({kind: "outline_window", ref: at.ref, cursor: null, anchor_link_id: at.anchor, limit: at.limit,
+          excluded_link_ids: [...at.branch.traversedEdgeIds], entering_link_id: [...at.branch.traversedEdgeIds].at(-1) ?? null});
+        if (!lease()) return;
+        window = projectOutlineWindow(data, at.ref, at.branch);
+        this.request(at, lease); this.accept(parent_id, window); this.notify();
+        await this.admission;
+        if (!lease() || this.windows.get(parent_id) !== window) return;
+      }
+      if (window.afterEdge || !window.data.scope_available || !this.admitNew()) return;
+      const last = [...this.rows.values()].filter(row => row.parent_id === parent_id && !row.seed && !row.gap).at(-1);
+      const id = this.born(parent_id, request.ref, last?.row_id ?? null, last ? {beside: last.row_id} : {});
+      await this.focus(id, {anchor: 1, head: 1}, lease);
+    } catch (error) {this.error = error; this.notify();}
   }
   async focusNote(ref: string, signal?: AbortSignal): Promise<boolean> {
     const lease = this.lease(); signal?.throwIfAborted();
@@ -1429,7 +1618,7 @@ export class OutlineController {
   }
   commandState(command: OutlineCommand) {
     if (command === "undo" || command === "redo") {
-      const handle = this.selectionRow === this.pending.root_id ? this.rootAttachment?.handle : this.handle;
+      const handle = this.activeInput();
       const local = handle?.localHistory(command); if (local) return {enabled: local.enabled, reason: null};
       return {enabled: !!handle?.canArrange() && (command === "undo" ? this.history.canUndo() : this.history.canRedo()), reason: null};
     }
@@ -1441,18 +1630,18 @@ export class OutlineController {
   }
   publication() {return this.focused || this.selected.size ? {session: `outline:${this.pending.root_id}`, touchVisible: this.selected.size > 0 || !this.touchCommandsDismissed, commandState: (command: OutlineCommand) => this.commandState(command), executeCommand: (command: OutlineCommand) => {
     if (!this.commandState(command).enabled) return;
-    if (command === "undo" || command === "redo") {const handle = this.selectionRow === this.pending.root_id ? this.rootAttachment?.handle : this.handle;
+    if (command === "undo" || command === "redo") {const handle = this.activeInput();
       if (!handle?.settleNativeInput()) return;
       const local = handle?.localHistory(command); if (local) local.execute(); else if (command === "undo") this.history.undo(); else this.history.redo();}
     else if (this.selectionRow) this.arrange(this.selectionRow, command); this.notify();
   }} : null;}
   chrome(): ReadonlyMap<string, OutlineRowChrome> {
-    return new Map([...this.rows.values()].filter(row => !row.root && !row.tail && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, resource: row.resource, kind: row.kind === "body" ? "note" : row.kind,
+    return new Map([...this.rows.values()].filter(row => !row.root && !row.seed && !row.gap).map(row => [row.row_id, {row_id: row.row_id, ref: row.ref, resource: row.resource, kind: row.kind === "body" ? "note" : row.kind,
       depth: row.depth, parent_id: row.parent_id, label: this.label(row), href: this.href(row), mirrors: this.mirrors(row),
       parentLabel: row.parent_id ? this.rows.has(row.parent_id) ? this.label(this.rows.get(row.parent_id)!) : this.windows.get(row.parent_id)?.rootResource ? localResourceLabel(this.windows.get(row.parent_id)!.rootResource!) : "this outline" : "this outline",
       childrenAvailable: row.children?.available === true || this.requests.has(row.row_id), read: this.branchRead(row.row_id), open: row.open, terminal: row.terminal, selected: this.selected.has(row.row_id),
       workOwners: owners => this.workOwners.set(row.row_id, owners),
-      editorReady: editor => {const mount = this.mounts.get(row.row_id); if (mount) mount.input = editor;},
+      annotation: row.resource?.kind === "highlight" && !row.terminal && !this.filter.trim() ? this.annotation(row.row_id) : null,
       toggle: () => {this.toggle(row.row_id); this.focused = false; this.notify();}, select: () => this.select(row.row_id),
       extend: this.blockRange ? () => this.select(row.row_id, true) : null, unlink: () => this.unlink(row.row_id), reveal: () => {
         if (row.ref) {const ancestor = row.branch.ancestors.get(row.ref); if (ancestor?.kind === "root" && this.rootField) void this.focusRoot();
@@ -1477,24 +1666,39 @@ export class OutlineController {
     return row.resource ? localResourceLabel(row.resource) : row.root ? this.rootField?.label ?? "outline" : "empty note";
   }
   private nodeView = (node: PMNode): NodeView => {
-    const id = String(node.attrs.row_id), dom = document.createElement("div"), guides = document.createElement("div"), head = document.createElement("div"), leading = document.createElement("div"), disclose = document.createElement("div"), content = document.createElement("div"), trailing = document.createElement("div");
-    dom.className = rowStyles.row; head.className = rowStyles.head; leading.className = rowStyles.leading; trailing.className = rowStyles.trailing; content.className = rowStyles.content;
-    leading.contentEditable = "false"; disclose.contentEditable = "false"; trailing.contentEditable = "false"; guides.contentEditable = "false"; content.dataset.outlineField = id;
+    const id = String(node.attrs.row_id), dom = document.createElement("div"), guides = document.createElement("div"), head = document.createElement("div"), leading = document.createElement("div"), disclose = document.createElement("div"), body = document.createElement("div"), content = document.createElement("div"), presentation = document.createElement("div"), annotation = document.createElement("div"), trailing = document.createElement("div");
+    dom.className = rowStyles.row; head.className = rowStyles.head; leading.className = rowStyles.leading; trailing.className = rowStyles.trailing; body.className = rowStyles.content;
+    leading.contentEditable = "false"; disclose.contentEditable = "false"; trailing.contentEditable = "false"; guides.contentEditable = "false"; presentation.contentEditable = "false"; annotation.contentEditable = "false"; content.dataset.outlineField = id;
+    annotation.dataset.outlineAnnotation = "true";
     disclose.dataset.outlineDisclose = "true"; guides.dataset.outlineGuides = "true";
-    leading.append(disclose); head.append(leading, content, trailing); dom.append(guides, head);
+    leading.append(disclose); body.append(content, presentation, annotation); head.append(leading, body, trailing); dom.append(guides, head);
+    let press: {x: number; y: number} | null = null;
     dom.addEventListener("pointerdown", event => {
       const target = event.target, row = this.rows.get(id);
       if (event.button !== 0 || !(target instanceof Element) || target.closest(".ProseMirror") !== this.view?.dom || target.closest("[data-outline-occurrence]") !== dom ||
-        target.closest("a[href], button, input, textarea, select, [role='button'], .note-object-embed") || !row || row.gap) return;
+        target.closest("a[href], button, input, textarea, select, [role='button'], .note-object-embed, [data-outline-annotation]") || !row || row.gap) return;
+      if (!event.shiftKey && this.canEditReference(row) && this.referenceRow !== id) press = {x: event.clientX, y: event.clientY};
       if (event.shiftKey) {
-        if (row.tail) return;
+        if (row.seed) return;
         if (!this.blockRange && this.view?.hasFocus() && this.view.state.selection instanceof TextSelection && fieldAt(this.view.state.doc, this.view.state.selection.anchor)?.row_id === id) return;
         event.preventDefault(); event.stopPropagation(); this.select(id, true);
-      } else if (this.view?.editable === false && (this.editableItem(row) || row.tail && !this.blockedRows.has(id) && this.editableReady(row))) {
+      } else if (this.view?.editable === false && (this.editableItem(row) || row.seed && !this.blockedRows.has(id) && this.editableReady(row))) {
         if (!this.handle?.settleNativeInput()) {event.preventDefault(); return;}
-        this.blockRange = null; this.announcement = ""; this.handle.setInputMode("text"); this.selectionRow = id; this.syncMetadata(); this.notify();
+        this.blockRange = null; this.announcement = ""; this.handle.setInputMode("text"); this.selectionRow = id;
+        // The standing block range is ours. Retire it before this press starts a new native text gesture.
+        const view = this.view, field = fieldById(view.state.doc, id);
+        if (view.state.selection instanceof NodeSelection && field) view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, field.from)));
+        this.syncMetadata(); this.notify();
       }
     }, true);
+    dom.addEventListener("pointermove", event => {if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) press = null;}, true);
+    dom.addEventListener("pointercancel", () => {press = null;}, true);
+    dom.addEventListener("click", event => {
+      const activating = press; press = null;
+      if (!activating || !(event.target instanceof Element) || event.target.closest("[data-outline-occurrence]") !== dom ||
+        event.target.closest("a[href], button, input, textarea, select, [role='button'], .note-object-embed, [data-outline-annotation]") || window.getSelection()?.isCollapsed === false) return;
+      this.activateReference(id);
+    });
     head.addEventListener("keydown", event => {
       const target = event.target, row = this.rows.get(id);
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey ||
@@ -1512,9 +1716,9 @@ export class OutlineController {
       const row = this.rows.get(id); if (!row) return;
       dom.dataset.outlineRow = id; dom.dataset.outlineOccurrence = id; dom.dataset.outlineKind = row.kind === "body" ? "note" : row.kind;
       dom.dataset.depth = String(row.depth); dom.style.setProperty("--outline-depth", String(row.depth));
-      leading.hidden = row.tail || !!row.gap;
+      leading.hidden = !!row.gap;
       leading.tabIndex = -1;
-      if (!leading.hidden) {
+      if (!leading.hidden && !row.seed) {
         leading.dataset.outlineTarget = "true"; leading.setAttribute("role", "group"); leading.setAttribute("aria-label", `outline item: ${this.label(row)}`);
       } else {delete leading.dataset.outlineTarget; leading.removeAttribute("role"); leading.removeAttribute("aria-label");}
       if (this.editableItem(row)) leading.setAttribute("aria-keyshortcuts", "F2"); else leading.removeAttribute("aria-keyshortcuts");
@@ -1539,10 +1743,11 @@ export class OutlineController {
           return guide;
         }));
       }
-      if (row.tail) {
-        dom.dataset.outlineInput = "true"; dom.dataset.outlineTail = "true";
+      if (row.seed) {
+        dom.dataset.outlineInput = "true"; dom.dataset.outlineSeed = "true";
+        if (!leading.querySelector("[data-seed-bullet]")) {const bullet = document.createElement("span"); bullet.className = rowStyles.bullet; bullet.textContent = "•"; bullet.dataset.seedBullet = "true"; bullet.setAttribute("aria-hidden", "true"); leading.append(bullet);}
         content.dataset.empty = String(node.firstChild?.content.size === 0); content.dataset.placeholder = "write or @ to link";
-      } else {delete dom.dataset.outlineInput; delete dom.dataset.outlineTail; delete content.dataset.empty; delete content.dataset.placeholder;}
+      } else {delete dom.dataset.outlineInput; delete dom.dataset.outlineSeed; delete content.dataset.empty; delete content.dataset.placeholder; leading.querySelector("[data-seed-bullet]")?.remove();}
       if (this.pending.fields.get(id)?.pending) dom.dataset.outlinePending = "true"; else delete dom.dataset.outlinePending;
       if (this.selected.has(id)) dom.dataset.selected = "true"; else delete dom.dataset.selected;
       if (this.focused && !this.blockRange && this.selectionRow === id) dom.dataset.outlineActive = "true"; else delete dom.dataset.outlineActive;
@@ -1550,19 +1755,23 @@ export class OutlineController {
         content.dataset.gap = row.gap;
         content.contentEditable = "false"; const button = document.createElement("button"); button.type = "button";
         button.className = rowStyles.control;
-        button.textContent = row.gap === "before" ? "show earlier items" : row.gap === "after" ? "show more items" : "write at end";
-        if (row.gap === "tail") button.onclick = () => {void this.append(row.parent_id!);};
-        else {const direction = row.gap; button.onclick = () => this.load(row.parent_id!, direction);}
-        if (row.gap === "after") {const append = document.createElement("button"); append.type = "button"; append.className = rowStyles.control; append.textContent = "write at end"; append.onclick = () => {void this.append(row.parent_id!);}; content.replaceChildren(button, append);}
-        else content.replaceChildren(button);
+        button.textContent = row.gap === "before" ? "show earlier items" : "show more items";
+        const direction = row.gap; button.onclick = () => this.load(row.parent_id!, direction);
+        presentation.replaceChildren(button);
       }
-      else if (row.kind === "reference" && !row.gap) content.contentEditable = "false";
+      if (row.kind === "reference") {
+        const editing = this.referenceRow === id && this.canEditReference(row);
+        content.hidden = !editing; content.contentEditable = editing ? "true" : "false";
+        presentation.hidden = editing;
+        if (this.canEditReference(row)) dom.dataset.referenceEditable = "true"; else delete dom.dataset.referenceEditable;
+        content.setAttribute("aria-label", `edit reference to ${this.label(row)}`);
+      } else {content.hidden = false; presentation.hidden = true; content.removeAttribute("contenteditable");}
     };
-    const mount: OutlineRowMount & {sync(): void} = {row_id: id, dom, leading, disclose, trailing, content, input: null, openMenu: null, sync};
+    const mount: OutlineRowMount & {sync(): void} = {row_id: id, dom, leading, disclose, trailing, content, presentation, annotation, openMenu: null, sync};
     sync(); this.mounts.set(id, mount); this.notify();
-    return {dom, ...(node.type.name !== "reference_row" ? {contentDOM: content} : {}), update: next => {if (next.type !== node.type || next.attrs.row_id !== id) return false; node = next; sync(); return true;},
-      stopEvent: event => event.target instanceof Node && (leading.contains(event.target) || trailing.contains(event.target) || guides.contains(event.target) || this.rows.get(id)?.kind === "reference"),
-      ignoreMutation: mutation => mutation.type !== "selection" && (!content.contains(mutation.target) || mutation.type === "attributes" && mutation.target === content || this.rows.get(id)?.kind === "reference"),
+    return {dom, contentDOM: content, update: next => {if (next.type !== node.type || next.attrs.row_id !== id) return false; node = next; sync(); return true;},
+      stopEvent: event => event.target instanceof Node && (leading.contains(event.target) || trailing.contains(event.target) || guides.contains(event.target) || presentation.contains(event.target) || annotation.contains(event.target) || this.rows.get(id)?.kind === "reference" && (this.referenceRow !== id || !content.contains(event.target))),
+      ignoreMutation: mutation => mutation.type !== "selection" && (!content.contains(mutation.target) || mutation.type === "attributes" && mutation.target === content),
       destroy: () => {if (this.mounts.get(id) === mount) {this.mounts.delete(id); this.notify();}}};
   };
   inertInput(event: Event): boolean {
@@ -1658,6 +1867,16 @@ export class OutlineController {
     }
   };
   private syncMetadata(): void {for (const mount of this.mounts.values()) mount.sync(); this.syncReadOnly();}
+  private consumeSeed(committed: Promise<LocalCommit>): void {
+    this.seedId = crypto.randomUUID();
+    const membership: {revision: string | null} = {revision: null}; this.seedMembership = membership;
+    this.syncReadOnly();
+    void committed.then(receipt => {
+      if (this.seedMembership === membership) {membership.revision = receipt.store_revision; this.changed();}
+    }, () => {
+      if (this.seedMembership === membership) {this.seedMembership = null; this.changed();}
+    });
+  }
   readonly projection: NoteEditorProjection = {
     schema: outlineEditorSchema, doc: () => this.doc(), binding: this.binding,
     nodeViews: {note_row: this.nodeView, title_row: this.nodeView, reference_row: this.nodeView},
@@ -1673,19 +1892,27 @@ export class OutlineController {
     reference: row_id => {
       const row = this.rows.get(row_id); if (!row) return null;
       const parent_ref = row.root ? this.rootRef : row.parent_ref;
-      return {source_ref: parent_ref, label: parent_ref, onSelected: (target, item) => {
-        const bookmark = this.capture();
+      if (row.kind === "reference") {
+        if (!this.canEditReference(row) || !row.link) return null;
+        const frozen = {...row, link: structuredClone(row.link)};
+        return {source_ref: parent_ref, label: this.label(row), replacement: {occurrence_key: row.row_id, link_id: row.link.link_id}, onSelected: (target, item) => this.replaceReference(frozen, target, item.label)};
+      }
+      return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: (target, item) => {
+        const bookmark = this.capture(), child_id = crypto.randomUUID(), parent_id = row.root ? this.pending.root_id : row.parent_id!;
         const admitted = this.history.insertReference({placement: {parent_ref, parent: this.writing(parent_ref),
-          after_ref: row.root || row.tail ? null : row.ref, before_ref: null}, target, label: item.label,
+          after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
+          occurrence: {row_id: child_id, parent_id, after_id: row.root || row.seed ? null : row.row_id, before_id: null},
           change: {before: bookmark, after: bookmark}});
+        void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, parent_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
         void admitted.result.catch(error => {this.error = error; this.notify();});
+        if (row.seed) this.consumeSeed(admitted.committed);
       }};
     },
   };
   /** Writes the selection by reference with indented text for other apps; the count is of its topmost items. */
   private copy(event: ClipboardEvent): number {
     if (!this.selected.size || !event.clipboardData) return 0;
-    const rows = [...this.rows.values()].filter(row => this.selected.has(row.row_id) && !row.tail && !row.gap && (row.kind === "body" || row.ref)), items: ClipItem[] = [];
+    const rows = [...this.rows.values()].filter(row => this.selected.has(row.row_id) && !row.seed && !row.gap && (row.kind === "body" || row.ref)), items: ClipItem[] = [];
     for (const row of rows) {
       const parent = rows.findIndex(candidate => candidate.row_id === row.parent_id);
       items.push(row.kind === "body" ? {kind: "note", ref: row.ref, body: this.pending.fields.get(row.row_id)?.pending ? this.body(row.row_id) : this.binding.body(row.row_id), parent: parent < 0 ? null : parent}
@@ -1703,7 +1930,7 @@ export class OutlineController {
     if (!block) {
       const selection = view.state.selection, field = selection.empty ? fieldAt(view.state.doc, selection.from) : null;
       const row = field?.kind === "body" && field.from === field.to ? this.rows.get(field.row_id) : undefined;
-      if (row && !this.blockedRows.has(row.row_id) && this.editableReady(row) && (row.tail || this.itemText(row.row_id))) at = row;
+      if (row && !this.blockedRows.has(row.row_id) && this.editableReady(row) && (row.seed || this.itemText(row.row_id))) at = row;
     }
     if (!at?.parent_id) return false;
     let items: ClipItem[];
@@ -1736,9 +1963,16 @@ export class OutlineController {
     if (!this.active) return;
     const skipped = roots.length - fresh.length;
     if (!fresh.length) {this.refuse(skipped === 1 ? "already here" : `all ${skipped} already here`); return;}
-    const first = block ? {after: at.ref, before: null} : {after: null, before: at.tail ? null : at.ref};
+    const first = block ? {after: at.ref, before: null} : {after: null, before: at.seed ? null : at.ref}, rows = fresh.map(() => crypto.randomUUID());
     const admitted = this.history.createMany({births: fresh.map((ref, index) => index ? {ref, parent: parent_ref, after: index - 1, before: null} : {ref, parent: parent_ref, ...first}),
-      parents: [this.writing(parent_ref)], change: {before, after: () => before}});
+      parents: [this.writing(parent_ref)], change: {before, after: () => before, placements_after: (_documents, links) => fresh.map((ref, index) => ({row_id: rows[index]!, ref, link: links[index]!,
+        placement: {row_id: rows[index]!, ref, parent_id: at.parent_id!, parent_ref, after_id: index ? rows[index - 1]! : block ? at.row_id : null, before_id: !index && !block && !at.seed ? at.row_id : null}}))}});
+    if (at.seed) this.consumeSeed(admitted.committed);
+    void Promise.all(admitted.links).then(links => {
+      if (!this.active) return;
+      for (const [index, link] of links.entries()) this.transfer(rows[index]!, at.parent_id!, link.link_id, this.origin(rows[index]!));
+      this.changed();
+    }, () => {});
     void admitted.committed.then(() => {
       if (!this.active) return;
       this.announce(`${fresh.length === 1 ? "linked" : `linked ${fresh.length} items`}${skipped ? `; ${skipped} already here` : ""}`); this.notify();
@@ -1747,8 +1981,9 @@ export class OutlineController {
   /** Births the lines at their indented depths in one command: a committed empty item takes line 1 and the rest follow
    * it, the write row's place takes them all, a selection puts them after its last topmost item. */
   private pasteLines(lines: readonly Extract<ClipItem, {kind: "note"}>[], at: OutlineRow, block: boolean, before: InputBookmark): void {
-    const fill = !block && !at.tail ? this.writing(at.ref!)! : null;
+    const fill = !block && !at.seed ? this.writing(at.ref!)! : null;
     if (!this.admitNew(lines.length - (fill ? 1 : 0))) return;
+    const lease = this.lease();
     // line i is birth i, or i - 1 when the empty item takes line 0; a born line anchors by its birth index, the filled one by its ref.
     const birth = (index: number) => fill ? index - 1 : index, anchor = (index: number): string | number => fill && index === 0 ? at.ref! : birth(index);
     const rows = lines.map((_, index) => fill && index === 0 ? at.row_id : crypto.randomUUID());
@@ -1766,6 +2001,7 @@ export class OutlineController {
           parent_ref: parent === null ? at.parent_ref : fill && parent === 0 ? at.ref! : documents[birth(parent)]!.ref,
           after_id: earlier >= 0 ? rows[earlier]! : parent === null && block ? at.row_id : null, before_id: null}};
       })}});
+    if (at.seed) this.consumeSeed(admitted.committed);
     if (fill) this.publishWriting([fill], admitted.committed);
     for (const index of lines.keys()) if (lines.some(line => line.parent === index)) this.opened.add(rows[index]!);
     // the occurrences paint from their windows; their rows take the ids the history group retains.
@@ -1774,12 +2010,13 @@ export class OutlineController {
       for (const index of born) this.transfer(rows[index]!, parentRow(index), links[birth(index)]!.link_id, this.history.typingOrigin());
       this.announce(births.length === 1 ? "added" : `added ${births.length} items`);
       this.changed();
-      if (!block) void this.focus(rows.at(-1)!, "end");
+      if (!block && lease()) void this.focus(rows.at(-1)!, "end", lease);
     }, () => {});
   }
   close(): void {
     this.setView(null); this.active = false; this.revoke(); this.disconnect?.(); this.unbindFocus?.(); this.view = null;
     this.workOwners.clear();
+    this.annotations.clear();
     for (const held of this.documents.values()) held.release(); this.documents.clear();
     for (const release of this.historyLeases.values()) release(); this.historyLeases.clear();
   }

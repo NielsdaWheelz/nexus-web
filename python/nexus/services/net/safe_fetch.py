@@ -26,6 +26,7 @@ import httpcore
 import httpx
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.services.net.http_retry import RETRYABLE_STATUSES, retry_at
 from nexus.services.url_normalize import is_public_ip, validate_requested_url
 
 _REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
@@ -47,10 +48,19 @@ type SafeFetchReason = Literal[
 class SafeFetchFailed(Exception):
     """One transport-neutral egress failure."""
 
-    def __init__(self, reason: SafeFetchReason, message: str) -> None:
+    def __init__(
+        self,
+        reason: SafeFetchReason,
+        message: str,
+        *,
+        status: int | None = None,
+        retry_after: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.reason: SafeFetchReason = reason
         self.message = message
+        self.status = status
+        self.retry_after = retry_after
 
 
 class SafeFetchNotFound(ApiError):
@@ -126,7 +136,12 @@ def safe_stream(
                 if status in {401, 403}:
                     raise SafeFetchFailed("Denied", f"Upstream denied access ({status})")
                 if not 200 <= status < 300:
-                    raise SafeFetchFailed("Status", f"Upstream returned status {status}")
+                    raise SafeFetchFailed(
+                        "Status",
+                        f"Upstream returned status {status}",
+                        status=status,
+                        retry_after=response.headers.get("retry-after"),
+                    )
                 raw_type = response.headers.get("content-type", "")
                 media_type = raw_type.split(";")[0].strip().lower()
                 if media_types is not None and media_type not in media_types:
@@ -167,6 +182,8 @@ def source_fetch_error(exc: SafeFetchFailed) -> ApiError:
     """Map one egress failure into the source-ingest vocabulary; the code decides terminality."""
     if exc.reason == "Gone":
         return SafeFetchNotFound()
+    if exc.reason == "Status" and exc.status not in RETRYABLE_STATUSES:
+        return ApiError(ApiErrorCode.E_SOURCE_NOT_READABLE, exc.message)
     code = {
         "Blocked": ApiErrorCode.E_SSRF_BLOCKED,
         "Denied": ApiErrorCode.E_SOURCE_ACCESS_DENIED,
@@ -174,7 +191,7 @@ def source_fetch_error(exc: SafeFetchFailed) -> ApiError:
         "Type": ApiErrorCode.E_INVALID_CONTENT_TYPE,
         "Timeout": ApiErrorCode.E_INGEST_TIMEOUT,
     }.get(exc.reason, ApiErrorCode.E_SOURCE_FETCH_FAILED)
-    return ApiError(code, exc.message)
+    return ApiError(code, exc.message, retry_at=retry_at(exc.retry_after))
 
 
 def safe_get(url: str, *, max_bytes: int, timeout_s: float) -> SafeFetchResult:
