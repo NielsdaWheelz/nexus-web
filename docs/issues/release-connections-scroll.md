@@ -3,7 +3,6 @@
 status: pending merge and owner qualification.
 
 this change adds no wire, schema, migration, environment or dependency change.
-the existing [outline release hold](release-outline-redesign.md) remains in force;
 this record authorizes no deployment. when the owner releases, deploy the web and
 api from the merged revision. the phone's bundled interface keeps the old pane
 until an apk containing that revision is built and installed through the normal
