@@ -92,8 +92,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const CONFLICT = "your libraries changed meanwhile.";
 /** Codes whose reason speaks of one item, false of the items refused behind it. */
 const ITEM_CODES = new Set(["E_MEDIA_NOT_FOUND", "E_NOT_FOUND", "E_MEDIA_DELETING"]);
-const LOCKED: Record<"PodcastSubscription" | "RequiresAdmin", string> = {
-  PodcastSubscription: "a podcast subscription files it here.",
+const LOCKED: Record<"FeedSubscription" | "RequiresAdmin", string> = {
+  FeedSubscription: "a subscription files it here.",
   RequiresAdmin: "only this library’s admins can change it.",
 };
 const keyOf = (target: LibraryPlacementTarget) => `${target.kind}:${target.id}`;
@@ -322,7 +322,7 @@ function createOwner(signIn: (error: unknown) => boolean, changed: () => void, r
       const action: ChooserRow["action"] = !known || cells.some(cell => cell === undefined)
         || rows.some(row => row.readError !== null || row.dirty || row.reading !== null) ? { kind: "Blocked", reason: failedRead ? null : "checking this library." }
         : uncertain ? { kind: "Blocked", reason: "retry the last change first." }
-          : locked === "PodcastSubscription" || locked === "RequiresAdmin" ? { kind: "Locked", reason: LOCKED[locked] }
+          : locked === "FeedSubscription" || locked === "RequiresAdmin" ? { kind: "Locked", reason: LOCKED[locked] }
             : { kind: "Set", included: intended !== rows.length,
               label: intended === rows.length ? `remove from ${library.name}` : `add to ${library.name}` };
       return { ...library, confirmed: known ? { included: confirmed, total: rows.length } : null,

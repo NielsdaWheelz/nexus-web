@@ -1,7 +1,7 @@
 "use client";
 
 import MediaActions from "@/components/media/MediaActions";
-import PodcastActions from "@/components/podcasts/PodcastActions";
+import FeedActions from "@/components/feeds/FeedActions";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import { assertNever } from "@/lib/assertNever";
 
@@ -14,7 +14,7 @@ export default function ResourceActions({ subject, ...props }: {
 }) {
   switch (subject.kind) {
     case "Media": return <MediaActions subject={subject.subject} knownDescriptor={subject.knownDescriptor} {...props} />;
-    case "Podcast": return <PodcastActions subject={subject.subject} {...props} />;
+    case "Feed": return <FeedActions subject={subject.subject} {...props} />;
     default: return assertNever(subject, "unsupported action subject");
   }
 }

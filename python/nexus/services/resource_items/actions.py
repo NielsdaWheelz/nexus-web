@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import assert_never, cast
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
@@ -22,7 +23,7 @@ from nexus.schemas.resource_items import (
     DownloadAction,
     DownloadKind,
     LecternMembershipAction,
-    OpenPodcastFeedAction,
+    OpenFeedAction,
     OpenSourceAction,
     PlaybackAction,
     RecoveryAction,
@@ -38,8 +39,8 @@ from nexus.schemas.resource_items import (
 from nexus.services import highlights, libraries, library_entries
 from nexus.services.chat import conversations
 from nexus.services.consumption import lectern, projection
+from nexus.services.feeds.queries import feed_states
 from nexus.services.media import media_facts
-from nexus.services.podcasts.subscriptions_query import podcast_states
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.items import resource_item_out
@@ -83,8 +84,8 @@ def _scheme_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> list[R
             return _media(db, viewer_id, ref.id)
         case "library":
             return _library(db, viewer_id, ref.id)
-        case "podcast":
-            return _podcast(db, viewer_id, ref.id)
+        case "podcast" | "feed":
+            return _feed(db, viewer_id, ref.id)
         case "highlight":
             return _highlight(db, viewer_id, ref.id)
         case "message":
@@ -141,7 +142,7 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
         actions.append(
             RefreshSourceAction(
                 blocked="PermissionDenied"
-                if not media.is_creator
+                if not media.refresh_authorized
                 else None
                 if media.refreshable
                 else "TemporarilyUnavailable",
@@ -151,7 +152,12 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
     retry = media.metadata.retry
     blocked = None if isinstance(retry, MetadataRetryAllowed) else _METADATA_BLOCKED[retry.reason]
     actions.append(RetryMetadataAction(blocked=blocked, retry=retry))
-    if kind == "podcast_episode":
+    retained_entry = kind == "podcast_episode" or bool(
+        db.scalar(
+            text("SELECT EXISTS(SELECT 1 FROM feed_entries WHERE media_id=:id)"), {"id": media_id}
+        )
+    )
+    if retained_entry:
         membership = library_entries.list_item_libraries(
             db, viewer_id=viewer_id, target=library_entries.media_target(media_id)
         ).all_membership
@@ -159,11 +165,11 @@ def _media(db: Session, viewer_id: UUID, media_id: UUID) -> list[ResourceActionO
             blocked = membership.remove_blocked
             actions.append(
                 _simple(
-                    "RemoveEpisodeFromAll",
+                    "RemoveFeedEntry",
                     "PermissionDenied" if blocked == "RequiresAdmin" else blocked,
                 )
             )
-        else:
+        elif kind == "podcast_episode":
             actions.append(_simple("AddEpisodeToAll"))
     else:
         actions.append(_simple("RemoveMedia", _owner(media.can_delete)))
@@ -219,26 +225,27 @@ def _library(db: Session, viewer_id: UUID, library_id: UUID) -> list[ResourceAct
     return actions
 
 
-def _podcast(db: Session, viewer_id: UUID, podcast_id: UUID) -> list[ResourceActionOut]:
-    state = podcast_states(db, viewer_id=viewer_id, podcast_ids=[podcast_id]).get(podcast_id)
+def _feed(db: Session, viewer_id: UUID, feed_id: UUID) -> list[ResourceActionOut]:
+    state = feed_states(db, viewer_id=viewer_id, feed_ids=[feed_id]).get(feed_id)
     if state is None:
         return []
     actions: list[ResourceActionOut] = [
         _simple("Metadata"),
-        OpenPodcastFeedAction(blocked=None, href=state.feed_url),
         _simple("MarkCollectionFinished"),
         _simple("MarkCollectionUnread"),
         _simple("AddUnfinishedToLectern"),
-        _simple("TranscribePodcastEpisodes"),
     ]
+    if state.feed_url is not None:
+        actions.append(OpenFeedAction(blocked=None, href=state.feed_url))
     if state.website_url is not None:
         actions.append(OpenSourceAction(blocked=None, href=state.website_url))
-    actions.append(_simple("UnsubscribePodcast" if state.subscribed else "SubscribePodcast"))
-    actions.append(_simple("PodcastLibraries"))
-    actions.append(_simple("PodcastSettings"))
-    actions.append(_simple("RefreshPodcast"))
-    if state.has_episodes:
-        actions.append(_simple("RemovePodcastEpisodes"))
+    actions.append(_simple("UnsubscribeFeed" if state.subscribed else "SubscribeFeed"))
+    actions.append(_simple("FeedLibraries"))
+    if state.kind == "podcast":
+        actions.extend([_simple("PodcastSettings"), _simple("TranscribePodcastEpisodes")])
+    actions.append(_simple("RefreshFeed"))
+    if state.has_entries:
+        actions.append(_simple("RemoveFeedItems"))
     return actions
 
 

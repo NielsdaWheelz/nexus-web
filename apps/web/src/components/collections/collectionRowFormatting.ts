@@ -38,17 +38,17 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
         accessible: `estimated ${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining to ${{ Read: "read", Listen: "listen at normal speed" }[modality]}`,
       };
     }
-    case "PodcastSync":
+    case "FeedSync":
       switch (activity.status) {
         case "pending":
           return {
             visible: "check queued",
-            accessible: "podcast check queued",
+            accessible: `${activity.feedKind === "podcast" ? "podcast" : "feed"} check queued`,
           };
         case "running":
           return {
             visible: "checking",
-            accessible: "checking for new episodes",
+            accessible: `checking for new ${activity.feedKind === "podcast" ? "episodes" : "articles"}`,
           };
         default:
           return assertNever(

@@ -247,9 +247,9 @@ def project(
                 library = _named(library_uri, items)
             if library:
                 detail.append(f"library: {library}")
-            podcast = value.get("podcast")
-            if isinstance(podcast, dict):
-                operation = podcast.get("import")
+            feed = value.get("feed")
+            if isinstance(feed, dict):
+                operation = feed.get("operation")
                 if isinstance(operation, dict):
                     state = _text(operation, "state")
                     outcome = "import " + state if state else "import accepted"
@@ -293,13 +293,7 @@ def project(
             subject = _text(value, "title") or subject
             if uri and uri != subject:
                 detail.append(uri)
-            podcast = value.get("podcast")
-            if isinstance(podcast, dict):
-                operation = podcast.get("import")
-                if isinstance(operation, dict):
-                    state = _text(operation, "state")
-                    outcome = "import " + state if state else "import accepted"
-            elif value.get("already_present") is True:
+            if value.get("already_present") is True:
                 outcome = "already present"
             elif value.get("already_present") is False:
                 outcome = "added"

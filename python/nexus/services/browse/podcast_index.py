@@ -33,8 +33,8 @@ from nexus.services.browse.targets import (
     seal_target,
     single_credit,
 )
+from nexus.services.feeds.catalog import validate_and_normalize_feed_url
 from nexus.services.podcasts.provider import PodcastIndexClient, get_podcast_index_client
-from nexus.services.podcasts.shows import validate_and_normalize_feed_url
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 # What a malformed provider item raises (a non-public feed url is an InvalidRequestError).

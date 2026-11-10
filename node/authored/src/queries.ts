@@ -41,7 +41,7 @@ export function pageTitle(title: string, local_date: string | null): string {
 /** Literal names alone receive name precedence; prose remains lexical evidence. */
 export function searchName(resource: ResourceProjection): string | null {
   if (resource.kind === "page") return pageTitle(resource.title ?? "", resource.local_date);
-  return resource.kind === "source" && /^(page|media|podcast|conversation|contributor|library|oracle_reading):/u.test(resource.ref)
+  return resource.kind === "source" && /^(page|media|podcast|feed|conversation|contributor|library|oracle_reading):/u.test(resource.ref)
     ? resource.title : null;
 }
 export function searchNameMatch(resource: ResourceProjection, text: string): "exact" | "prefix" | "substring" | null {
@@ -89,7 +89,7 @@ const BOUNDED_READABLE = `
   FROM wanted w CROSS JOIN passages p ON p.anchor_id=substr(w.ref,16) WHERE w.ref='passage_anchor:'||p.anchor_id`;
 const SEARCH_FAMILY = `CASE substr(d.ref,1,instr(d.ref,':')-1)
   WHEN 'note_block' THEN 'notes' WHEN 'page' THEN 'notes' WHEN 'highlight' THEN 'highlights'
-  WHEN 'passage_anchor' THEN 'saved_passages' WHEN 'media' THEN 'documents' WHEN 'podcast' THEN 'documents'
+  WHEN 'passage_anchor' THEN 'saved_passages' WHEN 'media' THEN 'documents' WHEN 'podcast' THEN 'documents' WHEN 'feed' THEN 'documents'
   WHEN 'conversation' THEN 'conversations' WHEN 'contributor' THEN 'people'
   WHEN 'library' THEN 'libraries' WHEN 'oracle_reading' THEN 'readings' END`;
 const SEARCH_SQL = `WITH wanted AS MATERIALIZED(

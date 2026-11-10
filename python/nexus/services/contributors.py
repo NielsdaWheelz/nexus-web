@@ -97,7 +97,7 @@ def _works_sql() -> str:
             ) AS role_facts
         FROM ({visible_content_credit_rows_sql()}) vcc
         LEFT JOIN media m ON m.id = vcc.media_id
-        LEFT JOIN podcasts p ON p.id = vcc.podcast_id
+        LEFT JOIN feeds p ON p.id = vcc.podcast_id AND p.kind='podcast'
         LEFT JOIN project_gutenberg_catalog pg
             ON pg.ebook_id = vcc.project_gutenberg_catalog_ebook_id
         GROUP BY

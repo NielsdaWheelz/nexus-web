@@ -28,7 +28,7 @@ from nexus.schemas.retrieval import LocationPrecision, RetrievalLocator
 from nexus.schemas.x_source import RevisionId
 
 BlockReason = Literal[
-    "PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable", "PodcastSubscription"
+    "PermissionDenied", "Locked", "Processing", "TemporarilyUnavailable", "FeedSubscription"
 ]
 
 
@@ -265,16 +265,16 @@ SimpleActionKind = Literal[
     "ResetProgress",
     "RemoveMedia",
     "AddEpisodeToAll",
-    "RemoveEpisodeFromAll",
+    "RemoveFeedEntry",
     "LibraryPlacement",
     "LibrarySettings",
     "DeleteLibrary",
     "PodcastSettings",
-    "SubscribePodcast",
-    "PodcastLibraries",
-    "UnsubscribePodcast",
-    "RemovePodcastEpisodes",
-    "RefreshPodcast",
+    "SubscribeFeed",
+    "FeedLibraries",
+    "UnsubscribeFeed",
+    "RemoveFeedItems",
+    "RefreshFeed",
     "DeleteConversation",
     "ForkMessage",
     "RerunMessage",
@@ -330,8 +330,8 @@ class OpenSourceAction(_Action):
     href: str
 
 
-class OpenPodcastFeedAction(_Action):
-    kind: Literal["OpenPodcastFeed"] = "OpenPodcastFeed"
+class OpenFeedAction(_Action):
+    kind: Literal["OpenFeed"] = "OpenFeed"
     href: str
 
 
@@ -363,7 +363,7 @@ ResourceActionOut = Annotated[
     | RecoveryAction
     | DownloadAction
     | OpenSourceAction
-    | OpenPodcastFeedAction
+    | OpenFeedAction
     | PlaybackAction
     | ConsumptionAction
     | TranscriptAction

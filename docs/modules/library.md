@@ -19,11 +19,11 @@ effective union membership as `all_membership.included` and physical personal
 retention as `all_membership.retained`; effective all membership alone does not
 prove personal retention.
 
-entries contain only media. podcast subscriptions are independent rules, read in
-a separate section above contents; shows never fold episodes or enter media sort,
-counts, order or paging. the rule requires every known episode as a physical
+entries contain only media. feed subscriptions are independent rules, read in
+a separate section above contents; sources never fold entries or enter media sort,
+counts, order or paging. the rule requires every known entry as a physical
 membership in its exact library and delivers later discoveries there.
-[podcasts](podcast.md) owns admission, finite work and scoped stop; the library
+[feeds](feeds.md) owns admission, finite work and scoped stop; the library
 writer owns all resulting memberships.
 
 explicit individual media capture/named filing retains the actor's default
@@ -32,14 +32,14 @@ preserves the actor's eligible holding first; an absent no-op acquires nothing.
 library deletion preserves the owner's eligible direct media. document incidental
 retention respects suppression and teardown.
 
-bulk podcast addition and automatic delivery file only their chosen destination.
+bulk feed addition and automatic delivery file only their chosen destination.
 choosing a named library creates no personal holding. individual episode
 `add to all` explicitly files the real default library; open/play/tools never save.
-while a library/show rule is active, individual unfiling and assistant filing undo
-refuse with `E_PODCAST_SUBSCRIPTION_ACTIVE`. all-removal refuses any contributing
+while a library/source rule is active, individual unfiling and assistant filing undo
+refuse with `E_FEED_SUBSCRIPTION_ACTIVE`. all-removal refuses any contributing
 rule, including a read-only shared rule.
 
-podcast unsubscribe/cleanup removes only reviewed placements after removing rules
+feed unsubscribe/cleanup removes only reviewed placements after removing rules
 and fencing affected work. named cleanup preserves existing personal and other
 holdings without manufacturing default retention; all-removal removes every
 reviewed placement. catalogue identities, authored work, transcripts, listening

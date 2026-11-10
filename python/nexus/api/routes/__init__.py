@@ -12,10 +12,12 @@ from nexus.api.routes.connection_discovery import router as connection_discovery
 from nexus.api.routes.consumption import router as consumption_router
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
+from nexus.api.routes.daily_brief import router as daily_brief_router
 from nexus.api.routes.email_ingest import router as email_ingest_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_items import router as extension_items_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
+from nexus.api.routes.feeds import router as feeds_router
 from nexus.api.routes.imports import router as imports_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_members import router as library_members_router
@@ -90,6 +92,8 @@ def create_api_router() -> APIRouter:
     api_router.include_router(atlas_router)
     api_router.include_router(consumption_activity_router)
     api_router.include_router(podcasts_router)
+    api_router.include_router(feeds_router)
+    api_router.include_router(daily_brief_router)
     api_router.include_router(email_ingest_router)
     api_router.include_router(stream_router)
     return api_router

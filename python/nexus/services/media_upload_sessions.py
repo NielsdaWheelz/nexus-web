@@ -457,7 +457,7 @@ def confirm_session(
         sa.enqueue_attempt(db, attempt, actor_id=viewer_id, request_id=request_id)
         published_attempt_id = attempt.id
         library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, destination_ids
+            db, viewer_id, media.id, destination_ids, individually_saved=True
         )
         db.execute(
             delete(MediaUploadSessionDestination).where(

@@ -143,12 +143,24 @@ def registry() -> dict[str, JobDefinition]:
             "background",
             "nexus.services.connection_discovery:connection_discovery_scan_job",
         ),
-        "podcast_feed_page": JobDefinition(
+        "daily_brief_due_job": JobDefinition(
             "background",
-            "nexus.services.podcasts.traversal:run_job",
+            "nexus.services.suggestion_shortlists:run_daily_due_job",
+            periodic_seconds=60,
+        ),
+        "feed_opml_step": JobDefinition(
+            "background",
+            "nexus.services.feeds.opml:run_job",
+            keep_dead=True,
+            lock_owner="nexus.jobs.dead_letters:lock_owner",
+            on_dead="nexus.jobs.dead_letters:feed_opml",
+        ),
+        "feed_page": JobDefinition(
+            "background",
+            "nexus.services.feeds.traversal:run_job",
             lock_owner="nexus.jobs.dead_letters:lock_owner",
             keep_dead=True,
-            on_dead="nexus.jobs.dead_letters:podcast_feed_run",
+            on_dead="nexus.jobs.dead_letters:feed_run",
         ),
         "podcast_chapters": JobDefinition(
             "background",
@@ -164,10 +176,10 @@ def registry() -> dict[str, JobDefinition]:
             on_dead="nexus.jobs.dead_letters:media_teardown",
         ),
         # Background upkeep, one job per slot.
-        "podcast_refresh_due_job": JobDefinition(
+        "feed_refresh_due_job": JobDefinition(
             "background",
-            "nexus.services.podcasts.sync:run_due_job",
-            periodic_seconds=s.podcast_refresh_due_schedule_seconds,
+            "nexus.services.feeds.sync:run_due_job",
+            periodic_seconds=s.feed_refresh_due_schedule_seconds,
         ),
         "atlas_project_job": JobDefinition(
             "background",

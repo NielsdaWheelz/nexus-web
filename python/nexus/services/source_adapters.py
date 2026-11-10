@@ -1,9 +1,9 @@
 """Acquisition per source type, and the file publication the runner fences.
 
 Each adapter opens with one fenced phase that checks the media kind and marks it
-extracting (a retained publication keeps it ready), then fetches or reads with no transaction open. Url families publish
-through their owners (web article, X, YouTube) and return an
-outcome; files, native articles and transcripts are prepared here and published by the runner
+extracting (a retained publication keeps it ready), then fetches or reads with no transaction open.
+YouTube publishes through its owner and returns an outcome; articles, files,
+native captures and transcripts are prepared here and published by the runner
 in its terminal transaction, including current-body facts and source settlement.
 Bytes are written before the row that
 names them: a write that never commits is an orphan the storage sweep reclaims.
@@ -14,7 +14,7 @@ any other storage error is the queue's to retry.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 from urllib.parse import urlparse
 from uuid import UUID
@@ -73,9 +73,8 @@ from nexus.services.web_article import (
     Article,
     ArticleMetadata,
     byline_observation,
+    fetch_article,
     prepare_article,
-    publish_article,
-    publish_fetched_article,
     publish_prepared_article,
 )
 from nexus.services.web_article_structure import WebArticlePreparedFragment
@@ -119,6 +118,12 @@ class PreparedBrowserArticle:
     fragment: WebArticlePreparedFragment
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedArticleSource:
+    article: Article
+    fragment: WebArticlePreparedFragment
+
+
 def acquire(
     session_factory: sessionmaker[Session],
     *,
@@ -132,6 +137,7 @@ def acquire(
     | PreparedXSource
     | PreparedNativeArticle
     | PreparedBrowserArticle
+    | PreparedArticleSource
     | PreparedTranscriptSource
 ):
     """Acquire one detached attempt in its source type's own refusal order.
@@ -141,14 +147,52 @@ def acquire(
     """
     target = attempt.provider_target_ref
     match attempt.source_type:
+        case st.FEED_ENTRY:
+            from nexus.services.feed_articles import FeedArticlePacket
+
+            _begin(session_factory, media_id, fence, _ARTICLE)
+            packet = FeedArticlePacket.model_validate_json(_read_stored(attempt))
+            if not packet.body_html:
+                raise ApiError(
+                    ApiErrorCode.E_SOURCE_NOT_READABLE,
+                    "This feed entry links to an article without supplying its body.",
+                )
+            published = packet.published_at or packet.published_on
+            article = Article(
+                content_html=packet.body_html,
+                source_html=None,
+                base_url=packet.base_url,
+                document_url=packet.entry_url or "",
+                extract_embeds=False,
+                metadata=ArticleMetadata(
+                    title=packet.title,
+                    byline=", ".join(packet.authors),
+                    excerpt="",
+                    site_name="",
+                    published_time=published.isoformat() if published else "",
+                ),
+                content_extent="excerpt"
+                if packet.body_kind == "summary"
+                else (
+                    "complete"
+                    if packet.entry_url is None and packet.body_kind == "content"
+                    else "unknown"
+                ),
+            )
+            return _prepare_article_source(article)
         case st.GENERIC_WEB_URL:
             _begin(session_factory, media_id, fence, _ARTICLE)
-            return publish_fetched_article(
+            article = fetch_article(
                 session_factory,
                 media_id=media_id,
                 attempt=attempt,
                 request_id=request_id,
                 fence=fence,
+            )
+            return (
+                article
+                if isinstance(article, SourceRunOutcome)
+                else _prepare_article_source(article)
             )
         case st.YOUTUBE_VIDEO:
             identity = classify_youtube_provider_video_id(target)
@@ -313,22 +357,15 @@ def acquire(
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST, "Email has no readable text content."
                 )
-            fragment_id = publish_article(
-                session_factory,
-                media_id=media_id,
-                request_id=request_id,
-                fence=fence,
-                article=Article(
+            return _prepare_article_source(
+                Article(
                     content_html=html,
                     source_html=None,
                     base_url="",
                     document_url="",
                     extract_embeds=False,
                     metadata=None,
-                ),
-            )
-            return SourceRunOutcome(
-                diagnostics=_published(attempt, fragment_id), metadata_enrichment=False
+                )
             )
         case st.PODCAST_EPISODE_TRANSCRIPT:
             _begin(session_factory, media_id, fence, frozenset({MediaKind.podcast_episode.value}))
@@ -362,6 +399,19 @@ def acquire(
     raise ApiError(ApiErrorCode.E_INVALID_KIND, f"Unsupported source type: {attempt.source_type}")
 
 
+def _prepare_article_source(article: Article) -> PreparedArticleSource:
+    return PreparedArticleSource(
+        article,
+        prepare_article(
+            article.content_html,
+            base_url=article.base_url,
+            document_url=article.document_url,
+            extract_embeds=article.extract_embeds,
+            embed_source_html=article.source_html,
+        ),
+    )
+
+
 def _prepare_native_article(
     *,
     article_id: str,
@@ -370,7 +420,9 @@ def _prepare_native_article(
 ) -> PreparedNativeArticle:
     return PreparedNativeArticle(
         article_id=article_id,
-        article=article,
+        article=replace(
+            article, content_extent="excerpt" if completeness == "incomplete" else "unknown"
+        ),
         completeness=completeness,
         fragment=prepare_article(
             article.content_html,

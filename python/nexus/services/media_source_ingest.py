@@ -444,7 +444,7 @@ def accept_extension_source(
             library_ids=[],
         )
         library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, []
+            db, viewer_id, media.id, [], individually_saved=True
         )
         attempt = _url_attempt(
             db, media, spec, id=request.id, actor_id=viewer_id, url=request.url, payload=payload
@@ -605,7 +605,7 @@ def _accept_url(
                 library_ids=library_ids,
             )
             library_entries.assign_libraries_for_media_in_current_transaction(
-                db, actor_id, media.id, library_ids
+                db, actor_id, media.id, library_ids, individually_saved=True
             )
         attempt = _url_attempt(db, media, spec, id=id, actor_id=actor_id, url=url, payload=payload)
         sa.enqueue_attempt(db, attempt, actor_id=actor_id, request_id=request_id)
@@ -639,11 +639,11 @@ def _accept_url(
             library_ids=library_ids,
         )
         library_entries.assign_libraries_for_media_in_current_transaction(
-            db, actor_id, media.id, library_ids
+            db, actor_id, media.id, library_ids, individually_saved=True
         )
         for child_id in sorted(article_ids):
             library_entries.assign_libraries_for_media_in_current_transaction(
-                db, actor_id, child_id, library_ids
+                db, actor_id, child_id, library_ids, individually_saved=False
             )
         db.refresh(media)
     if spec.source_type == st.YOUTUBE_VIDEO:
@@ -1112,7 +1112,16 @@ def refresh_source(
     """
 
     def admit() -> SourceAdmission:
-        media = _owned_media(db, viewer_id, media_id)
+        from nexus.auth.permissions import can_acquire_feed_media
+        from nexus.services.feed_articles import enqueue_linked_article
+
+        feed_access = can_acquire_feed_media(db, viewer_id, media_id)
+        if feed_access:
+            media_locks.lock_media_rows_in_order(db, [media_id])
+            media = db.get(Media, media_id)
+            assert media is not None
+        else:
+            media = _owned_media(db, viewer_id, media_id)
         latest = sa.latest_attempt(db, media.id, lock=True)
         landed = db.get(MediaSourceAttempt, sa.successor_id(expected_attempt_id))
         if landed is not None and landed.media_id == media.id:
@@ -1124,6 +1133,19 @@ def refresh_source(
             return _admission(latest)
         if not sa.source_refreshable(facts):
             raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Nothing to refresh.")
+        if facts.can_acquire_linked_article:
+            from nexus.services.media_parts import require_unpinned_source
+
+            require_unpinned_source(db, media_id=media.id)
+            identity = enqueue_linked_article(
+                db,
+                viewer_id=viewer_id,
+                media_id=media_id,
+                attempt_id=sa.successor_id(expected_attempt_id),
+            )
+            accepted = latest if identity is None else db.get(MediaSourceAttempt, identity)
+            assert accepted is not None
+            return _admission(accepted)
         if media.kind == MediaKind.web_article.value and media.provider == "x":
             # the readable copy is retained while the refresh runs, and if it fails
             ensure_reader_publication(db, media_id=media.id)

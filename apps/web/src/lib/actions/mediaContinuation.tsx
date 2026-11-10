@@ -51,7 +51,7 @@ type ContinuationFailure = { readonly line: Line; readonly error: ApiError | nul
   | { readonly unknown: false; readonly review: boolean }
   | { readonly unknown: true; readonly review: false; readonly busy: boolean }
 );
-type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "podcasts">;
+type Context = Pick<ActionContext, "sessionSignal" | "isActive" | "lectern" | "reportDefect" | "workspace" | "feeds">;
 const destinationLabel = (destination: MediaDestination) => destination.kind === "Lectern" ? "lectern" : destination.kind === "All" ? "All" : destination.library.name;
 const addLine = (operation: MediaContinuation, reason?: string): Line =>
   ({ fact: `couldn’t add “${operation.subject.title}” to ${destinationLabel(operation.destination)}.`, reason });
@@ -121,7 +121,7 @@ export function useMediaContinuationOwner(ctx: Context) {
       }
       if (operation.accepted?.kind === "Episode" && operation.destination.kind !== "Lectern") {
         const subject = `episode-save:${mediaId}`;
-        if (ctx.podcasts.pending(subject) !== null) {
+        if (ctx.feeds.pending(subject) !== null) {
           complete(id, mediaId);
           return;
         }
@@ -137,7 +137,7 @@ export function useMediaContinuationOwner(ctx: Context) {
             expected_removal_revision: operation.guard.expected_removal_revision } };
           update(id, value => ({ ...value, placement: request }));
         }
-        confirmed = await ctx.podcasts.submit({ subject, title: operation.subject.title,
+        confirmed = await ctx.feeds.submit({ subject, title: operation.subject.title,
           library: operation.destination.kind === "Library" ? operation.destination.library.name : null,
           shown: () => false,
           command: { kind: "EpisodeSave", mediaId, libraryId: request.libraryId, body: request.body },
@@ -248,8 +248,8 @@ export function useMediaContinuationOwner(ctx: Context) {
       for (const listener of listeners.current) listener();
       const { placement, ctx } = latest.current;
       if (operation.accepted?.kind === "Episode") {
-        const pending = ctx.podcasts.pending(`episode-save:${operation.accepted.mediaId}`);
-        if (pending !== null) ctx.podcasts.review(pending.key);
+        const pending = ctx.feeds.pending(`episode-save:${operation.accepted.mediaId}`);
+        if (pending !== null) ctx.feeds.review(pending.key);
       }
       const paneId = ctx.workspace().state.active_primary_pane_id;
       const anchor = () => findPaneLandmarkFocusTarget(paneId);

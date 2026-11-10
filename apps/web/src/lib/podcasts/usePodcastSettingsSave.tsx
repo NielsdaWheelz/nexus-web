@@ -63,7 +63,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
   async function read(entry: Entry, reason: Reason, scope: AbortController): Promise<PodcastSettings | null> {
     const command = entry.state.command;
     entry.state = { kind: "Reading", command, reason }; emit();
-    invalidateReads("Podcasts");
+    invalidateReads("Feeds");
     try {
       const value = await requestWithDeadline({ signal: scope.signal, timeoutMs: 30_000, request: signal => requestWithRetry(s => getPodcastSettings(entry.podcastId, s), signal) });
       if (!current(entry, scope)) return null;
@@ -73,7 +73,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
         return null;
       }
       if (reason === "Unknown" && value.id === command.patch.id && value.default_playback_speed === command.patch.default_playback_speed && value.pause_shortening_mode === command.patch.pause_shortening_mode) {
-        entry.state = { kind: "Accepted", command, current: value }; emit(); publishChange("Podcasts"); return value;
+        entry.state = { kind: "Accepted", command, current: value }; emit(); publishChange("Feeds"); return value;
       }
       entry.state = { kind: "Review", command, reason, current: value }; emit();
       // An unanswered save that reads back otherwise may never have landed: nothing says who changed them.
@@ -110,7 +110,7 @@ function createOwner(accountId: string, guard: WorkGuard, fail: (input: { error:
       const error = modeledApiError(caught, fail);
       if (error?.status === 409) return await read(entry, "Conflict", scope);
       if (error !== null) entry.state = error.code === "E_NOT_FOUND" ? { kind: "Absent", command } : { kind: outcomeUnknown(error) ? "Unknown" : "Rejected", command, error };
-      invalidateReads("Podcasts"); emit();
+      invalidateReads("Feeds"); emit();
       if (entry.state.kind === "Absent") tell(entry, { fact: unsaved(entry), reason: "it isn’t available anymore." });
       if (entry.state.kind === "Rejected") outcome.fail(entry.state.error, unsaved(entry),
         { label: "retry", commandKey: `retry ${entry.ownerId}`, run: () => void commands.retry(entry.podcastId) });

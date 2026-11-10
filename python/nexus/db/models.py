@@ -90,6 +90,7 @@ class SuggestionFeed(Base):
     library_id: Mapped[UUID | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     current_job_id: Mapped[UUID | None]
+    mode: Mapped[Literal["suggestions", "daily"]] = mapped_column(Text)
 
 
 class SuggestionShortlist(Base):
@@ -102,6 +103,11 @@ class SuggestionShortlist(Base):
     ranked_at: Mapped[datetime]
     ranked_revision: Mapped[int] = mapped_column(BigInteger)
     target_refs: Mapped[list[str]] = mapped_column(JSONB)
+    edition_date: Mapped[date | None]
+    time_zone: Mapped[str | None]
+    window_start: Mapped[datetime | None]
+    window_end: Mapped[datetime | None]
+    coverage: Mapped[dict[str, int] | None] = mapped_column(JSONB(none_as_null=True))
 
 
 class User(Base):
@@ -663,6 +669,12 @@ class ReaderPublication(Base):
         JSONB, server_default=FetchedValue()
     )
     changed_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    source_attempt_id: Mapped[UUID | None]
+    content_extent: Mapped[Literal["complete", "excerpt", "unknown"]] = mapped_column(
+        Text, server_default=FetchedValue()
+    )
+    publisher_published_at: Mapped[datetime | None]
+    publisher_published_on: Mapped[date | None]
 
 
 class Fragment(Base):
@@ -730,13 +742,14 @@ class LibraryEntry(Base):
     position: Mapped[int] = mapped_column(server_default=FetchedValue())
 
 
-class Podcast(Base):
+class Feed(Base):
     """Global podcast metadata from discovery providers."""
 
-    __tablename__ = "podcasts"
+    __tablename__ = "feeds"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    provider: Mapped[str]
-    provider_podcast_id: Mapped[str]
+    kind: Mapped[Literal["podcast", "article"]] = mapped_column(Text)
+    provider: Mapped[str | None]
+    provider_podcast_id: Mapped[str | None]
     title: Mapped[str]
     feed_url: Mapped[str]
     website_url: Mapped[str | None]
@@ -745,21 +758,27 @@ class Podcast(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
-    sync_run_id: Mapped[UUID | None]
+    head_run_id: Mapped[UUID | None]
+    catchup_run_id: Mapped[UUID | None]
     next_sync_at: Mapped[datetime | None]
     consecutive_sync_failures: Mapped[int] = mapped_column(server_default=FetchedValue())
     last_checked_at: Mapped[datetime | None]
     last_check_had_coverage_gaps: Mapped[bool | None]
     last_check_error_code: Mapped[str | None]
     last_check_error_detail: Mapped[str | None]
+    last_catchup_at: Mapped[datetime | None]
+    last_catchup_had_coverage_gaps: Mapped[bool | None]
+    last_catchup_error_code: Mapped[str | None]
+    last_catchup_error_detail: Mapped[str | None]
 
 
-class PodcastFeedRun(Base):
+class FeedRun(Base):
     """A finite import or the show's current recurring traversal owns each run."""
 
-    __tablename__ = "podcast_feed_runs"
+    __tablename__ = "feed_runs"
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    podcast_id: Mapped[UUID]
+    feed_id: Mapped[UUID]
+    purpose: Mapped[Literal["head", "catchup", "import"]] = mapped_column(Text)
     attempt_version: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     step_no: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     job_id: Mapped[UUID | None]
@@ -776,10 +795,10 @@ class PodcastFeedRun(Base):
     error_detail: Mapped[str | None]
 
 
-class PodcastLibraryImport(Base):
+class LibraryFeedImport(Base):
     """Retained finite-operation identity and honest first-processing counts."""
 
-    __tablename__ = "podcast_library_imports"
+    __tablename__ = "library_feed_imports"
     id: Mapped[UUID] = mapped_column(primary_key=True)
     library_id: Mapped[UUID]
     run_id: Mapped[UUID]
@@ -788,25 +807,109 @@ class PodcastLibraryImport(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
-class LibraryPodcastSubscription(Base):
+class LibraryFeedSubscription(Base):
     """Presence grants ongoing delivery to the library, independent of its creator."""
 
-    __tablename__ = "library_podcast_subscriptions"
+    __tablename__ = "library_feed_subscriptions"
     id: Mapped[UUID] = mapped_column(primary_key=True)
     library_id: Mapped[UUID]
-    podcast_id: Mapped[UUID]
+    feed_id: Mapped[UUID]
     initial_import_id: Mapped[UUID]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
-class PodcastImportProcessedEpisode(Base):
+class FeedImportProcessedMedia(Base):
     """An unfinished import has handled this identity, including later removal intent."""
 
-    __tablename__ = "podcast_import_processed_episodes"
+    __tablename__ = "feed_import_processed_media"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     import_id: Mapped[UUID]
     media_id: Mapped[UUID]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class FeedUrlAlias(Base):
+    __tablename__ = "feed_url_aliases"
+    url: Mapped[str] = mapped_column(primary_key=True)
+    feed_id: Mapped[UUID]
+
+
+class FeedCatalogAccess(Base):
+    __tablename__ = "feed_catalog_access"
+    feed_id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class FeedEntry(Base):
+    __tablename__ = "feed_entries"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    feed_id: Mapped[UUID]
+    media_id: Mapped[UUID]
+    entry_url: Mapped[str | None]
+    published_at: Mapped[datetime | None]
+    published_on: Mapped[date | None]
+    publication_evidence: Mapped[Literal["publisher", "unverified"]] = mapped_column(Text)
+    publisher_updated_at: Mapped[datetime | None]
+    first_seen_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    source_fingerprint: Mapped[str | None]
+
+
+class FeedEntryIdentity(Base):
+    __tablename__ = "feed_entry_identities"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    feed_id: Mapped[UUID]
+    entry_id: Mapped[UUID]
+    scheme: Mapped[str]
+    value: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class ViewerMediaDiscovery(Base):
+    __tablename__ = "viewer_media_discoveries"
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    media_id: Mapped[UUID] = mapped_column(primary_key=True)
+    first_discovered_at: Mapped[datetime | None]
+    origin: Mapped[Literal["followed_source", "manual", "history", "existing"]] = mapped_column(
+        Text
+    )
+    manually_saved: Mapped[bool]
+    last_manually_saved_at: Mapped[datetime | None]
+
+
+class FeedOpmlImport(Base):
+    __tablename__ = "feed_opml_imports"
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID]
+    expected_removal_revision: Mapped[int] = mapped_column(BigInteger)
+    attempt_version: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
+    current_job_id: Mapped[UUID | None]
+    state: Mapped[Literal["pending", "running", "complete", "needs_attention", "cancelled"]] = (
+        mapped_column(Text)
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class FeedOpmlImportItem(Base):
+    __tablename__ = "feed_opml_import_items"
+    batch_id: Mapped[UUID] = mapped_column(primary_key=True)
+    ordinal: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[UUID]
+    url: Mapped[str]
+    selected_kind: Mapped[Literal["podcast", "article"] | None] = mapped_column(Text)
+    library_id: Mapped[UUID]
+    subscription_id: Mapped[UUID]
+    initial_import_id: Mapped[UUID]
+    feed_id: Mapped[UUID | None]
+    admitted_subscription_id: Mapped[UUID | None]
+    admitted_import_id: Mapped[UUID | None]
+    state: Mapped[Literal["pending", "subscribed", "already_subscribed", "failed", "cancelled"]] = (
+        mapped_column(Text)
+    )
+    error_code: Mapped[str | None]
+    error_detail: Mapped[str | None]
+    retryable: Mapped[bool]
 
 
 class PodcastPlaybackSettings(Base):

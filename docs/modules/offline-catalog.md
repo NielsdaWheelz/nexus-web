@@ -1,8 +1,8 @@
 # installed catalog
 
 the android catalog is a complete, dated browsing projection. it contains personal
-library memberships, included shows with their full known episode metadata, lectern
-selections, and owned note/chat index summaries. metadata inclusion creates no
+library memberships, authorized sources with their known entry metadata, lectern
+selections and owned chat index summaries. authored notes retain their local owner. metadata inclusion creates no
 membership. the snapshot contains no bodies or downloaded assets and authorizes
 no command. hosted reads keep their existing owners.
 
@@ -12,8 +12,8 @@ no command. hosted reads keep their existing owners.
 the existing bff exposes `/api/offline-catalog`. query parameters are refused.
 responses require the current wire revision and are private/no-store.
 
-format 3 requires every episode summary’s canonical `show` and rejects every
-older format through the existing incompatible/online-rebuild outcome. replacement
+format 4 stores `sources`, `library_sources`, audio `episodes` and article `articles`.
+every episode summary retains its canonical `show`. it rejects every older format through the existing incompatible/online-rebuild outcome. replacement
 never purges downloads or authored data. it retains the positive decimal-string
 `consumption_revision`, each episode’s
 raw `consumption` and nullable `source_duration_ms`, and each media’s raw nullable
@@ -26,27 +26,31 @@ one read-only repeatable-read transaction selects the complete projection. exist
 domain owners supply visibility, membership, summaries and total-order plans.
 postgres assigns named integer ranks; clients filter those ranks rather than
 imitating database collation, null placement or tie directions. each library's
-structural ranks have their own domain; media/episode ranks span their entity
-tables, and followed-show ranks exclude detail-only shows.
+structural ranks have their own domain; media ranks span media, entry ranks span
+both source kinds, and source-index ranks exclude detail-only sources.
 
 the typed response validates identity uniqueness, reference closure, complete
-orders, repeated facts and episode counts before serialization. snapshot identity
+orders, repeated facts, source kinds and entry counts before serialization. snapshot identity
 is opaque. capture time dates the database observation, not transfer completion.
 there is no export table, server artifact, endpoint crawl or incremental protocol.
 
-roots are non-system member libraries, active subscriptions, unfinished
-member-library imports and readable lectern selections. each included show admits
-all known canonical episodes at capture, including unsaved episodes, excluding
-teardown. `episode_counts.known_count` counts those identities; it does not claim
-complete publisher history. capture neither fetches that history nor requests
-transcripts, audio or model work.
+roots are non-system member libraries, readable lectern selections and explicit
+source authority: supplying the feed or a current member-library source operation.
+retained podcast episodes also include their canonical show. holding an ordinary
+article never grants access to its source. source retrieval urls retain the live
+owner's supplying-account/writable-destination restriction.
 
-subscription sections, episode metadata and library membership remain distinct
-relations. `library_media` alone supplies collection inclusion; an episode in
-`media` or `episodes` gains no placement. explicit lectern selections may include
-system/grant-only media and catalogue-only episodes. a selected episode includes
-its own show's catalogue. an unfiled episode remains in a later snapshot only
-while an existing root still includes its show.
+each included source contributes its readable known entries at capture, including
+unsaved entries. private article bodies require exact active-publication lineage;
+metadata does not grant access to an unrelated private capture. entries are deduped
+per source/media, while `library_media` alone supplies physical collection inclusion.
+`entry_counts.known_count` describes this catalogue, never full publisher history.
+capture fetches no history, bodies, transcripts or audio and requests no model work.
+
+`library_sources`, `sources`, `episodes`/`articles` and `library_media` are separate
+relations. an entry outside a later snapshot's source and media roots is unavailable
+offline. the format change requires online rebuild; it changes no download or
+authored-store format.
 
 ## device contract
 
@@ -98,22 +102,23 @@ meaning. saved summary callers bypass live media-summary resolution.
 
 readers see the saved index projected over this device's listening facts
 ([player](player.md), `lib/consumption/listening.ts`) before filtering and sorting:
-summaries, episode states, show unfinished/unplayed counts, `has_new`, remaining
+summaries, episode states, source unfinished/unread counts, `has_new`, remaining
 seconds and lectern membership. unaffected rows keep their exact saved values.
 remaining sorts compare raw seconds (missing last, then the canonical title rank);
-the unplayed sort compares effective counts (then the recent-episode rank). the
+the unfinished sort compares effective counts (then the recent-entry rank). the
 raw snapshot's per-episode observations go to native for media it retains.
 
-library heading/entries/subscriptions, podcast heading/episodes, the podcast
-index and the lectern are consumption groups owned by their panes
+library heading/entries/subscriptions, source heading/entries, source
+indexes and the lectern are consumption groups owned by their panes
 (`useLiveGroup`). lost remote admission returns a covered group wholly to its
-saved projection; afterwards it promotes only when every part is a complete live
+saved projection; afterwards it promotes only when every part is an accepted live
 read, no relevant (unfiltered saved membership) local delivery is pending, and
 every part's stamped `consumption_revision` covers the highest relevant observed
 revision, all checked against current facts at commit. a promoted connected group
 stays live. each complete live index or aggregate carries its snapshot's stamp;
-library heading/entries/subscriptions and podcast heading/episodes each share one
-capture.
+library heading/entries/subscriptions share one capture. source detail uses bounded
+keyset pages; its first page carries the header and complete catalogue counts.
+refresh replaces the loaded prefix; source paging is not a frozen archive snapshot.
 `PaneChrome.displayTitle` belongs to the shown body, so an independently refreshed
 workspace title cannot put a new heading above a saved group. navigation labels
 retain their existing best-known presentation policy.

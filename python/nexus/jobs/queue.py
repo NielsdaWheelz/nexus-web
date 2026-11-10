@@ -34,7 +34,7 @@ from nexus.jobs.registry import FAILED_EXECUTION_LIMIT, registry, resolve
 LEASE_SECONDS = 30
 
 _HEAVY_BUSY = """EXISTS (SELECT 1 FROM background_job_capacity_leases
-    WHERE resource_class = 'Heavy' AND lease_expires_at > clock_timestamp())"""
+    WHERE resource_class = 'Heavy' AND job_id IS NOT NULL)"""
 # Expiry is a separate revocation transition; only waiting rows are claimable.
 _DUE = "status IN ('pending', 'failed') AND available_at <= clock_timestamp()"
 _DUE_AT = "available_at"
@@ -243,7 +243,7 @@ def claim_next_job(
         return None
     heavy = candidate[0].kind in heavy_kinds
     # Locked whatever it holds: a concurrent Heavy claim waits here, then sees ours.
-    busy = "SELECT lease_expires_at > clock_timestamp() FROM background_job_capacity_leases"
+    busy = "SELECT job_id IS NOT NULL FROM background_job_capacity_leases"
     if heavy and db.scalar(text(f"{busy} WHERE resource_class = 'Heavy' FOR UPDATE")):
         return None
     (job,) = _rows(
@@ -288,21 +288,41 @@ def seconds_until_due(
     ).scalar()
 
 
-def renew_running_job_claim(db: Session, *, context: JobExecutionContext, heavy: bool) -> bool:
-    """Extend this attempt's lease (and its Heavy lease); False once either is lost."""
-    if lock_running_job_claim(db, context=context) is None:
-        return False
+type ClaimRenewal = Literal["renewed", "busy", "lost"]
+
+
+def renew_running_job_claim(
+    db: Session, *, context: JobExecutionContext, heavy: bool
+) -> ClaimRenewal:
+    """Renew both leases, report contention, or confirm this execution lost ownership.
+
+    A publisher holds its claim through commit. The heartbeat must not wait on
+    that same row or mistake its busy lock for revocation. Busy changes no lease;
+    expiry recovery alone can revoke the execution and release Heavy capacity.
+    """
+    if not _rows(
+        db,
+        f"SELECT * FROM background_jobs WHERE {_OWNED} FOR UPDATE SKIP LOCKED",
+        job_id=context.job_id,
+        execution_id=context.execution_id,
+    ):
+        return "busy" if running_job_claim_is_current(db, context=context) else "lost"
     if (
         heavy
         and not db.execute(
             text(
                 "SELECT 1 FROM background_job_capacity_leases"
-                " WHERE resource_class = 'Heavy' AND job_id = :job_id FOR UPDATE"
+                " WHERE resource_class = 'Heavy' AND job_id = :job_id FOR UPDATE SKIP LOCKED"
             ),
             {"job_id": context.job_id},
         ).first()
     ):
-        return False
+        held = db.scalar(
+            text("""SELECT EXISTS (SELECT 1 FROM background_job_capacity_leases
+                WHERE resource_class='Heavy' AND job_id=:job_id)"""),
+            {"job_id": context.job_id},
+        )
+        return "busy" if held else "lost"
     db.execute(
         text(
             f"UPDATE background_jobs SET lease_expires_at = {_LEASE},"
@@ -317,7 +337,7 @@ def renew_running_job_claim(db: Session, *, context: JobExecutionContext, heavy:
                 " updated_at = clock_timestamp() WHERE resource_class = 'Heavy'"
             )
         )
-    return True
+    return "renewed"
 
 
 def finish_job(

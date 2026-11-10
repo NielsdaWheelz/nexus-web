@@ -204,6 +204,8 @@ def player_descriptors(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, wire.PlayerDescriptor]:
     """Descriptors of the playable episodes among ``media_ids``; others are missing."""
+    from nexus.services.podcasts.episodes import episode_source_rows_sql
+
     duration = _duration_sql("pls", "pe")
     rows = db.execute(
         text(f"""
@@ -216,8 +218,8 @@ def player_descriptors(
                    COALESCE(pls.playback_speed, ps.default_playback_speed, 1.0) AS rate,
                    pe.podcast_id, ps.pause_shortening_mode
             FROM media m
-            JOIN podcast_episodes pe ON pe.media_id = m.id
-            LEFT JOIN podcasts p ON p.id = pe.podcast_id
+            JOIN ({episode_source_rows_sql()}) pe ON pe.media_id = m.id
+            LEFT JOIN feeds p ON p.id = pe.podcast_id AND p.kind='podcast'
             LEFT JOIN podcast_listening_states pls
               ON pls.user_id = :viewer_id AND pls.media_id = m.id
             LEFT JOIN consumption_overrides co ON co.user_id = :viewer_id AND co.media_id = m.id

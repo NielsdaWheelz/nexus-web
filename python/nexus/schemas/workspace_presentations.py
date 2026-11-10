@@ -24,6 +24,7 @@ def _workspace_ref(value: str) -> str:
         "library",
         "conversation",
         "podcast",
+        "feed",
         "page",
         "note_block",
         "oracle_reading",

@@ -4,7 +4,7 @@ import { useCallback, useRef, type ComponentProps, type ReactNode } from "react"
 import ResourceActions from "@/components/resources/ResourceActions";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import ConversationMetadata from "@/components/chat/ConversationMetadata";
-import PodcastMenu from "@/components/podcasts/PodcastMenu";
+import FeedMenu from "@/components/feeds/FeedMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
 import { paneForkLink } from "@/lib/panes/paneForkLink";
@@ -21,7 +21,7 @@ import type { CollectionContext, CollectionRowView } from "@/lib/collections/typ
 import { collectionActivityText } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
+import type { FeedActionFocus } from "@/lib/actions/inlineActions";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { mediaSubjectKind } from "@/lib/media/mediaSummary";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -51,7 +51,7 @@ export default function CollectionRow({
   readonly as?: "li" | "div";
   readonly primaryControl?: ReactNode;
   readonly occurrenceActions?: readonly ActionDescriptor[];
-  readonly actionFocus?: PodcastActionFocus;
+  readonly actionFocus?: FeedActionFocus;
   readonly afterRemoval: () => HTMLElement | null;
   readonly compactPrimaryControl?: boolean;
   readonly rowActionsAvailable?: boolean;
@@ -67,7 +67,7 @@ export default function CollectionRow({
     : parsed !== null ? resourceType(parsed.scheme, null)
     : row.kind === "podcast" ? resourceType("podcast", null) : null;
   const typeLabel = type === null ? null : resourceTypeName(type);
-  const podcast = row.resourceActions?.kind === "Podcast" ? row.resourceActions.subject : null;
+  const podcast = row.resourceActions?.kind === "Feed" ? row.resourceActions.subject : null;
   const pane = usePaneRuntime();
   const paneId = pane?.paneId;
   const touch = useTouchCapable();
@@ -87,7 +87,7 @@ export default function CollectionRow({
     ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;
   const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
     ? "couldn’t process this. see its metadata."
-    : row.exceptionalStatus !== null ? "last episode check didn’t finish; check again from show details"
+    : row.exceptionalStatus !== null ? `last ${row.exceptionalStatus.feedKind === "podcast" ? "episode" : "article"} check didn’t finish; check again from source details`
     : row.activity !== null ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
   const sections: readonly ContextActionSection[] = [
     { id: "Occurrence", actions: rowActionsAvailable ? (occurrenceActions ?? []) : [] },
@@ -98,7 +98,7 @@ export default function CollectionRow({
   const more = rowActionsAvailable && media?.subject.kind === "External" ? <ExternalMediaMenu
     subject={media.subject} subjectKey={`collection:${row.id}`}
     viewActions={row.resourceRef ? [] : row.flatActions ?? []} triggerRef={moreRef} returnFocus={returnFocus}
-  /> : rowActionsAvailable && podcast !== null && row.resourceRef === null ? <PodcastMenu
+  /> : rowActionsAvailable && podcast !== null && row.resourceRef === null ? <FeedMenu
     subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
     actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     label={menuLabel}

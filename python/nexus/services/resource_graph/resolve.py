@@ -87,8 +87,8 @@ def resolve_prompt(
         return ResolvedResource(
             item.uri, item.label, "", fetch_hint=item.fetch_hint, title=item.title
         )
-    if ref.scheme == "podcast":
-        title = db.scalar(text("SELECT title FROM podcasts WHERE id=:id"), {"id": ref.id})
+    if ref.scheme in ("podcast", "feed"):
+        title = db.scalar(text("SELECT title FROM feeds WHERE id=:id"), {"id": ref.id})
         assert title is not None
         return _plain(ref, title, "")
     sql = {
@@ -590,7 +590,13 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _plain(ref, str(row.display_name), ""),
     ),
     "podcast": (
-        "SELECT id, title, description FROM podcasts WHERE id = ANY(:ids)",
+        "SELECT id, title, description FROM feeds WHERE kind='podcast' AND id = ANY(:ids)",
+        lambda ref, row: _plain(
+            ref, str(row.title), _first_line(row.description or ""), row.description
+        ),
+    ),
+    "feed": (
+        "SELECT id, title, description FROM feeds WHERE kind='article' AND id=ANY(:ids)",
         lambda ref, row: _plain(
             ref, str(row.title), _first_line(row.description or ""), row.description
         ),

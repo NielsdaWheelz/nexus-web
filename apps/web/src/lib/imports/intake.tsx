@@ -9,6 +9,7 @@
  * clock, opens what was armed, and raises a settled batch's slip.
  */
 
+import OpmlImportDialog from "@/components/feeds/OpmlImportDialog";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Hold, useOutcome, type Outcome } from "@/components/feedback/Feedback";
 import { verbsForTransport, type Line, type Verb, type Verbs } from "@/components/feedback/stage";
@@ -112,6 +113,7 @@ export interface IntakeLine {
 export interface Admission {
   readonly links: readonly string[];
   readonly files: readonly File[];
+  readonly opml?: readonly File[];
   /** Shared files the device named but could not stream. */
   readonly unreadable?: readonly { readonly name: string; readonly sizeBytes: number | null }[];
   /** Default: the intake's `into`, with any library being created for it. */
@@ -137,6 +139,7 @@ type Entry = IntakeLine & {
 type Deferral = { readonly input: Admission & { readonly into: readonly LibraryDestination[] }; readonly visit: object | null };
 
 type State = {
+  readonly opml: readonly { readonly id: string; readonly file: File }[];
   readonly lines: readonly IntakeLine[];
   readonly field: string;
   readonly fieldLine: Line | null;
@@ -161,7 +164,7 @@ type Host = {
 };
 
 const ANSWER_MS = 30_000;
-const EMPTY: State = { lines: [], field: "", fieldLine: null, hasAdmitted: false, into: [], running: 0, unsettled: 0, defect: null, showing: false, settledAt: new Map(), held: [] };
+const EMPTY: State = { opml: [], lines: [], field: "", fieldLine: null, hasAdmitted: false, into: [], running: 0, unsettled: 0, defect: null, showing: false, settledAt: new Map(), held: [] };
 
 /** The address the server keys a link by: no fragment, normalized host. */
 const address = (url: string) => { const parsed = new URL(url); parsed.hash = ""; return parsed.href; };
@@ -178,6 +181,7 @@ function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestin
   const listeners = new Set<() => void>();
   let state = EMPTY;
   let entries: readonly Entry[] = [];
+  let opml: State["opml"] = [];
   /** Ids waiting to be sent, oldest first. */
   let queue: readonly string[] = [];
   let field = "";
@@ -236,7 +240,7 @@ function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestin
     unseen = new Set([...unseen].filter(batch => settledNow.has(batch)));
     const running = entries.filter(line => linePhase(line.stage) === "Running").length;
     state = {
-      lines: entries, field, fieldLine, hasAdmitted, into, defect, running, showing, settledAt: settledNow,
+      opml, lines: entries, field, fieldLine, hasAdmitted, into, defect, running, showing, settledAt: settledNow,
       unsettled: entries.filter(line => linePhase(line.stage) !== "Settled").length,
       held: showing ? [] : [...unseen].filter(batch => batches.get(batch)!.some(line => line.stage.kind === "Unknown")),
     };
@@ -682,7 +686,7 @@ function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestin
           return () => { listeners.delete(listener); unsubscribe(); };
         },
         read: () => ({
-          changed: false,
+          changed: opml.length > 0,
           unconfirmed: creation.readUnconfirmed() || entries.some(line => ["Sending", "Verifying", "Unknown"].includes(line.stage.kind)),
           stopsBrowserWork: state.running > 0,
         }),
@@ -702,7 +706,7 @@ function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestin
         unsubscribe();
         if (lifetime !== scope) return;
         lifetime = null;
-        entries = []; queue = []; deferred = []; field = ""; fieldLine = null; hasAdmitted = false; into = []; visit = null;
+        entries = []; opml = []; queue = []; deferred = []; field = ""; fieldLine = null; hasAdmitted = false; into = []; visit = null;
         freezing = false; linkSending = false; filesSending = 0; showing = false;
         settledBatches = new Map(); unseen = new Set(); accepting = new Set();
         publish();
@@ -725,8 +729,12 @@ function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestin
     setField(text: string) { field = text; fieldLine = null; publish(); },
     setFieldLine(line: Line | null) { fieldLine = line; publish(); },
     setInto(next: readonly LibraryDestination[]) { into = next; publish(); },
+    dismissOpml() { opml = opml.slice(1); publish(); },
     admit(input: Admission) {
-      if (lifetime === null || !alive(lifetime) || input.links.length + input.files.length + (input.unreadable?.length ?? 0) === 0) return;
+      if (lifetime === null || !alive(lifetime) || input.links.length + input.files.length + (input.opml?.length ?? 0) + (input.unreadable?.length ?? 0) === 0) return;
+      const sources = [...input.opml ?? [], ...input.files.filter(file => /\.opml$/i.test(file.name) || /opml/i.test(file.type))];
+      if (sources.length > 0) { opml = [...opml, ...sources.map(file => ({ id: crypto.randomUUID(), file }))]; input = { ...input, files: input.files.filter(file => !sources.includes(file)) }; publish(); }
+      if (input.links.length + input.files.length + (input.unreadable?.length ?? 0) === 0) return;
       hasAdmitted = true;
       if (input.files.length > 0 || (input.unreadable?.length ?? 0) > 0) fieldLine = null;
       admitBatch(input);
@@ -930,6 +938,7 @@ export function ImportIntakeHost({ openPage, children }: { openPage: () => void;
 
   return <CreationContext value={creation}>
     {children}
+    {state.opml[0] ? <OpmlImportDialog key={state.opml[0].id} input={{ kind: "File", file: state.opml[0].file }} onClose={intake.dismissOpml} /> : null}
     {destinations.holds}
     {state.held.map(batch => {
       const lines = state.lines.filter(line => line.batch === batch);

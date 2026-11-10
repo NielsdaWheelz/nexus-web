@@ -24,7 +24,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services.library_entries import library_media_ids_cte_sql, library_podcast_rows_sql
+from nexus.services.library_entries import library_feed_rows_sql, library_media_ids_cte_sql
 from nexus.services.media_text_scope import highlight_in_reading_scope_sql
 from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
@@ -69,11 +69,13 @@ def reading_media_ids_sql(roots_sql: str) -> str:
 _MEDIA = reading_media_ids_sql("SELECT CAST(:{s} AS uuid) AS media_id")
 _LIBRARY_MEDIA = reading_media_ids_sql(library_media_ids_cte_sql(library_param=":{s}"))
 _LIBRARY_PODCASTS = (
-    f"SELECT podcast_id FROM ({library_podcast_rows_sql(library_param=':{s}')}) shows"
+    f"SELECT feed_id AS podcast_id FROM ({library_feed_rows_sql(library_param=':{s}')}) shows "
+    "WHERE feed_kind='podcast'"
 )
 
 _CONTEXT_PODCASTS = (
-    f"SELECT pe.podcast_id FROM podcast_episodes pe WHERE {_context('media', 'pe.media_id')}"
+    f"SELECT entry.feed_id AS podcast_id FROM podcast_episodes pe "
+    f"JOIN feed_entries entry ON entry.id=pe.media_id WHERE {_context('media', 'pe.media_id')}"
 )
 
 

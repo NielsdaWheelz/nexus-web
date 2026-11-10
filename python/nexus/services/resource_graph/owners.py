@@ -1,6 +1,6 @@
 """One hop from an exact graph endpoint to the object that owns it.
 
-Media, podcasts, pages and note blocks own themselves. Highlights, fragments,
+Media, feeds, podcasts, pages and note blocks own themselves. Highlights, fragments,
 apparatus items, evidence spans, content chunks and passage anchors resolve to
 the media or note block they belong to. An endpoint whose row is gone keeps its
 own identity, so it can only match itself.

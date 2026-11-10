@@ -31,7 +31,15 @@ def reading_time_rows_sql() -> str:
                    counts.word_count::float8 / 4.0::float8 AS total_seconds
             FROM ({quotable_document_rows_sql()}) document
             JOIN ({media_word_count_rows_sql()}) counts ON counts.media_id = document.media_id
-            WHERE counts.word_count > 0
+            JOIN reader_publications publication ON publication.media_id = document.media_id
+            WHERE counts.word_count > 0 AND (
+                publication.content_extent = 'complete'
+                OR (document.media_kind = 'text_part' AND EXISTS (
+                    SELECT 1 FROM media_parts part JOIN reader_publications source
+                      ON source.media_id=part.source_media_id
+                    WHERE part.media_id=document.media_id AND source.content_extent='complete'
+                ))
+            )
         ) duration
         LEFT JOIN ({current_position_rows_sql()}) cursor ON cursor.media_id = duration.media_id
     """

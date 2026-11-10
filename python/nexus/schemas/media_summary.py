@@ -4,10 +4,11 @@
 processing readiness. It promises neither remote delivery nor audible playback.
 """
 
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from nexus.db.models import MediaKind
 from nexus.schemas.contributor_credit import ContributorCreditOut
@@ -51,6 +52,25 @@ class MediaShowOut(BaseModel):
     image_url: str | None
 
 
+class PublisherTimestampOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["Timestamp"] = "Timestamp"
+    at: AwareDatetime
+
+
+class PublisherDateOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["Date"] = "Date"
+    on: date
+
+
+PublisherPublicationOut = Annotated[
+    PublisherTimestampOut | PublisherDateOut, Field(discriminator="kind")
+]
+
+
 class MediaSummaryOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -61,6 +81,7 @@ class MediaSummaryOut(BaseModel):
     show: MediaShowOut | None
     contributors: list[ContributorCreditOut]
     original_published_date: PublicationDate | None
+    publisher_publication: PublisherPublicationOut | None
     processing_status: MediaProcessingStatus
     consumption: ConsumptionOut
     duration: MediaDurationOut | None

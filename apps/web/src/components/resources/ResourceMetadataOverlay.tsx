@@ -11,14 +11,15 @@ import { informationFact } from "./InformationFacts";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import { isApiError } from "@/lib/api/client";
 import { catalogLine } from "@/lib/catalog/copy";
-import { podcastRefusalReason } from "@/lib/podcasts/paneState";
+import { feedRefusalReason } from "@/lib/feeds/paneState";
 import { libraryReason } from "@/lib/libraries/errors";
 import { assertNever } from "@/lib/assertNever";
 import type { Schema } from "@/lib/api/wire";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import { useChangeStamp } from "@/lib/api/changes";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
-import { getPodcastDetail } from "@/lib/podcasts/api";
+import { getFeedDetail } from "@/lib/feeds/api";
+
 import { getLibraryMetadata } from "@/lib/libraries/api";
 import { libraryDisplayName } from "@/lib/collections/presenters/library";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
@@ -31,20 +32,20 @@ function Fact({ label, children }: { readonly label: string; readonly children: 
 }
 const sourceLink = (href: string | null) => href === null ? null : <a href={href} dir="auto">{href}</a>;
 
-function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; readonly open: boolean }) {
+function FeedMetadata({ feedId, open }: { readonly feedId: string; readonly open: boolean }) {
   const display = useRenderEnvironment();
-  const key = open ? `metadata:podcast:${podcastId}` : null;
-  const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Podcasts", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getPodcastDetail(podcastId, signal)).data });
+  const key = open ? `metadata:podcast:${feedId}` : null;
+  const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Feeds", "Consumption", "Entries", "Metadata", "Libraries"), load: async signal => (await getFeedDetail(feedId, signal)).data });
   if (source.status === "loading") return <Ruling />;
   if (source.status === "failed") {
     const catalog = isApiError(source.error) ? catalogLine(source.error) : null;
     if (catalog !== null) return <FeedbackFact line={catalog}/>;
-    const reason = isApiError(source.error) && ["E_NOT_FOUND", "E_PODCAST_NOT_FOUND", "E_MEDIA_NOT_FOUND"].includes(source.error.code)
-      ? podcastRefusalReason(source.error) : undefined;
-    return reason === undefined ? <Failed error={source.error} noun="podcast details" retry={{run: source.refetch, busy: source.retrying}}/>
-      : <FeedbackFact line={{fact: "couldn’t load podcast details.", reason}}/>;
+    const reason = isApiError(source.error) && ["E_NOT_FOUND", "E_FEED_NOT_FOUND", "E_MEDIA_NOT_FOUND"].includes(source.error.code)
+      ? feedRefusalReason(source.error) : undefined;
+    return reason === undefined ? <Failed error={source.error} noun="source details" retry={{run: source.refetch, busy: source.retrying}}/>
+      : <FeedbackFact line={{fact: "couldn’t load source details.", reason}}/>;
   }
-  const { podcast, episode_counts: counts } = source.data;
+  const { feed: podcast, entry_counts: counts } = source.data;
   const date = (value: string) => <time dateTime={value}>{formatDisplayDate(value, display, { dateStyle: "medium", timeStyle: "short" })}</time>;
   return <div className={styles.content}>
     <h3 className={styles.resourceTitle}>{podcast.title}</h3>
@@ -55,8 +56,8 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
       <Fact label="website">{sourceLink(podcast.website_url)}</Fact>
       <Fact label="rss feed">{sourceLink(podcast.feed_url)}</Fact>
       <Fact label="provider">{podcast.provider === "podcast_index" ? "Podcast Index" : podcast.provider}</Fact>
-      <Fact label="known episodes">{formatDisplayNumber(counts.known_count, display)}</Fact>
-      <Fact label="unfinished episodes">{formatDisplayNumber(counts.unfinished_count, display)}</Fact>
+      <Fact label={`known ${podcast.kind === "podcast" ? "episodes" : "articles"}`}>{formatDisplayNumber(counts.known_count, display)}</Fact>
+      <Fact label={`unfinished ${podcast.kind === "podcast" ? "episodes" : "articles"}`}>{formatDisplayNumber(counts.unfinished_count, display)}</Fact>
       <Fact label="catalog record created">{date(podcast.created_at)}</Fact>
       <Fact label="catalog record updated">{date(podcast.updated_at)}</Fact>
     </dl>
@@ -66,7 +67,7 @@ function PodcastMetadata({ podcastId, open }: { readonly podcastId: string; read
 function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; readonly open: boolean }) {
   const display = useRenderEnvironment();
   const key = open ? `metadata:library:${libraryId}` : null;
-  const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Libraries", "Entries", "Podcasts", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
+  const source = usePaneFreeServerValue({ key, stale: useChangeStamp("Libraries", "Entries", "Feeds", "Metadata"), load: signal => getLibraryMetadata(libraryId, signal) });
   if (source.status === "loading") return <Ruling />;
   if (source.status === "failed") {
     const catalog = isApiError(source.error) ? catalogLine(source.error) : null;
@@ -89,7 +90,7 @@ function LibraryMetadata({ libraryId, open }: { readonly libraryId: string; read
   </div>;
 }
 
-function DirectoryPodcastMetadata({ directory }: { readonly directory: Schema<"PodcastCandidate"> | Schema<"PodcastPreview"> }) {
+function DirectoryFeedMetadata({ directory }: { readonly directory: Schema<"PodcastCandidate"> | Schema<"PodcastPreview"> }) {
   // justify-type-assertion: browse schemas issue proxy srcs for every image.
   const image = directory.image as MediaImageProxySrc | null;
   return <div className={styles.content}>
@@ -119,10 +120,10 @@ export default function ResourceMetadataOverlay(props: {
   let content: ReactNode;
   switch (subject.kind) {
     case "Media": return <MediaInfoOverlay {...frame} mediaId={subject.mediaId} jobId={subject.jobId} />;
-    case "Podcast": content = <PodcastMetadata podcastId={subject.podcastId} open={frame.open} />; break;
+    case "Feed": content = <FeedMetadata feedId={subject.feedId} open={frame.open} />; break;
     case "Library": content = <LibraryMetadata libraryId={subject.libraryId} open={frame.open} />; break;
-    case "DiscoveryPodcast": content = <DirectoryPodcastMetadata directory={subject.candidate} />; break;
-    case "DiscoveryPodcastPreview": content = <DirectoryPodcastMetadata directory={subject.preview} />; break;
+    case "DiscoveryPodcast": content = <DirectoryFeedMetadata directory={subject.candidate} />; break;
+    case "DiscoveryPodcastPreview": content = <DirectoryFeedMetadata directory={subject.preview} />; break;
     default: return assertNever(subject, "unsupported metadata subject");
   }
   return <InformationFrame {...frame} title={subject.kind === "Library" ? "library details" : "metadata"}>{content}</InformationFrame>;

@@ -5,24 +5,26 @@ import type { ApiError } from "@/lib/api/client";
 import type { ServerValue } from "@/lib/api/serverState";
 import type { MediaSubject } from "@/lib/media/mediaSummary";
 import type { PlayerDescriptor } from "@/lib/player/playerRuntime";
-import { podcastTargetKey, type PodcastActionResolution, type PodcastActionResult, type PodcastTarget } from "@/lib/podcasts/api";
+import { feedTargetKey, type FeedActionResolution, type FeedActionResult, type FeedTarget } from "@/lib/feeds/api";
 
-export type PodcastActionFacts =
-  | { readonly kind: "Ready"; readonly resolution: PodcastActionResolution }
+
+export type FeedActionFacts =
+  | { readonly kind: "Ready"; readonly resolution: FeedActionResolution }
   | { readonly kind: "Resolving"; readonly observedSubscribed: boolean | null }
   | { readonly kind: "Failed"; readonly observedSubscribed: boolean | null; readonly error: ApiError; readonly retry: () => void; readonly retrying: boolean };
 
-export type PodcastActionSubject = {
-  readonly target: PodcastTarget;
+export type FeedActionSubject = {
+  readonly target: FeedTarget;
+  readonly feedKind: "podcast" | "article";
   readonly title: string;
-  readonly facts: PodcastActionFacts;
+  readonly facts: FeedActionFacts;
 };
 
 export type ResourceActionSubject =
   | { readonly kind: "Media"; readonly subject: MediaSubject; readonly knownDescriptor: PlayerDescriptor | null }
-  | { readonly kind: "Podcast"; readonly subject: PodcastActionSubject };
+  | { readonly kind: "Feed"; readonly subject: FeedActionSubject };
 
-export interface PodcastActionFocus {
+export interface FeedActionFocus {
   readonly trigger: HTMLElement | null;
   readonly returnFocus: () => HTMLElement | null;
   readonly afterRemoval: () => HTMLElement | null;
@@ -40,25 +42,26 @@ export interface ActionButtonSpec {
   readonly waiting: boolean;
   readonly busy: boolean;
   readonly hasPopup: "dialog" | null;
-  readonly invoke: (input: PodcastActionFocus) => void;
+  readonly invoke: (input: FeedActionFocus) => void;
 }
 
-/** Retained facts describe a disabled control; only a settled matching read admits intent. */
-export function podcastActionFacts(
-  read: ServerValue<ReadonlyMap<string, PodcastActionResult>>,
-  target: PodcastTarget,
+/** Retained facts can open canonical reviews; a failed read always blocks them. */
+export function feedActionFacts(
+  read: ServerValue<ReadonlyMap<string, FeedActionResult>>,
+  target: FeedTarget,
   gate: { readonly kind: "Resolving" } | { readonly kind: "Failed"; readonly error: ApiError; readonly retry: () => void; readonly retrying: boolean } | null,
-): PodcastActionFacts {
-  const result = read.status === "ready" ? read.data.get(podcastTargetKey(target)) : undefined;
+): FeedActionFacts {
+  const result = read.status === "ready" ? read.data.get(feedTargetKey(target)) : undefined;
   const observedSubscribed = result?.resolution.kind === "Canonical" ? result.resolution.subscribed
     : result?.resolution.kind === "Discovery" ? false : null;
-  if (gate !== null) return { ...gate, observedSubscribed };
+  if (gate?.kind === "Failed") return { ...gate, observedSubscribed };
   const error = read.status === "loading" ? null : read.error;
   if (error !== null) return {
     kind: "Failed", observedSubscribed, error, retry: read.refetch,
     retrying: read.status === "failed" ? read.retrying : read.status === "ready" && read.refreshing,
   };
+  if (gate !== null) return { ...gate, observedSubscribed };
   if (read.status !== "ready" || read.refreshing) return { kind: "Resolving", observedSubscribed };
-  if (result === undefined) throw new Error("podcast action facts omitted a requested target");
+  if (result === undefined) throw new Error("feed action facts omitted a requested target");
   return { kind: "Ready", resolution: result.resolution };
 }

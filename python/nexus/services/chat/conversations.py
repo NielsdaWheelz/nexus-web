@@ -394,7 +394,17 @@ def _delete(db: Session, conversation: Conversation, root_id: UUID | None) -> bo
     # (link set null) as the account's write history; ``llm_calls`` has no
     # FK and outlives the chat as the operational ledger.
     quotes.changed(db, viewer_id=conversation.owner_user_id, message_ids=ids)
+    user_context_changed = db.scalar(
+        text("""SELECT EXISTS (
+        SELECT 1 FROM messages WHERE id=ANY(:ids) AND role='user' AND status='complete'
+    )"""),
+        {"ids": ids},
+    )
     db.execute(text("DELETE FROM messages WHERE id = ANY(:ids)"), {"ids": ids})
+    if user_context_changed:
+        from nexus.services.suggestion_changes import record_input_change
+
+        record_input_change(db, owners=[f"conversation:{conversation_id}"])
     for media_id in retained_media:
         claim_document_teardown_if_unreferenced_locked(db, media_id)
     cleanup.delete_orphaned_external_snapshots(db, snapshot_ids=snapshots)

@@ -24,7 +24,11 @@ from sqlalchemy import text
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import personal_media_removal_allowed_sql, requested_media_ids_cte_sql
+from nexus.auth.permissions import (
+    feed_catalog_ids_sql,
+    personal_media_removal_allowed_sql,
+    requested_media_ids_cte_sql,
+)
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.imports import (
@@ -51,6 +55,8 @@ from nexus.schemas.media_summary import (
     MediaProcessingStatus,
     MediaShowOut,
     MediaSummaryOut,
+    PublisherDateOut,
+    PublisherTimestampOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.x_source import XArticleContent
@@ -69,12 +75,16 @@ from nexus.services.media_text_scope import x_capture_scope_rows_sql
 from nexus.services.metadata_operations import metadata_enrichment_views
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source, episode_playback_source
+from nexus.services.podcasts.episodes import episode_source_rows_sql
+from nexus.services.publication_facts import earliest_publisher_fact_sql
 from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.search_recovery import SearchRecoveryFacts, search_recovery
 from nexus.services.source_attempts import (
     SourceRecoveryFacts,
+    is_feed_linked_attempt,
     source_recovery,
+    source_refresh_authorized,
     source_refreshable,
     source_repairable_sql,
 )
@@ -111,6 +121,8 @@ _ROWS_SQL = f"""
         GROUP BY x.reading_media_id
     )
     SELECT m.id, m.kind, m.title, m.original_published_date, m.acquisition_revision,
+        original.published_at AS publisher_published_at,
+        original.published_on AS publisher_published_on,
         part_definition.version AS part_version,
         part_source.title AS part_source_title,
         CASE WHEN source_visible.media_id IS NOT NULL THEN '/media/' || part_source.id::text END AS part_source_href,
@@ -125,6 +137,11 @@ _ROWS_SQL = f"""
         {source_repairable_sql("m")} AS repairable,
         attempt.id AS attempt_id, attempt.status AS attempt_status,
         attempt.error_code AS attempt_error_code, attempt.source_type,
+        attempt.source_payload, rp.content_extent,
+        CASE WHEN publication_source.source_type='feed_entry' THEN rp.content_extent END
+            AS feed_content_extent,
+        EXISTS(SELECT 1 FROM feed_entries e WHERE e.media_id=m.id AND e.entry_url IS NOT NULL
+            AND e.feed_id IN ({feed_catalog_ids_sql()})) AS linked_article_access,
         attempt.job_id AS attempt_job_id,
         mcis.revision AS index_revision, COALESCE(capture_state.status,mcis.status) AS index_status,
         CASE WHEN native_x.media_id IS NOT NULL THEN COALESCE(capture_state.lexical_ready,false) ELSE
@@ -146,21 +163,26 @@ _ROWS_SQL = f"""
         show_row.id AS show_id, show_row.title AS show_title, show_row.image_url AS show_image_url
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
+    JOIN users viewer ON viewer.id=:viewer_id
+    LEFT JOIN LATERAL (
+        {earliest_publisher_fact_sql(media_id_sql="m.id", time_zone_sql="viewer.calendar_time_zone")}
+    ) original ON true
     LEFT JOIN native_x ON native_x.media_id=m.id
     LEFT JOIN capture_states capture_state ON capture_state.reading_media_id=m.id
     LEFT JOIN media_parts part_definition ON part_definition.media_id=m.id
     LEFT JOIN media part_source ON part_source.id=part_definition.source_media_id
     LEFT JOIN visible_media source_visible ON source_visible.media_id=part_source.id
     LEFT JOIN LATERAL (
-        SELECT id, status, error_code, source_type, job_id FROM media_source_attempts
+        SELECT id, status, error_code, source_type, job_id,source_payload FROM media_source_attempts
         WHERE media_id = m.id ORDER BY {LATEST_ORDER_SQL} LIMIT 1
     ) attempt ON true
     LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
     LEFT JOIN reader_publications rp ON rp.media_id = m.id
+    LEFT JOIN media_source_attempts publication_source ON publication_source.id=rp.source_attempt_id
     LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media'
         AND mcis.owner_id = COALESCE(part_definition.source_media_id,m.id)
-    LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
-    LEFT JOIN podcasts show_row ON show_row.id = pe.podcast_id
+    LEFT JOIN ({episode_source_rows_sql()}) pe ON pe.media_id = m.id
+    LEFT JOIN feeds show_row ON show_row.id = pe.podcast_id
     LEFT JOIN podcast_listening_states pls ON pls.media_id = m.id AND pls.user_id = :viewer_id
     WHERE m.id = ANY(:media_ids)
 """
@@ -233,6 +255,11 @@ def _summaries(
             else None,
             contributors=credits[media_id],
             original_published_date=row.original_published_date,
+            publisher_publication=PublisherTimestampOut(at=row.publisher_published_at)
+            if row.publisher_published_at is not None
+            else PublisherDateOut(on=row.publisher_published_on)
+            if row.publisher_published_on is not None
+            else None,
             processing_status=_status(row),
             consumption=ConsumptionOut(state=state.state, progress=state.progress),
             duration=duration,
@@ -327,12 +354,12 @@ def hydrate_compact_media_targets(
 
 def _recovery(
     row: Row[Any], *, is_creator: bool, article_content: XArticleContent | None
-) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer, bool]:
-    """The source and search owners' answers to this viewer (an offer, why none, or
-    nothing), and whether the source refreshes."""
+) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer, bool, bool]:
+    """Source/search recovery, refresh availability and separate refresh authority."""
     source: SourceRecoveryAnswer = None
     search: SearchRecoveryAnswer = None
     refreshable = False
+    refresh_authorized = False
     if row.attempt_id is not None:
         facts = SourceRecoveryFacts(
             attempt_id=row.attempt_id,
@@ -343,12 +370,16 @@ def _recovery(
             job_id=row.attempt_job_id,
             repairable=row.repairable,
             is_creator=is_creator,
+            can_acquire_linked_article=row.linked_article_access
+            and is_feed_linked_attempt(row.source_type, row.source_payload),
+            content_extent=row.content_extent,
             native_article_id=native_x_article_id(
                 kind=row.kind, provider=row.provider, provider_id=row.provider_id
             ),
             article_content=article_content,
         )
         source = source_recovery(facts)
+        refresh_authorized = source_refresh_authorized(facts)
         refreshable = source_refreshable(facts) and not row.source_pinned
     # A piece inherits its source index; only the source's own media id can repair its job.
     if row.kind != "text_part" and not row.is_x_capture_source and row.index_revision is not None:
@@ -362,7 +393,7 @@ def _recovery(
                 ready_for_reading=row.persisted_status == "ready_for_reading",
             )
         )
-    return source, search, refreshable
+    return source, search, refreshable, refresh_authorized
 
 
 def _pdf_readiness(db: Session, rows: dict[UUID, Row[Any]]) -> dict[UUID, bool]:
@@ -385,7 +416,7 @@ def _capabilities(
     row: Row[Any], pdf_ready: dict[UUID, bool], article_content: XArticleContent | None
 ) -> CapabilitiesOut:
     can_read, can_highlight, can_quote = _reading(row, pdf_ready)
-    source, _, _ = _recovery(row, is_creator=row.is_creator, article_content=article_content)
+    source, _, _, _ = _recovery(row, is_creator=row.is_creator, article_content=article_content)
     return CapabilitiesOut(
         can_read=can_read,
         can_highlight=can_highlight,
@@ -422,6 +453,7 @@ class MediaFacts:
     source_attempt_id: UUID | None
     """The latest source attempt: what a refresh replaces."""
     refreshable: bool
+    refresh_authorized: bool
 
 
 def media_facts(
@@ -439,10 +471,10 @@ def media_facts(
     for media_id, row in rows.items():
         can_read, _, can_quote = _reading(row, pdf_ready)
         article_content = summaries[media_id].x_article_content
-        source, search, refreshable = _recovery(
+        source, search, refreshable, refresh_authorized = _recovery(
             row, is_creator=row.is_creator, article_content=article_content
         )
-        creator_source, creator_search, _ = _recovery(
+        creator_source, creator_search, _, _ = _recovery(
             row, is_creator=True, article_content=article_content
         )
         enclosure = row.external_playback_url if row.kind == "podcast_episode" else None
@@ -468,6 +500,7 @@ def media_facts(
             creator_search_offer=None if isinstance(creator_search, str) else creator_search,
             source_attempt_id=row.attempt_id,
             refreshable=refreshable,
+            refresh_authorized=refresh_authorized,
         )
     return facts
 
@@ -545,6 +578,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         capabilities=_capabilities(row, _pdf_readiness(db, rows), summary.x_article_content),
         contributors=summary.contributors,
         original_published_date=row.original_published_date,
+        publisher_publication=summary.publisher_publication,
         edition_published_date=detail.edition_published_date,
         edition_isbn=detail.edition_isbn,
         duration=summary.duration,
@@ -560,6 +594,7 @@ def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaO
         x_source_context=x_source_contexts(db, media_ids=[media_id]).get(media_id),
         x_article_content=summary.x_article_content,
         reader_generation=row.reader_generation,
+        feed_content_extent=row.feed_content_extent,
         consumption=summary.consumption,
         last_engaged_at=projection.engagement_recency(
             db, viewer_id=viewer_id, media_ids=[media_id]
@@ -624,6 +659,14 @@ def media_observations(
         status, retrieval = _status(row), _retrieval_status(row)
         observations[media_id] = MediaObservationOut(
             processing=MediaProcessingSnapshotOut(
+                linked_article_attempt_id=(
+                    row.attempt_id
+                    if row.source_type == "feed_entry"
+                    and row.attempt_status in ("succeeded", "failed")
+                    and row.linked_article_access
+                    and row.content_extent != "complete"
+                    else None
+                ),
                 processing_status=status,
                 last_error_code=row.last_error_code,
                 retrieval_status=retrieval,

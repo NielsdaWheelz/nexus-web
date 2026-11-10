@@ -1,7 +1,8 @@
 """Web articles: fetched through the egress, extracted by the node filter, and published.
 
-``publish_article`` is the one publisher for fetched pages, browser captures and
-emails; X reuses its primitives ``prepare_article`` and ``replace_article_fragments``.
+``publish_prepared_article`` publishes fetched pages, feed content, browser captures
+and emails in the source runner's terminal transaction. X reuses its preparation
+and fragment replacement primitives.
 fragment replacement retracts old identities and publishes new ones in the caller's
 publication-locked transaction; preparation and fetches hold no such lock.
 """
@@ -15,6 +16,7 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import delete, select, text
@@ -31,7 +33,10 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.publication_dates import normalize_source_publication_date
+from nexus.schemas.publication_dates import (
+    normalize_source_publication_date,
+    publisher_publication_fact,
+)
 from nexus.services import contributor_taxonomy as taxonomy
 from nexus.services import document_embeds as embeds
 from nexus.services import html_apparatus as apparatus
@@ -40,12 +45,11 @@ from nexus.services.fragment_tables import insert_fragment_tables
 from nexus.services.media_source_ingest import reusable_embedded_source_media_ids
 from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream, source_fetch_error
 from nexus.services.reader_apparatus import replace_media_apparatus
-from nexus.services.reader_publication import replace_reader_publication
+from nexus.services.reader_publication import ReaderPublicationSource, replace_reader_publication
 from nexus.services.search import projection
 from nexus.services.source_attempts import enqueue_attempt
-from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
+from nexus.services.source_outcome import SourceRunOutcome
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
-from nexus.services.suggestion_changes import record_input_change
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_structure import (
     WebArticlePreparedFragment,
@@ -88,17 +92,18 @@ class Article:
     document_url: str  # the page itself: its fragment targets stay local
     extract_embeds: bool  # False purges the embed artifact
     metadata: ArticleMetadata | None  # None: title, metadata and credits stay as they are
+    content_extent: Literal["complete", "excerpt", "unknown"] = "complete"
 
 
-def publish_fetched_article(
+def fetch_article(
     session_factory: sessionmaker[Session],
     *,
     media_id: UUID,
     attempt: MediaSourceAttempt,
     request_id: str | None,
     fence: SourcePublicationFence,
-) -> SourceRunOutcome:
-    """Fetch the attempt's URL; supersede onto the article holding its final URL, or publish."""
+) -> Article | SourceRunOutcome:
+    """Fetch and claim identity; the runner publishes body and successful attempt together."""
     if not attempt.requested_url:
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, "No requested_url on media")
     page = _fetch(attempt.requested_url)
@@ -115,88 +120,19 @@ def publish_fetched_article(
             diagnostics={"status": "deduped", "canonical_url": canonical_url},
             superseded_by_media_id=winner_id,
         )
-    metadata = ArticleMetadata(
-        page["title"], page["byline"], page["excerpt"], page["site_name"], page["published_time"]
-    )
-    fragment_id = publish_article(
-        session_factory,
-        media_id=media_id,
-        request_id=request_id,
-        fence=fence,
-        article=Article(
-            content_html=page["content_html"],
-            source_html=page["source_html"],
-            base_url=page["base_url"],
-            document_url=page["final_url"],
-            extract_embeds=True,
-            metadata=metadata,
+    return Article(
+        content_html=page["content_html"],
+        source_html=page["source_html"],
+        base_url=page["base_url"],
+        document_url=page["final_url"],
+        extract_embeds=True,
+        metadata=ArticleMetadata(
+            page["title"],
+            page["byline"],
+            page["excerpt"],
+            page["site_name"],
+            page["published_time"],
         ),
-    )
-    return SourceRunOutcome(
-        diagnostics={
-            "status": "success",
-            "canonical_url": canonical_url,
-            "title": page["title"],
-            "fragment_id": str(fragment_id),
-        },
-        observations=source_contributor_observations(
-            media_id=media_id,
-            observation=byline_observation(page["byline"]),
-            source="web_article_byline",
-        ),
-        metadata_enrichment=True,
-    )
-
-
-def publish_article(
-    session_factory: sessionmaker[Session],
-    *,
-    media_id: UUID,
-    request_id: str | None,
-    fence: SourcePublicationFence,
-    article: Article,
-) -> UUID:
-    """Prepare outside any transaction, then replace the reader content in one fenced phase.
-
-    Pre-existing embed children are discovered in the phase's serializable snapshot before
-    any lock, so they lock with the media in ascending id order. Returns the fragment id.
-    """
-    prepared = prepare_article(
-        article.content_html,
-        base_url=article.base_url,
-        document_url=article.document_url,
-        extract_embeds=article.extract_embeds,
-        embed_source_html=article.source_html,
-    )
-    children: list[UUID] = []
-
-    def discover(db: Session) -> list[UUID]:
-        children[:] = sorted(
-            article_publication_media_ids(db, media_id=media_id, prepared=prepared)
-        )
-        return children
-
-    def publish(db: Session, attempt: MediaSourceAttempt) -> UUID:
-        fragment_id = publish_prepared_article(
-            db,
-            media_id=media_id,
-            attempt=attempt,
-            article=article,
-            prepared=prepared,
-            request_id=request_id,
-            locked_target_ids=frozenset(children),
-            remap_cursors=False,
-        )
-        record_input_change(db, owners=(f"media:{ident}" for ident in {media_id, *children}))
-        return fragment_id
-
-    return run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_web_article_artifacts",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=publish,
-        discover=discover,
     )
 
 
@@ -326,12 +262,18 @@ def publish_prepared_article(
             remap_x_cursors(db, snapshots=cursor_plan)
         return fragment_id
 
+    published_at, published_on = publisher_publication_fact(
+        article.metadata.published_time if article.metadata is not None else None
+    )
     return replace_reader_publication(
         db,
         media_id=media_id,
         expected_kind="web_article",
         issues=prepared.source_issues,
         replace_projection=lambda media: project(db, media, attempt),
+        source=ReaderPublicationSource(
+            attempt.id, article.content_extent, published_at, published_on
+        ),
     )
 
 

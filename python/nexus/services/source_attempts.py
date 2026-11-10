@@ -23,6 +23,7 @@ the media projection, action menus and every recovery admission.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID, uuid5
@@ -30,6 +31,7 @@ from uuid import UUID, uuid5
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_acquire_feed_media, feed_catalog_ids_sql
 from nexus.db.models import Media, MediaSourceAttempt
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
@@ -257,6 +259,8 @@ class SourceRecoveryFacts:
     job_id: UUID | None
     repairable: bool
     is_creator: bool
+    can_acquire_linked_article: bool
+    content_extent: str | None
     native_article_id: str | None
     article_content: XArticleContent | None
 
@@ -297,13 +301,26 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
     return RetrySourceOffer(expected_attempt_id=facts.attempt_id, input=source_input)
 
 
+def is_feed_linked_attempt(source_type: str, payload: Mapping[str, object]) -> bool:
+    """A supplied feed observation or its separately acquired linked page."""
+    return source_type == st.FEED_ENTRY or (
+        source_type == st.GENERIC_WEB_URL and "feed_id" in payload
+    )
+
+
+def source_refresh_authorized(facts: SourceRecoveryFacts) -> bool:
+    """Linked acquisition grants no authority to repair another creator's stored input."""
+    return facts.is_creator or facts.can_acquire_linked_article
+
+
 def source_refreshable(facts: SourceRecoveryFacts) -> bool:
     """Refresh re-acquires a settled source; the capability and the admission both ask this.
     A ready epub is published, and its reader identities are never replaced (I9)."""
     return (
-        facts.is_creator
+        source_refresh_authorized(facts)
         and facts.attempt_status in (st.SUCCEEDED, st.FAILED)
         and facts.processing_status in ("ready_for_reading", "failed")
+        and not (facts.can_acquire_linked_article and facts.content_extent == "complete")
         and not (facts.source_type in st.EPUB_SOURCE_TYPES and facts.processing_status != "failed")
         and not (
             facts.native_article_id is not None
@@ -343,6 +360,18 @@ def recovery_facts(
         )
         in ("dead", "held")
     )
+    linked_access = False
+    extent = None
+    if is_feed_linked_attempt(attempt.source_type, attempt.source_payload):
+        extent, has_link = db.execute(
+            text(f"""SELECT p.content_extent,EXISTS (
+                SELECT 1 FROM feed_entries e WHERE e.media_id=m.id AND e.entry_url IS NOT NULL
+                  AND e.feed_id IN ({feed_catalog_ids_sql()})) AS has_link
+                FROM media m LEFT JOIN reader_publications p ON p.media_id=m.id
+                WHERE m.id=:media_id"""),
+            {"viewer_id": viewer_id, "media_id": media.id},
+        ).one()
+        linked_access = has_link and can_acquire_feed_media(db, viewer_id, media.id)
     return SourceRecoveryFacts(
         attempt_id=attempt.id,
         attempt_status=attempt.status,
@@ -352,6 +381,8 @@ def recovery_facts(
         job_id=attempt.job_id,
         repairable=repairable,
         is_creator=media.created_by_user_id == viewer_id,
+        can_acquire_linked_article=linked_access,
+        content_extent=extent,
         native_article_id=native_x_article_id(
             kind=media.kind, provider=media.provider, provider_id=media.provider_id
         ),

@@ -18,7 +18,10 @@ from nexus.services.consumption import observation
 
 
 def get_settings(db: Session, viewer_id: UUID, podcast_id: UUID) -> wire.PodcastPlaybackSettingsOut:
-    if db.scalar(text("SELECT id FROM podcasts WHERE id=:id"), {"id": podcast_id}) is None:
+    if (
+        db.scalar(text("SELECT id FROM feeds WHERE id=:id AND kind='podcast'"), {"id": podcast_id})
+        is None
+    ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
     return get_settings_many(db, viewer_id, [podcast_id])[podcast_id]
 
@@ -55,7 +58,10 @@ def put_settings(
     def attempt() -> wire.PodcastPlaybackSettingsOut:
         users.lock_viewer(db, viewer_id)
         if (
-            db.scalar(text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
+            db.scalar(
+                text("SELECT id FROM feeds WHERE id=:id AND kind='podcast' FOR UPDATE"),
+                {"id": podcast_id},
+            )
             is None
         ):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")

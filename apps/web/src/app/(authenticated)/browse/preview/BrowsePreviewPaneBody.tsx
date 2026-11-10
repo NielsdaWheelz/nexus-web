@@ -5,7 +5,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
-import { resolvePodcast, resolvePodcastEpisode } from "@/lib/podcasts/api";
+import { resolveFeed } from "@/lib/feeds/api";
+import { resolvePodcastEpisode } from "@/lib/podcasts/api";
 import MediaActions from "@/components/media/MediaActions";
 import { ContributorRoleGroups } from "@/components/contributors/ContributorCredits";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
@@ -70,8 +71,9 @@ export default function BrowsePreviewPaneBody() {
     setOpening(true);
     setOpeningError(null);
     void (async () => {
-      const resolved = preview.kind === "Podcast" ? await resolvePodcast(preview.target, ctx.sessionSignal()) : await resolvePodcastEpisode(preview.target, ctx.sessionSignal());
+      const resolved = preview.kind === "Podcast" ? await resolveFeed({ kind: "Discovery", target: preview.target }, ctx.sessionSignal()) : await resolvePodcastEpisode(preview.target, ctx.sessionSignal());
       if (!ctx.isActive()) return;
+      if ("state" in resolved && resolved.state !== "resolved") throw new Error("directory target did not resolve to a podcast");
       const current = ctx.workspace().state.panes.find(item => item.id === pane.paneId)?.current_visit;
       if (current?.id !== pane.visitId || current.href !== pane.href) return;
       router.replace(resolved.href, { labelHint: preview.title, activate: false });

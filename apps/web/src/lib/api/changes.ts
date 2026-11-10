@@ -24,7 +24,7 @@ export type ChangeTopic =
   | "Lectern"
   | "Metadata"
   | "PodcastEpisodes"
-  | "Podcasts"
+  | "Feeds"
   | "Chats"
   | "ChatSelection"
   | "Notes"
@@ -36,7 +36,7 @@ const counts: Record<ChangeTopic, number> = {
   Consumption: 0,
   Lectern: 0,
   Metadata: 0,
-  Podcasts: 0,
+  Feeds: 0,
   PodcastEpisodes: 0,
   Chats: 0,
   ChatSelection: 0,

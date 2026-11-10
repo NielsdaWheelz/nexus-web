@@ -28,7 +28,7 @@ export const OPEN_CAP = 5;
 const RECENT_CAP = 8;
 const COMMAND_IDS = Object.keys(NEXUS_COMMANDS) as NexusCommandId[];
 /** The sheet's places chips, rail order. */
-const PLACES: readonly DestinationId[] = ["today", "lectern", "libraries", "browse", "podcasts", "chats", "notes", "atlas", "oracle"];
+const PLACES: readonly DestinationId[] = ["today", "lectern", "libraries", "browse", "podcasts", "feeds", "chats", "notes", "atlas", "oracle"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
 const NO_USAGE: UsageMap = {};
 const UNSCORED = { href: null, evidence: false, frecency: 0, recency: 0 } as const;

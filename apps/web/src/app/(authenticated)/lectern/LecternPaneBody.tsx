@@ -2,7 +2,7 @@
 
 // Home: the Lectern in its custom order or a url-owned sort (`sort` ∈ added_desc, added_asc,
 // title_asc, title_desc; absent = custom), a local text filter, drag to move one row (custom
-// order, no filter), Play / Resume / Replay on episodes, then Quick reads and Suggestions.
+// order, no filter), Play / Resume / Replay on episodes, then Daily selection, Quick reads and Suggestions.
 
 import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
@@ -85,18 +85,25 @@ export default function LecternPaneBody() {
   const liveShown = lectern.status === "ready" && source.kind === "live";
   const order = useLecternOrder();
   const suggestions = useSuggestions({ kind: "Lectern" }, liveShown);
+  const daily = useSuggestions({ kind: "Daily" }, liveShown);
   const { refresh: refreshSuggestionFeed } = suggestions;
+  const { refresh: refreshDaily } = daily;
   // The section speaks for itself: success, its wait and its repair stand in it, and a failed
   // refresh over shown suggestions says nothing.
   const refreshSuggestions = useCallback<PaneRefreshExecute>(async ({ signal }) => {
-    const outcome = await refreshSuggestionFeed(signal);
-    switch (outcome) {
-      case "Refreshed": case "Finding": case "Repair": case "Failed": return null;
-      // justify-defect: the lectern has no authority or applicability gate.
-      case "NotApplicable": throw new Error("lectern suggestions cannot be inapplicable");
-      default: return assertNever(outcome);
+    const results = await Promise.allSettled([refreshSuggestionFeed(signal), refreshDaily(signal)]);
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      const outcome = result.value;
+      switch (outcome) {
+        case "Refreshed": case "Finding": case "Repair": case "Failed": break;
+        // justify-defect: the lectern has no authority or applicability gate.
+        case "NotApplicable": throw new Error("lectern selections cannot be inapplicable");
+        default: assertNever(outcome);
+      }
     }
-  }, [refreshSuggestionFeed]);
+    return null;
+  }, [refreshSuggestionFeed, refreshDaily]);
   const params = usePaneSearchParams();
   const router = usePaneRouter();
   const section = useRef<HTMLElement>(null);
@@ -167,7 +174,7 @@ export default function LecternPaneBody() {
     ? { kind: "Pending" }
     : { kind: "Count", value: items.length, unit: "item" };
   usePaneChrome({
-    refresh: source.kind === "catalog" ? undefined : suggestions.state === null ? { kind: "Resolving" } : {
+    refresh: source.kind === "catalog" ? undefined : suggestions.state === null || daily.state === null ? { kind: "Resolving" } : {
       kind: "Refreshable", sourceKey: "lectern:suggestions", execute: refreshSuggestions,
     },
     query: valid
@@ -273,6 +280,11 @@ export default function LecternPaneBody() {
           </PlaybackSourceContext.Provider>
         ) : null}
       </section>
+      {liveShown ? <SuggestionsSection
+        destination={{ kind: "Daily" }}
+        suggestions={daily}
+        returnScope="Lectern.DailySelection"
+      /> : null}
       {liveShown ? <QuickReadsSection /> : null}
       {liveShown ? <SuggestionsSection
         destination={{ kind: "Lectern" }}

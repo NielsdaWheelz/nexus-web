@@ -21,27 +21,29 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import (
-    visible_content_credit_rows_sql,
-    visible_media_ids_cte_sql,
-    visible_podcast_ids_cte_sql,
-)
+from nexus.auth.permissions import visible_content_credit_rows_sql, visible_media_ids_cte_sql
 from nexus.schemas.suggestions import (
+    FeedSuggestionTargetOut,
     MediaSuggestionTargetOut,
-    PodcastSuggestionTargetOut,
     QuickReadsOut,
     SuggestionItemOut,
 )
-from nexus.services import highlights, libraries, library_entries, notes, reading_time
+from nexus.services import (
+    daily_selection,
+    libraries,
+    library_entries,
+    reading_time,
+    selection_context,
+)
 from nexus.services import media as media_service
 from nexus.services.consumption import lectern, projection
 from nexus.services.content_indexing import reading_chunks_sql
-from nexus.services.media_text_scope import x_capture_scope_rows_sql
-from nexus.services.podcasts.episodes import episode_publication_rows_sql
-from nexus.services.podcasts.subscriptions_query import (
+from nexus.services.feeds.queries import (
     active_subscription_rows_sql,
-    hydrate_compact_podcast_targets,
+    catalog_feed_ids_sql,
+    hydrate_compact_feed_targets,
 )
+from nexus.services.media_text_scope import x_capture_scope_rows_sql
 from nexus.services.resource_graph.liveness import edge_live_sql
 from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
@@ -54,33 +56,63 @@ _EDGE_ORIGINS = ["user", "citation", "note_body", "document_embed", "discovery"]
 _EMBEDDING = ("openai", "openai_text_embedding_3_small_256_v1", 256)
 _MIN_SIMILARITY = 0.80
 
-Surface = Literal["lectern", "library", "default_library"]
+Surface = Literal["lectern", "library", "default_library", "daily"]
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestionsSelection:
+    library_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class QuickReadSelection:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class DailySelection:
+    window: daily_selection.DailyWindow
+
+
+Selection = SuggestionsSelection | QuickReadSelection | DailySelection
 
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
-    scheme: Literal["media", "podcast"]
+    scheme: Literal["media", "podcast", "feed"]
     id: UUID
     family: str
-    lane: int  # 0 Connected, 1 SharedAuthor, 2 Similar; 3 for the direct families
+    lane: int  # Connected, SharedAuthor, UserText, Similar, then direct recency
     lane_strength: int | None  # position in the lane's own strength order
     strength: int  # position inside the family
     reason: str
     media_kind: str | None
     anchor: int | None
     author: UUID | None
+    feed: UUID | None
 
 
 def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
+    return QuickReadsOut(
+        items=_hydrate(
+            db, viewer_id, select_refs(db, viewer_id=viewer_id, selection=QuickReadSelection())
+        )
+    )
+
+
+def _quick_refs(db: Session, *, viewer_id: UUID) -> list[ResourceRef]:
     """Up to five visible unfinished documents with under ten minutes left, Lectern members
     included: in progress first (most recently read), then newest added."""
-    media_ids = db.scalars(
-        text(f"""
+    rows = (
+        db.execute(
+            text(f"""
             WITH eligible AS (
                 SELECT d.media_id, COALESCE(part.source_media_id,m.id) AS family_id,
                        e.read_state,e.last_engaged_at,
                        COALESCE(source.created_at,m.created_at) AS source_recency,
                        m.kind='text_part' AS is_piece,
+                       EXISTS (SELECT 1 FROM consumption_queue_items q
+                               WHERE q.media_id=m.id AND q.user_id=:viewer_id) AS on_lectern,
                        (e.last_engaged_at IS NOT NULL OR EXISTS (
                            SELECT 1 FROM consumption_queue_items q
                            WHERE q.media_id=m.id AND q.user_id=:viewer_id
@@ -102,15 +134,36 @@ def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
                     PARTITION BY family_id,deliberate ORDER BY is_piece,media_id
                 ) AS family_rank FROM eligible
             )
-            SELECT media_id FROM ranked WHERE deliberate OR family_rank=1
+            SELECT media_id,read_state,last_engaged_at,source_recency,on_lectern
+            FROM ranked WHERE deliberate OR family_rank=1
             ORDER BY read_state='InProgress' DESC NULLS LAST,
                      last_engaged_at DESC NULLS LAST,source_recency DESC,media_id
-            LIMIT 5
         """),
-        {"viewer_id": viewer_id},
-    ).all()
-    picked = [ResourceRef("media", media_id) for media_id in media_ids]
-    return QuickReadsOut(items=_hydrate(db, viewer_id, picked))
+            {"viewer_id": viewer_id},
+        )
+        .mappings()
+        .all()
+    )
+    intent = selection_context.recent_intent(db, viewer_id=viewer_id)
+    anchors = _context_anchors(db, viewer_id=viewer_id, surface="lectern", intent=intent)
+    contextual = {anchor.id for anchor in anchors if anchor.scheme == "media"}
+    lexical = selection_context.lexical_evidence(
+        db,
+        viewer_id=viewer_id,
+        anchors=anchors,
+        intent=intent,
+        media_ids=[row["media_id"] for row in rows],
+    )
+    contextual.update(UUID(str(row["id"])) for row in lexical)
+    # Stable sort retains the current engagement/recency order within each policy tier.
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            row["read_state"] != "InProgress",
+            not (row["on_lectern"] or row["media_id"] in contextual),
+        ),
+    )
+    return [ResourceRef("media", row["media_id"]) for row in rows[:5]]
 
 
 def suggestion_surface(db: Session, *, viewer_id: UUID, library_id: UUID | None) -> Surface | None:
@@ -123,43 +176,59 @@ def suggestion_surface(db: Session, *, viewer_id: UUID, library_id: UUID | None)
     return "default_library" if context.is_default else "library"
 
 
-def rank_suggestion_refs(
-    db: Session, *, viewer_id: UUID, library_id: UUID | None = None
-) -> list[ResourceRef]:
-    """Exact ranking for one worker snapshot; the original ten lead the bounded pool."""
-    surface = suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
-    if surface is None:
-        return []
-    candidates = _candidates(db, viewer_id, surface, {"library_id": library_id})
-    if library_id is None:
+def select_refs(db: Session, *, viewer_id: UUID, selection: Selection) -> list[ResourceRef]:
+    """Closed mode policy over shared facts, evidence, diversity and presentation."""
+    if isinstance(selection, QuickReadSelection):
+        return _quick_refs(db, viewer_id=viewer_id)
+    params: dict[str, object]
+    if isinstance(selection, DailySelection):
+        surface: Surface = "daily"
+        params = daily_selection.bindings(selection.window)
+        limit = 5
+    else:
+        authorized = suggestion_surface(db, viewer_id=viewer_id, library_id=selection.library_id)
+        if authorized is None:
+            return []
+        surface = authorized
+        params = {"library_id": selection.library_id}
+        limit = 80
+    candidates = _candidates(db, viewer_id, surface, params)
+    if surface == "lectern":
         return [ResourceRef(c.scheme, c.id) for c in _rotate(candidates, limit=80)]
-    ordered = sorted(candidates, key=lambda c: (c.lane, c.lane_strength, c.scheme, c.id))
+    ordered = sorted(
+        candidates, key=lambda c: (c.lane, c.lane_strength or c.strength, c.scheme, c.id)
+    )
     picked: list[_Candidate] = []
     counts: Counter[tuple[str, object]] = Counter()
-    while len(picked) < 80 and _take(ordered, picked, counts):
+    while len(picked) < limit and _take(ordered, picked, counts, daily=surface == "daily"):
         pass
     return [ResourceRef(c.scheme, c.id) for c in picked]
 
 
 def lectern_anchor_refs(db: Session, *, viewer_id: UUID) -> tuple[ResourceRef, ...]:
-    """The five newest touched objects; engagement before highlights before notes."""
-    media_reads = (
-        projection.recent_engagement_anchor_facts,
-        highlights.recent_highlight_anchor_facts,
-    )
-    facts = [
-        (f.activity_at, tier, ResourceRef(scheme="media", id=f.media_id))
-        for tier, read in enumerate(media_reads)
-        for f in read(db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT)
-    ]
-    facts += [
-        (f.activity_at, 2 if f.ref.scheme == "note_block" else 3, f.ref)
-        for f in notes.recent_note_anchor_facts(
-            db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT
+    """The committed recent-intent head used by consumption's invalidation gate."""
+    return tuple(fact.ref for fact in selection_context.recent_intent(db, viewer_id=viewer_id))
+
+
+def _context_anchors(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    surface: Surface,
+    intent: tuple[selection_context.IntentAnchor, ...],
+    destination: tuple[ResourceRef, ...] = (),
+) -> tuple[ResourceRef, ...]:
+    if surface == "lectern":
+        destination = tuple(
+            ResourceRef("media", media_id)
+            for media_id in db.scalars(
+                text(f"""SELECT q.media_id FROM consumption_queue_items q
+                JOIN ({visible_media_ids_cte_sql()}) v ON v.media_id=q.media_id
+                WHERE q.user_id=:viewer_id ORDER BY q.position,q.id LIMIT :limit"""),
+                {"viewer_id": viewer_id, "limit": SUGGESTION_ANCHOR_LIMIT},
+            )
         )
-    ]
-    facts.sort(key=lambda fact: (-fact[0].timestamp(), fact[1], fact[2].uri))
-    return tuple(dict.fromkeys(ref for _, _, ref in facts))[:SUGGESTION_ANCHOR_LIMIT]
+    return tuple(dict.fromkeys((*destination, *(fact.ref for fact in intent))))
 
 
 def _eligible_media_sql(surface: Surface) -> str:
@@ -172,27 +241,32 @@ def _eligible_media_sql(surface: Surface) -> str:
 
 
 # A followed visible show `s` a named library does not file; needs `held`.
-_ELIGIBLE_SHOW_SQL = (
-    "s.podcast_id NOT IN (SELECT podcast_id FROM held WHERE podcast_id IS NOT NULL)"
-)
+_ELIGIBLE_FEED_SQL = "s.feed_id NOT IN (SELECT feed_id FROM held WHERE feed_id IS NOT NULL)"
 
 
 def hydrate_current_suggestions(
-    db: Session, *, viewer_id: UUID, library_id: UUID | None, refs: Sequence[ResourceRef]
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID | None,
+    refs: Sequence[ResourceRef],
+    daily: bool = False,
 ) -> list[SuggestionItemOut]:
     """Revalidate only supplied identities; no ranking, graph or embedding acquisition."""
-    surface = suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
+    surface = (
+        "daily" if daily else suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
+    )
     if surface is None or not refs:
         return []
     params = {
         "viewer_id": viewer_id,
         "library_id": library_id,
         "media_ids": [ref.id for ref in refs if ref.scheme == "media"],
-        "podcast_ids": [ref.id for ref in refs if ref.scheme == "podcast"],
+        "feed_ids": [ref.id for ref in refs if ref.scheme in ("podcast", "feed")],
     }
     held = (
         ""
-        if surface == "lectern"
+        if surface in ("lectern", "daily")
         else f"WITH held AS ({library_entries.destination_membership_rows_sql()})"
     )
     engagement = (
@@ -203,9 +277,10 @@ def hydrate_current_suggestions(
     )
     shows = f"""
         UNION ALL
-        SELECT 'podcast', s.podcast_id FROM ({active_subscription_rows_sql()}) s
-        JOIN ({visible_podcast_ids_cte_sql()}) visible USING (podcast_id)
-        WHERE s.podcast_id = ANY(:podcast_ids) AND {_ELIGIBLE_SHOW_SQL}
+        SELECT CASE s.feed_kind WHEN 'podcast' THEN 'podcast' ELSE 'feed' END,s.feed_id
+        FROM ({active_subscription_rows_sql()}) s
+        JOIN ({catalog_feed_ids_sql()}) visible USING (feed_id)
+        WHERE s.feed_id = ANY(:feed_ids) AND {_ELIGIBLE_FEED_SQL}
     """
     eligible = {
         ResourceRef(row.scheme, row.id)
@@ -215,7 +290,7 @@ def hydrate_current_suggestions(
                 SELECT 'media' AS scheme, m.id FROM media m
                 JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id = m.id
                 {engagement}
-                WHERE m.id = ANY(:media_ids) AND {_eligible_media_sql(surface)}
+                WHERE m.id = ANY(:media_ids) AND {"true" if daily else _eligible_media_sql(surface)}
                 {shows if surface == "library" else ""}
             """),
             params,
@@ -225,23 +300,34 @@ def hydrate_current_suggestions(
 
 
 def _targets_sql(surface: Surface) -> str:
-    """Target policy over caller CTEs visible, visible_podcasts, engagement, episodes,
+    """Target policy over caller CTEs visible, visible_feeds, engagement, entries,
     and held (library surfaces). Binds :viewer_id and, for libraries, :library_id.
     """
+    if surface == "daily":
+        return f"""
+            SELECT 'media'::text AS target_scheme,m.id AS target_id,m.kind::text AS media_kind,
+                   d.first_discovered_at AS created_at,d.published_at AS episode_at,
+                   d.published_on::text AS published_on,e.read_state,e.last_engaged_at AS engaged_at,
+                   d.feed_id,NULL::text AS added_day,NULL::text AS episode_day,
+                   NULL::text AS published_day,NULL::text AS arrival_day,'Daily'::text AS family
+            FROM ({daily_selection.eligible_media_rows_sql()}) d JOIN media m ON m.id=d.media_id
+            LEFT JOIN engagement e ON e.media_id=m.id
+        """
     on_lectern = surface == "lectern"
-    podcasts = (
+    feeds = (
         f"""
         UNION ALL
-        SELECT 'podcast', s.podcast_id, NULL, NULL, MAX(pe.published_at) FILTER (
+        SELECT CASE s.feed_kind WHEN 'podcast' THEN 'podcast' ELSE 'feed' END,
+               s.feed_id, NULL, NULL, MAX(pe.published_at) FILTER (
                    WHERE pe.published_at <= now()), NULL, NULL,
-               MAX(e.last_engaged_at) FILTER (WHERE e.last_engaged_at <= now())
+               MAX(e.last_engaged_at) FILTER (WHERE e.last_engaged_at <= now()),s.feed_id
         FROM ({active_subscription_rows_sql()}) s
-        JOIN visible_podcasts vp USING (podcast_id)
-        LEFT JOIN episodes pe
-          ON pe.podcast_id = s.podcast_id AND pe.media_id IN (SELECT media_id FROM visible)
+        JOIN visible_feeds vf USING (feed_id)
+        LEFT JOIN entries pe
+          ON pe.feed_id = s.feed_id AND pe.media_id IN (SELECT media_id FROM visible)
         LEFT JOIN engagement e ON e.media_id = pe.media_id
-        WHERE {_ELIGIBLE_SHOW_SQL}
-        GROUP BY s.podcast_id
+        WHERE {_ELIGIBLE_FEED_SQL}
+        GROUP BY s.feed_id,s.feed_kind
         """
         if surface == "library"
         else ""
@@ -254,13 +340,18 @@ def _targets_sql(surface: Surface) -> str:
                    CASE WHEN m.original_published_date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$'
                         THEN m.original_published_date END AS published_on,
                    e.read_state,
-                   CASE WHEN e.last_engaged_at <= now() THEN e.last_engaged_at END AS engaged_at
+                   CASE WHEN e.last_engaged_at <= now() THEN e.last_engaged_at END AS engaged_at,
+                   pe.feed_id
             FROM media m
             JOIN visible v ON v.media_id = m.id
             LEFT JOIN engagement e ON e.media_id = m.id
-            LEFT JOIN episodes pe ON pe.media_id = m.id
+            LEFT JOIN LATERAL (
+                SELECT entry.feed_id,entry.published_at FROM entries entry
+                WHERE entry.media_id=m.id
+                ORDER BY entry.published_at NULLS LAST,entry.feed_id LIMIT 1
+            ) pe ON true
             WHERE {_eligible_media_sql(surface)}
-            {podcasts}
+            {feeds}
         ),
         dated AS (
             SELECT facts.*,
@@ -298,6 +389,7 @@ _TARGET_FIELDS = (
     ("published_on", "text"),
     ("read_state", "text"),
     ("engaged_at", "timestamptz"),
+    ("feed_id", "uuid"),
     ("added_day", "text"),
     ("episode_day", "text"),
     ("published_day", "text"),
@@ -309,6 +401,7 @@ _TARGET_FIELDS = (
 @dataclass(frozen=True)
 class _SnapshotFacts:
     anchors: tuple[ResourceRef, ...]
+    intent: tuple[selection_context.IntentAnchor, ...]
     targets: list[RowMapping]
     visible_media: list[UUID]
     visible_podcasts: list[UUID]
@@ -318,7 +411,8 @@ def _snapshot_facts(
     db: Session, viewer_id: UUID, surface: Surface, params: dict[str, object]
 ) -> _SnapshotFacts:
     """Capture complete canonical facts once inside this caller's RR; never retain across reads."""
-    anchors = lectern_anchor_refs(db, viewer_id=viewer_id) if surface == "lectern" else ()
+    intent = selection_context.recent_intent(db, viewer_id=viewer_id)
+    library = surface in ("library", "default_library")
     held = (
         f"""held AS MATERIALIZED ({
             library_entries.destination_membership_rows_sql(
@@ -326,12 +420,12 @@ def _snapshot_facts(
             )
         }),"""
         "destination AS (SELECT * FROM held),"
-        if surface != "lectern"
+        if library
         else ""
     )
     anchor_rows = (
         library_entries.library_anchor_rows_sql()
-        if surface != "lectern"
+        if library
         else (
             "SELECT NULL::text AS target_scheme,NULL::uuid AS target_id,NULL::bigint AS ordinal WHERE false"
         )
@@ -341,39 +435,44 @@ def _snapshot_facts(
         db.execute(
             text(f"""
         WITH visible_media AS MATERIALIZED ({visible_media_ids_cte_sql()}),
-        visible_podcasts AS MATERIALIZED ({
-                visible_podcast_ids_cte_sql(visible_media_sql="SELECT media_id FROM visible_media")
-            }),
+        visible_feeds AS MATERIALIZED ({catalog_feed_ids_sql()}),
         visible AS (SELECT media_id FROM visible_media),
         engagement AS MATERIALIZED ({projection.engagement_fact_rows_sql()}),
-        episodes AS MATERIALIZED ({episode_publication_rows_sql()}),
+        entries AS MATERIALIZED (SELECT media_id,feed_id,published_at FROM feed_entries),
         {held}
         targets AS ({_targets_sql(surface)}), anchor_rows AS ({anchor_rows})
         SELECT 'target' AS row_kind,NULL::bigint AS ordinal,t.*,
                COALESCE(p.source_media_id,t.target_id) AS source_id
-        FROM targets t LEFT JOIN media_parts p ON p.media_id=t.target_id
+        FROM targets t LEFT JOIN media_parts p ON p.media_id=t.target_id AND t.target_scheme='media'
         UNION ALL SELECT 'anchor',ordinal,target_scheme,target_id,{
                 empty
             },NULL::uuid FROM anchor_rows
         UNION ALL SELECT 'visible_media',NULL,'media',media_id,{empty},NULL::uuid FROM visible_media
-        UNION ALL SELECT 'visible_podcast',NULL,'podcast',podcast_id,{
+        UNION ALL SELECT 'visible_podcast',NULL,'podcast',vf.feed_id,{
                 empty
-            },NULL::uuid FROM visible_podcasts
+            },NULL::uuid FROM visible_feeds vf JOIN feeds f ON f.id=vf.feed_id AND f.kind='podcast'
     """),
             params | {"viewer_id": viewer_id, "anchor_limit": SUGGESTION_ANCHOR_LIMIT},
         )
         .mappings()
         .all()
     )
-    if surface != "lectern":
-        anchors = tuple(
+    destination = (
+        tuple(
             ResourceRef(row["target_scheme"], row["target_id"])
             for row in sorted(
                 (row for row in rows if row["row_kind"] == "anchor"), key=lambda row: row["ordinal"]
             )
         )
+        if library
+        else ()
+    )
+    anchors = _context_anchors(
+        db, viewer_id=viewer_id, surface=surface, intent=intent, destination=destination
+    )
     return _SnapshotFacts(
         anchors,
+        intent,
         [row for row in rows if row["row_kind"] == "target"],
         [row["target_id"] for row in rows if row["row_kind"] == "visible_media"],
         [row["target_id"] for row in rows if row["row_kind"] == "visible_podcast"],
@@ -386,8 +485,11 @@ def _candidates(
     surface: Surface,
     params: dict[str, object],
 ) -> list[_Candidate]:
-    """Each eligible target's family, its strongest evidence (a relational
-    family's only), and its order; at most twenty per family."""
+    """Rank each target's strongest evidence within its family.
+
+    Suggestions retain twenty per family. Daily retains every eligible source
+    alternative until its five-item diversity selection.
+    """
     library = surface in ("library", "default_library")
     tiebreak = (
         "MAX(t.engaged_at) DESC NULLS LAST, MAX(GREATEST(t.created_at, t.episode_at)) DESC NULLS LAST,"
@@ -407,7 +509,8 @@ def _candidates(
         dict.fromkeys(
             (row["target_id"], row["family"], row["source_id"])
             for row in facts.targets
-            if row["target_scheme"] == "media" and row["family"] in ("GraphThread", "Rediscovery")
+            if row["target_scheme"] == "media"
+            and row["family"] in ("GraphThread", "Rediscovery", "Daily")
         )
     )
     params = {
@@ -416,8 +519,20 @@ def _candidates(
         "anchor_ids": [anchor.id for anchor in anchors],
         "anchor_ranks": list(range(len(anchors))),
         "similar": json.dumps(_similar(db, viewer_id, anchors, readings, params)),
+        "lexical": json.dumps(
+            selection_context.lexical_evidence(
+                db,
+                viewer_id=viewer_id,
+                anchors=anchors,
+                intent=facts.intent,
+                media_ids=[
+                    row["target_id"] for row in facts.targets if row["target_scheme"] == "media"
+                ],
+            )
+        ),
         "visible_media_ids": facts.visible_media,
         "visible_podcast_ids": facts.visible_podcasts,
+        "ranking_time_zone": params.get("time_zone", "UTC"),
         **{f"target_{name}": [row[name] for row in facts.targets] for name, _ in _TARGET_FIELDS},
         "origins": _EDGE_ORIGINS,
         **params,
@@ -440,7 +555,7 @@ def _candidates(
                 UNION SELECT target_scheme, target_id FROM edges
             ''')
         }),
-            connected AS (
+            edge_connections AS (
                 SELECT p.target_scheme, p.target_id, a.rank AS anchor_rank, NULL::uuid AS author_id,
                        ROW_NUMBER() OVER (ORDER BY array_position(:origins, e.origin),
                            e.created_at DESC,
@@ -455,6 +570,25 @@ def _candidates(
                 ) AS p(anchor_scheme, anchor_id, target_scheme, target_id)
                 JOIN anchors a ON a.scheme = p.anchor_scheme AND a.id = p.anchor_id
                 WHERE (p.target_scheme, p.target_id) <> (p.anchor_scheme, p.anchor_id)
+            ),
+            source_connections AS (
+                SELECT p.target_scheme,p.target_id,a.rank AS anchor_rank,NULL::uuid AS author_id,
+                       ROW_NUMBER() OVER (ORDER BY a.rank,entry.id,p.target_scheme,p.target_id) AS strength
+                FROM feed_entries entry JOIN feeds f ON f.id=entry.feed_id
+                CROSS JOIN LATERAL (VALUES
+                    ('media',entry.media_id,CASE f.kind WHEN 'podcast' THEN 'podcast' ELSE 'feed' END,entry.feed_id),
+                    (CASE f.kind WHEN 'podcast' THEN 'podcast' ELSE 'feed' END,entry.feed_id,'media',entry.media_id)
+                ) p(anchor_scheme,anchor_id,target_scheme,target_id)
+                JOIN anchors a ON (a.scheme,a.id)=(p.anchor_scheme,p.anchor_id)
+                JOIN targets t ON (t.target_scheme,t.target_id)=(p.target_scheme,p.target_id)
+            ),
+            connected AS (
+                SELECT target_scheme,target_id,anchor_rank,author_id,
+                       ROW_NUMBER() OVER (ORDER BY origin,strength) AS strength
+                FROM (
+                    SELECT 0 AS origin,* FROM edge_connections
+                    UNION ALL SELECT 1,* FROM source_connections
+                ) connections
             ),
             credit_visible_media AS (SELECT unnest(CAST(:visible_media_ids AS uuid[])) AS media_id),
             credit_visible_podcasts AS (SELECT unnest(CAST(:visible_podcast_ids AS uuid[])) AS podcast_id),
@@ -490,25 +624,32 @@ def _candidates(
                 FROM jsonb_to_recordset(CAST(:similar AS jsonb))
                     AS x(id uuid, rank integer, ordinal integer)
             ),
+            user_text AS (
+                SELECT 'media'::text AS target_scheme,id AS target_id,rank AS anchor_rank,
+                       NULL::uuid AS author_id,ROW_NUMBER() OVER (ORDER BY ordinal) AS strength
+                FROM jsonb_to_recordset(CAST(:lexical AS jsonb))
+                    AS x(id uuid,rank integer,ordinal integer)
+            ),
             evidence AS (
                 SELECT DISTINCT ON (target_scheme, target_id) *
                 FROM (
                     SELECT 0 AS lane, 'Connected' AS reason, * FROM connected
                     UNION ALL SELECT 1, 'SharedAuthor', * FROM authored
-                    UNION ALL SELECT 2, 'Similar', * FROM neighbours
+                    UNION ALL SELECT 2, 'UserText', * FROM user_text
+                    UNION ALL SELECT 3, 'Similar', * FROM neighbours
                 ) lanes
                 ORDER BY target_scheme, target_id, lane, strength
             ),
             ranked AS (
-                SELECT t.target_scheme, t.target_id, t.media_kind, t.family,
-                       COALESCE(ev.lane, 3) AS lane,
+                SELECT t.target_scheme, t.target_id, t.media_kind, t.family,t.feed_id,
+                       COALESCE(ev.lane, 4) AS lane,
                        CASE t.family
                            WHEN 'Continuity' THEN 'Continue'
                            WHEN 'Arrival' THEN CASE t.arrival_day
                                WHEN t.episode_day THEN 'NewEpisode'
                                WHEN t.published_day THEN 'Published'
                                ELSE 'AddedToNexus' END
-                           ELSE ev.reason
+                           ELSE COALESCE(ev.reason,'Published')
                        END AS reason,
                        ev.strength AS lane_strength, ev.anchor_rank, ev.author_id,
                        ROW_NUMBER() OVER (
@@ -525,17 +666,22 @@ def _candidates(
                                    CASE WHEN t.added_day = t.arrival_day THEN t.created_at END,
                                    CASE WHEN t.episode_day = t.arrival_day THEN t.episode_at END)
                                END DESC NULLS LAST,
-                               ev.lane, ev.strength, t.target_scheme, t.target_id
+                               ev.lane, ev.strength,
+                               CASE WHEN t.family='Daily' THEN COALESCE(
+                                   t.episode_at,t.published_on::date::timestamp AT TIME ZONE :ranking_time_zone) END
+                                   DESC NULLS LAST,
+                               CASE WHEN t.family='Daily' THEN t.created_at END DESC NULLS LAST,
+                               t.target_scheme, t.target_id
                        ) AS strength
                 FROM targets t
                 LEFT JOIN evidence ev ON t.family NOT IN ('Continuity', 'Arrival')
                      AND (ev.target_scheme, ev.target_id) = (t.target_scheme, t.target_id)
-                WHERE t.family IN ('Continuity', 'Arrival') OR ev.lane IS NOT NULL
+                WHERE t.family IN ('Continuity', 'Arrival','Daily') OR ev.lane IS NOT NULL
             )
             SELECT target_scheme AS scheme, target_id AS id, family, lane, lane_strength,
                    strength, reason,
-                   media_kind, anchor_rank AS anchor, author_id AS author
-            FROM ranked WHERE strength <= {_PER_FAMILY}
+                   media_kind, anchor_rank AS anchor, author_id AS author,feed_id AS feed
+            FROM ranked {"" if surface == "daily" else f"WHERE strength <= {_PER_FAMILY}"}
             ORDER BY family, strength
         """),
         params,
@@ -587,7 +733,7 @@ def _similar(
     media_anchors = [
         (rank, anchor.id) for rank, anchor in enumerate(anchors) if anchor.scheme == "media"
     ]
-    if not media_anchors:
+    if not media_anchors or not eligible_readings:
         return []
     provider, model, dimensions = _EMBEDDING
     bindings = {
@@ -651,7 +797,7 @@ def _similar(
         return []
     rows: list[tuple[float, int, UUID]] = []
     for anchor_id, rank, anchor_chunk_id in stored_anchors:
-        for family in ("GraphThread", "Rediscovery"):
+        for family in dict.fromkeys(row[1] for row in eligible_readings):
             owner, chunk_readings, membership_params = _reading_membership(
                 eligible_readings, family, anchor_id
             )
@@ -726,9 +872,13 @@ def _rotate(candidates: list[_Candidate], *, limit: int) -> list[_Candidate]:
 
 
 def _take(
-    remaining: list[_Candidate], picked: list[_Candidate], counts: Counter[tuple[str, object]]
+    remaining: list[_Candidate],
+    picked: list[_Candidate],
+    counts: Counter[tuple[str, object]],
+    *,
+    daily: bool = False,
 ) -> bool:
-    """Take the best row that keeps every attribute under two, else the best row."""
+    """Prefer uncapped attributes; daily source alternatives precede other soft caps."""
     if not remaining:
         return False
 
@@ -740,11 +890,19 @@ def _take(
                 ("media_kind", c.media_kind),
                 ("anchor", c.anchor),
                 ("author", c.author),
+                ("feed", c.feed),
             )
             if value is not None
         ]
 
-    choice = next((c for c in remaining if all(counts[a] < 2 for a in attributes(c))), remaining[0])
+    candidates = remaining
+    if daily:
+        candidates = [
+            c for c in remaining if c.feed is None or counts["feed", c.feed] < 2
+        ] or remaining
+    choice = next(
+        (c for c in candidates if all(counts[a] < 2 for a in attributes(c))), candidates[0]
+    )
     remaining.remove(choice)
     picked.append(choice)
     counts.update(attributes(choice))
@@ -757,8 +915,8 @@ def _hydrate(
     media = media_service.hydrate_compact_media_targets(
         db, viewer_id=viewer_id, media_ids=[c.id for c in picked if c.scheme == "media"]
     )
-    podcasts = hydrate_compact_podcast_targets(
-        db, viewer_id=viewer_id, podcast_ids=[c.id for c in picked if c.scheme == "podcast"]
+    feeds = hydrate_compact_feed_targets(
+        db, viewer_id=viewer_id, feed_ids=[c.id for c in picked if c.scheme in ("podcast", "feed")]
     )
     return [
         SuggestionItemOut(
@@ -769,12 +927,15 @@ def _hydrate(
                 href=media[c.id].href,
             )
             if c.scheme == "media"
-            else PodcastSuggestionTargetOut(
-                kind="Podcast",
-                ref=f"podcast:{c.id}",
-                title=podcasts[c.id].title,
-                subtitle=podcasts[c.id].subtitle,
-                href=podcasts[c.id].href,
+            else FeedSuggestionTargetOut(
+                kind="Feed",
+                ref=feeds[c.id].ref,
+                feed_id=c.id,
+                feed_kind=feeds[c.id].feed_kind,
+                title=feeds[c.id].title,
+                subtitle=feeds[c.id].subtitle,
+                image_url=feeds[c.id].image_url,
+                href=feeds[c.id].href,
             )
         )
         for c in picked

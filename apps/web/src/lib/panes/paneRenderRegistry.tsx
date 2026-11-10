@@ -29,6 +29,8 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
     import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),
   conversation: () => import("@/components/chat/Conversation"),
+  feeds: () => import("@/app/(authenticated)/feeds/FeedsPaneBody"),
+  feedDetail: () => import("@/app/(authenticated)/feeds/[feedId]/FeedDetailPaneBody"),
   podcasts: () => import("@/app/(authenticated)/podcasts/PodcastsPaneBody"),
   podcastDetail: () =>
     import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),

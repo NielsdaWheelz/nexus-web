@@ -103,6 +103,70 @@ def requested_media_ids_cte_sql(*, include_tearing_down: bool = False) -> str:
         SELECT pe.media_id FROM podcast_episodes pe
         JOIN media m ON m.id = pe.media_id AND m.kind = 'podcast_episode'
         WHERE TRUE {teardown}
+        UNION
+        SELECT pe.media_id FROM ({feed_publication_media_ids_sql()}) pe
+        WHERE TRUE {teardown}
+        UNION
+        SELECT pe.media_id FROM ({unpublished_feed_media_ids_sql()}) pe
+        WHERE TRUE {teardown}
+    """
+
+
+def feed_catalog_ids_sql() -> str:
+    """Source authority comes from explicit admission or a current source operation."""
+    return """
+        SELECT feed_id FROM feed_catalog_access WHERE user_id=:viewer_id
+        UNION
+        SELECT s.feed_id FROM library_feed_subscriptions s
+        JOIN memberships m ON m.library_id=s.library_id WHERE m.user_id=:viewer_id
+        UNION
+        SELECT r.feed_id FROM library_feed_imports i JOIN feed_runs r ON r.id=i.run_id
+        JOIN memberships m ON m.library_id=i.library_id WHERE m.user_id=:viewer_id
+          AND r.completed_at IS NULL AND r.cancelled_at IS NULL
+    """
+
+
+def feed_publication_media_ids_sql() -> str:
+    """Only the active body's exact successful source lineage grants point access."""
+    return f"""
+        SELECT DISTINCT e.media_id FROM feed_entries e
+        JOIN feeds f ON f.id=e.feed_id AND f.kind='article'
+        JOIN reader_publications p ON p.media_id=e.media_id
+        JOIN media_source_attempts a ON a.id=p.source_attempt_id AND a.status='succeeded'
+        WHERE e.feed_id IN ({feed_catalog_ids_sql()})
+          AND a.source_type IN ('feed_entry','generic_web_url')
+          AND a.source_payload->>'feed_id'=e.feed_id::text
+          AND a.source_payload->>'entry_id'=e.id::text
+    """
+
+
+def can_acquire_feed_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
+    """Authorize an explicit fetch before a body exists, without creating a holding."""
+    return bool(
+        db.scalar(
+            text(f"""
+        SELECT EXISTS (SELECT 1 FROM feed_entries e JOIN feeds f ON f.id=e.feed_id
+            WHERE e.media_id=:media AND f.kind='article'
+              AND e.feed_id IN ({feed_catalog_ids_sql()}))
+          AND :media IN ({requested_media_ids_cte_sql()})
+    """),
+            {"viewer_id": viewer_id, "media": media_id},
+        )
+    )
+
+
+def unpublished_feed_media_ids_sql() -> str:
+    """Catalogue metadata may open its own pending entry, never a private capture."""
+    return f"""
+        SELECT DISTINCT e.media_id FROM feed_entries e
+        JOIN feeds f ON f.id=e.feed_id AND f.kind='article'
+        JOIN LATERAL (SELECT * FROM media_source_attempts a WHERE a.media_id=e.media_id
+            ORDER BY attempt_no DESC,created_at DESC,id DESC LIMIT 1) attempt ON true
+        WHERE e.feed_id IN ({feed_catalog_ids_sql()})
+          AND NOT EXISTS (SELECT 1 FROM reader_publications p WHERE p.media_id=e.media_id)
+          AND attempt.source_type IN ('feed_entry','generic_web_url')
+          AND attempt.source_payload->>'feed_id'=e.feed_id::text
+          AND attempt.source_payload->>'entry_id'=e.id::text
     """
 
 
@@ -122,6 +186,7 @@ def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) ->
         WHERE le.media_id = :media_id AND m.user_id = :viewer_id)
         OR EXISTS (SELECT 1 FROM podcast_episodes pe JOIN media m ON m.id=pe.media_id
                    WHERE pe.media_id=:media_id AND m.kind='podcast_episode')
+        OR :media_id IN ({feed_publication_media_ids_sql()})
         OR EXISTS (SELECT 1 FROM media_parts p WHERE p.media_id=:media_id
                    AND p.source_media_id IN ({visible_media_ids_cte_sql()}))"""
     return bool(session.scalar(text(sql), {"viewer_id": viewer_user_id, "media_id": media_id}))
@@ -146,21 +211,22 @@ def visible_podcast_ids_cte_sql(*, visible_media_sql: str | None = None) -> str:
     """
     visible = visible_media_sql if visible_media_sql is not None else visible_media_ids_cte_sql()
     return f"""
-        SELECT ps.podcast_id FROM library_podcast_subscriptions ps
+        SELECT ps.feed_id AS podcast_id FROM library_feed_subscriptions ps
+        JOIN feeds f ON f.id=ps.feed_id AND f.kind='podcast'
         JOIN libraries l ON l.id=ps.library_id AND l.system_key IS NULL
         JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
         UNION
-        SELECT pe.podcast_id FROM podcast_episodes pe
+        SELECT pe.feed_id FROM feed_entries pe JOIN feeds f ON f.id=pe.feed_id AND f.kind='podcast'
         WHERE pe.media_id IN ({visible})
     """
 
 
 def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str:
     return f"""EXISTS (
-        SELECT 1 FROM library_podcast_subscriptions ps
+        SELECT 1 FROM library_feed_subscriptions ps
         JOIN libraries l ON l.id=ps.library_id AND l.system_key IS NULL
         JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
-        WHERE ps.podcast_id={podcast_id_expr}
+        WHERE ps.feed_id={podcast_id_expr}
     )"""
 
 

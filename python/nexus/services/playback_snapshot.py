@@ -71,8 +71,8 @@ def playable_episodes(
         text(f"""
             SELECT m.id, m.kind, m.title, p.title AS show_title, m.external_playback_url,
                    m.canonical_source_url, m.provider, m.provider_id
-            FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
-            JOIN podcasts p ON p.id = pe.podcast_id
+            FROM media m JOIN ({episodes.episode_source_rows_sql()}) pe ON pe.media_id = m.id
+            JOIN feeds p ON p.id = pe.podcast_id AND p.kind='podcast'
             WHERE m.id = ANY(:media_ids) AND m.id IN ({requested_media_ids_cte_sql()})
               AND m.kind = 'podcast_episode'
         """),

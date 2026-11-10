@@ -54,7 +54,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
   const recent = useRecent();
   const store = useAuthoredStore();
   const catalog = useCatalogState().data;
-  const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "Chats");
+  const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Feeds", "Chats");
   const { observation } = useImports();
   const observing = useObservationDemand(true);
   const foreground = useRefreshStamp(observing, 0);
@@ -162,7 +162,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
         savedDetail = authors.slice(0, 2).join(", ") || null;
       }
       else if (scheme === "library") saved = catalog.libraries.get(id)?.value.name ?? null;
-      else if (scheme === "podcast") saved = catalog.shows.get(id)?.detail.podcast.title ?? null;
+      else if (scheme === "podcast" || scheme === "feed") saved = catalog.sources.get(id)?.detail.feed.title ?? null;
       else if (scheme === "conversation") saved = catalog.chats.get(id)?.title ?? null;
     }
     const rawName=canonical?.title ?? saved ?? visit.title_hint;

@@ -16,3 +16,8 @@ export function suggestionRead(libraryId: string | null): ReadDescriptor<Suggest
   const path = libraryId === null ? "/api/lectern/suggestions" : `/api/libraries/${encodeURIComponent(libraryId)}/suggestions` as const;
   return { key, stale: "", timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS, load: signal => getSuggestions(path, signal) };
 }
+
+export const dailySelectionRead: ReadDescriptor<Suggestions> = {
+  key: "/daily-brief", stale: "", timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS,
+  load: signal => getSuggestions("/api/daily-brief", signal),
+};

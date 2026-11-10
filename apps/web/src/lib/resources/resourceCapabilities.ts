@@ -141,6 +141,16 @@ export const RESOURCE_CAPABILITIES = {
       default_surface_order: ["LinkedItems"],
     },
   },
+  feed: {
+    link_mode: "direct",
+    sharing: "CopyOnly",
+    app_search_scope: false,
+    inspector: {
+      linked_items: "ResourceConnections",
+      forks: null,
+      default_surface_order: ["LinkedItems"],
+    },
+  },
   reader_apparatus_item: {
     link_mode: "materialize_passage",
     sharing: "None",

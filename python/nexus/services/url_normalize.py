@@ -88,6 +88,8 @@ def normalize_url_for_display(url: str) -> str:
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
     host = parsed.hostname.lower() if parsed.hostname else ""
+    if ":" in host:
+        host = f"[{host}]"
     port = parsed.port
     netloc = f"{host}:{port}" if port and port != (80 if scheme == "http" else 443) else host
     return urlunparse((scheme, netloc, parsed.path or "/", parsed.params, parsed.query, ""))

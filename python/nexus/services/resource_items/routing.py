@@ -37,6 +37,7 @@ _STATIC_PREFIXES = {
     "library": "/libraries",
     "oracle_reading": "/oracle",
     "podcast": "/podcasts",
+    "feed": "/feeds",
 }
 _OWNER_PREFIXES = {"media": "/media", "note_block": "/notes", "highlight": "/highlights"}
 _PASSAGE_ANCHORS = {

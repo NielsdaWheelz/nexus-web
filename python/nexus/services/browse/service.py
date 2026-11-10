@@ -67,8 +67,8 @@ _OWNED_BY_URL = f"""{_VISIBLE} WHERE m.kind = :kind AND (m.requested_url = ANY(:
 _OWNED_VIDEO = (
     f"{_VISIBLE} WHERE m.kind = 'video' AND m.provider = 'youtube' AND m.provider_id = :ref"
 )
-_KNOWN_PODCAST = """SELECT p.id FROM podcasts p
-    WHERE p.provider = 'podcast_index' AND p.provider_podcast_id = :ref"""
+_KNOWN_PODCAST = """SELECT p.id FROM feeds p
+    WHERE p.kind='podcast' AND p.provider = 'podcast_index' AND p.provider_podcast_id = :ref"""
 
 
 async def search_browse(

@@ -47,6 +47,7 @@ export function mediaSummaryFromDetail(media: MediaDetail): MediaSummary {
     show: media.show,
     contributors: media.contributors,
     original_published_date: media.original_published_date,
+    publisher_publication: media.publisher_publication,
     processing_status: media.processing_status,
     duration: media.duration,
     consumption: media.consumption,

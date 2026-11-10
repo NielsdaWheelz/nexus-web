@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
+    feed_catalog_ids_sql,
     requested_media_ids_cte_sql,
     visible_contributor_ids_cte_sql,
     visible_conversation_ids_cte_sql,
@@ -38,6 +39,8 @@ from nexus.text import ECMASCRIPT_WHITESPACE
 def read_presentations(
     db: Session, *, viewer_id: UUID, request: WorkspacePresentationsRequest
 ) -> WorkspacePresentationsOut:
+    from nexus.services.podcasts.episodes import episode_source_rows_sql
+
     ids: dict[str, set[UUID]] = defaultdict(set)
     handles: set[str] = set()
     captures: set[UUID] = set()
@@ -56,8 +59,8 @@ def read_presentations(
             text(f"""
                 SELECT m.id, m.title, m.kind, m.canonical_source_url, p.title AS show_title
                 FROM media m
-                LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
-                LEFT JOIN podcasts p ON p.id = pe.podcast_id
+                LEFT JOIN ({episode_source_rows_sql()}) pe ON pe.media_id = m.id
+                LEFT JOIN feeds p ON p.id = pe.podcast_id AND p.kind='podcast'
                 WHERE m.id = ANY(:ids) AND m.id IN ({requested_media_ids_cte_sql()})
             """),
             {"ids": list(ids["media"]), "viewer_id": viewer_id},
@@ -108,7 +111,7 @@ def read_presentations(
     if ids["podcast"]:
         # Podcast detail admits any persisted catalog show, without a subscription.
         rows = db.execute(
-            text("SELECT id, title FROM podcasts WHERE id = ANY(:ids)"),
+            text("SELECT id, title FROM feeds WHERE id = ANY(:ids) AND kind='podcast'"),
             {"ids": list(ids["podcast"])},
         ).all()
         credits = load_contributor_credits_for_podcasts(db, [row.id for row in rows])
@@ -117,6 +120,16 @@ def read_presentations(
             facts[ref] = WorkspacePresentationOut(
                 resource_ref=ref, title=row.title, contributors=credits[row.id]
             )
+
+    if ids["feed"]:
+        rows = db.execute(
+            text(f"""SELECT id,title FROM feeds
+            WHERE id=ANY(:ids) AND kind='article' AND id IN ({feed_catalog_ids_sql()})"""),
+            {"ids": list(ids["feed"]), "viewer_id": viewer_id},
+        )
+        for row in rows:
+            ref = f"feed:{row.id}"
+            facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=row.title)
 
     if ids["page"]:
         for page_id, page in notes.page_facts(db, viewer_id, list(ids["page"])).items():

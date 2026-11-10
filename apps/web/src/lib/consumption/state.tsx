@@ -174,7 +174,7 @@ function createConsumptionCommands(
     if (lifetime !== scope || scope.signal.aborted || entries.get(entry.commandKey) !== entry) return;
     retire(entry);
     collections.supersede([{ mediaId: entry.mediaId, revision: restoredRevision }]);
-    publishChange("Consumption", "Podcasts", "Lectern");
+    publishChange("Consumption", "Feeds", "Lectern");
   }
   return {
     collections,
@@ -196,7 +196,7 @@ function createConsumptionCommands(
         } finally { finishes.delete(pending); }
         if (lifetime !== scope || scope.signal.aborted || receipt === null) return;
         collections.supersede([{ mediaId, revision: receipt.revision }]);
-        publishChange("Consumption", "Podcasts", "Lectern");
+        publishChange("Consumption", "Feeds", "Lectern");
         if (pending.observed !== null && pending.observed > receipt.revision) return;
         const commandKey = `${mediaId}:${receipt.revision}:${crypto.randomUUID()}`;
         const entry: UndoEntry = { mediaId, title, receipt, commandKey, status: "Offered", unconfirmed: 0,
@@ -211,7 +211,7 @@ function createConsumptionCommands(
         const response = await withProgressFence([mediaId], () => lifetime !== scope || scope.signal.aborted ? Promise.resolve(null) : apiFetch<ApiJson<"/media/{media_id}/unread", "post">>(`/api/media/${mediaId}/unread`, { method: "POST", signal: scope.signal }));
         if (lifetime !== scope || scope.signal.aborted || response === null) return;
         collections.supersede([{ mediaId, revision: response.data.override_revision }]);
-        publishChange("Consumption", "Podcasts");
+        publishChange("Consumption", "Feeds");
       },
       async resetProgress(mediaId: string): Promise<void> {
         const scope = lifetime;
@@ -219,7 +219,7 @@ function createConsumptionCommands(
         const response = await withProgressFence([mediaId], () => lifetime !== scope || scope.signal.aborted ? Promise.resolve(null) : apiFetch<ApiJson<"/media/{media_id}/progress/reset", "post">>(`/api/media/${mediaId}/progress/reset`, { method: "POST", signal: scope.signal }));
         if (lifetime !== scope || scope.signal.aborted || response === null) return;
         collections.supersede([{ mediaId, revision: response.data.override_revision }]);
-        publishChange("Consumption", "Podcasts");
+        publishChange("Consumption", "Feeds");
       },
     },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },

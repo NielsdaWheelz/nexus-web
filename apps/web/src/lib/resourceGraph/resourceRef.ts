@@ -31,6 +31,7 @@ const SCHEMES: Record<ResourceScheme, [Icon.Glyph, string]> = {
   external_snapshot: [Icon.Web, "saved web page"],
   contributor: [Icon.Author, "author"],
   podcast: [Icon.Podcast, "podcast"],
+  feed: [Icon.Feed, "feed"],
   reader_apparatus_item: [Icon.SourceReference, "source reference"],
   passage_anchor: [Icon.Passage, "passage"],
 };
