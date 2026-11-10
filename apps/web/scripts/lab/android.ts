@@ -15,8 +15,9 @@ export async function openLabAndroid(input: {
   adb_file: string; aapt_file: string; serial: string; package_name: string;
   apk_file: string; web_origin: string; storage_origin: string;
 }): Promise<{
-  /** Observe the owned app’s expected rendered entry through native accessibility
-   * before attachment. An owned URL can precede a live renderer. */
+  /** Observe the owned app's resumed WebView in its native view hierarchy before
+   * attachment; prove the rendered entry through the returned page. An owned
+   * target URL alone does not establish renderer readiness. */
   attachPage(): Promise<Page>; close(): Promise<AndroidLabRelease>;
   setWebReachable(reachable: boolean): Promise<void>;
   /** Relaunch with retained app data; previous_pid is null if the package already exited. */
