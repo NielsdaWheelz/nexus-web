@@ -112,7 +112,11 @@ export async function openLabAndroid(input: {
     }, { timeout: 20_000, intervals: [100, 250, 500, 1000], message: `owned android WebView page readiness (pid ${pid}, forward ${forward})` })
       .toMatchObject({ pages: 1, owned_pages: 1 });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 20_000, noDefaults: true });
-    const contexts = browser.contexts();
+    let contexts = browser.contexts();
+    if (contexts.length === 1 && contexts[0].pages().length === 0) {
+      await contexts[0].waitForEvent("page", { timeout: 20_000 });
+      contexts = browser.contexts();
+    }
     const pageCounts = contexts.map(context => context.pages().length);
     const pages = contexts.length === 1 ? contexts[0].pages() : [];
     const found = pages[0];

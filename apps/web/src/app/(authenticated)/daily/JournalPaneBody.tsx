@@ -211,10 +211,14 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
     if (entry.kind === "RevealDailyDate") {
       if (claim(delivery)) reveal("journal", day.local_date, false);
     } else if (entry.kind === "AppendNote") {
-      if (claim(delivery)) void api.current.append().catch(failed);
+      if (!claim(delivery)) return;
+      // Memento demand retains an offscreen day after its delivery is claimed.
+      reveal("journal", day.local_date, false);
+      void api.current.append().catch(failed);
     } else if (entry.kind === "EditPageTitle") {
       if (!claim(delivery)) return;
       if (`page:${entry.pageId}` !== resolved.ref) { say({ fact: "this page is no longer available." }); return; }
+      reveal("journal", day.local_date, false);
       showTitle();
       void api.current.focusRoot().catch(failed);
     } else if (entry.kind === "FocusNote") {

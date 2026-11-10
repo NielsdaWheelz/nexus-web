@@ -210,6 +210,10 @@ settlement, while the returned result reports the first failure. a partial
 mutation fault retains unsaved writing for copy or deliberate discard and blocks
 later commands. unsaved-copy includes open documents queued behind that fault.
 
+an explicit document reopen can supply a fresh nonempty initializer to the same
+cached cell; an empty open preserves its pending initializer. the next admitted
+command consumes it once. an already admitted command retains its frozen bytes.
+
 local receipts also retain `before`: touch/delete or add/remove vectors per
 changed resource or relationship from the successful compare-and-swap prestate. a stale result
 replaces that certificate before remerge; an uncertain committed retry retains
@@ -604,6 +608,8 @@ never means absent. first entry waits for
 preparation; refresh retains the prior window until its replacement is ready.
 a cold append keeps its existing focus intent through initial prefix admission,
 proves the absolute tail and births one real empty note on demand.
+journal append and title entries demand their date through the memento before
+entering the editor, retaining an offscreen day after its delivery is claimed.
 compatible child proofs refresh independently of raw field admission. each
 proof identifies its resource, relationship, parent and traversal context;
 relocation discards availability but retains its revision watermark, so an

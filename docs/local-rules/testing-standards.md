@@ -155,7 +155,8 @@ observes the expected rendered entry in the owned native accessibility hierarchy
 a target url can exist before its renderer is live. before one cdp
 connection, the existing bounded readiness check requires one page target at the
 supplied owned web origin; non-page targets do not prevent admission. attachment
-then requires one context and one page at that origin. rejection reports counts,
+waits up to 20 seconds for a sole empty context's page event on that same
+connection, then requires one context and one page at that origin. rejection reports counts,
 process and forward identity without page titles or urls. the caller owns real
 login, input and cleanup after attachment failure. `startup.json` binding proves
 durable local identity only; await public `session_check` admission `Ready` before
