@@ -62,7 +62,6 @@
     "mdast-util-from-markdown": "2.0.3",
     "openapi-typescript": "7.13.0",
     "typescript": "^6.0.2",
-    "vercel": "58.7.1",
     "vite": "8.0.16"
   },
   "overrides": {

@@ -1,0 +1,24 @@
+[Unit]
+Description=Nexus production frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus-web
+Group=nexus-web
+ExecStart=/usr/bin/python3 -B /opt/nexus-web/control/release.py run /srv/nexus-web/current/manifest.json 3443
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+MemoryMax=1G
+MemorySwapMax=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/cache/nexus-web
+
+[Install]
+WantedBy=multi-user.target

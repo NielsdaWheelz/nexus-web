@@ -45,8 +45,11 @@ and key and serves TLS with HTTP/2 only on `PORT`/`HOSTNAME`; Next binds a priva
 kernel-assigned loopback port. `probe-web.mjs` verifies `/version` over HTTP/2
 with an explicit CA. streams retain their existing application API and lifetime.
 `make web` builds and starts this package; development uses build/restart.
-Vercel owns its managed frontend TLS edge and uses `build:next`. production
-builds start without the previous `.next` cache so installed dependency patches
+production uses this same standalone package on the devbox behind a dedicated
+cloudflare tunnel; `deploy/web` owns sealed build/configuration inputs and host
+activation. `deploy/release.sh` prepares web before the matching backend release,
+then activates and checks the selected web candidate. production builds start
+without the previous `.next` cache so installed dependency patches
 reach the generated bundles. each build pays the full compilation cost.
 the lab reuses a completed package under its documented source/slot/public-key
 contract and copies a private writable runtime; it uses this same production

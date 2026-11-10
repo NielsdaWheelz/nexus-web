@@ -301,7 +301,7 @@ sudo cryptsetup open /var/lib/nexus/codex-state.luks nexus-codex-state
 sudo mount -o rw,nosuid,nodev,noexec \
   /dev/mapper/nexus-codex-state /srv/nexus/codex-state
 PYTHONPATH=python python3 deploy/hetzner/release.py --check
-./deploy/hetzner/deploy.sh <reviewed-exact-source-sha>
+./deploy/release.sh <reviewed-web-candidate-manifest.json>
 ```
 
 a host left exited (a manual kill, or its restart budget spent) is repaired by

@@ -1,0 +1,33 @@
+{
+  "config": {
+    "ingress": [
+      {
+        "hostname": "nexus.nielseriknandal.com",
+        "path": "(?:^|/)\\.{1,2}(?:/|$)|//|\\\\",
+        "service": "http_status:503"
+      },
+      {
+        "hostname": "nexus.nielseriknandal.com",
+        "path": "^/api/public/resource-share(?:/.*)?$",
+        "service": "http_status:503"
+      },
+      {
+        "hostname": "nexus.nielseriknandal.com",
+        "service": "https://127.0.0.1:3443",
+        "originRequest": {
+          "httpHostHeader": "nexus.nielseriknandal.com",
+          "http2Origin": true,
+          "originServerName": "nexus.nielseriknandal.com",
+          "caPool": "/etc/nexus-web/tls/cert.pem",
+          "noTLSVerify": false
+        }
+      },
+      {
+        "service": "http_status:404"
+      }
+    ],
+    "warp-routing": {
+      "enabled": false
+    }
+  }
+}

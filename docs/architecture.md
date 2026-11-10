@@ -134,7 +134,7 @@ dependencies.
 
 | Process                | Code                                                  | Hosted                           | Role                                      |
 | ---------------------- | ----------------------------------------------------- | -------------------------------- | ----------------------------------------- |
-| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (staged, then promoted) | React UI + `/api/*` proxy to FastAPI    |
+| Next.js frontend + BFF | `apps/web`                                            | devbox (standalone tls/h2) | React UI + `/api/*` proxy to FastAPI    |
 | api ingress            | `deploy/cloudflare/tunnel-config.json`                 | cloudflare edge and outbound tunnel | public https to the private caddy listener |
 | private api proxy      | `deploy/hetzner/Caddyfile`                              | hetzner vps (docker compose)      | private http reverse proxy to fastapi      |
 | FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
@@ -147,10 +147,10 @@ dependencies.
 managed/external: **cloudflare r2** (object storage; seaweedfs locally), **supabase**
 (hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
 and the generation/search/podcast services above. The frontend is
-served by Vercel.
+served by the devbox through a dedicated cloudflare tunnel.
 
 Key topology facts (details: [`deployment.md`](../deployment.md),
-`deploy/hetzner/`, `deploy/vercel/`):
+`deploy/hetzner/`, `deploy/web/`):
 
 - default request path is **browser → next.js bff → fastapi → postgres**,
   including live streams at the web origin's `/api/stream/*`.
@@ -158,27 +158,25 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   strict manifest (schema 3) containing immutable API/worker image digests and
   the expected schema. The host pulls those digests; it never
   builds application images.
-- `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
-  entrypoint. It runs `deploy/hetzner/release.py`, one linear idempotent pass
-  (preflight, declared host inputs, images, verified R2 backup, migration,
-  `up --wait`, Caddy reload, health, Codex isolation assertions, `current`
-  pointer, archive retention), then promotes the exact staged Vercel
-  deployment. There is no attempt state and no resume mode: rerun the same
-  command. A host timer takes the same verified backup nightly with writers up;
-  one host lock keeps it apart from releases.
-- VPS and Vercel config publication are explicit prepare-only operations, never
-  implicit release steps. The Oracle corpus seed is a separate idempotent
+- `deploy/release.sh <candidate-manifest.json>` is the sole application release
+  entrypoint. under one devbox lock it prepares the sealed web candidate, runs
+  the existing backend owner `deploy/hetzner/release.py`, activates the matching
+  web source and checks the exact serving candidate. backend backup, migration,
+  health, image provenance and forward-repair contracts remain backend-owned.
+  there is no automatic rollback or alternate frontend.
+- vps config publication and frontend config capture are explicit prepare-only
+  operations, never implicit release steps. The Oracle corpus seed is a separate idempotent
   operator command, safe while the app runs; application release never runs it.
 - Supabase owns Auth only. Hetzner Postgres and Cloudflare R2 own product data.
 - Both worker lanes use a bounded 300-second database statement timeout. The
   API keeps its tighter role-scoped timeout.
-- `NEXUS_INTERNAL_SECRET` must be **identical** on Vercel and the VPS — it is the
+- `NEXUS_INTERNAL_SECRET` must be **identical** on the frontend and backend — it is the
   shared secret the BFF attaches as `X-Nexus-Internal` so FastAPI knows a request
   came through the trusted proxy.
 - The web app has one public origin, `APP_PUBLIC_URL`: every absolute auth
   redirect, every Origin check (auth forms, session resolve, the BFF) and the
-  auth cookies' Secure flag come from it. Other hosts (the Vercel default
-  domain, an alias) cannot sign in, so sessions exist only on it. Server
+  auth cookies' Secure flag come from it. alternate hostnames cannot sign in,
+  so sessions exist only on that origin. Server
   Actions keep Next.js's own check, same-host only: the Origin host must equal
   the request host, whichever host that is. Hosted Supabase Auth must have
   `${APP_PUBLIC_URL}/auth/callback` as an exact redirect URL, reviewed in the
@@ -2009,12 +2007,12 @@ verification has one separate entrypoint, `./scripts/test`.
 **Deploy** ([`deployment.md`](../deployment.md), sole runbook): each exact
 `main` push triggers one backend publisher, and only on `run_attempt == 1`. It
 builds API/worker targets once and publishes their GHCR digests in one strict
-candidate manifest. Vercel builds the exact SHA as an unaliased
-production-target candidate. `deploy/hetzner/deploy.sh <source-sha>` resolves
-that manifest from the first CI run, converges the backend in one linear
-idempotent pass, then promotes the bound frontend deployment. Config
-publication and the Oracle corpus seed are separate explicit operations. Env
-contracts live in `deploy/env/*` (real values untracked, `.example` tracked).
+candidate manifest. the standalone frontend builds separately from the same
+clean source with captured production configuration. `deploy/release.sh
+<candidate-manifest.json>` prepares that candidate, converges the backend,
+then activates and checks the matching web. config publication and the oracle
+corpus seed remain explicit operations. env contracts live in `deploy/env/*`
+(real values untracked, `.example` tracked).
 Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,

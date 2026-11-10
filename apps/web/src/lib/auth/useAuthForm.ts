@@ -10,8 +10,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import type { Line } from "@/components/feedback/stage";
 
-// the origin check refuses posts from any host but APP_PUBLIC_URL (the vercel
-// default domain, an alias).
+// the origin check refuses posts from every host except APP_PUBLIC_URL.
 export const WRONG_ADDRESS_LINE: Line = {
   fact: "this web address can’t be used with nexus.",
   reason: "open nexus at its usual address.",

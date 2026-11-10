@@ -1,0 +1,23 @@
+[Unit]
+Description=Nexus frontend Cloudflare tunnel
+After=network-online.target nexus-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus-web-tunnel
+Group=nexus-web-tunnel
+ExecStart=/opt/nexus-web/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:2001 run --token-file /etc/nexus-web/cloudflared-token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+MemoryMax=128M
+MemorySwapMax=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

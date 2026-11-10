@@ -18,7 +18,7 @@ install -m 600 deploy/env/env-prod-backup.example deploy/env/env-prod-backup
 | File | Owner |
 |---|---|
 | `env-prod` | Values genuinely shared by web and VPS |
-| `env-prod-frontend` | Vercel/Next.js only |
+| `env-prod-frontend` | devbox standalone web only |
 | `env-prod-backend` | API, Caddy, Postgres, R2 credentials, provider secrets |
 | `env-prod-worker` | Worker parser path, timing, and schedule values only |
 | `env-prod-backup` | operator-only private database backup bucket and credentials |
@@ -38,7 +38,7 @@ manifest.
 `R2_BACKUP_SECRET_ACCESS_KEY`. use a separate private bucket and credentials
 scoped to object read/write access in that bucket; retention lists and deletes
 archives with them. these values never enter
-the three application inputs, vercel settings, api, or workers. the bounded
+the three application inputs, frontend candidates, api, or workers. the bounded
 backup container receives them only during backup operations.
 the access key id is 32 lowercase hexadecimal characters; its secret is 64.
 copy the s3 secret access key, not the separate cloudflare api token value.
@@ -85,17 +85,20 @@ keep the central generated source owner-only. the local overlay defaults to
 the tracked absent declaration and gives no memory file to its background
 worker.
 
-Vercel config is a separate provider snapshot:
+frontend config is captured separately, outside the source checkout:
 
 ```bash
-./deploy/vercel/sync-env.sh
+python3 deploy/web/publish-env.py <source-sha> /private/path/frontend.env
 ```
 
-For a config-bearing release, publish Vercel config before the SHA triggers its
-staged build, and VPS config before the release. Keep the sequence serialized.
+the publisher accepts only the declared shared/frontend partitions, rejects
+missing and misplaced keys, and writes a new owner-only file. it adds
+`NEXUS_SOURCE_SHA`; it never starts a service. `deploy/web/build.sh` captures these
+exact bytes with the standalone archive. every frontend config change requires
+an explicit new build, including changes at the same source sha.
 
-Neither publisher is a release entrypoint. The sole application release command
-is `deploy/hetzner/deploy.sh <source-sha>`.
+neither publisher is a release entrypoint. the sole application release command
+is `deploy/release.sh <candidate-manifest.json>`.
 
 ## Boundary rules
 
@@ -108,7 +111,7 @@ is `deploy/hetzner/deploy.sh <source-sha>`.
   S3 origin; access key, secret, and bucket are VPS-only.
 - `R2_BACKUP_*` is operator-only; application storage credentials cannot read
   or write the private database backup bucket.
-- `NEXUS_INTERNAL_SECRET` is identical in Vercel and VPS config.
+- `NEXUS_INTERNAL_SECRET` is identical in web and VPS config.
 - The app has one public origin, `APP_PUBLIC_URL`: auth redirects and Origin
   checks use it, and sessions exist only on it. Server Actions admit same-host
   posts only (Next.js's own check). The extension's one redirect origin,
@@ -121,7 +124,8 @@ is `deploy/hetzner/deploy.sh <source-sha>`.
   credentials, and database credentials are VPS-only.
 - Real env files, temporary merged files, provider tokens, and canonical
   published config contain secrets. Never commit, print, or copy them into
-  release state.
+  repository files or public release records. the host stores the captured frontend
+  configuration privately beside its immutable candidate.
 
 ## Worker contract
 
@@ -151,4 +155,4 @@ Before a config-bearing release, prove:
 - the backup bucket has neither an enabled `r2.dev` endpoint nor a public custom
   domain, and its dedicated credentials can list, read, write and delete objects;
 - paid provider accounts have the capacity implied by enabled feature flags;
-- Vercel and VPS hold the same internal secret without displaying it.
+- web and VPS hold the same internal secret without displaying it.

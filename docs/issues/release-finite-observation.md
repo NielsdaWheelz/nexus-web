@@ -8,6 +8,14 @@ metadata recovery's schema 0336 and shares its unreleased wire 20 bump. freshly
 inspect the deployed release vector before activation. authored format stays 4. preserve local corpus,
 pending source bytes and feed cursors.
 
+the devbox frontend bridge serves the earlier wire19/schema0335 release. its
+staged web operations and installed clients passed; the replacement coordinator's
+first full paired live execution remains `NOT_RUN`. prepare one sealed web
+candidate, then use `deploy/release.sh <candidate-manifest.json>` to run
+prepare-web → backend backup/migration/release → activate-web → exact public
+check. qualify that whole sequence with this release; do not activate current
+web alone against the wire19 api.
+
 before activation, qualify the notification cleanup migration against the existing
 schema and populated backup under the normal stopped-writer release procedure:
 application rows are unchanged; chat and background
