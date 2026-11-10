@@ -94,6 +94,9 @@ supplies actual `article.plain_text`; blank, missing, malformed or teaser-only
 responses fail. line breaks are preserved, html escaped, and formatting/media
 are not inferred. source title/byline/date are absolute, nullable observations;
 native articles never receive generated metadata.
+the api decoder leaves article byline/date null; carrier author/date never fill
+those fields. [native x acquisition](ingest.md#native-x-sources) owns request and
+completion policy.
 
 `x_article_sources` names the current publication's attempt and completeness.
 `x_source.x_article_content_facts` projects one nullable `x_article_content`
