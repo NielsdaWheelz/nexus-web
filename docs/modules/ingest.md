@@ -11,7 +11,7 @@ owners (`python/nexus/services/`): `source_types.py` (the vocabulary, a leaf the
 - **successor.** same-source recovery after `a` has the id `uuid5(a, "successor")`. every same-source recovery admission (retry, refresh, system repair) creates exactly that row, so a request that already landed finds its own effect. a newly confirmed browser replacement instead owns a fresh attempt through its upload receipt; it is not an api recovery successor.
 - **identity.** youtube video, readable x thread, standalone logical x post, native x article and an exact web url use their owning deduplication rules: their admission takes one advisory lock per source identity (I12), then reuses the media that source already became (a web article whose `canonical_url` is the normalized url and that is not in teardown; a redirecting url, or an article in teardown, is found only by the run, which supersedes). owned retained ordinary imports also reuse an exact original url while their canonical key is null; an active match refuses a fresh admission with 409 `E_SOURCE_IMPORT_ACTIVE`, as does any different x thread attempt already in flight; failed x work retains its existing recovery instead of accepting a fresh save; multiple matches require selection. ordinary url receipts follow current source provenance; a capture-input receipt retains its original attempt and media ids independently of current destination availability. an email maps to one media by its Message-ID.
 - **recovery.** one policy over the latest attempt: an in-flight attempt whose exact job is dead offers repair; a failed attempt its creator can re-acquire offers retry (a native X source whose refresh failed keeps its readable copy, so its media stays ready and the retry is still offered); a same-source-terminal error, or a stored source whose bytes are gone (`E_SIGN_UPLOAD_FAILED`, `E_STORAGE_MISSING`), offers nothing. refresh is offered and admitted by one predicate (`source_refreshable`): the creator's settled source on a ready or failed media with no such restriction. every rule reads the attempt's `error_code`.
-- **run.** the job marks the attempt running, keeps a detached snapshot, acquires with no transaction open, then settles: the url families publish through their owners (web article, youtube, podcast transcription) and the runner mirrors the media's outcome; files, browser articles and X sources are prepared here and published in the runner's terminal transaction (native X positions follow canonical source generations and explicit unresolved-position adoption). only catalogued terminal codes settle a failure, each a typed refusal no retry changes (a lost stored source never comes back; a publication its store refuses, `E_RESOURCE_CONFLICT`, refuses again), at once; anything else re-raises to the queue (three tries, then dead and the repair offer). a resource limit or a podcast transcript fails at dead-letter.
+- **run.** the job marks the attempt running, keeps a detached snapshot, acquires with no transaction open, then settles: the url families publish through their owners (web article, youtube, podcast transcription) and the runner mirrors the media's outcome; files, browser articles and X sources are prepared here and published in the runner's terminal transaction (native X positions follow canonical source generations and explicit unresolved-position adoption). only catalogued terminal codes settle a failure, each a typed refusal no retry changes (a lost stored source never comes back; a publication its store refuses, `E_RESOURCE_CONFLICT`, refuses again), at once; anything else re-raises to the job runtime's failure disposition. a held job leaves its source attempt unfinished; podcast transcript failure settles at dead-letter.
 - **upload session.** bytes go browser -> storage directly (Vercel caps bodies at 4.5 MB) and become media only after the server verifies them. the client mints the session id; the intent (kind, filename, content type, size, origin `LocalFile | BrowserCapture{source_url, sha256, source_binding}`) never changes. local uploads keep a destination draft; their confirmation freezes the removal fence and destinations. browser captures always acquire into personal all, with separate later placement edits. every create of an unpublished, unrejected session advances its generation: a new staging path `uploads/sessions/<id>/<generation>/` and a fresh five-minute url, so a failed PUT is answered by creating again, never reported. confirm copies the current generation's staged object to a fresh candidate under `media/<candidate media>/candidates/`, verifies size, content type, sha-256 and the file signature (or the strict article packet), then publishes once. a deterministic refusal (`E_SOURCE_INTEGRITY`, `E_INVALID_FILE_TYPE`, `E_FILE_TOO_LARGE`, `E_CAPTURE_TOO_LARGE`) settles the session `Rejected`; only removal remains. Imports derives its state set-wise (`UPLOAD_SESSION_DERIVED_STATE_SQL`): `Published`, `VerificationFailed`, `CapabilityExpired` (the url lapsed with no publication: Retry upload picks the original file and creates again) or `AwaitingBytes`; local uploads keep `upload:<session id>` after publication. browser captures use `media:<id>` after publication; an unpublished bound capture uses its target media, and an unbound one its upload session.
 - **x thread identity.** `x_source.x_thread_matches` owns proved primary holders and unresolved unpublished matches, including frozen capture inputs and logical aliases. ordinary acquisition prefers published holders; extension lookup considers both sets and refuses distinct matches. the query carries facts, not acquisition authority.
 - **browser acquisition.** lookup matches exact normalized requested/final urls and published capture provenance, native article ids, or proved x thread membership. only unreadable thread admissions match an attempted permalink. normalization preserves queries and drops fragments; ambiguous sources refuse. a readable match is retained through absolute default-library inclusion without a source attempt. an unreadable match is overwritten on the same creator-owned media, preserving placements and authored evidence. create/confirm repeat identity lookup under source/media locks and require the frozen latest attempt. completion of that same attempt is allowed; a newer attempt refuses. confirmation stamps the current reader generation as the replacement base. source pins and epub publication guards remain binding.
@@ -181,6 +181,38 @@ author-thread searches explicitly begin at the provider's archive floor,
 the last 30 days. the existing post budget still limits acquisition.
 `post_limit` means enumeration stopped at the configured bound; `exhausted` means
 enumeration ended, not that every historical post remains available.
+
+carrier/article inspection, search, edits, ancestors and saved-member discovery
+request post fields alone. selected primaries and exact direct context request
+only author and attachment-media expansions. reference ids remain post fields;
+expanded post bodies are neither requested nor graph inputs. articles never
+normalize carrier attribution. standalone quote acquisition starts with the
+capture shape and preserves the exact requested revision.
+
+the shared allowance is 32 logical operations by default, with batches/pages at
+most 100; transport retries remain physical calls within one operation. admit a
+lean discovery batch of at most `n` posts only when remaining operations are at
+least `1 + ceil((h + n) / 100)`. `h` counts every fresh raw revision missing its
+author or any declared media object, including disconnected candidates. exact
+initial carrier inspection is exempt.
+complete selected primaries before optional context and reselect after each
+completion/context batch; reserve does not authorize enriching unselected posts.
+optional context preserves `ceil(h / 100)` operations. refused discovery records
+`operation_limit`; if required completion still exceeds the bound, `E_RESOURCE_LIMIT`
+with dimension `Structure` holds the job and preserves the published copy. optional
+exhaustion retains links and partial coverage. an admitted response missing required
+expansions is a provider-protocol failure; explicit disappearance retains the
+existing unavailable-post outcome. saved reads and title generation use retained
+evidence without x calls.
+
+`x_provider_response` logs one final received http json object's row counts at
+the provider boundary, before semantic validation: data posts and expanded posts,
+users, media, polls and places. absent/null collections count zero, objects one,
+lists their length, other shapes null. absent `includes` means zero expansions;
+null or non-object `includes` makes expansion counts null. these are response
+occurrences, including evidence rejected later, without source text or credentials.
+they establish neither billing deduplication nor spend;
+intermediate transport retries retain their existing separate logs.
 
 `services/x_ingest.py` publishes immutable capture payloads, canonical fragments
 and pinned direct-context outcomes together. logical post aliases group proved

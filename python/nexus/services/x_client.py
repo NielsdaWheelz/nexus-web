@@ -25,7 +25,7 @@ import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from nexus.config import get_settings
-from nexus.errors import ApiError, ApiErrorCode, ConflictError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, ResourceLimitError
 from nexus.jobs.queue import JobFailure
 from nexus.logging import get_logger
 from nexus.schemas.x_source import (
@@ -47,11 +47,13 @@ from nexus.services.net.http_retry import RETRYABLE_STATUSES, get_json_with_retr
 from nexus.services.x_identity import classify_x_article_url
 
 logger = get_logger(__name__)
-_FIELDS = {
+_POST_FIELDS = {
     "tweet.fields": "id,text,author_id,created_at,conversation_id,referenced_tweets,"
     "in_reply_to_user_id,attachments,entities,note_tweet,lang,edit_history_tweet_ids,article",
-    "expansions": "referenced_tweets.id,attachments.media_keys,author_id,"
-    "referenced_tweets.id.author_id",
+}
+_CAPTURE_FIELDS = {
+    **_POST_FIELDS,
+    "expansions": "author_id,attachments.media_keys",
     "media.fields": "media_key,type,url,preview_image_url,alt_text",
     "user.fields": "id,name,username",
 }
@@ -234,8 +236,23 @@ class _Capture:
     operations: int = 0
     limited: bool = False
 
-    def get(self, path: str, params: Mapping[str, str], operation: str) -> dict[str, Any] | None:
-        if self.operations >= self.max_operations:
+    def has_expansions(self, post: _Post) -> bool:
+        return post.author_id in self.users and all(
+            key in self.media for key in (post.attachments.media_keys if post.attachments else ())
+        )
+
+    def missing_expansions(self) -> set[str]:
+        return {identity for identity, post in self.posts.items() if not self.has_expansions(post)}
+
+    def get(
+        self,
+        path: str,
+        params: Mapping[str, str],
+        operation: str,
+        *,
+        reserved_operations: int,
+    ) -> dict[str, Any] | None:
+        if self.max_operations - self.operations <= reserved_operations:
             self.limited = True
             return None
         self.operations += 1
@@ -248,7 +265,7 @@ class _Capture:
             self.users[user.id] = user
         for media in _decode(_Media, includes.get("media")):
             self.media[media.media_key] = media
-        posts = [*_decode(_Post, includes.get("tweets")), *_decode(_Post, payload.get("data"))]
+        posts = _decode(_Post, payload.get("data"))
         unavailable = _unavailable_ids(payload)
         if unavailable.intersection(post.id for post in posts):
             raise _protocol_failure("contradictory_availability")
@@ -283,15 +300,37 @@ class _Capture:
             self.unavailable[revision_id] = observed_at
         return payload
 
-    def lookup(self, revision_ids: set[str], operation: str) -> bool:
-        pending = sorted(revision_ids - self.posts.keys() - self.unavailable.keys(), key=int)
+    def lookup(self, revision_ids: set[str], operation: str, fields: Mapping[str, str]) -> bool:
+        pending_ids = revision_ids - self.posts.keys()
+        if fields is _CAPTURE_FIELDS:
+            pending_ids.update(revision_ids & self.missing_expansions())
+        pending = sorted(pending_ids - self.unavailable.keys(), key=int)
         for offset in range(0, len(pending), 100):
             ids = pending[offset : offset + 100]
-            payload = self.get("/tweets", {**_FIELDS, "ids": ",".join(ids)}, operation)
+            missing = len(self.missing_expansions())
+            if fields is _POST_FIELDS:
+                # The first exact carrier observation can end at article inspection.
+                reserved = (missing + len(ids) + 99) // 100 if self.operations else 0
+            else:
+                reserved = (missing + 99) // 100
+            payload = self.get(
+                "/tweets",
+                {**fields, "ids": ",".join(ids)},
+                operation,
+                reserved_operations=reserved,
+            )
             if payload is None:
                 return False
-            if not set(ids) <= self.posts.keys() | self.unavailable.keys():
+            unavailable = _unavailable_ids(payload)
+            returned = {post.id for post in _decode(_Post, payload.get("data"))}
+            if not set(ids) <= returned | unavailable:
                 raise _protocol_failure(operation)
+            if fields is _CAPTURE_FIELDS:
+                nodes, aliases = self.graph()
+                for identity in set(ids) - unavailable:
+                    self.normalize(
+                        _Node(self.posts[identity], nodes[aliases[identity]].history, frozenset())
+                    )
         return True
 
     def resolve_edits(self, revision_ids: set[str] | None = None) -> None:
@@ -318,7 +357,7 @@ class _Capture:
                 )
                 if candidate is not None:
                     pending.add(candidate)
-            if not pending or not self.lookup(pending, "resolve_edits"):
+            if not pending or not self.lookup(pending, "resolve_edits", _POST_FIELDS):
                 return
 
     def graph(self) -> tuple[dict[str, _Node], dict[str, str]]:
@@ -397,10 +436,10 @@ class _Capture:
         post = node.post
         if not isinstance(post, _Post):
             return post
-        author = self.users.get(post.author_id)
-        media_keys = post.attachments.media_keys if post.attachments is not None else ()
-        if author is None or any(key not in self.media for key in media_keys):
+        if not self.has_expansions(post):
             raise _protocol_failure("missing_expansion")
+        author = self.users[post.author_id]
+        media_keys = post.attachments.media_keys if post.attachments is not None else ()
         entities = post.note_tweet.entities if post.note_tweet is not None else post.entities
         return XSourcePost(
             source_revision_id=post.id,
@@ -462,7 +501,7 @@ class XCarrierLookup:
 def lookup_x_carrier(*, requested_revision_id: str, prior: XPriorSource) -> XCarrierLookup:
     """Inspect the submitted revision before any edit resolution or thread search."""
     capture = _Capture(prior, get_settings().x_api_acquisition_max_operations)
-    capture.lookup({requested_revision_id}, "lookup_post")
+    capture.lookup({requested_revision_id}, "lookup_post", _POST_FIELDS)
     post = capture.posts.get(requested_revision_id)
     if post is None:
         return XCarrierLookup(requested_revision_id, None, None, capture)
@@ -502,15 +541,15 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
     settings = get_settings()
     capture = carrier._capture
     requested_revision_id, prior = carrier.requested_revision_id, capture.prior
-    capture.resolve_edits({requested_revision_id})
-    nodes, aliases = capture.graph()
-    requested_key = aliases.get(requested_revision_id)
-    if requested_key is None:
-        raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_post")
-    requested = nodes[requested_key]
-    _complete_expansions(capture, {requested.revision_id})
-    nodes, aliases = capture.graph()
-    requested = nodes[aliases[requested_revision_id]]
+    while True:
+        capture.resolve_edits({requested_revision_id})
+        nodes, aliases = capture.graph()
+        requested_key = aliases.get(requested_revision_id)
+        if requested_key is None:
+            raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_post")
+        requested = nodes[requested_key]
+        if not _complete_expansions(capture, {requested.revision_id}):
+            break
     author = capture.normalize(requested).content.author
     exhausted = None
     post_limited = False
@@ -522,7 +561,7 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
         raise _protocol_failure("missing_conversation")
     if scope == "author_thread" and requested.conversation_id is not None:
         params = {
-            **_FIELDS,
+            **_POST_FIELDS,
             "query": f"conversation_id:{requested.conversation_id} from:{author.username}",
             "start_time": "2006-03-21T00:00:00Z",
             "max_results": str(max(10, min(100, settings.x_api_author_thread_max_posts))),
@@ -530,7 +569,15 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
         candidates: set[str] = set()
         tokens: set[str] = set()
         while True:
-            page = capture.get("/tweets/search/all", params, "search_author_thread")
+            page = capture.get(
+                "/tweets/search/all",
+                params,
+                "search_author_thread",
+                reserved_operations=(
+                    len(capture.missing_expansions()) + int(params["max_results"]) + 99
+                )
+                // 100,
+            )
             if page is None:
                 break
             data = _decode(_Post, page.get("data"))
@@ -565,41 +612,40 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
             for item in prior.posts
             if item.post_id in prior.primary_post_ids
         }
-        capture.lookup(saved_ids, "check_saved_members")
+        capture.lookup(saved_ids, "check_saved_members", _POST_FIELDS)
         capture.resolve_edits(saved_ids)
         if requested.conversation_id is not None:
             _hydrate_ancestors(
                 capture, author_id=author.id, conversation_id=requested.conversation_id
             )
-    # Resolve only direct context of the current primaries. A lookup can reveal a
-    # newer primary revision; repeat until its direct references are stable or bounded.
+    # Re-select before each completion/context batch: a response can change aliases
+    # and membership. Required completion always precedes optional exact context.
     while True:
-        before = capture.operations
         nodes, aliases = capture.graph()
         selected = _select(nodes, aliases, requested_revision_id, prior, scope)
+        capture.resolve_edits({nodes[key].revision_id for key in selected})
+        nodes, aliases = capture.graph()
+        selected = _select(nodes, aliases, requested_revision_id, prior, scope)
+        if _complete_expansions(capture, {nodes[key].revision_id for key in selected}):
+            continue
         direct = set()
         for key in selected:
             post = nodes[key].post
             direct.update(ref.id for ref in post.referenced_tweets) if isinstance(
                 post, _Post
             ) else direct.update(ref.target_revision_id for ref in post.content.references)
-        context_failed = False
+        pending = (
+            (direct - capture.posts.keys()) | (direct & capture.missing_expansions())
+        ) - capture.unavailable.keys()
+        if not pending:
+            break
         try:
-            capture.lookup(direct, "lookup_context")
+            if not capture.lookup(
+                set(sorted(pending, key=int)[:100]), "lookup_context", _CAPTURE_FIELDS
+            ):
+                break
         except ApiError:
-            context_failed = True
-        nodes, aliases = capture.graph()
-        selected = _select(nodes, aliases, requested_revision_id, prior, scope)
-        _complete_expansions(
-            capture,
-            {nodes[key].revision_id for key in selected if nodes[key].revision_id in capture.posts},
-        )
-        for revision_id in direct:
-            try:
-                _complete_expansions(capture, {revision_id})
-            except ApiError:
-                continue
-        if context_failed or capture.operations == before:
+            # justify-ignore-error: optional context failure retains complete primaries.
             break
     nodes, aliases = capture.graph()
     selected = _select(nodes, aliases, requested_revision_id, prior, scope)
@@ -611,13 +657,10 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
         if observed is not None:
             new_posts.append(capture.normalize(_Node(observed, node.history, node.prior_post_ids)))
     captured_ids = {post.source_revision_id for post in new_posts}
-    for revision_id in sorted(direct - captured_ids, key=int):
+    for revision_id in sorted(direct - captured_ids - capture.missing_expansions(), key=int):
         observed = capture.posts.get(revision_id)
         if observed is not None:
-            try:
-                new_posts.append(capture.normalize(_Node(observed, observed.history, frozenset())))
-            except ApiError:
-                continue
+            new_posts.append(capture.normalize(_Node(observed, observed.history, frozenset())))
     unresolved = {
         node.parent
         for node in nodes.values()
@@ -677,26 +720,35 @@ def fetch_x_source(*, carrier: XCarrierLookup, scope: XSourceScope) -> XAcquired
     )
 
 
-def _complete_expansions(capture: _Capture, revision_ids: set[str]) -> None:
-    missing = []
-    for identity in sorted(revision_ids, key=int):
-        post = capture.posts.get(identity)
-        if post is not None and (
-            post.author_id not in capture.users
-            or any(
-                key not in capture.media
-                for key in (post.attachments.media_keys if post.attachments else ())
-            )
-        ):
-            missing.append(identity)
-    for offset in range(0, len(missing), 100):
-        ids = missing[offset : offset + 100]
-        capture.get("/tweets", {**_FIELDS, "ids": ",".join(ids)}, "lookup_expansions")
-        nodes, aliases = capture.graph()
-        for identity in ids:
-            capture.normalize(
-                _Node(capture.posts[identity], nodes[aliases[identity]].history, frozenset())
-            )
+def _complete_expansions(capture: _Capture, revision_ids: set[str]) -> bool:
+    """Complete one admitted batch; its owner re-selects before the next request."""
+    ids = sorted(revision_ids & capture.missing_expansions(), key=int)[:100]
+    if not ids:
+        return False
+    payload = capture.get(
+        "/tweets",
+        {**_CAPTURE_FIELDS, "ids": ",".join(ids)},
+        "lookup_expansions",
+        reserved_operations=0,
+    )
+    if payload is None:
+        raise ResourceLimitError(
+            "X acquisition reached its operation limit before completing selected posts.",
+            dimension="Structure",
+        )
+    unavailable = _unavailable_ids(payload)
+    returned = {post.id for post in _decode(_Post, payload.get("data"))}
+    if not set(ids) <= returned | unavailable:
+        raise _protocol_failure("lookup_expansions")
+    nodes, aliases = capture.graph()
+    missing = capture.missing_expansions()
+    for identity in ids:
+        if identity in unavailable and identity in missing:
+            raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_expansions")
+        capture.normalize(
+            _Node(capture.posts[identity], nodes[aliases[identity]].history, frozenset())
+        )
+    return True
 
 
 def _hydrate_ancestors(capture: _Capture, *, author_id: str, conversation_id: str) -> None:
@@ -713,7 +765,7 @@ def _hydrate_ancestors(capture: _Capture, *, author_id: str, conversation_id: st
             and node.parent_author_id in {None, author_id}
             and node.parent not in capture.unavailable
         }
-        if not pending or not capture.lookup(pending, "lookup_ancestors"):
+        if not pending or not capture.lookup(pending, "lookup_ancestors", _POST_FIELDS):
             return
 
 
@@ -863,7 +915,7 @@ def _get(path: str, params: Mapping[str, str], operation: str) -> dict[str, Any]
     if not token:
         raise _error(ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED, operation)
     try:
-        return get_json_with_retry(
+        payload = get_json_with_retry(
             settings.x_api_base_url.rstrip("/") + path,
             headers={"Authorization": f"Bearer {token}", "User-Agent": "Nexus Media Ingestion/1.0"},
             params=params,
@@ -882,9 +934,14 @@ def _get(path: str, params: Mapping[str, str], operation: str) -> dict[str, Any]
         if not isinstance(cause, httpx.HTTPStatusError):
             raise _protocol_failure(operation) from exc
         status = cause.response.status_code
+        try:
+            body = cause.response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict):
+            _log_response(body, operation)
         if status in {403, 404}:
             try:
-                body = cause.response.json()
                 if not isinstance(body, dict):
                     raise ValueError("provider problem must be an object")
                 payload = body if "errors" in body else {"errors": [body]}
@@ -907,6 +964,39 @@ def _get(path: str, params: Mapping[str, str], operation: str) -> dict[str, Any]
         error = _error(code, operation, status=status)
         error.retry_at = exc.retry_at
         raise error from exc
+    _log_response(payload, operation)
+    return payload
+
+
+def _log_response(payload: Mapping[str, Any], operation: str) -> None:
+    includes = payload.get("includes", {})
+    logger.info(
+        "x_provider_response",
+        operation=operation,
+        data_posts=_row_count(payload.get("data")),
+        **{
+            f"expanded_{name}": _row_count(includes.get(key))
+            if isinstance(includes, dict)
+            else None
+            for name, key in (
+                ("posts", "tweets"),
+                ("users", "users"),
+                ("media", "media"),
+                ("polls", "polls"),
+                ("places", "places"),
+            )
+        },
+    )
+
+
+def _row_count(value: Any) -> int | None:
+    if value is None:
+        return 0
+    if isinstance(value, dict):
+        return 1
+    if isinstance(value, list):
+        return len(value)
+    return None
 
 
 def _protocol_failure(operation: str) -> JobFailure:
@@ -929,28 +1019,23 @@ def _error(code: ApiErrorCode, operation: str, *, status: int | None = None) -> 
 def fetch_x_post_capture(*, requested_revision_id: str) -> XAcquiredSource:
     """Acquire the requested body and exact direct references, without edit substitution."""
     capture = _Capture(XPriorSource(), get_settings().x_api_acquisition_max_operations)
-    capture.lookup({requested_revision_id}, "lookup_post")
+    capture.lookup({requested_revision_id}, "lookup_post", _CAPTURE_FIELDS)
     post = capture.posts.get(requested_revision_id)
     if post is None:
         raise _error(ApiErrorCode.E_X_POST_UNAVAILABLE, "lookup_post")
-    _complete_expansions(capture, {requested_revision_id})
     primary = capture.normalize(_Node(post, post.history, frozenset()))
     direct = {reference.target_revision_id for reference in primary.content.references}
     try:
-        capture.lookup(direct, "lookup_context")
+        capture.lookup(direct, "lookup_context", _CAPTURE_FIELDS)
     except ApiError:
+        # justify-ignore-error: optional context failure retains the exact primary.
         pass
     posts = [primary]
     for identity in sorted(direct - {requested_revision_id}, key=int):
         target = capture.posts.get(identity)
         if target is None:
             continue
-        try:
-            _complete_expansions(capture, {identity})
-            posts.append(capture.normalize(_Node(target, target.history, frozenset())))
-        except ApiError:
-            # Context failure does not discard the validated primary body.
-            continue
+        posts.append(capture.normalize(_Node(target, target.history, frozenset())))
     return XAcquiredSource(
         article_ids={},
         scope="post",
