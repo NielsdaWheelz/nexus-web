@@ -1,0 +1,17 @@
+{
+  "http_request_firewall_managed": {
+    "rules": [
+      {
+        "ref": "nexus_api_free_managed_waf",
+        "description": "nexus api and web: execute cloudflare free managed waf",
+        "expression": "http.host in {\"nexus-api.nielseriknandal.com\" \"nexus.nielseriknandal.com\"}",
+        "action": "execute",
+        "action_parameters": {
+          "id": "77454fe2d30c4220b5701f6fdfb893ba",
+          "version": "latest"
+        },
+        "enabled": true
+      }
+    ]
+  }
+}

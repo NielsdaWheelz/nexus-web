@@ -144,27 +144,26 @@ post or YouTube video only when its ref and every URL of the attempt agree; a
 `remote_pdf_url` only when every URL names the same arXiv paper
 (`https://arxiv.org/abs/<id>`); nothing else.
 
-Every public API answer, errors included, carries `Cache-Control: private,
-no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`,
-`nosniff`, `Cross-Origin-Resource-Policy: same-origin`, a `default-src 'none'`
-CSP and no `Set-Cookie`, stamped by one `next.config.ts` header rule over the
-path (`lib/security/headers.ts` `SHARE_SECURITY_HEADERS` after the static suite);
-`/s` itself is noindex, no-referrer and no-store under `publicReaderCsp`.
+during the devbox bridge, the dedicated frontend tunnel returns status-only
+503 for `/api/public/resource-share` and its descendants before the application.
+`deploy/cloudflare/frontend-tunnel-config.json` owns this refusal. its first
+rule also rejects decoded dot segments, repeated slashes and backslashes so
+framework normalization cannot reopen the endpoint; malformed unrelated web
+paths therefore return503 too. the api tunnel declaration
+`deploy/cloudflare/tunnel-config.json` also refuses `/public/resource-share` and
+its descendants before caddy: every public BFF route constructs that canonical
+path, including framework aliases such as `/_next/data/...`. the api boundary
+owns capability suspension; frontend refusals avoid unnecessary forwarding. `/s` retains
+its existing failure presentation; stored tokens, grants and signed-in person
+sharing remain unchanged. the frozen recovery app still offers public-link
+creation/copy, but those links cannot be read during the bridge.
 
-The Vercel WAF rate-limits the share path per ip, fixed 60 s windows, denying
-(403) past the limit, with two disjoint rules in `deploy/vercel/firewall/`.
-Byte reads, `^/api/public/resource-share/(?:file|assets/[0-9]{1,9})$`, get 600
-(`resource-sharing-bytes.json`); every other path under
-`^/api/public/resource-share(?:/.*)?$` gets 120 (`resource-sharing.json`, whose
-negated second condition excludes the byte paths, so no request counts against
-both and rule order does not matter). Byte reads come in bursts: a pdf opens
-with one `bytes=0-` stream plus a range read for each top-level page-tree kid
-the stream has not yet reached (pdf.js prefetches every kid of the root
-`/Pages`, so a flat-tree 200-page scan costs ~200), and an epub unit fetches
-every image at once. 600 holds a 200-read open plus a 150-image chapter
-(350) with 250 to spare. Summary and document are two requests an open, so 120
-leaves them ample. A flat-tree scan past ~600 pages still exceeds its limit
-(issue `public-share-pdf-open-burst-exceeds-waf-limit`).
+when enabled by a separately reviewed protection policy, application public api
+answers carry the security headers owned by `SHARE_SECURITY_HEADERS` and
+`next.config.ts`; `/s` is noindex, no-referrer and no-store under
+`publicReaderCsp`. application headers do not describe the tunnel's status-only
+refusal. anonymous sharing must not be reopened without replacing its retired
+provider rate limits.
 
 ## Web
 

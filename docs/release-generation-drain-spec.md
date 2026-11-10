@@ -38,7 +38,7 @@ chat intent before that. inspect durable jobs and accepted domain work together.
 
 ## owners, scope and invariants
 
-- release coordination belongs to `deploy/hetzner/deploy.sh` / `release.py`;
+- release coordination belongs to `deploy/release.sh` and `deploy/hetzner/release.py`;
   generation admission owns accepted commands; `jobs/worker.py` and
   `jobs/registry.py` own periodic scheduling/consumption; existing domain owners
   own cancellation, claims and settlement.

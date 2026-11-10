@@ -57,6 +57,7 @@ Primary variables for this app:
 - `PORT`, `HOSTNAME`, `NEXUS_WEB_TLS_CERT_FILE`, `NEXUS_WEB_TLS_KEY_FILE` (required by canonical serving; certificate inputs are pem paths)
 - `NEXUS_EXTENSION_REDIRECT_ORIGINS` (the firefox extension's one redirect origin)
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
+- `NEXUS_SOURCE_SHA` (the exact full source commit; captured at build and runtime)
 
 `make web` loads the live local auth settings written by `make dev` to `.dev-ports`.
 when running `bun run dev` directly, supply those settings in the environment or
@@ -111,12 +112,14 @@ Reference map for reader internals used in code comments:
 
 export the same local `APP_PUBLIC_URL`, `FASTAPI_BASE_URL`,
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXUS_ENV` for
-both commands. set `VERCEL_GIT_COMMIT_SHA` to the checkout's full head. then, from
+both commands. set `NEXUS_SOURCE_SHA` to the checkout's full head. then, from
 `apps/web`, run `bun run build` followed by `PORT=3000 HOSTNAME=127.0.0.1 bun run start`
 with the certificate/key paths above (use the port in the public origin).
 build prepares pdf.js and packages public/static assets; start runs the canonical
 http2 edge with next on a private loopback port. stop it before the static
 gate or a disposable invocation in this checkout.
 
-vercel's project root is `apps/web`; its `vercel.json` selects `bun run build:next`
-to prepare pdf.js and build next. the vercel adapter owns serverless packaging.
+production uses the same standalone package on the devbox behind a dedicated
+cloudflare tunnel. the [production runbook](../../deployment.md) owns sealed
+candidates, private origin trust, configuration publication and paired releases.
+there is one production frontend and no hosted preview path.

@@ -118,7 +118,7 @@ api: local-runtime-identity
 
 web: local-storage
 	cd apps/web && \
-		VERCEL_GIT_COMMIT_SHA="$$(git -C ../.. rev-parse HEAD)" \
+		NEXUS_SOURCE_SHA="$$(git -C ../.. rev-parse HEAD)" \
 		FASTAPI_BASE_URL=http://localhost:$(API_PORT) \
 		NEXUS_ENV=$${NEXUS_ENV:-local} \
 		PORT=$(WEB_PORT) HOSTNAME=127.0.0.1 \

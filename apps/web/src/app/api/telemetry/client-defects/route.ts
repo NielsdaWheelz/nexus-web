@@ -2,7 +2,7 @@
 // adds the release and names its own wire, so a stale tab's crash still lands.
 import { proxySession } from "@/lib/api/proxy";
 import { WIRE_REVISION } from "@/lib/api/wire.gen";
-import { vercelSourceSha } from "@/lib/env";
+import { sourceSha } from "@/lib/env";
 import { isRecord } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -25,7 +25,7 @@ export async function POST(request: Request): Promise<Response> {
   const forwarded = new Request(request.url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ...report, release: vercelSourceSha() }),
+    body: JSON.stringify({ ...report, release: sourceSha() }),
     signal: request.signal,
   });
   return proxySession(forwarded, "/telemetry/client-defects", "Json");

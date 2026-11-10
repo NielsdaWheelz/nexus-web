@@ -1264,7 +1264,7 @@ def main() -> int:
             "NEXT_PUBLIC_SUPABASE_ANON_KEY": status["PUBLISHABLE_KEY"],
             "FASTAPI_BASE_URL": api_origin,
             "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{extension_redirect}.extensions.allizom.org",
-            "VERCEL_GIT_COMMIT_SHA": source_sha,
+            "NEXUS_SOURCE_SHA": source_sha,
             "NEXT_TELEMETRY_DISABLED": "1",
             "NODE_ENV": "production",
             "HOSTNAME": "127.0.0.1",

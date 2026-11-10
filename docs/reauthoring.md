@@ -4,6 +4,14 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+devbox frontend hosting replaces the vercel coordinator, environment publisher,
+firewall declarations, project configuration and cli dependency with sealed web
+candidates and one prepare → backend → activate → check owner. public sharing
+reads are suspended at the frontend and api tunnels; product wire/schema and client
+storage stay unchanged. deployment tooling, configuration, generated lock changes
+and documentation are excluded from authored runtime counts. the source-identity
+rename retains one accessor with no compatibility path.
+
 finite foreground observation against `d855bf190`: -24 net authored runtime
 lines (1,179 added, 1,203 deleted), assigned once across 19 existing
 areas. passive streams, autonomous sync successors, notification-only hooks and
@@ -942,7 +950,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | content index | 1,438 | reauthored #559 | x threads +46 · empty-resource lifecycle +4 · media controls +8 · contained works +435 · x captures: one fragment index per capture; no post/thread media chunks · highlight annotations: closed note/highlight publication owner · finite observation -2 | keep |
 | search pane | 892 | reauthored #592 | #646 -284 · #651 +50 · resource-first search +11 · #679 +1 · shift-open +1 · reference interaction -26 · unsaved work -1 · collection loading +5 · notes re-slice (server) +0 · media controls -8 · durable writing -1 · native control cutover · podcast action parity · bounded indexes +19 · resource menu parity · indexed search (bounded integrated checks pass) · pane controls -20 · pane query overflow +0 · frozen excerpts · highlight annotations: winning field label and destination · feedback homes -5 | keep |
 | find in pane | 856 | reauthored #509 | #652 +76 · #578 +9 · resource insertion +1 · native control cutover · bounded indexes +1 · fork gesture -14 · pane controls -12 · feedback homes -5 | keep |
-| release and backup tooling | 833 | not yet | hosted backend publication +0 authored runtime · nightly backups +126 · generation quiescence: stopped census and exact-id pre-mutation restoration (+268 controller lines; deployment tooling excluded from runtime count) | later tooling rewrite remains separate |
+| release and backup tooling | 833 | not yet | hosted backend publication +0 authored runtime · nightly backups +126 · generation quiescence: stopped census and exact-id pre-mutation restoration (+268 controller lines; deployment tooling excluded from runtime count) · devbox web candidate/coordinator replaces vercel; backend backup/migration owner retained | later tooling rewrite remains separate |
 | reader: transcripts | 652 | partial: web #535 | shift-open +27 · media controls -40 · native control cutover · feedback homes -13 · playback bar +1 | reader python read (13b, deferred) |
 | android share page | 653 | partial: web #600 | #670 -1 · unsaved work +1 · durable writing +21 · libraries retention +21 · dropdown primitives +1 · feedback homes +17 · import intake +0 · outward import runtime -123 | android slice (late) |
 | connections | 514 | reauthored #525 | #536 +8 · connection actions -47 · libraries retention +11 · native control cutover · feedback activity · pane controls +24 · connections scroll: mentions reuse their held projection · feedback homes +124 · outward import runtime +0 · finite observation +12 | keep (earlier rewrite) |

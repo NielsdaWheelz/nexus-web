@@ -44,11 +44,11 @@ export function isDeployed(): boolean {
 }
 
 /** The exact commit this deployment serves (the Makefile sets it locally). */
-export function vercelSourceSha(): string {
-  const sha = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
+export function sourceSha(): string {
+  const sha = process.env.NEXUS_SOURCE_SHA ?? "";
   if (!/^[0-9a-f]{40}$/.test(sha))
     throw new Error(
-      "VERCEL_GIT_COMMIT_SHA must be exactly 40 lowercase hex characters",
+      "NEXUS_SOURCE_SHA must be exactly 40 lowercase hex characters",
     );
   return sha;
 }

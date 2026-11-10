@@ -2,13 +2,13 @@
 
 This is the sole production runbook. Nexus uses a planned no-use window and one
 human-triggered release. Do not mutate production Compose services, the host
-`current` pointer, or Vercel aliases outside the owners named here.
+`current` pointer, or frontend service selection outside the owners named here.
 
 ## Production shape
 
 | Capability | Production owner |
 |---|---|
-| Frontend and BFF | Vercel project `nexus-web` |
+| frontend and bff | devbox `nexus-web.service`, through its dedicated cloudflare tunnel |
 | API, interactive worker, background worker | Hetzner Compose project `nexus` |
 | Product database | Hetzner Postgres with pgvector |
 | Object storage, database backups | Cloudflare R2 |
@@ -20,13 +20,34 @@ Public hosts are `nexus.nielseriknandal.com` (frontend) and
 as `nexus@nexus-prod` over tailscale. its public address is transport only;
 provider and host firewalls admit only tailscale's encrypted udp transport.
 
-`deploy/cloudflare/tunnel-config.json` owns the public route and
-`deploy/cloudflare/api-rules.json` owns api-only waf/cache behavior. visitors use
+`deploy/cloudflare/tunnel-config.json` owns the api public route, including a
+503 refusal for `/public/resource-share` and its descendants during the bridge.
+all frozen public-share handlers construct this canonical backend path, so this
+resource boundary also closes next.js internal aliases. the caddy route and
+backend application remain unchanged.
+
+`deploy/cloudflare/api-rules.json` owns api-only browser-check/cache behavior.
+`deploy/cloudflare/nexus-managed-waf.json` owns the single managed-waf execution
+for both nexus hostnames; cloudflare permits one zone deployment of that ruleset.
+the shared rule retains its immutable provider reference `nexus_api_free_managed_waf`. visitors use
 the public website normally. the shared fleet grants policy belongs to
 `dev-server`; production receives operator ssh but no peer application access.
 
-The release identity is one full lowercase Git `source_sha`. It binds the Vercel
-deployment, the API and worker image digests, and the expected Alembic revision.
+`deploy/cloudflare/frontend-tunnel-config.json` and `frontend-rules.json` own
+the frontend hostname. its separate tunnel reaches only `127.0.0.1:3443` on
+`dev-server`; no public port forwarding or cloudflare access login is used.
+anonymous `/api/public/resource-share` reads and suffixes return status-only 503.
+the tunnel first refuses decoded dot segments, repeated slashes and backslashes
+with503, including on unrelated web paths; these noncanonical urls lose framework
+redirects/404. canonical paths, ordinary filenames and query strings keep their
+application meaning. this prevents path normalization from bypassing sharing refusal.
+`/s` keeps its existing failure presentation; person sharing and stored tokens
+remain intact. public-link controls still produce temporarily unusable links.
+there is no alternate frontend origin or hosted preview path.
+
+the release identity is one full lowercase git `source_sha`. it binds the web
+source, api and worker image digests, and expected alembic revision. a web
+candidate additionally binds archive bytes, captured configuration and node version.
 
 ## capacity contract
 
@@ -58,8 +79,9 @@ qualification remains open in the
 
 ## Non-negotiable rules
 
-- `deploy/hetzner/deploy.sh <source-sha>` is the only application release
-  entrypoint. It converges the backend and then binds the frontend.
+- `deploy/release.sh <candidate-manifest.json>` is the only application release
+  entrypoint. it prepares web, converges the matching backend, activates web and
+  checks the exact candidate. it never builds implicitly or changes dns.
 - The release is **linear and idempotent**. There is no attempt state, no
   resume mode and no rollback settlement: after a failure, repair the named
   cause and rerun the same command. `/var/lib/nexus/releases/current` records
@@ -84,24 +106,18 @@ qualification remains open in the
 
 ## Operator prerequisites
 
-Install the repository's locked dependencies and authenticate `gh`, SSH and
-Vercel. the release needs `curl`, `gh`, `git`, `jq`, `python3`, `scp`, `ssh`,
-`timeout`, `uv`, the installed locked backend environment at `python/.venv`,
-and the locked vercel cli under `apps/web/node_modules`. the controller uses
+install the repository's locked dependencies and authenticate `gh` and ssh.
+the release needs `curl`, `gh`, `git`, `python3`, `ssh`, `uv`, and the installed
+locked backend environment at `python/.venv`. the controller uses
 `uv run --frozen --no-sync`; a release never creates or updates dependencies.
 
-```bash
-export VERCEL_TOKEN=<vercel-token>
-```
-
 `gh` supplies GitHub credentials; ssh to `nexus@nexus-prod` must be
-non-interactive with passwordless `sudo` on the host.
+non-interactive with passwordless `sudo` on the host. the same is required for
+`dev-server`, whose web owner is installed at `/opt/nexus-web/control/release.py`.
 
 production coordinates are committed, not ambient: ssh `nexus@nexus-prod`,
-web `nexus.nielseriknandal.com`, Vercel project `nexus-web` /
-`prj_WFC4SZpNF9YV5DpHpc4EjctAS8zs`, team `niels-erik-nandals-projects` /
-`team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing a coordinate is a reviewed
-infrastructure change, not a release flag.
+frontend ssh `dev-server`, web `nexus.nielseriknandal.com`.
+changing a coordinate is a reviewed infrastructure change, not a release flag.
 
 **After any reboot, unlock the Codex credential volume before releasing.** The
 boot guard leaves `/srv/nexus/codex-state` root-owned and mode `000` until its
@@ -115,9 +131,8 @@ newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
 2 GiB free under `/`.
 preflight measures each of these; after application and connector image pulls, the release
 requires the same 2 gib disk reserve again before stopping writers.
-Vercel custom-domain auto-assignment must stay
-disabled and Vercel Authentication must protect previews only, so the staged
-production-target deployment is publicly probeable before promotion.
+the frontend candidate is qualified on private port 3444 before activation.
+only the selected candidate on 3443 has a public tunnel route.
 
 the api has a 384 MiB memory ceiling with container swap disabled. the eight
 service ceilings total 2352 MiB; these are independent limits, not reserved
@@ -229,15 +244,95 @@ publication neither admits native capture lanes nor captures nexus chats.
 ## Release
 
 ```bash
-VERCEL_TOKEN=... ./deploy/hetzner/deploy.sh <source-sha>
+./deploy/release.sh /private/candidate/manifest.json
 ```
 
-`deploy.sh` proves the checkout, selects the single `READY` production-target
-Vercel deployment CI built for that exact SHA, and proves its staged
-`/version` serves exactly `{"source_sha": <sha>}` with
-`Cache-Control: no-store`. It then runs the backend release, and only afterwards
-promotes that exact deployment, assigns the custom domain, polls the alias until
-it binds, and re-proves the public `/version`.
+the manifest must sit beside its original `app.tar.gz` and private `runtime.env`
+on the controller machine. the coordinator derives its source from that manifest,
+requires a clean matching checkout merged into freshly fetched `origin/main`,
+and checks the archive/configuration digests before transfer. a remote build's
+three sealed files must first be copied privately to the controller; no rebuild
+or source label substitutes for those bytes.
+
+one ssh session holds `/run/lock/nexus-web-release.lock` on the devbox for the
+whole transfer → prepare → backend → activate → check sequence. a competing
+release refuses immediately. losing the lock connection stops the coordinator's
+current child and refuses further phases; inspect both hosts before retrying.
+the backend retains its independent backup lock. no helper reacquires the web lock.
+
+the web owner installs and probes the candidate before backend mutation. after
+the backend converges, activation requires its live source to match, stops web,
+atomically selects the candidate and proves local h2/identity. the final check
+proves selected bytes/configuration/process identity and public `/version` with
+`Cache-Control: no-store`, alongside backend identity. only then does the
+coordinator print `released`. this command does not establish installed-client
+journeys. the first complete paired live run remains a gate in
+`docs/issues/release-finite-observation.md` until actually qualified.
+
+### web candidates and host ownership
+
+on linux/x64, publish a private frontend environment outside the clean source
+checkout and build once:
+
+```bash
+python3 deploy/web/publish-env.py <source-sha> /private/frontend.env
+sudo systemd-run --unit=nexus-web-build --wait --pipe \
+  --property="User=$(id -un)" --setenv="HOME=$HOME" \
+  --property=MemoryMax=3G --property=MemorySwapMax=0 \
+  --property=RuntimeMaxSec=1800 \
+  "$PWD/deploy/web/build.sh" /clean/application-checkout /private/frontend.env
+```
+
+the publisher reads only `deploy/env/env-prod` and `env-prod-frontend`; it never
+restarts a service. the builder uses private pinned node 22.23.2 and bun 1.3.14
+under `/opt/nexus-web/`, leaving shared workstation runtimes unchanged. use the
+same captured application environment at build and runtime. every application
+configuration change requires an explicit new candidate, even for the same source.
+
+`manifest.json` contains exactly `source_sha`, `archive_sha256`, `config_sha256`
+and `node_version`. sorted compact json with one final newline names the candidate
+by its sha256. `/srv/nexus-web/releases/<digest>/` retains the original archive,
+manifest, private runtime environment and unpacked read-only `app/`.
+`/srv/nexus-web/current` selects one directory; only its separate
+`/var/cache/nexus-web/<digest>/` cache is writable by the application.
+
+host provisioning uses `sudo deploy/web/install.sh` from the reviewed tooling
+checkout under the release lock. it installs checksummed node22.23.2, bun1.3.14
+and cloudflared2026.10.4, private trust, accounts and units; it starts nothing.
+publish the dedicated connector token as `/etc/nexus-web/cloudflared-token`,
+root:nexus-web-tunnel0640. after the first candidate and connector qualify, enable
+both units with `systemctl enable nexus-web.service nexus-web-tunnel.service` and
+verify `systemctl is-enabled`. renewals and tooling changes use these same owners.
+
+`nexus-web.service` and `nexus-web-tunnel.service` have distinct non-login users,
+1 gib and 128 mib memory ceilings respectively, and no swap. the build is capped
+at 3 gib separately. qualify build/runtime overlap and ordinary browser load;
+these ceilings are not a capacity guarantee. devbox contention or downtime affects
+frontend availability; there is no failover. the tunnel's scoped token and public
+origin certificate trust grant no application or cloudflare management credentials.
+
+the origin certificate covers the canonical hostname and 127.0.0.1. only probes
+and the connector trust `/etc/nexus-web/tls/cert.pem`; the private key remains
+application-only at `key.pem`. renew the one-year certificate and replace its
+paired trust before expiry, then restart/probe both services. public tls belongs
+to cloudflare; direct ingress and connector metrics remain private.
+
+cloudflare bypasses shared caching for the frontend and skips browser-only checks
+while retaining managed waf. signed uploads/downloads and playback stay on their
+existing storage/publisher origins. remaining proxied images, document json,
+streams and slow reading-copy requests must fit the actual plan's media, size
+and timeout limits. managed ingress changes require actual canonical-route proof;
+local h2 or connector health alone does not prove public routing.
+
+`prepare <candidate-directory>`, `activate <installed-manifest>` and
+`check <installed-manifest>` are internal host operations under the outer lock.
+check is read-only. failure before backend mutation leaves serving web untouched;
+later failure names its phase and requires forward repair with the selected
+candidate. never restore an older frontend against a newer backend or edit a
+sealed candidate in place. the one-time unchanged-backend recovery is separate
+from this normal paired release command.
+
+### backend release
 
 `deploy/hetzner/release.py` is the backend release, top to bottom. it holds the
 host backup lock from before preflight until it exits (see
@@ -588,8 +683,8 @@ Postgres or Caddy image upgrades, host replacement, R2 policy changes and
 provider configuration changes are separate reviewed operations, not release
 flags. Postgres and Caddy images are pinned by digest in the published config;
 changing one is a config publication followed by a release. Permanent R2 policy
-owners are under `deploy/cloudflare/`; Vercel environment publication is
-`deploy/vercel/sync-env.sh`.
+owners are under `deploy/cloudflare/`; frontend configuration publication is
+`deploy/web/publish-env.py`.
 
 Supabase Auth configuration (hosted refresh rotation and its reuse interval) is
 no longer verified by the release. Review it in the Supabase dashboard when auth
@@ -607,15 +702,19 @@ deleting archives outside it is a reviewed operator decision.
 | Backend artifact | `docker/Dockerfile.backend` |
 | Candidate manifest contract | `python/nexus/release_artifact.py` |
 | Release | `deploy/hetzner/release.py` |
-| Release entrypoint and frontend binding | `deploy/hetzner/deploy.sh` |
+| release coordinator | `deploy/release.sh`, `deploy/web/controller.py` |
+| web artifact and host operations | `deploy/web/artifact.py`, `build.sh`, `build.py`, `release.py` |
+| web provisioning and services | `deploy/web/install.sh`, `nexus-web.service`, `nexus-web-tunnel.service` |
 | Production topology and isolation | `deploy/hetzner/docker-compose.yml` |
 | Codex credential-state boot guard | `deploy/hetzner/codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
 | Nightly backup | `deploy/hetzner/nightly-backup.sh`, `nexus-nightly-backup.service`, `nexus-nightly-backup.timer` |
-| api public tls, routing and waf/cache | `deploy/cloudflare/tunnel-config.json`, `deploy/cloudflare/api-rules.json` |
+| api public tls, routing and browser-check/cache policy | `deploy/cloudflare/tunnel-config.json`, `deploy/cloudflare/api-rules.json` |
+| frontend public routing and browser-check/cache policy | `deploy/cloudflare/frontend-tunnel-config.json`, `deploy/cloudflare/frontend-rules.json` |
+| shared nexus managed waf | `deploy/cloudflare/nexus-managed-waf.json` |
 | private api proxy | `deploy/hetzner/Caddyfile` |
 | Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
 | Streamed database backup and retention | `python/nexus/release_backup.py` |
-| Vercel config publication | `deploy/vercel/sync-env.sh` |
+| frontend config publication | `deploy/web/publish-env.py` |
 | Oracle corpus seed | `python/nexus/services/oracle/corpus.py` (`seed`) |
 | Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |

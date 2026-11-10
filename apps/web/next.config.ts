@@ -5,9 +5,8 @@ import {
 } from "./src/lib/security/headers";
 import { getEnv } from "./src/lib/env";
 
-// Fail the deploy, not the request: a staging/prod build with missing/invalid env aborts
-// `next build`, so Vercel never promotes the bad artifact and the last-good deployment keeps
-// serving. Local/test builds keep local defaults.
+// A staging/prod build rejects missing or invalid configuration before an
+// artifact can be prepared. Local/test builds keep local defaults.
 const env = getEnv();
 
 const nextConfig: NextConfig = {
