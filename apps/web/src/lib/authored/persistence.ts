@@ -138,7 +138,7 @@ export class Persistence {
       const cursor = raw.at(-1)?.cursor_json;
       next = typeof cursor === "string" ? cursor : last.resource.ref;
     }
-    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: typeof raw[0]?.previous_cursor === "string" ? raw[0].previous_cursor : null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
+    return { store_revision: (await this.replica()).store_revision, rows, next_cursor: next, previous_cursor: null, binding_id: null, canonical_source_ref: null, positions: [], children: [], scope_available: true, daily_index: null, outline_windows: null };
   }
   async write(states: MergeResult) {
     for (const state of states.resources) {

@@ -73,7 +73,7 @@ accepted rows on refresh failure and publish recovery outside the content flow;
 retry retains the incident, action and accepted same-query prefix until settlement.
 account, query and null changes never borrow another read's rows. direct runtime,
 reader, media and title subscribers explicitly retain global failure reporting.
-all authored pane locators retain their canonical title subscriptions. the active
+standalone authored pane locators retain their canonical title subscriptions. the active
 root separately publishes its literal display label through pane chrome; previews
 and unfinished input never become acknowledged workspace hints.
 `useAuthoredPrefix` owns one revision-consistent paginated read for both the
@@ -140,9 +140,10 @@ text and selection offsets derive from the shared projection.
 
 ordinary resources use fresh client uuids. daily identity is account plus local
 date; known bindings preserve seeded page ids, unseen days derive uuid5. opening
-a day writes nothing. an empty stored title displays its date-derived default
-without inserting that default into the title crdt. title storage has no display
-length ceiling.
+a day writes nothing. standalone captions and list labels use a date-derived
+default for an empty stored title without inserting it into the title crdt.
+the journal keeps its date heading separate and hides the blank authored title.
+title storage has no display length ceiling.
 
 links are relationships, never ownership. explicit unlink preserves endpoints;
 deleting a page, note or highlight never consumes an independent related note.

@@ -414,7 +414,6 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             cursor = if (record.has("cursor_json")) record.getString("cursor_json") else last.getJSONObject("resource").getString("ref")
         }
         return result.put("rows", output).put("next_cursor", cursor)
-            .put("previous_cursor", if (records.length() > 0 && records.getJSONObject(0).has("previous_cursor")) records.getJSONObject(0).opt("previous_cursor") else JSONObject.NULL)
     }
     fun close() {
         var failure: Throwable? = null

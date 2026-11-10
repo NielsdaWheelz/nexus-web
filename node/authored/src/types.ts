@@ -75,7 +75,6 @@ export type AuthoredQuery =
   | { kind: "outline_windows"; ref: ResourceRef; ranges: OutlineRange[]; excluded_link_ids: string[]; entering_link_id: string | null }
   | { kind: "outline_children"; occurrences: OutlineChildrenOccurrence[] }
   | { kind: "positions"; ref: ResourceRef; exclude_link_id: string | null; at: PositionQuery }
-  | { kind: "adjacency_window"; ref: ResourceRef; link_id: string; cursor: string | null; limit: number }
   | { kind: "binding"; key: SemanticKey }
   | { kind: "resource"; ref: ResourceRef }
   | { kind: "excerpt"; ref: ResourceRef; reading_ref: string | null }

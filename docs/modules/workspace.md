@@ -60,7 +60,7 @@ forward}, secondary}` with its inspector embedded. `primary_width_px: null` mean
 column changes, and only a user resize stores a number. each visit stores
 `{id, href, title_hint}`; its nullable hint is settled display evidence, not a
 canonical title. recently closed panes, mementos, visit data, the transient
-inspector and daily-page publications are not persisted.
+inspector are not persisted.
 
 python owns the shape and validates every save and every stored read
 ([schema](../../python/nexus/schemas/workspace_session.py),

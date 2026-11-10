@@ -1035,10 +1035,11 @@ export class OutlineController {
         let refusedEntry = false;
         if (entry && entered && this.reading) {
           const held = this.reading.rows.get(entry.row);
-          let available = false;
-          if (entry.row === this.pending.root_id) available = entered.window.rootResource?.visible === true || !this.reading.rootVisible && this.prelude.some(intent =>
+          const rootAvailable = entered.window.rootResource?.visible === true || !this.reading.rootVisible && this.prelude.some(intent =>
             intent.kind === "restore_resource" && intent.ref === this.rootRef || intent.kind === "create_page" && intent.ref === this.rootRef && provesEmptyOutline(entered.window));
-          else if (held?.seed) available = provesEmptyOutline(entered.window);
+          let available = false;
+          if (entry.row === this.pending.root_id) available = rootAvailable;
+          else if (held?.seed) available = rootAvailable && provesEmptyOutline(entered.window);
           else if (held?.link) {const link = held.link.link_id; available = entered.window.rows.some(row => row.link?.link_id === link && row.resource.ref === held.ref);}
           this.readingEntry = null;
           if (available) {

@@ -354,11 +354,13 @@ export function createPaneReturnMemento(guard: WorkGuard) {
           if (findAnchor(port.content, target) !== null) continue;
           return isReady(port) ? "missing" : "pending";
         }
-        const position = entry.geometry.read()?.position(target.id);
-        if (position?.kind === "failed") return "failed";
+        const frame = entry.geometry.read();
+        if (frame === null) return "pending";
+        const position = frame.position(target.id);
+        if (position.kind === "failed") return "failed";
         const key = anchorKey(target);
         if (!restore.mounted.has(key)) restore.mounted.set(key, entry.geometry.demand(target.id));
-        if (!entry.ready || !entry.geometry.layoutReady() || !position || position.kind === "pending") return "pending";
+        if (!entry.ready || !entry.geometry.layoutReady() || position.kind === "pending") return "pending";
         if (position.kind === "missing") return "missing";
       }
       return "ready";
@@ -367,7 +369,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     if (eyeLine !== null) {
       const state = admit(eyeLine, eyeLine.parents);
       if (state === "failed") return finish(paneId, false);
-      if (state === "pending") { place(port, memento); return; }
+      if (state === "pending") return;
       if (state === "missing") {
         const next = survivingAnchor(port, eyeLine, eyeLine.parents, memento.anchors);
         memento.eyeLine = next === null ? null : {...next, offset: eyeLine.offset, parents: parentsFor(port, next)};
@@ -387,9 +389,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
     const ready = () => pending.get(paneId) === restore && scrollports.get(paneId) === port &&
       (memento.eyeLine !== null || memento.focus?.anchor ? bodyReady(port) : isReady(port)) &&
       frames(port).every(entry => entry.geometry.layoutReady());
-    if (!ready()) return;
-    place(port, memento);
-    if (restore.frame !== null) return;
+    // The scheduled frame owns placement; publications only advance admission.
+    if (!ready() || restore.frame !== null) return;
     // Committed rows lay out over the next frames: place again, then focus.
     restore.frame = requestAnimationFrame(() => {
       if (!ready()) { restore.frame = null; return; }
@@ -399,6 +400,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         flushSync(() => { place(port, memento); finish(paneId, true); });
       });
     });
+    place(port, memento);
   }
 
   function requestRestore(paneId: string, port: Scrollport): void {
