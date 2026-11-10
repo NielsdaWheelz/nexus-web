@@ -1913,12 +1913,17 @@ export class OutlineController {
   async focusNote(ref: string, signal?: AbortSignal): Promise<boolean> {
     const lease = this.lease(); signal?.throwIfAborted();
     const row = [...this.rows.values()].find(row => row.ref === ref);
-    if (row) {await this.focus(row.row_id, "end", () => lease() && !signal?.aborted); return true;}
+    if (row) {
+      const anchor = this.anchorFor(row);
+      if (anchor !== null && lease()) this.revealAnchor(anchor, false);
+      await this.focus(row.row_id, "end", () => lease() && !signal?.aborted); return true;
+    }
     const store = await this.runtime.store, binding = await store.query({kind: "binding", key: {kind: "link", endpoint_a: [this.rootRef, ref].sort()[0]!, endpoint_b: [this.rootRef, ref].sort()[1]!}});
     if (!lease() || signal?.aborted || binding.binding_id === null) return false;
     const states = await store.readStates({refs: [], link_ids: [binding.binding_id], anchor_ids: [], source_refs: []});
     if (!lease() || signal?.aborted || !states.links.some(link => link.link_id === binding.binding_id && isVisible(link.add_vv, link.remove_vv))) return false;
-    const request = this.requests.get(this.pending.root_id)!; this.request({...request, anchor: binding.binding_id, cursor: null}, () => lease() && !signal?.aborted); this.notify();
+    const request = this.requests.get(this.pending.root_id)!; this.request({...request, anchor: binding.binding_id, cursor: null}, () => lease() && !signal?.aborted);
+    this.revealAnchor(binding.binding_id, false); this.notify();
     await this.focus(this.id(this.pending.root_id, binding.binding_id), "end", () => lease() && !signal?.aborted); return true;
   }
   focusFirst(): void {const row = [...this.rows.values()].find(row => !row.root && !row.gap); if (row) void this.focus(row.row_id, row.kind === "reference" ? null : {anchor: 1, head: 1});}

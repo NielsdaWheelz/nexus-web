@@ -610,6 +610,8 @@ a cold append keeps its existing focus intent through initial prefix admission,
 proves the absolute tail and births one real empty note on demand.
 journal append and title entries demand their date through the memento before
 entering the editor, retaining an offscreen day after its delivery is claimed.
+explicit note focus reveals its canonical occurrence through the same memento
+before the existing editor selects its text.
 compatible child proofs refresh independently of raw field admission. each
 proof identifies its resource, relationship, parent and traversal context;
 relocation discards availability but retains its revision watermark, so an
