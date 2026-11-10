@@ -69,11 +69,24 @@ def current_content_fingerprint(db: Session, *, media_id: UUID) -> str:
 
 
 def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> None:
-    """Find-or-create the head at the current fingerprint and enqueue its build.
+    """Automatically ensure a unit for an eligible current publication.
 
     Flushes, never commits: the enqueue stays atomic with the index publish that calls it.
     Every current head retains its intent, including a permanent refusal or held job.
+    Feed acquisition and daily preparation publish searchable text without admitting
+    generative enrichment. The published attempt owns that policy, not a later failed
+    attempt or another feed's reference to an independently captured article.
     """
+    if db.scalar(
+        text("""
+            SELECT 1 FROM reader_publications p
+            JOIN media_source_attempts a ON a.id=p.source_attempt_id
+            WHERE p.media_id=:m AND (a.source_type='feed_entry'
+                OR a.source_payload ? 'feed_id' OR a.source_payload ? 'daily_edition_id')
+        """),
+        {"m": media_id},
+    ):
+        return
     waiting, ready = db.execute(
         text(f"""
         SELECT count(*) FILTER (WHERE s.status IS NULL OR s.status NOT IN ('ready','no_text')

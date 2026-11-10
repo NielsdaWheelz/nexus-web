@@ -26,7 +26,7 @@ function placement(raw: unknown): Schema<"LibraryPlacementOut"> {
   const v = expectExactRecord(raw, ["library_id", "name", "order_revision", "relation", "blocked"], "placement");
   return { library_id: uuid(v.library_id), name: str(v.name), order_revision: expectOrderRevision(v.order_revision),
     relation: expectOneOf(v.relation, ["Absent", "Direct"], "relation"),
-    blocked: v.blocked === null ? null : expectOneOf(v.blocked, ["RequiresAdmin", "SystemManaged", "PodcastSubscription"], "blocked") };
+    blocked: v.blocked === null ? null : expectOneOf(v.blocked, ["RequiresAdmin", "SystemManaged", "FeedSubscription"], "blocked") };
 }
 function placements(raw: unknown): Schema<"LibraryPlacementsOut"> {
   const v = expectExactRecord(raw, ["removal_revision", "all_membership", "placements"], "placements");
@@ -34,7 +34,7 @@ function placements(raw: unknown): Schema<"LibraryPlacementsOut"> {
   return { removal_revision: expectOrderRevision(v.removal_revision), placements: expectArray(v.placements, placement, "placements"),
     all_membership: { library_id: uuid(all.library_id), order_revision: expectOrderRevision(all.order_revision),
       included: bool(all.included), retained: bool(all.retained),
-      remove_blocked: all.remove_blocked === null ? null : expectOneOf(all.remove_blocked, ["RequiresAdmin", "PodcastSubscription"], "remove blocked") } };
+      remove_blocked: all.remove_blocked === null ? null : expectOneOf(all.remove_blocked, ["RequiresAdmin", "FeedSubscription"], "remove blocked") } };
 }
 function contributor(raw: unknown): Schema<"ContributorCreditOut"> {
   const v = expectExactRecord(raw, ["contributor_display_name", "contributor_handle", "credited_name", "href", "ordinal", "raw_role", "role"], "credit");

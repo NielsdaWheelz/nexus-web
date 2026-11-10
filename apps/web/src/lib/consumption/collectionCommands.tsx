@@ -53,7 +53,7 @@ interface Inverse {
 }
 const inverseLabel = (target: CollectionTarget, state: Request["desired_state"], count: number, scope: string) => `Undo mark ${verb(target, state)} · ${count} item${count === 1 ? "" : "s"} · ${scope}`;
 const targetKey = (target: CollectionTarget) => JSON.stringify(target);
-const verb = (target: CollectionTarget, state: Request["desired_state"]) => target.kind === "Podcast"
+const verb = (target: CollectionTarget, state: Request["desired_state"]) => target.kind === "Feed" && target.feed_kind === "podcast"
   ? state === "finished" ? "played" : "unplayed"
   : state === "finished" ? "finished" : "unread";
 /** What the entry's press would do, as a fact. */
@@ -142,7 +142,7 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
       }));
       if (!current(entry, scope) || result === null) return;
       retire(entry);
-      publishChange("Consumption", "Podcasts");
+      publishChange("Consumption", "Feeds");
       if (entry.kind === "Undo") {
         if (entry.receipt === null) throw new Error("collection undo lost its acknowledged receipt");
         supersede(entry.receipt.items.map(item => ({ mediaId: item.media_id, revision: item.applied_override_revision + 1 })));
@@ -159,7 +159,7 @@ export function createCollectionCommands({ accountId, guard, outcome, fail, supe
       if (result.undo !== null && !superseded) retainUndo(entry, result.undo);
     } catch (error) {
       if (!current(entry, scope)) return;
-      if (isApiError(error) && error.sent) invalidateReads("Consumption", "Podcasts");
+      if (isApiError(error) && error.sent) invalidateReads("Consumption", "Feeds");
       const defect = !(error instanceof ProgressPreparationError) && ((!isApiError(error) && !isAbortError(error)) || isSameSystemApiDefect(error));
       if (defect) { fail({ error }); return; }
       handleUnauthenticatedApiError(error);

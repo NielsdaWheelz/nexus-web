@@ -104,6 +104,7 @@ def update_user_profile(db: Session, user_id: UUID, request: UpdateProfileReques
                 f"Display name cannot exceed {DISPLAY_NAME_MAX_LENGTH} characters",
             )
     with transaction(db):
+        lock_viewer(db, user_id)
         user = db.get(User, user_id)
         if user is None:
             # justify-defect: authenticated bootstrap guarantees the viewer's User row.
@@ -115,7 +116,11 @@ def update_user_profile(db: Session, user_id: UUID, request: UpdateProfileReques
                 # justify-defect: UpdateProfileRequest rejects supplied null and
                 # this branch only runs when the field was supplied.
                 raise AssertionError("validated calendar timezone is missing")
-            user.calendar_time_zone = request.calendar_time_zone
+            if user.calendar_time_zone != request.calendar_time_zone:
+                from nexus.services.suggestion_changes import record_input_change
+
+                user.calendar_time_zone = request.calendar_time_zone
+                record_input_change(db, owners=[f"user:{user_id}:calendar_time_zone"])
 
 
 def calendar_local_date(db: Session, user_id: UUID) -> date:

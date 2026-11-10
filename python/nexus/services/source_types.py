@@ -2,7 +2,7 @@
 
 A leaf over the history schemas: the background supervisor's queue hooks and the
 history seam read this vocabulary and must never import the ORM's heavy neighbours
-(boto3, httpx, lxml). The types mirror ``ck_media_source_attempts_source_type``.
+(boto3, httpx, lxml). This module owns the supported source names.
 """
 
 from __future__ import annotations
@@ -25,13 +25,14 @@ BROWSER_PDF_CAPTURE = "browser_pdf_capture"
 BROWSER_EPUB_CAPTURE = "browser_epub_capture"
 PODCAST_EPISODE_TRANSCRIPT = "podcast_episode_transcript"
 EMAIL_MESSAGE = "email_message"
+FEED_ENTRY = "feed_entry"
 
 TRANSCRIPT_SOURCE_TYPES = frozenset({PODCAST_EPISODE_TRANSCRIPT, YOUTUBE_VIDEO})
 REMOTE_FILE_SOURCE_TYPES = frozenset({REMOTE_PDF_URL, REMOTE_EPUB_URL})
 LOCAL_FILE_SOURCE_TYPES = frozenset(
     {UPLOADED_PDF_FILE, UPLOADED_EPUB_FILE, BROWSER_PDF_CAPTURE, BROWSER_EPUB_CAPTURE}
 )
-STORED_SOURCE_TYPES = LOCAL_FILE_SOURCE_TYPES | {BROWSER_ARTICLE_CAPTURE, EMAIL_MESSAGE}
+STORED_SOURCE_TYPES = LOCAL_FILE_SOURCE_TYPES | {BROWSER_ARTICLE_CAPTURE, EMAIL_MESSAGE, FEED_ENTRY}
 """Sources whose bytes exist only as the stored artifact: nothing to re-fetch."""
 EPUB_SOURCE_TYPES = frozenset({REMOTE_EPUB_URL, UPLOADED_EPUB_FILE, BROWSER_EPUB_CAPTURE})
 COUNTED_PROGRESS_SOURCE_TYPES = LOCAL_FILE_SOURCE_TYPES | REMOTE_FILE_SOURCE_TYPES

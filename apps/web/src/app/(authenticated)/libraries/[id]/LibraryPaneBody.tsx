@@ -9,11 +9,10 @@
 import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import * as Icon from "@/lib/ui/icons";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
-import LibraryPodcastsSection from "@/components/podcasts/LibraryPodcastsSection";
+import LibraryFeedsSection from "@/components/feeds/LibraryFeedsSection";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import CollectionView from "@/components/collections/CollectionView";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
-import { suggestionTargetId } from "@/lib/suggestions";
 import { useSuggestions } from "@/lib/useSuggestions";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -33,11 +32,13 @@ import { unstamped } from "@/lib/consumption/listening";
 import { catalogEntries } from "@/lib/catalog/selectors";
 import { LIVE_SOURCE } from "@/lib/catalog/types";
 import { remoteReady } from "@/lib/native/admission";
-import { type LibraryPodcastIndex } from "@/lib/podcasts/api";
+import { type LibraryFeedIndex } from "@/lib/feeds/api";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { PASSIVE_OBSERVATION_MS, WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
 import { indexPaneQuery } from "@/lib/panes/indexPaneQuery";
 import { useLibraryEntriesRead } from "@/lib/panes/indexPaneEntry";
@@ -77,7 +78,7 @@ import {
   usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
-import { podcastRefresh } from "@/lib/podcasts/paneState";
+import { feedRefresh } from "@/lib/feeds/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
@@ -138,15 +139,22 @@ function LibraryPane({ id }: { readonly id: string }) {
   const busy = indexReading(list);
   const retry = () => { void list.refetch().catch(() => {}); };
   const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library } : list;
-  const shows: ServerValue<LibraryPodcastIndex> = list.status === "ready" ? { ...list, data: list.data.podcasts } : list;
+  const shows: ServerValue<LibraryFeedIndex> = list.status === "ready" ? { ...list, data: list.data.feeds } : list;
+  const sourceWork = index !== null && (index.feeds.imports.some(operation => operation.work_in_flight)
+    || index.feeds.subscriptions.some(source => source.recurring.work_in_flight || source.recurring.history.work_in_flight
+      || source.imports.some(operation => operation.work_in_flight)));
+  // justify-polling: one aggregate owns both source cards and their incoming entries.
+  useIntervalPoll({ enabled: observing && remoteReady() && list.status === "ready" && list.source.kind === "live",
+    pollIntervalMs: sourceWork ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS,
+    onPoll: () => list.revalidate({ passive: true }) });
   // Publication belongs to the aggregate owner, with one baseline per exact view.
   const publicationKey = `${ctx.accountId}:${descriptor.key}`;
   const publicationData = raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh ? raw.data.data : null;
   const publication = useMemo(() => publicationData === null ? null : JSON.stringify([
     publicationData.items.map(entry => [entry.entry_id, entry.media_summary.media_id]), publicationData.order_revision,
-    publicationData.podcasts.order_revision,
-    publicationData.podcasts.subscriptions.map(show => [show.podcast.id, show.recurring.last_checked_at, show.imports.map(operation => [operation.id, operation.updated_at]).sort((a, b) => a[0].localeCompare(b[0]))]),
-    publicationData.podcasts.imports.map(operation => [operation.id, operation.updated_at]).sort((a, b) => a[0].localeCompare(b[0])),
+    publicationData.feeds.order_revision,
+    publicationData.feeds.subscriptions.map(show => [show.feed.id, show.recurring.last_checked_at, show.imports.map(operation => [operation.id, operation.updated_at]).sort((a, b) => a[0].localeCompare(b[0]))]),
+    publicationData.feeds.imports.map(operation => [operation.id, operation.updated_at]).sort((a, b) => a[0].localeCompare(b[0])),
   ]), [publicationData]);
   const observed = useRef<{ key: string; signature: string } | null>(null);
   useEffect(() => {
@@ -264,7 +272,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const execute = useCallback<PaneRefreshExecute>(
     async (context) => {
       const [result] = await Promise.all([
-        podcastRefresh({ kind: "Library", library_id: id })(context),
+        feedRefresh({ kind: "Library", library_id: id })(context),
         refreshSuggestionFeed(context.signal),
       ]);
       await refetchEntries().catch(() => {});
@@ -377,7 +385,8 @@ function LibraryPane({ id }: { readonly id: string }) {
       {readFeedback.announcement}
       <PaneSurface>
         {members.held}
-        <LibraryPodcastsSection library={library} source={shows} />
+        <LibraryFeedsSection library={library} source={shows} kind="podcast" />
+        <LibraryFeedsSection library={library} source={shows} kind="article" />
         <PlaybackSourceContext.Provider value={capture}>
         <CollectionView geometry="UniformIndex"
           returnScope="Library.Entries"
@@ -395,8 +404,8 @@ function LibraryPane({ id }: { readonly id: string }) {
             destination={suggestionDestination}
             suggestions={suggestions}
             returnScope="Library.Suggestions"
-            subscribe={target => ctx.overlays.open({ kind: "SubscribePodcast", target: { kind: "Canonical", podcast_id: suggestionTargetId(target) },
-              title: target.title, libraryId: library.is_default ? null : id, onAccepted: () => suggestions.acknowledge(target.ref) })}
+            subscribe={target => ctx.overlays.open({ kind: "SubscribeFeed", target: { kind: "Canonical", feed_id: target.feed_id },
+              title: target.title, feedKind: target.feed_kind, libraryId: library.is_default ? null : id, onAccepted: () => suggestions.acknowledge(target.ref) })}
           /> : null}
       </PaneSurface>
     </>

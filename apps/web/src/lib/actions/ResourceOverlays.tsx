@@ -1,15 +1,15 @@
 "use client";
 
 import { useLayoutEffect, useRef, type MouseEvent, type KeyboardEvent } from "react";
-import PodcastAcquisitionDialog from "@/components/podcasts/PodcastAcquisitionDialog";
-import EpisodeRemovalDialog from "@/components/podcasts/EpisodeRemovalDialog";
+import FeedAcquisitionDialog from "@/components/feeds/FeedAcquisitionDialog";
+import FeedEntryRemovalDialog from "@/components/feeds/FeedEntryRemovalDialog";
 import MediaRemovalDialog from "@/components/media/MediaRemovalDialog";
-import PodcastStopDialog from "@/components/podcasts/PodcastStopDialog";
+import FeedStopDialog from "@/components/feeds/FeedStopDialog";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import ResourceMetadataOverlay from "@/components/resources/ResourceMetadataOverlay";
 import CollectionConsumptionDialog from "@/components/collections/CollectionConsumptionDialog";
 import CollectionLecternDialog from "@/components/collections/CollectionLecternDialog";
-import PodcastLibrariesOverlay from "@/components/podcasts/PodcastLibrariesOverlay";
+import FeedLibrariesOverlay from "@/components/feeds/FeedLibrariesOverlay";
 import PodcastTranscriptDialog from "@/components/podcasts/PodcastTranscriptDialog";
 import PodcastSettingsOverlay from "@/components/podcasts/PodcastSettingsOverlay";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
@@ -81,7 +81,7 @@ export function ResourceOverlays({
       ) : null}
       {overlay?.kind === "CollectionConsumption" ? <CollectionConsumptionDialog key={overlay.key} selection={overlay.selection} desiredState={overlay.desiredState} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "CollectionLectern" ? <CollectionLecternDialog key={overlay.key} target={overlay.target} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
-      {overlay?.kind === "PodcastLibraries" ? <PodcastLibrariesOverlay key={overlay.key} target={overlay.target} title={overlay.title} successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "FeedLibraries" ? <FeedLibrariesOverlay key={overlay.key} target={overlay.target} feedKind={overlay.feedKind} title={overlay.title} successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "TranscribePodcastEpisodes" ? <PodcastTranscriptDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} state={overlay.state} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "LibrarySettings" ? (
         <LibrarySettingsDialog
@@ -97,11 +97,11 @@ export function ResourceOverlays({
           onClose={close}
         />
       ) : null}
-      {overlay?.kind === "SubscribePodcast" ? <PodcastAcquisitionDialog key={overlay.key} mode="follow" target={overlay.target} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
-      {overlay?.kind === "RemoveEpisodeFromAll" ? <EpisodeRemovalDialog key={overlay.key} mediaId={overlay.mediaId} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "SubscribeFeed" ? <FeedAcquisitionDialog key={overlay.key} mode="follow" target={overlay.target} feedKind={overlay.feedKind} title={overlay.title} libraryId={overlay.libraryId} onAccepted={overlay.onAccepted} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "RemoveFeedEntry" ? <FeedEntryRemovalDialog key={overlay.key} mediaId={overlay.mediaId} title={overlay.title} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
       {overlay?.kind === "RemoveMedia" ? <MediaRemovalDialog key={overlay.key} mediaId={overlay.mediaId} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
-      {overlay?.kind === "UnsubscribePodcast" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={overlay.libraryId} episodes="keep" successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
-      {overlay?.kind === "RemovePodcastEpisodes" ? <PodcastStopDialog key={overlay.key} podcastId={overlay.podcastId} title={overlay.title} libraryId={null} episodes="remove" returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "UnsubscribeFeed" ? <FeedStopDialog key={overlay.key} feedId={overlay.feedId} feedKind={overlay.feedKind} title={overlay.title} libraryId={overlay.libraryId} items="keep" successFocus={overlay.successFocus} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
+      {overlay?.kind === "RemoveFeedItems" ? <FeedStopDialog key={overlay.key} feedId={overlay.feedId} feedKind={overlay.feedKind} title={overlay.title} libraryId={null} items="remove" returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback} onClose={close} /> : null}
     </PaneReturnVisitScope>
   );
 }

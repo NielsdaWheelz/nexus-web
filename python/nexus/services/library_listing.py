@@ -1,7 +1,7 @@
 """Complete library entry indexes and their atomic pane aggregate.
 
 The caller owns one read-only repeatable-read snapshot for library detail, entries
-and the section owned by podcasts.subscriptions_query. Subscriptions never fold
+and the section owned by feeds.queries. Subscriptions never fold
 episodes, affect media counts, or participate in manual entry order.
 Publication order uses the full original calendar value, with undated works last
 in either direction. Feed release dates never stand in for original publication.
@@ -33,8 +33,8 @@ from nexus.services.collection_keyset import (
 )
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import primary_creator_rows_sql
+from nexus.services.feeds.queries import read_library_feed_index
 from nexus.services.library_entries import library_media_rows_sql, unfiled_media_ids_sql
-from nexus.services.podcasts.subscriptions_query import read_library_podcast_index
 
 
 def _nullable(column: str, direction: Direction, value: KeysetValueKind) -> tuple[SortKey, ...]:
@@ -199,7 +199,7 @@ def list_library_entries(
     )
     return LibraryEntriesIndexOut(
         library=library.out(viewer_id),
-        podcasts=read_library_podcast_index(db, viewer_id, library_id),
+        feeds=read_library_feed_index(db, viewer_id, library_id),
         items=[
             LibraryMediaEntryOut(
                 kind="media",

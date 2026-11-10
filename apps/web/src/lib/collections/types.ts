@@ -32,6 +32,7 @@ export interface OrderPresentation {
 export type CollectionItemKind =
   | "media"
   | "podcast"
+  | "feed"
   | "podcast_episode"
   | "library"
   | "contributor_work"
@@ -43,8 +44,9 @@ export type CollectionItemKind =
 export type CollectionActivity =
   | { readonly kind: "RemainingTime"; readonly modality: "Read" | "Listen"; readonly minutes: number }
   | {
-      readonly kind: "PodcastSync";
-      readonly status: Extract<Schema<"PodcastRecurringOut">["state"], "pending" | "running">;
+      readonly kind: "FeedSync";
+      readonly feedKind: "podcast" | "article";
+      readonly status: Extract<Schema<"FeedRecurringOut">["state"], "pending" | "running">;
     };
 
 export type CollectionContext =
@@ -53,7 +55,8 @@ export type CollectionContext =
   | { readonly kind: "Snippet"; readonly segments: readonly EmphasisSegment[] };
 
 export type ExceptionalStatus = {
-  readonly kind: "PodcastSync";
+  readonly kind: "FeedSync";
+  readonly feedKind: "podcast" | "article";
   readonly status: "failed";
 };
 
@@ -68,7 +71,7 @@ interface CollectionRowBase {
   readonly contributors: readonly ContributorCredit[];
   readonly publicationDate: string | null;
   readonly context: CollectionContext | null;
-  readonly activity: Extract<CollectionActivity, { kind: "PodcastSync" }> | null;
+  readonly activity: Extract<CollectionActivity, { kind: "FeedSync" }> | null;
   readonly exceptionalStatus: ExceptionalStatus | null;
   /**
    * The displayed resource's canonical identity and contextual More menu subject.
@@ -90,9 +93,9 @@ interface CollectionRowBase {
 
 export type CollectionRowView = CollectionRowBase & (
   | {
-      readonly kind: "podcast";
+      readonly kind: "podcast" | "feed";
       /** omission reserves no column; a null source still presents an initials tile. */
       readonly artwork?: { readonly imageUrl: string | null };
     }
-  | { readonly kind: Exclude<CollectionItemKind, "podcast">; readonly artwork?: never }
+  | { readonly kind: Exclude<CollectionItemKind, "podcast" | "feed">; readonly artwork?: never }
 );

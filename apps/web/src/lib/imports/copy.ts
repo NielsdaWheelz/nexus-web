@@ -213,6 +213,11 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     title: "no readable content was found.",
     explanation: null,
   },
+  E_FEED_PRIVATE_SOURCE: {
+    reason: "this source cannot authorize the matching article",
+    title: "the article is unavailable to this source’s readers.",
+    explanation: null,
+  },
   E_SOURCE_POSITION_UNMAPPABLE: {
     reason: "a reading spot has no clear match",
     title: "couldn’t refresh this source.",

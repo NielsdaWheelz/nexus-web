@@ -5,6 +5,7 @@ import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Failed } from "@/components/feedback/Fact";
+import OpmlImportsSection from "@/components/feeds/OpmlImportsSection";
 import { Ruling } from "@/components/feedback/Ruling";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsList, {
@@ -134,6 +135,7 @@ export default function ImportsPaneBody() {
   // Before the counts choose a view there are no list controls; held commands still stand.
   return <ImportCommandsProvider commands={commands}>
     {feedback}
+    <OpmlImportsSection />
     {view === null ? summary.status === "failed"
       ? <Failed error={summary.error} noun="imports" retry={{ run: refresh, busy: summary.retrying }} />
       : <Ruling />

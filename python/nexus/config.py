@@ -195,8 +195,8 @@ class Settings(BaseSettings):
     background_job_prune_succeeded_after_days: int = Field(7, ge=1)
     background_job_prune_dead_after_days: int = Field(30, ge=1)
     background_job_prune_batch_size: int = Field(100, ge=1)
-    podcast_refresh_due_schedule_seconds: int = Field(900, ge=1)
-    podcast_refresh_due_limit: int = Field(100, ge=1)
+    feed_refresh_due_schedule_seconds: int = Field(900, ge=1)
+    feed_refresh_due_limit: int = Field(100, ge=1)
 
     # Post Room: unless secret, slug, domain and owner are all set, /ingest/email answers 503.
     email_ingest_hmac_secret: str | None = None

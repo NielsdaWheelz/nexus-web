@@ -25,6 +25,7 @@ ResourceScheme = Literal[
     "external_snapshot",
     "contributor",
     "podcast",
+    "feed",
     "reader_apparatus_item",
     "passage_anchor",
 ]

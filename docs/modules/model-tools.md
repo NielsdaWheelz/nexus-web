@@ -24,6 +24,8 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
   provider-input revalidation or raw output dump. callers batch resource hydration.
   start supplies arguments only; result supplies its committed facts. saved reads
   alone carry current authorship/undo state. absent subject is not absent input.
+  source filing reports the admitted `feed.operation.state`; ordinary media and
+  queue filing report added/already present. admission does not mean import completion.
 - **plan**: plan id -> granted tool ids, in publication order: `NoModelTools`,
   `ChatReadAdditiveWrite`, `ChatMemoryRead`, `ChatMemoryReadSave`,
   `MetadataResearch`. Generation policy picks one; admission freezes it into the

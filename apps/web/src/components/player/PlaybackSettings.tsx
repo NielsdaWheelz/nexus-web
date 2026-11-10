@@ -35,7 +35,7 @@ export function usePlaybackSettings({ loaded, playbackSubject, preferences, open
 }) {
   const { accountId } = useAuthenticatedAccount();
   const podcastId = loaded?.source.descriptor.podcast_id ?? null;
-  const stamp = useChangeStamp("Podcasts");
+  const stamp = useChangeStamp("Feeds");
   const read = usePaneFreeServerValue({
     key: podcastId === null ? null : `podcast-settings:${accountId}:${podcastId}:${playbackSubject}`,
     stale: `${stamp}:${opening}`,

@@ -8,9 +8,8 @@ them; the web labels, orders, confirms and runs them through each verb's owner.
 resource subjects share those verbs. both row families use that same resource
 ellipsis; an outline bullet separately exposes its exact relationship commands.
 
-podcasts and libraries share metadata and finite collection actions through the
-same catalog/projectors. `Metadata` selects an explicit media, podcast, library or
-supplied discovery subject; it never treats collection ids as media ids. podcast
+podcast sources, article feeds and libraries share metadata and finite collection
+actions through the same catalog/projectors. `Metadata` selects an explicit media, feed, library or supplied discovery subject; it never treats collection ids as media ids. podcast
 metadata is local catalog inspection; discovery metadata names its directory
 provenance. library details contains native collection facts. for podcasts, source
 means the supplied homepage; feed is a separate native rss link. absent facts grant
@@ -41,7 +40,7 @@ selection scope while execution keeps the same catalog command ids.
 - `GET /resource-items/{ref}/actions` → `ResourceActionsOut {ref, label, activation, missing,
   actions}` (`services/resource_items/actions.py`). each action is `{kind, blocked, …facts}`;
   `blocked` is `PermissionDenied | Locked | Processing | TemporarilyUnavailable |
-  PodcastSubscription | null`.
+  FeedSubscription | null`.
   inapplicable verbs are omitted; forbidden ones are present and blocked. an invisible ref
   answers 200 `missing: true`, no actions, a `none` activation. a bad ref is 400. a media
   carries at most one `Recovery` per import obligation (source, then search); the web keys
@@ -78,7 +77,7 @@ selection scope while execution keeps the same catalog command ids.
   order and confirmations, keyed by the server's kind; `project.tsx` turns facts into
   descriptors; `ResourceActionsProvider` confirms, tracks busy, reports failures and hosts
   the overlays (metadata, library settings, podcast settings and fixed
-  podcast addition, unsubscribe, cleanup and episode-removal reviews).
+  feed addition, unsubscribe, cleanup and retained-entry removal reviews).
   `ResourceActionPresentation` renders overlays and throws reported action defects
   beneath the existing workspace boundary. overlay state, identity-gated dismissal,
   account command owners and their feedback remain above containment. a review

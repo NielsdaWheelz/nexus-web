@@ -92,12 +92,20 @@ def engagement_gate(
     from nexus.services.suggestions import lectern_anchor_refs
 
     db.flush()
-    show = db.scalar(
-        text("SELECT podcast_id FROM podcast_episodes WHERE media_id = :id"), {"id": media_id}
-    )
-    own = {ResourceRef("media", media_id), *([ResourceRef("podcast", show)] if show else [])}
+    feeds = db.execute(
+        text("""SELECT fe.feed_id,f.kind FROM feed_entries fe
+        JOIN feeds f ON f.id=fe.feed_id WHERE fe.media_id=:id"""),
+        {"id": media_id},
+    ).all()
+    own = {
+        ResourceRef("media", media_id),
+        *(
+            ResourceRef("podcast" if feed.kind == "podcast" else "feed", feed.feed_id)
+            for feed in feeds
+        ),
+    }
     lists = [lectern_anchor_refs(db, viewer_id=viewer_id)]
-    if show is None or listening:
+    if not any(feed.kind == "podcast" for feed in feeds) or listening:
         lists += [
             library_anchor_facts(db, viewer_id=viewer_id, library_id=library_id, limit=1)
             for library_id in engagement_anchor_library_ids(

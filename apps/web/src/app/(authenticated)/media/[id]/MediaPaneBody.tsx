@@ -194,6 +194,20 @@ function MediaRoute({ id }: { readonly id: string }) {
   const presented = usePaneIsPresented();
   const observing = useObservationDemand(presented);
   const observation = useMediaObservation(id, presented);
+  const { ctx } = useActionRuntime();
+  const { fail, say } = useOutcome();
+  const linkedAttempt = observation.status === "ready" ? observation.observation?.processing.linked_article_attempt_id ?? null : null;
+  const attemptedLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!observing || !admitted || !ctx.online || linkedAttempt === null || attemptedLink.current === linkedAttempt) return;
+    attemptedLink.current = linkedAttempt;
+    void ctx.admissions.admit({ kind: "SourceRefresh", mediaId: id, request: { expected_attempt_id: linkedAttempt } })
+      .then(result => {
+        if (result.kind !== "LocalFailure") return;
+        if (result.error !== null) fail(result.error, result.line.fact);
+        else say(result.line, result.verbs ?? undefined);
+      }).catch(error => { fail(error, "couldn’t open the linked article."); });
+  }, [admitted, ctx, fail, id, linkedAttempt, observing, say]);
   const metadata = observation.status === "ready" ? observation.observation?.metadata_enrichment ?? null : null;
   const operation = metadata?.operation;
   const titleJob = operation?.purpose === "title" ? operation.job_id : null;
@@ -202,7 +216,8 @@ function MediaRoute({ id }: { readonly id: string }) {
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
     enabled: observing,
-    stale: JSON.stringify([metadataStamp, metadata?.last_enriched_at ?? null, titleJob]),
+    stale: JSON.stringify([metadataStamp, metadata?.last_enriched_at ?? null, titleJob,
+      observation.status === "ready" ? observation.observation?.processing.reader_generation ?? null : null]),
     load: async (signal) =>
       mediaDetailFromResponse(
         await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
@@ -902,6 +917,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
 
   // ---- render ----
   const sourceLine = mediaSourceLine(media.processing_status, media.last_error_code);
+  const feedSourceHref = media.canonical_source_url;
   const transcriptChrome = transcript ? (
     <TranscriptChrome media={media} paneActive={paneActive} videoAt={videoAt} onSeek={seek} reader={reader}
       transcriptReaderKey={snapshot?.transcript_reader_key ?? null} />
@@ -997,6 +1013,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
                 ? { fact: "these saved threads overlap and need repair.", reason: "both are kept." }
                 : { fact: "couldn’t refresh from x.", reason: "the saved copy is kept." }} /> : null}
             {doc?.kind === "text" && doc.transcriptCoverage === "partial" ? <Fact line={{ fact: "this transcript is partial." }} /> : null}
+            {doc?.kind === "text" && detail.reader_generation === Number(doc.identity.slice(1).split(":", 1)[0])
+              && (media.feed_content_extent === "excerpt" || media.feed_content_extent === "unknown") ? <Fact
+                line={{ fact: media.feed_content_extent === "excerpt" ? "feed excerpt" : "feed content; full article not yet available" }}
+                verbs={feedSourceHref === null ? undefined : [{ label: "open source", href: feedSourceHref,
+                  onActivate: event => activateTargetLink({ event, runtime, target: { href: feedSourceHref } }) }]} /> : null}
           </>
         }
         end={

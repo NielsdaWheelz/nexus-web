@@ -182,7 +182,7 @@ _SOURCES = {
     ),
     "podcast": _source(
         "podcast",
-        "podcasts p LEFT JOIN ("
+        "feeds p LEFT JOIN ("
         + contributor_credits_rollup_cte_sql("podcast_id")
         + ") credits ON credits.podcast_id=p.id",
         identity="p.id",
@@ -192,6 +192,7 @@ _SOURCES = {
             "description": "p.description",
             "contributors": "credits.contributor_search_text",
         },
+        where="p.kind='podcast'",
     ),
     "contributor": _source(
         "contributor",

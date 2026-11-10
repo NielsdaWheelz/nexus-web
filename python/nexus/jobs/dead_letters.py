@@ -84,9 +84,9 @@ def media_unit_build(db: Session, job: JobRow) -> None:
     )
 
 
-def podcast_feed_run(db: Session, job: JobRow) -> None:
+def feed_run(db: Session, job: JobRow) -> None:
     """Pause only this exact live page, under the queue's fenced terminal execution."""
-    from nexus.services.podcasts import sync
+    from nexus.services.feeds import sync
 
     assert job.execution_id is not None
     run_id = UUID(job.payload["run_id"])
@@ -96,18 +96,18 @@ def podcast_feed_run(db: Session, job: JobRow) -> None:
         "attempt": job.payload["expected_attempt_version"],
         "step": job.payload["expected_step_no"],
         "code": job.error_code,
-        "detail": (job.last_error or "Podcast page exhausted its retry budget")[:500],
+        "detail": (job.last_error or "Feed page exhausted its retry budget")[:500],
     }
-    podcast_id = db.scalar(text("SELECT podcast_id FROM podcast_feed_runs WHERE id=:id"), params)
-    if podcast_id is None:
+    feed_id = db.scalar(text("SELECT feed_id FROM feed_runs WHERE id=:id"), params)
+    if feed_id is None:
         return
-    db.execute(text("SELECT id FROM podcasts WHERE id=:id FOR UPDATE"), {"id": podcast_id})
+    db.execute(text("SELECT id FROM feeds WHERE id=:id FOR UPDATE"), {"id": feed_id})
     row = db.execute(
         text("""
-        SELECT r.id FROM podcast_feed_runs r JOIN podcasts p ON p.id=r.podcast_id
+        SELECT r.id FROM feed_runs r JOIN feeds p ON p.id=r.feed_id
         WHERE r.id=:id AND r.job_id=:job_id AND r.attempt_version=:attempt AND r.step_no=:step
             AND r.completed_at IS NULL AND r.failed_at IS NULL AND r.cancelled_at IS NULL
-            AND (p.sync_run_id=r.id OR EXISTS(SELECT 1 FROM podcast_library_imports i WHERE i.run_id=r.id))
+            AND (p.head_run_id=r.id OR p.catchup_run_id=r.id OR EXISTS(SELECT 1 FROM library_feed_imports i WHERE i.run_id=r.id))
         FOR UPDATE OF r
     """),
         params,
@@ -116,12 +116,25 @@ def podcast_feed_run(db: Session, job: JobRow) -> None:
         return
     db.execute(
         text("""
-        UPDATE podcast_feed_runs SET failed_at=now(),job_id=NULL,error_code=:code,
+        UPDATE feed_runs SET failed_at=now(),job_id=NULL,error_code=:code,
             error_detail=:detail,updated_at=now() WHERE id=:id
     """),
         params,
     )
     sync.settle_recurring(db, run_id=run_id)
+
+
+def feed_opml(db: Session, job: JobRow) -> None:
+    """Retain unsent rows and child identities when their exact queue step exhausts."""
+    db.execute(
+        text("""UPDATE feed_opml_imports SET state='needs_attention',current_job_id=NULL,updated_at=now()
+        WHERE id=:id AND current_job_id=:job AND attempt_version=:attempt AND state='running'"""),
+        {
+            "id": UUID(job.payload["batch_id"]),
+            "job": job.id,
+            "attempt": job.payload["expected_attempt_version"],
+        },
+    )
 
 
 def podcast_chapters(db: Session, job: JobRow) -> None:
@@ -157,15 +170,24 @@ def lock_owner(db: Session, job: JobRow) -> None:
                 text("SELECT id FROM media_summaries WHERE id=:id FOR UPDATE"),
                 {"id": UUID(job.payload["summary_id"])},
             )
-        case "podcast_feed_page":
-            params = {"id": UUID(job.payload["run_id"])}
+        case "feed_opml_step":
+            params = {"id": UUID(job.payload["batch_id"])}
             db.execute(
                 text(
-                    "SELECT p.id FROM podcasts p JOIN podcast_feed_runs r ON r.podcast_id=p.id WHERE r.id=:id FOR UPDATE OF p"
+                    "SELECT u.id FROM users u JOIN feed_opml_imports p ON p.user_id=u.id WHERE p.id=:id FOR UPDATE OF u"
                 ),
                 params,
             )
-            db.execute(text("SELECT id FROM podcast_feed_runs WHERE id=:id FOR UPDATE"), params)
+            db.execute(text("SELECT id FROM feed_opml_imports WHERE id=:id FOR UPDATE"), params)
+        case "feed_page":
+            params = {"id": UUID(job.payload["run_id"])}
+            db.execute(
+                text(
+                    "SELECT p.id FROM feeds p JOIN feed_runs r ON r.feed_id=p.id WHERE r.id=:id FOR UPDATE OF p"
+                ),
+                params,
+            )
+            db.execute(text("SELECT id FROM feed_runs WHERE id=:id FOR UPDATE"), params)
         case "podcast_chapters":
             db.execute(
                 text("SELECT id FROM media WHERE id=:id FOR UPDATE"),

@@ -47,7 +47,7 @@ function createOwner(accountId: string) {
         }
         const envelope: { data: OfflineCatalog } | null = response.status === 204 ? null : await response.json();
         if (controller.signal.aborted || generation !== epoch || stopped) return;
-        if (envelope !== null && (envelope.data.account_id !== accountId || envelope.data.wire_revision !== WIRE_REVISION || envelope.data.format_version !== 3))
+        if (envelope !== null && (envelope.data.account_id !== accountId || envelope.data.wire_revision !== WIRE_REVISION || envelope.data.format_version !== 4))
           throw new ApiError(0, "E_CATALOG_INCOMPATIBLE", "saved catalog needs an online rebuild");
         const data = envelope === null ? null : indexCatalog(envelope.data);
         publish({ ...state, data, loading: false, error: null });
@@ -119,7 +119,7 @@ const Context = createContext<Owner | null>(null);
 export function CatalogProvider({ accountId, children }: { readonly accountId: string; readonly children: ReactNode }) {
   const owner = useMemo(() => createOwner(accountId), [accountId]);
   const admission = useRemoteAdmission();
-  const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Podcasts", "PodcastEpisodes", "Lectern", "Notes", "Chats");
+  const changes = useChangeStamp("Libraries", "Entries", "Metadata", "Feeds", "PodcastEpisodes", "Lectern", "Notes", "Chats");
   const state = useSyncExternalStore(owner.subscribe, owner.get, owner.get);
   const pending = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

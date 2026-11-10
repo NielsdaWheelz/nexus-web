@@ -266,7 +266,7 @@ export function MediaSummaryProvider({ children }: { children: ReactNode }) {
     window.addEventListener("online", store.retryFailed);
     return () => window.removeEventListener("online", store.retryFailed);
   }, [store]);
-  useOnChange(useChangeStamp("Consumption", "PodcastEpisodes", "Podcasts"), store.invalidateAll);
+  useOnChange(useChangeStamp("Consumption", "PodcastEpisodes", "Feeds"), store.invalidateAll);
   useOnChange(
     `${useChangeStamp("Metadata")}:${foreground}`,
     store.invalidateQueries,

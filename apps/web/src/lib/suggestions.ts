@@ -1,10 +1,11 @@
-/** Published suggestions and direct quick reads share only their item presentation. */
+/** Selection modes share publications, item presentation and ordinary actions. */
 
 import { apiFetch, requestWithDeadline, type ApiPath } from "@/lib/api/client";
 import { requestWithRetry } from "@/lib/api/retry";
 import { SUGGESTIONS_REQUEST_TIMEOUT_MS } from "@/lib/api/suggestionPolicy";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { presentMedia } from "@/lib/collections/presenters/media";
+import { presentFeed } from "@/lib/collections/presenters/feed";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
@@ -16,6 +17,7 @@ export type SuggestionState = Schema<"SuggestionStateOut">;
 export type QuickReads = Schema<"QuickReadsOut">;
 export type SuggestionsDestination =
   | { kind: "Lectern" }
+  | { kind: "Daily" }
   | { kind: "Library"; id: string; name: string };
 
 export async function getSuggestions(path: ApiPath, signal: AbortSignal): Promise<Suggestions> {
@@ -63,20 +65,16 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
     });
   }
   return {
-    presentation: "Index",
+    ...presentFeed({
+      id: target.feed_id,
+      kind: target.feed_kind,
+      title: target.title,
+      subtitle: target.subtitle,
+      imageUrl: target.image_url,
+      contributors: [],
+      recurring: null,
+    }),
     id: target.ref,
-    kind: "podcast",
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },
-    title: { text: target.title },
-    contributors: [],
-    publicationDate: null,
-    context:
-      target.subtitle !== null
-        ? { kind: "Text", text: target.subtitle }
-        : null,
-    activity: null,
-    exceptionalStatus: null,
-    resourceRef,
-    selected: false,
   };
 }

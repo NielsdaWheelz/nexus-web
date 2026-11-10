@@ -140,6 +140,12 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
         inspector=_CONNECTIONS,
         prompt_render="label",
     ),
+    "feed": Capability(
+        sharing="CopyOnly",
+        readable="none",
+        inspector=_CONNECTIONS,
+        prompt_render="label",
+    ),
     "reader_apparatus_item": Capability(
         link_mode="materialize_passage",
         embeddable=False,

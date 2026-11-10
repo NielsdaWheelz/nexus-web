@@ -5,7 +5,7 @@ snapshot of it, acquires the source through ``source_adapters`` with no transact
 open, then settles: success mirrors the media's outcome onto the attempt and requests
 the reindex and metadata enrichment; a typed refusal is a terminal failure, published at
 once (I3); other failures retain their typed queue retry or repair disposition.
-Prepared file and transcript publication commits body, attempt success and follow-up
+Prepared article, file and transcript publication commits body, attempt success and follow-up
 work together. A run whose exact attempt already succeeded does no acquisition.
 A run that finds its source is another media's transfers current holdings and
 placements, preserving entry identity/position and earliest time, then claims
@@ -21,10 +21,16 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import Media, MediaKind, MediaSourceAttempt, ProcessingStatus
+from nexus.db.models import (
+    Media,
+    MediaKind,
+    MediaSourceAttempt,
+    ProcessingStatus,
+    ReaderPublication,
+)
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import JobExecutionContext, JobResult, get_job, running_job_claim_is_current
@@ -52,6 +58,7 @@ from nexus.services.podcasts.transcription import (
 )
 from nexus.services.search import projection
 from nexus.services.source_adapters import (
+    PreparedArticleSource,
     PreparedBrowserArticle,
     PreparedFileSource,
     PreparedNativeArticle,
@@ -60,7 +67,11 @@ from nexus.services.source_adapters import (
     publish_prepared_file,
     publish_prepared_native_article,
 )
-from nexus.services.source_outcome import SourceRunOutcome, source_outcome_to_job_result
+from nexus.services.source_outcome import (
+    SourceRunOutcome,
+    source_contributor_observations,
+    source_outcome_to_job_result,
+)
 from nexus.services.source_publication import (
     SourceAttemptFailure,
     SourcePublicationFence,
@@ -71,7 +82,11 @@ from nexus.services.source_publication import (
     run_source_publication_phase,
 )
 from nexus.services.suggestion_changes import record_input_change
-from nexus.services.web_article import article_publication_media_ids
+from nexus.services.web_article import (
+    article_publication_media_ids,
+    byline_observation,
+    publish_prepared_article,
+)
 from nexus.services.x_ingest import (
     PreparedXSource,
     lock_x_publication_identities,
@@ -92,7 +107,7 @@ _TERMINAL_CODES = frozenset(
     E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE
     E_INVALID_REQUEST E_INVALID_KIND E_PDF_PASSWORD_REQUIRED E_TRANSCRIPT_UNAVAILABLE
     E_X_POST_UNAVAILABLE
-    E_REPAIR_NOT_ALLOWED E_RESOURCE_CONFLICT E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE
+    E_FEED_PRIVATE_SOURCE E_REPAIR_NOT_ALLOWED E_RESOURCE_CONFLICT E_STORAGE_MISSING E_SOURCE_POSITION_UNMAPPABLE
     E_X_IDENTITY_CONFLICT E_X_ARTICLE_BODY_UNAVAILABLE E_X_ARTICLE_IDENTITY_CHANGED E_PART_SOURCE_PINNED""".split()
 )
 _INDEXED_KINDS = frozenset({MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value})
@@ -166,10 +181,8 @@ def _run(
         if isinstance(acquired, PreparedXSource):
             outcome = _publish_x(session_factory, media_id, acquired, fence, actor_id, request_id)
             return source_outcome_to_job_result(outcome)
-        if isinstance(acquired, PreparedBrowserArticle):
-            outcome = _publish_browser_article(
-                session_factory, media_id, acquired, fence, request_id
-            )
+        if isinstance(acquired, PreparedBrowserArticle | PreparedArticleSource):
+            outcome = _publish_article(session_factory, media_id, acquired, fence, request_id)
             return source_outcome_to_job_result(outcome)
         if isinstance(acquired, PreparedNativeArticle):
             outcome = _publish_native_article(
@@ -238,6 +251,12 @@ def _publish_file(
         outcome, cleanup = publish_prepared_file(
             db, media_id=media_id, attempt=attempt, prepared=prepared
         )
+        publication = db.scalar(
+            select(ReaderPublication).where(ReaderPublication.media_id == media_id)
+        )
+        assert publication is not None
+        publication.source_attempt_id = attempt.id
+        publication.content_extent = "complete"
         _settle(db, attempt, media_id, outcome, request_id)
         record_input_change(db, owners=(f"media:{media_id}",))
         return outcome, cleanup
@@ -252,10 +271,10 @@ def _publish_file(
     )
 
 
-def _publish_browser_article(
+def _publish_article(
     session_factory: sessionmaker[Session],
     media_id: UUID,
-    prepared: PreparedBrowserArticle,
+    prepared: PreparedBrowserArticle | PreparedArticleSource,
     fence: SourcePublicationFence,
     request_id: str | None,
 ) -> SourceRunOutcome:
@@ -269,21 +288,48 @@ def _publish_browser_article(
         return children | set(_embed_owners({media_id})(db))
 
     def publish(db: Session, attempt: MediaSourceAttempt) -> SourceRunOutcome:
-        outcome = publish_prepared_browser_article(
-            db,
-            media_id=media_id,
-            attempt=attempt,
-            prepared=prepared,
-            locked_target_ids=frozenset(children),
-            request_id=request_id,
-        )
+        if isinstance(prepared, PreparedArticleSource):
+            fragment_id = publish_prepared_article(
+                db,
+                media_id=media_id,
+                attempt=attempt,
+                article=prepared.article,
+                prepared=prepared.fragment,
+                request_id=request_id,
+                locked_target_ids=frozenset(children),
+                remap_cursors=True,
+            )
+            outcome = SourceRunOutcome(
+                diagnostics={"status": "success", "fragment_id": str(fragment_id)},
+                observations=source_contributor_observations(
+                    media_id=media_id,
+                    observation=byline_observation(prepared.article.metadata.byline),
+                    source="feed_byline"
+                    if attempt.source_type == st.FEED_ENTRY
+                    else "web_article_byline",
+                )
+                if prepared.article.metadata is not None
+                else (),
+                metadata_enrichment=attempt.source_type == st.GENERIC_WEB_URL
+                and "feed_id" not in attempt.source_payload
+                and "daily_edition_id" not in attempt.source_payload,
+            )
+        else:
+            outcome = publish_prepared_browser_article(
+                db,
+                media_id=media_id,
+                attempt=attempt,
+                prepared=prepared,
+                locked_target_ids=frozenset(children),
+                request_id=request_id,
+            )
         _settle(db, attempt, media_id, outcome, request_id)
         record_input_change(db, owners=(f"media:{ident}" for ident in {media_id, *children}))
         return outcome
 
     return run_source_publication_phase(
         session_factory=session_factory,
-        label="publish_browser_article",
+        label="publish_prepared_article",
         fence=fence,
         media_ids=(media_id,),
         mutate=publish,
@@ -532,9 +578,32 @@ def _supersede(
     Public capture scope freezes before holdings move. Newly authorized private
     readers admit their selected roots for authored use, never unseen context.
     """
+    from nexus.auth.permissions import can_read_media, requested_media_ids_cte_sql
     from nexus.services.media_parts import require_unpinned_source
 
     media_locks.lock_media_rows_in_order(db, [loser_id, winner_id])
+    if "feed_id" in attempt.source_payload or "daily_edition_id" in attempt.source_payload:
+        readable = requested_media_ids_cte_sql().replace(":viewer_id", "audience.id")
+        viewers = set(
+            db.scalars(
+                text(f"""SELECT audience.id FROM users audience WHERE EXISTS (
+                    SELECT 1 FROM ({readable}) current_readers
+                    WHERE current_readers.media_id=:loser)"""),
+                {"loser": loser_id},
+            )
+        )
+        if "feed_id" in attempt.source_payload:
+            viewers.update(
+                db.scalars(
+                    text("SELECT user_id FROM feed_catalog_access WHERE feed_id=:id"),
+                    {"id": UUID(str(attempt.source_payload["feed_id"]))},
+                )
+            )
+        if any(not can_read_media(db, viewer, winner_id) for viewer in viewers):
+            raise ApiError(
+                ApiErrorCode.E_FEED_PRIVATE_SOURCE,
+                "This source resolves to content unavailable to its readers.",
+            )
     require_unpinned_source(db, media_id=loser_id)
     kinds = db.scalars(
         text("SELECT kind FROM media WHERE id=ANY(:ids)"), {"ids": [loser_id, winner_id]}

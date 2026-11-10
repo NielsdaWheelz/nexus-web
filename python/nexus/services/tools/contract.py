@@ -28,9 +28,9 @@ from universal_memory.tools import MEMORY_READ_SPECS, MEMORY_SAVE_NOTE_SPEC
 from nexus.db.models import MediaKind
 from nexus.schemas.assistant_writes import MachineAuthorshipOut
 from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.feed import FeedAdmissionOut
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.library import CreateLibraryRequest
-from nexus.schemas.podcast import PodcastAdmissionOut
 from nexus.schemas.resource_evidence import ResourceField, validate_resource_field
 from nexus.schemas.resource_graph import (
     EDGE_KINDS,
@@ -338,24 +338,24 @@ class RelationsListSuccess(_Closed):
     uri: Annotated[str, Field(max_length=_URI)]
 
 
-class PodcastLibraryAddInput(_Closed):
-    mode: Literal["follow", "current_episodes"]
+class FeedLibraryAddInput(_Closed):
+    mode: Literal["follow", "current_items"]
     id: UUID
     import_id: UUID | None
 
     @model_validator(mode="after")
-    def require_mode_identity(self) -> PodcastLibraryAddInput:
+    def require_mode_identity(self) -> FeedLibraryAddInput:
         if (self.mode == "follow") != (self.import_id is not None):
             raise ValueError("Following requires an initial import id; one-time import uses id")
         return self
 
 
 class LibraryAddInput(_Closed):
-    podcast: PodcastLibraryAddInput | None
+    feed: FeedLibraryAddInput | None
     library_id: Annotated[UUID, Field(description="The named library returned by inspect.")]
     expected_order_revision: Annotated[
         OrderRevision | None,
-        Field(description="The inspected order revision for media; null for a podcast."),
+        Field(description="The inspected order revision for media; null for a feed."),
     ]
     expected_removal_revision: OrderRevision
     resource_uri: Annotated[
@@ -365,13 +365,13 @@ class LibraryAddInput(_Closed):
 
     @model_validator(mode="after")
     def require_media_order(self) -> LibraryAddInput:
-        if (self.podcast is None) != (self.expected_order_revision is not None):
-            raise ValueError("Media filing requires an order revision; a podcast requires null")
+        if (self.feed is None) != (self.expected_order_revision is not None):
+            raise ValueError("Media filing requires an order revision; a feed requires null")
         return self
 
 
 class LibraryAddSuccess(_Closed):
-    podcast: PodcastAdmissionOut | None
+    feed: FeedAdmissionOut | None
     already_present: bool
     library_name: Annotated[str, Field(max_length=_LIBRARY_NAME_MAX)]
     library_uri: Annotated[str, Field(max_length=_URI)]
@@ -557,9 +557,9 @@ NEXUS_SPECS = (
         "Add a resource to a user library.",
         "Perform the user's additive library filing request through the existing authorized "
         "library owner. Filing retains media personally; undo removes only the named filing. "
-        "Inspect the library for exact guards; a podcast addition takes a null order revision. "
-        "Podcast requests require an explicit follow or current_episodes "
-        "mode and frozen resource ids; null podcast means media filing. Imports are accepted background work. "
+        "Inspect the library for exact guards; a feed addition takes a null order revision. "
+        "Feed requests require an explicit follow or current_items "
+        "mode and frozen resource ids; null feed means media filing. Imports are accepted background work. "
         "Conflicts require user review; never refresh tokens internally.",
         (
             LibraryAddInput,

@@ -43,9 +43,7 @@ def parse_rows(entries: list[dict[str, Any]], *, source: str, base: str) -> list
         raw_end = _first(entry, "endTime", "end_time", "end")
         end = _clock_ms(raw_end)
         if raw_end is not None and (end is None or end < start):
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Publisher chapter end is invalid"
-            )
+            raise ApiError(ApiErrorCode.E_FEED_UNAVAILABLE, "Publisher chapter end is invalid")
         rows.append(
             {
                 "title": title,
@@ -168,7 +166,7 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobR
             )
         except ValueError as exc:
             raise ApiError(
-                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast chapters are unavailable"
+                ApiErrorCode.E_FEED_UNAVAILABLE, "Podcast chapters are unavailable"
             ) from exc
 
         def publish() -> JobResult:

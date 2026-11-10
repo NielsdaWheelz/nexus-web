@@ -11,8 +11,8 @@ import ResourceBody from "@/components/resources/ResourceBody";
 // offline, including scope membership and clipped evidence. Unavailable local scope
 // inputs stay explicit; only readable peers retain their remote search owner.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject, type SyntheticEvent } from "react";
-import { podcastActionFacts, type PodcastActionSubject } from "@/lib/actions/inlineActions";
-import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
+import { feedActionFacts, type FeedActionSubject } from "@/lib/actions/inlineActions";
+import { useFeedActionFacts } from "@/lib/feeds/useFeedActionFacts";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ResourceList from "@/components/ui/ResourceList";
@@ -164,16 +164,25 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
   const [localPages, setLocalPages] = useState(1);
   const local = useLocalSearch(localApplies ? query.text.trim() : null, query.requestedKinds, localPages, query.scope);
   const list = selected;
-  const actionFacts = usePodcastActionFacts({ scope: `Search:${key}`,
-    targets: results.flatMap(row => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? [{ kind: "Canonical" as const, podcast_id: row.item.ref.slice(8) }] : []),
+  const actionFacts = useFeedActionFacts({ scope: `Search:${key}`,
+    targets: results.flatMap(row => {
+      const ref = parseResourceRef(row.item.ref);
+      return (ref?.scheme === "podcast" || ref?.scheme === "feed") && row.item.preview.body.kind === "named" && !row.item.missing
+        ? [{ kind: "Canonical" as const, feed_id: ref.id }] : [];
+    }),
     refresh: `${list.current}:${list.running}:${list.requestedKey}`,
   });
-  const podcastFor = (row: Row): PodcastActionSubject | undefined => row.item.ref.startsWith("podcast:") && row.item.preview.body.kind === "named" && !row.item.missing ? {
-    target: { kind: "Canonical", podcast_id: row.item.ref.slice(8) }, title: row.item.label,
-    facts: podcastActionFacts(actionFacts, { kind: "Canonical", podcast_id: row.item.ref.slice(8) },
+  const podcastFor = (row: Row): FeedActionSubject | undefined => {
+    const ref = parseResourceRef(row.item.ref);
+    if ((ref?.scheme !== "podcast" && ref?.scheme !== "feed") || row.item.preview.body.kind !== "named" || row.item.missing) return undefined;
+    const target = { kind: "Canonical" as const, feed_id: ref.id };
+    return {
+    target, feedKind: ref.scheme === "podcast" ? "podcast" : "article", title: row.item.label,
+    facts: feedActionFacts(actionFacts, target,
       failure !== null ? { kind: "Failed", error: failure.error, retry: list.failure !== null ? list.retry : refreshResults, retrying: list.running !== null }
         : !list.fresh || list.running !== null ? { kind: "Resolving" } : null),
-  } : undefined;
+    };
+  };
   const afterRemoval = (following: readonly Row[]) => () => following.map(row =>
     root.current?.querySelector<HTMLElement>(`[data-resource-ref="${CSS.escape(row.item.ref)}"] [data-row-focusable]`)).find(element => element !== null && element !== undefined)
     ?? findPaneLandmarkFocusTarget(paneId);
@@ -404,7 +413,7 @@ function LocalResult({ match, runtime }: { match: LocalMatch; runtime: ReturnTyp
 }
 
 /** A matching passage owns the single evidence slot and its exact destination. */
-function SearchResult({ row, selection, podcastSubject, afterRemoval }: { row: Row; selection: Selection | null; podcastSubject?: PodcastActionSubject; afterRemoval?: () => HTMLElement | null }) {
+function SearchResult({ row, selection, podcastSubject, afterRemoval }: { row: Row; selection: Selection | null; podcastSubject?: FeedActionSubject; afterRemoval?: () => HTMLElement | null }) {
   const runtime = usePaneRuntime();
   const evidence = ("matching_passage" in row ? row.matching_passage : null) ?? row;
   const { match } = evidence;

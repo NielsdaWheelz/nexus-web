@@ -2,7 +2,7 @@
  * names. Quote normalization serves matching and never rewrites literal capture. */
 import { v5 } from "uuid";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-const SCHEMES = new Set(["media","library","evidence_span","content_chunk","highlight","page","note_block","fragment","conversation","message","oracle_reading","oracle_passage_anchor","external_snapshot","contributor","podcast","reader_apparatus_item","passage_anchor"]);
+const SCHEMES = new Set(["media","library","evidence_span","content_chunk","highlight","page","note_block","fragment","conversation","message","oracle_reading","oracle_passage_anchor","external_snapshot","contributor","podcast","feed","reader_apparatus_item","passage_anchor"]);
 export function isResourceRef(ref: unknown): ref is string {
   if (typeof ref !== "string") return false;
   const [scheme,id,...rest] = ref.split(":");

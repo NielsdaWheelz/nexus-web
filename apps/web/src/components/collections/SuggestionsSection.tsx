@@ -13,18 +13,19 @@ import { useLecternCommands } from "@/lib/lectern/lectern";
 import { PaneRefreshAnchor, usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import type { SuggestionsController } from "@/lib/useSuggestions";
 
-/** A suggested podcast is the one row with a control: `add` opens its subscribe dialog, whose
+/** A suggested source is the one row with a control: `add` opens its subscribe dialog, whose
  * acceptance acknowledges the row. Media rows carry their own commands, and a lectern receipt for
- * one acknowledges it. Only named libraries suggest podcasts. A first read's or first request's
+ * one acknowledges it. Only named libraries suggest sources. A first read's or first request's
  * failure stands where the rows would; over a shown pool, failures say nothing and heal. A stopped
  * job says so above the rows, or in their place. */
 export default function SuggestionsSection({ destination, suggestions, subscribe, returnScope }: {
   destination: SuggestionsDestination;
   suggestions: SuggestionsController;
-  subscribe?: (target: Extract<SuggestionTarget, { kind: "Podcast" }>) => void;
+  subscribe?: (target: Extract<SuggestionTarget, { kind: "Feed" }>) => void;
   returnScope: string;
 }) {
   const lectern = destination.kind === "Lectern";
+  const daily = destination.kind === "Daily";
   const { receipts } = useLecternCommands();
   const previousReceipts = useRef<typeof receipts>(new Map());
   const [retrying, setRetrying] = useState(false);
@@ -65,6 +66,8 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
   const coldFailure = suggestions.adopted === null ? suggestions.readFailure?.error ?? null : null;
   const admissionFailure = suggestions.adopted === null && coldFailure === null && !needsRepair ? suggestions.admissionError?.error ?? null : null;
   const waiting = suggestions.adopted === null && coldFailure === null && admissionFailure === null && !needsRepair;
+  const edition = suggestions.adopted?.publication.edition ?? null;
+  const partial = edition !== null && edition.checked_source_count < edition.source_count;
 
   async function retry() {
     if (retrying) return;
@@ -80,12 +83,14 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
 
   const sectionVisible = !suggestions.withdrawn && suggestions.state?.capability !== "NotApplicable";
   // Section visibility and its facts can move the eye-line independently of rows.
-  const noticeGeometry = useMemo(() => sectionVisible ? { visible: sectionVisible, waiting, needsRepair, coldFailure, admissionFailure } : null,
-  [sectionVisible, waiting, needsRepair, coldFailure, admissionFailure]);
-  const repair = needsRepair ? <Fact line={{ fact: "suggestions stopped updating.", reason: "the job that finds them needs a repair." }} /> : null;
+  const noticeGeometry = useMemo(() => sectionVisible ? { visible: sectionVisible, waiting, needsRepair, coldFailure, admissionFailure, edition, partial } : null,
+  [sectionVisible, waiting, needsRepair, coldFailure, admissionFailure, edition, partial]);
+  const repair = needsRepair ? <Fact line={{ fact: daily ? "daily selection stopped updating." : "suggestions stopped updating.", reason: "the job that finds them needs a repair." }} /> : null;
   if (defect) throw defect.error;
-  const title = lectern ? "suggestions" : "suggested for this library";
-  const ariaLabel = lectern ? "suggestions" : `suggestions for ${destination.name}`;
+  const title = daily ? "daily selection" : lectern ? "suggestions" : "suggested for this library";
+  const ariaLabel = destination.kind === "Library" ? `suggestions for ${destination.name}` : title;
+  const coverage = partial ? <Fact line={{ fact: "some feeds could not be checked." }} /> : null;
+  const notice = repair !== null || coverage !== null ? <>{repair}{coverage}</> : null;
   return (
     <PaneRefreshAnchor identity={`${returnScope}:notices`} value={noticeGeometry} ready={!sectionVisible || !waiting}>
     {sectionVisible ? <PaneSection
@@ -94,6 +99,7 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
       aria-label={ariaLabel}
       tabIndex={-1}
       title={title}
+      description={edition === null ? undefined : <time dateTime={edition.local_date}>{edition.local_date}</time>}
     >
       <CollectionView geometry="UniformIndex"
         returnScope={returnScope}
@@ -101,11 +107,11 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
         status={waiting ? "loading" : "ready"}
         ariaLabel={ariaLabel}
         surface={false}
-        notice={rows.length > 0 ? repair : null}
+        notice={rows.length > 0 ? notice : null}
         empty={coldFailure !== null ? <Failed error={coldFailure} noun="suggestions" retry={{ run: () => void retry(), busy: retrying || suggestions.reconciling }} />
           : admissionFailure !== null ? <Failed error={admissionFailure} noun="suggestions" retry={{ run: suggestions.retryAdmission, busy: suggestions.admitting }} />
-            : repair ?? (suggestions.adopted !== null ? <Fact line={{ fact: "no suggestions right now." }} /> : undefined)}
-        rowControls={subscribe === undefined || destination.kind !== "Library" ? undefined : Object.fromEntries(rows.flatMap(({ target }) => target.kind !== "Podcast" ? [] : [[target.ref,
+            : notice ?? (suggestions.adopted !== null ? <Fact line={{ fact: daily ? "no eligible items today." : "no suggestions right now." }} /> : undefined)}
+        rowControls={subscribe === undefined || destination.kind !== "Library" ? undefined : Object.fromEntries(rows.flatMap(({ target }) => target.kind !== "Feed" ? [] : [[target.ref,
           <Button key={target.ref} aria-label={`add ${target.title} to ${destination.name}`} onClick={() => subscribe(target)}>add</Button>,
         ]]))}
       />

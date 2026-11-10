@@ -8,7 +8,7 @@ import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourc
 
 const ROUTES: Partial<Record<string, string>> = {
   highlight: "/highlights", page: "/pages", note_block: "/notes", media: "/media", conversation: "/conversations",
-  library: "/libraries", podcast: "/podcasts", oracle_reading: "/oracle",
+  library: "/libraries", podcast: "/podcasts", feed: "/feeds", oracle_reading: "/oracle",
 };
 const routeFor = (ref: string): string | null => {
   const parsed = parseResourceRef(ref);

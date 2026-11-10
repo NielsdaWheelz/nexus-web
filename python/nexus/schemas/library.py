@@ -11,8 +11,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.feed import LibraryFeedIndexOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.podcast import LibraryPodcastIndexOut
 
 LibraryRole = Literal["admin", "member"]
 LibraryName = Annotated[str, Field(min_length=1, max_length=100)]
@@ -125,7 +125,7 @@ class LibraryEntriesIndexOut(BaseModel):
     library: LibraryOut
     items: list[LibraryEntryOut]
     order_revision: OrderRevision | None
-    podcasts: LibraryPodcastIndexOut
+    feeds: LibraryFeedIndexOut
 
     model_config = ConfigDict(extra="forbid")
 
@@ -137,7 +137,7 @@ class LibraryPlacementOut(BaseModel):
     name: str
     order_revision: OrderRevision
     relation: Literal["Absent", "Direct"]
-    blocked: Literal["RequiresAdmin", "SystemManaged", "PodcastSubscription"] | None
+    blocked: Literal["RequiresAdmin", "SystemManaged", "FeedSubscription"] | None
 
 
 class LibraryAllMembershipOut(BaseModel):
@@ -147,7 +147,7 @@ class LibraryAllMembershipOut(BaseModel):
     order_revision: OrderRevision
     included: bool
     retained: bool
-    remove_blocked: Literal["RequiresAdmin", "PodcastSubscription"] | None
+    remove_blocked: Literal["RequiresAdmin", "FeedSubscription"] | None
 
 
 class LibraryPlacementsOut(BaseModel):

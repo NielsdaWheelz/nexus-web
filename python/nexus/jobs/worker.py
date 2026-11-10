@@ -153,8 +153,8 @@ class JobWorker:
         while not done.wait(HEARTBEAT_SECONDS):
             try:
                 with get_control_session_factory()() as db, db.begin():
-                    renewed = queue.renew_running_job_claim(db, context=context, heavy=heavy)
-                    stored = None if renewed else queue.get_job(db, context.job_id)
+                    renewal = queue.renew_running_job_claim(db, context=context, heavy=heavy)
+                    stored = queue.get_job(db, context.job_id) if renewal == "lost" else None
             except Exception as error:
                 logger.exception("worker_heartbeat_failed", job_id=str(context.job_id))
                 if is_transient_database_error(error):
@@ -162,7 +162,7 @@ class JobWorker:
                 failures.append(failure_of(error))
                 lost.set()  # stop and join the child before settling the typed defect.
                 return
-            if not renewed:
+            if renewal == "lost":
                 if not (
                     stored is not None
                     and stored.execution_id == context.execution_id

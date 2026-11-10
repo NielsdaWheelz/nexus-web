@@ -3,13 +3,14 @@ import { parseResourceRef, type ResourceRef } from "@/lib/resourceGraph/resource
 import { assertNever } from "@/lib/assertNever";
 import { installedApp, remoteAdmission, remoteReady } from "@/lib/native/admission";
 import { createElement, type ReactElement } from "react";
-import type { PodcastActionFacts, PodcastActionFocus } from "./inlineActions";
-import PodcastSubscriptionIcon from "@/components/podcasts/PodcastSubscriptionIcon";
+import type { FeedActionFacts, FeedActionFocus } from "./inlineActions";
+import FeedSubscriptionIcon from "@/components/feeds/FeedSubscriptionIcon";
 import type { MetadataSubject } from "./subjects";
 import type { CollectionSelection, CollectionTarget } from "@/lib/consumption/api";
 import type { EpisodeState } from "@/lib/podcasts/api";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
-import type { PodcastTarget } from "@/lib/podcasts/api";
+import type { FeedTarget } from "@/lib/feeds/api";
+
 import * as Icon from "@/lib/ui/icons";
 import {
   ACTION_CATALOG,
@@ -47,9 +48,8 @@ import { getWritingRuntime } from "@/lib/notes/runtime";
 import { LocalMutationObservationError, localMutation, type LocalItem } from "@/lib/offline/localContent";
 import type { PlaybackSource } from "./playbackSource";
 import { queueBlock, type PlayerDescriptor } from "@/lib/player/playerRuntime";
-import {
-  requestPodcastRefresh,
-} from "@/lib/podcasts/api";
+import { requestFeedRefresh } from "@/lib/feeds/api";
+
 import { activateResource } from "@/lib/resources/activation";
 import { resourceShareTarget } from "@/lib/sharing/targets";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
@@ -72,7 +72,7 @@ import type {
 
 export type ResourceActions = Schema<"ResourceActionsOut">;
 type Action = ResourceActions["actions"][number];
-type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribePodcast" | "UnsubscribePodcast" | "PodcastLibraries" | "AddUnfinishedToLectern" | "MarkCollectionFinished" | "MarkCollectionUnread" | "TranscribePodcastEpisodes">;
+type DirectKind = Exclude<Schema<"SimpleAction">["kind"], "SubscribeFeed" | "UnsubscribeFeed" | "FeedLibraries" | "AddUnfinishedToLectern" | "MarkCollectionFinished" | "MarkCollectionUnread" | "TranscribePodcastEpisodes">;
 
 /** One chosen verb. The provider confirms it, tracks it busy and reports failure. */
 export interface ActionCommand {
@@ -241,7 +241,7 @@ function invocationFocus(trigger: HTMLElement | null, returnFocus?: ReturnFocusT
 function metadataSubject(parsed: ResourceRef): MetadataSubject {
   switch (parsed.scheme) {
     case "media": return { kind: "Media", mediaId: parsed.id, jobId: null };
-    case "podcast": return { kind: "Podcast", podcastId: parsed.id };
+    case "podcast": case "feed": return { kind: "Feed", feedId: parsed.id };
     case "library": return { kind: "Library", libraryId: parsed.id };
     case "evidence_span": case "content_chunk": case "highlight": case "page": case "note_block":
     case "fragment": case "conversation": case "message": case "oracle_reading": case "oracle_passage_anchor":
@@ -252,7 +252,7 @@ function metadataSubject(parsed: ResourceRef): MetadataSubject {
 }
 
 function collectionTarget(resource: ResourceRef): CollectionTarget {
-  if (resource.scheme === "podcast") return { kind: "Podcast", podcast_id: resource.id };
+  if (resource.scheme === "podcast" || resource.scheme === "feed") return { kind: "Feed", feed_id: resource.id, feed_kind: resource.scheme === "podcast" ? "podcast" : "article" };
   if (resource.scheme === "library") return { kind: "Library", library_id: resource.id };
   throw new Error(`collection action has no target for ${resource.scheme}`);
 }
@@ -263,11 +263,15 @@ export function projectCollectionConsumptionAction({ selection, desiredState, ti
   ctx: ActionContext; run(command: ActionCommand): void; returnFocus?: ReturnFocusTarget;
 }): Extract<ActionDescriptor, { kind: "command" }> {
   const id = desiredState === "finished" ? "MarkCollectionFinished" : "MarkCollectionUnread";
-  const status = selection.kind === "Podcast" ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
-  const label = selection.kind === "Podcast" && selection.state !== "all"
-    ? `Mark ${selection.state.replaceAll("_", " ")} episodes as ${status}…`
+  const podcast = selection.kind === "Feed" && selection.feed_kind === "podcast";
+  const status = podcast ? desiredState === "finished" ? "played" : "unplayed" : desiredState;
+  const selectedState = selection.kind === "Feed" && podcast
+    ? selection.state === "finished" ? "played" : selection.state === "unread" ? "unplayed" : selection.state.replaceAll("_", " ")
+    : selection.kind === "Feed" ? selection.state.replaceAll("_", " ") : "all";
+  const label = selection.kind === "Feed" && selection.state !== "all"
+    ? `Mark ${selectedState} ${podcast ? "episodes" : "articles"} as ${status}…`
     : `Mark all ${status}…`;
-  return { kind: "command", id: selection.kind === "Podcast" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: null,
+  return { kind: "command", id: selection.kind === "Feed" && selection.state !== "all" ? `View.${id}.${selection.state}` : id, label, icon: null,
     disabled: blocked !== null || undefined, disabledReason: blocked === null ? undefined : BLOCKED_COPY[blocked],
     onSelect: ({ triggerEl }) => {
       if (blocked !== null) return;
@@ -313,64 +317,65 @@ export function projectPodcastDiscoveryActions({ subject, ctx, returnFocus }: {
       ctx.overlays.open({ kind: "Metadata", subject: metadata, returnFocusTo: triggerEl, fallback: focus.returnFocusFallback }, focus);
     },
   });
-  result.push({ kind: "link", id: "OpenPodcastFeed", label: ACTION_CATALOG.OpenPodcastFeed.label,
+  result.push({ kind: "link", id: "OpenFeed", label: ACTION_CATALOG.OpenFeed.label,
     icon: null, href: facts.feed_href });
 
   return result;
 }
 
-/** observations choose the glyph; only ready facts authorize a reviewed command. */
-export function projectPodcastSubscriptionAction({ target, title, facts, disabledReason, ctx, run, focus }: {
-  readonly target: PodcastTarget;
+/** Known source observations can open a review; its current guards admit the write. */
+export function projectFeedSubscriptionAction({ target, feedKind, title, facts, disabledReason, ctx, run, focus }: {
+  readonly target: FeedTarget; readonly feedKind: "podcast" | "article";
   readonly title: string;
-  readonly facts: PodcastActionFacts;
+  readonly facts: FeedActionFacts;
   readonly disabledReason: string | null;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
-  readonly focus?: PodcastActionFocus;
+  readonly focus?: FeedActionFocus;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId; readonly accessibleLabel: string } {
   let subscribed: boolean | null = null;
   let label: string;
   if (facts.kind === "Ready") {
     switch (facts.resolution.kind) {
       case "Canonical":
-        target = { kind: "Canonical", podcast_id: facts.resolution.podcast_id };
+        target = { kind: "Canonical", feed_id: facts.resolution.feed_id };
         subscribed = facts.resolution.subscribed;
-        label = ACTION_CATALOG[subscribed ? "UnsubscribePodcast" : "SubscribePodcast"].label;
+        label = ACTION_CATALOG[subscribed ? "UnsubscribeFeed" : "SubscribeFeed"].label;
         break;
-      case "Discovery": subscribed = false; label = ACTION_CATALOG.SubscribePodcast.label; break;
+      case "Discovery": subscribed = false; label = ACTION_CATALOG.SubscribeFeed.label; break;
       case "Unavailable":
         label = "Subscription unavailable";
-        disabledReason = facts.resolution.reason === "NotFound" ? "this podcast is gone." : "this podcast link doesn’t work.";
+        disabledReason = facts.resolution.reason === "NotFound" ? "this source is gone." : "this source link doesn’t work.";
         break;
       default: assertNever(facts.resolution);
     }
   } else {
     subscribed = facts.observedSubscribed;
     label = subscribed === null ? "Subscription status unknown" : subscribed ? "Last known subscribed" : "Last known not subscribed";
-    disabledReason = facts.kind === "Failed" ? "couldn’t check the subscription." : "checking the subscription.";
+    if (facts.kind === "Failed") disabledReason = "couldn’t check the subscription.";
+    else if (target.kind !== "Canonical" || subscribed === null) disabledReason = "checking the subscription.";
   }
-  const waiting = facts.kind === "Resolving" && !(installedApp && !ctx.online);
+  const waiting = facts.kind === "Resolving" && disabledReason !== null && !(installedApp && !ctx.online);
   disabledReason = installedApp && !ctx.online ? admissionReason() : disabledReason;
-  const id = subscribed ? "UnsubscribePodcast" : "SubscribePodcast";
+  const id = subscribed ? "UnsubscribeFeed" : "SubscribeFeed";
   const entry = ACTION_CATALOG[id];
   return {
     kind: "command", id, label,
     accessibleLabel: `${facts.kind === "Ready" && subscribed ? `Subscribed. ${label}` : label}: ${title}`,
-    icon: createElement(PodcastSubscriptionIcon, {
+    icon: createElement(FeedSubscriptionIcon, {
       key: subscribed === null ? "Unknown" : "Known", // learning is no event: the remount skips the transition
       subscribed: subscribed === true,
     }), hasPopup: "dialog",
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined, waiting: waiting || undefined,
     restoreFocusOnClose: false,
     onSelect: detail => {
-      if (facts.kind !== "Ready" || disabledReason !== null) return;
+      if (disabledReason !== null || subscribed === null) return;
       if (subscribed && target.kind !== "Canonical") throw new Error("a subscription requires canonical identity");
       const overlay: Overlay = subscribed && target.kind === "Canonical"
-        ? { kind: "UnsubscribePodcast", podcastId: target.podcast_id, title, libraryId: null, successFocus: focus?.afterRemoval }
-        : { kind: "SubscribePodcast", target, title, libraryId: null };
+        ? { kind: "UnsubscribeFeed", feedId: target.feed_id, feedKind, title, libraryId: null, successFocus: focus?.afterRemoval }
+        : { kind: "SubscribeFeed", target, feedKind, title, libraryId: null };
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id, label: entry.label, feedbackLabel: entry.label.toLowerCase(), title,
+      run({ ref: `${feedKind === "podcast" ? "podcast" : "feed"}:${target.kind === "Canonical" ? target.feed_id : target.target}`, id, label: entry.label, feedbackLabel: entry.label.toLowerCase(), title,
         confirmation: null, tracked: false,
         execute: () => ctx.overlays.open(overlay, focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
       });
@@ -378,22 +383,22 @@ export function projectPodcastSubscriptionAction({ target, title, facts, disable
   };
 }
 
-export function projectPodcastLibrariesAction({ target, title, disabledReason, ctx, run, focus }: {
-  readonly target: PodcastTarget; readonly title: string; readonly disabledReason: string | null;
-  readonly ctx: ActionContext; readonly run: (command: ActionCommand) => void; readonly focus?: PodcastActionFocus;
+export function projectFeedLibrariesAction({ target, feedKind, title, disabledReason, ctx, run, focus }: {
+  readonly target: FeedTarget; readonly feedKind: "podcast" | "article"; readonly title: string; readonly disabledReason: string | null;
+  readonly ctx: ActionContext; readonly run: (command: ActionCommand) => void; readonly focus?: FeedActionFocus;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly id: ActionId } {
   disabledReason = installedApp && !ctx.online ? admissionReason() : disabledReason;
   return {
-    kind: "command", id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label,
-    icon: createElement(ACTION_CATALOG.PodcastLibraries.icon, { "aria-hidden": true }),
+    kind: "command", id: "FeedLibraries", label: ACTION_CATALOG.FeedLibraries.label,
+    icon: createElement(ACTION_CATALOG.FeedLibraries.icon, { "aria-hidden": true }),
     disabled: disabledReason !== null || undefined, disabledReason: disabledReason ?? undefined, restoreFocusOnClose: false,
     onSelect: detail => {
       if (disabledReason !== null) return;
       const trigger = detail.triggerEl ?? focus?.trigger ?? null;
       const successFocus = focus?.afterRemoval;
-      run({ ref: `podcast:${target.kind === "Canonical" ? target.podcast_id : target.target}`, id: "PodcastLibraries", label: ACTION_CATALOG.PodcastLibraries.label, feedbackLabel: ACTION_CATALOG.PodcastLibraries.label.toLowerCase(), title,
+      run({ ref: `${feedKind === "podcast" ? "podcast" : "feed"}:${target.kind === "Canonical" ? target.feed_id : target.target}`, id: "FeedLibraries", label: ACTION_CATALOG.FeedLibraries.label, feedbackLabel: ACTION_CATALOG.FeedLibraries.label.toLowerCase(), title,
         confirmation: null, tracked: false,
-        execute: () => ctx.overlays.open({ kind: "PodcastLibraries", target, title, successFocus },
+        execute: () => ctx.overlays.open({ kind: "FeedLibraries", target, feedKind, title, successFocus },
           focus === undefined ? undefined : { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
       });
     },
@@ -401,14 +406,14 @@ export function projectPodcastLibrariesAction({ target, title, disabledReason, c
 }
 
 /** One named destination's removal; the existing review owns scope and acknowledgement. */
-export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId, libraryName, canRemove, blocked, focus, ctx, run }: {
-  readonly podcastId: string;
+export function projectFeedLibraryRemovalAction({ feedId, feedKind, title, libraryId, libraryName, canRemove, blocked, focus, ctx, run }: {
+  readonly feedId: string; readonly feedKind: "podcast" | "article";
   readonly title: string;
   readonly libraryId: string;
   readonly libraryName: string;
   readonly canRemove: boolean;
   readonly blocked: BlockedReason | null;
-  readonly focus: PodcastActionFocus;
+  readonly focus: FeedActionFocus;
   readonly ctx: ActionContext;
   readonly run: (command: ActionCommand) => void;
 }): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement; readonly accessibleLabel: string } {
@@ -425,9 +430,9 @@ export function projectPodcastLibraryRemovalAction({ podcastId, title, libraryId
       if (disabledReason !== undefined) return;
       const successFocus = focus.afterRemoval;
       const trigger = detail.triggerEl ?? focus.trigger;
-      run({ ref: `podcast:${podcastId}`, id: "UnsubscribePodcast", label, feedbackLabel: `remove from ${libraryName}`, title,
+      run({ ref: `${feedKind === "podcast" ? "podcast" : "feed"}:${feedId}`, id: "UnsubscribeFeed", label, feedbackLabel: `remove from ${libraryName}`, title,
         confirmation: null, tracked: false,
-        execute: () => ctx.overlays.open({ kind: "UnsubscribePodcast", podcastId, title, libraryId, successFocus },
+        execute: () => ctx.overlays.open({ kind: "UnsubscribeFeed", feedId, feedKind, title, libraryId, successFocus },
           { anchor: () => trigger, returnFocusFallback: focus.returnFocus }),
       });
     },
@@ -445,7 +450,7 @@ export function projectResourceActions(
   run: (command: ActionCommand) => void,
   boundPaneId: string | null,
   playbackSource: PlaybackSource | null,
-  podcastFocus?: PodcastActionFocus,
+  podcastFocus?: FeedActionFocus,
 ): ActionDescriptor[] {
   const { ref, activation } = facts;
   const resource = parseResourceRef(ref);
@@ -474,7 +479,7 @@ export function projectResourceActions(
       readonly icon: Icon.Glyph | null;
       readonly group: string;
       readonly confirmation?: Confirmation;
-    } = { ...ACTION_CATALOG[actionId], ...options.state };
+    } = { ...ACTION_CATALOG[actionId], ...(resource.scheme !== "feed" ? {} : actionId === "RefreshFeed" ? { label: "Check for new articles" } : actionId === "RemoveFeedItems" ? { label: "Remove articles from libraries…" } : {}), ...options.state };
     const reason = blocked ?? options.blocked;
     const disabledReason = busy.has(actionId)
       ? BLOCKED_COPY.Busy
@@ -687,19 +692,19 @@ export function projectResourceActions(
     LibrarySettings: overlay({ kind: "LibrarySettings", libraryId: id }),
     PodcastSettings: overlay({ kind: "PodcastSettings", podcastId: id }),
     AddEpisodeToAll: [async () => {
-      if (ctx.podcasts.pending(`episode-save:${id}`) !== null) return;
+      if (ctx.feeds.pending(`episode-save:${id}`) !== null) return;
       const snapshot = await placements({ kind: "Media", id }, ctx.sessionSignal());
       if (!ctx.isActive() || snapshot.all_membership.included) return;
-      await ctx.podcasts.submit({ subject: `episode-save:${id}`, title: facts.label, library: null, command: {
+      await ctx.feeds.submit({ subject: `episode-save:${id}`, title: facts.label, library: null, command: {
         kind: "EpisodeSave", mediaId: id, libraryId: snapshot.all_membership.library_id,
         body: { included: true, expected_order_revision: snapshot.all_membership.order_revision,
           expected_removal_revision: snapshot.removal_revision },
       } });
     }],
-    RemoveEpisodeFromAll: overlay({ kind: "RemoveEpisodeFromAll", mediaId: id, title: facts.label }),
-    RemovePodcastEpisodes: overlay({ kind: "RemovePodcastEpisodes", podcastId: id, title: facts.label }),
-    RefreshPodcast: [async (_, acknowledged) => {
-      await requestPodcastRefresh({ kind: "Podcast", podcast_id: id });
+    RemoveFeedEntry: overlay({ kind: "RemoveFeedEntry", mediaId: id, title: facts.label }),
+    RemoveFeedItems: overlay({ kind: "RemoveFeedItems", feedId: id, feedKind: resource.scheme === "podcast" ? "podcast" : "article", title: facts.label }),
+    RefreshFeed: [async (_, acknowledged) => {
+      await requestFeedRefresh({ kind: "Feed", feed_id: id });
       acknowledged();
     }, { rawWrite: true }],
     RemoveMedia: overlay({ kind: "RemoveMedia", mediaId: id }),
@@ -754,7 +759,7 @@ export function projectResourceActions(
     const { blocked } = action;
     switch (action.kind) {
       case "OpenSource":
-      case "OpenPodcastFeed": {
+      case "OpenFeed": {
         return link(make(action.kind, blocked, () => {}), action.href);
       }
       case "Playback":
@@ -830,23 +835,23 @@ export function projectResourceActions(
       case "MarkCollectionFinished":
       case "MarkCollectionUnread": {
         const target = collectionTarget(resource);
-        return projectCollectionConsumptionAction({ selection: target.kind === "Podcast" ? { ...target, state: "all" } : target, desiredState: action.kind === "MarkCollectionFinished" ? "finished" : "unread", title: facts.label, blocked, ctx, run, returnFocus });
+        return projectCollectionConsumptionAction({ selection: target.kind === "Feed" ? { ...target, state: "all" } : target, desiredState: action.kind === "MarkCollectionFinished" ? "finished" : "unread", title: facts.label, blocked, ctx, run, returnFocus });
       }
       case "AddUnfinishedToLectern": {
         const target = collectionTarget(resource);
-        const label = target.kind === "Podcast" ? "Add unfinished episodes to Lectern…" : ACTION_CATALOG.AddUnfinishedToLectern.label;
+        const label = target.kind === "Feed" && resource.scheme === "podcast" ? "Add unfinished episodes to Lectern…" : ACTION_CATALOG.AddUnfinishedToLectern.label;
         return make(action.kind, blocked, ({ triggerEl }) => ctx.overlays.open({ kind: "CollectionLectern", target, title: facts.label }, invocationFocus(triggerEl, returnFocus)),
           { tracked: false, state: { label, icon: ACTION_CATALOG.AddUnfinishedToLectern.icon } });
       }
-      case "SubscribePodcast":
-      case "UnsubscribePodcast":
-        return projectPodcastSubscriptionAction({
-          target: { kind: "Canonical", podcast_id: id }, title: facts.label, focus: podcastFocus,
-          facts: { kind: "Ready", resolution: { kind: "Canonical", podcast_id: id, subscribed: action.kind === "UnsubscribePodcast" } },
+      case "SubscribeFeed":
+      case "UnsubscribeFeed":
+        return projectFeedSubscriptionAction({
+          target: { kind: "Canonical", feed_id: id }, feedKind: resource.scheme === "podcast" ? "podcast" : "article", title: facts.label, focus: podcastFocus,
+          facts: { kind: "Ready", resolution: { kind: "Canonical", feed_id: id, feed_kind: resource.scheme === "podcast" ? "podcast" : "article", subscribed: action.kind === "UnsubscribeFeed" } },
           disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run,
         });
-      case "PodcastLibraries":
-        return projectPodcastLibrariesAction({ target: { kind: "Canonical", podcast_id: id }, title: facts.label, disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run, focus: podcastFocus });
+      case "FeedLibraries":
+        return projectFeedLibrariesAction({ target: { kind: "Canonical", feed_id: id }, feedKind: resource.scheme === "podcast" ? "podcast" : "article", title: facts.label, disabledReason: blocked === null ? null : BLOCKED_COPY[blocked], ctx, run, focus: podcastFocus });
       case "RetryMetadata": {
         const recovery = pendingAdmission("MetadataResearch", "RetryMetadata");
         if (recovery !== null) return recovery;
@@ -944,7 +949,7 @@ export function projectResourceActions(
   }
   const undoTarget = resource.scheme === "media" ? { kind: "Media" as const, mediaId: id }
     : resource.scheme === "library" ? { kind: "Library" as const, library_id: id }
-    : resource.scheme === "podcast" ? { kind: "Podcast" as const, podcast_id: id } : null;
+    : resource.scheme === "podcast" || resource.scheme === "feed" ? { kind: "Feed" as const, feed_id: id, feed_kind: resource.scheme === "podcast" ? "podcast" as const : "article" as const } : null;
   if (undoTarget !== null) menu.push(...projectConsumptionUndoActions(undoTarget, ctx));
   return menu;
 }
@@ -954,7 +959,7 @@ export function projectConsumptionUndoActions(target: ActionContext["consumption
   return ctx.consumptionUndoItems.filter(item => {
     if (item.target.kind === "Media") return target.kind === "Media" && item.target.mediaId === target.mediaId;
     if (item.target.kind === "Library") return target.kind === "Library" && item.target.library_id === target.library_id;
-    return target.kind === "Podcast" && item.target.podcast_id === target.podcast_id;
+    return target.kind === "Feed" && item.target.feed_id === target.feed_id;
   }).map(item => {
     const disabledReason = !ctx.online ? admissionReason() : undefined;
     return { kind: "command", id: `ConsumptionUndo:${item.commandKey}`, label: item.actionLabel, icon: createElement(Icon.Undo, { "aria-hidden": true }),

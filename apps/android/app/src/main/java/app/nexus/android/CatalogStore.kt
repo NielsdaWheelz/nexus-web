@@ -334,7 +334,7 @@ internal class CatalogStore(context: Context, private val session: DeviceSession
                 }
                 json.endObject()
                 require(json.peek() == JsonToken.END_DOCUMENT && found && identity == owner && id != null && captured != null && format != null && wire != null)
-                if (format != 3 || wire != BuildConfig.NEXUS_WIRE) throw LocalStateError("E_CATALOG_INCOMPATIBLE", "connect to rebuild this device’s catalog")
+                if (format != 4 || wire != BuildConfig.NEXUS_WIRE) throw LocalStateError("E_CATALOG_INCOMPATIBLE", "connect to rebuild this device’s catalog")
                 require(consumptionRevision != null)
                 return JSONObject().put("snapshot_id", id).put("captured_at", captured).put("consumption_revision", consumptionRevision)
             }

@@ -9,7 +9,7 @@ import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { forecastEpisodeTranscripts, type EpisodeState } from "@/lib/podcasts/api";
 import { installedApp } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
-import styles from "./PodcastCommands.module.css";
+import styles from "@/components/feeds/FeedCommands.module.css";
 
 /** Existing transcript eligibility and admission, shown before an account command. */
 export default function PodcastTranscriptDialog({ podcastId, title, state, returnFocusTo, returnFocusFallback, onClose }: {

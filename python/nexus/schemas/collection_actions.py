@@ -16,9 +16,10 @@ class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PodcastCollectionTarget(_Closed):
-    kind: Literal["Podcast"]
-    podcast_id: UUID
+class FeedCollectionTarget(_Closed):
+    kind: Literal["Feed"]
+    feed_id: UUID
+    feed_kind: Literal["podcast", "article"]
 
 
 class LibraryCollectionTarget(_Closed):
@@ -27,16 +28,16 @@ class LibraryCollectionTarget(_Closed):
 
 
 type CollectionTarget = Annotated[
-    PodcastCollectionTarget | LibraryCollectionTarget, Field(discriminator="kind")
+    FeedCollectionTarget | LibraryCollectionTarget, Field(discriminator="kind")
 ]
 
 
-class PodcastCollectionSelection(PodcastCollectionTarget):
-    state: Literal["all", "unplayed", "in_progress", "played"]
+class FeedCollectionSelection(FeedCollectionTarget):
+    state: Literal["all", "unread", "in_progress", "finished"]
 
 
 type CollectionSelection = Annotated[
-    PodcastCollectionSelection | LibraryCollectionTarget, Field(discriminator="kind")
+    FeedCollectionSelection | LibraryCollectionTarget, Field(discriminator="kind")
 ]
 type _Revision = Annotated[int, Field(strict=True, ge=1)]
 type _Count = Annotated[int, Field(strict=True, ge=0)]

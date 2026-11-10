@@ -1,11 +1,11 @@
 """One complete account catalog: immutable display facts and canonical order ordinals.
 
 Nested command capabilities and revisions are historical metadata, never authority.
-The export validates identity, reference closure, total orders and episode counts
+The export validates identity, reference closure, total orders and entry counts
 before publication. No body, downloaded asset or offline write is represented.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -15,9 +15,9 @@ from nexus.db.models import TranscriptState
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.consumption import EpisodeConsumptionState, LecternOut
 from nexus.schemas.conversation import ConversationListItemOut
+from nexus.schemas.feed import FeedDetailOut, LibraryFeedsOut
 from nexus.schemas.library import LibraryOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.podcast import LibraryPodcastsOut, PodcastDetailOut
 
 Rank = Annotated[int, Field(strict=True, ge=1, le=9_007_199_254_740_991)]
 
@@ -50,9 +50,9 @@ class LibraryEntryOrder(_Closed):
     added_desc: Rank
 
 
-class PodcastIndexOrder(_Closed):
-    recent_episode: Rank
-    unplayed_count: Rank
+class FeedIndexOrder(_Closed):
+    recent_entry: Rank
+    unfinished_count: Rank
     alpha: Rank
 
 
@@ -90,30 +90,42 @@ class CatalogLibraryMediaOut(_Closed):
     order: LibraryEntryOrder
 
 
-class CatalogPodcastIndexOut(_Closed):
+class CatalogFeedIndexOut(_Closed):
     has_new: bool
     not_in_library: bool
-    order: PodcastIndexOrder
+    order: FeedIndexOrder
 
 
-class CatalogShowOut(_Closed):
-    detail: PodcastDetailOut
-    index: CatalogPodcastIndexOut | None
+class CatalogSourceOut(_Closed):
+    detail: FeedDetailOut
+    index: CatalogFeedIndexOut | None
 
 
-class CatalogLibraryShowsOut(_Closed):
+class CatalogLibrarySourcesOut(_Closed):
     library_id: UUID
-    value: LibraryPodcastsOut
+    value: LibraryFeedsOut
 
 
-class CatalogEpisodeOut(_Closed):
+class CatalogEntryOut(_Closed):
     media_id: UUID
-    podcast_id: UUID
+    feed_id: UUID
+    entry_id: UUID
+    published_at: datetime | None
+    published_on: date | None
+    entry_url: str | None
+    entry_state: Literal["unread", "in_progress", "finished"]
+    order: EpisodeOrder
+
+
+class CatalogEpisodeOut(CatalogEntryOut):
     transcript_state: TranscriptState
     episode_state: Literal["unplayed", "in_progress", "played"]
     consumption: EpisodeConsumptionState
     source_duration_ms: int | None
-    order: EpisodeOrder
+
+
+class CatalogArticleOut(CatalogEntryOut):
+    transcript_state: None
 
 
 class CatalogChatOut(_Closed):
@@ -136,7 +148,7 @@ def _orders(values: list[BaseModel]) -> None:
 
 
 class OfflineCatalogOut(_Closed):
-    format_version: Literal[3]
+    format_version: Literal[4]
     wire_revision: int
     account_id: UUID
     snapshot_id: UUID
@@ -145,9 +157,10 @@ class OfflineCatalogOut(_Closed):
     libraries: list[CatalogLibraryOut]
     media: list[CatalogMediaOut]
     library_media: list[CatalogLibraryMediaOut]
-    shows: list[CatalogShowOut]
-    library_shows: list[CatalogLibraryShowsOut]
+    sources: list[CatalogSourceOut]
+    library_sources: list[CatalogLibrarySourcesOut]
     episodes: list[CatalogEpisodeOut]
+    articles: list[CatalogArticleOut]
     lectern: LecternOut
     chats: list[CatalogChatOut]
 
@@ -155,52 +168,58 @@ class OfflineCatalogOut(_Closed):
     def complete(self) -> "OfflineCatalogOut":
         libraries = {row.value.id for row in self.libraries}
         media = {row.summary.media_id: row.summary for row in self.media}
-        shows = {row.detail.podcast.id: row.detail for row in self.shows}
+        shows = {row.detail.feed.id: row.detail for row in self.sources}
         _unique([row.value.id for row in self.libraries])
         _unique([row.summary.media_id for row in self.media])
-        _unique([row.detail.podcast.id for row in self.shows])
+        _unique([row.detail.feed.id for row in self.sources])
         _unique([(row.library_id, row.media_id) for row in self.library_media])
-        _unique([row.library_id for row in self.library_shows])
+        _unique([row.library_id for row in self.library_sources])
         _unique([row.media_id for row in self.episodes])
+        _unique([(row.feed_id, row.media_id) for row in self.articles])
         _unique([row.media_summary.media_id for row in self.lectern.items])
         _unique([row.value.id for row in self.chats])
         _orders([row.order for row in self.libraries])
         _orders([row.order for row in self.media])
-        _orders([row.index.order for row in self.shows if row.index is not None])
-        _orders([row.order for row in self.episodes])
+        _orders([row.index.order for row in self.sources if row.index is not None])
+        entries = [*self.episodes, *self.articles]
+        _orders([row.order for row in entries])
         _orders([row.order for row in self.chats])
-        if {row.library_id for row in self.library_shows} != libraries:
+        if {row.library_id for row in self.library_sources} != libraries:
             raise ValueError("catalog library sections are incomplete")
         for library_id in libraries:
             _orders([row.order for row in self.library_media if row.library_id == library_id])
         for row in self.library_media:
             if row.library_id not in libraries or row.media_id not in media:
                 raise ValueError("catalog library entry reference is missing")
-        for row in self.episodes:
-            if row.media_id not in media or row.podcast_id not in shows:
+        for row in entries:
+            if row.media_id not in media or row.feed_id not in shows:
                 raise ValueError("catalog episode reference is missing")
+        if any(shows[row.feed_id].feed.kind != "podcast" for row in self.episodes) or any(
+            shows[row.feed_id].feed.kind != "article" for row in self.articles
+        ):
+            raise ValueError("catalog source kind differs")
         for row in self.lectern.items:
             if media.get(row.media_summary.media_id) != row.media_summary:
                 raise ValueError("catalog lectern summary differs")
         for show_id, detail in shows.items():
-            episodes = [row for row in self.episodes if row.podcast_id == show_id]
-            if detail.episode_counts.known_count != len(episodes) or (
-                detail.episode_counts.unfinished_count
-                != sum(row.episode_state != "played" for row in episodes)
+            episodes = [row for row in entries if row.feed_id == show_id]
+            if detail.entry_counts.known_count != len(episodes) or (
+                detail.entry_counts.unfinished_count
+                != sum(row.entry_state != "finished" for row in episodes)
             ):
                 raise ValueError("catalog episode counts differ")
             if any(row.library_id not in libraries for row in detail.destinations):
                 raise ValueError("catalog show destination is missing")
             if any(row.library_id not in libraries for row in detail.imports):
                 raise ValueError("catalog show import destination is missing")
-        for section in self.library_shows:
+        for section in self.library_sources:
             for row in section.value.subscriptions:
-                if row.podcast.id not in shows or row.podcast != shows[row.podcast.id].podcast:
+                if row.feed.id not in shows or row.feed != shows[row.feed.id].feed:
                     raise ValueError("catalog library show differs")
                 if any(destination.library_id not in libraries for destination in row.destinations):
                     raise ValueError("catalog library show destination is missing")
-                if any(operation.podcast_id not in shows for operation in row.imports):
+                if any(operation.feed_id not in shows for operation in row.imports):
                     raise ValueError("catalog library show import is missing")
-            if any(row.podcast_id not in shows for row in section.value.imports):
+            if any(row.feed_id not in shows for row in section.value.imports):
                 raise ValueError("catalog library import show is missing")
         return self

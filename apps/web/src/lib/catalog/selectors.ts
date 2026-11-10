@@ -1,7 +1,7 @@
 /** Pure complete-view queries over one server-ranked catalog. Membership and
  * ordering facts never come from live summaries or locally recomputed collation.
  * Consumption-dependent facts (summaries, episode states, counts, remaining and
- * unplayed orders, lectern membership) come from one projection of this device's
+ * unfinished orders, lectern membership) come from one projection of this device's
  * listening over the dated catalog, applied before filtering and sorting. */
 import { ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
@@ -13,19 +13,19 @@ import {
 
 export type OfflineCatalog = Schema<"OfflineCatalogOut">;
 export function indexCatalog(value: OfflineCatalog) {
-  const unplayed = new Map<string, number>();
-  for (const row of value.episodes)
-    unplayed.set(row.podcast_id, (unplayed.get(row.podcast_id) ?? 0) + (row.episode_state === "unplayed" ? 1 : 0));
+  const unfinished = new Map<string, number>();
+  for (const row of [...value.episodes, ...value.articles])
+    unfinished.set(row.feed_id, (unfinished.get(row.feed_id) ?? 0) + (row.entry_state !== "finished" ? 1 : 0));
   return {
     value,
     libraries: new Map(value.libraries.map(row => [row.value.id, row])),
     media: new Map(value.media.map(row => [row.summary.media_id, row])),
     episodes: new Map(value.episodes.map(row => [row.media_id, row])),
-    shows: new Map(value.shows.map(row => [row.detail.podcast.id, row])),
-    libraryShows: new Map(value.library_shows.map(row => [row.library_id, row.value])),
+    sources: new Map(value.sources.map(row => [row.detail.feed.id, row])),
+    librarySources: new Map(value.library_sources.map(row => [row.library_id, row.value])),
     chats: new Map(value.chats.map(row => [row.value.id, row.value])),
-    /** Per show: complete saved episode selection's unplayed count. */
-    unplayed,
+    /** Per source: complete saved entry selection's unfinished count. */
+    unfinished,
   };
 }
 export type CatalogIndex = ReturnType<typeof indexCatalog>;
@@ -61,14 +61,14 @@ export function projectCatalog(raw: CatalogIndex, facts: ListeningFacts | null):
     const STATE = { Finished: "played", InProgress: "in_progress", Unread: "unplayed" } as const;
     const episodes = raw.value.episodes.map(row => {
       const effective = changed.get(row.media_id);
-      return effective === undefined ? row : { ...row, episode_state: STATE[episodeReadState(effective)] };
+      return effective === undefined ? row : { ...row, episode_state: STATE[episodeReadState(effective)], entry_state: ({ Finished: "finished", InProgress: "in_progress", Unread: "unread" } as const)[episodeReadState(effective)] };
     });
-    const shows = new Set(episodes.filter(row => changed.has(row.media_id)).map(row => row.podcast_id));
+    const shows = new Set(episodes.filter(row => changed.has(row.media_id)).map(row => row.feed_id));
     const unfinished = new Map<string, number>();
     const unplayed = new Map<string, number>();
-    for (const row of episodes) if (shows.has(row.podcast_id)) {
-      unfinished.set(row.podcast_id, (unfinished.get(row.podcast_id) ?? 0) + (row.episode_state !== "played" ? 1 : 0));
-      unplayed.set(row.podcast_id, (unplayed.get(row.podcast_id) ?? 0) + (row.episode_state === "unplayed" ? 1 : 0));
+    for (const row of episodes) if (shows.has(row.feed_id)) {
+      unfinished.set(row.feed_id, (unfinished.get(row.feed_id) ?? 0) + (row.episode_state !== "played" ? 1 : 0));
+      unplayed.set(row.feed_id, (unplayed.get(row.feed_id) ?? 0) + (row.episode_state === "unplayed" ? 1 : 0));
     }
     result = indexCatalog({
       ...raw.value,
@@ -77,9 +77,9 @@ export function projectCatalog(raw: CatalogIndex, facts: ListeningFacts | null):
         return effective === undefined ? row : { ...row, summary: summary(row.summary), remaining_seconds: episodeRemainingSeconds(effective) };
       }),
       episodes,
-      shows: raw.value.shows.map(row => !shows.has(row.detail.podcast.id) ? row : {
-        detail: { ...row.detail, episode_counts: { ...row.detail.episode_counts, unfinished_count: unfinished.get(row.detail.podcast.id) ?? 0 } },
-        index: row.index === null ? null : { ...row.index, has_new: (unplayed.get(row.detail.podcast.id) ?? 0) > 0 },
+      sources: raw.value.sources.map(row => !shows.has(row.detail.feed.id) ? row : {
+        detail: { ...row.detail, entry_counts: { ...row.detail.entry_counts, unfinished_count: unfinished.get(row.detail.feed.id) ?? 0 } },
+        index: row.index === null ? null : { ...row.index, has_new: (unplayed.get(row.detail.feed.id) ?? 0) > 0 },
       }),
       lectern: { ...raw.value.lectern, items: raw.value.lectern.items.flatMap(item =>
         changed.get(item.media_summary.media_id)?.lectern_member === false ? [] : [{ ...item, media_summary: summary(item.media_summary) }]) },
@@ -96,7 +96,7 @@ function query(input: URLSearchParams, choices: Readonly<Record<string, readonly
 }
 const sorted = <T,>(rows: readonly T[], rank: (row: T) => number) => [...rows].sort((a, b) => rank(a) - rank(b));
 const index = <T,>(items: T[]) => ({ items });
-const podcastRow = ({ id, title, contributors, image_url }: Schema<"PodcastListItemOut">): Schema<"PodcastIndexItemOut"> => ({ id, title, contributors, image_url });
+const feedRow = ({ id, kind, title, contributors, image_url }: Schema<"FeedListItemOut">): Schema<"FeedIndexItemOut"> => ({ id, kind, title, contributors, image_url });
 
 export function catalogLibraries(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_LibraryOut_"> {
   query(params, { sort: ["created_desc", "name_asc", "name_desc"] });
@@ -105,12 +105,12 @@ export function catalogLibraries(catalog: CatalogIndex, params = new URLSearchPa
 }
 export const catalogLibrary = (catalog: CatalogIndex, id: string) => catalog.libraries.get(id)?.value ?? null;
 /** Compact section and entry projection share this exact catalog capture. */
-function catalogLibraryPodcastIndex(catalog: CatalogIndex, id: string): Schema<"LibraryPodcastIndexOut"> | null {
-  const section = catalog.libraryShows.get(id);
-  return section === undefined ? null : { ...section, subscriptions: section.subscriptions.map(row => ({ ...row, podcast: podcastRow(row.podcast) })) };
+function catalogLibraryFeedIndex(catalog: CatalogIndex, id: string): Schema<"LibraryFeedIndexOut"> | null {
+  const section = catalog.librarySources.get(id);
+  return section === undefined ? null : { ...section, subscriptions: section.subscriptions.map(row => ({ ...row, feed: feedRow(row.feed) })) };
 }
 export const catalogMedia = (catalog: CatalogIndex, id: string) => catalog.media.get(id)?.summary ?? null;
-export const catalogShow = (catalog: CatalogIndex, id: string) => catalog.shows.get(id)?.detail ?? null;
+export const catalogSource = (catalog: CatalogIndex, id: string) => catalog.sources.get(id)?.detail ?? null;
 export const catalogChat = (catalog: CatalogIndex, id: string) => catalog.chats.get(id) ?? null;
 export const catalogLectern = (catalog: CatalogIndex) => catalog.value.lectern;
 
@@ -156,49 +156,50 @@ export function catalogEntries(catalog: CatalogIndex, id: string, params = new U
       default: throw invalid();
     }
   });
-  const podcasts = catalogLibraryPodcastIndex(catalog, id);
-  if (podcasts === null) return null;
-  return { library, podcasts, ...index(ordered.map(row => ({ kind: "media" as const, entry_id: row.entry_id, added_at: row.added_at, media_summary: media(row).summary }))),
+  const feeds = catalogLibraryFeedIndex(catalog, id);
+  if (feeds === null) return null;
+  return { library, feeds, ...index(ordered.map(row => ({ kind: "media" as const, entry_id: row.entry_id, added_at: row.added_at, media_summary: media(row).summary }))),
     order_revision: !library.is_default && [...params].length === 0 ? library.order_revision : null };
 }
 
-export function catalogPodcasts(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_PodcastIndexItemOut_"> | null {
-  query(params, { sort: ["recent_episode", "unplayed_count", "alpha"], filter: ["all", "has_new", "not_in_library"], library_id: null });
-  const sort = params.get("sort") ?? "recent_episode";
+export function catalogFeeds(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_FeedIndexItemOut_"> | null {
+  query(params, { kind: ["podcast", "article"], sort: ["recent_entry", "unfinished_count", "alpha"], filter: ["all", "has_new", "not_in_library"], library_id: null });
+  const sort = params.get("sort") ?? "recent_entry";
   const filter = params.get("filter") ?? "all";
   const libraryId = params.get("library_id");
-  const section = libraryId === null ? null : catalog.libraryShows.get(libraryId);
+  const section = libraryId === null ? null : catalog.librarySources.get(libraryId);
   if (libraryId !== null && !section) return null;
-  const scoped = section === null || section === undefined ? null : new Set(section.subscriptions.map(row => row.podcast.id));
-  const rows = catalog.value.shows.filter(row => row.index !== null && (scoped === null || scoped.has(row.detail.podcast.id)) &&
+  const scoped = section === null || section === undefined ? null : new Set(section.subscriptions.map(row => row.feed.id));
+  const rows = catalog.value.sources.filter(row => (params.get("kind") === null || row.detail.feed.kind === params.get("kind")) && row.index !== null && (scoped === null || scoped.has(row.detail.feed.id)) &&
     (filter !== "has_new" || row.index.has_new) && (filter !== "not_in_library" || row.index.not_in_library));
   const index = (row: (typeof rows)[number]) => {
     if (row.index === null) throw new Error("detail-only show entered followed index");
     return row.index;
   };
-  // Unplayed counts are effective: the canonical plan is count descending, then recent-episode order.
-  const ordered = sort === "unplayed_count" ? [...rows].sort((a, b) =>
-    (catalog.unplayed.get(b.detail.podcast.id) ?? 0) - (catalog.unplayed.get(a.detail.podcast.id) ?? 0) ||
-      index(a).order.recent_episode - index(b).order.recent_episode)
+  // Unfinished counts are effective: the canonical plan is count descending, then recent-entry order.
+  const ordered = sort === "unfinished_count" ? [...rows].sort((a, b) =>
+    (catalog.unfinished.get(b.detail.feed.id) ?? 0) - (catalog.unfinished.get(a.detail.feed.id) ?? 0) ||
+      index(a).order.recent_entry - index(b).order.recent_entry)
     : sorted(rows, row => {
-      switch (sort) { case "recent_episode": case "alpha": return index(row).order[sort]; default: throw invalid(); }
+      switch (sort) { case "recent_entry": case "alpha": return index(row).order[sort]; default: throw invalid(); }
     });
-  return { items: ordered.map(row => podcastRow(row.detail.podcast)) };
+  return { items: ordered.map(row => feedRow(row.detail.feed)) };
 }
 
-export function catalogEpisodes(catalog: CatalogIndex, id: string, params = new URLSearchParams()): Schema<"PodcastEpisodeIndexOut"> | null {
-  const podcast = catalog.shows.get(id)?.detail;
-  if (podcast === undefined) return null;
-  query(params, { state: ["all", "unplayed", "in_progress", "played"], sort: ["newest", "oldest", "duration_asc", "duration_desc"] });
+export function catalogFeedEntries(catalog: CatalogIndex, id: string, params = new URLSearchParams()): Schema<"FeedEntryIndexOut"> | null {
+  const feed = catalog.sources.get(id)?.detail;
+  if (feed === undefined) return null;
+  query(params, { state: ["all", "unread", "in_progress", "finished"], sort: ["newest", "oldest", "duration_asc", "duration_desc"] });
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
-  const rows = catalog.value.episodes.filter(row => row.podcast_id === id && (state === "all" || row.episode_state === state));
-  return { podcast, ...index(sorted(rows, row => {
+  const rows = [...catalog.value.episodes, ...catalog.value.articles].filter(row => row.feed_id === id && (state === "all" || row.entry_state === state));
+  return { feed, next_cursor: null, ...index(sorted(rows, row => {
     switch (sort) { case "newest": case "oldest": case "duration_asc": case "duration_desc": return row.order[sort]; default: throw invalid(); }
   }).map(row => {
     const media = catalog.media.get(row.media_id);
-    if (!media) throw new Error("catalog episode has no media");
-    return { id: row.media_id, media_summary: media.summary, transcript_state: row.transcript_state };
+    if (!media) throw new Error("catalog source entry has no media");
+    return { id: row.media_id, entry_id: row.entry_id, media_summary: media.summary, transcript_state: row.transcript_state,
+      published_at: row.published_at, published_on: row.published_on, entry_url: row.entry_url };
   })) };
 }
 function updatedRank(params: URLSearchParams): keyof Schema<"UpdatedTitleOrder"> {

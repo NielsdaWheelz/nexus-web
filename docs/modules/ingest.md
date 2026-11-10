@@ -141,7 +141,12 @@ remains outside it. a publication already admitted can finish after expiry, and
 a concurrent confirmation waits for its outcome before answering. a published
 session always replays its receipt, including after expiry.
 
-recovery admissions require the media's creator (403 `E_OWNER_REQUIRED`; an unreadable media is 404).
+stored-source recovery requires the media's creator (403 `E_OWNER_REQUIRED`; an
+unreadable media is 404). linked feed extraction additionally permits a reader
+with current source authority and permitted access to the incomplete or unpublished
+article. the source
+owner's refresh policy drives both the action facts and admission; settled state,
+same-source terminal errors and publication pins still constrain refresh.
 
 in process: `accept_url_source` (a fresh session, frozen removal revision and destination ids), `accept_system_url_source` (the caller's transaction; the oracle corpus sends `uuid5(NAMESPACE_URL, "oracle:<key>")`; both refuse another user's id with 409, as over http), `accept_embedded_source` (non-x only, flush-only, requiring retaining parent identity/current visibility and preserving child removal markers; the publisher enqueues a created child with `source_attempts.enqueue_attempt` in its own transaction), `enqueue_podcast_episode_transcript_source_attempt`, `accept_x_capture`, `replace_x_capture`, `repair_source_for_system_media`, `reusable_embedded_source_media_ids`. readers of the policy: `source_recovery`, `source_refreshable`, `source_repairable_sql` (the media projection, whose answers Imports and the action menu show), `load_source_progress` (Imports). supersession: `rehome_supersessions`, `superseding_media_id`.
 

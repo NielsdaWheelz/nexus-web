@@ -341,10 +341,12 @@ def build_metadata_research_input(db: Session, media: Media) -> MetadataResearch
             for interval in scope.fragment_intervals
         ]
     if media.kind == "podcast_episode":
+        from nexus.services.podcasts.episodes import episode_source_rows_sql
+
         episode = db.execute(
-            text("""
-                SELECT p.title, pe.rss_metadata_fingerprint FROM podcast_episodes pe
-                JOIN podcasts p ON p.id = pe.podcast_id WHERE pe.media_id = :m
+            text(f"""
+                SELECT p.title, pe.rss_metadata_fingerprint FROM ({episode_source_rows_sql()}) pe
+                JOIN feeds p ON p.id = pe.podcast_id AND p.kind='podcast' WHERE pe.media_id = :m
             """),
             {"m": media.id},
         ).one()

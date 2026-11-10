@@ -11,7 +11,7 @@ import { installedApp, remoteGeneration } from "@/lib/native/admission";
 import { ApiError, admissionRefusal, apiFetch } from "@/lib/api/client";
 import { modeledApiError, useThrowLater } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
-import type { PodcastActionFocus } from "./inlineActions";
+import type { FeedActionFocus } from "./inlineActions";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
 type Failure = { readonly error: ApiError };
@@ -27,7 +27,7 @@ type ReadState =
  * Admission refuses a read unsent, in its own words. Projection uses current runtime
  * availability; this reader owns no menu or timer.
  */
-export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void, focus?: PodcastActionFocus) {
+export function useResourceActions(ref: string | null, onDefect?: (defect: { readonly error: unknown }) => void, focus?: FeedActionFocus) {
   const { ctx, run } = useActionRuntime();
   const source = usePlaybackSource();
   const pane = usePaneRuntime();
@@ -124,7 +124,7 @@ export function useClientActions(ref: string | null, title: string): ActionDescr
   const resource = ref === null ? null : parseResourceRef(ref);
   const target = resource?.scheme === "media" ? { kind: "Media" as const, mediaId: resource.id }
     : resource?.scheme === "library" ? { kind: "Library" as const, library_id: resource.id }
-    : resource?.scheme === "podcast" ? { kind: "Podcast" as const, podcast_id: resource.id } : null;
+    : resource?.scheme === "podcast" || resource?.scheme === "feed" ? { kind: "Feed" as const, feed_id: resource.id, feed_kind: resource.scheme === "podcast" ? "podcast" as const : "article" as const } : null;
   const undo = target === null ? [] : projectConsumptionUndoActions(target, ctx);
   if (resource === null || resource.scheme !== "media") return undo;
   const mediaId = resource.id;
