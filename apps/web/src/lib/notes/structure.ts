@@ -102,7 +102,7 @@ export class OutlineHistory {
   private occurrenceRetention: (() => {documents: readonly WritingDocument[]; bytes: number}) | null = null;
   private readonly leaveAllowance: () => void;
   constructor(readonly runtime: WritingRuntime, private readonly failure: (error: unknown) => void,
-    readonly allowance: OutlineHistoryAllowance, changed: () => void) {
+    private readonly allowance: OutlineHistoryAllowance, changed: () => void) {
     this.leaveAllowance = allowance.join({
       documents: () => [...new Set([...this.retainedHistoryDocuments(), ...(this.occurrenceRetention?.().documents ?? [])])],
       bytes: () => this.retainedBytes() + (this.occurrenceRetention?.().bytes ?? 0),
@@ -115,24 +115,22 @@ export class OutlineHistory {
   hasRetained(): boolean {return this.groups().length > 0 || [...this.texts.values()].some(history => history.captureBytes > 0);}
   typingOrigin(): unknown {return new this.TypingOrigin();}
   boundary(): void {for (const history of this.texts.values()) history.manager.stopCapturing();}
-  retainedRefs(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => group.refs));}
   retainedHistoryDocuments(): readonly WritingDocument[] {return [...new Set([...this.groups().flatMap(group => group.documents), ...[...this.texts.values()].filter(history => history.captureBytes).map(history => history.document)])];}
   retainedDocuments(): readonly WritingDocument[] {return [...new Set([...this.groups().flatMap(group => group.documents), ...[...this.texts.values()].filter(history => history.active || history.captureBytes).map(history => history.document)])];}
   retainedOccurrences(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => [...inputRows(group.before), ...inputRows(group.after), ...group.added.map(row => row.row_id), ...group.removed.map(row => row.row_id)]));}
   retainedRows(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => [...inputRows(group.before), ...inputRows(group.after), ...[...group.placements_before, ...group.placements_after, ...group.added, ...group.removed]
     .flatMap(row => [row.row_id, row.placement?.parent_id, row.placement?.after_id, row.placement?.before_id]).filter((key): key is string => typeof key === "string")]));}
-  retainedBytes(): number {return this.groups().reduce((bytes, group) => bytes + new TextEncoder().encode(JSON.stringify({
+  private retainedBytes(): number {return this.groups().reduce((bytes, group) => bytes + new TextEncoder().encode(JSON.stringify({
     refs: group.refs, before: group.before, after: group.after, placements_before: group.placements_before, placements_after: group.placements_after, added: group.added, removed: group.removed, receipt: group.receipt,
     resources: [...group.coverage.resources], links: [...group.coverage.links], metadata: group.metadata(),
   })).byteLength, [...this.texts.values()].reduce((bytes, history) => bytes + history.captureBytes, 0));}
-  releaseOldest(): boolean {
-    if (this.groups().some(group => group.released)) return false;
+  private releaseOldest(): void {
+    if (this.groups().some(group => group.released)) return;
     const oldest = this.groups().reduce<Group | null>((oldest, group) => oldest === null || group.stamp < oldest.stamp ? group : oldest, null);
-    if (oldest && this.past.includes(oldest)) {this.release(oldest); return true;}
+    if (oldest && this.past.includes(oldest)) {this.release(oldest); return;}
     const future = this.future.filter(group => !group.released);
-    if (!future.length) return false;
+    if (!future.length) return;
     for (const group of future) this.release(group);
-    return true;
   }
   bindFocus(owner: FocusOwner): () => void {this.focus = owner; return () => {if (this.focus === owner) this.focus = null;};}
   canUndo(): boolean {return this.past.some(group => !group.released && group.suspended === 0);}

@@ -8,7 +8,7 @@ interface Member {
   bytes(): number;
   retiring(): boolean;
   oldest(): number | null;
-  retire(): boolean;
+  retire(): void;
   changed(): void;
 }
 

@@ -388,7 +388,6 @@ export class OutlineController {
       for (const name of CLIPBOARD_EVENTS) window.addEventListener(name, this.blockClipboard, true);
       window.addEventListener("keydown", this.removalFence, true); window.addEventListener("beforeinput", this.removalFence, true);
       window.addEventListener("keyup", this.releaseRemoval, true); window.addEventListener("blur", this.releaseRemoval);
-      if (!this.disconnect) this.connect();
       this.presentation = true;
       this.resize?.disconnect();
       this.resize = new ResizeObserver(() => {
@@ -854,12 +853,12 @@ export class OutlineController {
     return false;
   }
   private hasPendingWriting(): boolean {return [...this.pending.fields.values()].some(row => row.pending);}
-  private refs(windows?: ReadonlyMap<string, OutlineWindow>, historyRefs: ReadonlySet<string> = new Set(this.history.retainedHistoryDocuments().map(document => document.ref))): Set<string> {
+  private refs(windows?: ReadonlyMap<string, OutlineWindow>): Set<string> {
     const current = windows ?? this.reservedWindows ?? this.windows;
     return new Set([...this.binding.capturedDocuments().map(document => document.ref), ...[...this.documents].filter(([, held]) => held.captureBytes > 0).map(([ref]) => ref), ...(this.rootField ? [this.rootRef] : []), ...[...current.values()].flatMap(window => [...window.editableRefs]),
       ...[...this.pending.retainedRefs()].filter(ref => /^(note_block|page):/u.test(ref)), ...[...this.protectedRows()].flatMap(id => {const ref = this.rows.get(id)?.ref; return ref && /^(note_block|page):/u.test(ref) ? [ref] : [];}),
       ...[...this.annotations.values()].flatMap(value => value.attachment && value.document ? [value.document.ref] : []), ...(this.preparing ? [this.preparing.ref] : []),
-      ...historyRefs, ...(windows === undefined ? [...this.documents.keys(), ...this.settlingRefs] : [])]);
+      ...this.history.retainedHistoryDocuments().map(document => document.ref), ...(windows === undefined ? [...this.documents.keys(), ...this.settlingRefs] : [])]);
   }
   private baselineRefs(windows: ReadonlyMap<string, OutlineWindow>): Map<string, string> {
     const fields = new Map<string, string>();
