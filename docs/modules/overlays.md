@@ -332,6 +332,10 @@ budget starts at activation; initial publication does not complete preparation o
 clear its deadline. cancellation aborts and forgets. publication owns one desktop
 transient or mobile modal, never both.
 
+automatic publication uses one cancelable animation frame after commit-time pane
+compensation. a closed invocation schedules none. pointer and keyboard guards
+still validate current meaning and geometry synchronously before activation.
+
 initial meaning and the first ready prepared meaning freeze separately. prepared
 content and its trailing resource verbs share one capped delayed region: below
 initial controls in a below-popup, above them in an above-popup or mobile sheet.
