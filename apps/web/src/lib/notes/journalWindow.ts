@@ -46,6 +46,13 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
   const origin = root.current && port
     ? root.current.getBoundingClientRect().top - port.getBoundingClientRect().top - port.clientTop + port.scrollTop : 0;
   const epoch = revision.current;
+  const day = [...elements.current.values()].find(element => !element.hidden);
+  const trailing = day === undefined ? 0 : parseFloat(getComputedStyle(day).paddingBottom);
+  // Day spacing occupies layout, but cannot be the reader's eye-line anchor.
+  const firstVisible = (top: number, bottom: number) => {
+    const index = dates.findIndex((_, index) => (tops[index + 1] ?? height) - trailing > top && tops[index] < bottom);
+    return index < 0 ? null : { id: dates[index], offset: tops[index] };
+  };
 
   const measure = useCallback((date: string, element: HTMLElement | null) => {
     const previous = elements.current.get(date);
@@ -88,10 +95,7 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
     const proof = new Map(admissions.current);
     const byDate = new Map(dates.map((date, index) => [date, index]));
     frame.current = { revision: epoch, root: root.current, scrollport: port, origin, anchors: dates,
-      firstVisible(top, bottom) {
-        const index = dates.findIndex((_, index) => (tops[index + 1] ?? height) > top && tops[index] < bottom);
-        return index < 0 ? null : { id: dates[index], offset: tops[index] };
-      },
+      firstVisible,
       position(date) {
         if (indexState === "failed") return { kind: "failed" };
         if (indexState === "pending") return { kind: "pending", estimate: null };
@@ -174,6 +178,6 @@ export function useJournalWindow(dates: readonly string[], root: RefObject<HTMLD
       document.fonts.removeEventListener("loadingdone", invalidate);
     };
   }, [beforeLayout, root, virtualizer, port]);
-  const visible = port === null ? null : dates.find((date, index) => tops[index] + (heights.current.get(date) ?? 320) > port.scrollTop - origin) ?? null;
+  const visible = port === null ? null : firstVisible(port.scrollTop - origin, port.scrollTop - origin + port.clientHeight)?.id ?? null;
   return { geometry, measure, admit, dates: slots.map(slot => dates[slot.index]!), tops, height, visible };
 }

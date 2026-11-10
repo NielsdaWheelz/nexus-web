@@ -177,12 +177,12 @@ export class OutlineController {
     readonly rootRef: string, readonly rootBranch: OutlineBranch, public rootField: RootField | undefined,
     readonly prelude: readonly Intent[], private readonly notify: () => void, private readonly pendingChanged: () => void,
     private readonly workGuard: Pick<WorkGuard, "confirmLoss" | "hasWork">, session: OutlineSession, private readonly presentationAllowance: OutlinePresentationAllowance,
-    private readonly revealAnchor: (anchor: string, focus: boolean) => void, private readonly paneInputLease: (() => () => boolean) | null) {
+    private readonly revealAnchor: (anchor: string, focus: boolean) => void, private readonly paneInputLease: (() => () => boolean) | null, initialRows: 1 | 32) {
     // fold state and occurrence ids belong to the session (decision 4): a remount, as a pane's return, reopens what was
     // open under the same row ids. a typing origin is the history's own, so each retained id takes a fresh one.
     this.opened = session.opened; this.identities = session.identities;
     for (const [key, row] of this.identities) this.identities.set(key, {id: row.id, origin: history.typingOrigin()});
-    this.requests.set(pending.root_id, {parent_id: pending.root_id, ref: rootRef, branch: rootBranch, cursor: null, anchor: null, limit: 32});
+    this.requests.set(pending.root_id, {parent_id: pending.root_id, ref: rootRef, branch: rootBranch, cursor: null, anchor: null, limit: initialRows});
     this.attempted.add(pending.root_id);
     this.history.trackOccurrences(() => this.binding.historyRetention(this.history.retainedOccurrences()));
     this.connect();
@@ -467,7 +467,7 @@ export class OutlineController {
       (row.seed && window.rows.length === 0 || window.rows.some(item => item.link?.link_id === row.link?.link_id))));
   }
   setViewport(range: {top: number; bottom: number}): void {
-    this.viewportRange = range; this.planViewport();
+    this.planViewport(range);
   }
   private anchorFor(row: OutlineRow): string | null {
     if (!row.link) return null;
@@ -523,8 +523,13 @@ export class OutlineController {
         return missing.has(id) ? {kind: "missing"} : {kind: "pending", estimate: null};
       }};
   }
-  private planViewport(): void {
+  private planViewport(range?: {top: number; bottom: number}): void {
+    if (range) this.viewportRange = range;
     if (!this.presentation || !this.view || this.handle?.canArrange() === false) return;
+    if (!range && this.frame) {
+      const top = this.frame.scrollport.scrollTop - this.frame.origin;
+      this.viewportRange = {top, bottom: top + this.frame.scrollport.clientHeight};
+    }
     const top = this.viewportRange.top - this.rowOverscan, bottom = this.viewportRange.bottom + this.rowOverscan;
     const wanted = new Set(this.protectedRows());
     const near = this.viewport.metrics.filter(metric => metric.top + metric.height >= top && metric.top <= bottom);

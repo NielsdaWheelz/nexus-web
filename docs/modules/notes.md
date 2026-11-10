@@ -28,6 +28,12 @@ reads or rewriting the destination to a standalone page.
 programmatic scroll positions reach the date virtualizer through its offset
 observer before range planning. geometry and admission use the same scroll
 position; ordinary scroll events keep the library's existing observer.
+day heights include their spacing, but trailing inter-day spacing is not readable
+content when choosing the eye line or visible date.
+
+a cold journal day first admits one row and its existing boundary proof, then
+fills through ordinary viewport demand. standalone roots keep their 32-row
+bootstrap. boundary resources remain complete; the row limit is not a byte cap.
 
 date headings stay separate from authored titles. inline journal titles use the
 existing content editor's six-line extent; empty titles hide only after settled

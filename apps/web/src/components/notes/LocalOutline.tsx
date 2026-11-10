@@ -45,7 +45,7 @@ export interface LocalOutlineHandle {
   rootText(): string;
 }
 type Props = {rootRef: string; rootField?: RootField; prelude?: readonly Intent[]; apiRef?: React.RefObject<LocalOutlineHandle | null>;
-  filter?: string; occurrencePrefix?: string; attached?: boolean; historyAllowance?: OutlineHistoryAllowance | null; presentationAllowance?: OutlinePresentationAllowance | null; rootPresentation?: RootPresentation;
+  filter?: string; occurrencePrefix?: string; attached?: boolean; historyAllowance?: OutlineHistoryAllowance | null; presentationAllowance?: OutlinePresentationAllowance | null; rootPresentation?: RootPresentation; initialRows?: 1 | 32;
   onControllerReady?(controller: OutlineController | null): void; childrenVisible?: boolean;
   /** The link the pane was opened through; the outline omits it, so the parent is not listed as a child. */
   entering?: string};
@@ -86,7 +86,7 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
 /** The route and editing host consume one root read; descendants retain their
  * own collectors. Canonical root metadata survives paging and refresh failure. */
 export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef, entering, onControllerReady, childrenVisible = true,
-  attached = true, historyAllowance = null, presentationAllowance = null, rootPresentation = "header"}: Props): LocalOutlineRoot {
+  attached = true, historyAllowance = null, presentationAllowance = null, rootPresentation = "header", initialRows = 32}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
   const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
@@ -123,14 +123,14 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     if (!runtime) return;
     const history = new OutlineHistory(runtime, setFailure, historyAllowance ?? new OutlineHistoryAllowance(), notify);
     const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed, guard, pending.value, presentationAllowance ?? new OutlinePresentationAllowance(notify),
-      (anchor, focus) => revealAnchor(`outline:${occurrencePrefix}`, anchor, focus), retained ? paneInputLease : null);
+      (anchor, focus) => revealAnchor(`outline:${occurrencePrefix}`, anchor, focus), retained ? paneInputLease : null, initialRows);
     controller.beforeLayout = beforeLayout;
     setMounted({id: crypto.randomUUID(), controller});
     if (apiRef) apiRef.current = controller;
     return () => {if (apiRef?.current === controller) apiRef.current = null; controller.close(); history.close();};
     // Presentation and latent-page props update the mounted session below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime, input, rootRef, branch, notify, changed, guard, historyAllowance, presentationAllowance, occurrencePrefix, revealAnchor, retained, paneInputLease]);
+  }, [runtime, input, rootRef, branch, notify, changed, guard, historyAllowance, presentationAllowance, occurrencePrefix, revealAnchor, retained, paneInputLease, initialRows]);
   const controller = current?.controller ?? null;
   useLayoutEffect(() => {
     if (attached) setPresented(true);

@@ -182,7 +182,7 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
   const [menuOpen, setMenuOpen] = useState(false);
   const rootField = useMemo(() => ({ label: "page title", placeholder: "" }), []);
   const outline = useLocalOutlineRoot({ rootRef: resolved.ref, prelude: resolved.prelude, rootField, apiRef: api,
-    occurrencePrefix: `journal:${day.local_date}:outline`, attached, historyAllowance: allowance, presentationAllowance, rootPresentation: "inline" });
+    occurrencePrefix: `journal:${day.local_date}:outline`, attached, historyAllowance: allowance, presentationAllowance, rootPresentation: "inline", initialRows: 1 });
   const controller = outline.controller;
   const { rootReady, showTitle } = outline;
   useLayoutEffect(() => {
