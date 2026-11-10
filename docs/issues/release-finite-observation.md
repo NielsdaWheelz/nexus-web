@@ -8,6 +8,12 @@ metadata recovery's schema 0336 and shares its unreleased wire 20 bump. freshly
 inspect the deployed release vector before activation. authored format stays 4. preserve local corpus,
 pending source bytes and feed cursors.
 
+prepare android `0.3.12` (code33) and firefox `1.1.1` from the same final merged
+source as web/backend. preserve package/add-on identities and signing keys;
+install in place during the cutover. the wire19 firefox `1.1.0` signature cannot
+be reused for the changed wire20 payload. keep the new distribution draft until
+paired deployment and installed-client checks pass.
+
 the devbox frontend bridge serves the earlier wire19/schema0335 release. its
 staged web operations and installed clients passed; the replacement coordinator's
 first full paired live execution remains `NOT_RUN`. prepare one sealed web
