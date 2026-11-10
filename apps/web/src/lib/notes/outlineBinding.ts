@@ -29,6 +29,7 @@ interface BoundField {
   safe: Vector;
   release(): void;
 }
+function fieldBytes(entry: BoundField): number {return entry.captureBytes + (entry.baseline ? Y.encodeStateAsUpdate(entry.baseline).byteLength : 0);}
 
 /** Vectors cannot represent an unseen earlier write from the same replica.
  * A structural command may cover a newer dot only when its frozen displayed
@@ -46,6 +47,7 @@ export function snapshotIncludesDocument(body_state: string, document: Y.Doc): b
 }
 
 export class OutlineBinding implements EditorBinding {
+  beforeLayout: () => () => void = () => () => {};
   private readonly fields = new Map<string, BoundField>();
   private view: EditorView | null = null;
   private deferred: () => boolean = () => false;
@@ -117,16 +119,23 @@ export class OutlineBinding implements EditorBinding {
     void proof.catch(() => {});
     return {body_state, observed: proof};
   }
-  /** Charge each independently owned baseline and unresolved frozen capture.
-   * A proposed map estimates new aliases; retained history occurrences keep
-   * their old baselines even when their native row is not displayed. A new
-   * binding also reserves its initial independently frozen capture. */
-  encodedBytes(proposed?: ReadonlyMap<string, number>, retained?: ReadonlySet<string>): number {
+  /** Only chronology-owned occurrences consume the history allowance. New
+   * presentation bindings also capture frontiers, without becoming undo work. */
+  historyRetention(retained: ReadonlySet<string>): {documents: readonly WritingDocument[]; bytes: number} {
+    const documents = new Set<WritingDocument>();
+    let bytes = 0;
+    for (const [id, entry] of this.fields) if (retained.has(id)) {
+      bytes += fieldBytes(entry);
+      if (entry.captureBytes > 0 && entry.field.document) documents.add(entry.field.document);
+    }
+    return {documents: [...documents], bytes};
+  }
+  /** Charge each proposed baseline and every unresolved capture. A new binding
+   * also reserves its initial independently frozen capture. */
+  encodedBytes(proposed?: ReadonlyMap<string, number>): number {
     let bytes = 0;
     for (const [id, entry] of this.fields) {
-      bytes += entry.captureBytes;
-      if (entry.baseline && (!proposed || proposed.has(id) || retained?.has(id) || entry.captureBytes > 0))
-        bytes += Y.encodeStateAsUpdate(entry.baseline).byteLength;
+      if (!proposed || proposed.has(id) || entry.captureBytes > 0) bytes += fieldBytes(entry);
     }
     if (proposed) for (const [id, size] of proposed) if (!this.fields.get(id)?.baseline) bytes += 2 * size;
     return bytes;
@@ -198,6 +207,7 @@ export class OutlineBinding implements EditorBinding {
     return entry;
   }
   attach(view: EditorView, deferred: () => boolean): void {this.view = view; this.deferred = deferred;}
+  detach(): void {this.view = null; this.deferred = () => false;}
   apply(transaction: Transaction): void {
     const route = routeInlineTransaction(transaction);
     if (route.kind === "refused") throw new Error(route.reason);
@@ -302,7 +312,8 @@ export class OutlineBinding implements EditorBinding {
       const a = Y.createAbsolutePositionFromRelativePosition(anchor, active.baseline), b = Y.createAbsolutePositionFromRelativePosition(head, active.baseline);
       if (a && b) transaction.setSelection(TextSelection.create(transaction.doc, nextField.from + a.index, nextField.from + b.index));
     }
-    view.dispatch(transaction);
+    const finish = this.beforeLayout();
+    try {view.dispatch(transaction);} finally {finish();}
   }
-  close(): void {for (const entry of this.fields.values()) entry.release(); this.fields.clear(); this.view = null;}
+  close(): void {this.detach(); for (const entry of this.fields.values()) entry.release(); this.fields.clear();}
 }

@@ -1,5 +1,5 @@
 "use client";
-/** Titles retain their displayed Y.Text baseline through IME. An outline supplies
+/** Titles retain their displayed Y.Text baseline through IME and reading holds. An outline supplies
  * the same history owner as its body and structural commands; standalone title
  * fields keep an occurrence-local manager. Neither path creates note-body state. */
 import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
@@ -15,8 +15,9 @@ import styles from "./BoundPageTitleEditor.module.css";
 import type { TextEditorHandle, NoteEditorProps, StructuralKeys } from "./NoteEditor";
 import { outlineHistoryCommand, outlineStructuralCommand } from "@/lib/shortcuts";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-export default function BoundPageTitleEditor({ pageRef, document: suppliedDocument, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, history: suppliedHistory, structuralKeys, onEditorReady, onSelectionChange, header }: {
+export default function BoundPageTitleEditor({ pageRef, document: suppliedDocument, label = "page title", editable = true, placeholder = "untitled page", onEnter, inputRef, history: suppliedHistory, structuralKeys, onEditorReady, onSelectionChange, header, readingFrame = null }: {
   document?: WritingDocument; header?: true;
+  readingFrame?: object | null;
   history?: EditorHistory; structuralKeys?: StructuralKeys; onEditorReady?: (editor: TextEditorHandle | null) => void; onSelectionChange?: NoteEditorProps["onSelectionChange"];
   pageRef: string; label?: string; editable?: boolean; placeholder?: string;
   onEnter?: () => void; inputRef?: React.RefObject<HTMLTextAreaElement | null>;
@@ -42,10 +43,13 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   const beforeSelection = useRef({anchor: 1, head: 1});
   const inputIntent = useRef(0);
   const pendingSelection = useRef<{input: HTMLTextAreaElement; anchor: number; head: number; intent: number} | null>(null);
-  const latest = useRef({onEditorReady, onSelectionChange, onEnter, editable, suppliedHistory, structuralKeys});
-  latest.current = {onEditorReady, onSelectionChange, onEnter, editable, suppliedHistory, structuralKeys};
+  const refresh = useRef<(() => void) | null>(null);
+  const previousFrame = useRef(readingFrame);
+  const latest = useRef({onEditorReady, onSelectionChange, onEnter, editable, suppliedHistory, structuralKeys, readingFrame});
+  latest.current = {onEditorReady, onSelectionChange, onEnter, editable, suppliedHistory, structuralKeys, readingFrame};
   const selection = useCallback(() => ({anchor: (ref.current?.selectionStart ?? 0) + 1, head: (ref.current?.selectionEnd ?? 0) + 1}), [ref]);
   const step = useCallback((redo: boolean) => {
+    if (latest.current.readingFrame !== null) return;
     if (history.current) {if (redo) history.current.redo(); else history.current.undo();}
     else if (redo) manager.current?.redo(); else manager.current?.undo();
     latest.current.onSelectionChange?.(selection());
@@ -79,18 +83,26 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
       setValue(next);
       if (input?.value === next) latest.current.onSelectionChange?.(selection());
     };
-    const finish = () => queueMicrotask(() => {composing.current = false; receive(); shared?.boundary(); manager.current?.stopCapturing(); latest.current.onSelectionChange?.(selection());});
-    document.doc.on("update", receive);
+    const update = () => {if (latest.current.readingFrame === null) receive();};
+    refresh.current = receive;
+    const finish = () => queueMicrotask(() => {composing.current = false; update(); shared?.boundary(); manager.current?.stopCapturing(); latest.current.onSelectionChange?.(selection());});
+    document.doc.on("update", update);
     const input = ref.current;
     input?.addEventListener("compositionend", finish);
-    return () => { input?.removeEventListener("compositionend", finish); document.doc.off("update", receive); history.current = null; release(); baseline.current = null; manager.current?.clear(); manager.current?.destroy(); manager.current = null; doc.destroy(); };
+    return () => { input?.removeEventListener("compositionend", finish); document.doc.off("update", update); refresh.current = null; history.current = null; release(); baseline.current = null; manager.current?.clear(); manager.current?.destroy(); manager.current = null; doc.destroy(); };
   }, [document, ref, suppliedHistory, selection]);
+  useLayoutEffect(() => {
+    const previous = previousFrame.current; previousFrame.current = readingFrame;
+    // Entry keeps what is displayed; an admitted continuation or departure
+    // advances this same baseline without opening another reader or query.
+    if (readingFrame === null || previous !== null && previous !== readingFrame) refresh.current?.();
+  }, [readingFrame]);
   useLayoutEffect(() => {
     const pending = pendingSelection.current; pendingSelection.current = null;
     if (pending && pending.intent === inputIntent.current && ref.current === pending.input && pending.input.ownerDocument.activeElement === pending.input)
       pending.input.setSelectionRange(pending.anchor, pending.head);
     latest.current.onSelectionChange?.(selection());
-  }, [value, ref, selection]);
+  }, [value, ref, selection, readingFrame]);
   useLayoutEffect(() => {
     const input = ref.current;
     if (!input) return;
@@ -103,7 +115,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
       queueMicrotask(() => {if (event.defaultPrevented) release();});
     };
     const beforeInput = (event: Event) => {
-      if (!(event instanceof InputEvent) || !latest.current.editable || event.isComposing || composing.current) return;
+      if (!(event instanceof InputEvent) || !latest.current.editable || latest.current.readingFrame !== null || event.isComposing || composing.current) return;
       inputIntent.current++;
       beforeSelection.current = selection();
       if (!event.cancelable) return;
@@ -145,7 +157,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
         input.focus({preventScroll}); input.setSelectionRange(a, b);
         if (input.value !== text) pendingSelection.current = {input, anchor: a, head: b, intent: inputIntent.current};
       },
-      canArrange: () => !composing.current && !nativeFlight.current && !applying.current && pendingSelection.current === null && ref.current?.value === baseline.current?.getText("title").toString(),
+      canArrange: () => latest.current.readingFrame === null && !composing.current && !nativeFlight.current && !applying.current && pendingSelection.current === null && ref.current?.value === baseline.current?.getText("title").toString(),
       localHistory: command => {
         if (!handle.canArrange()) return {enabled: false, execute: () => undefined};
         if (latest.current.suppliedHistory) return null;
@@ -171,7 +183,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
   };
   if (error !== null && !isAuthoredStorageFailure(error)) throw error;
   return <>
-    <Textarea bare className={styles.title} autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} aria-label={label} aria-describedby={error === null ? undefined : failureId} placeholder={placeholder} disabled={!editable || !document}
+    <Textarea bare className={styles.title} autoGrow={{minRows: 1, maxRows: header ? focused ? 3 : 1 : 6}} ref={ref} value={value} readOnly={readingFrame !== null} aria-label={label} aria-describedby={error === null ? undefined : failureId} placeholder={placeholder} disabled={!editable || !document}
     style={atRisk ? {caretColor: "var(--danger)"} : undefined}
     onPointerDown={() => {inputIntent.current++;}}
     onInput={() => {const release = nativeRelease.current; queueMicrotask(release);}}
@@ -182,6 +194,7 @@ export default function BoundPageTitleEditor({ pageRef, document: suppliedDocume
     onChange={event => change(event.target.value)} onKeyDown={event => {
       inputIntent.current++;
       if (event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return;
+      if (readingFrame !== null && event.key !== "Escape") return;
       const command = outlineStructuralCommand(event, platform);
       if (command && structuralKeys) {event.preventDefault(); if (command === "indent") structuralKeys.indent?.(); else if (command === "outdent") structuralKeys.outdent?.(); else structuralKeys.move?.(command === "move_up" ? "up" : "down"); return;}
       if (event.key === "Escape" && structuralKeys?.selectBlock) {event.preventDefault(); structuralKeys.selectBlock(); return;}

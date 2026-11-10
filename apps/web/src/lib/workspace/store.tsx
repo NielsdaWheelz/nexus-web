@@ -50,8 +50,8 @@ import {
 import {
   planWorkspaceTarget,
   paneEntryWorkOwnerId,
-  type PaneDailyPage,
   type PaneEntryDelivery,
+  type WorkspacePaneEntry,
   type WorkspaceTargetActivationRequest,
   type WorkspaceTargetActivationResult,
   type WorkspaceTargetDisposition,
@@ -95,8 +95,6 @@ interface Data {
   readonly foregroundGeneration: number;
   columnWidthPx: number;
   recentlyClosedPanes: readonly ClosedPane[];
-  /** A daily body's identity, valid while its pane shows `routeKey`. */
-  dailyPageByPaneId: ReadonlyMap<string, { routeKey: string; value: PaneDailyPage }>;
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
   /** A destination owns focus after its initiating overlay has closed. */
   pendingPaneFocus: WorkspaceSelection | null;
@@ -211,13 +209,13 @@ function createWorkspaceStore(
     foregroundGeneration: 0,
     columnWidthPx,
     recentlyClosedPanes: [],
-    dailyPageByPaneId: new Map(),
     pendingPaneFocus: null,
     pendingPaneEntryDeliveryByPaneId: new Map(initial.panes.flatMap((pane) => {
       const target = sourceTargetFromHref(pane.current_visit.href);
-      return target ? [[pane.id, {
-        activationId: crypto.randomUUID(), paneId: pane.id,
-        visitId: pane.current_visit.id, entry: { kind: "InspectSource" as const, target, purpose: "Open" as const },
+      const entry: WorkspacePaneEntry | null = resolvePaneRouteModel(pane.current_visit.href).id === "dailyDate"
+        ? {kind: "RevealDailyDate"} : target ? {kind: "InspectSource", target, purpose: "Open"} : null;
+      return entry ? [[pane.id, {
+        activationId: crypto.randomUUID(), paneId: pane.id, visitId: pane.current_visit.id, entry,
       }]] : [];
     })),
   };
@@ -262,7 +260,6 @@ function createWorkspaceStore(
       }
     }
     if (materializedPage) memento.rekeyVisit(materializedPage.visitId, materializedPage.previousRoute, materializedPage.routeKey);
-    const closed = patch.recentlyClosedPanes ?? data.recentlyClosedPanes;
     const visitOf = new Map(next.panes.map((p) => [p.id, p.current_visit.id]));
     const deliveries = new Map(
       patch.pendingPaneEntryDeliveryByPaneId ??
@@ -277,9 +274,6 @@ function createWorkspaceStore(
       const entry = retainedEntry(pane.current_visit);
       if (entry) deliveries.set(pane.id, entry);
     }
-    // A closed pane keeps its daily record for a reopen.
-    const routeKeys = new Map([...next.panes, ...closed.map((c) => c.pane)].map((p) => [p.id, routeKeyOf(p)]));
-    const daily = [...data.dailyPageByPaneId].filter(([id, page]) => routeKeys.get(id) === page.routeKey);
     const foregroundGeneration = (patch.foregroundGeneration ?? data.foregroundGeneration) +
       (foregroundKey(data.state) === foregroundKey(next) ? 0 : 1);
     let focus = patch.pendingPaneFocus === undefined ? data.pendingPaneFocus : patch.pendingPaneFocus;
@@ -289,7 +283,6 @@ function createWorkspaceStore(
       ...patch,
       state: next,
       foregroundGeneration,
-      dailyPageByPaneId: daily.length === data.dailyPageByPaneId.size ? data.dailyPageByPaneId : new Map(daily),
       pendingPaneEntryDeliveryByPaneId: deliveries,
       pendingPaneFocus: focus,
     });
@@ -425,11 +418,7 @@ function createWorkspaceStore(
     ): WorkspaceTargetActivationResult {
       const href = resolveTodayHref(input.target.href, timeZone());
       const request = { ...input, target: { ...input.target, href } };
-      const plan = planWorkspaceTarget(
-        data.state,
-        data.dailyPageByPaneId,
-        request,
-      );
+      const plan = planWorkspaceTarget(data.state, request);
       let paneId = plan.paneId;
       let state: WorkspaceState;
       if (plan.kind === "CreatedPane") {
@@ -458,7 +447,8 @@ function createWorkspaceStore(
       if (surface) state = withSecondary(state, paneId, surface);
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const target = sourceTargetFromHref(plan.href, true);
-      const entry = request.entry ?? (target ? { kind: "InspectSource" as const, target, purpose: "Open" as const } : null);
+      const entry = request.entry ?? (resolvePaneRouteModel(plan.href).id === "dailyDate" ? {kind: "RevealDailyDate" as const}
+        : target ? {kind: "InspectSource" as const, target, purpose: "Open" as const} : null);
       state = trimHistory(state);
       const visit = state.panes.find(current => current.id === paneId)!.current_visit;
       const previous = retainedEntry(visit);
@@ -541,7 +531,12 @@ function createWorkspaceStore(
       const pane = find(paneId);
       if (!target || !pane) return "unchanged";
       if (pane.current_visit.href === target) {
-        return guard.confirmLoss({ scopes: [], ownerIds: options.discardOwnerIds ?? [] }) ? "unchanged" : "cancelled";
+        if (!guard.confirmLoss({scopes: [], ownerIds: options.discardOwnerIds ?? []})) return "cancelled";
+        if (resolvePaneRouteModel(target).id !== "dailyDate") return "unchanged";
+        const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
+        deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: pane.current_visit.id, entry: {kind: "RevealDailyDate"}});
+        commit(data.state, {pendingPaneEntryDeliveryByPaneId: deliveries});
+        return "committed";
       }
       const visit = options.replace
         ? replaceVisit(pane.current_visit, target, options.labelHint)
@@ -554,12 +549,9 @@ function createWorkspaceStore(
       if (!admit(state, options.discardOwnerIds, materializing ? visit.id : null)) return "cancelled";
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const arrival = sourceTargetFromHref(target, true);
-      if (arrival) {
-        deliveries.set(paneId, {
-          activationId: crypto.randomUUID(), paneId, visitId: visit.id,
-          entry: { kind: "InspectSource", target: arrival, purpose: "Open" },
-        });
-      }
+      const entry: WorkspacePaneEntry | null = resolvePaneRouteModel(target).id === "dailyDate" ? {kind: "RevealDailyDate"}
+        : arrival ? {kind: "InspectSource", target: arrival, purpose: "Open"} : null;
+      if (entry) deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry});
       else deliveries.delete(paneId);
       const previousForeground = find(data.state.active_primary_pane_id);
       commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null,
@@ -702,20 +694,6 @@ function createWorkspaceStore(
         ...current,
         current_visit: { ...current.current_visit, title_hint },
       })));
-    },
-    publishPaneDailyPage(
-      paneId: string,
-      routeKey: string,
-      page: PaneDailyPage | null,
-    ) {
-      const pane = find(paneId);
-      const current = data.dailyPageByPaneId.get(paneId);
-      if (!pane || routeKeyOf(pane) !== routeKey) return;
-      if (JSON.stringify(current?.routeKey === routeKey ? current.value : null) === JSON.stringify(page)) return;
-      const pages = new Map(data.dailyPageByPaneId);
-      if (page) pages.set(paneId, { routeKey, value: page });
-      else pages.delete(paneId);
-      set({ dailyPageByPaneId: pages });
     },
     /** Removes a pending delivery; true only for the one call that removed it. */
     claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean {

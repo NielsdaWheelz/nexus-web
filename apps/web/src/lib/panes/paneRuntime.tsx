@@ -22,7 +22,6 @@ import type {
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
 import { useWorkspaceStore, type PaneViewHrefUpdate, type PaneHistoryOptions, type WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type {
-  PaneDailyPage,
   PaneEntryDelivery,
   WorkspaceTarget,
   WorkspaceTargetActivationResult,
@@ -82,7 +81,6 @@ interface PaneRuntimeCommands {
     discardOwnerIds?: readonly string[];
   }): WorkspaceTargetActivationResult;
   setPreviewTitleHint(input: { visitId: string; target: string; title: string }): void;
-  setPaneDailyPage(page: PaneDailyPage | null): void;
   claimPaneEntryDelivery(delivery: PaneEntryDelivery): boolean;
   // the pane shell's Companion commands; null opens the remembered tab while
   // published, else the default.
@@ -142,7 +140,6 @@ export function PaneRuntimeProvider(props: {
       back: (options) => now().store.goBackPane(pane.id, options),
       forward: (options) => now().store.goForwardPane(pane.id, options),
     };
-    const routeKey = () => now().route.routeKey;
     const commands: PaneRuntimeCommands = {
       router,
       updatePaneViewHref: (input) => now().store.updatePaneViewHref({ paneId: pane.id, ...input }),
@@ -157,8 +154,6 @@ export function PaneRuntimeProvider(props: {
           title: input.title,
         });
       },
-      setPaneDailyPage: (page) =>
-        now().store.publishPaneDailyPage(pane.id, routeKey(), page),
       claimPaneEntryDelivery: (delivery) =>
         now().store.claimPaneEntryDelivery(delivery),
       requestSecondarySurface: (surfaceId, options) =>
@@ -272,17 +267,6 @@ export function usePreviewTitleHint(target: string | null, title: string | null 
   useLayoutEffect(() => {
     if (publish && visitId && target && title != null) publish({ visitId, target, title });
   }, [publish, visitId, target, title]);
-}
-
-/** A daily page's identity, so Today finds this pane under either href (D7). */
-export function usePaneDailyPage(page: PaneDailyPage | null): void {
-  const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneDailyPage");
-  const { setPaneDailyPage, routeKey } = runtime;
-  const localDate = page?.localDate ?? null;
-  const pageId = page?.pageId ?? null;
-  useLayoutEffect(() => {
-    if (routeKey) setPaneDailyPage(localDate ? { localDate, pageId } : null);
-  }, [setPaneDailyPage, routeKey, localDate, pageId]);
 }
 
 /**

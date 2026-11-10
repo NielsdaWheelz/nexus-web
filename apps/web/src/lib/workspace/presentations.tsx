@@ -36,17 +36,17 @@ function titleFacts(resource: ResourceProjection | null): TitleFacts | null {
   return resource ? {ref: resource.ref, title: resource.title ?? (resource.kind === "highlight" ? localResourceLabel(resource) : resource.body_text?.split("\n")[0] ?? ""), local_date: resource.local_date} : null;
 }
 /** One locator owns one bounded read; sibling pane changes do not restart it. */
-function AuthoredTitleSubscription({ store, locatorKey, kind, value, usedRevision, publish }: {
-  store: AuthoredStore; locatorKey: string; kind: "daily" | "resource"; value: string; usedRevision: string | undefined;
+function AuthoredTitleSubscription({ store, locatorKey, resourceRef, usedRevision, publish }: {
+  store: AuthoredStore; locatorKey: string; resourceRef: string; usedRevision: string | undefined;
   publish: PublishTitle;
 }) {
   useEffect(() => {
     let live = true;
-    const stop = store.subscribe(kind === "daily" ? { kind: "daily", local_date: value } : { kind: "resource", ref: value }, result => {
+    const stop = store.subscribe({kind: "resource", ref: resourceRef}, result => {
       if (live) publish(locatorKey, titleFacts(result.rows[0]?.resource ?? null), result.store_revision, usedRevision);
     }, reportError);
     return () => { live = false; stop(); };
-  }, [store, locatorKey, kind, value, usedRevision, publish]);
+  }, [store, locatorKey, resourceRef, usedRevision, publish]);
   return null;
 }
 export function WorkspacePresentationsProvider({ accountId, initial = null, children }: { accountId: string; initial?: InitialPresentations | null; children: ReactNode }) {
@@ -63,7 +63,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     for (const pane of state.panes) { const locator = resolvePaneRouteModel(pane.current_visit.href).titleLocator; if (locator) result.set(panePresentationLocatorKey(locator), locator); }
     for (const entry of recent.snapshot?.entries ?? []) {
       const target = entry.target;
-      if (target.kind !== "preview") result.set(panePresentationLocatorKey(target), target);
+      if (target.kind !== "preview" && target.kind !== "daily_date") result.set(panePresentationLocatorKey(target), target);
     }
     return [...result.values()];
   }, [state.panes, recent.snapshot]);
@@ -87,7 +87,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     .sort((a, b) => panePresentationLocatorKey(a).localeCompare(panePresentationLocatorKey(b)));
   // Only revisions whose remote evidence may reconcile a recent target invalidate this batch.
   const recentRemoteRevisions = (recent.snapshot?.entries ?? [])
-    .filter(entry => entry.target.kind !== "preview" && entry.target.kind !== "x_capture" && !authored(entry.target))
+    .filter(entry => entry.target.kind !== "preview" && entry.target.kind !== "daily_date" && remotePresentation(entry.target))
     .map(entry => [recentTargetKey(entry.target), entry.used_revision]).sort();
   const remoteKey = JSON.stringify([accountId, remoteLocators, recentRemoteRevisions, changes, observation, foreground]);
   const remote = usePaneFreeServerValue({ key: `workspace-presentations:${accountId}`, enabled: observing, stale: remoteKey,
@@ -137,13 +137,13 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
     const route = resolvePaneRouteModel(visit.href);
     if (route.labelMode === "static") return { title: route.defaultLabel, name:route.defaultLabel, detail: null, status: "Ready" };
     const locator = route.titleLocator;
-    const kind = route.id === "dailyDate" ? "page" : route.defaultLabel.toLowerCase();
+    const kind = route.defaultLabel.toLowerCase();
     if (!locator) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: "unavailable", status: "Unavailable" };
     const key = panePresentationLocatorKey(locator);
     if (authored(locator)) {
       const resource = local.entries.get(key)?.facts;
       if (resource === undefined) return { title: visit.title_hint ?? kind, name:visit.title_hint, detail: null, status: "Loading" };
-      if (resource === null) return { title: route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint ?? `unavailable ${kind}`, name:route.id === "dailyDate" && locator.kind === "daily_date" ? pageTitle("", locator.local_date) : visit.title_hint, detail: route.id === "dailyDate" ? null : "removed", status: route.id === "dailyDate" ? "Ready" : "Unavailable" };
+      if (resource === null) return {title: visit.title_hint ?? `unavailable ${kind}`, name: visit.title_hint, detail: "removed", status: "Unavailable"};
       const title = resource.title;
       const name = title.trim() ? title : resource.local_date !== null ? pageTitle("", resource.local_date) : null;
       return { title: name ?? route.defaultLabel, name, detail: null, status: "Ready" };
@@ -198,7 +198,7 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
       return { title: entry.title_hint ?? fact?.title ?? fallback, name: entry.title_hint ?? fact?.title ?? null, detail: entry.detail_hint, status: fact === null ? "Unavailable" : fact ? "Ready" : "Loading" };
     }
     const presentation = forVisit({ id: "", href: entry.href, title_hint: entry.title_hint });
-    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? (entry.target.kind === "daily_date" ? pageTitle("", entry.target.local_date) : fallback), detail: entry.detail_hint };
+    if (presentation.status !== "Ready") return { ...presentation, title: entry.title_hint ?? fallback, detail: entry.detail_hint };
     return presentation;
   }, [forVisit, captureFacts]);
   const isRecentRemoved = useCallback((entry: RecentEntry): boolean => {
@@ -227,8 +227,14 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
         if (title !== null && title !== entry.title_hint) recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: { target: entry.target, href: entry.href, title_hint: title, detail_hint: entry.detail_hint } });
         continue;
       }
+      if (entry.target.kind === "daily_date") {
+        const title = resolvePaneRouteModel(entry.href).defaultLabel;
+        if (title !== entry.title_hint || entry.detail_hint !== null) recent.reconcile({target: entry.target, expected_used_revision: entry.used_revision,
+          replacement: {target: entry.target, href: entry.href, title_hint: title, detail_hint: null}});
+        continue;
+      }
       // Retained display facts cannot reconcile a newer recent revision before revalidation.
-      if (!authored(entry.target) && !remoteFresh) continue;
+      if (remotePresentation(entry.target) && !remoteFresh) continue;
       const presentation = forRecent(entry);
       const key = panePresentationLocatorKey(entry.target);
       const localEntry = local.entries.get(key);
@@ -238,13 +244,12 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
         recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: null });
         continue;
       }
-      if (!authored(entry.target) && remote.status === "ready" && !remote.error && remote.data.has(key) && remote.data.get(key) === null) {
+      if (remotePresentation(entry.target) && remote.status === "ready" && !remote.error && remote.data.has(key) && remote.data.get(key) === null) {
         recent.reconcile({ target: entry.target, expected_used_revision: entry.used_revision, replacement: null });
         continue;
       }
       if (presentation.status !== "Ready") continue;
-      const canonicalHref = entry.target.kind === "daily_date" && facts?.ref.startsWith("page:") ? `/pages/${facts.ref.slice(5)}` : entry.href;
-      const value = recentValueForHref(canonicalHref, normalizeVisitTitleHint(presentation.title));
+      const value = recentValueForHref(entry.href, normalizeVisitTitleHint(presentation.title));
       if (!value) continue;
       value.detail_hint = normalizeVisitTitleHint(presentation.detail);
       if (recentTargetKey(value.target) !== recentTargetKey(entry.target) || value.href !== entry.href || value.title_hint !== entry.title_hint || value.detail_hint !== entry.detail_hint)
@@ -272,11 +277,10 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
   }, [state.panes, forVisit, setVisitTitleHint]);
   return <Context value={value}>
     {locators.map(locator => {
-      if (!authored(locator) || locator.kind !== "daily_date" && locator.kind !== "resource_ref") return null;
+      if (!authored(locator) || locator.kind !== "resource_ref") return null;
       const key = panePresentationLocatorKey(locator);
       return <AuthoredTitleSubscription key={key} store={store} locatorKey={key}
-        kind={locator.kind === "daily_date" ? "daily" : "resource"}
-        value={locator.kind === "daily_date" ? locator.local_date : locator.ref} usedRevision={recent.snapshot?.entries.find(entry => recentTargetKey(entry.target) === key)?.used_revision} publish={publishLocal} />;
+        resourceRef={locator.ref} usedRevision={recent.snapshot?.entries.find(entry => recentTargetKey(entry.target) === key)?.used_revision} publish={publishLocal} />;
     })}
     {children}
   </Context>;

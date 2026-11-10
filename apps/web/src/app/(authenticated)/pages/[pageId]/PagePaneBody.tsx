@@ -1,9 +1,5 @@
 "use client";
 
-import * as Icon from "@/lib/ui/icons";
-
-// Opening a daily page resolves its permanent identity but writes nothing. Its
-// first title edit or item commits the latent page and that edit/item together.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import type { Intent } from "@nexus/authored/commands";
@@ -18,84 +14,48 @@ import { useLocalOutlineRoot, type LocalOutlineHandle } from "@/components/notes
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
-import { shiftLocalDate } from "@/lib/localDate";
 import { useAuthoredAccountId } from "@/lib/authored/provider";
-import { dailyPage } from "@/lib/notes/api";
-import { useAuthoredQuery, useWritingRuntime } from "@/lib/notes/hooks";
-import { type WritingRuntime } from "@/lib/notes/runtime";
+import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { requirePaneRuntime, usePaneDailyPage, usePaneEntryDelivery, usePaneParam, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneEntryDelivery, usePaneParam, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
 import { NEW_PAGE_IDENTITY, type NewPageIdentity } from "@/lib/panes/pageAuthoring";
 
-type ResolvedPage = { ref: string; prelude: Intent[] };
-
 export default function PagePaneBody() {
-  const writing = useWritingRuntime();
   const accountId = useAuthoredAccountId();
-  const page = usePaneParam("pageId");
-  const date = usePaneParam("localDate");
-  if (writing === null) return <Ruling />;
-  return <PageAccount key={accountId} writing={writing} pageId={page} localDate={date} />;
+  const pageId = usePaneParam("pageId");
+  return <PageAccount key={accountId} pageId={pageId} />;
 }
 
-function PageAccount({ writing, pageId, localDate }: { writing: WritingRuntime; pageId: string | null; localDate: string | null }) {
+function PageAccount({pageId}: {pageId: string | null}) {
   const accountId = useAuthoredAccountId();
-  const retained: NewPageIdentity | null = usePaneVisitData(NEW_PAGE_IDENTITY, (): NewPageIdentity => ({ accountId, id: createdId }));
+  const retained: NewPageIdentity | null = usePaneVisitData(NEW_PAGE_IDENTITY, (): NewPageIdentity => ({accountId, id: createdId}));
   const [createdId] = useState<string>(() => retained?.accountId === accountId ? retained.id : crypto.randomUUID());
-  const identity = localDate === null ? pageId === "new" || pageId === null ? createdId : pageId : `daily:${localDate}`;
-  return <PageContent key={identity} writing={writing} createdId={createdId} pageId={pageId === "new" ? null : pageId} localDate={localDate} />;
+  const identity = pageId === "new" || pageId === null ? createdId : pageId;
+  return <PageContent key={identity} createdId={createdId} pageId={pageId === "new" ? null : pageId} />;
 }
 
-function PageContent({ writing, createdId, pageId, localDate }: { writing: WritingRuntime; createdId: string; pageId: string | null; localDate: string | null }) {
+function PageContent({createdId, pageId}: {createdId: string; pageId: string | null}) {
   const {delivery, claim} = usePaneEntryDelivery();
-  const newPage = pageId === null && localDate === null;
-  const direct = useMemo<ResolvedPage>(() => ({
-    ref: `page:${pageId ?? createdId}`,
-    prelude: newPage ? [{ kind: "create_page", ref: `page:${createdId}`, title: "", local_date: null }] : [],
-  }), [createdId, newPage, pageId]);
-  const [dailyAttempt, setDailyAttempt] = useState(0);
-  const [dailyRetrying, setDailyRetrying] = useState(localDate !== null);
-  const [daily, setDaily] = useState<{ writing: WritingRuntime; date: string; value: ResolvedPage | null; error: unknown | null } | null>(null);
-  useEffect(() => {
-    if (localDate === null) return;
-    let retired = false;
-    setDailyRetrying(true);
-    void dailyPage(writing, localDate).then(value => {
-      if (!retired) {setDailyRetrying(false); setDaily({ writing, date: localDate, value, error: null });}
-    }).catch(error => { if (!retired) {setDailyRetrying(false); setDaily(old => ({ writing, date: localDate, value: old?.writing === writing && old.date === localDate ? old.value : null, error }));} });
-    return () => { retired = true; };
-  }, [dailyAttempt, localDate, writing]);
-  const currentDaily = daily?.writing === writing && daily.date === localDate ? daily : null;
-  const resolved = localDate === null ? direct : currentDaily?.value ?? null;
-  const ref = resolved?.ref ?? null;
-  const read = useAuthoredQuery(ref === null ? null : { kind: "resource", ref });
+  const newPage = pageId === null;
+  const ref = `page:${pageId ?? createdId}`;
+  const read = useAuthoredQuery({kind: "resource", ref});
   const page = read.data?.rows.find(row => row.resource.kind === "page")?.resource ?? null;
-  const prelude = page === null ? resolved?.prelude ?? [] : [];
-  const latent = prelude.length > 0;
-  const ready = resolved !== null && read.data !== null;
-  const gone = ready && page === null && !latent;
+  const prelude = useMemo<Intent[]>(() => newPage && page === null
+    ? [{kind: "create_page", ref, title: "", local_date: null}] : [], [newPage, page, ref]);
+  const ready = read.data !== null;
+  const gone = ready && page === null && !newPage;
   useEffect(() => {
     if (!gone || !delivery) return;
     const kind = delivery.entry.kind;
     if (kind === "EditPageTitle" || kind === "AppendNote" || kind === "FocusNote" || kind === "ComposePage") claim(delivery);
   }, [claim, delivery, gone]);
-  const date = page?.local_date ?? localDate;
-  const id = ref?.slice("page:".length) ?? null;
-  usePaneReturnReady(ready || read.error !== null || (currentDaily !== null && currentDaily.error !== null));
-  usePaneDailyPage(date !== null && id !== null ? { localDate: date, pageId: id } : null);
-  const dailyError = currentDaily?.error ?? null;
-  const error = dailyError ?? read.error;
-  // A read that fails over a shown page says nothing: the page is the proof.
-  return !ready || ref === null || id === null
-    ? error === null ? <Ruling /> : <AuthoredReadFailure error={error}
-      pending={dailyError !== null ? dailyRetrying : read.pending}
-      retry={dailyError !== null ? () => {setDailyRetrying(true); setDailyAttempt(attempt => attempt + 1);} : read.retry}
-      noun="this page"/>
-    : gone ? <Fact line={{ fact: "this page is no longer available." }} speak />
-    : <PageEditing rootRef={ref} id={id} page={page} date={date} newPage={newPage} prelude={prelude} />;
+  usePaneReturnReady(ready || read.error !== null);
+  return !ready
+    ? read.error === null ? <Ruling /> : <AuthoredReadFailure error={read.error} pending={read.pending} retry={read.retry} noun="this page" />
+    : gone ? <Fact line={{fact: "this page is no longer available."}} speak />
+    : <PageEditing rootRef={ref} id={ref.slice("page:".length)} page={page} date={page?.local_date ?? null} newPage={newPage} prelude={prelude} />;
 }
 
 function PageEditing({rootRef, id, page, date, newPage, prelude}: {
@@ -120,12 +80,8 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   usePaneReturnReady(root.ready || root.error !== null);
   const { inputRef, focusInput } = usePaneQueryInput();
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
-  const menuActions = useMemo<ActionDescriptor[]>(() => date === null ? [] : ([-1, 1] as const).map(days => ({
-    kind: "link", id: days < 0 ? "ViewAction.Page.OpenYesterday" : "ViewAction.Page.OpenTomorrow",
-    label: days < 0 ? "Open yesterday" : "Open tomorrow", icon: days < 0 ? <Icon.Left aria-hidden="true" /> : <Icon.Right aria-hidden="true" />, href: `/daily/${shiftLocalDate(date, days)}`,
-  })), [date]);
   usePaneChrome({
-    displayTitle, menuActions, editor: root.rootEditor ?? undefined,
+    displayTitle, editor: root.rootEditor ?? undefined,
     header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
     query: { kind: "Controls", focusInput, content: <PaneQueryToolbar inputRef={inputRef}

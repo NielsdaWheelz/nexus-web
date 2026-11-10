@@ -1,13 +1,11 @@
 """Canonical, lightweight identity for the workspace's current destinations."""
 
-from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
     AfterValidator,
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     model_validator,
@@ -34,16 +32,6 @@ def _workspace_ref(value: str) -> str:
     return value
 
 
-def _local_date(value: object) -> date:
-    if type(value) is date:
-        return value
-    if isinstance(value, str):
-        parsed = date.fromisoformat(value)
-        if parsed.isoformat() == value:
-            return parsed
-    raise ValueError("expected a calendar date in YYYY-MM-DD form")
-
-
 class _Locator(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -58,21 +46,13 @@ class WorkspaceContributorLocator(_Locator):
     handle: Annotated[str, AfterValidator(parse_contributor_handle)]
 
 
-class WorkspaceDailyLocator(_Locator):
-    kind: Literal["daily_date"]
-    local_date: Annotated[date, BeforeValidator(_local_date)]
-
-
 class WorkspaceCaptureLocator(_Locator):
     kind: Literal["x_capture"]
     capture_id: UUID
 
 
 WorkspacePresentationLocator = Annotated[
-    WorkspaceResourceLocator
-    | WorkspaceContributorLocator
-    | WorkspaceDailyLocator
-    | WorkspaceCaptureLocator,
+    WorkspaceResourceLocator | WorkspaceContributorLocator | WorkspaceCaptureLocator,
     Field(discriminator="kind"),
 ]
 

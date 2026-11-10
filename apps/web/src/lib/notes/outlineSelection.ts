@@ -2,6 +2,8 @@
 import type {FocusSelection} from "./editorTypes";
 import type {WritingDocument} from "./runtime";
 
+export const ACROSS_FIELDS = {fact: "couldn’t change text across fields.", reason: "select the items to change them together."};
+
 export type BlockRange = {anchor_id: string; head_id: string; row_ids: readonly string[]};
 export type InputBookmark = {kind: "text"; row_id: string; ref: string; range: FocusSelection; root?: true; annotation?: true;
   resolveBefore?: (document: WritingDocument) => FocusSelection;
@@ -163,7 +165,7 @@ export function planRange(command: RangeCommand, snapshot: RangeSnapshot, select
 export function rangeReasonMessage(reason: RangeReason): string {
   switch (reason) {
     case "unavailable": return "select an available item";
-    case "gap": return "show the missing items first";
+    case "gap": return "that selection crosses writing that isn’t shown.";
     case "scope": return "select items in the same outline";
     case "no_preceding": return "no preceding item to nest under";
     case "top_level": return "already at the top level";

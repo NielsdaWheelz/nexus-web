@@ -1,9 +1,8 @@
 "use client";
-/** One bounded data-only branch proof. The root outline admits and retains all
- * writing together; a disclosed branch never opens documents independently. */
+/** One coherent set of data-only branch proofs. Only the root session admits
+ * writing; disclosed branches never open documents independently. */
 import {useMemo} from "react";
-import type {AuthoredQuery, LinkState, QueryResult, QueryRow, ResourceProjection} from "@nexus/authored/types";
-import {useAuthoredAccountId} from "@/lib/authored/provider";
+import type {AuthoredQuery, LinkState, QueryResult, QueryRow, ResourceProjection, OutlineWindowSlice} from "@nexus/authored/types";
 import {classifyOutlineOccurrence, type OutlineBranch} from "@/lib/resources/outlineProjection";
 import {useAuthoredQuery} from "./hooks";
 import type {WritingRuntime} from "./runtime";
@@ -12,7 +11,7 @@ export interface OutlineEdge {link: LinkState; resource: ResourceProjection}
 export interface OutlineWindow {
   readonly ref: string;
   readonly branch: OutlineBranch;
-  data: QueryResult;
+  data: Pick<QueryResult, "store_revision" | "scope_available"> & OutlineWindowSlice;
   rows: QueryRow[];
   beforeEdge: OutlineEdge | null;
   afterEdge: OutlineEdge | null;
@@ -22,29 +21,27 @@ export interface OutlineWindow {
   rootResource: ResourceProjection | null;
   editableRefs: ReadonlySet<string>;
 }
-type OutlineQuery = Extract<AuthoredQuery, {kind: "adjacency" | "adjacency_window"}>;
-export function useOutlineWindow(query: OutlineQuery, branch: OutlineBranch, runtime: WritingRuntime | null) {
-  const accountId = useAuthoredAccountId();
-  const traversed = [...branch.traversedEdgeIds];
-  const effective: Extract<AuthoredQuery, {kind: "outline_window"}> = {kind: "outline_window", ref: query.ref,
-    cursor: query.cursor, anchor_link_id: query.kind === "adjacency_window" ? query.link_id : null,
-    limit: Math.min(48, query.limit), excluded_link_ids: traversed, entering_link_id: traversed.at(-1) ?? null};
-  const read = useAuthoredQuery(effective);
-  const key = JSON.stringify([accountId, effective, [...branch.ancestors]]);
-  const window = useMemo((): OutlineWindow | null => {
-    if (!runtime || !read.data) return null;
-    return projectOutlineWindow(read.data, query.ref, branch);
-    // The serialized account/query/branch key owns the captured projection identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime, key, branch, read.data]);
-  return {window, loading: read.pending || window === null && read.error === null, error: read.error, occurrence: read.occurrence, retry: read.retry};
+type OutlineQuery = Omit<Extract<AuthoredQuery, {kind: "outline_windows"}>, "kind">;
+export function useOutlineWindows(query: OutlineQuery, branch: OutlineBranch, runtime: WritingRuntime | null) {
+  const read = useAuthoredQuery({kind: "outline_windows", ...query});
+  const ref = query.ref;
+  const count = query.ranges.length;
+  const windows = useMemo((): readonly OutlineWindow[] | null => {
+    const data = read.data;
+    if (!runtime || !data) return null;
+    if (data.outline_windows === null || data.outline_windows.length !== count) throw new Error("outline windows result length mismatch");
+    return data.outline_windows.map((_, index) => projectOutlineWindow(data, ref, branch, index));
+  }, [runtime, read.data, ref, branch, count]);
+  return {windows, loading: read.pending || windows === null && read.error === null, error: read.error, occurrence: read.occurrence, retry: read.retry};
 }
 
 /** Decode the same bounded proof for a reactive read and an explicit destination admission. */
-export function projectOutlineWindow(data: QueryResult, ref: string, branch: OutlineBranch): OutlineWindow {
-  const proof = data.outline_window;
-  // justify-service-invariant-check: the closed query owns proof completeness and raw-row alignment.
-  if (proof === null) throw new Error("outline window proof is missing");
+export function projectOutlineWindow(result: QueryResult, ref: string, branch: OutlineBranch, index: number): OutlineWindow {
+  // justify-service-invariant-check: the closed query owns slice completeness and raw-row alignment.
+  const slice = result.outline_windows?.[index];
+  if (!slice) throw new Error("outline window slice is missing");
+  const data = {store_revision: result.store_revision, scope_available: result.scope_available, ...slice};
+  const proof = slice.proof;
   if (data.children.length !== data.rows.length) throw new Error("outline availability result length mismatch");
   const captured = branch;
   const resources = new Map(data.rows.map(row => [row.resource.ref, row.resource]));

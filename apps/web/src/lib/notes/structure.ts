@@ -14,6 +14,7 @@ import {preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/
 import {lowerGraph, LocalCommitError, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
 import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
 import type {InputBookmark, Placement, RangePlan, RangeReason, RangeSnapshot} from "./outlineSelection";
+import {OutlineHistoryAllowance} from "./outlineHistoryAllowance";
 
 export interface EditorHistory {
   origin: unknown;
@@ -71,6 +72,7 @@ interface Settlement {store_revision: string; links: readonly LinkState[]}
  * the destination is added beside the untouched source, keyed by its own id. */
 interface PhysicalLink {kind: "relink" | "move" | "merge" | "mirror"; before: Placement; after: Placement | null; source: LinkState; destination: LinkState | null; stays?: true}
 interface Group {
+  stamp: number;
   refs: string[]; documents: WritingDocument[]; metadata(): unknown;
   before: InputBookmark; after: InputBookmark; placements_before: readonly OccurrenceBookmark[]; placements_after: readonly OccurrenceBookmark[]; coverage: Coverage;
   suspended: number; range: {replay(redo: boolean, lower: Promise<Settlement | null>, mayFocus: () => boolean): boolean} | null;
@@ -97,10 +99,24 @@ export class OutlineHistory {
   private readonly TypingOrigin = class {};
   private focus: FocusOwner | null = null;
   private closed = false;
-  constructor(readonly runtime: WritingRuntime, private readonly failure: (error: unknown) => void) {}
+  private occurrenceRetention: (() => {documents: readonly WritingDocument[]; bytes: number}) | null = null;
+  private readonly leaveAllowance: () => void;
+  constructor(readonly runtime: WritingRuntime, private readonly failure: (error: unknown) => void,
+    readonly allowance: OutlineHistoryAllowance, changed: () => void) {
+    this.leaveAllowance = allowance.join({
+      documents: () => [...new Set([...this.retainedHistoryDocuments(), ...(this.occurrenceRetention?.().documents ?? [])])],
+      bytes: () => this.retainedBytes() + (this.occurrenceRetention?.().bytes ?? 0),
+      retiring: () => this.groups().some(group => group.released),
+      oldest: () => this.groups().some(group => group.released) ? null : this.groups().reduce<number | null>((oldest, group) => oldest === null || group.stamp < oldest ? group.stamp : oldest, null),
+      retire: () => this.releaseOldest(), changed: () => {if (!this.closed) changed();},
+    });
+  }
+  trackOccurrences(read: () => {documents: readonly WritingDocument[]; bytes: number}): void {this.occurrenceRetention = read;}
+  hasRetained(): boolean {return this.groups().length > 0 || [...this.texts.values()].some(history => history.captureBytes > 0);}
   typingOrigin(): unknown {return new this.TypingOrigin();}
   boundary(): void {for (const history of this.texts.values()) history.manager.stopCapturing();}
   retainedRefs(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => group.refs));}
+  retainedHistoryDocuments(): readonly WritingDocument[] {return [...new Set([...this.groups().flatMap(group => group.documents), ...[...this.texts.values()].filter(history => history.captureBytes).map(history => history.document)])];}
   retainedDocuments(): readonly WritingDocument[] {return [...new Set([...this.groups().flatMap(group => group.documents), ...[...this.texts.values()].filter(history => history.active || history.captureBytes).map(history => history.document)])];}
   retainedOccurrences(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => [...inputRows(group.before), ...inputRows(group.after), ...group.added.map(row => row.row_id), ...group.removed.map(row => row.row_id)]));}
   retainedRows(): ReadonlySet<string> {return new Set(this.groups().flatMap(group => [...inputRows(group.before), ...inputRows(group.after), ...[...group.placements_before, ...group.placements_after, ...group.added, ...group.removed]
@@ -111,15 +127,12 @@ export class OutlineHistory {
   })).byteLength, [...this.texts.values()].reduce((bytes, history) => bytes + history.captureBytes, 0));}
   releaseOldest(): boolean {
     if (this.groups().some(group => group.released)) return false;
-    const first = this.past.find(group => !group.released);
-    if (first) {this.release(first); return true;}
+    const oldest = this.groups().reduce<Group | null>((oldest, group) => oldest === null || group.stamp < oldest.stamp ? group : oldest, null);
+    if (oldest && this.past.includes(oldest)) {this.release(oldest); return true;}
     const future = this.future.filter(group => !group.released);
     if (!future.length) return false;
     for (const group of future) this.release(group);
     return true;
-  }
-  async settleRetired(): Promise<void> {
-    await Promise.allSettled(this.groups().filter(group => group.released).map(group => group.settled));
   }
   bindFocus(owner: FocusOwner): () => void {this.focus = owner; return () => {if (this.focus === owner) this.focus = null;};}
   canUndo(): boolean {return this.past.some(group => !group.released && group.suspended === 0);}
@@ -130,7 +143,7 @@ export class OutlineHistory {
   private reserve(change: OutlineChange, provisional = false): Group {
     if (this.closed) throw new Error("outline history is closed");
     if (!provisional) for (const discarded of this.future) this.release(discarded);
-    const group: Group = {refs: [], documents: [], metadata: () => null, before: change.before, after: change.after, placements_before: change.placements_before ?? [], placements_after: change.placements_after ?? [], suspended: 0, range: null,
+    const group: Group = {stamp: this.allowance.stamp(), refs: [], documents: [], metadata: () => null, before: change.before, after: change.after, placements_before: change.placements_before ?? [], placements_after: change.placements_after ?? [], suspended: 0, range: null,
       coverage: {resources: new Map(), links: new Map()}, added: [], removed: [], settled: Promise.resolve(null), receipt: null, released: false,
       apply: () => {throw new Error("outline command has not finished admission");}, cleanup: () => {}};
     this.past.push(group);
@@ -162,10 +175,11 @@ export class OutlineHistory {
       group.coverage.resources.clear(); group.coverage.links.clear();
       group.metadata = () => null; group.cleanup = () => {}; group.settled = Promise.resolve(null);
       group.apply = () => {throw new Error("outline command is retired");};
+      this.allowance.trim();
     };
     void group.settled.then(finish, finish).catch(this.failure);
   }
-  private trim(): void {while (this.retainedDocuments().length > 64 || this.retainedBytes() + this.retainedDocuments().reduce((bytes, document) => bytes + Y.encodeStateAsUpdate(document.doc).byteLength, 0) > 16 * 1024 * 1024) if (!this.releaseOldest()) break;}
+  private trim(): void {this.allowance.trim();}
   private settle(result: Promise<LocalCommit>): Promise<LocalCommit> {
     return result.catch(error => {this.failure(error); if (error instanceof LocalCommitError) return error.completion; throw error;});
   }
@@ -318,7 +332,7 @@ export class OutlineHistory {
         // ownership: only the receipts observed above may extend group coverage.
         const bytes = Y.encodeStateAsUpdate(document.doc).byteLength;
         history.captureBytes += bytes;
-        const barrier = document.capture().then(() => undefined).finally(() => {history.captureBytes -= bytes; this.pruneText(history);});
+        const barrier = document.capture().then(() => undefined).finally(() => {history.captureBytes -= bytes; this.pruneText(history); this.trim();});
         const previous = group.settled;
         group.settled = Promise.all([previous, barrier]).then(([receipt]) => receipt);
         void barrier.then(stop, stop); void group.settled.catch(this.failure);
@@ -946,6 +960,7 @@ export class OutlineHistory {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.leaveAllowance(); this.occurrenceRetention = null;
     for (const group of this.groups()) this.release(group);
     for (const history of this.texts.values()) this.pruneText(history);
     this.focus = null;

@@ -4,7 +4,7 @@ import { recentValueForHref } from "@/lib/panes/paneRouteModel";
 import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import { expectExactRecord, expectOrderRevision, isCanonicalUuid } from "@/lib/validation";
 
-export type RecentTarget = PanePresentationLocator | { kind: "preview"; target: string };
+export type RecentTarget = PanePresentationLocator | { kind: "daily_date"; local_date: string } | { kind: "preview"; target: string };
 export type RecentValue = { target: RecentTarget; href: string; title_hint: string | null; detail_hint: string | null };
 export type RecentEntry = RecentValue & { used_revision: OrderRevision };
 export type RecentSnapshot = { format_version: 1; account_id: string; epoch: string; revision: OrderRevision; entries: RecentEntry[] };

@@ -7,9 +7,9 @@ import { cpSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } f
 import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { compileQuery, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL } from "../../node/authored/src/queries";
+import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
-import { nativeQueryPlan } from "./src/lib/authored/nativeQuery";
+import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
 import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
@@ -46,12 +46,13 @@ export default defineConfig({
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
         const cursor = JSON.stringify(["a0", ""]);
-        type SingleQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
-        const samples: Record<SingleQuery["kind"], SingleQuery[]> = {
-          outline_window: [
-            {kind: "outline_window", ref: "", cursor: null, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
-            {kind: "outline_window", ref: "", cursor, anchor_link_id: null, limit: 48, excluded_link_ids: [], entering_link_id: null},
-            {kind: "outline_window", ref: "", cursor: null, anchor_link_id: "", limit: 48, excluded_link_ids: [], entering_link_id: null},
+        type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
+        const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
+          daily_index: [{kind: "daily_index"}],
+          outline_windows: [
+            {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
+            {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: "", limit: 48}], excluded_link_ids: [], entering_link_id: null},
           ],
           binding: [{ kind: "binding", key: { kind: "daily", local_date: "" } }, { kind: "binding", key: { kind: "link", endpoint_a: "", endpoint_b: "" } }, { kind: "binding", key: { kind: "passage", source_ref: "", normalized_exact: "", prefix: "", suffix: "" } }],
           outline_children: [{ kind: "outline_children", occurrences: [] }],
@@ -71,10 +72,13 @@ export default defineConfig({
         const statements: Record<string, string> = { pending_changes: PENDING_CHANGES_SQL, search_index: SEARCH_INDEX_SQL, search_remove: SEARCH_REMOVE_SQL, ...SCOPE_SQL, ...SEARCH_MATCH_SQL };
         for (const sql of SEARCH_READ_SQL) statements[`search_read:${createHash("sha256").update(sql).digest("hex")}`] = sql;
         for (const query of Object.values(samples).flat()) {
-          const { plan_key } = await nativeQueryPlan(query);
-          const sql = compileQuery(query).sql;
-          if (statements[plan_key] !== undefined && statements[plan_key] !== sql) throw new Error("native query plan collision");
-          statements[plan_key] = sql;
+          const compiled = query.kind === "outline_windows" ? compileOutlineWindows(query) : [compileQuery(query)];
+          const plans = await nativeQueryPlans(query);
+          for (const [index, {plan_key}] of plans.entries()) {
+            const sql = compiled[index]!.sql;
+            if (statements[plan_key] !== undefined && statements[plan_key] !== sql) throw new Error("native query plan collision");
+            statements[plan_key] = sql;
+          }
         }
         writeFileSync(path.join(outDir, "authored-queries.json"), JSON.stringify(statements));
         rmSync(nativeOutDir, { recursive: true, force: true });

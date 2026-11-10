@@ -11,7 +11,7 @@ export type InitialPresentations =
   | Extract<ServerReadSeed<PresentationFacts>, { status: "failure" }>;
 
 export function authoredPresentation(locator: PanePresentationLocator): boolean {
-  return locator.kind === "daily_date" || locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref);
+  return locator.kind === "resource_ref" && /^(page|note_block|highlight):/u.test(locator.ref);
 }
 export function remotePresentation(locator: PanePresentationLocator): boolean {
   return !authoredPresentation(locator) && locator.kind !== "x_capture";
