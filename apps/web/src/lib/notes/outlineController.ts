@@ -54,6 +54,7 @@ export interface BranchRequest {parent_id: string; ref: string; branch: OutlineB
   ranges?: OutlineRange[];
   navigation?: {lease(): boolean; previous: BranchRequest}}
 interface Held {document: WritingDocument; captureBytes: number; release(): void}
+interface ReadingWindow {rows: Map<string, OutlineRow>; before: OutlineEdge | null; after: OutlineEdge | null}
 interface EmbeddedBranch {owner: string; projection: {ref: string; branch: OutlineBranch} | null}
 export interface RootField {label: string; placeholder?: string; initialTitle?: string; inspection?: import("@/components/notes/NoteEditor").NoteInspection | null}
 export interface OutlineRootAttachment {
@@ -92,7 +93,7 @@ export class OutlineController {
   private layoutSignature: string | null = null;
   private frame: AnchorGeometryFrame | null = null;
   private presentation = true;
-  private reading: {token: object; rows: Map<string, OutlineRow>; parent: string; pending: boolean; rootVisible: boolean} | null = null;
+  private reading: ReadingWindow & {token: object; parent: string; pending: boolean; rootVisible: boolean} | null = null;
   private readonly anchorDemands = new Map<object, string>();
   private readonly missingAnchors = new Set<string>();
   private nativeSelection: {anchor: Node; anchorOffset: number; head: Node; headOffset: number; rows: readonly string[]} | null = null;
@@ -446,9 +447,11 @@ export class OutlineController {
     const anchor = row_id === null ? [...this.rows.values()].find(row => !row.root && !row.gap) : this.rows.get(row_id);
     const parent = anchor?.parent_id ?? this.pending.root_id;
     const part = this.slices.get(parent)?.find(window => anchor?.link && window.rows.some(row => row.link?.link_id === anchor.link!.link_id)) ?? this.slices.get(parent)?.[0];
-    const rows = part ? this.rowsInWindow(parent, part) : new Map<string, OutlineRow>();
+    const snapshot = part ? this.readingWindow(parent, part, anchor?.row_id ?? null) : null;
     const token = {};
-    this.reading = {token, rows, parent, pending: part === undefined, rootVisible: this.windows.get(this.pending.root_id)?.rootResource?.visible === true}; this.syncReadOnly(); this.notify();
+    this.reading = {token, rows: new Map(), before: null, after: null, ...snapshot, parent, pending: snapshot === null,
+      rootVisible: this.windows.get(this.pending.root_id)?.rootResource?.visible === true};
+    this.changed("semantic");
     return () => {
       if (this.reading?.token !== token) return;
       this.reading = null; this.readingContinuation = null; this.readingEntry?.resolve(); this.readingEntry = null; this.binding.refresh(); this.refresh(); this.notify();
@@ -462,9 +465,26 @@ export class OutlineController {
   }
   /** Opaque owner of the current reading frame; null after departure. */
   readingFrame(): object | null {return this.reading;}
-  private rowsInWindow(parent: string, window: OutlineWindow): Map<string, OutlineRow> {
-    return new Map([...this.rows].filter(([, row]) => row.parent_id === parent && !row.gap &&
-      (row.seed && window.rows.length === 0 || window.rows.some(item => item.link?.link_id === row.link?.link_id))));
+  /** Freeze displayed progress, not the later viewport's overlapping proof. */
+  private readingWindow(parent: string, window: OutlineWindow, anchor: string | null): ReadingWindow | null {
+    const displayed = [...this.rows.values()].filter(row => row.parent_id === parent && !row.row_id.startsWith("reading:"));
+    if (window.rows.length === 0) {
+      if (!provesEmptyOutline(window)) return null;
+      const seed = displayed.find(row => row.seed);
+      return {rows: new Map(seed ? [[seed.row_id, seed]] : []), before: null, after: null};
+    }
+    const indices = new Map(window.rows.map((row, index) => [row.link!.link_id, index]));
+    const indexOf = (row: OutlineRow | undefined): number => row?.link ? indices.get(row.link.link_id) ?? -1 : -1;
+    const at = anchor === null ? displayed.findIndex(row => indexOf(row) >= 0) : displayed.findIndex(row => row.row_id === anchor && indexOf(row) >= 0);
+    if (at < 0) return null;
+    let from = at, to = at;
+    while (from > 0 && indexOf(displayed[from - 1]) >= 0 && indexOf(displayed[from - 1]) === indexOf(displayed[from]) - 1) from--;
+    while (to + 1 < displayed.length && indexOf(displayed[to + 1]) >= 0 && indexOf(displayed[to + 1]) === indexOf(displayed[to]) + 1) to++;
+    const first = indexOf(displayed[from]), last = indexOf(displayed[to]);
+    const before = window.rows[first - 1], after = window.rows[last + 1];
+    return {rows: new Map(displayed.slice(from, to + 1).map(row => [row.row_id, row])),
+      before: before ? {link: before.link!, resource: before.resource} : window.beforeEdge,
+      after: after ? {link: after.link!, resource: after.resource} : window.afterEdge};
   }
   setViewport(range: {top: number; bottom: number}): void {
     this.planViewport(range);
@@ -566,7 +586,7 @@ export class OutlineController {
       }
       for (const metric of near) {
         const gap = this.gaps.get(metric.id);
-        if (metric.parent === parent && gap && !ranges.some(range => range.anchor_link_id === gap.range.anchor_link_id && range.cursor === gap.range.cursor))
+        if (metric.parent === parent && gap && !metric.id.startsWith("reading:") && !ranges.some(range => range.anchor_link_id === gap.range.anchor_link_id && range.cursor === gap.range.cursor))
           ranges.push({...gap.range, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / 32)))});
       }
       // A focused title keeps its root proof, not unrelated offscreen bodies.
@@ -1056,18 +1076,25 @@ export class OutlineController {
         this.changed(initial ? "initial" : "projection");
         if (this.reading?.pending) {
           const part = this.slices.get(this.reading.parent)?.[0];
-          if (part) {this.reading = {...this.reading, rows: this.rowsInWindow(this.reading.parent, part), pending: false, rootVisible: this.windows.get(this.pending.root_id)?.rootResource?.visible === true}; this.syncReadOnly();}
+          const snapshot = part ? this.readingWindow(this.reading.parent, part, null) : null;
+          if (snapshot) {
+            this.reading = {...this.reading, ...snapshot, pending: false, rootVisible: this.windows.get(this.pending.root_id)?.rootResource?.visible === true};
+            this.changed("semantic");
+          }
         }
         const continuation = this.readingContinuation;
         const continued = continuation && accepted.find(part => part.request === continuation.request);
         if (continuation && continued && this.reading?.token === continuation.token) {
           const part = this.slices.get(continued.id)?.[0];
           const link = part ? continuationLink(part, continuation.edge, continuation.direction) : null;
-          const rows = link !== null && part ? this.rowsInWindow(continued.id, part) : this.reading.rows;
-          this.reading = {...this.reading, rows}; this.readingContinuation = null; this.syncReadOnly();
-          const target = link !== null ? this.id(continued.id, link) : continuation.direction === "after" ? [...rows.keys()].at(-1) : [...rows.keys()][0];
-          const row = target ? this.rows.get(target) : null, anchor = row ? this.anchorFor(row) : null;
-          if (anchor && continuation.lease()) this.revealAnchor(anchor, true);
+          const target = link === null ? null : this.id(continued.id, link);
+          const snapshot = target !== null && part ? this.readingWindow(continued.id, part, target) : null;
+          const row = target === null ? null : snapshot?.rows.get(target), anchor = row ? this.anchorFor(row) : null;
+          if (snapshot && anchor !== null && continuation.lease()) {
+            this.reading = {...this.reading, ...snapshot}; this.changed("semantic");
+            this.revealAnchor(anchor, true);
+          } else if (continuation.lease()) this.error = new OutlineActionRefusal({fact: "that writing isn’t ready here."});
+          this.readingContinuation = null;
         }
         this.pending.resume(); this.presentationAllowance.changed();
       } finally {for (const [, held] of acquired) held.release(); this.blockedRows.clear(); if (this.active) this.rebuild(); this.syncReadOnly();}
@@ -1310,6 +1337,23 @@ export class OutlineController {
           const at = previous.findIndex(item => item.row_id === id), next = previous.slice(at + 1).find(item => ordered.some(candidate => candidate.row_id === item.row_id));
           ordered.splice(next ? ordered.findIndex(item => item.row_id === next.row_id) : ordered.length, 0, row);
         }
+      }
+      // These are real controls at the frozen reading boundary, not estimates
+      // of unloaded writing. Live viewport previews cannot move or remove them.
+      for (const direction of ["before", "after"] as const) {
+        const edge = this.reading[direction];
+        if (!edge) continue;
+        const held = [...this.reading.rows.values()], boundary = direction === "before" ? held[0] : held.at(-1);
+        const at = boundary ? ordered.findIndex(row => row.row_id === boundary.row_id) : ordered.findIndex(row => row.row_id === this.reading!.parent) + 1;
+        let insert = at;
+        if (boundary && direction === "after") {insert++; while (insert < ordered.length && ordered[insert]!.depth > boundary.depth) insert++;}
+        const parent = ordered.find(row => row.row_id === this.reading!.parent);
+        const row_id = `reading:${this.reading.parent}:${direction}`;
+        this.gaps.set(row_id, {kind: "gap", key: row_id, height: 32, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
+        ordered.splice(Math.max(0, insert), 0, {row_id, ref: null, link: null, parent_id: this.reading.parent,
+          parent_ref: boundary?.parent_ref ?? parent?.ref ?? this.rootRef, depth: boundary?.depth ?? (parent && !parent.root ? parent.depth + 1 : 0),
+          branch: boundary?.branch ?? parent?.branch ?? this.rootBranch, resource: null, kind: "reference", children: null,
+          open: false, terminal: false, root: false, seed: false, gap: direction, gapHeight: 32, origin: null});
       }
       this.rows.clear(); for (const row of ordered) this.rows.set(row.row_id, row);
     }
@@ -1778,9 +1822,9 @@ export class OutlineController {
   load(parent_id: string, direction: "before" | "after"): void {
     const request = this.requests.get(parent_id);
     const held = this.reading?.parent === parent_id ? this.reading : null;
-    const window = held ? this.slices.get(parent_id)?.find(part => part.rows.some(row => [...held.rows.values()].some(item => item.link?.link_id === row.link?.link_id))) : this.windows.get(parent_id);
+    const window = this.windows.get(parent_id);
     if (!request || !window || !this.handle?.canArrange()) return;
-    const edge = direction === "before" ? window.beforeEdge : window.afterEdge;
+    const edge = held ? held[direction] : direction === "before" ? window.beforeEdge : window.afterEdge;
     if (!edge) return;
     const lease = this.lease();
     const range = {cursor: null, anchor_link_id: edge.link.link_id, limit: 32};
@@ -2117,7 +2161,7 @@ export class OutlineController {
       if (row.kind === "reference") {
         const editing = this.referenceRow === id && this.canEditReference(row);
         content.hidden = !editing; content.contentEditable = editing ? "true" : "false";
-        presentation.hidden = editing;
+        presentation.hidden = editing || !!row.gap && this.reading?.parent === row.parent_id && !id.startsWith("reading:");
         if (this.canEditReference(row)) dom.dataset.referenceEditable = "true"; else delete dom.dataset.referenceEditable;
         content.setAttribute("aria-label", `edit reference to ${this.label(row)}`);
       } else {content.hidden = false; presentation.hidden = true; content.removeAttribute("contenteditable");}

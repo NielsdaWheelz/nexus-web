@@ -47,6 +47,12 @@ interval; earlier/later-writing controls advance it explicitly. editing admits
 fresh local proof before releasing the hold. deliberate departure never waits
 for a read. the same renderer serves reading and writing.
 
+the hold freezes the displayed contiguous interval and its exact neighboring
+proofs. viewport prefetch cannot move those continuation boundaries. advancing
+may revisit a live preview. fresh admission follows the captured neighbor's
+identity, or its surviving order after deletion. concurrent insertions or moves
+may require revisiting the day; a reading hold is not an archive snapshot.
+
 the complete index and visited geometry cost `o(days)`. unseen heights are
 estimates; active selections and rich bodies have no hard total-memory bound.
 android's existing 16-mib result cap applies to the compact index and compound
