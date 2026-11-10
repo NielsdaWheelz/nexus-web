@@ -197,19 +197,19 @@ def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> 
         media_ids = sorted(target.id for target in targets)
         parents = list(
             db.scalars(
-                text("SELECT podcast_id FROM podcast_episodes WHERE media_id = ANY(:ids)"),
+                text("SELECT feed_id FROM feed_entries WHERE media_id = ANY(:ids)"),
                 {"ids": media_ids},
             )
         )
-        podcast_ids = sorted(set(parents))
-        if podcast_ids:
+        feed_ids = sorted(set(parents))
+        if feed_ids:
             held = list(
                 db.scalars(
-                    text("SELECT id FROM podcasts WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"),
-                    {"ids": podcast_ids},
+                    text("SELECT id FROM feeds WHERE id = ANY(:ids) ORDER BY id FOR UPDATE"),
+                    {"ids": feed_ids},
                 )
             )
-            if held != podcast_ids:
+            if held != feed_ids:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
         media_locks.lock_media_rows_in_order(db, media_ids)
         for media_id in media_ids:
@@ -243,11 +243,11 @@ def create_library(db: Session, viewer_id: UUID, body: CreateLibraryRequest) -> 
         # Retain every selected media before organization.
         for media_id in media_ids:
             library_entries.assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, media_id, []
+                db, viewer_id, media_id, [], individually_saved=True
             )
         for media_id in media_ids:
             library_entries.assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, media_id, [body.id]
+                db, viewer_id, media_id, [body.id], individually_saved=True
             )
         if targets:
             record_input_change(
@@ -305,27 +305,27 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     def attempt() -> None:
         users.lock_viewer(db, viewer_id)
         users.advance_removal_revision(db, viewer_id)
-        from nexus.services.podcasts import imports, sync
+        from nexus.services.feeds import imports, sync
 
         show_ids = list(
             db.scalars(
                 text("""
-            SELECT podcast_id FROM library_podcast_subscriptions WHERE library_id=:id
-            UNION SELECT r.podcast_id FROM podcast_library_imports i
-            JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
-            ORDER BY podcast_id
+            SELECT feed_id FROM library_feed_subscriptions WHERE library_id=:id
+            UNION SELECT r.feed_id FROM library_feed_imports i
+            JOIN feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
+            ORDER BY feed_id
         """),
                 {"id": library_id},
             )
         )
         if show_ids:
             db.execute(
-                text("SELECT id FROM podcasts WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
+                text("SELECT id FROM feeds WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
                 {"ids": show_ids},
             )
             db.execute(
-                text("""SELECT r.id FROM podcast_feed_runs r
-                WHERE r.podcast_id=ANY(:ids) ORDER BY r.id FOR UPDATE"""),
+                text("""SELECT r.id FROM feed_runs r
+                WHERE r.feed_id=ANY(:ids) ORDER BY r.id FOR UPDATE"""),
                 {"ids": show_ids},
             )
         media_ids = library_entries.media_ids_in_library(db, library_id)
@@ -359,9 +359,9 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         current_shows = set(
             db.scalars(
                 text("""
-            SELECT podcast_id FROM library_podcast_subscriptions WHERE library_id=:id
-            UNION SELECT r.podcast_id FROM podcast_library_imports i
-            JOIN podcast_feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
+            SELECT feed_id FROM library_feed_subscriptions WHERE library_id=:id
+            UNION SELECT r.feed_id FROM library_feed_imports i
+            JOIN feed_runs r ON r.id=i.run_id WHERE i.library_id=:id
         """),
                 {"id": library_id},
             )
@@ -369,8 +369,8 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         if not current_shows <= set(show_ids):
             raise TransactionRestart("library podcast set grew")
         imports.delete_for_libraries(db, library_ids=[library_id])
-        for podcast_id in show_ids:
-            sync.stop_if_unused(db, podcast_id=podcast_id)
+        for feed_id in show_ids:
+            sync.stop_if_unused(db, feed_id=feed_id)
         library_entries.delete_library_entries(db, library_id)
         delete_suggestion_feeds(db, library_id=library_id)
         db.execute(text("DELETE FROM libraries WHERE id = :id"), {"id": library_id})
@@ -381,7 +381,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             owners=(
                 f"library:{library_id}",
                 *(f"media:{media_id}" for media_id in held),
-                *(f"podcast:{podcast_id}" for podcast_id in show_ids),
+                *(f"feed:{feed_id}" for feed_id in show_ids),
             ),
         )
 

@@ -1,6 +1,6 @@
 /** Browse result rows keep catalogue identity separate from membership. */
 
-import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
+import type { FeedActionSubject } from "@/lib/actions/inlineActions";
 import {
   browsePreviewHref,
   type BrowseCandidate,
@@ -14,7 +14,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 /** An InNexusMedia candidate carries its resolved media summary. */
 export function presentBrowseCandidate(
   candidate: BrowseCandidate,
-  podcast?: PodcastActionSubject,
+  podcast?: FeedActionSubject,
 ): CollectionRowView {
   const { resolution } = candidate;
   const id = candidate.kind === "OwnedMedia"
@@ -44,7 +44,7 @@ export function presentBrowseCandidate(
     id,
     kind: candidate.kind === "Podcast" ? "podcast" : "search_result",
     ...(candidate.kind === "Podcast" ? { podcastMetadata: { kind: "DiscoveryPodcast" as const, candidate } } : {}),
-    ...(podcast === undefined ? {} : { resourceActions: { kind: "Podcast" as const, subject: podcast } }),
+    ...(podcast === undefined ? {} : { resourceActions: { kind: "Feed" as const, subject: podcast } }),
     ...(candidate.kind !== "Podcast" && preview ? {
       resourceActions: {
         kind: "Media" as const,
@@ -61,7 +61,7 @@ export function presentBrowseCandidate(
     } : {}),
     primary: {
       kind: "link",
-      href: candidate.kind === "Podcast" ? local !== null ? `/podcasts/${local.podcast_id}` : browsePreviewHref(candidate.target)
+      href: candidate.kind === "Podcast" ? local !== null ? `/podcasts/${local.feed_id}` : browsePreviewHref(candidate.target)
         : resolution.kind === "Preview" ? browsePreviewHref(candidate.target) : resolution.href,
       paneLabelHint: candidate.title,
     },
@@ -77,7 +77,7 @@ export function presentBrowseCandidate(
     },
     activity: null,
     exceptionalStatus: null,
-    resourceRef: candidate.kind === "Podcast" ? local === null ? null : assumeCanonicalResourceRef(`podcast:${local.podcast_id}`)
+    resourceRef: candidate.kind === "Podcast" ? local === null ? null : assumeCanonicalResourceRef(`podcast:${local.feed_id}`)
       : resolution.kind === "Preview" ? null : assumeCanonicalResourceRef(resolution.action_ref),
     selected: false,
   };

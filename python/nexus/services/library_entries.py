@@ -1,11 +1,11 @@
 """physical library media membership and its sole writer.
 
 named libraries and personal holdings store physical memberships; all derives
-their distinct union. active podcast rules require every known episode in their
-exact library and protect those placements. callers
-lock show, complete media set and complete library set in that order. bulk show
+their distinct union. active feed rules protect required placements in their
+exact library. callers
+lock source, complete media set and complete library set in that order. bulk source
 addition files only its chosen destination; individual named filing also retains
-personally. episode removal never writes a hiding marker. strict placement retries
+personally. feed-entry removal never writes a hiding marker. strict placement retries
 compare frozen guards before desired-state equality and advance accepted no-op revisions.
 """
 
@@ -20,20 +20,26 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_media,
     can_restore_media,
+    feed_catalog_ids_sql,
     requested_media_ids_cte_sql,
     visible_media_ids_cte_sql,
-    visible_podcast_ids_cte_sql,
 )
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.schemas.library import (
     LibraryAllMembershipOut,
     LibraryOrderOut,
     LibraryPlacementOut,
     LibraryPlacementsOut,
 )
-from nexus.services import libraries, media_locks, resource_grants, users
+from nexus.services import libraries, media_discoveries, media_locks, resource_grants, users
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -116,18 +122,19 @@ def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
     return f"SELECT DISTINCT media_id FROM ({library_media_rows_sql(library_param=library_param)}) members"
 
 
-def library_podcast_rows_sql(*, library_param: str = ":library_id") -> str:
+def library_feed_rows_sql(*, library_param: str = ":library_id") -> str:
     """Active library rules; own all aggregates current non-system memberships."""
     return f"""
-        SELECT s.podcast_id,min(s.created_at) AS added_at
-        FROM library_podcast_subscriptions s
+        SELECT s.feed_id,f.kind AS feed_kind,min(s.created_at) AS added_at
+        FROM library_feed_subscriptions s
+        JOIN feeds f ON f.id=s.feed_id
         JOIN libraries source ON source.id = s.library_id AND source.system_key IS NULL
         JOIN memberships m ON m.library_id = source.id AND m.user_id = :viewer_id
         JOIN libraries destination ON destination.id = {library_param}
         WHERE (NOT destination.is_default AND s.library_id = destination.id)
            OR (destination.is_default AND destination.owner_user_id = :viewer_id
                AND destination.system_key IS NULL)
-        GROUP BY s.podcast_id
+        GROUP BY s.feed_id,f.kind
     """
 
 
@@ -155,11 +162,12 @@ def destination_membership_rows_sql(*, visible_media_sql: str | None = None) -> 
     """
     return f"""
         SELECT 'media' AS target_scheme,member.media_id AS target_id,
-               member.media_id,NULL::uuid AS podcast_id,member.added_at
+               member.media_id,NULL::uuid AS feed_id,member.added_at
         FROM ({library_media_rows_sql(visible_media_sql=visible_media_sql)}) member
         UNION ALL
-        SELECT 'podcast',show.podcast_id,NULL::uuid,show.podcast_id,show.added_at
-        FROM ({library_podcast_rows_sql()}) show
+        SELECT CASE WHEN show.feed_kind='podcast' THEN 'podcast' ELSE 'feed' END,
+               show.feed_id,NULL::uuid,show.feed_id,show.added_at
+        FROM ({library_feed_rows_sql()}) show
         JOIN libraries l ON l.id = :library_id AND NOT l.is_default
     """
 
@@ -205,23 +213,23 @@ def engagement_anchor_library_ids(
 def library_anchor_rows_sql() -> str:
     """Ordered refs and zero-based ordinal before media/vector filtering; binds :anchor_limit.
 
-    Caller CTEs: destination(target_scheme,target_id,media_id,podcast_id,added_at),
+    Caller CTEs: destination(target_scheme,target_id,media_id,feed_id,added_at),
     engagement(media_id,read_state,progress_fraction,progress_resettable,last_engaged_at),
-    episodes(media_id,podcast_id,published_at), visible_media(media_id),
-    visible_podcasts(podcast_id). These are complete canonical owner relations.
+    entries(media_id,feed_id,published_at), visible_media(media_id),
+    visible_feeds(feed_id). These are complete canonical owner relations.
     """
     return """
         WITH canonical AS (
                 SELECT target_scheme, target_id, added_at AS created_at FROM destination
             ),
-            podcast_engagement AS (
-                SELECT e.podcast_id,
+            feed_engagement AS (
+                SELECT e.feed_id,
                        MAX(g.last_engaged_at) FILTER (WHERE g.last_engaged_at <= now())
                            AS last_engaged_at
-                FROM episodes e
+                FROM entries e
                 JOIN visible_media vm ON vm.media_id = e.media_id
                 JOIN engagement g ON g.media_id = e.media_id
-                GROUP BY e.podcast_id
+                GROUP BY e.feed_id
             ), candidates AS (
             SELECT c.target_scheme, c.target_id, c.created_at,
                    CASE WHEN c.target_scheme = 'media'
@@ -230,12 +238,12 @@ def library_anchor_rows_sql() -> str:
                    END AS last_engaged_at
             FROM canonical c
             LEFT JOIN engagement me ON c.target_scheme = 'media' AND me.media_id = c.target_id
-            LEFT JOIN podcast_engagement pe
-              ON c.target_scheme = 'podcast' AND pe.podcast_id = c.target_id
+            LEFT JOIN feed_engagement pe
+              ON c.target_scheme IN ('podcast','feed') AND pe.feed_id = c.target_id
             WHERE (c.target_scheme = 'media'
                    AND c.target_id IN (SELECT media_id FROM visible_media))
-               OR (c.target_scheme = 'podcast'
-                   AND c.target_id IN (SELECT podcast_id FROM visible_podcasts))
+               OR (c.target_scheme IN ('podcast','feed')
+                   AND c.target_id IN (SELECT feed_id FROM visible_feeds))
             )
             SELECT target_scheme, target_id,
                    ROW_NUMBER() OVER (ORDER BY last_engaged_at DESC NULLS LAST,
@@ -252,15 +260,14 @@ def library_anchor_facts(
     if limit <= 0:
         return ()
     from nexus.services.consumption import projection
-    from nexus.services.podcasts.episodes import episode_publication_rows_sql
 
     rows = db.execute(
         text(f"""
             WITH destination AS ({destination_membership_rows_sql()}),
             engagement AS ({projection.engagement_fact_rows_sql()}),
-            episodes AS ({episode_publication_rows_sql()}),
+            entries AS (SELECT media_id,feed_id,published_at FROM feed_entries),
             visible_media AS ({visible_media_ids_cte_sql()}),
-            visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
+            visible_feeds AS ({feed_catalog_ids_sql()}),
             anchor_rows AS ({library_anchor_rows_sql()})
             SELECT target_scheme,target_id FROM anchor_rows ORDER BY ordinal
         """),
@@ -313,36 +320,39 @@ def lock_media_for_references(db: Session, media_ids: Sequence[UUID]) -> None:
     )
 
 
-def lock_parent_podcast(db: Session, media_id: UUID) -> UUID | None:
-    """Lock an episode's show (the first lock of the order); None for other media."""
-    return db.scalar(
-        text("""
-            SELECT p.id FROM podcast_episodes pe JOIN podcasts p ON p.id = pe.podcast_id
-            WHERE pe.media_id = :media_id FOR UPDATE OF p
-        """),
-        {"media_id": media_id},
+def lock_parent_feeds(db: Session, media_id: UUID) -> tuple[UUID, ...]:
+    """Every occurrence parent precedes media/library locks, ordered across feeds."""
+    return tuple(
+        db.scalars(
+            text("""
+        SELECT f.id FROM feeds f WHERE EXISTS
+          (SELECT 1 FROM feed_entries e WHERE e.feed_id=f.id AND e.media_id=:media)
+        ORDER BY f.id FOR UPDATE OF f
+    """),
+            {"media": media_id},
+        )
     )
 
 
-def podcast_subscription_protected_sql(
+def feed_subscription_protected_sql(
     *, library_param: str = ":library_id", media_param: str = ":media_id"
 ) -> str:
     """Exact library/show protection; callers serialize changes with the parent show."""
     return f"""EXISTS (
-        SELECT 1 FROM library_podcast_subscriptions protected
-        JOIN podcast_episodes episode ON episode.podcast_id=protected.podcast_id
+        SELECT 1 FROM library_feed_subscriptions protected
+        JOIN feed_entries episode ON episode.feed_id=protected.feed_id
         WHERE protected.library_id={library_param} AND episode.media_id={media_param}
     )"""
 
 
-def require_podcast_unfile_allowed(db: Session, *, library_id: UUID, media_id: UUID) -> None:
+def require_feed_unfile_allowed(db: Session, *, library_id: UUID, media_id: UUID) -> None:
     """Reject individual unfiling under the caller's parent-show lock."""
     if db.scalar(
-        text(f"SELECT {podcast_subscription_protected_sql()}"),
+        text(f"SELECT {feed_subscription_protected_sql()}"),
         {"library_id": library_id, "media_id": media_id},
     ):
         raise ConflictError(
-            ApiErrorCode.E_PODCAST_SUBSCRIPTION_ACTIVE, "Podcast subscription protects this episode"
+            ApiErrorCode.E_FEED_SUBSCRIPTION_ACTIVE, "An active subscription requires this item"
         )
 
 
@@ -380,6 +390,9 @@ def _ensure_entry_locked(
     """),
         {"library": library_id, "media": media_id, "position": position},
     )
+    media_discoveries.record_library_arrivals(
+        db, library_id=library_id, media_ids=[media_id], origin="manual"
+    )
     if inserted is None:
         return False
     libraries.advance_order_revision(db, library_id)
@@ -389,8 +402,22 @@ def _ensure_entry_locked(
     return True
 
 
-def add_podcast_episodes_locked(
+def deliverable_feed_media_ids(
     db: Session, *, library_id: UUID, media_ids: Sequence[UUID]
+) -> list[UUID]:
+    """A source addition cannot create access to a private canonical article."""
+    viewers = list(
+        db.scalars(text("SELECT user_id FROM memberships WHERE library_id=:id"), {"id": library_id})
+    )
+    return [
+        media_id
+        for media_id in dict.fromkeys(media_ids)
+        if all(can_read_media(db, viewer, media_id) for viewer in viewers)
+    ]
+
+
+def add_feed_media_locked(
+    db: Session, *, library_id: UUID, media_ids: Sequence[UUID], origin: media_discoveries.Origin
 ) -> tuple[int, int]:
     """File one locked episode set; count actual insertions and invalidate once per set.
 
@@ -400,6 +427,11 @@ def add_podcast_episodes_locked(
     ordered = list(dict.fromkeys(media_ids))
     if not ordered:
         return 0, 0
+    if deliverable_feed_media_ids(db, library_id=library_id, media_ids=ordered) != ordered:
+        raise ForbiddenError(
+            ApiErrorCode.E_FEED_PRIVATE_SOURCE,
+            "Some source entries are not readable by this library's members.",
+        )
     inserted = set(
         db.scalars(
             text("""
@@ -421,10 +453,13 @@ def add_podcast_episodes_locked(
         resource_grants.invalidate_annotation_visibility(
             db, resource_grants.library_annotation_visibility(db, library_id, media_ids=inserted)
         )
+    media_discoveries.record_library_arrivals(
+        db, library_id=library_id, media_ids=ordered, origin=origin
+    )
     return len(inserted), len(ordered) - len(inserted)
 
 
-def remove_podcast_episodes_locked(
+def remove_feed_media_locked(
     db: Session,
     *,
     library_ids: Sequence[UUID],
@@ -578,14 +613,14 @@ def transfer_current_media_references(
         )
     db.execute(
         text("""
-        INSERT INTO podcast_import_processed_episodes(import_id,media_id,created_at)
-        SELECT import_id,:winner,created_at FROM podcast_import_processed_episodes
+        INSERT INTO feed_import_processed_media(import_id,media_id,created_at)
+        SELECT import_id,:winner,created_at FROM feed_import_processed_media
         WHERE media_id=:loser ON CONFLICT (import_id,media_id) DO NOTHING
     """),
         {"winner": winner_media_id, "loser": loser_media_id},
     )
     db.execute(
-        text("DELETE FROM podcast_import_processed_episodes WHERE media_id=:loser"),
+        text("DELETE FROM feed_import_processed_media WHERE media_id=:loser"),
         {"loser": loser_media_id},
     )
     resource_grants.invalidate_annotation_visibility(db, projections)
@@ -650,21 +685,21 @@ def admin_non_default_library_ids_for_media(
     )
 
 
-def podcast_ids_in_libraries_for_viewer(
+def feed_ids_in_libraries_for_viewer(
     db: Session, *, viewer_id: UUID, library_id: UUID | None = None
 ) -> set[UUID]:
     if library_id is not None:
         libraries.access(db, viewer_id, library_id, lock=False)
         return set(
             db.scalars(
-                text(f"SELECT podcast_id FROM ({library_podcast_rows_sql()}) shows"),
+                text(f"SELECT feed_id FROM ({library_feed_rows_sql()}) shows"),
                 {"viewer_id": viewer_id, "library_id": library_id},
             )
         )
     return set(
         db.scalars(
             text("""
-        SELECT DISTINCT s.podcast_id FROM library_podcast_subscriptions s
+        SELECT DISTINCT s.feed_id FROM library_feed_subscriptions s
         JOIN libraries l ON l.id=s.library_id AND NOT l.is_default AND l.system_key IS NULL
         JOIN memberships m ON m.library_id=l.id AND m.user_id=:viewer_id
     """),
@@ -691,8 +726,8 @@ def list_item_libraries(
                      AND (NOT l.is_default OR l.owner_user_id=u.id)
                ) AS all_included,
                EXISTS (
-                   SELECT 1 FROM library_podcast_subscriptions s
-                   JOIN podcast_episodes pe ON pe.podcast_id=s.podcast_id
+                   SELECT 1 FROM library_feed_subscriptions s
+                   JOIN feed_entries pe ON pe.feed_id=s.feed_id
                    JOIN libraries l ON l.id=s.library_id AND l.system_key IS NULL
                    JOIN memberships m ON m.library_id=l.id AND m.user_id=u.id
                    WHERE pe.media_id=:target_id
@@ -711,7 +746,7 @@ def list_item_libraries(
             SELECT l.id,l.name,l.system_key,l.order_revision,m.role,
                    EXISTS (SELECT 1 FROM library_entries le
                            WHERE le.library_id=l.id AND le.media_id=:target_id) AS direct,
-                   {podcast_subscription_protected_sql(library_param="l.id", media_param=":target_id")}
+                   {feed_subscription_protected_sql(library_param="l.id", media_param=":target_id")}
                        AS protected
             FROM libraries l JOIN memberships m ON m.library_id=l.id AND m.user_id=u.id
             WHERE NOT l.is_default
@@ -731,7 +766,7 @@ def list_item_libraries(
             order_revision=str(first.all_revision),
             included=first.all_included,
             retained=first.all_retained,
-            remove_blocked="PodcastSubscription"
+            remove_blocked="FeedSubscription"
             if first.all_protected
             else "RequiresAdmin"
             if first.all_requires_admin
@@ -745,7 +780,7 @@ def list_item_libraries(
                 relation="Direct" if row.direct else "Absent",
                 blocked="SystemManaged"
                 if row.system_key is not None
-                else "PodcastSubscription"
+                else "FeedSubscription"
                 if row.protected
                 else "RequiresAdmin"
                 if row.role != "admin"
@@ -790,7 +825,7 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
     """
     from nexus.services.media_deletion import clear_user_media_deletion
 
-    lock_parent_podcast(db, media_id)
+    lock_parent_feeds(db, media_id)
     media_locks.lock_media_rows_in_order(db, [media_id])
     if not (
         can_restore_media(db, viewer_id, media_id)
@@ -811,6 +846,7 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
     for library_id in library_ids:
         inserted = _ensure_entry_locked(db, library_id, media_id) or inserted
     clear_user_media_deletion(db, viewer_id, media_id)
+    media_discoveries.mark_manual_save(db, user_id=viewer_id, media_id=media_id)
     advance_acquisition_revision(db, media_id)
 
     from nexus.services.source_citations import complete_media_citations
@@ -820,13 +856,18 @@ def _file_media(db: Session, viewer_id: UUID, media_id: UUID, library_ids: Seque
 
 
 def assign_libraries_for_media_in_current_transaction(
-    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_ids: list[UUID],
+    *,
+    individually_saved: bool,
 ) -> None:
     """Retain newly ingested media and file each named physical destination."""
     from nexus.services.media_deletion import clear_user_media_deletion
 
     targets = libraries.resolve_writable_destinations(db, viewer_id, library_ids)
-    lock_parent_podcast(db, media_id)
+    lock_parent_feeds(db, media_id)
     lock_media_for_reference(db, media_id)
     default_id = libraries.default_library_id(db, viewer_id)
     libraries.lock_library_rows_in_order(db, [default_id, *targets])
@@ -838,6 +879,8 @@ def assign_libraries_for_media_in_current_transaction(
     for library_id in targets:
         _ensure_entry_locked(db, library_id, media_id)
     clear_user_media_deletion(db, viewer_id, media_id)
+    if individually_saved:
+        media_discoveries.mark_manual_save(db, user_id=viewer_id, media_id=media_id)
     advance_acquisition_revision(db, media_id)
 
     from nexus.services.source_citations import complete_media_citations
@@ -897,14 +940,14 @@ def remove_media_from_library_in_current_transaction(
     absence acquires nothing; incidental retention never clears removal markers.
     caller owns the viewer lock and the complete ordered lock set.
     """
-    lock_parent_podcast(db, media_id)
+    lock_parent_feeds(db, media_id)
     media_locks.lock_media_rows_in_order(db, [media_id])
     default_id = libraries.default_library_id(db, viewer_id)
     libraries.lock_library_rows_in_order(db, [default_id, library_id])
     library = libraries.access(db, viewer_id, library_id, lock=False)
     library.require_admin()
     library.require_mutable()
-    require_podcast_unfile_allowed(db, library_id=library_id, media_id=media_id)
+    require_feed_unfile_allowed(db, library_id=library_id, media_id=media_id)
     if not entry_exists(db, library_id, media_target(media_id)):
         return
     ensure_media_in_default_library(db, viewer_id, media_id)
@@ -925,7 +968,7 @@ def _lock_placement_target(
     db: Session, *, viewer_id: UUID, library_id: UUID, target: EntryTarget
 ) -> None:
     libraries.access(db, viewer_id, library_id, lock=False)
-    lock_parent_podcast(db, target.id)
+    lock_parent_feeds(db, target.id)
     media_locks.lock_media_rows_in_order(db, [target.id])
     libraries.lock_library_rows_in_order(
         db, [libraries.default_library_id(db, viewer_id), library_id]
@@ -979,9 +1022,9 @@ def set_item_in_current_transaction(
     if included:
         _file_media(db, viewer_id, target.id, [] if library.is_default else [library_id])
     else:
-        from nexus.services.podcasts import imports
+        from nexus.services.feeds import imports
 
-        require_podcast_unfile_allowed(db, library_id=library_id, media_id=target.id)
+        require_feed_unfile_allowed(db, library_id=library_id, media_id=target.id)
         imports.mark_processed(db, library_ids=[library_id], media_id=target.id)
         remove_media_from_library_in_current_transaction(db, viewer_id, target.id, library_id)
     current = libraries.access(db, viewer_id, library_id, lock=False)
@@ -992,9 +1035,9 @@ def set_item_in_current_transaction(
         name=library.name,
         order_revision=str(libraries.access(db, viewer_id, library_id, lock=False).order_revision),
         relation="Direct" if entry_exists(db, library_id, target) else "Absent",
-        blocked="PodcastSubscription"
+        blocked="FeedSubscription"
         if db.scalar(
-            text(f"SELECT {podcast_subscription_protected_sql()}"),
+            text(f"SELECT {feed_subscription_protected_sql()}"),
             {"library_id": library_id, "media_id": target.id},
         )
         else None,
@@ -1064,7 +1107,7 @@ def library_entry_undo_eligible(
         WHERE l.id = :l AND NOT l.is_default AND l.system_key IS NULL
           AND l.order_revision = :revision AND le.id = :entry
           AND le.media_id = :target
-          AND NOT {podcast_subscription_protected_sql(library_param="l.id", media_param=":target")}
+          AND NOT {feed_subscription_protected_sql(library_param="l.id", media_param=":target")}
     """),
             {
                 "u": viewer_id,
@@ -1094,7 +1137,7 @@ def undo_library_entry_in_current_transaction(
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed; filing cannot be undone"
         ) from exc
-    require_podcast_unfile_allowed(db, library_id=library_id, media_id=target.id)
+    require_feed_unfile_allowed(db, library_id=library_id, media_id=target.id)
     if not library_entry_undo_eligible(
         db,
         viewer_id=viewer_id,
@@ -1106,7 +1149,7 @@ def undo_library_entry_in_current_transaction(
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Library changed; filing cannot be undone"
         )
-    from nexus.services.podcasts import imports
+    from nexus.services.feeds import imports
 
     imports.mark_processed(db, library_ids=[library_id], media_id=target.id)
     remove_media_from_library_in_current_transaction(db, viewer_id, target.id, library_id)

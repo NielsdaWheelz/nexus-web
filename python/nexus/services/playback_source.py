@@ -46,7 +46,9 @@ def derive_playback_source(
     if kind not in {MediaKind.podcast_episode.value, MediaKind.video.value}:
         return None
 
-    resolved_url = _normalize_url(external_playback_url) or _normalize_url(canonical_source_url)
+    resolved_url = _normalize_url(external_playback_url)
+    if resolved_url is None and kind == MediaKind.video.value:
+        resolved_url = _normalize_url(canonical_source_url)
     if resolved_url is None:
         return None
 

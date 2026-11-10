@@ -41,9 +41,9 @@ from nexus.services import (
 )
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.consumption import lectern
+from nexus.services.feeds import subscriptions
 from nexus.services.media_text_scope import read_media_text_scope
 from nexus.services.passage_anchors import normalize_quote_text
-from nexus.services.podcasts import subscriptions
 from nexus.services.reader_publication import lock_publication_generation
 from nexus.services.resource_graph.edges import EdgeCreate, create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
@@ -79,6 +79,9 @@ _URIS = ("resource_uri", "page_uri", "media_uri", "source_uri", "target_uri")
 _REFUSALS: dict[str, dict[ApiErrorCode, str]] = {
     "nexus.library.add": {
         ApiErrorCode.E_MEDIA_DELETING: "ResourceUnavailable",
+        ApiErrorCode.E_FEED_PRIVATE_SOURCE: "ResourceUnavailable",
+        ApiErrorCode.E_FEED_SUBSCRIPTION_ACTIVE: "Conflict",
+        ApiErrorCode.E_FEED_IDENTITY_CONFLICT: "Conflict",
         ApiErrorCode.E_RESOURCE_CONFLICT: "Conflict",
     },
     "nexus.queue.add": {
@@ -171,21 +174,24 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
     """File through the one actor-authorized filing command REST also uses.
 
     The filing command owns media authorization (readable or restorable, so re-filing
-    restores a tombstoned media); podcasts have no restorable lane and are checked here.
+    restores a tombstoned media); feed sources have no restorable lane and are checked here.
     """
 
     db, viewer = call.db, call.principal
-    ref = _ref(value.resource_uri, ("media", "podcast"))
-    if ref.scheme == "podcast":
-        if value.podcast is None:
+    ref = _ref(value.resource_uri, ("media", "podcast", "feed"))
+    if ref.scheme in ("podcast", "feed"):
+        if value.feed is None:
             refuse("InvalidInput")
         assert_ref_visible(db, viewer_id=viewer, ref=ref)
-        intent = value.podcast
+        feed_kind = db.scalar(text("SELECT kind FROM feeds WHERE id=:id"), {"id": ref.id})
+        if feed_kind != ("podcast" if ref.scheme == "podcast" else "article"):
+            refuse("ResourceUnavailable")
+        intent = value.feed
         existing = db.scalar(
             text(
-                "SELECT id FROM library_podcast_subscriptions WHERE id=:id"
+                "SELECT id FROM library_feed_subscriptions WHERE id=:id"
                 if intent.mode == "follow"
-                else "SELECT id FROM podcast_library_imports WHERE id=:id"
+                else "SELECT id FROM library_feed_imports WHERE id=:id"
             ),
             {"id": intent.id},
         )
@@ -193,20 +199,20 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
             db,
             viewer_id=viewer,
             library_id=value.library_id,
-            podcast_id=ref.id,
+            feed_id=ref.id,
             id=intent.id,
             import_id=intent.import_id,
             expected_removal_revision=int(value.expected_removal_revision),
         )
         library = libraries.access(db, viewer, value.library_id, lock=False)
         return LibraryAddSuccess(
-            podcast=admission,
+            feed=admission,
             already_present=existing is not None,
             library_name=library.name,
             library_uri=f"library:{library.id}",
             resource_uri=ref.uri,
         )
-    if value.podcast is not None or value.expected_order_revision is None:
+    if value.feed is not None or value.expected_order_revision is None:
         refuse("InvalidInput")
     library_id = value.library_id
     target = library_entries.media_target(ref.id)
@@ -233,7 +239,7 @@ def library_add(value: LibraryAddInput, call: Call) -> LibraryAddSuccess:
             }
         )
     return LibraryAddSuccess(
-        podcast=None,
+        feed=None,
         already_present=inserted_entry_id is None,
         library_name=placement.name,
         library_uri=f"library:{library_id}",
@@ -560,7 +566,7 @@ def revert(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
 def _unfile(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> None:
     """Undo requires the exact inserted entry and its unchanged named-library revision."""
     if ref["target_scheme"] != "media":
-        raise ApiError(ApiErrorCode.E_RESOURCE_CONFLICT, "Podcast actions need scoped review")
+        raise ApiError(ApiErrorCode.E_RESOURCE_CONFLICT, "Feed actions need scoped review")
     target = library_entries.media_target(UUID(ref["target_id"]))
     library_entries.undo_library_entry_in_current_transaction(
         db,

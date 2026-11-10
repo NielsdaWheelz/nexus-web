@@ -37,3 +37,16 @@ def normalize_source_publication_date(value: str | None) -> PublicationDate | No
     except (ValueError, OverflowError):
         return None
     return None
+
+
+def publisher_publication_fact(value: str | None) -> tuple[datetime | None, date | None]:
+    """Keep credible publisher precision; a year/month or an offsetless time is not a day."""
+    candidate = (value or "").strip()
+    try:
+        if _SOURCE_INSTANT.fullmatch(candidate):
+            return datetime.fromisoformat(candidate).astimezone(UTC), None
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", candidate):
+            return None, date.fromisoformat(candidate)
+    except (ValueError, OverflowError):
+        pass
+    return None, None

@@ -16,8 +16,8 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { podcastActionFacts } from "@/lib/actions/inlineActions";
-import { usePodcastActionFacts } from "@/lib/podcasts/usePodcastActionFacts";
+import { feedActionFacts } from "@/lib/actions/inlineActions";
+import { useFeedActionFacts } from "@/lib/feeds/useFeedActionFacts";
 import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -56,6 +56,7 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import { providerRefusal } from "./providerRefusal";
 import styles from "./browse.module.css";
+import FeedBrowse from "@/components/feeds/FeedBrowse";
 
 /** A section's cold read, as far as the body's rule needs it. */
 interface SectionStatus {
@@ -191,15 +192,15 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
   const summaries = useMediaSummaries(list.items.flatMap((item) =>
     item.resolution.kind === "InNexusMedia" ? [item.resolution.media_summary] : [],
   ));
-  const actionFacts = usePodcastActionFacts({ scope: `Browse.${sectionKey}:${queryKey}`,
+  const actionFacts = useFeedActionFacts({ scope: `Browse.${sectionKey}:${queryKey}`,
     targets: list.items.flatMap(item => item.kind === "Podcast" ? [{ kind: "Discovery" as const, target: item.target }] : []),
     refresh: `${list.current}:${list.running}:${list.requestedKey}`,
   });
   const rows = list.items.flatMap((item) => {
     if (item.resolution.kind !== "InNexusMedia") {
       return [presentBrowseCandidate(item, item.kind === "Podcast" ? {
-        target: { kind: "Discovery", target: item.target }, title: item.title,
-        facts: podcastActionFacts(actionFacts, { kind: "Discovery", target: item.target },
+        target: { kind: "Discovery", target: item.target }, feedKind: "podcast", title: item.title,
+        facts: feedActionFacts(actionFacts, { kind: "Discovery", target: item.target },
           list.failure !== null ? { kind: "Failed", error: list.failure.error, retry: list.retry, retrying: list.running !== null }
             : !list.fresh || list.running !== null ? { kind: "Resolving" } : null),
       } : undefined)];
@@ -236,6 +237,11 @@ function BrowseSourceSection({ queryKey, text, section, quiet, onStatus }: {
 }
 
 export default function BrowsePaneBody() {
+  const params = usePaneSearchParams();
+  return params.get("kind") === "Feed" ? <FeedBrowse /> : <DirectoryBrowse />;
+}
+
+function DirectoryBrowse() {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const query = useMemo(() => readBrowseQuery(params), [params]);

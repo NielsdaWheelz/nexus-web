@@ -14,7 +14,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
-from nexus.schemas import podcast as podcast_wire
+from nexus.schemas import feed as feed_wire
 from nexus.schemas.collection_index import CollectionIndex
 from nexus.schemas.consumption import ConsumptionData
 from nexus.schemas.library import (
@@ -38,13 +38,13 @@ from nexus.schemas.suggestions import (
 )
 from nexus.services import libraries, library_entries, library_listing, suggestion_shortlists
 from nexus.services.consumption import observation
-from nexus.services.podcasts import (
-    imports as podcast_imports,
+from nexus.services.feeds import (
+    imports as feed_imports,
 )
-from nexus.services.podcasts import (
-    subscriptions as podcast_subscriptions,
+from nexus.services.feeds import queries as feed_queries
+from nexus.services.feeds import (
+    subscriptions as feed_subscriptions,
 )
-from nexus.services.podcasts import subscriptions_query as podcast_queries
 
 router = APIRouter(tags=["libraries"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -228,80 +228,80 @@ def place_item(
     )
 
 
-@router.get("/libraries/{library_id}/podcasts")
-def library_podcasts(
+@router.get("/libraries/{library_id}/feeds")
+def library_feeds(
     library_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession, response: Response
-) -> ConsumptionData[podcast_wire.LibraryPodcastsOut]:
+) -> ConsumptionData[feed_wire.LibraryFeedsOut]:
     response.headers["Cache-Control"] = "private, no-store"
     return observation.stamp(
         db,
         viewer.user_id,
-        podcast_queries.read_library_podcasts(db, viewer.user_id, library_id),
+        feed_queries.read_library_feeds(db, viewer.user_id, library_id),
         [],
     )
 
 
-@router.get("/libraries/{library_id}/podcasts/{podcast_id}")
-def library_podcast(
+@router.get("/libraries/{library_id}/feeds/{feed_id}")
+def library_feed(
     library_id: UUID,
-    podcast_id: UUID,
+    feed_id: UUID,
     viewer: ViewerDep,
     db: RepeatableReadDbSession,
     response: Response,
-) -> ConsumptionData[podcast_wire.LibraryPodcastOut]:
+) -> ConsumptionData[feed_wire.LibraryFeedOut]:
     response.headers["Cache-Control"] = "private, no-store"
     return observation.stamp(
         db,
         viewer.user_id,
-        podcast_queries.read_library_podcast(db, viewer.user_id, library_id, podcast_id),
+        feed_queries.read_library_feed(db, viewer.user_id, library_id, feed_id),
         [],
     )
 
 
-@router.post("/libraries/{library_id}/podcast-subscriptions", status_code=202)
-def create_podcast_subscription(
+@router.post("/libraries/{library_id}/feed-subscriptions", status_code=202)
+def create_feed_subscription(
     library_id: UUID,
-    body: podcast_wire.PodcastSubscriptionCreateRequest,
+    body: feed_wire.FeedSubscriptionCreateRequest,
     viewer: ViewerDep,
     db: DbSession,
-) -> Data[podcast_wire.PodcastAdmissionOut]:
-    return Data(data=podcast_subscriptions.admit(db, viewer.user_id, library_id, body))
+) -> Data[feed_wire.FeedAdmissionOut]:
+    return Data(data=feed_subscriptions.admit(db, viewer.user_id, library_id, body))
 
 
-@router.post("/libraries/{library_id}/podcast-imports", status_code=202)
-def create_podcast_import(
+@router.post("/libraries/{library_id}/feed-imports", status_code=202)
+def create_feed_import(
     library_id: UUID,
-    body: podcast_wire.PodcastImportCreateRequest,
+    body: feed_wire.FeedImportCreateRequest,
     viewer: ViewerDep,
     db: DbSession,
-) -> Data[podcast_wire.PodcastAdmissionOut]:
-    return Data(data=podcast_subscriptions.admit(db, viewer.user_id, library_id, body))
+) -> Data[feed_wire.FeedAdmissionOut]:
+    return Data(data=feed_subscriptions.admit(db, viewer.user_id, library_id, body))
 
 
-@router.get("/libraries/{library_id}/podcast-imports/{import_id}")
-def get_podcast_import(
+@router.get("/libraries/{library_id}/feed-imports/{import_id}")
+def get_feed_import(
     library_id: UUID, import_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
-) -> Data[podcast_wire.PodcastImportOut]:
-    return Data(data=podcast_imports.get_import(db, viewer.user_id, library_id, import_id))
+) -> Data[feed_wire.FeedImportOut]:
+    return Data(data=feed_imports.get_import(db, viewer.user_id, library_id, import_id))
 
 
-@router.post("/libraries/{library_id}/podcast-imports/{import_id}/cancel")
-def cancel_podcast_import(
+@router.post("/libraries/{library_id}/feed-imports/{import_id}/cancel")
+def cancel_feed_import(
     library_id: UUID,
     import_id: UUID,
-    body: podcast_wire.PodcastImportCancelRequest,
+    body: feed_wire.FeedImportCancelRequest,
     viewer: ViewerDep,
     db: DbSession,
-) -> Data[podcast_wire.PodcastImportOut]:
-    return Data(data=podcast_imports.cancel(db, viewer.user_id, library_id, import_id, body))
+) -> Data[feed_wire.FeedImportOut]:
+    return Data(data=feed_imports.cancel(db, viewer.user_id, library_id, import_id, body))
 
 
-@router.post("/libraries/{library_id}/podcast-imports/{import_id}/retry", status_code=202)
-def retry_podcast_import(
+@router.post("/libraries/{library_id}/feed-imports/{import_id}/retry", status_code=202)
+def retry_feed_import(
     library_id: UUID,
     import_id: UUID,
-    body: podcast_wire.PodcastImportRetryRequest,
+    body: feed_wire.FeedImportRetryRequest,
     viewer: ViewerDep,
     db: DbSession,
-) -> Data[podcast_wire.PodcastImportOut]:
-    return Data(data=podcast_imports.retry(db, viewer.user_id, library_id, import_id, body))
+) -> Data[feed_wire.FeedImportOut]:
+    return Data(data=feed_imports.retry(db, viewer.user_id, library_id, import_id, body))

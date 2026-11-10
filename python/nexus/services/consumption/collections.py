@@ -17,7 +17,7 @@ from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas import collection_actions as wire
 from nexus.services import library_listing
 from nexus.services.consumption import state, viewer_txn
-from nexus.services.podcasts import episodes
+from nexus.services.feeds import entries, queries
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -25,13 +25,33 @@ def ordered_source_ids(
     db: Session, viewer_id: UUID, target: wire.CollectionTarget
 ) -> tuple[str, list[UUID]]:
     """Known show catalogue or physical library contents, in the owner's fixed order."""
-    if isinstance(target, wire.PodcastCollectionTarget):
-        return episodes.ordered_selection_ids(
-            db, viewer_id, target.podcast_id, state="all", sort="oldest"
-        )
+    if isinstance(target, wire.FeedCollectionTarget):
+        return _feed_selection(db, viewer_id, target, state="all")
     return library_listing.ordered_selection_ids(
         db, viewer_id, target.library_id, library_listing.EntryView(None, None, None, None)
     )
+
+
+def _feed_selection(
+    db: Session, viewer_id: UUID, target: wire.FeedCollectionTarget, *, state: str
+) -> tuple[str, list[UUID]]:
+    queries.require_feed_access(db, viewer_id, target.feed_id)
+    feed = db.execute(
+        text("SELECT title,kind FROM feeds WHERE id=:id"), {"id": target.feed_id}
+    ).one()
+    if feed.kind != target.feed_kind:
+        raise ConflictError(ApiErrorCode.E_SELECTION_CHANGED, "Source kind changed")
+    media_ids = list(
+        db.scalars(
+            text(f"""
+        SELECT media_id FROM ({entries.entry_rows_sql()}) e WHERE feed_id=:feed
+        AND (:state='all' OR entry_state=:state)
+        ORDER BY publication_order ASC NULLS LAST,media_id
+    """),
+            {"viewer_id": viewer_id, "feed": target.feed_id, "state": state},
+        )
+    )
+    return feed.title, media_ids
 
 
 def require_source_members(
@@ -57,10 +77,8 @@ def require_source_members(
 def prepare(
     db: Session, viewer_id: UUID, selection: wire.CollectionSelection
 ) -> wire.CollectionConsumptionPreparedOut:
-    if isinstance(selection, wire.PodcastCollectionSelection):
-        label, media_ids = episodes.ordered_selection_ids(
-            db, viewer_id, selection.podcast_id, state=selection.state, sort="oldest"
-        )
+    if isinstance(selection, wire.FeedCollectionSelection):
+        label, media_ids = _feed_selection(db, viewer_id, selection, state=selection.state)
     else:
         label, media_ids = ordered_source_ids(db, viewer_id, selection)
     revisions = {

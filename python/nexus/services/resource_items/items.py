@@ -25,7 +25,11 @@ import regex
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import highlight_readability_sql, requested_media_ids_cte_sql
+from nexus.auth.permissions import (
+    feed_catalog_ids_sql,
+    highlight_readability_sql,
+    requested_media_ids_cte_sql,
+)
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.highlight_color import HighlightColor
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -430,6 +434,7 @@ def resource_labels(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
             "library": "title",
             "conversation": "title",
             "podcast": "title",
+            "feed": "title",
             "contributor": "title",
             "oracle_reading": "title",
             "message": "prose",
@@ -808,7 +813,8 @@ _QUERIES = {
     "note_block": _NOTE_SQL,
     "conversation": "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled conversation') AS title FROM conversations WHERE id = ANY(:ids) AND owner_user_id = :viewer_id",
     "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role, 'conversation:' || c.id AS owner_ref FROM messages m JOIN conversations c ON c.id = m.conversation_id AND c.owner_user_id = :viewer_id WHERE m.id = ANY(:ids) AND m.status != 'pending'",
-    "podcast": "SELECT id, title, image_url FROM podcasts WHERE id = ANY(:ids)",
+    "podcast": "SELECT id, title, image_url FROM feeds WHERE kind='podcast' AND id = ANY(:ids)",
+    "feed": f"SELECT id, title, image_url FROM feeds WHERE kind='article' AND id=ANY(:ids) AND id IN ({feed_catalog_ids_sql()})",
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",
     "oracle_reading": "SELECT id, left(question_text, 601) AS title FROM oracle_readings WHERE id = ANY(:ids) AND user_id = :viewer_id",
     "highlight": f"SELECT h.id, h.user_id=:viewer_id AS owned, 'passage' AS body_kind, left(h.exact,601) AS exact, right(h.prefix,49) AS prefix, left(h.suffix,49) AS suffix, h.color, h.excerpt_preview, 'media:' || h.anchor_media_id AS owner_ref FROM highlights h WHERE h.id = ANY(:ids) AND ((h.user_id=:viewer_id AND h.authored_visible) OR {highlight_readability_sql('h')})",

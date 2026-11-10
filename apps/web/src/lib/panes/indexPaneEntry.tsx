@@ -12,7 +12,8 @@ import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { librariesIndex, libraryEntriesIndex } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { fetchConversationIndex } from "@/lib/chat/conversationIndex";
-import { listPodcasts, listEpisodes } from "@/lib/podcasts/api";
+import { listFeeds, listFeedEntries } from "@/lib/feeds/api";
+
 import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { SuggestionEntryRead, QuickReadsEntryRead, suggestionRead } from "@/lib/panes/suggestionEntryReads";
@@ -22,8 +23,8 @@ import { PaneEntryReads } from "@/lib/api/serverState";
 type Result<F extends (...args: never[]) => unknown> = Awaited<ReturnType<F>>;
 const Libraries = createContext<ReadDescriptor<Result<typeof librariesIndex>> | null>(null);
 const Entries = createContext<{ read: ReadDescriptor<Result<typeof libraryEntriesIndex>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
-const Podcasts = createContext<{ read: ReadDescriptor<Result<typeof listPodcasts>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
-const Episodes = createContext<{ read: ReadDescriptor<Result<typeof listEpisodes>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
+const Feeds = createContext<{ read: ReadDescriptor<Result<typeof listFeeds>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
+const FeedEntries = createContext<{ read: ReadDescriptor<Result<typeof listFeedEntries>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Chats = createContext<ReadDescriptor<Result<typeof fetchConversationIndex>> | null>(null);
 const Author = createContext<{ detail: ReadDescriptor<Result<typeof getContributor>>; works: ReadDescriptor<Result<typeof listContributorWorks>> } | null>(null);
 function requireRead<T>(value: T | null): T {
@@ -33,8 +34,8 @@ function requireRead<T>(value: T | null): T {
 }
 export const useLibrariesIndexRead = () => requireRead(useContext(Libraries));
 export const useLibraryEntriesRead = () => requireRead(useContext(Entries));
-export const usePodcastsIndexRead = () => requireRead(useContext(Podcasts));
-export const usePodcastEpisodesRead = () => requireRead(useContext(Episodes));
+export const useFeedsIndexRead = () => requireRead(useContext(Feeds));
+export const useFeedEntriesRead = () => requireRead(useContext(FeedEntries));
 export const useChatsIndexRead = () => requireRead(useContext(Chats));
 export const useAuthorIndexReads = () => requireRead(useContext(Author));
 
@@ -50,20 +51,20 @@ function LibraryEntry({ query, params, children }: EntryProps) {
   const group = useLiveGroup(`${id}?${text}`);
   const consumption = useChangeStamp("Consumption");
   const follows = query.has("projection") || query.has("completion") || (query.get("sort") ?? "").startsWith("remaining");
-  const stale = `${useChangeStamp("Libraries", "Entries", "Podcasts")}|${follows ? consumption : "-"}|${useMediaQueryRevision()}|${useRefreshStamp(usePaneIsActive(), 60_000)}|${group.stale}`;
+  const stale = `${useChangeStamp("Libraries", "Entries", "Feeds")}|${follows ? consumption : "-"}|${useMediaQueryRevision()}|${useRefreshStamp(usePaneIsActive(), 60_000)}|${group.stale}`;
   const read = useMemo(() => ({ key: `/libraries/${id}/entries?${text}`, stale, load: (signal: AbortSignal) => libraryEntriesIndex(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
   const suggestions = useMemo(() => suggestionRead(id), [id]);
   return <Entries.Provider value={{ read, group }}><SuggestionEntryRead.Provider value={suggestions}><PaneEntryReads reads={[read, suggestions]}>{children}</PaneEntryReads></SuggestionEntryRead.Provider></Entries.Provider>;
 }
-function PodcastsEntry({ query, children }: EntryProps) {
-  const text = indexPaneQuery("podcasts", query)!;
-  const group = useLiveGroup(`podcasts?${text}`);
-  const stale = `${useChangeStamp("Podcasts", "Libraries")}:${useMediaQueryRevision()}:${group.stale}`;
-  const read = useMemo(() => ({ key: `/podcasts?${text}`, stale, load: (signal: AbortSignal) => listPodcasts(new URLSearchParams(text ?? ""), signal) }), [text, stale]);
-  return <Podcasts.Provider value={{ read, group }}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Podcasts.Provider>;
+function FeedsEntry({ query, children, kind }: EntryProps & { kind: "podcast" | "article" }) {
+  const text = indexPaneQuery(kind === "podcast" ? "podcasts" : "feeds", query)!;
+  const group = useLiveGroup(`feeds?${text}`);
+  const stale = `${useChangeStamp("Feeds", "Libraries")}:${useMediaQueryRevision()}:${group.stale}`;
+  const read = useMemo(() => ({ key: `/feeds?${text}`, stale, load: (signal: AbortSignal) => listFeeds(new URLSearchParams(text ?? ""), signal) }), [text, stale]);
+  return <Feeds.Provider value={{ read, group }}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Feeds.Provider>;
 }
 function EpisodesEntry({ query, params, children }: EntryProps) {
-  const id = params.podcastId;
+  const id = params.podcastId ?? params.feedId;
   const text = indexPaneQuery("podcastDetail", query)!;
   const group = useLiveGroup(`${id}?${text}`);
   const active = usePaneIsActive();
@@ -71,9 +72,9 @@ function EpisodesEntry({ query, params, children }: EntryProps) {
   const consumption = useChangeStamp("Consumption");
   const seen = useRef(consumption);
   if (active && visible) seen.current = consumption;
-  const stale = `${useChangeStamp("Podcasts", "Libraries", "Entries", "Metadata", "PodcastEpisodes")}:${useMediaQueryRevision()}:${seen.current}:${useRefreshStamp(active && visible, 0)}:${group.stale}`;
-  const read = useMemo(() => ({ key: `/podcasts/${id}/episodes?${text}`, stale, load: (signal: AbortSignal) => listEpisodes(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
-  return <Episodes.Provider value={{ read, group }}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Episodes.Provider>;
+  const stale = `${useChangeStamp("Feeds", "Libraries", "Entries", "Metadata", "PodcastEpisodes")}:${useMediaQueryRevision()}:${seen.current}:${useRefreshStamp(active && visible, 0)}:${group.stale}`;
+  const read = useMemo(() => ({ key: `/feeds/${id}/entries?${text}`, stale, load: (signal: AbortSignal) => listFeedEntries(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
+  return <FeedEntries.Provider value={{ read, group }}>{children}</FeedEntries.Provider>;
 }
 function ChatsEntry({ query, children }: EntryProps) {
   const text = indexPaneQuery("conversations", query);
@@ -85,7 +86,7 @@ function ChatsEntry({ query, children }: EntryProps) {
 function AuthorEntry({ query, params, children }: EntryProps) {
   const handle = params.handle;
   const text = indexPaneQuery("author", query)!;
-  const stale = `${useMediaQueryRevision()}:${useChangeStamp("Podcasts")}`;
+  const stale = `${useMediaQueryRevision()}:${useChangeStamp("Feeds")}`;
   const detail = useMemo(() => ({ key: `/contributors/${encodeURIComponent(handle)}`, stale, load: (signal: AbortSignal) => getContributor(handle, signal) }), [handle, stale]);
   const works = useMemo(() => ({ key: `/contributors/${encodeURIComponent(handle)}/works?${text}`, stale, load: (signal: AbortSignal) => listContributorWorks(handle, new URLSearchParams(text ?? ""), signal) }), [handle, text, stale]);
   return <Author.Provider value={{ detail, works }}><PaneEntryReads reads={[detail, works]}>{children}</PaneEntryReads></Author.Provider>;
@@ -103,7 +104,9 @@ export function IndexPaneEntry({ routeId, ...props }: EntryProps & { routeId: Pa
     case "lectern": return <LecternEntry {...props} />;
     case "libraries": return <LibrariesEntry {...props} />;
     case "library": return <LibraryEntry {...props} />;
-    case "podcasts": return <PodcastsEntry {...props} />;
+    case "podcasts": return <FeedsEntry {...props} kind="podcast" />;
+    case "feeds": return <FeedsEntry {...props} kind="article" />;
+    case "feedDetail":
     case "podcastDetail": return <EpisodesEntry {...props} />;
     case "conversations": return <ChatsEntry {...props} />;
     case "author": return <AuthorEntry {...props} />;

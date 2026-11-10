@@ -151,8 +151,7 @@ WITH visible_media AS (
         live_jobs.unfinished_count AS unfinished_job_count,
         live_jobs.active_count AS active_job_count,
         live_jobs.updated_at AS live_jobs_updated_at,
-        CASE WHEN capacity.lease_expires_at > now() OR holder.lease_expires_at > now()
-            THEN capacity.job_id END AS capacity_job_id
+        capacity.job_id AS capacity_job_id
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
     LEFT JOIN reader_publications rp ON rp.media_id = m.id
@@ -187,7 +186,6 @@ WITH visible_media AS (
           AND status IN ('pending', 'failed', 'running', 'held') AND payload @> jsonb_build_object('media_id', m.id::text)
     ) live_jobs ON TRUE
     LEFT JOIN background_job_capacity_leases capacity ON capacity.resource_class = 'Heavy'
-    LEFT JOIN background_jobs holder ON holder.id = capacity.job_id
 ), media_classified AS (
     SELECT media_work.*,
         CASE WHEN attempt_id IS NULL THEN NULL

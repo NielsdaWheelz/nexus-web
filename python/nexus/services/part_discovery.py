@@ -315,6 +315,9 @@ def enqueue_initial_part_discovery(
     if (
         source.kind not in ("epub", "web_article")
         or source.provider == "x"
+        or attempt.source_type == "feed_entry"
+        or "feed_id" in attempt.source_payload
+        or "daily_edition_id" in attempt.source_payload
         or source.created_by_user_id is None
         or attempt.media_id != source.id
     ):

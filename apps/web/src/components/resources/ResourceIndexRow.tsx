@@ -6,7 +6,7 @@ import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ResourceRow from "@/components/ui/ResourceRow";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceActions from "@/components/resources/ResourceActions";
-import type { PodcastActionSubject } from "@/lib/actions/inlineActions";
+import type { FeedActionSubject } from "@/lib/actions/inlineActions";
 import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
 import { useResolvedResourceItem } from "@/lib/media/mediaSummary";
 import { resourceMetadata } from "@/lib/resources/metadata";
@@ -36,7 +36,7 @@ export default function ResourceIndexRow({
   item: supplied, occurrenceKey, presentation, match = null, matchMethod = null,
   occurrenceLabel, primaryLinkRef, moreTriggerRef, primaryControl, attention: suppliedAttention, podcastSubject, afterRemoval,
 }: {
-  podcastSubject?: PodcastActionSubject;
+  podcastSubject?: FeedActionSubject;
   afterRemoval?: () => HTMLElement | null;
   item: ResourceItem;
   occurrenceKey: string;
@@ -56,8 +56,8 @@ export default function ResourceIndexRow({
   const parsed = parseResourceRef(item.ref);
   // justify-defect: canonical row identity must satisfy the resource-ref grammar.
   if (parsed === null) throw new Error(`Invalid canonical resource index ref: ${item.ref}`);
-  if (podcastSubject !== undefined && (podcastSubject.target.kind !== "Canonical" || item.ref !== `podcast:${podcastSubject.target.podcast_id}` || item.preview.body.kind !== "named" || item.missing))
-    throw new Error("podcast action subject does not match the live resource ref");
+  if (podcastSubject !== undefined && (podcastSubject.target.kind !== "Canonical" || item.ref !== `${podcastSubject.feedKind === "podcast" ? "podcast" : "feed"}:${podcastSubject.target.feed_id}` || item.preview.body.kind !== "named" || item.missing))
+    throw new Error("feed action subject does not match the live resource ref");
   const body = item.preview.body;
   const source = item.preview.source;
   const metadata = resourceMetadata({ item, matchMethod, occurrenceLabel });
@@ -72,7 +72,7 @@ export default function ResourceIndexRow({
   const returnFocus = () => moreRef.current?.isConnected && moreRef.current.getClientRects().length ? moreRef.current : titleRef.current;
   const actionFocus = { get trigger() { return moreRef.current; }, returnFocus, afterRemoval: afterRemoval ?? returnFocus };
   const subject = summary !== null ? { kind: "Media" as const, subject: { kind: "Stored" as const, summary }, knownDescriptor: null }
-    : podcastSubject !== undefined ? { kind: "Podcast" as const, subject: podcastSubject } : null;
+    : podcastSubject !== undefined ? { kind: "Feed" as const, subject: podcastSubject } : null;
   const type = resourceType(parsed.scheme, itemMediaKind(item));
   const typeLabel = resourceTypeName(type);
   let title = "";

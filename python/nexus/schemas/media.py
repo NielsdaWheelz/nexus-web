@@ -20,6 +20,7 @@ from nexus.schemas.media_summary import (
     MediaProcessingStatus,
     MediaShowOut,
     MediaSummaryOut,
+    PublisherPublicationOut,
 )
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.publication_dates import PublicationDate
@@ -147,6 +148,7 @@ class MediaOut(BaseModel):
     capabilities: CapabilitiesOut
     contributors: list[ContributorCreditOut]
     original_published_date: PublicationDate | None
+    publisher_publication: PublisherPublicationOut | None
     edition_published_date: PublicationDate | None
     edition_isbn: str | None
     duration: MediaDurationOut | None
@@ -160,6 +162,7 @@ class MediaOut(BaseModel):
     x_source_context: XSourceContext | None
     x_article_content: XArticleContent | None
     reader_generation: int | None
+    feed_content_extent: Literal["complete", "excerpt", "unknown"] | None
     consumption: ConsumptionOut
     last_engaged_at: datetime | None
     player_descriptor: PlayerDescriptor | None
@@ -175,6 +178,7 @@ class XQuoteProcessingOut(BaseModel):
 class MediaProcessingSnapshotOut(BaseModel):
     """The current source work, transcript and indexing facts."""
 
+    linked_article_attempt_id: UUID | None
     processing_status: MediaProcessingStatus
     last_error_code: str | None
     retrieval_status: str | None

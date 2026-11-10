@@ -58,10 +58,11 @@ import {
 } from "@/lib/player/playerRuntime";
 
 import { usePodcastSettingsOwner } from "@/lib/podcasts/usePodcastSettingsSave";
-import { usePodcastCommands } from "@/lib/podcasts/commands";
+import { useFeedCommands } from "@/lib/feeds/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
-import type { PodcastTarget } from "@/lib/podcasts/api";
+import type { FeedTarget } from "@/lib/feeds/api";
+
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
 import { installedApp, subscribeAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
 import { useRemoteAdmission } from "@/lib/native/admissionHooks";
@@ -85,12 +86,12 @@ export type Overlay =
   | { readonly kind: "TranscribePodcastEpisodes"; readonly podcastId: string; readonly title: string; readonly state: EpisodeState }
   | { readonly kind: "LibrarySettings"; readonly libraryId: string }
   | { readonly kind: "PodcastSettings"; readonly podcastId: string }
-  | { readonly kind: "PodcastLibraries"; readonly target: PodcastTarget; readonly title: string; readonly successFocus?: ReturnFocusTarget }
-  | { readonly kind: "SubscribePodcast"; readonly target: PodcastTarget; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
-  | { readonly kind: "RemoveEpisodeFromAll"; readonly mediaId: string; readonly title: string }
+  | { readonly kind: "FeedLibraries"; readonly target: FeedTarget; readonly feedKind: "podcast" | "article"; readonly title: string; readonly successFocus?: ReturnFocusTarget }
+  | { readonly kind: "SubscribeFeed"; readonly target: FeedTarget; readonly feedKind: "podcast" | "article"; readonly title: string; readonly libraryId: string | null; readonly onAccepted?: () => void }
+  | { readonly kind: "RemoveFeedEntry"; readonly mediaId: string; readonly title: string }
   | { readonly kind: "RemoveMedia"; readonly mediaId: string }
-  | { readonly kind: "UnsubscribePodcast"; readonly podcastId: string; readonly title: string; readonly libraryId: string | null; readonly successFocus?: ReturnFocusTarget }
-  | { readonly kind: "RemovePodcastEpisodes"; readonly podcastId: string; readonly title: string };
+  | { readonly kind: "UnsubscribeFeed"; readonly feedId: string; readonly feedKind: "podcast" | "article"; readonly title: string; readonly libraryId: string | null; readonly successFocus?: ReturnFocusTarget }
+  | { readonly kind: "RemoveFeedItems"; readonly feedId: string; readonly feedKind: "podcast" | "article"; readonly title: string };
 
 /** Everything a verb reads or calls; it changes only when one of those facts does. */
 export interface ActionContext {
@@ -129,13 +130,13 @@ export interface ActionContext {
   readonly consumption: ReturnType<typeof useConsumptionCommands>["commands"];
   readonly consumptionUndoItems: ReturnType<typeof useConsumptionCommands>["undoItems"];
   readonly podcastSettings: ReturnType<typeof usePodcastSettingsOwner>["commands"];
-  readonly podcasts: ReturnType<typeof usePodcastCommands>["commands"];
+  readonly feeds: ReturnType<typeof useFeedCommands>["commands"];
   readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
   readonly createConversationAbout: (input: ConversationCreationInput) => Promise<void>;
   readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
-  readonly podcastLibraryCreation: ReturnType<typeof useDestinationCreation>;
+  readonly feedLibraryCreation: ReturnType<typeof useDestinationCreation>;
   readonly overlays: { readonly open: (overlay: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => void };
 }
 
@@ -143,8 +144,8 @@ export interface ActionContext {
  * Player/queue/download and live writing operations retain their own policies. */
 const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "Metadata", "MarkCollectionFinished", "MarkCollectionUnread", "AddUnfinishedToLectern", "TranscribePodcastEpisodes", "LeaveLibrary", "Consumption", "ResetProgress", "LibraryPlacement", "LecternMembership",
-  "SubscribePodcast", "UnsubscribePodcast", "PodcastLibraries", "AddEpisodeToAll", "RemoveEpisodeFromAll", "RemovePodcastEpisodes",
-  "RefreshPodcast", "Chat", "Share", "DownloadOriginal",
+  "SubscribeFeed", "UnsubscribeFeed", "FeedLibraries", "AddEpisodeToAll", "RemoveFeedEntry", "RemoveFeedItems",
+  "RefreshFeed", "Chat", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
   "LibrarySettings", "PodcastSettings", "RemoveUpload",
   "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
@@ -285,11 +286,11 @@ export default function ResourceActionsProvider({
   useLayoutEffect(() => () => { for (const attempt of attempts.values()) attempt.release(); }, [attempts]);
   const [confirmation, setConfirmation] = useState<{ readonly command: ActionCommand; readonly outcome: Outcome } | null>(null);
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
-  const podcasts = usePodcastCommands(accountId, setDefect);
+  const feeds = useFeedCommands(accountId, setDefect);
   const podcastSettings = usePodcastSettingsOwner(accountId, setDefect);
   const conversationCreation = useConversationCreationOwner(accountId);
   const [destinationCreation] = useState(createDestinationCreation);
-  const podcastLibraryCreation = useDestinationCreation(`podcast-libraries:${accountId}`, destinationCreation);
+  const feedLibraryCreation = useDestinationCreation(`podcast-libraries:${accountId}`, destinationCreation);
   const workGuard = useWorkGuard();
   useLayoutEffect(() => workGuard.register({ id: "podcast-library-creation", scope: { kind: "account" },
     subscribe: destinationCreation.subscribe,
@@ -327,7 +328,7 @@ export default function ResourceActionsProvider({
   const mediaContinuations = useMediaContinuationOwner({
     isActive: () => !session.controller.signal.aborted,
     sessionSignal: () => session.controller.signal,
-    lectern, podcasts: podcasts.commands, reportDefect: setDefect, workspace,
+    lectern, feeds: feeds.commands, reportDefect: setDefect, workspace,
   });
   const ctx = useMemo(
     (): ActionContext => ({
@@ -352,12 +353,12 @@ export default function ResourceActionsProvider({
       consumptionUndoItems: consumption.undoItems,
       admissions,
       podcastEpisodes: podcastEpisodes.commands,
-      podcasts: podcasts.commands,
+      feeds: feeds.commands,
       podcastSettings: podcastSettings.commands,
       mediaContinuations,
       observeChatCommand,
       createConversationAbout: conversationCreation.create,
-      podcastLibraryCreation,
+      feedLibraryCreation,
       overlays: { open },
     }),
     [
@@ -379,12 +380,12 @@ export default function ResourceActionsProvider({
       consumption.undoItems,
       admissions,
       podcastEpisodes.commands,
-      podcasts.commands,
+      feeds.commands,
       podcastSettings.commands,
       conversationCreation.create,
       mediaContinuations,
       observeChatCommand,
-      podcastLibraryCreation,
+      feedLibraryCreation,
       open,
     ],
   );
@@ -470,13 +471,13 @@ export default function ResourceActionsProvider({
     [attempts, busy, session, workGuard],
   );
   const consumptionReviewKey = overlay?.kind === "CollectionConsumption"
-    ? consumption.commands.pendingCollection(overlay.selection.kind === "Podcast"
-      ? { kind: "Podcast", podcast_id: overlay.selection.podcast_id } : overlay.selection)?.commandKey : undefined;
+    ? consumption.commands.pendingCollection(overlay.selection.kind === "Feed"
+      ? { kind: "Feed", feed_id: overlay.selection.feed_id, feed_kind: overlay.selection.feed_kind } : overlay.selection)?.commandKey : undefined;
   const lecternReview = overlay?.kind === "CollectionLectern" && lectern.collectionPending !== null &&
     (overlay.target.kind === "Library" && lectern.collectionPending.target.kind === "Library"
       ? overlay.target.library_id === lectern.collectionPending.target.library_id
-      : overlay.target.kind === "Podcast" && lectern.collectionPending.target.kind === "Podcast" &&
-        overlay.target.podcast_id === lectern.collectionPending.target.podcast_id);
+      : overlay.target.kind === "Feed" && lectern.collectionPending.target.kind === "Feed" &&
+        overlay.target.feed_id === lectern.collectionPending.target.feed_id);
   const runtime = useMemo(() => ({
     ctx, run, busy, defect,
     overlayPresentation: <ResourceOverlays overlay={overlay} close={close} />,
@@ -486,13 +487,13 @@ export default function ResourceActionsProvider({
           run: () => {
             if (attempts.get(key) === attempt && attempt.line !== null) run(attempt.command, attempt.outcome);
           } } })} />)}
-      {chatCommandFeedback}{podcastSettings.feedback}{podcasts.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
+      {chatCommandFeedback}{podcastSettings.feedback}{feeds.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
       {consumption.collectionFailures.filter(failure => failure.key !== consumptionReviewKey).map(failure =>
         <Hold key={failure.key} id={failure.key} attempt={failure.attempt} line={failure.line} verbs={failure.verbs} />)}
       {lectern.collectionFailure && !lecternReview ? <Hold id={lectern.collectionFailure.key} attempt={lectern.collectionFailure.attempt}
         line={lectern.collectionFailure.line} verbs={lectern.collectionFailure.verbs} /> : null}
-      {podcastLibraryCreation.holds}</>,
-  }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, chatCommandFeedback, podcastSettings.feedback, podcasts.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, podcastLibraryCreation.holds, resendFeedback]);
+      {feedLibraryCreation.holds}</>,
+  }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, chatCommandFeedback, podcastSettings.feedback, feeds.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, feedLibraryCreation.holds, resendFeedback]);
 
   return (
     <RuntimeContext.Provider value={runtime}>

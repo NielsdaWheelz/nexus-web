@@ -43,7 +43,7 @@ export const ACTION_CATALOG = {
     group: "Navigate",
   },
   OpenSource: { label: "Open source", icon: null, group: "Navigate" },
-  OpenPodcastFeed: { label: "Open feed", icon: null, group: "Navigate" },
+  OpenFeed: { label: "Open feed", icon: null, group: "Navigate" },
   Metadata: { label: "Metadata…", icon: null, group: "Navigate" },
   Playback: {
     label: "Play",
@@ -100,7 +100,7 @@ export const ACTION_CATALOG = {
     },
   },
   AddEpisodeToAll: { label: "Add to All", icon: Icon.Add, group: "Organize" },
-  RemoveEpisodeFromAll: { label: "Remove from All…", icon: Icon.Remove, group: "Danger" },
+  RemoveFeedEntry: { label: "Remove from All…", icon: Icon.Remove, group: "Danger" },
   LibraryPlacement: { label: "Libraries…", icon: Icon.Library, group: "Organize" },
   LecternMembership: {
     label: "Add to Lectern",
@@ -112,9 +112,9 @@ export const ACTION_CATALOG = {
     },
   },
   AddUnfinishedToLectern: { label: "Add unfinished contents to Lectern…", icon: Icon.AddToLectern, group: "Organize" },
-  PodcastLibraries: { label: "Add to library…", icon: Icon.Library, group: "Organize" },
-  SubscribePodcast: { label: "Subscribe", icon: null, group: "Organize" },
-  UnsubscribePodcast: { label: "Unsubscribe", icon: null, group: "Organize" },
+  FeedLibraries: { label: "Add to library…", icon: Icon.Library, group: "Organize" },
+  SubscribeFeed: { label: "Subscribe", icon: null, group: "Organize" },
+  UnsubscribeFeed: { label: "Unsubscribe", icon: null, group: "Organize" },
   Chat: {
     label: "Chat about this…",
     icon: Icon.NewChat,
@@ -198,12 +198,12 @@ export const ACTION_CATALOG = {
     icon: Icon.Settings,
     group: "Manage",
   },
-  RefreshPodcast: {
+  RefreshFeed: {
     label: "Check for new episodes",
     icon: Icon.Again,
     group: "Manage",
   },
-  RemovePodcastEpisodes: { label: "Remove episodes from libraries…", icon: Icon.Remove, group: "Danger" },
+  RemoveFeedItems: { label: "Remove episodes from libraries…", icon: Icon.Remove, group: "Danger" },
   RemoveUpload: { label: "Remove import", icon: null, group: "Danger" },
   RemoveMedia: {
     label: "remove from nexus…",
@@ -271,7 +271,7 @@ export type ActionId = keyof typeof ACTION_CATALOG;
 /** The server's `blocked` reasons. `Loading` and `Busy` describe waits, so their sites keep them
  * off screen, for a screen reader alone. */
 export const BLOCKED_COPY = {
-  PodcastSubscription: "included by this podcast subscription.",
+  FeedSubscription: "included by a subscription.",
   PermissionDenied: "you don’t have permission.",
   Locked: "this item is locked.",
   Processing: "available once processing finishes.",

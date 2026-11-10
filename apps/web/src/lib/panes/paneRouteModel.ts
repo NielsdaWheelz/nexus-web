@@ -34,6 +34,8 @@ const ROUTES = {
   conversationNew: ["conversations/new", "New chat", Icon.NewChat],
   conversation: ["conversations/:id", "Chat", resourceIconForScheme("conversation")],
   podcasts: ["podcasts", "Podcasts", Icon.Podcast],
+  feeds: ["feeds", "Feeds", Icon.Feed],
+  feedDetail: ["feeds/:feedId", "Feed", resourceIconForScheme("feed")],
   podcastDetail: ["podcasts/:podcastId", "Podcast", resourceIconForScheme("podcast")],
   search: ["search", "Search", Icon.Search],
   author: ["authors/:handle", "Author", resourceIconForScheme("contributor")],
@@ -65,6 +67,7 @@ const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   media: ["media", "id"],
   conversation: ["conversation", "id"],
   podcastDetail: ["podcast", "podcastId"],
+  feedDetail: ["feed", "feedId"],
   author: ["contributor_handle", "handle"],
   page: ["page", "pageId"],
   note: ["note_block", "blockId"],
@@ -79,6 +82,8 @@ const IN_PLACE = new Set<PaneRouteId>([
   "browse",
   "conversations",
   "podcasts",
+  "feeds",
+  "feedDetail",
   "podcastDetail",
   "search",
   "author",
@@ -414,7 +419,7 @@ export function recentValueForHref(href: string, titleHint: string | null = null
   }
   const path = target.kind === "resource_ref" ? (() => {
     const ref = parseResourceRef(target.ref)!;
-    const prefix: Partial<Record<ResourceScheme, string>> = { media: "media", library: "libraries", conversation: "conversations", podcast: "podcasts", page: "pages", note_block: "notes", highlight: "highlights", oracle_reading: "oracle" };
+    const prefix: Partial<Record<ResourceScheme, string>> = { media: "media", library: "libraries", conversation: "conversations", podcast: "podcasts", feed: "feeds", page: "pages", note_block: "notes", highlight: "highlights", oracle_reading: "oracle" };
     return `/${prefix[ref.scheme]}/${ref.id}`;
   })() : target.kind === "contributor_handle" ? `/authors/${target.handle}`
     : target.kind === "daily_date" ? `/daily/${target.local_date}`

@@ -6,9 +6,9 @@ export function indexPaneQuery(routeId: PaneRouteId | "unsupported", query: URLS
     const decoded = decodeUpdatedTitleIndexView(query);
     return decoded.kind === "Invalid" ? null : updatedTitleIndexViewQuery(decoded.view).slice(1);
   }
-  if (routeId === "podcastDetail") return new URLSearchParams({ state: query.get("state") ?? "all", sort: query.get("sort") ?? "newest" }).toString();
-  if (routeId === "podcasts") {
-    const result = new URLSearchParams({ sort: query.get("sort") ?? "recent_episode", filter: query.get("filter") ?? "all" });
+  if ((routeId === "podcastDetail" || routeId === "feedDetail")) return new URLSearchParams({ state: query.get("state") ?? "all", sort: query.get("sort") ?? "newest" }).toString();
+  if (routeId === "podcasts" || routeId === "feeds") {
+    const result = new URLSearchParams({ kind: routeId === "podcasts" ? "podcast" : "article", sort: query.get("sort") ?? "recent_entry", filter: query.get("filter") ?? "all" });
     const library = query.get("library_id");
     if (library !== null) result.set("library_id", library);
     return result.toString();

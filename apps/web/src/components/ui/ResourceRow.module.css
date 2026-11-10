@@ -129,7 +129,7 @@ a.primary:hover { text-decoration: underline; }
 .body { min-width: 0; overflow-wrap: anywhere; color: var(--ink-muted); font-size: var(--text-sm); }
 
 .trailing :global([data-action-control-key="LibraryPlacement"]),
-.trailing :global([data-action-control-key="PodcastLibraries"]),
+.trailing :global([data-action-control-key="FeedLibraries"]),
 .trailing :global([data-action-control-key="AddEpisodeToAll"]) {
   display: none;
 }

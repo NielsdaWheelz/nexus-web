@@ -16,7 +16,7 @@ import { prepareCollectionLectern } from "@/lib/lectern/api";
 import { LecternReadFailure } from "@/lib/lectern/lectern";
 import { remoteAdmission, subscribeAdmission } from "@/lib/native/admission";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
-import styles from "@/components/podcasts/PodcastCommands.module.css";
+import styles from "@/components/feeds/FeedCommands.module.css";
 
 /** One complete, fixed-order append enters the existing account lectern lane. An unknown append
  * holds here with its retry, gated as admission stands, while the dialog is open, named when it
@@ -75,13 +75,13 @@ export default function CollectionLecternDialog({ target, title, returnFocusTo, 
     <div className={styles.form}>
       {source.status === "loading" ? <Ruling /> : source.status === "failed"
         ? isApiError(source.error) && source.error.status === 404
-          ? <Fact line={{ fact: target.kind === "Podcast" ? "this podcast is no longer available." : "this library is no longer available." }} />
+          ? <Fact line={{ fact: target.kind === "Feed" && target.feed_kind === "podcast" ? "this podcast is no longer available." : "this library is no longer available." }} />
           : <Failed error={source.error} noun="selected items" retry={{ run: source.refetch, busy: source.retrying }} />
         : <>
           <p>{source.data.label}</p>
           <p>{source.data.media_ids.length} unfinished item{source.data.media_ids.length === 1 ? "" : "s"} selected, including in-progress items.</p>
           <p>{needed} new · {source.data.already_present_count} already in lectern. existing items keep their positions.</p>
-          <p>{target.kind === "Podcast" ? "episodes append oldest publication first." : "contents append in the library’s stored order; all uses newest added first."} this captures the whole accessible collection, ignoring page, sort, text and filters. new arrivals are excluded; future items are not added automatically.</p>
+          <p>{target.kind === "Feed" && target.feed_kind === "podcast" ? "episodes append oldest publication first." : "contents append in the library’s stored order; all uses newest added first."} this captures the whole accessible collection, ignoring page, sort, text and filters. new arrivals are excluded; future items are not added automatically.</p>
           {source.data.media_ids.length === 0 ? <Fact line={{ fact: "no unfinished items to add." }} /> : null}
           {capacity ? <Fact line={{ fact: source.data.available_slots === 0 ? "the lectern is full." : `the lectern has room for ${source.data.available_slots} of ${needed}.`,
             reason: "nothing is added until all fit." }} /> : null}

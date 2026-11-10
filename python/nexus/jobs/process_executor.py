@@ -102,7 +102,7 @@ def failure_of(exc: Exception) -> Failed:
             "E_RATE_LIMITED",
             "E_BROWSE_PROVIDER_UNAVAILABLE",
             "E_BROWSE_PROVIDER_RATE_LIMITED",
-            "E_PODCAST_FEED_UNAVAILABLE",
+            "E_FEED_UNAVAILABLE",
             "E_X_PROVIDER_UNAVAILABLE",
             "E_X_PROVIDER_RATE_LIMITED",
             "E_X_PROVIDER_TIMEOUT",

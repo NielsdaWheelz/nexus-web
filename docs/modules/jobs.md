@@ -36,6 +36,8 @@ reset or refund. every effect locks its exact running execution until commit:
 a lease permits revocation, not publication without the fence. every exit from
 running releases its claim and heavy capacity. retained execution ids are audit,
 never permission to publish again.
+heavy capacity remains occupied until that release; its timestamp alone never
+admits another heavy execution while the holder can still publish.
 
 ## failure policy
 
@@ -125,7 +127,10 @@ claims are never refunded.
 heartbeats renew job/heavy leases every five seconds. recognized temporary
 heartbeat outages leave the claim to its lease. a heartbeat defect stops the
 child and communicates its typed failure to settlement; it is not disguised as
-worker disappearance. periodic schedules use unique utc slots; idle workers
+worker disappearance. renewal reports renewed, busy or lost: a current claim
+whose publication lock is busy retains its child and capacity without claiming
+to have extended either lease. recovery must revoke the expired claim under its
+normal fence before capacity becomes available. periodic schedules use unique utc slots; idle workers
 listen for their lane, next due instant or heartbeat. readiness and health keep
 their existing process/database identity contracts.
 

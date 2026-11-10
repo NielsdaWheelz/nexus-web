@@ -6,7 +6,7 @@
 // local read settles; the server's verbs settle in the trailing region (loading, ready or failed),
 // never gating, reordering or replacing the local snapshot. The menu and the verb rail both project it.
 import { useCallback, useState } from "react";
-import type { PodcastActionFocus } from "@/lib/actions/inlineActions";
+import type { FeedActionFocus } from "@/lib/actions/inlineActions";
 import { AUTHORED_ACTION_IDS, useAuthoredActions } from "@/lib/actions/useAuthoredActions";
 import { useClientActions, useResourceActions } from "@/lib/actions/useResourceActions";
 import { usePaneSubject } from "@/lib/panes/paneChrome";
@@ -31,7 +31,7 @@ export interface ContextualActionsInput {
   readonly navigation: DisplayedNavigation | null;
   readonly omitResourceActions?: readonly string[];
   readonly showSourceSubject?: boolean;
-  readonly actionFocus?: PodcastActionFocus;
+  readonly actionFocus?: FeedActionFocus;
   /** Loading defects belong to the resource's pane, even outside its provider. */
   readonly onDefect?: (defect: { readonly error: unknown }) => void;
 }

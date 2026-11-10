@@ -340,18 +340,17 @@ def respond_to_invitation(
         if row.status != "pending":
             raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
         captures: list[UUID] = []
+        media_ids: list[UUID] = []
         if accept:
+            from nexus.services import library_entries
             from nexus.services.x_source import admit_x_captures_for_accounts
 
+            media_ids = library_entries.media_ids_in_library(db, row.library_id)
+            library_entries.lock_media_for_references(db, media_ids)
             captures = resource_grants.capture_manifest_for_media(
                 db,
                 grantor_id=row.inviter_user_id,
-                media_ids=list(
-                    db.scalars(
-                        text("SELECT media_id FROM library_entries WHERE library_id=:id"),
-                        {"id": row.library_id},
-                    )
-                ),
+                media_ids=media_ids,
             )
             admit_x_captures_for_accounts(db, account_ids=[viewer_id], capture_ids=captures)
         db.execute(text(_ANSWER), {"id": invitation_id, "status": status})
@@ -366,14 +365,32 @@ def respond_to_invitation(
             resource_grants.invalidate_annotation_visibility(
                 db, resource_grants.library_annotation_visibility(db, row.library_id)
             )
-            from nexus.services import library_entries
+            from nexus.services import media_discoveries
             from nexus.services.source_citations import complete_source_citations
 
             complete_source_citations(
                 db,
                 account_ids=[viewer_id],
                 capture_ids=captures,
-                media_ids=library_entries.media_ids_in_library(db, row.library_id),
+                media_ids=media_ids,
+            )
+            followed = set(
+                db.scalars(
+                    text("""
+                SELECT DISTINCT e.media_id FROM feed_entries e JOIN library_feed_subscriptions s
+                  ON s.feed_id=e.feed_id WHERE s.library_id=:library AND e.media_id=ANY(:media)
+            """),
+                    {"library": row.library_id, "media": media_ids},
+                )
+            )
+            media_discoveries.record_arrivals(
+                db, user_ids=[viewer_id], media_ids=list(followed), origin="followed_source"
+            )
+            media_discoveries.record_arrivals(
+                db,
+                user_ids=[viewer_id],
+                media_ids=[m for m in media_ids if m not in followed],
+                origin="manual",
             )
             projection.refresh_viewer_contributors(db, [viewer_id])
             record_input_change(db, owners=(f"library:{row.library_id}",))

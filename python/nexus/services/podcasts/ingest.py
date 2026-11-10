@@ -1,49 +1,24 @@
-"""The episode writer: observed episodes become media, by stable identity, exactly once.
-
-Identity is a set of aliases per show: at most one PodcastIndex ref, at most one rss guid,
-and any number of canonical enclosure urls. Title, date and random values are never
-identity. An item whose identity is ambiguous is skipped and counted, never guessed.
-
-Caller lock order is queue claim (when applicable), actor (when applicable), sorted
-aliases, show and owning run; this writer locks the complete existing media set.
-It writes catalog facts only. Both resolution and traversal publish inserted ids
-through the imports owner after their complete observation set has resolved. Repeated
-observations are harmless; conflicting strong identifiers are rejected, never guessed.
-No automatic model enrichment, download or transcript work is admitted.
-"""
+"""Podcast audio materialization. Shared feed entries own identity and publication."""
 
 import hashlib
 import json
-from collections.abc import Iterable
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, ConflictError
-from nexus.ids import new_uuid7
-from nexus.logging import get_logger
-from nexus.services import media_locks
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
-from nexus.services.search import projection
+from nexus.services.feeds.parsing import EpisodeFacts, is_safe_url
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
-from nexus.services.url_normalize import normalize_url_for_display
 
 from . import chapters
-from .feed import EpisodeFacts, is_safe_url
 from .provider import PROVIDER
 
-logger = get_logger(__name__)
-
-Scheme = Literal["PodcastIndex", "RssGuid", "RssEnclosure"]
-_PRIORITY = {"PodcastIndex": 0, "RssGuid": 1, "RssEnclosure": 2}
-# The feed's observed bibliography: an unchanged observation never undoes enrichment.
 _FINGERPRINTED = (
     "title",
     "canonical_source_url",
@@ -56,209 +31,54 @@ _FINGERPRINTED = (
 )
 
 
-@dataclass(frozen=True, order=True, slots=True)
-class Alias:
-    scheme: Scheme
-    value: str
-
-
-@dataclass(frozen=True, slots=True)
-class IngestResult:
-    media_ids: list[UUID | None]  # aligned with the input; None = skipped
-    changed: bool
-    inserted_media_ids: list[UUID]
-
-    @property
-    def skipped(self) -> int:
-        return self.media_ids.count(None)
-
-
-class _Skipped(Exception):
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-
-
-def identity_conflict() -> ConflictError:
-    return ConflictError(
-        ApiErrorCode.E_PODCAST_EPISODE_IDENTITY_CONFLICT, "Podcast episode identity is ambiguous"
-    )
-
-
-def aliases_of(episode: EpisodeFacts) -> tuple[Alias, ...]:
-    """Sorted; an enclosure counts only when it is a safe url, in display form."""
-    aliases = [
-        Alias("PodcastIndex", episode.provider_ref) if episode.provider_ref else None,
-        Alias("RssGuid", episode.guid) if episode.guid else None,
-        Alias("RssEnclosure", normalize_url_for_display(episode.audio_url))
-        if episode.audio_url and is_safe_url(episode.audio_url)
-        else None,
-    ]
-    return tuple(sorted({alias for alias in aliases if alias is not None}))
-
-
-def lock_aliases(db: Session, show_identity: str, aliases: Iterable[Alias]) -> None:
-    """``show_identity`` is ``provider:provider_podcast_id``, known before the show row is."""
-    for alias in sorted(set(aliases)):
-        db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-            {"key": f"podcast-episode:{show_identity}:{alias.scheme}:{alias.value}"},
-        )
-
-
-def ingest_episodes(
+def observe(
     db: Session,
     *,
-    podcast_id: UUID,
-    feed_url: str,
-    episodes: list[EpisodeFacts],
-    viewer_id: UUID | None = None,
-) -> IngestResult:
-    """Upsert catalog observations newest first, with aligned canonical ids and insertions.
-
-    The caller holds every alias and the show before entering. A skipped observation
-    has no id; an existing identity still belongs to this import's processed set.
-    """
-    order = sorted(
-        range(len(episodes)),
-        key=lambda i: episodes[i].published_at or datetime.min.replace(tzinfo=UTC),
-        reverse=True,
-    )
-    aliases = [aliases_of(episode) for episode in episodes]
-    flat_aliases = [alias for item in aliases for alias in item]
-    existing_ids = db.scalars(
-        text("""
-        SELECT DISTINCT episode_media_id FROM podcast_episode_identities
-        WHERE podcast_id=:p AND (scheme,value) IN (
-            SELECT * FROM unnest(CAST(:schemes AS text[]),CAST(:values AS text[]))
-        )
-    """),
-        {
-            "p": podcast_id,
-            "schemes": [a.scheme for a in flat_aliases],
-            "values": [a.value for a in flat_aliases],
-        },
-    ).all()
-    media_locks.lock_media_rows_in_order(db, existing_ids)
-    show_authors = [
+    feed_id: UUID,
+    media_id: UUID,
+    facts: EpisodeFacts,
+    provider_id: str,
+    is_new: bool,
+    actor_id: UUID | None,
+) -> tuple[str, bool]:
+    authors = [
         credit.credited_name
-        for credit in load_contributor_credits_for_podcasts(db, [podcast_id]).get(podcast_id, [])
+        for credit in load_contributor_credits_for_podcasts(db, [feed_id]).get(feed_id, [])
         if credit.role == "author" and credit.credited_name
     ]
-    media_ids: list[UUID | None] = [None] * len(episodes)
-    inserted_media_ids: list[UUID] = []
-    written_media_ids: list[UUID] = []
-    changed = False
-    for i in order:
-        episode = episodes[i]
-        item = aliases[i]
-        try:
-            if not item:
-                raise _Skipped("no_identity")
-            media_id, stored = _resolve(db, podcast_id, item)
-        except _Skipped as skip:
-            logger.warning(
-                "podcast_episode_skipped",
-                podcast_id=str(podcast_id),
-                reason=skip.reason,
-                aliases=[f"{alias.scheme}:{alias.value}" for alias in item],
-            )
-            continue
-        row = _row(episode, feed_url, show_authors)
-        if media_id is None:
-            media_id = new_uuid7()
-            _insert(db, viewer_id, podcast_id, media_id, row, _display_alias(item))
-            inserted_media_ids.append(media_id)
-            dirty = True
-            updated = True
-            changed = True
-        else:
-            dirty, updated = _update(db, media_id, row, _display_alias({*stored, *item}))
-            changed = changed or updated
-        unbound = [alias for alias in item if alias not in stored]
-        if unbound:
-            db.execute(
-                text("""
-                    INSERT INTO podcast_episode_identities (
-                        id, podcast_id, scheme, value, episode_media_id
-                    )
-                    VALUES (:id, :podcast_id, :scheme, :value, :media_id)
-                """),
-                [
-                    {
-                        "id": new_uuid7(),
-                        "podcast_id": podcast_id,
-                        "scheme": alias.scheme,
-                        "value": alias.value,
-                        "media_id": media_id,
-                    }
-                    for alias in unbound
-                ],
-            )
-        if dirty:
-            entries = [RawCreditEntry(credited_name=name) for name in row["author_names"]]
-            apply_observed_role_slices_in_current_transaction(
-                db,
-                target=MediaTarget(media_id),
-                observation=build_observation({"author": entries})[0],
-                source="rss",
-            )
-        if updated:
-            written_media_ids.append(media_id)
-        chapters.observe(
-            db, media_id=media_id, inline=episode.chapters, source_url=episode.chapters_source_url
+    row = _row(facts, authors)
+    if is_new:
+        _insert(db, actor_id, media_id, row, provider_id)
+        dirty = changed = True
+    else:
+        dirty, changed = _update(db, media_id, row, provider_id)
+    if dirty:
+        observation, _ = build_observation(
+            {"author": [RawCreditEntry(credited_name=name) for name in row["author_names"]]}
         )
-        media_ids[i] = media_id
-    projection.refresh(db, "media", written_media_ids)
-    return IngestResult(media_ids=media_ids, changed=changed, inserted_media_ids=inserted_media_ids)
+        apply_observed_role_slices_in_current_transaction(
+            db, target=MediaTarget(media_id), observation=observation, source="rss"
+        )
+    chapters.observe(
+        db, media_id=media_id, inline=facts.chapters, source_url=facts.chapters_source_url
+    )
+    return _fingerprint(row), changed
 
 
-def _resolve(
-    db: Session, podcast_id: UUID, item: tuple[Alias, ...]
-) -> tuple[UUID | None, set[Alias]]:
-    """The one stored episode these aliases name and all its aliases, or (None, {})."""
-    rows = db.execute(
-        text("""
-            SELECT scheme, value, episode_media_id FROM podcast_episode_identities
-            WHERE podcast_id = :podcast_id AND episode_media_id IN (
-                SELECT episode_media_id FROM podcast_episode_identities
-                WHERE podcast_id = :podcast_id AND (scheme, value) IN (
-                    SELECT * FROM unnest(CAST(:schemes AS text[]), CAST(:values AS text[]))
-                )
-            )
-        """),
-        {
-            "podcast_id": podcast_id,
-            "schemes": [a.scheme for a in item],
-            "values": [a.value for a in item],
-        },
-    ).all()
-    owners = {row.episode_media_id for row in rows}
-    if len(owners) > 1:
-        raise _Skipped("ambiguous_identity")
-    if not owners:
-        return None, set()
-    stored = {Alias(row.scheme, row.value) for row in rows}
-    merged = stored | set(item)
-    for scheme in ("PodcastIndex", "RssGuid"):
-        if len({a.value for a in merged if a.scheme == scheme}) > 1:
-            raise _Skipped("ambiguous_identity")
-    return owners.pop(), stored
-
-
-def _display_alias(aliases: Iterable[Alias]) -> str:
-    return min(aliases, key=lambda a: (_PRIORITY[a.scheme], a.value)).value
-
-
-def _row(episode: EpisodeFacts, feed_url: str, show_authors: list[str]) -> dict[str, Any]:
+def _row(episode: EpisodeFacts, show_authors: list[str]) -> dict[str, Any]:
     published = episode.published_at
     return {
         "title": episode.title,
-        "canonical_source_url": feed_url,
+        "canonical_source_url": episode.entry_url if is_safe_url(episode.entry_url) else None,
         "external_playback_url": episode.audio_url if is_safe_url(episode.audio_url) else None,
         "description": episode.description_text[:2000] if episode.description_text else None,
         "description_html": episode.description_html,
         "description_text": episode.description_text,
-        "edition_published_date": published.date().isoformat() if published else None,
+        "edition_published_date": published.date().isoformat()
+        if published
+        else episode.published_on.isoformat()
+        if episode.published_on
+        else None,
         "published_at": published,
         "duration_seconds": episode.duration_seconds,
         "language": episode.language,
@@ -276,14 +96,12 @@ def _fingerprint(row: dict[str, Any]) -> str:
 def _insert(
     db: Session,
     viewer_id: UUID | None,
-    podcast_id: UUID,
     media_id: UUID,
     row: dict[str, Any],
     provider_id: str,
 ) -> None:
     params = row | {
         "media_id": media_id,
-        "podcast_id": podcast_id,
         "provider": PROVIDER,
         "provider_id": provider_id,
         "viewer_id": viewer_id,
@@ -308,12 +126,12 @@ def _insert(
     db.execute(
         text("""
             INSERT INTO podcast_episodes (
-                media_id, podcast_id, published_at, duration_seconds, description_html,
-                description_text, rss_transcript_url, rss_metadata_fingerprint
+                media_id, duration_seconds, description_html,
+                description_text, rss_transcript_url
             )
             VALUES (
-                :media_id, :podcast_id, :published_at, :duration_seconds, :description_html,
-                :description_text, :rss_transcript_url, :fingerprint
+                :media_id, :duration_seconds, :description_html,
+                :description_text, :rss_transcript_url
             )
         """),
         params,
@@ -329,8 +147,9 @@ def _update(
     fingerprint = _fingerprint(row)
     previous = db.execute(
         text("""
-            SELECT pe.rss_metadata_fingerprint, pe.published_at, pe.duration_seconds
+            SELECT e.source_fingerprint AS rss_metadata_fingerprint, e.published_at, pe.duration_seconds
             FROM media m JOIN podcast_episodes pe ON pe.media_id = m.id
+            JOIN feed_entries e ON e.id=pe.media_id
             WHERE m.id = :media_id FOR UPDATE OF m
         """),
         {"media_id": media_id},
@@ -342,7 +161,7 @@ def _update(
             """
             UPDATE media
             SET title = :title,
-                canonical_source_url = :canonical_source_url,
+                canonical_source_url = COALESCE(:canonical_source_url, canonical_source_url),
                 external_playback_url = COALESCE(:external_playback_url, external_playback_url),
                 description = COALESCE(:description, description),
                 edition_published_date = COALESCE(:edition_published_date, edition_published_date),
@@ -365,10 +184,8 @@ def _update(
             UPDATE podcast_episodes
             SET description_html = COALESCE(:description_html, description_html),
                 description_text = COALESCE(:description_text, description_text),
-                published_at = COALESCE(:published_at, published_at),
                 duration_seconds = COALESCE(:duration_seconds, duration_seconds),
-                rss_transcript_url = COALESCE(:rss_transcript_url, rss_transcript_url),
-                rss_metadata_fingerprint = :fingerprint
+                rss_transcript_url = COALESCE(:rss_transcript_url, rss_transcript_url)
             WHERE media_id = :media_id
         """),
         params,

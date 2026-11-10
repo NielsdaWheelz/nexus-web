@@ -2,11 +2,12 @@
 
 import * as Icon from "@/lib/ui/icons";
 import { useCallback, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type MouseEvent, type MouseEventHandler, type RefObject } from "react";
-import { podcastTargetKey } from "@/lib/podcasts/api";
+import { feedTargetKey } from "@/lib/feeds/api";
+
 import ResourceActions from "@/components/resources/ResourceActions";
 import { useMediaActions } from "@/lib/actions/useMediaActions";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
-import PodcastMenu from "@/components/podcasts/PodcastMenu";
+import FeedMenu from "@/components/feeds/FeedMenu";
 import { truncateText } from "@/lib/display/format";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -107,7 +108,7 @@ export default function SurfaceHeader({
     return () => query.removeEventListener("change", update);
   }, []);
   const ref = useRef<HTMLElement>(null);
-  const actionSubjectKey = resourceActions?.kind === "Podcast" ? podcastTargetKey(resourceActions.subject.target)
+  const actionSubjectKey = resourceActions?.kind === "Feed" ? feedTargetKey(resourceActions.subject.target)
     : resourceActions?.kind === "Media" ? resourceActions.subject.kind === "Stored" ? `media:${resourceActions.subject.summary.media_id}` : `external:${resourceActions.subject.target}`
     : resourceRef ?? identityId;
   const more = useRef<{ readonly element: HTMLButtonElement; readonly resourceRef: CanonicalResourceRef | null; readonly subjectKey: string } | null>(null);
@@ -246,8 +247,8 @@ export default function SurfaceHeader({
                 sections={sections} resourceRef={resourceRef} actionFocus={actionFocus}
                 triggerRef={setMore} triggerAttributes={{ "data-pane-chrome-focus": "true" }}
                 renderTrigger={props => <OverflowMenuButton {...props} className={styles.mobileOverflow} />} />
-            ) : resourceActions?.kind === "Podcast" && resourceRef === undefined ? (
-              <PodcastMenu subject={resourceActions.subject} metadataSubject={podcastMetadata} actionFocus={actionFocus}
+            ) : resourceActions?.kind === "Feed" && resourceRef === undefined ? (
+              <FeedMenu subject={resourceActions.subject} metadataSubject={podcastMetadata} actionFocus={actionFocus}
                 subjectKey={identityId} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections} omitResourceActions={narrow ? [...seen] : undefined}
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}

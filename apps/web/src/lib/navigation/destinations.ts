@@ -37,6 +37,7 @@ const REGISTRY = {
     href: "/browse",
     keywords: ["discover", "external", "find"],
   },
+  feeds: { label: "Feeds", href: "/feeds", keywords: ["rss", "articles", "subscriptions"] },
   podcasts: {
     label: "Podcasts",
     href: "/podcasts",

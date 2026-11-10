@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -48,6 +49,14 @@ class ReaderPublicationSourceFile:
     content_type: str
     size_bytes: int
     source_sha256: str
+
+
+@dataclass(frozen=True)
+class ReaderPublicationSource:
+    attempt_id: UUID
+    extent: Literal["complete", "excerpt", "unknown"]
+    published_at: datetime | None
+    published_on: date | None
 
 
 def read_publication_generation(db: Session, *, media_id: UUID) -> int | None:
@@ -151,6 +160,7 @@ def replace_reader_publication[T](
     replace_projection: Callable[[Media], T],
     issues: tuple[SourceIssue, ...],
     source_file: ReaderPublicationSourceFile | None = None,
+    source: ReaderPublicationSource | None = None,
 ) -> T:
     """Lock media, then the publication row, then install the source pointer and bump."""
     from nexus.services import media_locks
@@ -199,15 +209,24 @@ def replace_reader_publication[T](
     _validate_source_issues(db, media_id=media_id, issues=issues)
     payload = source_issues_payload(issues)
     if publication is None:
-        db.add(
-            ReaderPublication(
-                id=new_uuid7(), media_id=media_id, generation=1, source_issues=payload
-            )
+        publication = ReaderPublication(
+            id=new_uuid7(),
+            media_id=media_id,
+            generation=1,
+            source_issues=payload,
+            content_extent="complete",
         )
+        db.add(publication)
     else:
         publication.generation = int(publication.generation) + 1
         publication.changed_at = db.scalar(text("SELECT now()"))
         publication.source_issues = payload
+    if source is not None:
+        assert source.published_at is None or source.published_on is None
+        publication.source_attempt_id = source.attempt_id
+        publication.content_extent = source.extent
+        publication.publisher_published_at = source.published_at
+        publication.publisher_published_on = source.published_on
     db.flush()
     projection.refresh(db, "media", [media_id])
     projection.refresh_source_highlights(db, media_id)

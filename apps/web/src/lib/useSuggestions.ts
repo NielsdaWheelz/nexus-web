@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isApiError, isSameSystemApiDefect, isStaleBuild, outcomeUnknown, type ApiError, type ApiPath } from "@/lib/api/client";
 import { readSharedValue, useServerArrival, type ArrivalClaim } from "@/lib/api/serverState";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { useSuggestionEntryRead } from "@/lib/panes/suggestionEntryReads";
+import { dailySelectionRead, useSuggestionEntryRead } from "@/lib/panes/suggestionEntryReads";
 import { PASSIVE_OBSERVATION_MS, WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
@@ -25,6 +25,7 @@ interface AdoptedPool {
 }
 
 const VISIT = definePaneVisitDataKey<AdoptedPool>("Suggestions.Pool");
+const DAILY_VISIT = definePaneVisitDataKey<AdoptedPool>("DailySelection.Pool");
 type ReadIntention = "Initial" | "Reconcile" | "Refresh";
 type ReadOwner = "Inline" | "Pane";
 
@@ -70,16 +71,18 @@ function displayedRefs(items: SuggestionItem[], previous: string[]): string[] {
  * Inactivity retires requests, not the visit's pool or server-admitted work.
  */
 export function useSuggestions(destination: SuggestionsDestination, eligible: boolean) {
+  const daily = destination.kind === "Daily";
   const libraryId = destination.kind === "Library" ? destination.id : null;
-  const key = libraryId === null ? "/lectern/suggestions" : `/libraries/${libraryId}/suggestions`;
-  const path: ApiPath = libraryId === null
+  const key = daily ? "/daily-brief" : libraryId === null ? "/lectern/suggestions" : `/libraries/${libraryId}/suggestions`;
+  const path: ApiPath = daily ? "/api/daily-brief" : libraryId === null
     ? "/api/lectern/suggestions"
     : `/api/libraries/${encodeURIComponent(libraryId)}/suggestions`;
   const captured = useRef<AdoptedPool | null>(null);
-  const restored = usePaneVisitData(VISIT, () => captured.current);
-  const writeVisit = usePaneVisitDataWriter(VISIT);
+  const restored = usePaneVisitData(daily ? DAILY_VISIT : VISIT, () => captured.current);
+  const writeVisit = usePaneVisitDataWriter(daily ? DAILY_VISIT : VISIT);
   const { accountId } = useAuthenticatedAccount();
-  const descriptor = useSuggestionEntryRead();
+  const entryDescriptor = useSuggestionEntryRead();
+  const descriptor = daily ? dailySelectionRead : entryDescriptor;
   // justify-defect: library and lectern entries own their published-selection GET.
   if (descriptor === null) throw new Error("suggestions without route entry");
   const ownedDescriptor = descriptor;

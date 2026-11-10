@@ -507,6 +507,9 @@ def _insert_pair(
         {"leaf": assistant.id, "id": conversation_id},
     )
     projection.refresh(db, "message", [user.id])
+    from nexus.services.suggestion_changes import record_input_change
+
+    record_input_change(db, owners=[f"conversation:{conversation_id}"])
     return user, assistant
 
 

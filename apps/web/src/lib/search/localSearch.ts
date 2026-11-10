@@ -20,10 +20,10 @@ import type { SearchQuery } from "./query";
 
 /** Schemes that can have a canonical local writing row; this does not establish ownership. */
 export const WRITING_REF = /^(note_block|page|highlight|passage_anchor):/u;
-/** The server's discovery families (`services/search/query.py` `DISCOVERY_FAMILIES`) for local refs. */
+/** Discovery families for local refs, matching the shared authored query owner. */
 const FAMILIES: Partial<Record<string, SearchKind>> = {
   note_block: "notes", page: "notes", highlight: "highlights", passage_anchor: "saved_passages",
-  media: "documents", podcast: "documents", conversation: "conversations", contributor: "people",
+  media: "documents", podcast: "documents", feed: "documents", conversation: "conversations", contributor: "people",
   library: "libraries", oracle_reading: "readings",
 };
 const kindOf = (resource: ResourceProjection): SearchKind | null => FAMILIES[parseResourceRef(resource.ref)?.scheme ?? ""] ?? null;

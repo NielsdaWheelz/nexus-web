@@ -15,7 +15,8 @@ import type { ApiError } from "@/lib/api/client";
 import { staleBuild, transportOf } from "@/lib/api/failure";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
-import { getPodcastDetail, type PodcastDetail, type PodcastSettings } from "@/lib/podcasts/api";
+import { getFeedDetail, type FeedDetail } from "@/lib/feeds/api";
+import { type PodcastSettings } from "@/lib/podcasts/api";
 import { usePodcastSettingsSave } from "@/lib/podcasts/usePodcastSettingsSave";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
@@ -30,11 +31,17 @@ interface Props {
 export default function PodcastSettingsOverlay(props: Props) {
   const { podcastId, onClose } = props;
   const { accountId } = useAuthenticatedAccount();
-  const stamp = useChangeStamp("Podcasts");
+  const stamp = useChangeStamp("Feeds");
   const source = usePaneFreeServerValue({
     key: `podcast-detail:${accountId}:${podcastId}`,
     stale: stamp,
-    load: async signal => (await getPodcastDetail(podcastId, signal)).data,
+    load: async signal => {
+      const detail = (await getFeedDetail(podcastId, signal)).data;
+      // justify-defect: playback defaults are a podcast-only action contract.
+      if (detail.feed.kind !== "podcast" || detail.playback_settings === null)
+        throw new Error("podcast playback defaults require a podcast source and settings");
+      return { ...detail, playback_settings: detail.playback_settings };
+    },
   });
   return source.status === "ready" ? (
     <SettingsForm key={`${accountId}:${podcastId}`} {...props} source={source.data} readError={source.error} />
@@ -48,7 +55,7 @@ export default function PodcastSettingsOverlay(props: Props) {
 }
 
 function SettingsForm({ podcastId, onClose, source, readError }: Props & {
-  readonly source: PodcastDetail;
+  readonly source: FeedDetail & { readonly playback_settings: PodcastSettings };
   readonly readError: ApiError | null;
 }) {
   const [opening] = useState(source.playback_settings);
@@ -61,7 +68,7 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
   useLayoutEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const gateId = useId();
   const transportVerbs = useTransportVerbs();
-  const save = usePodcastSettingsSave(podcastId, source.podcast.title, `${accountId}:${podcastId}`, () => live.current);
+  const save = usePodcastSettingsSave(podcastId, source.feed.title, `${accountId}:${podcastId}`, () => live.current);
   const operation = save.state;
   useEffect(() => {if (operation?.kind === "Accepted") onClose();}, [operation, onClose]);
   const reviewed = operation?.kind === "Review" ? operation.current : null;
@@ -115,7 +122,7 @@ function SettingsForm({ podcastId, onClose, source, readError }: Props & {
     onDismissRequest={() => requestDismiss() ? "accepted" : "blocked"}
     initialFocus={card => card.querySelector<HTMLElement>('input[type="range"]')}>
     <div className={styles.form}>
-      <p className={styles.podcastName}>{source.podcast.title}</p>
+      <p className={styles.podcastName}>{source.feed.title}</p>
       <p className={styles.note}>edit this podcast’s defaults. saving leaves current playback unchanged.</p>
       <fieldset className={styles.fields} disabled={save.busy || absent || replaced || needsCheck || reloadRequired}>
         <PlaybackRateEditor value={default_playback_speed ?? 1} label="speed"

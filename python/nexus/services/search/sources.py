@@ -82,7 +82,14 @@ def _ctes(
     reading_media_id: UUID | None = None,
     *,
     scope_sql: ScopeSQL | None = None,
+    reading_media_ids: Sequence[UUID] | None = None,
 ) -> tuple[str, dict[str, Any]]:
+    if reading_media_ids is not None:
+        return (
+            _BASE_CTES + ", admitted_media AS (SELECT media_id FROM visible_media "
+            "WHERE media_id=ANY(CAST(:eligible_reading_ids AS uuid[])))" + _NO_EXACT_PASSAGES,
+            {"eligible_reading_ids": list(reading_media_ids)},
+        )
     if reading_media_id is not None:
         return (
             _BASE_CTES
@@ -293,7 +300,7 @@ SOURCES: dict[str, str] = {
             concat_ws(' ', p.title, p.description, pc.contributor_search_text)) AS doc,
             COALESCE(p.description, p.title) AS text, p.title,
             concat_ws(' ', p.description, pc.contributor_search_text) AS discovery_text
-        FROM podcasts p JOIN visible_podcasts vp ON vp.podcast_id = p.id
+        FROM feeds p JOIN visible_podcasts vp ON vp.podcast_id = p.id AND p.kind='podcast'
         LEFT JOIN ({contributor_credits_rollup_cte_sql("podcast_id")}) pc ON pc.podcast_id = p.id
         WHERE TRUE {{where}}""",
     "contributor": f"""SELECT 'contributor' AS type, c.id, c.display_name AS label,
@@ -684,6 +691,41 @@ def _saved_passages(
 
 
 def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
+    return _rank(db, r, families=families)
+
+
+def rank_readings(
+    db: Session, *, viewer_id: UUID, terms: str, media_ids: Sequence[UUID], limit: int
+) -> list[Hit]:
+    """Lexical evidence for exact eligible reading identities, without embeddings.
+
+    A frozen chat context intentionally admits only exact passages. Selection instead
+    admits each requested reading's own bounded body and retains its strongest hit;
+    visibility and candidate restrictions precede each independent result window.
+    """
+    if not media_ids or not terms.strip():
+        return []
+    hits = _rank(
+        db,
+        Retrieval(viewer_id=viewer_id, terms=terms, k=limit),
+        families=("media", "content_chunk"),
+        reading_media_ids=media_ids,
+    )
+    strongest: dict[UUID, Hit] = {}
+    for hit in sorted(hits, key=lambda hit: (-hit.score, hit.type, str(hit.id))):
+        media_id = hit.reading_media_id if hit.type == "content_chunk" else hit.id
+        if media_id is not None and media_id not in strongest:
+            strongest[media_id] = hit
+    return list(strongest.values())
+
+
+def _rank(
+    db: Session,
+    r: Retrieval,
+    *,
+    families: Sequence[str],
+    reading_media_ids: Sequence[UUID] | None = None,
+) -> list[Hit]:
     """Independent top-``r.k`` windows, concatenated in supplied family order.
 
     Ordinary families share one statement's canonical scope relations. Semantic
@@ -693,7 +735,7 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
     """
     scopes = compose_scopes(families, r.scopes, r.frozen)
     escaped = escape_like(r.terms)
-    ctes, scope_params = _ctes(r, scope_sql=scopes)
+    ctes, scope_params = _ctes(r, scope_sql=scopes, reading_media_ids=reading_media_ids)
     params = (
         dict(scopes.bindings)
         | scope_params
@@ -726,6 +768,8 @@ def rank(db: Session, r: Retrieval, *, families: Sequence[str]) -> list[Hit]:
             ]
             continue
         where = cell[0] + filters + _STRICT_ADMISSION.get(family, "")
+        if reading_media_ids is not None:
+            where += " AND m.id=ANY(CAST(:eligible_reading_ids AS uuid[]))"
         active.append((index, family, where))
         if family in SEMANTIC and r.terms and r.embedding is not None:
             semantic_families.append(family)

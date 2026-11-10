@@ -1,7 +1,7 @@
 """A complete personal browsing projection from one read-only repeatable-read snapshot.
 
-Physical memberships, active subscriptions/imports and visible Lectern selections
-admit roots. Included shows admit their complete known episodes, never provider
+Physical memberships, source access, active subscriptions/imports and visible Lectern
+selections admit roots. Included sources admit their complete visible entries, never provider
 history or the global corpus. Domain owners supply facts and total-order plans;
 Postgres assigns ordinals so local selectors need no database collation replica.
 Retries produce a new independent snapshot identity. This read writes nothing. Authored
@@ -20,12 +20,18 @@ from nexus.api.edge import WIRE_REVISION
 from nexus.db.models import TranscriptState
 from nexus.schemas import offline_catalog as wire
 from nexus.schemas.conversation import ConversationListItemOut
-from nexus.schemas.podcast import PodcastEpisodeCountsOut
+from nexus.schemas.feed import FeedEntryCountsOut
 from nexus.services import libraries, library_entries, library_listing, media
 from nexus.services.chat.conversations import conversation_index_rows_sql
-from nexus.services.collection_keyset import UPDATED_TITLE_PLANS, SortKey, order_by_sql
+from nexus.services.collection_keyset import (
+    UPDATED_TITLE_PLANS,
+    KeysetValueKind,
+    SortKey,
+    order_by_sql,
+)
 from nexus.services.consumption import lectern, observation
-from nexus.services.podcasts import episodes, subscriptions_query
+from nexus.services.feeds import entries, queries
+from nexus.services.podcasts import episodes
 
 
 def _ranked(
@@ -102,29 +108,37 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         )
     )
     root_media_ids = selected_ids | {row["media_id"] for row in entry_rows}
-    show_ids = list(
+    source_ids = list(
         db.scalars(
             text(f"""
-                SELECT podcast_id FROM ({subscriptions_query.catalog_show_ids_sql()}) roots
+                SELECT feed_id FROM ({queries.catalog_feed_ids_sql()}) roots
                 UNION
-                SELECT podcast_id FROM podcast_episodes WHERE media_id=ANY(:media_ids)
-                ORDER BY podcast_id
+                SELECT entry.feed_id FROM feed_entries entry JOIN feeds source ON source.id=entry.feed_id
+                WHERE source.kind='podcast' AND entry.media_id=ANY(:media_ids)
+                ORDER BY feed_id
             """),
             {**params, "media_ids": list(root_media_ids)},
         )
     )
-    episode_rows = _ranked(
+    entry_rows_by_source = _ranked(
         db,
-        f"SELECT * FROM ({episodes.episode_rows_sql()}) episodes WHERE podcast_id=ANY(:show_ids)",
+        f"SELECT * FROM ({entries.entry_rows_sql()}) entries WHERE feed_id=ANY(:source_ids)",
         {
-            "newest": episodes.episode_order_plan("newest"),
-            "oldest": episodes.episode_order_plan("oldest"),
-            "duration_asc": episodes.episode_order_plan("duration_asc"),
-            "duration_desc": episodes.episode_order_plan("duration_desc"),
+            name: [*entries.entry_order_plan(name), SortKey("feed_id", "asc", KeysetValueKind.Uuid)]
+            for name in ("newest", "oldest", "duration_asc", "duration_desc")
         },
-        {**params, "show_ids": show_ids},
+        {**params, "source_ids": source_ids},
     )
-    media_ids = sorted(root_media_ids | {row["media_id"] for row in episode_rows})
+    podcast_facts = {
+        row["media_id"]: row
+        for row in db.execute(
+            text(
+                f"SELECT * FROM ({episodes.episode_rows_sql()}) episodes WHERE podcast_id=ANY(:source_ids)"
+            ),
+            {**params, "source_ids": source_ids},
+        ).mappings()
+    }
+    media_ids = sorted(root_media_ids | {row["media_id"] for row in entry_rows_by_source})
     summaries = media.media_summaries(db, viewer_id=viewer_id, media_ids=media_ids)
     consumption = observation.states(db, viewer_id, media_ids)
     media_rows = _ranked(
@@ -150,28 +164,28 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         )
     )
     counts = {
-        show_id: PodcastEpisodeCountsOut(known_count=0, unfinished_count=0) for show_id in show_ids
+        show_id: FeedEntryCountsOut(known_count=0, unfinished_count=0) for show_id in source_ids
     }
-    for row in episode_rows:
-        count = counts[row["podcast_id"]]
+    for row in entry_rows_by_source:
+        count = counts[row["feed_id"]]
         count.known_count += 1
-        count.unfinished_count += row["episode_state"] != "played"
-    sections, details = subscriptions_query.read_catalog(db, viewer_id, member_libraries, counts)
+        count.unfinished_count += row["entry_state"] != "finished"
+    sections, details = queries.read_catalog(db, viewer_id, member_libraries, counts)
     followed_rows = _ranked(
         db,
-        subscriptions_query.podcast_index_rows_sql(),
+        queries.feed_index_rows_sql(),
         {
-            "recent_episode": subscriptions_query.podcast_order_plan("recent_episode"),
-            "unplayed_count": subscriptions_query.podcast_order_plan("unplayed_count"),
-            "alpha": subscriptions_query.podcast_order_plan("alpha"),
+            "recent_entry": queries.feed_order_plan("recent_entry"),
+            "unfinished_count": queries.feed_order_plan("unfinished_count"),
+            "alpha": queries.feed_order_plan("alpha"),
         },
         params,
     )
     followed = {
-        row["podcast_id"]: wire.CatalogPodcastIndexOut(
-            has_new=row["unplayed_count"] > 0,
+        row["feed_id"]: wire.CatalogFeedIndexOut(
+            has_new=row["unread_count"] > 0,
             not_in_library=row["not_in_library"],
-            order=_order(row, wire.PodcastIndexOrder),
+            order=_order(row, wire.FeedIndexOrder),
         )
         for row in followed_rows
     }
@@ -183,7 +197,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
     }
     chat_rows = _ranked(db, conversation_index_rows_sql(), updated_plans, params)
     return wire.OfflineCatalogOut(
-        format_version=3,
+        format_version=4,
         wire_revision=WIRE_REVISION,
         account_id=viewer_id,
         snapshot_id=uuid4(),
@@ -214,25 +228,56 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
             )
             for row in entry_rows
         ],
-        shows=[
-            wire.CatalogShowOut(detail=details[show_id], index=followed.get(show_id))
-            for show_id in show_ids
+        sources=[
+            wire.CatalogSourceOut(detail=details[show_id], index=followed.get(show_id))
+            for show_id in source_ids
         ],
-        library_shows=[
-            wire.CatalogLibraryShowsOut(library_id=library.id, value=sections[library.id])
+        library_sources=[
+            wire.CatalogLibrarySourcesOut(library_id=library.id, value=sections[library.id])
             for library in member_libraries
         ],
         episodes=[
             wire.CatalogEpisodeOut(
-                media_id=row["media_id"],
-                podcast_id=row["podcast_id"],
+                **{
+                    key: row[key]
+                    for key in (
+                        "media_id",
+                        "feed_id",
+                        "entry_id",
+                        "published_at",
+                        "published_on",
+                        "entry_url",
+                        "entry_state",
+                    )
+                },
                 transcript_state=TranscriptState(row["transcript_state"] or "not_requested"),
-                episode_state=row["episode_state"],
+                episode_state=podcast_facts[row["media_id"]]["episode_state"],
                 consumption=consumption[row["media_id"]],
-                source_duration_ms=row["source_duration_ms"],
+                source_duration_ms=podcast_facts[row["media_id"]]["source_duration_ms"],
                 order=_order(row, wire.EpisodeOrder),
             )
-            for row in episode_rows
+            for row in entry_rows_by_source
+            if details[row["feed_id"]].feed.kind == "podcast"
+        ],
+        articles=[
+            wire.CatalogArticleOut(
+                **{
+                    key: row[key]
+                    for key in (
+                        "media_id",
+                        "feed_id",
+                        "entry_id",
+                        "published_at",
+                        "published_on",
+                        "entry_url",
+                        "entry_state",
+                    )
+                },
+                transcript_state=None,
+                order=_order(row, wire.EpisodeOrder),
+            )
+            for row in entry_rows_by_source
+            if details[row["feed_id"]].feed.kind == "article"
         ],
         lectern=lectern.get_lectern(db, viewer_id, summaries=summaries),
         chats=[

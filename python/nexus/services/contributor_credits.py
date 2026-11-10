@@ -36,7 +36,8 @@ def current_media_contributor_rows_sql() -> str:
             UNION ALL
             SELECT pe.media_id, cc.contributor_id, cc.role
             FROM contributor_credits cc
-            JOIN podcast_episodes pe ON pe.podcast_id = cc.podcast_id
+            JOIN feed_entries entry ON entry.feed_id = cc.podcast_id
+            JOIN podcast_episodes pe ON pe.media_id = entry.id
             WHERE cc.podcast_id IS NOT NULL
         ) targets
         JOIN contributors c ON c.id = targets.contributor_id

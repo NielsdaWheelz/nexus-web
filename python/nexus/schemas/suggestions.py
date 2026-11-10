@@ -1,6 +1,6 @@
 """Suggestion publications, current eligibility and refresh observation."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -19,17 +19,20 @@ class MediaSuggestionTargetOut(Closed):
     href: str
 
 
-class PodcastSuggestionTargetOut(Closed):
-    kind: Literal["Podcast"]
+class FeedSuggestionTargetOut(Closed):
+    kind: Literal["Feed"]
     ref: str
+    feed_id: UUID
+    feed_kind: Literal["podcast", "article"]
     title: str
     subtitle: str | None
+    image_url: str | None
     href: str
 
 
 class SuggestionItemOut(Closed):
     target: Annotated[
-        MediaSuggestionTargetOut | PodcastSuggestionTargetOut, Field(discriminator="kind")
+        MediaSuggestionTargetOut | FeedSuggestionTargetOut, Field(discriminator="kind")
     ]
 
 
@@ -37,7 +40,17 @@ class SuggestionPublicationMetaOut(Closed):
     id: UUID
 
 
+class DailyEditionOut(Closed):
+    local_date: date
+    time_zone: str
+    window_start: datetime
+    window_end: datetime
+    checked_source_count: int
+    source_count: int
+
+
 class SuggestionPublicationOut(SuggestionPublicationMetaOut):
+    edition: DailyEditionOut | None
     items: list[SuggestionItemOut] = Field(max_length=80)
 
 
@@ -87,8 +100,8 @@ class SuggestionViewIn(Closed):
             raise ValueError("suggestion refs must be distinct")
         for raw in refs:
             ref = parse_resource_ref(raw)
-            if not isinstance(ref, ResourceRef) or ref.scheme not in ("media", "podcast"):
-                raise ValueError("suggestion refs must be canonical media or podcast refs")
+            if not isinstance(ref, ResourceRef) or ref.scheme not in ("media", "podcast", "feed"):
+                raise ValueError("suggestion refs must be canonical media or feed refs")
         return refs
 
 
