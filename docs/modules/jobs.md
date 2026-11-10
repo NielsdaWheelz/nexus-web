@@ -84,6 +84,8 @@ facts and queue success together; a lost response then changes nothing.
 `on_failure` recognizes already committed success before retry/hold.
 `on_dead` runs only for terminal failure, never for a hold. `on_history` records
 retry, hold, reschedule and interruption outcomes in the transition transaction.
+passive observation has no queue notification producer. only worker wakeups and
+chat events retain notifications; retained jobs remain the source of operation state.
 
 expiry first obtains necessary domain locks, then rechecks and revokes the exact
 expired execution, releases capacity and schedules recovery. it never closes

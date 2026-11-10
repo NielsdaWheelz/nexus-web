@@ -64,6 +64,9 @@ export const SCOPE_SQL = {
     EXISTS(SELECT 1 FROM scope_facts f WHERE f.revision=(SELECT active_revision FROM scope_state) AND f.kind='scope' AND f.owner_ref=v.scope_ref)
     OR EXISTS(SELECT 1 FROM scope_readings r WHERE r.revision=(SELECT active_revision FROM scope_state) AND r.reading_ref=v.scope_ref)
   ) ORDER BY v.scope_ref`,
+  scope_needs_repair: `SELECT EXISTS(SELECT 1 FROM scope_revocations v WHERE
+    EXISTS(SELECT 1 FROM scope_facts f WHERE f.revision=(SELECT active_revision FROM scope_state) AND f.kind='scope' AND f.owner_ref=v.scope_ref)
+    OR EXISTS(SELECT 1 FROM scope_readings r WHERE r.revision=(SELECT active_revision FROM scope_state) AND r.reading_ref=v.scope_ref)) AS needed`,
   scope_pending_reading: `SELECT r.reading_ref,p.cursor,COALESCE(p.raw_complete,0) AS raw_complete FROM scope_readings r
     LEFT JOIN scope_text_progress p ON p.revision=r.revision AND p.reading_ref=r.reading_ref
     WHERE r.revision=(SELECT staging_revision FROM scope_state) AND NOT EXISTS (

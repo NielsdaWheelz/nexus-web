@@ -1,5 +1,8 @@
 "use client";
 
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
+import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -51,8 +54,9 @@ export default function ImportsPaneBody() {
     [displayTimeZone],
   );
 
-  // A mounted pane keeps the observer polling; it counts until unmount.
-  useEffect(() => retainObserver(), [retainObserver]);
+  // Only a presented foreground pane accelerates the shell summary.
+  const observing = useObservationDemand(usePaneIsPresented());
+  useEffect(() => observing ? retainObserver() : undefined, [observing, retainObserver]);
 
   // The counts choose a view once and the url records it once; a later count
   // never moves the reader, and the url write may not have landed yet.

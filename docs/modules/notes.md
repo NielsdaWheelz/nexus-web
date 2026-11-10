@@ -633,8 +633,19 @@ server tools use that same owner within their existing fenced transaction.
 
 `GET /authored/changes?after=…` returns a bounded ascending prefix through one
 captured head. applying each command and advancing its cursor is one device
-transaction. sending and receiving proceed independently. the writing stream is
-a wake hint; cursor catch-up remains authoritative.
+transaction. sending and receiving proceed independently.
+
+the document schedules finite `Sync.step({refresh})` units while foregrounded.
+each unit admits at most one upload batch, feed page and scope unit. registration
+and initial snapshot are exclusive units. a feed round captures one head; scope
+hydration retains its frontier. `more` permits an immediate external continuation;
+otherwise `retry_after_ms` and the 30-second refresh cadence govern the next step.
+failed lanes retain their deadlines while healthy lanes progress. no worker timer
+or passive stream exists. hide stops successors, never durable commits or an
+admitted acknowledgement; return and local commits wake the document scheduler.
+two visible documents may share one running unit without owning each other's lifetime.
+hello checks account, wire and format before storage, with an exact revision echo.
+wire changes do not change durable format 4.
 
 `GET /authored/snapshot` streams a repeatable-read corpus with head and lamport in
 its header and completion footer, plus exact record counts. interrupted staging
@@ -652,6 +663,10 @@ raw text and unfinished normalization resume from durable staging. local writing
 remains available during hydration. explicit denial immediately blacklists only
 the affected scope/reading and removes its copied text. readmission waits for a
 complete fenced repair, including when permission changes return the same hash.
+an unchanged idle round samples the exact digest with `active_refs: []` and skips
+stored-ref sweeps unless durable staging/revocation needs repair. evidence revision
+alone never replaces authorization or publication consistency. normalization
+advances one 32k-codepoint chunk with retained carry; invalid final coverage fails.
 
 authorized pieces supply only body and proved required-note slices. highlights
 follow complete canonical-anchor containment within one reading; saved passages

@@ -62,7 +62,7 @@ def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> No
 
     The source publisher already holds every affected media in ascending order.
     A canonical source and every rendering parent advance once in the same commit;
-    the existing media stream observes even an otherwise idle parent's new generation.
+    finite media observations include even an otherwise idle parent's new generation.
     """
     from nexus.services.media_parts import require_unpinned_source
     from nexus.services.search import projection
@@ -81,7 +81,6 @@ def advance_reader_publications(db: Session, *, media_ids: Sequence[UUID]) -> No
         else:
             publication.generation += 1
             publication.changed_at = db.scalar(text("SELECT now()"))
-        db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     db.flush()
     projection.refresh(db, "media", sorted(set(media_ids)))
 
@@ -210,7 +209,6 @@ def replace_reader_publication[T](
         publication.changed_at = db.scalar(text("SELECT now()"))
         publication.source_issues = payload
     db.flush()
-    db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     projection.refresh(db, "media", [media_id])
     projection.refresh_source_highlights(db, media_id)
     return result
@@ -252,7 +250,6 @@ def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
         return False
     db.add(ReaderPublication(id=new_uuid7(), media_id=media_id, generation=1, source_issues=[]))
     db.flush()
-    db.execute(text("SELECT pg_notify('media_events', :media_id)"), {"media_id": str(media_id)})
     projection.refresh(db, "media", [media_id])
     return True
 

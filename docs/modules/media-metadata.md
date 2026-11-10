@@ -82,11 +82,27 @@ failed. held includes a typed reason and held_at, has no completion time, and is
 unfinished but neither executing nor claimable. completed bibliography contains
 only purpose, completed_at and changed_fields. generic generation/tool audit remains.
 
-summary streams belong to mounted subscribers and reread on mount. exact admission
-interest observes accepted work after pane closure. one held notice releases that
-interest; only mounted inspection keeps following held work. supersession is silent.
-no recovery inventory, permanent idle stream or extra poller is introduced. an
-operator resume with every pane closed need not toast; reopening reads durable state.
+`POST /media/observations/resolve` accepts 1–100 unique media ids and returns
+ordered `{media_id, observation}` items. each authorized repeatable-read observation
+combines processing and metadata; missing/unreadable ids return null. invalid,
+duplicate, empty and oversized inputs return structured 400. reads admit no work.
+one document/account owner batches due presented main/child/inspector interests
+on aligned 10/30-second boundaries. processing `work_in_flight` or metadata
+`work_in_flight` selects 10 seconds; settled or held-only subjects use 30.
+metadata derives that boolean from active queue work, not `unfinished_count`,
+which truthfully includes held work. a busy sibling never accelerates settled ids.
+attention joins current reads and wakes omitted interests; immediate demand can
+precede the next shared boundary closely. hiding suspends observation and retains
+accepted snapshots; successful null clears private state. reader invalidation
+compares publication facts and coalesces changed children, never operation phase.
+
+`GET /media/{media_id}/metadata-enrichment/{job_id}` returns the exact authorized
+accepted job, even after newer work. deliberate interest survives pane closure
+while foreground; background retains it without requests and return checks it.
+one held notice releases that interest; mounted inspection keeps observing held
+work every 30 seconds. supersession is silent. account teardown cancels reads and
+clears only its entries. no recovery inventory or passive stream is introduced.
+an operator resume with every pane closed need not toast; reopening reads durable state.
 
 copy distinguishes `metadata updated`, `metadata unchanged`, `waiting to retry`
 and `metadata update needs a repair`. failures retain exact update/status actions.

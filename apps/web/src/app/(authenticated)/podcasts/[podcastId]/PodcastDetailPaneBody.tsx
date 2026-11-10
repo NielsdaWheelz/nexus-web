@@ -45,7 +45,7 @@ import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
 import { shouldPollTranscriptProvisioning } from "@/lib/media/transcriptView";
 import {
   usePaneIsActive,
-  usePaneIsVisible,
+  usePaneIsPresented,
   usePaneRuntime,
   usePaneParam,
   usePaneRouter,
@@ -76,6 +76,8 @@ import { LIVE_SOURCE } from "@/lib/catalog/types";
 import { podcastRefresh } from "@/lib/podcasts/paneState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { PASSIVE_OBSERVATION_MS, WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -102,7 +104,6 @@ const SORTS = [
   { value: "duration_asc", label: "Shortest duration" },
   { value: "duration_desc", label: "Longest duration" },
 ];
-const HEAD_POLL_INTERVAL_MS = 60_000;
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
@@ -119,15 +120,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const active = usePaneIsActive();
-  const paneVisible = usePaneIsVisible();
-  const [documentVisible, setDocumentVisible] = useState(true);
-  useEffect(() => {
-    const changed = () => setDocumentVisible(document.visibilityState === "visible");
-    changed();
-    document.addEventListener("visibilitychange", changed);
-    return () => document.removeEventListener("visibilitychange", changed);
-  }, []);
-  const observing = active && paneVisible && documentVisible;
+  const observing = useObservationDemand(usePaneIsPresented());
   const capturedDetails = useRef<boolean | null>(null);
   const savedDetails = usePaneVisitData(DETAILS, () => capturedDetails.current);
   const [expanded, setExpanded] = useState(savedDetails ?? false);
@@ -146,7 +139,7 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
     const data = catalogEpisodes(value, podcastId, new URLSearchParams(query));
     return data === null ? null : { data, consumption_revision: value.value.consumption_revision };
   });
-  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: EPISODES });
+  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: EPISODES, enabled: observing });
   const showEpisodes = useMemo(() => new Set(catalog.raw?.value.episodes.flatMap(row => row.podcast_id === podcastId ? [row.media_id] : []) ?? []), [catalog.raw, podcastId]);
   usePromoteLiveGroup(group, raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh
     ? [raw.data.consumption_revision] : null, showEpisodes);
@@ -213,11 +206,11 @@ function PodcastDetailPane({ podcastId }: { readonly podcastId: string }) {
   const matching = (text: string) => resolved.filter(episode =>
     matchesPaneFilterQuery(text, mediaListFilterFields(episode.media_summary, { containingPodcastId: podcastId })));
 
-  const working = history.some(operation => operation.state === "pending" || operation.state === "running") || recurring?.state === "pending" || recurring?.state === "running";
-  const provisioning = episodeItems.some(episode => shouldPollTranscriptProvisioning(episode.transcript_state));
+  const working = history.some(operation => operation.work_in_flight) || recurring?.work_in_flight === true;
+  const provisioning = episodeItems.some(episode => episode.media_summary.processing_status !== "suspended" && shouldPollTranscriptProvisioning(episode.transcript_state));
   // justify-polling: one visible observation lane owns header and episode publication.
   useIntervalPoll({ enabled: live && remoteReady() && observing && (following || working || provisioning),
-    pollIntervalMs: working || provisioning ? 3000 : HEAD_POLL_INTERVAL_MS, onPoll: () => episodes.revalidate({ passive: true }) });
+    pollIntervalMs: working || provisioning ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS, onPoll: () => episodes.revalidate({ passive: true }) });
   const publicationKey = `${ctx.accountId}:${descriptor.key}`;
   const publicationData = raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh ? raw.data.data : null;
   const publication = useMemo(() => publicationData === null ? null : JSON.stringify([

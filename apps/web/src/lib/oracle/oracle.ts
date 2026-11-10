@@ -1,7 +1,6 @@
-// The oracle transport: ask, and follow one reading until it leaves pending.
+// Oracle admission; authoritative finite reads own subsequent state.
 
 import { apiFetch } from "@/lib/api/client";
-import { openStream } from "@/lib/api/stream";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 
 export type OracleReading = Schema<"OracleReadingOut">;
@@ -35,29 +34,4 @@ export async function createReading(attempt: { readonly id: string; readonly que
     },
   );
   return body.data.reading_id;
-}
-
-/**
- * Each frame is the whole reading; the last one is complete or failed. A reading
- * that is gone, or a stream that stays down, is reported once as lost. A stream
- * suspended for admission resumes on its cursor, so it reports nothing.
- */
-export function watchReading(
-  id: string,
-  onState: (reading: OracleReading) => void,
-  onLost: (error: Error) => void,
-): () => void {
-  return openStream<OracleReading, OracleReading>({
-    path: `/api/stream/oracle-readings/${encodeURIComponent(id)}/events`,
-    decode: (type, reading) => {
-      if (type !== "state" && type !== "done")
-        throw new Error(`Unknown oracle event type: ${type}`);
-      return reading;
-    },
-    isTerminal: (reading) =>
-      reading.status === "complete" || reading.status === "failed",
-    onEvent: onState,
-    onError: onLost,
-    onSuspended: () => {},
-  });
 }

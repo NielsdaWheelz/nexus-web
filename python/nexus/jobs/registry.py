@@ -87,7 +87,6 @@ def registry() -> dict[str, JobDefinition]:
             "background",
             "nexus.services.suggestion_shortlists:run_suggestion_refresh_job",
             keep_dead=True,
-            on_history="nexus.services.suggestion_changes:on_suggestion_job_history",
         ),
         "ingest_media_source": JobDefinition(
             "background",
@@ -105,14 +104,12 @@ def registry() -> dict[str, JobDefinition]:
             "nexus.tasks.capture_x_quote:run_job",
             keep_succeeded=True,
             keep_dead=True,
-            on_history="nexus.services.x_capture_job_hooks:on_history",
         ),
         "archive_x_capture_assets": JobDefinition(
             "background",
             "nexus.tasks.archive_x_capture_assets:run_job",
             keep_succeeded=True,
             keep_dead=True,
-            on_history="nexus.services.x_capture_job_hooks:on_history",
         ),
         "x_capture_content_reindex": JobDefinition(
             "background",

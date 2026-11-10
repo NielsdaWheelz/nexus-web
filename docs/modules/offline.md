@@ -132,8 +132,10 @@ raw chunks inside 64 kib messages. the preparation mutex spans baseline read and
 uncertain durable commit settlement. device/account retirement rejects late work.
 
 fixed native replica/change/snapshot calls use current credentials and the asserted
-bound account. synchronization runs in the foreground with writing-stream wake
-hints; it is separate from reading-position delivery and adds no background job.
+bound account. the foreground document schedules finite synchronization units
+every 30 seconds, with immediate local-commit/return wakes and bounded productive
+continuations. hiding stops successors; admitted durable work can settle.
+this is separate from reading-position delivery and adds no background job.
 source copies and media bytes remain owned by the existing content store. source
 absence does not remove authored quotes or notes, and the shelf has no account
 commands. sign-in intervention returns to the workspace.

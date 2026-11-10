@@ -103,11 +103,14 @@ export function createChatStore(accountId: string, conversationId: string | null
   };
   const listeners = new Set<() => void>();
   const tails = new Map<string, () => void>();
-  const reading = new Set<string>();
+  const reading = new Map<string, number>();
   let frame = 0;
   let active = false;
+  let observation: AbortController | null = null;
+  let observationGeneration = 0;
   let loading: AbortController | null = null;
   let loadingAcceptance: AcceptedDraft | null = null;
+  let treeRequested = conversationId !== null;
   const cleanups: (() => void)[] = [];
 
   const set = (patch: Partial<ChatState>) => {
@@ -129,6 +132,8 @@ export function createChatStore(accountId: string, conversationId: string | null
     if (live) setLive(id, { ...live, link });
   };
   const owned = () => active && !state.gone && commands.isActive();
+  const observing = (generation: number) => owned() && observation !== null &&
+    !observation.signal.aborted && generation === observationGeneration;
 
   /** Replace whole messages from a read; an older copy never wins. */
   const apply = (incoming: readonly Message[], replaceAll: boolean, patch: Partial<ChatState>) => {
@@ -173,13 +178,15 @@ export function createChatStore(accountId: string, conversationId: string | null
 
   /** Tail each pending answer once; drop tails and overlays of settled ones. */
   const syncTails = () => {
-    if (!active) return;
+    if (!owned()) return;
     for (const [id, stop] of tails) {
       if (state.messages.get(id)?.status === "pending") continue;
       stop();
       tails.delete(id);
     }
     for (const id of Object.keys(state.live)) if (state.messages.get(id)?.status !== "pending") setLive(id, null);
+    if (observation === null) return;
+    const generation = observationGeneration;
     for (const message of state.messages.values()) {
       const runId = message.trust_trail?.run.run_id;
       const live = state.live[message.id];
@@ -188,29 +195,33 @@ export function createChatStore(accountId: string, conversationId: string | null
       setLive(message.id, { ...(live ?? emptyLive(runId)), link: { kind: "Live" } });
       const stop = openRunTail(runId, live?.lastSeq ?? 0, {
         event: (event) => {
+          if (!observing(generation)) return;
           const current = state.live[message.id];
-          if (current) setLive(message.id, foldLive({ ...current, link: { kind: "Live" } }, event));
+          if (current?.runId === runId) setLive(message.id, foldLive({ ...current, link: { kind: "Live" } }, event));
         },
         end: () => {
+          if (!observing(generation)) return;
           tails.delete(message.id);
-          void readRun(message.id, runId, false);
+          void readRun(message.id, runId, false, generation);
         },
       });
       tails.set(message.id, stop);
     }
   };
   /** One run read decides a pending answer; after a tail ends a still-pending run is Lost. */
-  const readRun = async (id: string, runId: string, retail: boolean) => {
-    reading.add(id);
+  const readRun = async (id: string, runId: string, retail: boolean, generation: number) => {
+    if (!observing(generation) || observation === null || reading.has(id)) return;
+    const signal = observation.signal;
+    reading.set(id, generation);
     try {
-      const { data } = await apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(`/api/chat-runs/${runId}`);
+      const { data } = await apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(`/api/chat-runs/${runId}`, { signal });
+      if (!observing(generation) || reading.get(id) !== generation) return;
       reading.delete(id);
-      if (!active) return;
       if (data.assistant_message.status === "pending") setLink(id, { kind: retail ? "Live" : "Lost" });
       applyRead(data);
     } catch (error) {
+      if (!observing(generation) || reading.get(id) !== generation) return;
       reading.delete(id);
-      if (!active) return;
       const failure = readFailureOf(error);
       if (failure.kind === "Defect") set({ defect: { error: failure.error } });
       setLink(id, retail && failure.kind === "Failed"
@@ -236,6 +247,26 @@ export function createChatStore(accountId: string, conversationId: string | null
     },
     getState: () => state,
 
+    /** Observation follows presentation; commands, drafts and accepted output remain owned. */
+    observe(wanted: boolean) {
+      if (wanted === (observation !== null)) return;
+      if (!wanted && loading !== null && loadingAcceptance === null) treeRequested = true;
+      observationGeneration++;
+      observation?.abort();
+      observation = wanted ? new AbortController() : null;
+      for (const stop of tails.values()) stop();
+      tails.clear();
+      reading.clear();
+      if (!wanted || !owned()) return;
+      if (treeRequested && (loading === null || loading.signal.aborted)) void store.load();
+      for (const message of state.messages.values()) {
+        const runId = message.trust_trail?.run.run_id;
+        if (message.status !== "pending" || !runId) continue;
+        if (!state.live[message.id]) setLive(message.id, emptyLive(runId));
+        void readRun(message.id, runId, true, observationGeneration);
+      }
+    },
+
     async load() {
       if (!active) {
         active = true;
@@ -259,20 +290,27 @@ export function createChatStore(accountId: string, conversationId: string | null
         heard();
       }
       if (conversationId === null || state.gone && draft.getSnapshot().accepted === null) return;
+      treeRequested = true;
+      const accepted = draft.getSnapshot().accepted;
+      const observer = accepted === null ? observation : null;
+      if (accepted === null && !observing(observationGeneration)) return;
       loading?.abort();
       const controller = (loading = new AbortController());
-      const accepted = draft.getSnapshot().accepted;
+      const retireObservation = () => controller.abort();
+      observer?.signal.addEventListener("abort", retireObservation, { once: true });
+      treeRequested = false;
       loadingAcceptance = accepted;
+      let completed = false;
       set({ readingTree: true, ...(accepted ? { gone: false, acceptanceError: null } : {}) });
       try {
         const { data } = await requestWithRetry(
           (signal) => apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(`/api/conversations/${conversationId}/tree`, { signal }),
           controller.signal,
         );
-        if (!controller.signal.aborted) { applyTree(data); draft.accountFor(accepted); }
+        if (!controller.signal.aborted) { applyTree(data); draft.accountFor(accepted); completed = true; }
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
-        if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") { applyTree(null); draft.accountFor(accepted); return; }
+        if (isApiError(error) && error.code === "E_CONVERSATION_NOT_FOUND") { applyTree(null); draft.accountFor(accepted); completed = true; return; }
         const failure = readFailureOf(error);
         if (failure.kind === "Defect") {
           if (accepted) {
@@ -285,7 +323,9 @@ export function createChatStore(accountId: string, conversationId: string | null
           if (state.history !== "Ready") set({ history: "Unavailable", unread: failure.error });
         }
       } finally {
+        observer?.signal.removeEventListener("abort", retireObservation);
         if (loading === controller) {
+          if (!completed && accepted === null && active && !state.gone) treeRequested = true;
           loading = null;
           if (active) set({ readingTree: false });
         }
@@ -341,9 +381,9 @@ export function createChatStore(accountId: string, conversationId: string | null
     /** Connection lost: read the same run, then show it or tail it again. Never reruns. */
     reconnect(assistantId: string) {
       const live = state.live[assistantId];
-      if (!live || reading.has(assistantId) || tails.has(assistantId)) return;
+      if (!live || !observing(observationGeneration) || reading.has(assistantId) || tails.has(assistantId)) return;
       setLink(assistantId, { kind: "Reconnecting", error: live.link.kind === "Failed" ? live.link.error : null });
-      void readRun(assistantId, live.runId, true);
+      void readRun(assistantId, live.runId, true, observationGeneration);
     },
 
     /** Freeze the pane's observed tree before asking for destructive confirmation. */
@@ -373,6 +413,7 @@ export function createChatStore(accountId: string, conversationId: string | null
     },
 
     dispose() {
+      store.observe(false);
       active = false;
       for (const cleanup of cleanups.splice(0)) cleanup();
       loading?.abort();
@@ -385,7 +426,7 @@ export function createChatStore(accountId: string, conversationId: string | null
   return store;
 }
 
-export function useChatStore(conversationId: string | null, viewId: string) {
+export function useChatStore(conversationId: string | null, viewId: string, observed: boolean) {
   const { accountId } = useAuthenticatedAccount();
   const guard = useWorkGuard();
   const workspace = useLatestWorkspace();
@@ -395,6 +436,7 @@ export function useChatStore(conversationId: string | null, viewId: string) {
     void store.load();
     return store.dispose;
   }, [store]);
+  useEffect(() => store.observe(observed), [store, observed]);
   const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   return [state, store] as const;
 }

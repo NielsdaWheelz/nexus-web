@@ -269,7 +269,7 @@ def metadata_enrichment_views(
     )
     operations = _operations(db, rows)
     latest: dict[UUID, RowMapping] = {}
-    # An unfinished job (pending, running, failed) projects to an unfinished operation.
+    # Held work remains unfinished; only pending/running/failed jobs can progress.
     unfinished: dict[UUID, Any] = {}
     for row in rows:
         if row["latest_position"] == 1:
@@ -283,6 +283,7 @@ def metadata_enrichment_views(
         views[item.id] = MetadataEnrichmentView(
             operation=None if head is None else operations[head["job_id"]],
             unfinished_count=count,
+            work_in_flight=head is not None and head["active_count"] > 0,
             unfinished_operation=unfinished.get(item.id),
             retry=_retry(
                 item,
@@ -311,15 +312,6 @@ def metadata_operations_for_jobs(
         .all()
     )
     return _operations(db, rows)
-
-
-def metadata_enrichment_for_viewer(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> MetadataEnrichmentView:
-    """The metadata stream's frame; an unreadable media is ``E_MEDIA_NOT_FOUND``."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return metadata_enrichment_views(db, viewer_id=viewer_id, media_ids=[media_id])[media_id]
 
 
 def metadata_operation_for_viewer(

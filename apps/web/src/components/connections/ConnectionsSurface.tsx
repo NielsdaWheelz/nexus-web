@@ -35,6 +35,9 @@ import { formatResourceRef, type ResourceRef } from "@/lib/resourceGraph/resourc
 import { CONNECTION_DISCOVERY_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
+import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 import RemoteConnections, { useRemoteConnections } from "./RemoteConnections";
 import { useConnectionAttachments } from "./useConnectionAttachments";
 import styles from "./ConnectionsSurface.module.css";
@@ -103,7 +106,6 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
   );
 }
 
-const DISCOVERY_SCAN_POLL_MS = 2000;
 const DISCOVERY_SCAN_TIMEOUT_MS = 45_000;
 type ScanCommand = "StartScan" | "ScanStatus";
 
@@ -132,6 +134,10 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     .some(visit => visit.id === scope.visitId && resolvePaneRouteModel(visit.href).routeKey === scope.routeKey));
   const owner = useResourceDraft<ScanState>(`Connections.Scan:${selfRef}`, () => ({ phase: "idle", operation: null, held: null, deadline: 0, repairRequired: false, defect: null }),
     value => ({ changed: false, unconfirmed: value.operation?.command === "StartScan" || value.held?.kind === "Unsure", stopsBrowserWork: false }));
+  const observing = useObservationDemand(usePaneIsPresented() && enabled);
+  const observation = useRef({ observing, generation: 0 });
+  if (observation.current.observing !== observing)
+    observation.current = { observing, generation: observation.current.generation + 1 };
   const mounted = useRef(false);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { phase, held, repairRequired } = owner.value;
@@ -191,7 +197,7 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
   // An auxiliary read resumes only an active job; old outcomes are no news and cannot answer a
   // pending start. Its snapshot fence also prevents a late read from replacing deliberate work.
   useEffect(() => {
-    if (!enabled || owner.read().phase !== "idle") return;
+    if (!observing || owner.read().phase !== "idle") return;
     let cancelled = false;
     const snapshot = owner.read();
     void fetchDiscoveryScanStatus(selfRef).then(state => {
@@ -210,19 +216,25 @@ function useDiscoveryScan({ selfRef, enabled, onSettled }: {
     return () => { cancelled = true; };
     // The retained cell and exact source belong to this mount; updates must not restart its read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, selfRef]);
+  }, [observing, selfRef]);
   // justify-polling: user-requested background work has no SSE plane; poll at
-  // 2s for at most 45s, then hold the scan as still running, with a status read.
-  useIntervalPoll({ enabled: phase === "polling", pollIntervalMs: DISCOVERY_SCAN_POLL_MS, onPoll: async () => {
+  // the work cadence for at most 45s, then hold it with an explicit status read.
+  useIntervalPoll({ enabled: observing && phase === "polling", pollIntervalMs: WORK_OBSERVATION_MS, onPoll: async () => {
+    const generation = observation.current.generation;
     const snapshot = owner.read();
-    if (!owned() || snapshot.phase !== "polling") return;
-    try {
-      const state = await fetchDiscoveryScanStatus(selfRef);
-      if (!owned() || owner.read() !== snapshot) return;
-      if (settle(state) || Date.now() < snapshot.deadline) return;
+    const current = () => mounted.current && observation.current.observing && observation.current.generation === generation && owned() && owner.read() === snapshot;
+    if (!current() || snapshot.phase !== "polling") return;
+    const holdAtDeadline = () => {
       if (snapshot.held?.kind === "Unsure") owner.set(current => ({ ...current, phase: "idle" }));
       else hold("Waiting");
-    } catch (error) { if (owned() && owner.read() === snapshot) failed(error, "ScanStatus"); }
+    };
+    if (Date.now() >= snapshot.deadline) { holdAtDeadline(); return; }
+    try {
+      const state = await fetchDiscoveryScanStatus(selfRef);
+      if (!current()) return;
+      if (settle(state) || Date.now() < snapshot.deadline) return;
+      holdAtDeadline();
+    } catch (error) { if (current()) failed(error, "ScanStatus"); }
   } });
   if (owner.value.defect) throw owner.value.defect.error;
   return {

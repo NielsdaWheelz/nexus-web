@@ -42,7 +42,6 @@ import {
   usePaneFilterRows,
 } from "@/lib/panes/paneFilterRows";
 import {
-  usePaneIsActive,
   usePaneRouter,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
@@ -85,8 +84,7 @@ export default function LecternPaneBody() {
     error: catalog.error?.code.startsWith("E_CATALOG_") ? catalog.error : new ApiError(0, "E_CATALOG_UNAVAILABLE", "catalog not ready on this device") };
   const liveShown = lectern.status === "ready" && source.kind === "live";
   const order = useLecternOrder();
-  const isActive = usePaneIsActive();
-  const suggestions = useSuggestions({ kind: "Lectern" }, isActive && liveShown);
+  const suggestions = useSuggestions({ kind: "Lectern" }, liveShown);
   const { refresh: refreshSuggestionFeed } = suggestions;
   // The section speaks for itself: success, its wait and its repair stand in it, and a failed
   // refresh over shown suggestions says nothing.

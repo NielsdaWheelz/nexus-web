@@ -281,7 +281,6 @@ def upload(db: Session, account_id: UUID, request: UploadChanges) -> AcceptedCha
                 ),
                 {"a": account_id, "s": cursor, "l": max(int(c.lamport) for c in remaining)},
             )
-            db.execute(text("SELECT pg_notify('nexus_writing',:a)"), {"a": str(account_id)})
     return AcceptedChanges(accepted_command_seq=str(accepted), head_cursor=str(cursor))
 
 
@@ -775,7 +774,6 @@ def server_command(
         text("UPDATE authored_heads SET head_seq=:s,lamport=:l WHERE account_id=:a"),
         {"a": account_id, "s": cursor + 1, "l": lamport},
     )
-    db.execute(text("SELECT pg_notify('nexus_writing',:a)"), {"a": str(account_id)})
     return result
 
 

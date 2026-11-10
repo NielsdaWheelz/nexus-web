@@ -18,25 +18,27 @@ import { remoteReady } from "@/lib/native/admission";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import type { LibraryPodcastIndex } from "@/lib/podcasts/api";
 import { PODCAST_BROWSE_ACTION } from "@/lib/podcasts/navigation";
-import { usePaneIsVisible } from "@/lib/panes/paneRuntime";
+import { usePaneIsPresented } from "@/lib/panes/paneRuntime";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { PASSIVE_OBSERVATION_MS, WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import type { Library } from "@/lib/libraries/api";
 import { prepareActionSelect } from "@/lib/ui/actionDescriptor";
 import PodcastImportProgress from "./PodcastImportProgress";
 
-export default function LibraryPodcastsSection({ library, active, source }: { readonly library: Library; readonly active: boolean; readonly source: ServerValue<LibraryPodcastIndex> }) {
+export default function LibraryPodcastsSection({ library, source }: { readonly library: Library; readonly source: ServerValue<LibraryPodcastIndex> }) {
   const { ctx, run } = useActionRuntime();
   const card = useRef<HTMLElement>(null);
   const browse = useRef<HTMLAnchorElement>(null);
   const reasonId = useId();
-  const visible = usePaneIsVisible();
+  const observing = useObservationDemand(usePaneIsPresented());
   const data = source.status === "ready" ? source.data : null;
   const live = source.status === "ready" && source.source.kind === "live";
   const manage = live && remoteReady();
   const blocked = !manage || source.status !== "ready" || source.error !== null || source.refreshing || !source.fresh ? "TemporarilyUnavailable" : null;
-  const busy = data !== null && (data.imports.some(operation => operation.state === "pending" || operation.state === "running") || data.subscriptions.some(show => show.recurring.state !== "idle" || show.imports.some(operation => operation.state === "pending" || operation.state === "running")));
+  const busy = data !== null && (data.imports.some(operation => operation.work_in_flight) || data.subscriptions.some(show => show.recurring.work_in_flight || show.imports.some(operation => operation.work_in_flight)));
   // justify-polling: imports and recurring publication have no client event stream.
-  useIntervalPoll({ enabled: manage && active && visible && busy, pollIntervalMs: 3000, onPoll: () => {
+  useIntervalPoll({ enabled: manage && observing, pollIntervalMs: busy ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS, onPoll: () => {
     if (document.visibilityState === "visible") source.revalidate({ passive: true });
   } });
   const showsById = useMemo(() => new Map((data?.subscriptions ?? []).map(show => [show.podcast.id, show])), [data]);

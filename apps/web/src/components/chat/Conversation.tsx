@@ -7,6 +7,7 @@ import { Ruling } from "@/components/feedback/Ruling";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { useFailedReadRepair, useServerValue, type Visit } from "@/lib/api/serverState";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { catalogLine } from "@/lib/catalog/copy";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { catalogChat } from "@/lib/catalog/selectors";
@@ -29,6 +30,7 @@ import {
   requirePaneRuntime,
   usePaneEntryDelivery,
   usePaneIsActive,
+  usePaneIsPresented,
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
@@ -73,7 +75,10 @@ function persistEndpoint(runtime: Pick<PaneRuntimeContextValue, "href" | "visitI
 // owns writes, the pane lands their answers.
 function Conversation({ conversationId }: { conversationId: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "Conversation");
-  const [state, store] = useChatStore(conversationId, runtime.paneId);
+  const observed = useObservationDemand(usePaneIsPresented());
+  const liveObservation = useRef(observed);
+  liveObservation.current = observed;
+  const [state, store] = useChatStore(conversationId, runtime.paneId, observed);
   const savedCatalog = useCatalogState();
   const saved = conversationId === null || savedCatalog.data === null ? null : catalogChat(savedCatalog.data, conversationId);
   const catalogRead = useServerValue({
@@ -423,7 +428,9 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const resendFeedback = useResendFeedback();
   const again = useCallback((openIntent: OpenIntent) => void paneStore.retryCommand(openIntent).then((outcome) => sayRefusal(slips, outcome)), [paneStore, slips]);
   useFailedReadRepair(holds && pending?.standing?.kind === "Unread", pending?.kind === "Busy", () => void store.refreshCommand());
-  useFailedReadRepair(history === "Unavailable" && !state.gone, state.readingTree, () => void store.load());
+  useFailedReadRepair((observed || state.acceptance !== null) && history === "Unavailable" && !state.gone, state.readingTree, () => {
+    if (liveObservation.current || store.getState().acceptance !== null) void store.load();
+  });
 
   usePaneReturnReady(savedOnly);
   if (state.defect) throw state.defect.error;

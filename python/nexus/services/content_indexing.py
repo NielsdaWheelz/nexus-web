@@ -340,7 +340,6 @@ def _complete_media_effects(db: Session, owner: IndexOwner, count: int) -> None:
             {"id": owner.id},
         ):
             media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=media_id)
-            db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def completed_content_index(
@@ -1127,7 +1126,6 @@ def run_media_reindex_job(
                     record(db, IndexSuperseded)
                     _request(db, media_id, reason, None)
                 record_input_change(db, owners=(f"media:{media_id}",))
-                db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
                 return not changed
 
             if not index_phase("attach_media_section_witnesses", attach):

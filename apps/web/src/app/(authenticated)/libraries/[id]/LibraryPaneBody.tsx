@@ -37,6 +37,7 @@ import { type LibraryPodcastIndex } from "@/lib/podcasts/api";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
 import { indexPaneQuery } from "@/lib/panes/indexPaneQuery";
 import { useLibraryEntriesRead } from "@/lib/panes/indexPaneEntry";
@@ -70,6 +71,7 @@ import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import {
   usePaneIsActive,
+  usePaneIsPresented,
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
@@ -101,6 +103,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
   const active = usePaneIsActive();
+  const observing = useObservationDemand(usePaneIsPresented());
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const query = indexPaneQuery("library", params)!;
@@ -111,7 +114,7 @@ function LibraryPane({ id }: { readonly id: string }) {
     const data = catalogEntries(value, id, new URLSearchParams(query));
     return data === null ? null : { data, consumption_revision: value.value.consumption_revision };
   });
-  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: ENTRIES });
+  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: ENTRIES, enabled: observing });
   const relevantMediaIds = useMemo(() => new Set(catalog.raw?.value.library_media.flatMap(row => row.library_id === id ? [row.media_id] : []) ?? []), [catalog.raw, id]);
   usePromoteLiveGroup(group, raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh
     ? [raw.data.consumption_revision] : null, relevantMediaIds);
@@ -158,7 +161,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   const source = list.status === "ready" ? list.source : LIVE_SOURCE;
   const live = source.kind === "live";
   const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
-  const suggestions = useSuggestions(suggestionDestination, active && library !== null && live);
+  const suggestions = useSuggestions(suggestionDestination, library !== null && live);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const order = useLibraryOrder(id, raw.status === "ready" && raw.source.kind === "live" && raw.fresh && raw.error === null ? raw.data.data.order_revision : null);
   const invalidView =
@@ -374,7 +377,7 @@ function LibraryPane({ id }: { readonly id: string }) {
       {readFeedback.announcement}
       <PaneSurface>
         {members.held}
-        <LibraryPodcastsSection library={library} active={active} source={shows} />
+        <LibraryPodcastsSection library={library} source={shows} />
         <PlaybackSourceContext.Provider value={capture}>
         <CollectionView geometry="UniformIndex"
           returnScope="Library.Entries"

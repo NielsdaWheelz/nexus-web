@@ -40,7 +40,7 @@ from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import advance_reader_publications, replace_reader_publication
 from nexus.services.reader_document import read_reader_document
 from nexus.services.reader_navigation import read_media_navigation_proof
-from nexus.services.media import get_media_for_viewer, read_processing_snapshot
+from nexus.services.media import get_media_for_viewer, media_observations
 from nexus.services import authored, highlights, library_entries, library_members, libraries
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.reader_excerpts import text_parts
@@ -402,7 +402,7 @@ else:
                 state=db.execute(text("SELECT revision,lexical_revision,section_bounds_key,status FROM content_index_states WHERE owner_kind='media' AND owner_id=:id"), {"id":UUID(f["source"])}).one()
                 assert sections is not None and state.lexical_revision==state.revision and state.section_bounds_key==sections.bounds_key, "piece result used an obsolete partition"
                 detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
-                processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
+                processing=media_observations(db,viewer_id=UUID(f["viewer"]),media_ids=[UUID(f["part"])])[UUID(f["part"])].processing
                 assert detail.text_search_ready and processing.text_search_ready, "piece lost current lexical capability"
                 # A real provider can finish vectors before this later evidence read.
                 # Observe the actual lexical-only publication phase under its owner locks;
@@ -418,7 +418,7 @@ else:
                     published=publish_text_index(db,owner=IndexOwner("media",source_id),source_kind="web_article",blocks=blocks,chunks=chunks,reason="oracle_corpus_seed")
                     assert published.status=="indexing", "publisher did not expose the lexical-only phase"
                     lexical_detail=get_media_for_viewer(db,UUID(f["viewer"]),UUID(f["part"]))
-                    lexical_processing=read_processing_snapshot(db,viewer_id=UUID(f["viewer"]),media_id=UUID(f["part"]))
+                    lexical_processing=media_observations(db,viewer_id=UUID(f["viewer"]),media_ids=[UUID(f["part"])])[UUID(f["part"])].processing
                     assert lexical_detail.text_search_ready and lexical_processing.text_search_ready, "piece lost lexical capability while vectors are not ready"
                     publication.rollback()
             root_context=(await read(UUID(f["viewer"]),"media:"+f["source"],f["neighbour"],kinds=("highlights",)))["results"]

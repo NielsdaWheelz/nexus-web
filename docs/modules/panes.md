@@ -113,7 +113,7 @@ the command publishes `Podcasts` and the panes reread through it a moment
 later. the library detail keeps admission followed by its matching reload and
 retry. Complete describes the admitted command, never provider sync completion.
 the RefreshPodcast resource action posts the same command and opens no pane; an
-open detail pane converges through `Podcasts` and its subscription stream.
+presented detail pane converges through `Podcasts` and finite foreground reads.
 shared pane source fencing, progress and lifecycle remain owned by
 `usePaneRefresh`.
 

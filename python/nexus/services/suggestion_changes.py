@@ -1,11 +1,11 @@
-"""Suggestion invalidation: durable source-owner clocks and transactional wakeups.
+"""Suggestion invalidation: durable source-owner clocks.
 
 Each changed canonical source supplies its stable namespaced identity. Only those
 clocks advance in the source transaction; unrelated owners never share a counter
 row. Multiple changed owners may advance the aggregate by more than one. Clock
 rows remain after source deletion, so their sum (including the migrated baseline)
 never loses a committed change. Only suggestion readers compute that sum; source
-publishers never read it. Notifications are hints, delivered only after commit.
+publishers never read it.
 """
 
 from __future__ import annotations
@@ -19,11 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from nexus.jobs.queue import JobRow
     from nexus.schemas.media_summary import ConsumptionState
-
-CHANNEL = "nexus_suggestions"
-NOTIFY_KEY = "changed"
 
 
 def input_revision(db: Session) -> int:
@@ -31,13 +27,8 @@ def input_revision(db: Session) -> int:
     return int(db.execute(text("SELECT sum(revision) FROM suggestion_inputs")).scalar_one())
 
 
-def notify_suggestions(db: Session) -> None:
-    """A transactional wakeup hint; readers always reread durable state."""
-    db.execute(text("SELECT pg_notify(:channel, :key)"), {"channel": CHANNEL, "key": NOTIFY_KEY})
-
-
 def record_input_change(db: Session, *, owners: Iterable[str]) -> None:
-    """Advance each changed source once and notify in its existing transaction.
+    """Advance each changed source once in its existing transaction.
 
     Keys name actual canonical identities, including natural composite identities;
     they are opaque clock keys, not a new resource-ref format. The baseline is
@@ -54,12 +45,6 @@ def record_input_change(db: Session, *, owners: Iterable[str]) -> None:
         """),
         {"owners": keys},
     )
-    notify_suggestions(db)
-
-
-def on_suggestion_job_history(db: Session, job: JobRow, execution_id: UUID) -> None:
-    """Queue retry/reclaim/dead transitions change observation, never source inputs."""
-    notify_suggestions(db)
 
 
 def delete_suggestion_feeds(db: Session, *, library_id: UUID, user_id: UUID | None = None) -> None:

@@ -9,9 +9,11 @@ import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedb
 import { sentence, useActiveRegion, useTransportVerbs } from "@/components/feedback/stage";
 import type { DocumentEmbed, TextUnit } from "@/lib/documentReader/model";
 import { articleContentLabel } from "@/lib/documentReader/chrome/ArticleContentNotice";
-import { usePaneIsVisible, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneIsPresented, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import type { Reader } from "@/lib/documentReader/DocumentReader";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { apiFetch, outcomeUnknown } from "@/lib/api/client";
@@ -97,11 +99,8 @@ function safeHref(value: string | null | undefined): string | null {
 export default function EmbedCard({ embed, reader }: { readonly embed: DocumentEmbed; readonly reader: Reader }) {
   const runtime = usePaneRuntime();
   const { display, target } = embed;
-  const visible = usePaneIsVisible();
   const [busy, setBusy] = useState(false);
   const retrieval = embed.retrieval;
-  useIntervalPoll({ enabled: visible && retrieval !== null && ["queued", "running", "recovering"].includes(retrieval.status), pollIntervalMs: 2000,
-    onPoll: () => { if (document.visibilityState === "visible") reader.reload(); } });
   const article = embed.provider === "x" && embed.kind === "link_preview";
   const thumbnail = safeHref(target.thumbnail_url);
   const title = target.title?.trim() ?? null;
@@ -258,15 +257,16 @@ function PostSaveButton({ disabled, busy, save }: { readonly disabled: boolean; 
 
 /** Archive hydration and missing-image recovery are independent of saving a post. */
 function PostArchive({ captureId }: { readonly captureId: string }) {
-  const visible = usePaneIsVisible();
+  const visible = useObservationDemand(usePaneIsPresented());
   const [busy, setBusy] = useState(false);
   const archive = usePaneFreeServerValue({
+    enabled: visible,
     key: `x-archive:${captureId}`, stale: "",
     load: async signal => (await apiFetch<ApiJson<"/x/captures/{capture_id}/archive", "get">>(`/api/x/captures/${captureId}/archive`, { signal })).data,
   });
   const work = archive.status === "ready" ? archive.data.retrieval : null;
-  useIntervalPoll({ enabled: visible && work !== null && ["queued", "running", "recovering"].includes(work.status), pollIntervalMs: 2000,
-    onPoll: () => { if (document.visibilityState === "visible") archive.refetch(); } });
+  useIntervalPoll({ enabled: visible && archive.status === "ready" && archive.error === null && work !== null && ["queued", "running", "recovering"].includes(work.status), pollIntervalMs: WORK_OBSERVATION_MS,
+    onPoll: () => archive.refetch().catch(() => { /* The read owner retains its failure. */ }) });
   const assets = archive.status === "ready" ? archive.data.assets : null;
   useEffect(() => {
     if (assets === null) return;

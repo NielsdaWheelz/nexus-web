@@ -1,5 +1,5 @@
-// Event streams through the session lane. The bff ends each one cleanly before
-// maxDuration and the client resumes from its cursor.
+// Only chat owns a streaming lifetime. Retired paths keep the session/wire error
+// boundary and receive finite structured refusals from the API.
 import { proxySession } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";
@@ -12,5 +12,6 @@ export async function GET(
 ): Promise<Response> {
   const { path } = await params;
   const target = `/stream/${path.map(encodeURIComponent).join("/")}`;
-  return proxySession(request, target, "Stream");
+  const chat = path.length === 3 && path[0] === "chat-runs" && path[2] === "events";
+  return proxySession(request, target, chat ? "Stream" : "Json");
 }

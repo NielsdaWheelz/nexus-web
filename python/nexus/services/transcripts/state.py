@@ -1,7 +1,7 @@
-"""Transcript state persistence and its transaction-bound media notifications.
+"""Transcript state persistence and publication revisions.
 
 Absolute state upserts converge on retry; publication revisions advance once inside
-that publication transaction. PostgreSQL delivers notifications only after commit.
+that publication transaction. finite observations read the committed state.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ def advance_transcript_content_revision(db: Session, *, media_id: UUID) -> None:
         # justify-defect: transcript publication must establish its state before
         # advancing the content identity in the same transaction.
         raise AssertionError("transcript publication has no lifecycle row")
-    db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def set_media_transcript_state(
@@ -95,8 +94,6 @@ def set_media_transcript_state(
             "now": now,
         },
     )
-
-    db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def ensure_media_transcript_state_row(

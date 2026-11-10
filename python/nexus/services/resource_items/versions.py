@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceVersion
@@ -19,7 +19,7 @@ def evidence_revision(db: Session, *, viewer_id: UUID) -> str:
     """Opaque equality token for the viewer's readable remote evidence.
 
     It is independent of authored feed cursors and confers no source access.
-    Pull responses and writing hints read this same owner in their snapshot.
+    feed responses read this owner in their snapshot.
     Source lanes survive source removal; the sum only advances. Captures use
     their immutable fragment identity, including when they have no saved media.
     """
@@ -33,13 +33,11 @@ def evidence_revision(db: Session, *, viewer_id: UUID) -> str:
 
 
 def invalidate_evidence(db: Session, *, projections: set[tuple[UUID, ResourceRef]]) -> None:
-    """Flush authorized audience/source revisions; notification publishes at commit."""
+    """Flush authorized audience/source revisions in the caller's transaction."""
     for viewer_id, ref in sorted(
         projections, key=lambda item: (item[0], item[1].scheme, item[1].id)
     ):
         bump_version(db, viewer_id=viewer_id, ref=ref, lane="evidence")
-    for viewer_id in sorted({viewer for viewer, _ in projections}):
-        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(viewer_id)})
 
 
 def ensure_version(

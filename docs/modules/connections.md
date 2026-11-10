@@ -63,7 +63,7 @@ retained quoted user messages supply source-scoped quotation roots, owned by mes
 identity. their question opens the chat; their frozen quotation opens its source.
 these roots count under links, have neutral markers and no authored placement,
 unlink or highlight controls. context detachment leaves them; message/subtree/chat
-deletion removes them. source evidence lanes and the existing writing stream
+deletion removes them. source evidence lanes and finite foreground authored catch-up
 refresh other profiles even when source context already existed. capture map versions
 sum distinct fragment lanes, so changing a nonmaximum lane changes the token.
 current resource presentation is hydrated in batches; primary annotations carry

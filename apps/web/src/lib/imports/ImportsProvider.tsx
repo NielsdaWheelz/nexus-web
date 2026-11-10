@@ -4,8 +4,8 @@
  * The Imports summary observer (docs/modules/imports.md). Wakes and polls read
  * the observation clock; manual refresh and mutations also advance the strict
  * collection revision. Collections coalesce clock advances through revalidate.
- * Panes and pending media continuations retain observation without expiry;
- * attaching an observer wakes the summary without resetting collections.
+ * The visible shell shares one summary. Presented busy consumers accelerate it;
+ * mounting a retained pane alone grants no observation demand.
  */
 
 import {
@@ -28,10 +28,8 @@ import {
   type ImportSummary,
 } from "@/lib/imports/api";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-
-const POLL_MS = 5_000;
-/** With no retained observer, polling lasts this long after the last wake. */
-const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
+import { PASSIVE_OBSERVATION_MS, WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 
 interface ImportsContextValue {
   readonly summary: ServerValue<ImportSummary>;
@@ -42,8 +40,7 @@ interface ImportsContextValue {
   /** Strictly refresh collections and wake the summary. */
   refresh(): void;
   /**
-   * A pane or pending continuation retains observation and wakes the read.
-   * Polling needs no expiry window while an observer is retained.
+   * A presented pane or continuation accelerates a busy summary; release on hide.
    */
   retainObserver(): () => void;
 }
@@ -51,28 +48,26 @@ interface ImportsContextValue {
 const ImportsContext = createContext<ImportsContextValue | null>(null);
 
 export function ImportsProvider({ children }: { children: ReactNode }) {
-  const [wake, setWake] = useState(() => ({ count: 0, at: Date.now() }));
+  const demand = useObservationDemand(true);
   const [revision, setRevision] = useState(0);
   const [observers, setObservers] = useState(0);
-  const [visible, setVisible] = useState(true);
-  const [windowOpen, setWindowOpen] = useState(true);
-  const summary = usePaneFreeServerValue({
-    key: "imports-summary",
-    stale: String(wake.count),
-    load: fetchImportSummary,
-  });
-  const observe = useCallback(
-    () => setWake((last) => ({ count: last.count + 1, at: Date.now() })),
-    [],
-  );
+  const summary = usePaneFreeServerValue({ key: "imports-summary", enabled: demand,
+    stale: "", load: fetchImportSummary });
+  const latest = useRef({ demand, summary });
+  latest.current = { demand, summary };
+  const observe = useCallback(() => {
+    const now = latest.current;
+    if (now.demand && now.summary.status === "ready" && now.summary.error === null) now.summary.revalidate({ passive: true });
+  }, []);
   const refresh = useCallback(() => {
-    setRevision((last) => last + 1);
-    observe();
-  }, [observe]);
+    setRevision(last => last + 1);
+    const now = latest.current;
+    if (now.demand) void now.summary.refetch().catch(() => { /* The read owner retains failures and rethrows defects. */ });
+  }, []);
   const retainObserver = useCallback(() => {
-    setObservers((count) => count + 1);
+    setObservers(count => count + 1);
     observe();
-    return () => setObservers((count) => count - 1);
+    return () => setObservers(count => count - 1);
   }, [observe]);
 
   useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
@@ -87,59 +82,21 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [entries, refresh]);
 
-  // A tab opened in the background reports its visibility once rather than
-  // assuming it.
   useEffect(() => {
-    let blurred = false;
-    const onVisibility = () => {
-      const shown = document.visibilityState === "visible";
-      setVisible(shown);
-      if (shown) observe();
-    };
-    const onBlur = () => {
-      blurred = true;
-    };
-    const onFocus = () => {
-      if (blurred) observe();
-      blurred = false;
-    };
-    setVisible(document.visibilityState === "visible");
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("pageshow", observe);
+    if (!demand) return;
+    // Demand admission owns its read; focus and online are separate repair wakes.
+    window.addEventListener("focus", observe);
     window.addEventListener("online", observe);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("pageshow", observe);
-      window.removeEventListener("online", observe);
-    };
-  }, [observe]);
-
-  useEffect(() => {
-    setWindowOpen(true);
-    const timer = window.setTimeout(
-      () => setWindowOpen(false),
-      wake.at + CLOSED_PANE_WINDOW_MS - Date.now(),
-    );
-    return () => window.clearTimeout(timer);
-  }, [wake.at]);
+    return () => { window.removeEventListener("focus", observe); window.removeEventListener("online", observe); };
+  }, [demand, observe]);
 
   // justify-polling: Imports is a composed projection with no push plane. A
   // failed read stops polling until the next wake or Refresh.
   const ready = summary.status === "ready" ? summary : null;
   useIntervalPoll({
-    enabled:
-      ready !== null &&
-      ready.error === null &&
-      !ready.refreshing &&
-      ready.data.unfinished_work_count > 0 &&
-      visible &&
-      (observers > 0 || windowOpen),
-    pollIntervalMs: POLL_MS,
-    onPoll: summary.refetch,
+    enabled: demand && ready !== null && ready.error === null && !ready.refreshing,
+    pollIntervalMs: observers > 0 && ready !== null && ready.data.work_in_flight ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS,
+    onPoll: () => summary.refetch().catch(() => { /* The read owner retains its failure. */ }),
   });
 
   const value = {

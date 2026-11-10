@@ -95,6 +95,16 @@ re-present existing data and never refetch, publish, reorder or move focus.
 | `POST /chat-reader-selections/preview` | `{key, expected_capture_revision}` | `ReaderSelectionPreview{key, expected_capture_revision, item, revision}` | private no-store read; no writes |
 | `GET /stream/chat-runs/{id}/events?after=N` | none | sse `assistant_text_delta{text}`, `tool_call_start`, `tool_result`, `context_ref_added{id, resource_ref}`, `done{status}`; unsequenced `ExecutionAdvisory{phase, cancel_requested}` | resume from the last seen sequence |
 
+observation demand is distinct from mounted command/draft ownership. only a
+presented foreground conversation tails runs. hiding silently stops tails and
+retains accepted text/cursors; return first reads each pending run, then settles
+terminal output or resumes the same run/cursor. generation fences cover replies,
+tail callbacks and bookkeeping. suspension never resends a command or creates
+`Lost`. chat retains its 280-second stream renewal and 15-second repair behavior.
+passive history reads and retries inherit observation demand; deferred or
+interrupted reads resume on return. accepted command landing retains its own
+read lifetime, independent of presentation.
+
 a send's `destination` is `{kind:"New", expected_deletion_revision}` or
 `{kind:"Existing", conversation_id, expected_revision, insertion:
 {kind:"Empty"} | {kind:"Reply", parent_message_id, branch_anchor}}`. creation,

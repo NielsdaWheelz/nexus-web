@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Ruling } from "@/components/feedback/Ruling";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
-import type { Line } from "@/components/feedback/stage";
+import { useActiveRegion, type Line } from "@/components/feedback/stage";
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
@@ -14,21 +14,25 @@ import { openAsyncResult } from "@/lib/panes/openResult";
 import type { OpenIntent } from "@/lib/ui/targetActivation";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { apiFetch, isApiError, isRefusal, isSameSystemApiDefect } from "@/lib/api/client";
-import { useFailedReadRepair, usePaneFreeServerValue } from "@/lib/api/serverState";
+import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
 import {
   createReading,
   platePath,
-  watchReading,
   type OracleReading,
 } from "@/lib/oracle/oracle";
 import {
   requirePaneRuntime,
   usePaneParam,
+  usePaneIsPresented,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
+import { WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useRefreshStamp } from "@/lib/consumption/refresh";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { toRoman } from "@/lib/toRoman";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -121,16 +125,16 @@ export default function OracleReadingPaneBody() {
     value => ({ changed: false, unconfirmed: value.attempt !== null, stopsBrowserWork: false }));
   const { retrying, unknown } = retryDraft.value;
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-  const [loads, setLoads] = useState(0);
-  // Stream frames replace the loaded reading; each frame is the whole reading.
-  const [streamed, setStreamed] = useState<OracleReading | null>(null);
-  /** The watch that went down, by the load that opened it: a later load is its reread, in flight. */
-  const [lost, setLost] = useState<{ error: Error; load: number } | null>(null);
+  const observing = useObservationDemand(usePaneIsPresented());
+  const foreground = useRefreshStamp(observing, 0);
+  const speak = useActiveRegion();
+  const unfinishedSeen = useRef<string | null>(null);
   const { fail } = useOutcome();
   const resendFeedback = useResendFeedback();
   const detail = usePaneFreeServerValue<OracleReading>({
     key: `/oracle/readings/${readingId}`,
-    stale: "",
+    enabled: observing,
+    stale: String(foreground),
     load: async (signal) =>
       (
         await apiFetch<ApiJson<"/oracle/readings/{reading_id}", "get">>(
@@ -143,32 +147,17 @@ export default function OracleReadingPaneBody() {
     detail.status === "ready" && detail.data.id === readingId
       ? detail.data
       : null;
-  const reading = streamed?.id === readingId ? streamed : loaded;
-  const unfinishedId =
-    reading?.status === "pending" || reading?.status === "streaming"
-      ? reading.id
-      : null;
-
-  useEffect(() => {
-    if (unfinishedId === null) return;
-    let live = true;
-    const stop = watchReading(
-      unfinishedId,
-      (next) => {
-        if (!live) return;
-        setStreamed(next);
-        setLost(null);
-      },
-      error => { if (live) setLost({ error, load: loads }); },
-    );
-    return () => {
-      live = false;
-      stop();
-    };
-  }, [unfinishedId, loads]);
+  const reading = loaded;
+  const unfinished = reading?.status === "pending" || reading?.status === "streaming";
+  if (unfinished) unfinishedSeen.current = reading.id;
+  // justify-polling: oracle publishes prose at completion; its finite detail
+  // read follows unfinished work while presented, without a passive stream.
+  useIntervalPoll({ enabled: observing && unfinished && detail.status === "ready" && detail.error === null,
+    pollIntervalMs: WORK_OBSERVATION_MS, onPoll: () => detail.refetch().catch(() => { /* The read owner retains its failure. */ }) });
 
   const concordance = usePaneFreeServerValue({
     key: reading?.status === "complete" ? `concordance:${reading.id}` : null,
+    enabled: observing,
     stale: "",
     load: (signal) =>
       apiFetch<ApiJson<"/oracle/readings/{reading_id}/concordance", "get">>(
@@ -177,22 +166,14 @@ export default function OracleReadingPaneBody() {
       ),
   });
 
-  // a stream that ends without an api error is this system's defect
-  if (lost !== null && !isApiError(lost.error)) throw lost.error;
-  usePaneReturnReady(reading !== null || detail.status === "failed" || lost !== null);
+  usePaneReturnReady(reading !== null || detail.status === "failed");
   usePaneChrome({
     resourceRef:
       reading === null
         ? undefined
         : canonicalResourceRef({ scheme: "oracle_reading", id: readingId }),
   });
-  const reload = () => {
-    detail.refetch();
-    setLoads((count) => count + 1);
-  };
-  // reads wake: an unfinished reading's lost watch opens again on focus and reconnection
-  const watchLost = lost !== null && unfinishedId !== null;
-  useFailedReadRepair(watchLost, lost !== null && lost.load !== loads, reload);
+  const reload = () => detail.refetch();
   const retryReading = async (intent: OpenIntent) => {
     const current = retryDraft.read();
     if (reading === null || current.retrying) return;
@@ -402,8 +383,8 @@ export default function OracleReadingPaneBody() {
           </section> : null}
           {reading?.status === "failed" && reading.error_code !== null && (
             <section className={styles.errorPanel}>
-              {/* a failure the stream brought is news; one loaded cold is not */}
-              <Fact speak={reading === streamed} line={failureLine(reading.error_code)}
+              {/* A newly observed terminal failure is news; a cold result is not. */}
+              <Fact speak={speak && unfinishedSeen.current === reading.id} line={failureLine(reading.error_code)}
                 verbs={recovery ? recovery.verbs ?? undefined : [retryVerb]} />
               {unknown && recovery ? <Hold id={unknown.id} attempt={unknown.attempt} {...recovery} /> : null}
             </section>
@@ -412,7 +393,8 @@ export default function OracleReadingPaneBody() {
           {reading === null && detail.status === "loading" ? <Ruling /> : null}
           {detail.status === "failed" ? detail.error.code === "E_NOT_FOUND" ? <Fact line={{ fact: "this reading doesn’t exist." }} />
             : <Failed error={detail.error} noun="readings" retry={{ run: reload, busy: detail.retrying }} />
-            : watchLost ? <Failed error={lost.error} noun="live updates" retry={{ run: reload, busy: lost.load !== loads }} /> : null}
+            : detail.status === "ready" && detail.error !== null
+              ? <Failed error={detail.error} noun="the updated reading" retry={{ run: reload, busy: detail.refreshing }} /> : null}
         </article>
       </div>
     </OracleTheme>

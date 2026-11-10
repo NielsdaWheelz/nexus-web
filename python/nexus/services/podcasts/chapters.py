@@ -129,7 +129,6 @@ def replace_rows(db: Session, *, media_id: UUID, rows: list[dict[str, Any]]) -> 
         """),
             [row | {"media_id": media_id, "idx": i} for i, row in enumerate(rows)],
         )
-    db.execute(text("SELECT pg_notify('media_events', :id)"), {"id": str(media_id)})
 
 
 def _lock_owner(db: Session, *, context: JobExecutionContext, media_id: UUID, url: str) -> bool:

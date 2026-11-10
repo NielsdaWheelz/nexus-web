@@ -5,7 +5,7 @@
 // availability. It rereads the media whenever a new enrichment stamp or a newly admitted
 // title job arrives; a failed reread keeps the old values. Desktop dialog, mobile sheet.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { useTransportVerbs, type Line } from "@/components/feedback/stage";
@@ -17,6 +17,7 @@ import { useChangeStamp } from "@/lib/api/changes";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { apiFetch } from "@/lib/api/client";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import type { ApiJson } from "@/lib/api/wire";
 import {
   groupContributorCredits,
@@ -28,7 +29,6 @@ import {
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
 import { mediaSearchLine, mediaSourceLine } from "@/lib/media/mediaErrorMessage";
-import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
 import {
   METADATA_FAILURE_COPY,
   X_TITLE_CONTEXT_HELP,
@@ -39,10 +39,9 @@ import {
   xSourceCoverage,
 } from "@/lib/media/mediaMetadataCopy";
 import {
-  reconnectMetadataOperations,
   reconnectMetadataOperation,
   useMetadataOperation,
-  useMediaMetadataOperations,
+  useMediaObservation,
   type MetadataEnrichmentView,
   type MetadataOperation,
 } from "@/lib/media/mediaMetadataOperations";
@@ -294,15 +293,17 @@ export default function MediaInfoOverlay({
       inspection = <Fact line={TRANSPORT_LINES[transport].read("this update")} verbs={verbs ?? undefined} />;
     }
   }
-  const observation = useMediaMetadataOperations(open ? mediaId : null);
-  const processing = useMediaProcessingStatus(open ? mediaId : null);
-  const view = observation.view;
+  const observation = useMediaObservation(open ? mediaId : null, open);
+  const observed = observation.status === "ready" ? observation.observation : null;
+  const view = observed?.metadata_enrichment ?? null;
+  const processing = observed?.processing ?? null;
   const changes = useChangeStamp("Metadata");
-  const foreground = useRefreshStamp(open, 0);
-  useEffect(() => { if (open) reconnectMetadataOperations(mediaId); }, [open, mediaId, foreground]);
+  const observing = useObservationDemand(open);
+  const foreground = useRefreshStamp(observing, 0);
   const titleJob =
     view?.operation?.purpose === "title" ? view.operation.job_id : "";
   const media = useServerValue({
+    enabled: observing,
     key: open ? `/media/${mediaId}` : null,
     // New source publication admits a title job before naming can succeed or fail.
     stale: `${view?.last_enriched_at ?? ""}:${titleJob}:${changes}:${foreground}`,
@@ -327,8 +328,9 @@ export default function MediaInfoOverlay({
   /> : null;
   const readStatus = media.status === "loading" ? <Ruling /> : media.error !== null
     ? <Failed error={media.error} noun="current metadata" retry={{ run: media.refetch, busy: media.status === "ready" ? media.refreshing : media.retrying }} /> : null;
-  const content = media.status === "ready" ? <MediaInfo
-    media={processing.snapshot ? { ...media.data, ...processing.snapshot } : media.data}
+  const content = observation.status === "ready" && observation.observation === null
+    ? <Fact line={{ fact: "this item isn’t available to you." }} /> : media.status === "ready" ? <MediaInfo
+    media={processing ? { ...media.data, ...processing } : media.data}
     pinned={jobId !== null}
     readStatus={readStatus}
   >{operationInfo}</MediaInfo> : <div className={styles.content}>

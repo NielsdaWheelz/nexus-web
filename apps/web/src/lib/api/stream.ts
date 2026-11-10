@@ -1,8 +1,7 @@
 // Live streams (docs/modules/api-edge.md): one GET under /api/stream/ through
 // the bff, resumed from the last accepted cursor after any cut (a network drop,
 // the bff's planned cut before the platform's function limit). The server's
-// committed state is the truth: a reconnect replays what was missed (cursor
-// streams) or re-sends the whole snapshot (snapshot streams).
+// committed chat events are the truth: a reconnect replays what was missed.
 import { installedApp, remoteAdmission, remoteReady, subscribeAdmission } from "@/lib/native/admission";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {

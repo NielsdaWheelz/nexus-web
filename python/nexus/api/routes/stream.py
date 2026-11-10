@@ -1,15 +1,7 @@
-"""Live streams: ``GET /stream/...``, reached through the bff's session lane like any route.
+"""Chat output: committed events after a cursor, plus unsequenced execution advisories.
 
-Two semantics share one envelope. A cursor stream (chat runs) emits each committed event
-with ``id: <seq>`` and resumes after ``?after=<seq>``; a snapshot stream (oracle readings,
-metadata) emits the whole
-``state`` when it changed and ``done`` when terminal, and a reconnect re-sends it. Every
-wake (a NOTIFY carrying the entity id, or the keepalive timeout) re-reads committed state
-in a fresh session, so a missed NOTIFY delays but never drops. Snapshots listen before
-their initial read, accept that snapshot before response creation, and emit it without
-another query. Setup owns listener cleanup until the response takes it, including before
-body iteration; a later read that finds the entity gone closes the stream cleanly.
-Media processing stays live while mounted, including idle publication changes.
+Each notification or existing idle reconciliation reads a fresh committed snapshot.
+The response owns its listener through completion, cancellation and failed sends.
 """
 
 import json
@@ -30,20 +22,13 @@ from nexus.db.listen import Listener, open_listener
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
-from nexus.schemas.suggestions import SuggestionCurrentOut, SuggestionWithdrawnOut
-from nexus.schemas.writing import WritingState
-from nexus.services import authored, metadata_operations, suggestion_changes, suggestion_shortlists
-from nexus.services import media as media_service
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
-from nexus.services.oracle import readings as oracle_readings
-from nexus.services.resource_items.versions import evidence_revision
 
 router = APIRouter(tags=["streaming"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 KEEPALIVE_SECONDS = 15.0
 _GONE = frozenset({ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_MEDIA_NOT_FOUND})
-type Snapshot = tuple[dict[str, Any], bool]
 type Advisory = tuple[str, dict[str, Any]]
 
 
@@ -110,101 +95,6 @@ async def _cursor_frames(
             yield ": keepalive\n\n"
 
 
-async def _snapshot_frames(
-    request: Request, listener: Listener, read: Callable[[], Snapshot], initial: Snapshot
-) -> AsyncIterator[str]:
-    last, quiet, first = None, time.monotonic(), True
-    async for _ in listener.wakes(KEEPALIVE_SECONDS):
-        if await request.is_disconnected():
-            return
-        if first:
-            payload, terminal = initial
-            first = False
-        else:
-            try:
-                payload, terminal = await run_in_threadpool(read)
-            except ApiError as exc:
-                if exc.code in _GONE:
-                    return
-                raise
-        if payload != last:
-            last, quiet = payload, time.monotonic()
-            yield _frame("state", payload)
-        if terminal:
-            yield _frame("done", payload)
-            return
-        if time.monotonic() - quiet >= KEEPALIVE_SECONDS:
-            quiet = time.monotonic()
-            yield ": keepalive\n\n"
-
-
-async def _snapshot_stream(
-    request: Request, channel: str, key: UUID, read: Callable[[], Snapshot]
-) -> StreamingResponse:
-    listener = await open_listener(channel, str(key))
-    try:
-        initial = await run_in_threadpool(read)
-        return _StreamResponse(_snapshot_frames(request, listener, read, initial), listener)
-    except BaseException:
-        await listener.close()
-        raise
-
-
-@router.get("/stream/writing")
-async def stream_writing(request: Request, viewer: ViewerDep) -> StreamingResponse:
-    """Listen first, then read the authored head and independent evidence token.
-
-    A hint only: clients catch up through ``GET /authored/changes`` from their cursor and
-    refetch document maps whose ``evidence_version`` moved."""
-
-    def read() -> Snapshot:
-        with _snapshot() as db:
-            revision = str(authored.head(db, viewer.user_id))
-            evidence = evidence_revision(db, viewer_id=viewer.user_id)
-        state = WritingState(revision=revision, evidence_revision=evidence)
-        return state.model_dump(mode="json"), False
-
-    return await _snapshot_stream(request, "nexus_writing", viewer.user_id, read)
-
-
-@router.get("/stream/lectern/suggestions")
-async def stream_lectern_suggestions(request: Request, viewer: ViewerDep) -> StreamingResponse:
-    return await _stream_suggestions(request, viewer_id=viewer.user_id, library_id=None)
-
-
-@router.get("/stream/libraries/{library_id}/suggestions")
-async def stream_library_suggestions(
-    request: Request, library_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    return await _stream_suggestions(request, viewer_id=viewer.user_id, library_id=library_id)
-
-
-async def _stream_suggestions(
-    request: Request, *, viewer_id: UUID, library_id: UUID | None
-) -> StreamingResponse:
-    def read(*, initial: bool = False) -> Snapshot:
-        try:
-            with _snapshot() as db:
-                state = suggestion_shortlists.read_suggestion_state(
-                    db, viewer_id=viewer_id, library_id=library_id
-                )
-        except ApiError as exc:
-            if initial or exc.code != ApiErrorCode.E_LIBRARY_NOT_FOUND:
-                raise
-            return SuggestionWithdrawnOut().model_dump(mode="json"), True
-        if state.capability == "NotApplicable":
-            return SuggestionWithdrawnOut().model_dump(mode="json"), True
-        return SuggestionCurrentOut(state=state).model_dump(mode="json"), False
-
-    listener = await open_listener(suggestion_changes.CHANNEL, suggestion_changes.NOTIFY_KEY)
-    try:
-        initial = await run_in_threadpool(read, initial=True)
-        return _StreamResponse(_snapshot_frames(request, listener, read, initial), listener)
-    except BaseException:
-        await listener.close()
-        raise
-
-
 @router.get("/stream/chat-runs/{run_id}/events")
 async def stream_chat_run_events(
     request: Request, run_id: UUID, viewer: ViewerDep, after: Annotated[int, Query(ge=0)] = 0
@@ -240,73 +130,3 @@ async def stream_chat_run_events(
     except BaseException:
         await listener.close()
         raise
-
-
-@router.get("/stream/oracle-readings/{reading_id}/events")
-async def stream_oracle_reading_events(
-    request: Request, reading_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    """The reading on each change; ``done`` once complete or failed."""
-
-    def read() -> Snapshot:
-        with _snapshot() as db:
-            reading = oracle_readings.get_reading(
-                db, viewer_id=viewer.user_id, reading_id=reading_id
-            )
-        return reading.model_dump(mode="json"), reading.status in ("complete", "failed")
-
-    return await _snapshot_stream(request, "oracle_readings", reading_id, read)
-
-
-@router.get("/stream/media/{media_id}/events")
-async def stream_media_events(
-    request: Request, media_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    """Work and publication changes while mounted; access loss ends the stream."""
-
-    def read() -> Snapshot:
-        with _snapshot() as db:
-            frame = media_service.read_processing_snapshot(
-                db, viewer_id=viewer.user_id, media_id=media_id
-            )
-        return frame.model_dump(mode="json"), False
-
-    return await _snapshot_stream(request, "media_events", media_id, read)
-
-
-@router.get("/stream/media/{media_id}/metadata/events")
-async def stream_metadata_events(
-    request: Request, media_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    """Metadata enrichment state until nothing is unfinished (an idle media: one frame).
-
-    Only a new run changes the view then; the client reopens the stream on admission and
-    on every read that can follow one."""
-
-    def read() -> Snapshot:
-        with _snapshot() as db:
-            view = metadata_operations.metadata_enrichment_for_viewer(
-                db, viewer_id=viewer.user_id, media_id=media_id
-            )
-        return view.model_dump(mode="json"), view.unfinished_count == 0
-
-    return await _snapshot_stream(request, "media_events", media_id, read)
-
-
-@router.get("/stream/media/{media_id}/metadata-enrichment/{job_id}/events")
-async def stream_metadata_operation_events(
-    request: Request, media_id: UUID, job_id: UUID, viewer: ViewerDep
-) -> StreamingResponse:
-    """Follow the accepted job, independently of newer operations on its media."""
-
-    def read() -> Snapshot:
-        with _snapshot() as db:
-            operation = metadata_operations.metadata_operation_for_viewer(
-                db, viewer_id=viewer.user_id, media_id=media_id, job_id=job_id
-            )
-        return operation.model_dump(mode="json"), operation.status in (
-            "completed",
-            "failed",
-        )
-
-    return await _snapshot_stream(request, "media_events", media_id, read)

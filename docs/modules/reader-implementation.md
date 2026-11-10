@@ -203,9 +203,14 @@ erasing completion history. whole-source and sibling progress remain independent
 
 `transcript_navigation.py` reads ordered fragment ids and canonical publisher chapter
 facts. its digest is both navigation `key` and processing `transcript_reader_key`;
-body identity remains the segment-id digest. state/publication/chapter transactions
-notify `media_events` after commit. the pane reloads on a changed key or coverage;
-there is no episode-pane provisioning poll or raw media-response spread.
+body identity remains the segment-id digest. the finite composite media observation
+compares that key and coverage. one pane effect coalesces main/child publication,
+metadata publication and citation/evidence changes into one reader reload;
+operation phase and unchanged polls never reload prose. child discovery attaches
+after reader creation and performs one baseline revalidation when needed.
+readability owns mounting and progress commits. separate observation demand gates
+automatic failed-read repair and foreground catch-up; hidden readers retain
+content, selection and position. keyboard focus has no separate reload owner.
 before disabling a focused admission button, the hosted pane holds focus on its
 existing root. root blur or pane deactivation cancels the handoff. the ready reader
 takes focus only while that active pane's root still holds it; background completion
@@ -788,7 +793,7 @@ stretch with nothing nearby stays blank.
 
 | file | owns |
 | --- | --- |
-| `MediaPaneBody.tsx` | composition: media record (+ processing stream, metadata re-read), the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
+| `MediaPaneBody.tsx` | composition: media record, shared finite processing/metadata observations, the reader, annotations, arrivals, find, evidence/contents bodies, render states, banners, end of document and the lectern prompt |
 | `hostedReader.ts` | `hostedSource`, `hostedProgress`, locator/extent conversion, displayed-publication validation and visit-owned source inspection |
 | `annotations.ts` | `MediaAnnotations`: local authored highlights, attached notes and links remain authoritative; separately reads the mounted media and distinct X owner maps. Each owner occurrence admits offsets only at its explicit publication generation. Canonical evidence rows dedupe by ref while mounted decorations retain their occurrences; a replaced document cancels its old read wave, including same-identity replacements. Failed reads retain only the still-mounted owners’ cached maps. |
 | `useAnnotationVerbs.ts` | selection admission, canonical mark verbs, mobile bounds capture/confirmation and highlight pane entries scoped to this reader visit |

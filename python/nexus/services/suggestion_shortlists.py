@@ -121,7 +121,7 @@ def _read(
 def read_suggestion_state(
     db: Session, *, viewer_id: UUID, library_id: UUID | None = None
 ) -> SuggestionStateOut:
-    """State only, without a moving observation clock, for snapshot/diff streams."""
+    """Current eligibility and refresh advice without loading publication items."""
     state, _, _ = _read(db, viewer_id=viewer_id, library_id=library_id)
     return state
 
@@ -194,7 +194,6 @@ def request_suggestions_refresh(
         )
         feed.current_job_id = job.id
         db.flush()
-        suggestion_changes.notify_suggestions(db)
         state = read_suggestion_state(db, viewer_id=viewer_id, library_id=library_id)
         return state
 
@@ -318,7 +317,6 @@ def run_suggestion_refresh_job(
                 db.flush()
             finished = queue.finish_job(db, context=context, result=result)
             assert finished is not None  # the claim stays locked through settlement
-            suggestion_changes.notify_suggestions(db)
             return result
 
         return retry_serializable(db, "suggestions.publish", publish)

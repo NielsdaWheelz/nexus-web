@@ -1,4 +1,4 @@
-"""Oracle wire models (one reading shape for detail and the status stream) and the two
+"""Oracle wire models (one reading shape for finite detail) and the two
 jsonb shapes the reading row stores: its passages and a captured plate."""
 
 from datetime import datetime

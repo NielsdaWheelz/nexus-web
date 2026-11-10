@@ -479,11 +479,12 @@ type MetadataOperationOut = Annotated[
 
 
 class MetadataEnrichmentView(_Frozen):
-    """The latest operation, the oldest unfinished one, and whether the viewer may start one;
-    the metadata stream ends once ``unfinished_count`` is 0 (only a new run changes it)."""
+    """The latest/oldest unfinished operations and admission; held work stays unfinished
+    while ``work_in_flight`` names only work that can progress without repair."""
 
     operation: MetadataOperationOut | None
     unfinished_count: Annotated[int, Field(ge=0)]
+    work_in_flight: bool
     unfinished_operation: MetadataUnfinishedOperation | None
     retry: MetadataRetry
     last_enriched_at: AwareDatetime | None

@@ -45,8 +45,7 @@ import { bibliographyMetadata } from "@/lib/resources/metadata";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 import { usePaneFreeServerValue, type ServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
-import { openStream } from "@/lib/api/stream";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { ApiJson } from "@/lib/api/wire";
 import { localPoint, readingPublicationIdentity } from "@/lib/documentReader/model";
 import { PositionRibbon } from "@/lib/documentReader/chrome/MapRail";
 import {
@@ -66,14 +65,14 @@ import type { LecternItem } from "@/lib/lectern/api";
 import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaSourceLine } from "@/lib/media/mediaErrorMessage";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
-import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
+import { useMediaObservation, useMediaObservations } from "@/lib/media/mediaMetadataOperations";
 import { fetchAcceptedSource } from "@/lib/imports/ingest";
 import {
   paneSourceKey,
   requirePaneRuntime,
   usePaneIsActive,
   usePaneIsVisible,
+  usePaneIsPresented,
   usePaneParam,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -86,6 +85,8 @@ import type { OpenIntent, TargetActivationEvent } from "@/lib/ui/targetActivatio
 import { openAsyncResult } from "@/lib/panes/openResult";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { useReaderActivity } from "./activity";
@@ -132,12 +133,13 @@ export default function MediaPaneBody() {
 /** Acceptance survives deduplication; mount the reader only after its identity settles. */
 function AcceptedSourcePane({ attemptId, postRevision }: { readonly attemptId: string; readonly postRevision: string | null }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "AcceptedSourcePane");
-  const visible = usePaneIsVisible();
+  const visible = useObservationDemand(usePaneIsPresented());
   const speak = useActiveRegion();
   const transportVerbs = useTransportVerbs();
   usePaneChrome({ titleRole: "Pointer" });
   const source = usePaneFreeServerValue({
     key: `source-attempt:${attemptId}`,
+    enabled: visible,
     stale: "",
     load: (signal) => fetchAcceptedSource(attemptId, signal),
   });
@@ -151,7 +153,7 @@ function AcceptedSourcePane({ attemptId, postRevision }: { readonly attemptId: s
   // on admission, online or focus changes, or through an explicit retry.
   useIntervalPoll({
     enabled: visible && result !== null && !settled && error === null,
-    pollIntervalMs: 2_000,
+    pollIntervalMs: WORK_OBSERVATION_MS,
     onPoll: () => {
       // The read's busy state survives hiding and revealing its pane.
       if (document.visibilityState === "visible" && source.status === "ready" && !source.refreshing)
@@ -189,14 +191,18 @@ function MediaRoute({ id }: { readonly id: string }) {
   const [interacted, setInteracted] = useState(false);
   const pinSaved = useCallback(() => setInteracted(true), []);
   const metadataStamp = useChangeStamp("Metadata");
-  const metadata = useMediaMetadataOperations(usePaneIsVisible() ? id : null);
-  const operation = metadata.view?.operation;
+  const presented = usePaneIsPresented();
+  const observing = useObservationDemand(presented);
+  const observation = useMediaObservation(id, presented);
+  const metadata = observation.status === "ready" ? observation.observation?.metadata_enrichment ?? null : null;
+  const operation = metadata?.operation;
   const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   const speak = useActiveRegion();
   const { profile } = useReaderContext();
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
-    stale: JSON.stringify([metadataStamp, metadata.view?.last_enriched_at ?? null, titleJob]),
+    enabled: observing,
+    stale: JSON.stringify([metadataStamp, metadata?.last_enriched_at ?? null, titleJob]),
     load: async (signal) =>
       mediaDetailFromResponse(
         await apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal }),
@@ -209,7 +215,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   const failure = record.status === "loading" ? null : record.error;
   // media's own code comes ahead of transport: only E_MEDIA_NOT_FOUND says the item is gone, so a
   // mismatch 403 reads sign-in and any other refusal reads as one.
-  const gone = failure?.code === "E_MEDIA_NOT_FOUND";
+  const gone = failure?.code === "E_MEDIA_NOT_FOUND" || observation.status === "ready" && observation.observation === null;
   const savedReady = saved.kind === "Ready";
   // Only an entry whose own record read failed with the server out of reach opens on the saved
   // copy, and stays there once the record lands. Another read's dropped response, or a refresh
@@ -237,6 +243,10 @@ function MediaRoute({ id }: { readonly id: string }) {
     : saved.kind === "Failed" ? <Fact line={{ fact: "couldn’t open the downloaded copy." }} speak={speak}
       verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, viewCurrent]} />
     : <Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />;
+  if (observation.status === "ready" && observation.observation === null) return <>
+    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />
+    <LocalAnnotations mediaId={id} />
+  </>;
   if (record.status === "ready") return <div className={styles.layout}>
     {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
     {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
@@ -317,6 +327,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const { requestSecondarySurface } = runtime;
   const paneActive = usePaneIsActive();
   const paneVisible = usePaneIsVisible();
+  const presented = usePaneIsPresented();
+  const observing = useObservationDemand(presented);
+  const liveObservation = useRef(observing);
+  liveObservation.current = observing;
   const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
   const lectern = lecternItems(useLectern());
@@ -334,7 +348,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   );
 
   const detail = record.data;
-  const { snapshot } = useMediaProcessingStatus(detail.id);
+  const observation = useMediaObservation(detail.id, presented);
+  const snapshot = observation.status === "ready" ? observation.observation?.processing ?? null : null;
   const media = useMemo(() => snapshot === null ? detail : {
       ...detail,
       processing_status: snapshot.processing_status,
@@ -409,6 +424,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       [chrome, viewport, entry, forkMiss, id],
     ),
     readable,
+    observing,
   );
   readerRef.current = reader;
   const restored = useReaderState(reader, (s) => s.restored);
@@ -417,38 +433,40 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const doc = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc : null));
   const postSaves = usePostSaveStates(doc);
   useEffect(() => { forkMiss(null); }, [doc?.identity, forkMiss, runtime.visitId]);
-  const articleEmbeds = doc?.kind === "text"
-    ? doc.embeds.filter((embed) => embed.provider === "x" && embed.kind === "link_preview")
-    : [];
-  const articleIds = [...new Set(articleEmbeds.flatMap((embed) =>
-    embed.target.media_id !== null ? [embed.target.media_id] : []))].sort().join(",");
+  const childIds = doc?.kind === "text" ? doc.embeds.flatMap(embed => embed.target.media_id === null ? [] : [embed.target.media_id]) : [];
+  const children = useMediaObservations(childIds, presented);
+  const childPublications = useRef(new Map<string, string>());
+  const authored = useAuthoredStore();
+  const [evidenceRevision, setEvidenceRevision] = useState(0);
+  const citationStamp = useChangeStamp("Entries", "Metadata");
+  const acceptedCitations = useRef({ stamp: citationStamp, evidenceRevision });
+  useEffect(() => readable ? authored.evidence_changed(() => setEvidenceRevision(revision => revision + 1)) : undefined, [authored, readable]);
   useEffect(() => {
-    if (!paneVisible || !articleIds) return;
-    const stops = articleIds.split(",").map((childId) =>
-      openStream<Schema<"MediaProcessingSnapshotOut">, Schema<"MediaProcessingSnapshotOut">>({
-        path: `/api/stream/media/${childId}/events`,
-        decode: (_type, data) => data,
-        isTerminal: () => false,
-        onEvent: () => reader.reload(),
-        // A paused stream over shown text says nothing; it resumes on its own.
-        onSuspended: () => {},
-        // A final stream refusal gets one fresh projection through the reader's error owner.
-        onError: () => reader.reload(),
-      }),
-    );
-    return () => stops.forEach((close) => close());
-  }, [articleIds, paneVisible, reader]);
-  useEffect(() => {
-    if (readable && doc && media.reader_generation != null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
+    if (!observing || !readable || doc === null) return;
+    let changed = acceptedCitations.current.stamp !== citationStamp || acceptedCitations.current.evidenceRevision !== evidenceRevision;
+    acceptedCitations.current = { stamp: citationStamp, evidenceRevision };
+    for (const id of childPublications.current.keys()) if (!children.has(id)) childPublications.current.delete(id);
+    for (const [id, state] of children) {
+      if (state.status !== "ready") continue;
+      const value = state.observation;
+      const processing = value?.processing;
+      const signature = JSON.stringify(value === null ? null : [
+        processing?.reader_generation, processing?.capabilities, processing?.transcript_reader_key,
+        processing?.transcript_coverage, processing?.last_error_code,
+        value.metadata_enrichment.last_enriched_at,
+      ]);
+      if (childPublications.current.get(id) !== signature) {
+        childPublications.current.set(id, signature);
+        changed = true;
+      }
+    }
+    // One decision coalesces publication, child baseline and citation changes.
+    // Phase-only updates leave prose alone; hiding retains the accepted facts.
+    if (media.reader_generation !== null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
-    else if (readable && doc && !transcript && doc.title !== media.title)
-      reader.reload();
-  }, [doc, media.reader_generation, media.title, readable, reader, transcript]);
-  useEffect(() => {
-    if (readable && snapshot !== null && doc?.kind === "text" && doc.format === "transcript"
-      && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key
-        || doc.transcriptCoverage !== snapshot.transcript_coverage)) reader.reload();
-  }, [doc, readable, reader, snapshot]);
+    else if (changed || !transcript && doc.title !== media.title || snapshot !== null && doc.kind === "text" && doc.format === "transcript"
+      && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key || doc.transcriptCoverage !== snapshot.transcript_coverage)) reader.reload();
+  }, [children, citationStamp, doc, evidenceRevision, media.reader_generation, media.title, observing, readable, reader, snapshot, transcript]);
   const pendingTranscriptFocus = useRef(false);
   const holdTranscriptFocus = useCallback(() => {
     const element = root.current;
@@ -477,15 +495,6 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   );
 
   // ---- annotations ----
-  const authored = useAuthoredStore();
-  const citationStamp = useChangeStamp("Entries", "Metadata");
-  useEffect(() => readable ? authored.evidence_changed(() => reader.reload()) : undefined, [authored, readable, reader]);
-  useEffect(() => {
-    if (readable && reader.getState().document.status === "ready") reader.reload();
-  }, [citationStamp, readable, reader]);
-  useEffect(() => {
-    if (paneActive && readable && reader.getState().document.status === "ready") reader.reload();
-  }, [paneActive, readable, reader]);
   const [store] = useState(() => createMediaAnnotations(authored, id));
   const chatStamp = useChangeStamp("Chats");
   useEffect(() => store.invalidateChats(chatStamp), [store, chatStamp]);
@@ -493,7 +502,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const sourceAbsent = documentFailed || !readable;
   useEffect(() => { if (doc) store.bind(doc); else if (sourceAbsent) store.bind(null); }, [doc, sourceAbsent, store]);
   const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
-  useFailedReadRepair(annotations.remoteRead.failed, annotations.remoteRead.running, store.refresh);
+  useFailedReadRepair(observing && annotations.remoteRead.failed, annotations.remoteRead.running, () => {
+    if (liveObservation.current && document.visibilityState === "visible") store.refresh();
+  });
   const positionFeedback = usePositionFeedback();
   const [openKey, setOpenKey] = useState<EvidenceOpenRequest | null>(null);
   const latestOpenRequest = useRef<EvidenceOpenRequest | null>(null);

@@ -531,6 +531,7 @@ function useServerState<D>(
   catalog?: CatalogRead<D>,
   onDefect?: (defect: Defect) => void,
   initialRead?: ServerReadSeed<D>,
+  enabled = true,
 ) {
   const admissionGeneration = useRemoteGeneration();
   const account = useOptionalAuthenticatedAccount();
@@ -560,8 +561,8 @@ function useServerState<D>(
   heldRef.current = held;
   const loadRef = useRef(load);
   loadRef.current = load;
-  const latest = useRef({ key, stale, accountId, catalog, policy, stateKey });
-  latest.current = { key, stale, accountId, catalog, policy, stateKey };
+  const latest = useRef({ key, stale, accountId, catalog, policy, stateKey, enabled });
+  latest.current = { key, stale, accountId, catalog, policy, stateKey, enabled };
   type Flight = { controller: AbortController; strict: boolean; observe: boolean };
   const flight = useRef<Flight | null>(null);
   const waiters = useRef(new Set<{ resolve: () => void; reject: (error: unknown) => void }>());
@@ -578,10 +579,11 @@ function useServerState<D>(
     setState(next);
   };
   const start = useRef<() => void>(() => {});
-  const queueRead = () => { if (mounted.current) start.current(); };
+  const queueRead = () => { if (mounted.current && latest.current.enabled) start.current(); };
   const owner = useReadOwner(key, policyIdentity({ readPolicy, ...policy }), stale, queueRead);
   const lane = useMemo(() => ({ active: false, owner, stateKey }), [owner, stateKey]);
   const run = useCallback(async (prepared: ArrivalClaim<D> | null = null, passive = false) => {
+    if (!latest.current.enabled) { prepared?.release(); return; }
     if (flight.current !== null) {
       flight.current.strict = true;
       update(h => h.passive ? { ...h, passive: false } : h);
@@ -595,12 +597,12 @@ function useServerState<D>(
     update(h => ({ ...h, running: true, passive }));
     try {
       while (current.strict || current.observe) {
-        if (controller.signal.aborted || latest.current.accountId !== accountId || latest.current.stateKey !== stateKey) return;
+        if (controller.signal.aborted || !latest.current.enabled || latest.current.accountId !== accountId || latest.current.stateKey !== stateKey) return;
         current.strict = false;
         current.observe = false;
         const reading = latest.current;
         const generation = owner.generation;
-        const superseded = () => controller.signal.aborted || current.strict || generation !== owner.generation || reading.accountId !== latest.current.accountId || reading.key !== latest.current.key || reading.stale !== latest.current.stale;
+        const superseded = () => controller.signal.aborted || !latest.current.enabled || current.strict || generation !== owner.generation || reading.accountId !== latest.current.accountId || reading.key !== latest.current.key || reading.stale !== latest.current.stale;
         try {
           let localError: ApiError | null = null;
           const retained = heldRef.current;
@@ -616,6 +618,7 @@ function useServerState<D>(
               localError = error;
             }
           }
+          if (superseded()) continue;
           if (localError?.code === "E_CATALOG_COVERAGE" && heldRef.current?.source.kind === "catalog")
             update(h => ({ ...h, data: null, source: LIVE_SOURCE, acceptedStale: null, error: remoteAttemptAllowed() ? null : localError }));
           let next: D;
@@ -661,18 +664,22 @@ function useServerState<D>(
   }, [fail, signIn, owner, accountId, stateKey]);
   start.current = () => { void run(); };
 
-  const completedBootstrap = useRef(initialRead !== undefined && (initialRead.status === "failure" || initialRead.acceptedStale === stale) ? stateKey : null);
+  const completedBootstrap = useRef({ key: initialRead !== undefined && (initialRead.status === "failure" || initialRead.acceptedStale === stale) ? stateKey : null, enabled });
   useEffect(() => {
-    mounted.current = true;
-    lane.active = true;
+    // A settled bootstrap exempts first demand, never a return after suspension.
+    if (completedBootstrap.current.enabled && !enabled) completedBootstrap.current.key = null;
+    completedBootstrap.current.enabled = enabled;
+    mounted.current = enabled;
+    lane.active = enabled;
     const next = heldRef.current;
-    if (completedBootstrap.current !== stateKey) completedBootstrap.current = null;
+    if (completedBootstrap.current.key !== stateKey) completedBootstrap.current.key = null;
     if (next?.key !== stateKey) update(() => arrive(stateKey, restoredHere));
-    if (key !== null) {
+    if (!enabled) update(h => ({ ...h, running: false, passive: false }));
+    else if (key !== null) {
       const prepared = claimArrival();
       if (prepared !== null) {
         void run(prepared);
-      } else if (completedBootstrap.current === stateKey && owner.generation === 0 && next?.generation === 0) {
+      } else if (completedBootstrap.current.key === stateKey && owner.generation === 0 && next?.generation === 0) {
         // A settled bootstrap result survives strict effect replay; invalidations still run normally.
         update(h => ({ ...h, running: false }));
       } else void run();
@@ -686,7 +693,7 @@ function useServerState<D>(
     };
   // Key entry consumes at most one prepared read; descriptor changes are ordinary invalidations.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, stateKey, run, lane]);
+  }, [key, stateKey, run, lane, enabled]);
 
   const catalogSnapshot = catalog?.snapshot_id ?? null;
   const observedCatalog = useRef(catalogSnapshot);
@@ -697,7 +704,7 @@ function useServerState<D>(
     owner.invalidate();
   }, [catalogSnapshot, owner]);
   const refetch = useCallback((): Promise<void> => {
-    const active = lane.active && mounted.current && key !== null && latest.current.stateKey === stateKey;
+    const active = lane.active && mounted.current && latest.current.enabled && key !== null && latest.current.stateKey === stateKey;
     const promise = active
       ? new Promise<void>((resolve, reject) => waiters.current.add({ resolve, reject }))
       : Promise.reject<void>(new DOMException("read retired", "AbortError"));
@@ -709,7 +716,7 @@ function useServerState<D>(
     return promise;
   }, [key, owner, stateKey, lane]);
   const revalidate = useCallback((options?: { readonly passive: boolean }) => {
-    if (!lane.active || !mounted.current || key === null || latest.current.stateKey !== stateKey || heldRef.current?.error !== null) return;
+    if (!lane.active || !mounted.current || !latest.current.enabled || key === null || latest.current.stateKey !== stateKey || heldRef.current?.error !== null) return;
     if (flight.current === null) { void run(null, options?.passive === true); return; }
     flight.current.observe = true;
     if (!options?.passive) update(h => h.passive ? { ...h, passive: false } : h);
@@ -722,7 +729,7 @@ function useServerState<D>(
     admittedGeneration.current = admissionGeneration;
     void refetch().catch(() => { /* A modeled read failure is rendered by this owner. */ });
   }, [admissionGeneration, refetch]);
-  useFailedReadRepair(held.error !== null, held.running, () => { void refetch().catch(() => { /* As above. */ }); });
+  useFailedReadRepair(enabled && held.error !== null, held.running, () => { void refetch().catch(() => { /* As above. */ }); });
 
   return valueOf(held, stale, refetch, revalidate);
 }
@@ -741,6 +748,8 @@ function valueOf<T>(held: Held<T>, stale: string, refetch: () => Promise<void>, 
 }
 
 export function useServerValue<T>(input: ReadPolicy & {
+  /** Optional observation retires its flight while retaining the accepted snapshot. */
+  readonly enabled?: boolean;
   readonly key: string | null;
   readonly stale: string;
   readonly visit: PaneVisitDataKey<Visit<T>>;
@@ -754,7 +763,7 @@ export function useServerValue<T>(input: ReadPolicy & {
     input.key,
     useCallback(() => shown.current, []),
   );
-  const value = useServerState(input.key, input.stale, restored, input.load, input.readPolicy ?? "value:retry3", input, input.catalog);
+  const value = useServerState(input.key, input.stale, restored, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, undefined, undefined, input.enabled);
   shown.current =
     input.key !== null && value.status === "ready"
       ? { key: input.key, data: value.data, source: value.source, acceptedStale: value.acceptedStale }
@@ -763,6 +772,8 @@ export function useServerValue<T>(input: ReadPolicy & {
 }
 
 export function usePaneFreeServerValue<T>(input: ReadPolicy & {
+  /** Optional observation retires its flight while retaining the accepted snapshot. */
+  readonly enabled?: boolean;
   readonly key: string | null;
   readonly stale: string;
   readonly load: Load<T>;
@@ -772,7 +783,7 @@ export function usePaneFreeServerValue<T>(input: ReadPolicy & {
   /** An account owner relays defects below its retained command state. */
   readonly onDefect?: (defect: Defect) => void;
 }): ServerValue<T> {
-  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, input.onDefect, input.initialRead);
+  return useServerState(input.key, input.stale, null, input.load, input.readPolicy ?? "value:retry3", input, input.catalog, input.onDefect, input.initialRead, input.enabled);
 }
 
 /** `value` once it has held still for `ms`: a typed query before its read. */

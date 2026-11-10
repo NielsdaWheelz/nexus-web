@@ -149,6 +149,7 @@ WITH visible_media AS (
         metadata_summary.unfinished_count AS metadata_unfinished_count,
         metadata_summary.updated_at AS metadata_updated_at,
         live_jobs.unfinished_count AS unfinished_job_count,
+        live_jobs.active_count AS active_job_count,
         live_jobs.updated_at AS live_jobs_updated_at,
         CASE WHEN capacity.lease_expires_at > now() OR holder.lease_expires_at > now()
             THEN capacity.job_id END AS capacity_job_id
@@ -178,7 +179,9 @@ WITH visible_media AS (
         FROM metadata_jobs WHERE media_id = m.id
     ) metadata_summary ON TRUE
     LEFT JOIN LATERAL (
-        SELECT count(*) AS unfinished_count, max(updated_at) AS updated_at
+        SELECT count(*) AS unfinished_count,
+            count(*) FILTER (WHERE status IN {_LIVE}) AS active_count,
+            max(updated_at) AS updated_at
         FROM background_jobs
         WHERE kind IN ('ingest_media_source', 'media_content_reindex_job', 'enrich_metadata')
           AND status IN ('pending', 'failed', 'running', 'held') AND payload @> jsonb_build_object('media_id', m.id::text)
@@ -439,7 +442,12 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                     + (SELECT count(*) FROM obligations
                        WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
                     + (SELECT count(*) FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))::integer
-                    AS unfinished_work_count
+                    AS unfinished_work_count,
+                (EXISTS (SELECT 1 FROM import_media WHERE active_job_count > 0)
+                    OR EXISTS (SELECT 1 FROM obligations
+                       WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
+                    OR EXISTS (SELECT 1 FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))
+                    AS work_in_flight
             FROM imports"""),
             _params(viewer_id),
         )

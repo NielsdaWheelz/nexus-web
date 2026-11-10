@@ -106,10 +106,10 @@ plate, else (history without a plate event) `plate_key`'s current `corpus.json`
 record, so plate keys are permanent; concordance compares `plate_key`. Concordance is one query: the viewer's other complete readings with
 a motto, scored 2·shared plate + 2·shared theme + shared cited targets, top five.
 
-Clients follow a pending or streaming reading over
-`GET /stream/oracle-readings/{id}/events`: each frame is the whole
-`OracleReadingOut` (`state` on change, `done` once it is complete or failed),
-pushed by the `oracle_readings` status NOTIFY.
+presented foreground clients read pending or streaming readings through
+`GET /oracle/readings/{id}` every 10 seconds. complete and failed stop observation.
+oracle publishes prose at completion; status observation implies no incremental
+prose stream. hiding is silent and return immediately revalidates retained state.
 
 ## Operator
 
@@ -133,8 +133,8 @@ Owner questions this rewrite answered by assumption (spec §7; reversible in rev
    reading's typed failure, not a global gate.
 3. A folio shows the curated quote; the works stay ingested for the reader jump
    and the ranking embedding.
-4. The event log goes (its display is folded into the row); push stays as a
-   status-snapshot stream. Omens are a column.
+4. the event log's display is folded into the row; presented unfinished status
+   uses finite reads. omens are a column.
 5. Generation conforms to the shared durable contract's minimum arms; a dead job
    leaves its reading pending (ticketed).
 6. Plates are static web assets; a plate change is a web deploy.

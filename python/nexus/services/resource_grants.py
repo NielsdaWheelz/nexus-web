@@ -1,7 +1,7 @@
 """The resource_grants table: a creator and one audience (a grantee user, or any holder of the
 row's raw share token) may read one media or one owned live highlight. Rows are authorization
 paths and teardown references; each mutation invalidates audience visibility for the users it
-affects, bumping their media ``annotations`` lane and waking their writing stream.
+affects, bumping their media ``annotations`` lane for finite synchronization.
 Grants are addressed by their plain id; a create takes the client's id. Public
 capture output is pinned separately in resource_grant_captures at grant creation
 and authorized media publication; later account admissions never widen a token.
@@ -288,8 +288,7 @@ def annotation_visibility(
 
 
 def invalidate_annotation_visibility(db: Session, projections: set[tuple[UUID, UUID]]) -> None:
-    """Bump each ``(viewer, media)`` evidence lane in one sorted order, then wake each viewer's
-    writing stream; flush-only, the notification publishes with the caller's commit."""
+    """Bump each ``(viewer, media)`` evidence lane in one sorted order; flush-only."""
     from nexus.services.resource_items.versions import invalidate_evidence
 
     invalidate_evidence(
@@ -347,8 +346,6 @@ def _delete(db: Session, *where: ColumnElement[bool], also: frozenset[UUID] = fr
         .returning(ResourceGrant.created_by_user_id, ResourceGrant.grantee_user_id)
     ).all()
     invalidate_annotation_visibility(db, projections)
-    for user_id in sorted(users):
-        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(user_id)})
     return len(rows)
 
 
@@ -595,8 +592,6 @@ def insert_grant(
             else {subject.id},
         ),
     )
-    for account_id in {creator_id, *([] if grantee_id is None else [grantee_id])}:
-        db.execute(text("SELECT pg_notify('nexus_writing', :viewer)"), {"viewer": str(account_id)})
     return grant
 
 
