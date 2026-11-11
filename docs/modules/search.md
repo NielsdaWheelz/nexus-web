@@ -56,15 +56,45 @@ and [background admission occupancy](../issues/production-search-admission-conte
 heavy search, refresh, indexing and backup may queue and serialize at their
 existing owners. normal services and retained connections still count when idle;
 useful foreground/background completion and finite queue drain remain required.
-the [reliability spec](../search-reliability-spec.md) owns current qualification
-and release gates; historical timing verdicts retain their recorded scope.
-the [capacity spec](../database-capacity-spec.md) owns physical topology and
-accounting; its current pool/listener allocation remains provisional until the
-complete reachable workload fits. mechanisms are justified by ownership and
-control progress, not by a prescribed pr split.
+the qualification contract below and [release acceptance](../issues/release-search.md)
+separate current obligations from historical receipts. physical quotas and retained
+pool/listener costs must fit the complete reachable workload, including maintenance;
+mechanisms are justified by ownership and control progress.
 production host swap stays enabled while postgres and service leaves disallow
 swap; host ram reserve and swap pressure are accounted separately. no swapless
 host condition follows from the leaf limits.
+
+## qualification contract
+
+useful completion, exact permissions, canonical reading boundaries, publication/model
+identity, literal evidence and real activation are independent requirements. compare
+frozen name/body/semantic-only/empty cases across global, library, source, piece and
+capture scopes, active-model changes and exclusions. exact retrieval preserves the
+reference windows, ordering, thresholds, anchor attribution and family composition.
+suggestion comparisons include 401 equal-distance chunks and overlapping readings:
+the cutoff is on reading/chunk rows, before grouping by media.
+
+an approximate replacement requires an explicit owner decision and one qualified
+implementation. the retained quality floors are 95% of exact-200 qualifying browser
+owners and every semantic first-page owner; suggestion overlap is at least
+`ceil(0.9 * min(10, reference_count))` per frozen case. review every changed item;
+graph-only success cannot conceal a broken semantic lane. no load-dependent recall
+or runtime fallback is authorized.
+
+qualify full five-anchor, both-family refresh and useful foreground lexical/hybrid
+completion alongside reading, local writing, sync, cancellation and finite queue
+drain. freeze the due-feed cohort and a finite observation window before execution;
+failed or suspended work created by the scenario does not leave that cohort. timeout,
+perpetual deferral and old publications are noncompletion. operational watchdogs are
+finite safeguards, not numeric latency acceptance targets.
+
+capacity proof uses the actual deployment envelope, fresh first use and warmed
+connections, two clients, both worker lanes, listeners, retained memory, reachable
+maintenance and verified backup under the declared serialization policy. larger-host
+or isolated-component success does not establish combined headroom. host swap is
+measured separately from ram reserve; require useful progress without new oom,
+recovery, crashes or lost claims, and confirm physical retirement. accepted release
+scopes and unresolved capacity limits stay with their issue owners.
 
 ## browser discovery
 

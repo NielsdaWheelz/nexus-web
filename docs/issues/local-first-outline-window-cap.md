@@ -7,8 +7,8 @@ response would have fit. saved writing remains intact; the qualified
 100,000-note workload fits. this is an owner-accepted limit, not an open
 acceptance failure.
 
-the contract lives in `docs/local-first-writing-spec.md` under commands and
-local composition and in `docs/modules/notes.md` under atomic outline reads.
+the [notes contract](../modules/notes.md) owns atomic outline reads and their
+native response cap.
 preserving every such oversized window would require a bounded multipart
 response contract with one consistent revision, rather than raising the cap,
 clipping projections or dropping writing. revisit only if that capability is

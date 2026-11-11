@@ -23,5 +23,5 @@ no further campaign or scheduler is selected. preserve configured caps and servi
 no-swap limits; host swap is enabled and is not ram reserve. unrestricted overlap,
 combined production query-time headroom and cache-cold behavior remain unproved.
 revisit this owner if ordinary use exposes another capacity failure or the
-accepted deployment scope expands. exact evidence stays in the release prs and
-private receipts; [remaining client acceptance](release-search.md) is separate.
+accepted deployment scope expands. observations and accepted scopes are recorded
+in the release prs; [remaining client acceptance](release-search.md) is separate.

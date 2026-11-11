@@ -77,6 +77,15 @@ within the fixed envelope use the existing release owners. current aggregate
 qualification remains open in the
 [connection-budget issue](docs/issues/production-database-connection-budgets-implicit.md).
 
+qualification retains 64 mib database and 128 mib workload-host ram reserves;
+the separate deployment available-memory preflight remains 256 mib. when the
+connector is omitted from backend qualification, reserve its full 128 mib cap
+alongside the host reserve. host swap remains enabled and measured separately;
+every service leaf keeps `memswap_limit == mem_limit`. count reachable physical
+connections, background children, idle/warmed backends, listeners, maintenance and
+operator utilities. count an exclusion only when its owner enforces it; a quiet
+workload alone does not prove exclusion or unrestricted overlap capacity.
+
 ## Non-negotiable rules
 
 - `deploy/release.sh <candidate-manifest.json>` is the only application release

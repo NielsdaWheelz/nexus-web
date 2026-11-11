@@ -20,14 +20,46 @@ this cause is separate from the unattributed historical phone admission holder i
 resolve by attributing the remaining demand and qualifying the integrated candidate
 with normal retained connections, complete retrieval/cancellation and useful
 background work inside unchanged service/host budgets, without recovery. see
-[capacity](production-database-connection-budgets-implicit.md). the exact incident,
-kernel hashes and profiling limits remain privately archived under
-`.nexus-local/search-integration-docs-20261029.private/original-source/docs/issues/production-search-postgres-oom.md`.
-the detailed main-side kernel, request and retained-backend profiling record is
-also preserved in
-`.nexus-local/pr866-e219-doc-contract-before.private/e219/docs/issues/production-search-postgres-oom.md`.
-its old timer failures remain failures; current capacity/progress acceptance is
-owned by the reliability contract, not those retired latency cutoffs.
+[capacity](production-database-connection-budgets-implicit.md). the historical
+profiling limits above remain material: emulation, retained-backend demand and
+unattributed allocation are different facts. old timer failures remain failures;
+current capacity/progress acceptance belongs to the reliability contract, not
+those retired latency cutoffs.
+
+on 2026-10-29, the same `3d81/0317` cohort also exhausted the 512 mib
+postgres cgroup during a media-scoped chat-tool search with limit 5.
+nearest-chunk retrieval ran 19.456 seconds; subsequent highlight ranking lost
+its connection at 20:41:52 utc when backend 359910 was killed and postgres
+recovered. this proves aggregate exhaustion, not allocation attribution to
+that query. the historical observation was recorded as
+`nexus-chat-diagnosis-20261029-5_rw1_cy`; current release acceptance and
+remaining aggregate-headroom limits stay with the connection-budget issue.
+
+on 2026-11-03 at 19:34:43.596 utc, deployed `e505409d1` again exhausted
+the postgres memory cgroup. the kernel killed host pid 1700443 (`postgres`,
+anon-rss 301104 kb); postgres logged backend 222306 killed by signal 9 and
+recovered by 19:34:44.313. chat admission request
+`14adfdad-89c6-48f0-801b-c6cb9a2c3f9c` lost its connection during attached
+citation hydration (`chat/context.py:316` through `search/sources.py:856`),
+returned 500 and triggered the reader crash.
+kernel and api journald records establish this recurrence and its impact;
+they do not establish that this query caused the aggregate allocation.
+
+on 2026-11-05, deployed `191ae44612d22626251a0d17950d3077d89650da`, schema
+0335, again exhausted postgres's 512 mib cgroup during a batch of metadata
+updates. kernel records show postgres kills at 18:37:24 utc (host pid 3074827,
+anon-rss 190452 kb) and 18:37:45 (pids 3075365 and 3074992, anon-rss 269548
+and 65056 kb). container restart count remained zero. interactive-worker logs
+show connection loss and recovery-mode refusal during those times; metadata
+job `01a1acfb-ec15-7896-9ba4-97e3a8860a92` retained an open generation and
+expired lease after settlement failed. subsequent jobs progressed normally.
+postgres logged recovery by 18:37:25.838 and 18:37:46.729. both killed-backend
+statements share a truncated `WITH visible_media AS` / recursive eligibility
+prefix; the remainder is unavailable. job `01a1acfb-dc97-7037-8046-46a0709d9bda`
+also lost its database connection during the first recovery. this proves another
+aggregate-memory failure and interrupted research, not which allocation caused
+it. the independent earlier excerpt failures are
+recorded separately as metadata excerpt correspondence failures.
 
 disposable outline qualification reproduced backend death on `ca942ac6d`, schema
 0335, with the unchanged 512-mib database limit. run

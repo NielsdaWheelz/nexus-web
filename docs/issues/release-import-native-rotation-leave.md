@@ -1,13 +1,21 @@
-# native share rotation and leave proof
+# native share rotation and leave remain unqualified
 
-status: owner-accepted source qualification for this build; actual native journeys remain release gates.
+owner disposition, 2026-11-04, recorded in `88e92445b`
+([pr 901](https://github.com/NielsdaWheelz/nexus-web/pull/901)): the owner waived
+this pre-release qualification for `c6c90343c4324942b310fe7d9b9fadc4f6e5e944`
+and confirmed the no-use window. the waiver does not prove the journey or
+authorize previously stopped transfer-control actions.
 
-the current source has not been qualified here for rotation during an incomplete native upload or actual native decline/accept of leaving. source inspection cannot establish the live activity, document, transfer or dialog outcome. a duplicate import, lost continuation or failed leave remains an unmeasured release risk.
+source review at `fdcbcf7b14ec0bc347d49764b349b60494dca47c` found handled
+rotation in `AndroidManifest.xml`, retained document/guarded leave in
+`ShareActivity.kt`, and live risk supplied by `lib/imports/intake.tsx`.
+these source facts do not establish activity, transfer or dialog outcomes.
+current contracts are [imports](../modules/imports.md) and
+[device startup](../modules/device-startup.md).
 
-source reviewed: `fdcbcf7b14ec0bc347d49764b349b60494dca47c`. `AndroidManifest.xml:25,61` declares the same handled rotation changes for main and share. `ShareActivity.kt:113-130,144-146,236-249` retains the existing document and routes ordinary back/done through the work guard. `lib/imports/intake.tsx:674-708` supplies its live risk; `lib/unsavedWork.tsx:81-91,129-130` owns the decision. these are source facts, not native behavior proof.
-
-before release, retain evidence on the release candidate that a genuinely incomplete upload survives ordinary rotation without a second admission/import; actual native decline retains the same live work; and actual native accept performs the intended exit and ends its browser work. distinguish accepted server work, which leaving does not cancel, and qualify ordinary activity/document teardown separately from cleanup. other slice-3 journeys remain required.
-
-ruling39 records the accepted source-only build boundary. it grants no runtime proof or release waiver. the stopped transfer-control action remains stopped; this record authorizes no replacement mechanism or run. process-death resend remains outside the rotation promise under spec decision 21.
-
-delete this issue only after the missing release observations are linked and independently reviewed.
+resolve on an identified native build: a genuinely incomplete upload survives
+rotation without a second admission; declining leave retains the same work;
+accepting leave exits and ends its browser work. accepted server work continues
+independently. qualify activity/document teardown separately from cleanup.
+process-death resend is outside this rotation promise. retain the issue until
+those observations or an explicit further owner disposition are recorded.

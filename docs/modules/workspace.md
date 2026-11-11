@@ -518,13 +518,12 @@ draws `Filter`, return `Locate`; the companion's search-results tab draws
 `Search`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry/return transfer focus before their controls disappear; companion results
-remain transient. current capability and
-keyboard details are specified in the pane controls plan (#578, revised by #628);
-its chrome sketch's `actionSubject?: ResourceActionSubject` is now
-`resourceRef?: CanonicalResourceRef`.
-current toolbar presentation is specified in the query toolbar plan (#628);
-its verification records browser and dom
-evidence, including native page/text zoom, with no spoken assistive-technology claim.
+remain transient. `useFind` and `FindBar` own find movement, cancellation and
+focus; the shared field primitives own ordinary text editing and keyboard behavior.
+the chrome's canonical resource identity is `resourceRef?: CanonicalResourceRef`.
+[the visual system](visual-system.md) owns query-toolbar sizing, wrapping and
+refinement presentation. historical #628 browser/dom and native zoom observations
+make no spoken assistive-technology claim.
 
 a resource pane publishes its canonical `resourceRef`
 (`CanonicalResourceRef`) and explicit inline `resourceActions` subject.

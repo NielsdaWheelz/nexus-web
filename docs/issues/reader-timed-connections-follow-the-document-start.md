@@ -1,26 +1,14 @@
-# reader timed connections follow the document start
+# qualify timed connection placement
 
-source baseline: `69c00182c8328f46cec893517971f87f03cdbf16`; still present at `origin/main` `ff57128842b470510446b3edca54922ebcace41e` on 2026-10-16. line numbers refer to the original baseline unless stated otherwise.
+the original document-start fallback is repaired. source review at `0f7d6ffa6`
+on 2026-10-28 found that
+`apps/web/src/app/(authenticated)/media/[id]/evidence/model.ts` projects a
+time extent into intersecting transcript units and returns null when none
+exists. the [reader contract](../modules/reader-implementation.md) preserves
+unavailable placement rather than inventing document-start geometry.
 
-status: open
-origin: 2026-10-16 resource presentation and navigation audit
-area: reader / connections following
-
-resolved audio, video and transcript passage groups are assigned document
-fraction zero in the connections pane, regardless of their timestamp. follow
-mode therefore cannot track those groups at their actual reading position.
-
-evidence: `apps/web/src/app/(authenticated)/media/[id]/hostedReader.ts:151-154`
-maps time-range locators to a `time` reader target. `evidence/EvidencePane.tsx:64-78`
-under that directory handles range, quads and point targets only, falling back
-to zero for a time target. `:82-94` uses that fraction for following and visible
-band marking. this is a source audit; no browser reproduction was run.
-
-prerequisite: resolve a timed target to its actual transcript unit through the
-reader's target projection owner. retain a distinct unavailable state when no
-readable position exists; do not substitute the document start.
-
-acceptance: multiple connections at distinct transcript times follow and mark
-their respective passages as the reader scrolls; an unplaceable timed target
-is identified explicitly. this fix is independent of whether the product
-uses following or geometric alignment.
+remaining acceptance: connections at distinct transcript times follow and mark
+their respective passages while scrolling; an uncovered time remains explicitly
+unplaceable. verify current following/alignment presentation, not the removed
+always-zero branch. that rendered journey was not run in the source review or
+this cleanup; close after it is observed.

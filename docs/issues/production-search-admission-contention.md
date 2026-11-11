@@ -27,7 +27,7 @@ functional proof does not establish native contention, actual 2 gib or
 production/phone acceptance. genuine injected upload-failure retry is not
 newly proved; the earlier missing notes input was instrumentation-only.
 
-resolve under [the spec](../search-reliability-spec.md): complete five-anchor,
+resolve under [search](../modules/search.md#qualification-contract): complete five-anchor,
 both-family refreshes and strict discovery through normal claims/publication;
 useful foreground lexical/hybrid completion; usable reading, local
 authored writing/sync and stop controls; and every frozen active due feed converged

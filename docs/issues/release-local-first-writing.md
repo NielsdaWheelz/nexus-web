@@ -2,8 +2,8 @@
 
 schema 0329/wire 17/authored format 4 are deployed. production conversion,
 original-owner preservation and the paired local storage/editor capacity work are
-qualified at their recorded scopes; no replay is required. [the specification](../local-first-writing-spec.md)
-owns the contract. server relational authored rows remain projections, while the
+qualified at their recorded scopes; no replay is required. [notes](../modules/notes.md)
+and [offline writing](../modules/offline.md) own the contract. server relational authored rows remain projections, while the
 firefox account sqlite worker and android bundled store own durable commands.
 
 actual installed firefox and phone retain existing writing, report writing synced,
@@ -30,5 +30,12 @@ migration preserved live content and captures. already-deleted legacy edge/day
 bindings were not recoverable; recreation uses the new deterministic identity.
 a legacy source label without a proved simple admission path may remain unavailable
 until a new legitimate capture refreshes it; no hidden metadata is invented.
-full conversion and client receipts remain in the implementation prs/private
-archive. the paired release observations are accepted at the scopes above.
+conversion and client observations are recorded in the implementation prs.
+the paired release observations are accepted at the scopes above.
+
+separate capacity limit: 100,000 realistically edited blocks through the current
+canonical deployed snapshot/upload route remains unqualified by these ordinary
+installed observations. finite transport caps and the streamed snapshot/footer
+fence exist; do not reopen accepted normal quit/offline/reconnect checks or
+restore the retired vercel prerequisite. preserve the [notes](../modules/notes.md)
+capacity and immutable-command contract if this boundary is qualified.

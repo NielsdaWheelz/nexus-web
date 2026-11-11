@@ -14,6 +14,10 @@ binding and fetches a profile only when absent;
 `apps/web/src/lib/native/settingsRefresh.tsx:13` returns immediately for browsers
 after settings saves.
 
+reproduced 2026-11-01 at `61562d112`, lab run `20261101-201845-11fd92a91143`: a font size
+slider save returned 200 and the server read 20, while the indexeddb binding stayed 16 and the
+reloaded paragraph rendered 16px. a fresh firefox profile bound 20 from the server.
+
 resolved when acknowledged reader settings survive browser reload and offline
 reopening through the existing durable binding owner, without direct storage
 mutation or an independent profile writer.

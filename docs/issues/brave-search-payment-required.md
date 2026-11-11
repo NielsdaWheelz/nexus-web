@@ -63,8 +63,17 @@ same reason. all four media have null `metadata_enriched_at`; egan has no
 credits and the sonnets retain the credited name “author”. no job was submitted,
 configuration changed or provider request made during inspection.
 
-restoration requires provisioning working search credentials through the normal
-configuration owner as well as resolving provider quota. then deliberately rerun
-these items and verify evidenced metadata corrections. the separate
-[manual-command feedback gap](metadata-update-lacks-feedback.md) conceals their
-terminal failures from the initiating menu.
+restoring public search requires working credentials through the normal
+configuration owner and available provider quota. review current target state
+before any metadata retry; the ordinary corrections below already supersede
+some historical failures. current command feedback belongs to the
+[metadata contract](../modules/media-metadata.md).
+
+2026-11-05 at released `191ae4461` / schema 0335: ordinary metadata commands
+now complete through the optional-search path and record
+`web_search: not_available`. all three sonnets have committed corrected author
+credits; their older missing-required-tool failure above is historical. public
+search availability and quota remain unresolved. current batch failures have
+independent [excerpt](release-metadata-update.md) and
+[database-memory](production-search-postgres-oom.md) evidence; do not attribute
+them to brave's historical 402.

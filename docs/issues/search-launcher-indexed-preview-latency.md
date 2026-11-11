@@ -1,7 +1,7 @@
 # launcher lexical requests can expire despite usable results
 
 status: open reliability follow-up. the historical release accepted measured
-visible results; current [reliability acceptance](../search-reliability-spec.md)
+visible results; current [reliability acceptance](../modules/search.md#qualification-contract)
 requires useful lexical and hybrid completion independently, without a new speed
 target or a campaign to erase the old failures.
 
@@ -13,9 +13,8 @@ responses supply usable keyword results. full search's22 lexical requests succee
 visible delivery does not establish independent lexical-request reliability.
 
 existing logs do not join those six requests to admission, sql or presentation;
-they do not establish provider dependence. private evidence remains
-`.nexus-local/search-qualification/runtime225-client/`, controller `70c562db`,
-source `4d3739e8`. preserve its full denominator and failed requests. integrated
+they do not establish provider dependence. the historical run used controller
+`70c562db`, source `4d3739e8`; retain its full denominator and failed requests. integrated
 bounded publication checks in [the release](release-search.md) establish no new
 launcher percentile or retrospective cause.
 

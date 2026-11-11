@@ -291,10 +291,10 @@ the clear slot, so typing/clearing preserves the input's bounds and node.
 applied text, chips, visible status and reset wrap in one compact summary;
 errors and expanded options share its bounded refinement region. shell
 measurement publishes the cap. essential controls never depend on horizontal
-scrolling. see [workspace controls](workspace.md) and the toolbar
-specification and browser qualification in #628. the latter
-includes native firefox 158 page/text zoom at 200% in a 320px pane; it makes
-no spoken assistive-technology claim.
+scrolling. [workspace controls](workspace.md) own capability, find and focus
+behavior; this module owns toolbar presentation. historical browser qualification
+in #628 included native firefox 158 page/text zoom at 200% in a 320px pane;
+it makes no spoken assistive-technology claim.
 
 ## pane sections
 

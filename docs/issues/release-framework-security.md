@@ -1,15 +1,16 @@
 # framework release disposition
 
 next/eslint-config-next 15.5.28 and sharp 0.35.5 are deployed with the unchanged
-necessary two-output response-header patch. [the security spec](../framework-security-update-spec.md)
-owns applicability. next 15's recorded maintenance runway ends 2027-01-31;
+necessary two-output response-header patch. [the api edge](../modules/api-edge.md)
+owns the pinned cohort, native dependency floor and both patched writers.
+next 15's recorded maintenance runway ends 2027-01-31;
 a major upgrade is separate work.
 
 accepted packaging evidence combines the locked build, unchanged serving owners,
 exact staged version and a cache-miss allowed-image transform on vercel's managed
 runtime. it does not inspect final internal sharp/libvips versions or establish
 self-hosted linux packaging; generated manifests retain their prior-artifact
-scope. exact identities and proof remain in the implementation pr/private receipt.
+scope. exact identities and recorded observations remain in the implementation pr.
 
 the temporary public google caller FAILED before callback/landing at the provider
 boundary and cleaned up normally. no authorized catalog or writing-sse capture

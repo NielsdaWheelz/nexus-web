@@ -1,22 +1,22 @@
 # a permanent authored conflict reads as lag
 
-status: open
-origin: 2026-11-01 feedback-homes L0a review
-area: web / authored sync
+open; source rechecked at `4d29b434f` on 2026-11-11. authored sync treats every
+409 as retryable (`apps/web/src/lib/authored/sync.ts`, `TRANSIENT_4XX`). a busy
+row lock (`python/nexus/api/edge.py:97`) and `Noncontiguous upload`,
+`Accepted command bytes changed` and `Source sequence gap`
+(`python/nexus/services/authored/__init__.py:229–245`) all answer
+`E_RESOURCE_CONFLICT`; only the human message distinguishes them.
 
-every 409 on authored routes counts as `Retrying`, because the api answers a busy row
-lock and a permanent conflict with the same `E_RESOURCE_CONFLICT`, and no field separates
-them. `Noncontiguous upload`, `Accepted command bytes changed` and `Source sequence gap`
-therefore retry for ever.
+a permanent refusal therefore remains `Retrying` and presents as lag instead
+of exposing a failure that needs intervention. this is a source finding, not
+attribution of a particular deployed sync incident.
 
-impact: a replica that can never upload shows a hollow `Lagging` mark and no slip, where
-main said `couldn't sync`. the writer is not told that a person is needed.
+separate retryable contention from permanent protocol refusal at the api error
+contract, then project the latter as `Refused`. do not match human copy or
+rewrite the immutable pending command. apply the current wire revision rule;
+the retired feedback plan is not a prohibition on this repair. the current
+contract is [authored writing](../modules/notes.md); presentation stays with
+`apps/web/src/components/feedback`.
 
-evidence, by reading: `apps/web/src/lib/authored/sync.ts` `TRANSIENT_4XX`;
-`python/nexus/api/edge.py:97`; `python/nexus/services/authored/__init__.py:229,240-241,245`.
-only the human message differs, and matching it would make copy a contract.
-
-blocker: a separating field is a wire change, which `docs/feedback-homes-spec.md` forbids.
-
-resolved when: a client can tell a busy lock from a permanent conflict, and the conflict
-reads `Refused`.
+resolved when contention still retries, each permanent conflict reaches the
+existing failure presentation, and local writing and pending bytes survive.

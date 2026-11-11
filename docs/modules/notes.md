@@ -772,6 +772,14 @@ and compared before new commands merge. the account head lock commits canonical
 states, projections, consecutive feed sequences and source acceptance together.
 server tools use that same owner within their existing fenced transaction.
 
+atomic changes are bounded to 2 mib fully encoded; nonstreaming envelopes and
+change-feed pages to 3 mib, including base64 and wrappers. an indivisible command
+occupies a page alone when needed. refuse oversized input before local success;
+never commit a command that its upload envelope cannot carry, truncate writing or
+rewrite committed bytes to fit. migration preflight reports existing oversize
+content. local queries return bounded rows; native transfer retains 24 kib raw
+chunks within 64 kib frames. the whole streamed corpus snapshot has no 3 mib cap.
+
 `GET /authored/changes?after=…` returns a bounded ascending prefix through one
 captured head. applying each command and advancing its cursor is one device
 transaction. sending and receiving proceed independently.
