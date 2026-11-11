@@ -18,7 +18,6 @@ historical 0321 evidence, not current ff83/0329 quality or whole-topology proof.
 resolve with the current integrated candidate: an authorized ready source, grounded
 candidate/evidence identity, real generation, normal claim-fenced completion and
 truthful publication, with backend/child/provider retirement and unchanged failure
-budgets. [the spec](../search-reliability-spec.md) owns the complete gates; no
-retired subsecond timing target applies. earlier plans and raw receipt pointers
-are preserved privately in the archived original of this issue under
-`.nexus-local/search-integration-docs-20261029.private/original-source/docs/issues/`.
+budgets. [search](../modules/search.md#qualification-contract) owns the complete gates; no
+retired subsecond timing target applies. historical failed work stays failed;
+this record selects no job reset, new campaign or runtime change.

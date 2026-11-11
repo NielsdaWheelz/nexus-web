@@ -23,3 +23,8 @@ incident remains open and explicitly unproved. the chat web was rewritten since
 (`apps/web/src/components/chat/*`, `apps/web/src/lib/chat/*`, 2026-10-19 re-slice): a
 recurrence names the new owners, the command owner `lib/chat/commands.ts` and the store
 `components/chat/conversationStore.ts` first.
+
+the 2026-11-04 report of a live-site failure a couple of days earlier matches
+the separately attributed [november 3 postgres recovery incident](production-search-postgres-oom.md),
+which interrupted chat admission. that evidence does not identify the older
+incident above.

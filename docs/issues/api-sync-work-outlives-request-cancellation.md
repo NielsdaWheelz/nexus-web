@@ -1,5 +1,15 @@
 # synchronous api work can outlive request cancellation
 
+release recurrence, 2026-11-05: the canonical c6c90343c cutover stopped the
+restored e505 api at 02:26:39 utc. uvicorn cancelled four tasks after its
+20-second grace, including an active `POST /authored/scope-inputs` and media
+streams. application shutdown completed, but docker killed the process at
+02:27:09 with exit 137 and `OOMKilled=false`. repeated scope-input reads had
+continued about once per second during the intended no-use window. the
+controller refused before candidate mutation and canonical original-cohort
+recovery restored service. close the remaining client sessions and establish
+an actual quiet boundary before retrying; the cancellation defect remains open.
+
 status: open · origin: 2026-10-13 production release and restored-copy shutdown control · area: api / database / lifecycle
 
 on source `16763c3cd4a7cb0b54520e99ec388fb82d573b9d`, an actual
@@ -15,8 +25,7 @@ thread. cancelling the asgi task neither stops that thread nor prevents its
 later statements. calling rollback or close from a second owner is not a
 safe cancellation protocol.
 
-private receipt: `release/api-shutdown-qualification/timeout-only-failed/`;
-receipt sha256 `ca95797c2cd6cde2e71217a7aefec061ba70088193442bd185e3b934418ac797`.
+historical shutdown receipt sha256 `ca95797c2cd6cde2e71217a7aefec061ba70088193442bd185e3b934418ac797`.
 the measured similarity-query repair and finite-request/stream shutdown
 control qualify that release workload; they do not establish a bound for
 every synchronous request. the deployer's nonzero-exit refusal remains in

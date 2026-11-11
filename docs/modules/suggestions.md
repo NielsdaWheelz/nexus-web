@@ -10,10 +10,9 @@ and the queue handlers.
 `services/suggestion_changes.py` owns the input revision, the engagement gate and
 feed deletion. web: `lib/useSuggestions.ts` (the visit model),
 `components/collections/SuggestionsSection.tsx`, `QuickReadsSection.tsx`.
-the [suggestion admission spec](../suggestion-admission-spec.md) owns the exact
-retrieval/admission contract; the [reliability spec](../search-reliability-spec.md)
-owns common quality, progress and release acceptance. fixed scheduling intervals
-are not latency guarantees.
+this module owns retrieval, admission and complete publication. [search](search.md)
+owns shared admission, quality and progress; [deployment](../../deployment.md#capacity-contract)
+owns aggregate physical resources. fixed scheduling intervals are not latency guarantees.
 
 ## product contract
 
@@ -140,7 +139,7 @@ vectors and eligibility stay in postgres. there is no shared ann traversal or
 all-anchor cross-product.
 ranking uses the native async search gate with one finite
 absolute allowance for checkout, nonblocking admission and the complete snapshot.
-the [required contract](../search-reliability-spec.md) separates capacity waiting
+the [search contract](search.md#work-bounds) separates capacity waiting
 from the execution allowance. background contention defers through the existing
 job owner; browser capacity waiting belongs to the current client intent.
 retirement confirms the search pid is absent before any publication transaction;
@@ -203,7 +202,7 @@ peak execution is not required. backup-window enforcement is not required by the
 current prototype acceptance. idle normal
 services and retained memory remain part of capacity accounting.
 backend retirement, useful publication and the resource envelope remain separate
-obligations under the [reliability spec](../search-reliability-spec.md).
+obligations under the [search contract](search.md#qualification-contract).
 
 ## ports
 

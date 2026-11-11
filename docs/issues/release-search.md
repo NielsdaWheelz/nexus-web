@@ -56,4 +56,4 @@ is truthfully unavailable. pagination is source-reviewed; screen-reader and
 unrestricted-backlog qualification retain their existing deferrals. no broader
 waiver follows. [codex final-text delivery](codex-final-answer-not-streamed.md)
 and [runtime release overhead](release-app-only-backup-cost.md) remain distinct
-follow-ups. exact source/proof history stays in prs and private receipts.
+follow-ups. exact source and recorded observations stay in the implementation prs.

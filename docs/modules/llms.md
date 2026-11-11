@@ -47,7 +47,7 @@ only with unchanged database identity and a revision on its original-to-target
 path. refusal preserves admitted specifications and receipts; exact original
 containers may reopen only while the durable pre-mutation recovery record remains
 valid. terminal calls' historical tool statuses are not active work. see the
-[drain contract](../release-generation-drain-spec.md) and
+[stopped-writer procedure](../../deployment.md#backend-release) and
 [release recovery procedure](../../deployment.md#refusal-recovery).
 
 ## Catalog and exact selection

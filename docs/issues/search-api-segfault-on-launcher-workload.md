@@ -87,7 +87,7 @@ rebuild inputs; exact current images must be rebuilt for environment-specific
 qualification. current routine verification uses the
 [mac docker desktop lab](../local-rules/testing-standards.md); paired production
 endpoint/client configuration is deployed and preserved by the search release.
-the [current reliability contract](../search-reliability-spec.md) retires the old
+the [current reliability contract](../modules/search.md#qualification-contract) retires the old
 timing gates without changing these verdicts or the accepted residual fault
 uncertainty. it still requires useful independent lexical/hybrid completion and
 the named cold, coexistence and capacity proof.
