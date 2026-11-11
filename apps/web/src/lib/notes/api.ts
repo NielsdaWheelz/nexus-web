@@ -6,7 +6,8 @@ import { isVisible } from "@nexus/authored/merge";
 import { dailyId } from "@nexus/authored/identity";
 import { createNoteIntent, type Intent } from "@nexus/authored/commands";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
-import { createLink, deleteResource } from "@/lib/resourceGraph/links";
+import { prepareLink, deleteResource } from "@/lib/resourceGraph/links";
+import type {OutlineHistory} from "./structure";
 import type { WritingRuntime } from "./runtime";
 import { selectStates } from "./runtime";
 export interface NotePageSummary { id: string; title: string }
@@ -24,9 +25,21 @@ export async function dailyPage(runtime: WritingRuntime, local_date: string): Pr
   return { ref, prelude: existing ? isVisible(existing.touch_vv, existing.delete_vv) ? [] : [{ kind: "restore_resource", ref }] : [{ kind: "create_page", ref, title: "", local_date }] };
 }
 export async function captureToday(runtime: WritingRuntime, localDate: string, noteId: string, text: string): Promise<string> {
+  return capture(runtime, localDate, noteId, text, null);
+}
+export async function captureTaskToday(runtime: WritingRuntime, localDate: string, noteId: string, text: string, history: OutlineHistory): Promise<string> {
+  if (history.runtime !== runtime) throw new Error("capture history belongs to another writing account");
+  return capture(runtime, localDate, noteId, text, history);
+}
+async function capture(runtime: WritingRuntime, localDate: string, noteId: string, text: string, history: OutlineHistory | null): Promise<string> {
   const page = await dailyPage(runtime, localDate);
   const ref = `note_block:${noteId}`;
-  await createLink(runtime, { source_ref: page.ref, target_ref: ref, source_label: null, target_label: null, after: null, prelude: [...page.prelude, createNoteIntent(ref, bodyText(text))] });
+  const link = await prepareLink(runtime, {source_ref:page.ref,target_ref:ref,source_label:null,target_label:null,after:null});
+  const intents: Intent[] = [...page.prelude,createNoteIntent(ref,bodyText(text)),...link.intents];
+  if (history) {
+    intents.push({kind:"set_work_designation",ref,designation:{kind:"task",enabled:true}});
+    await history.captureTask(ref,link.link_id,intents);
+  } else await runtime.run({kind:"batch",intents});
   return page.ref.slice("page:".length);
 }
 export type DailyLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };

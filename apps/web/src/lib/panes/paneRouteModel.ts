@@ -48,6 +48,7 @@ const ROUTES = {
   note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
   imports: ["imports", "Imports", Icon.Upload],
   stats: ["stats", "Stats", Icon.Stats],
+  habits: ["habits", "habits", Icon.Check],
   settings: ["settings", "Settings", Icon.Settings],
   settingsAccount: ["settings/account", "Account", Icon.Account],
   settingsReader: ["settings/reader", "Reader settings", Icon.ReaderSettings],
@@ -77,6 +78,7 @@ const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
 };
 // Query changes keep the mounted body (url-owned filters, sort, selection).
 const IN_PLACE = new Set<PaneRouteId>([
+  "habits",
   "lectern",
   "libraries",
   "library",

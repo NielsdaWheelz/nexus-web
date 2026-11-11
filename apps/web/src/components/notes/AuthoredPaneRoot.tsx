@@ -14,10 +14,13 @@ import type {TextEditorHandle} from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
 import BoundPageTitleEditor from "./BoundPageTitleEditor";
 import styles from "./AuthoredPaneRoot.module.css";
+import WorkCheckbox from "./WorkCheckbox";
+import {useAccountToday} from "@/lib/notes/accountDay";
 
 export type RootPresentation = "header" | "inline";
 
 export function useAuthoredPaneRoot(controller: OutlineController | null, field: RootField | undefined, presentation: RootPresentation) {
+  const today = useAccountToday();
   const inline = presentation === "inline";
   const regionId = useId();
   const region = useRef<HTMLDivElement>(null), disclosure = useRef<HTMLButtonElement>(null);
@@ -160,6 +163,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
         else {firstFocus.current = true; reveal();}
       }}><span className={styles.preview}>{preview}</span></button>,
     content: <RootAttachment controller={controller} handle={handle} visible={expanded} ownsFocus={ownsFocus} reveal={reveal} onVisible={visible}><div ref={region} className={styles.note} data-outline-session={controller.pending.root_id} onFocusCapture={focus} onBlurCapture={blur}>
+      {controller.windows.get(controller.pending.root_id)?.rootResource ? <WorkCheckbox resource={controller.windows.get(controller.pending.root_id)!.rootResource!} today={today} history={controller.history}/> : null}
       <AuthoredNoteEditor document={root} history={history} label="note body" header
         embedding={{row_id: controller.pending.root_id, context: controller.projection.context(controller.pending.root_id)}}
         reference={controller.projection.reference(controller.pending.root_id)} inspection={expanded || shownInspection.current?.controller === controller && shownInspection.current.activationId === inspection?.activationId ? inspection : null}

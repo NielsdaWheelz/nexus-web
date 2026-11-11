@@ -95,6 +95,7 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
     }
     return { wire_revision: WIRE_REVISION, format_revision: FORMAT_REVISION, status: syncStatus(sync!.facts), detail: sync!.detail, failure: sync!.facts.failure };
   }
+  if (op === "close") { ports.delete(port); port.close(); return null; }
   if (!persistence || retired) throw new Error("authored account is closed");
   switch (op) {
     case "pause_commands": {
@@ -140,7 +141,6 @@ async function operation(port: MessagePort, op: string, input: Record<string, un
       sync!.facts.online = input.online;
       return sync!.step({ refresh: input.refresh });
     }
-    case "close": ports.delete(port); port.close(); return null;
     default: throw new Error("unknown authored operation");
   }
 }
@@ -155,7 +155,7 @@ scope.onconnect = event => {
         try {
           const result = await operation(port, data.op, data);
           if (data.op !== "close" && data.op !== "retire") port.postMessage({ id: data.id, ok: true, result });
-        } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", status: error instanceof ApiError ? error.status : null, code: error instanceof ApiError ? error.code : error instanceof Error && "code" in error && error.code === "E_AUTHORED_LOCAL" ? error.code : null }); }
+        } catch (error) { port.postMessage({ id: data.id, ok: false, error: error instanceof Error ? error.message : "authored operation failed", status: error instanceof ApiError ? error.status : null, code: error instanceof ApiError ? error.code : error instanceof Error && "code" in error && (error.code === "E_AUTHORED_LOCAL" || error.code === "E_AUTHORED_UPGRADE_PENDING") ? error.code : null }); }
       };
       // Network work reacquires the SQL queue for each local transaction.
       if (data.op === "sync_step") void answer();

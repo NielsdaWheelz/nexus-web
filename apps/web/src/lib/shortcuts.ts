@@ -84,6 +84,7 @@ export function outlineShortcuts(platform: PlatformKind): readonly {
 }[] {
   const meta = usesMeta(platform);
   return [
+    {id:"Outline.Task",title:"Make a task",description:"Type [ ] then space at the start of a note. The checkbox belongs to that note; Return creates ordinary writing in an outline.",meta:"[ ] + Space"},
     {id: "Outline.Insert", title: "Insert or split an item", description: "Return splits the item at the caret; from its start it leaves the caret and puts an empty item above, and from the end of an open parent it starts the first child. An empty nested item outdents instead, an empty top-level item stays, and with items selected Return edits the first one.", meta: "Enter"},
     {id: "Outline.LineBreak", title: "Insert a line break", description: "Starts another line within the same note. Return inside code also stays in the note.", meta: "Shift+Enter"},
     {id: "Outline.Indent", title: "Indent or outdent", description: "Tab nests the item, or every selected item, under the item above; Shift+Tab lifts it out after its parent and the siblings below follow. Lines keep their order; a first sibling or a top-level item stays where it is.", meta: "Tab / Shift+Tab"},

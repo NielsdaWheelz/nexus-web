@@ -10,7 +10,7 @@ import { prepareChange, createNoteIntent, type Intent, type CommandContext } fro
 import { decodeBytes, encodeBytes, hydrateNote, createTitle, readBody } from "@nexus/authored/documents";
 import { noteBodySchema, rawBodyText, type NoteBody } from "@nexus/authored/body";
 import { advanceCoverage, mergeChanges, mergeVector } from "@nexus/authored/merge";
-import { MAX_COMMAND_BYTES, CommandTooLargeError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector } from "@nexus/authored/types";
+import { MAX_COMMAND_BYTES, CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, type AuthoredStore, type Change, type CommitFrame, type Corpus, type QueryResult, type MergeResult, type ResourceState, type StateSelection, type Vector, type NoteWork } from "@nexus/authored/types";
 import { openAuthoredStore } from "@/lib/authored/client";
 export interface WritingSnapshot { body_state: string; observed_touch: Vector }
 export interface WritingDocument {
@@ -31,7 +31,7 @@ export function writingStoreStopped(error:unknown):boolean {
 }
 export interface LocalCommit {
   command_seq: string; store_revision: string; change: Change;
-  before: { resources: { ref: string; touch_vv: Vector; delete_vv: Vector }[]; links: { link_id: string; add_vv: Vector; remove_vv: Vector }[] };
+  before: { resources: { ref: string; touch_vv: Vector; delete_vv: Vector; work: NoteWork | null }[]; links: { link_id: string; add_vv: Vector; remove_vv: Vector }[] };
 }
 export interface LocalGraphCommit extends LocalCommit {states: MergeResult}
 export type GraphIntent = Exclude<Intent, {kind: "batch" | "create_note" | "create_page" | "create_highlight" | "edit_body" | "edit_title"}>;
@@ -185,7 +185,7 @@ export class WritingRuntime {
    * structural edits. Only actual updates from the declared live documents enter
    * its text segment; asynchronous preparation may add graph intents only. */
   admitWriting(args: {
-    existing: readonly { document: WritingDocument; origin: unknown }[];
+    existing: readonly { document: WritingDocument; origin: unknown; state_vector?: Uint8Array }[];
     notes: readonly { body: NoteBody; origin: unknown }[];
     mutate: (created: readonly WritingDocument[]) => void;
     prepare: (created_refs: readonly string[]) => Promise<readonly Intent[]>;
@@ -197,13 +197,13 @@ export class WritingRuntime {
       this.capture_scope.owner.fault = error;
       throw error;
     }
-    const participants: {document: CachedDocument; origin: unknown}[] = [];
+    const participants: {document: CachedDocument; origin: unknown; state_vector?: Uint8Array}[] = [];
     const refs = new Set<string>();
     for (const entry of args.existing) {
       const cached = this.documents.get(entry.document.ref)?.value;
       if (!cached || cached !== entry.document || refs.has(cached.ref)) throw new Error("Compound writing needs distinct open documents from this account");
       refs.add(cached.ref);
-      participants.push({document:cached,origin:entry.origin});
+      participants.push({document:cached,origin:entry.origin,state_vector:entry.state_vector});
     }
     const initializers: {ref:string;intent:Extract<Intent,{kind:"create_note"}>;doc:Y.Doc;origin:unknown}[] = [];
     try {
@@ -218,7 +218,9 @@ export class WritingRuntime {
     }
     let vectors: Map<string,Uint8Array>;
     try {
-      vectors = new Map(participants.map(({document}) => [document.ref,Y.encodeStateVector(document.doc)]));
+      // A refused copy supplies its pre-copy basis so rollback includes those
+      // undurable ids, without resending the already durable document.
+      vectors = new Map(participants.map(({document,state_vector}) => [document.ref,state_vector ?? Y.encodeStateVector(document.doc)]));
       for (const note of initializers) vectors.set(note.ref,Y.encodeStateVector(note.doc));
     } catch (error) {
       for (const note of initializers) note.doc.destroy();
@@ -236,7 +238,7 @@ export class WritingRuntime {
       void owner.settled.then(release,release);
     }
     for (const note of initializers) {
-      const resource: ResourceState = {kind:"note",ref:note.ref,touch_vv:{},delete_vv:{},body_state:note.intent.body_update};
+      const resource: ResourceState = {kind:"note",ref:note.ref,touch_vv:{},delete_vv:{},body_state:note.intent.body_update,work:null};
       const document = this.cacheDocument(note.ref,resource,note.doc,[],null,null);
       const release = document.retain();
       document.track(owner.settled,note.origin);
@@ -317,7 +319,7 @@ export class WritingRuntime {
       let receipt: LocalCommit;
       try { receipt = await this.attempt(owner); }
       catch (error) {
-        if (error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null) {
+        if (refusedBeforePrepare(owner, error)) {
           if (this.failed === owner) this.failed = null;
           throw error;
         }
@@ -330,7 +332,7 @@ export class WritingRuntime {
     });
     this.tail = operation.then(owner.accept, error => {
       owner.reject(error instanceof Error ? error : new Error("Writing command did not settle"));
-      if (!this.retired) this.publish(error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null
+      if (!this.retired) this.publish(refusedBeforePrepare(owner, error)
         ? { error: null, error_occurrence: null, error_refs: [] } : { error, error_occurrence: owner.occurrence, error_refs: owner.selection.refs });
       owner.refuse(error);
     }).finally(() => {
@@ -355,7 +357,7 @@ export class WritingRuntime {
         owner.held = true;
         try { return await this.prepareAndPersist(owner, store); }
         catch (error) {
-          if (error instanceof CommandTooLargeError && owner.reject_oversize && owner.prepared === null) throw error;
+          if (refusedBeforePrepare(owner, error)) throw error;
           owner.attempting = false;
           this.reportFailure(owner, error);
           // Retain the account lease until these exact bytes settle or the
@@ -647,7 +649,7 @@ function commitBefore(change: Change, states: Corpus, requested: Pick<StateSelec
   return {
     resources: [...new Set(change.resources.map(resource => resource.ref))].flatMap(ref => {
       const resource = resources.get(ref);
-      return resource || requested.refs.includes(ref) ? [{ ref, touch_vv: { ...resource?.touch_vv }, delete_vv: { ...resource?.delete_vv } }] : [];
+      return resource || requested.refs.includes(ref) ? [{ ref, touch_vv: { ...resource?.touch_vv }, delete_vv: { ...resource?.delete_vv }, work: resource?.kind === "note" ? structuredClone(resource.work) : null }] : [];
     }),
     links: [...new Set(change.links.map(link => link.link_id))].flatMap(link_id => {
       const link = links.get(link_id);
@@ -683,4 +685,8 @@ export function lowerGraph(context: CommandContext, intents: readonly GraphInten
     states = mergeChanges(states, [patch]);
   }
   return {change, states};
+}
+
+function refusedBeforePrepare(owner: FailedCommit, error: unknown): boolean {
+  return owner.prepared === null && (error instanceof WorkConversionError || error instanceof WorkJoinError || error instanceof WorkUnavailableError || error instanceof CommandTooLargeError && owner.reject_oversize);
 }

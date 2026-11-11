@@ -11,7 +11,7 @@ import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQ
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "../../node/authored/src/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_4_TO_5_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -45,10 +45,15 @@ export default defineConfig({
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
+        writeFileSync(path.join(outDir, "authored-upgrade-4-to-5.json"), JSON.stringify(UPGRADE_4_TO_5_SQL));
         const cursor = JSON.stringify(["a0", ""]);
+        const workCursors = [null, JSON.stringify(["1", "22222222-2222-4222-8222-222222222222", "note_block:33333333-3333-4333-8333-333333333333"])];
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;
         const samples: Record<PackagedQuery["kind"], PackagedQuery[]> = {
           daily_index: [{kind: "daily_index"}],
+          work_pending: workCursors.map(cursor => ({kind: "work_pending", local_date: "2026-11-11", cursor, limit: 100})),
+          work_completed: workCursors.map(cursor => ({kind: "work_completed", local_date: "2026-11-11", cursor, limit: 100})),
+          habits: workCursors.map(cursor => ({kind: "habits", cursor, limit: 100})),
           outline_windows: [
             {kind: "outline_windows", ref: "", ranges: [{cursor: null, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
             {kind: "outline_windows", ref: "", ranges: [{cursor, anchor_link_id: null, limit: 48}], excluded_link_ids: [], entering_link_id: null},
@@ -106,6 +111,6 @@ self.addEventListener("activate",event=>event.waitUntil((async()=>{for(const key
 self.addEventListener("message",event=>{if(event.data?.op==="ready")event.waitUntil((async()=>{const cache=await caches.open(CACHE);const ready=(await Promise.all(ASSETS.map(asset=>cache.match(asset)))).every(Boolean);event.ports[0]?.postMessage({ready});})());});
 self.addEventListener("fetch",event=>{const request=event.request,url=new URL(request.url);if(request.method!=="GET"||url.origin!==self.location.origin)return;
 if(ASSETS.includes(url.pathname)){event.respondWith((async()=>{const cache=await caches.open(CACHE);return await cache.match(url.pathname)||fetch(request);})());return;}
-if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|highlights\/[^/]+$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|feeds(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
+if(request.mode!=="navigate"||!(/^\/(?:$|share$|notes(?:\/[^/]+)?$|highlights\/[^/]+$|pages\/[^/]+$|daily(?:\/[^/]+)?$|search$|downloads$|lectern$|libraries(?:\/[^/]+)?$|browse(?:\/preview)?$|media\/[^/]+$|conversations(?:\/[^/]+)?$|podcasts(?:\/[^/]+)?$|feeds(?:\/[^/]+)?$|authors\/[^/]+$|imports$|stats$|habits$|settings(?:\/[^/]+)?$|atlas$|oracle(?:\/[^/]+)?$)/).test(url.pathname))return;
 event.respondWith((async()=>{const cached=await(await caches.open(CACHE)).match("/_nexus/app/index.html");if(!cached)throw Error("offline workspace shell incomplete");const nonce=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));const html=(await cached.text()).replaceAll("__NEXUS_NONCE__",nonce);return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Content-Security-Policy":POLICY.replaceAll("__NEXUS_NONCE__",nonce),"Cache-Control":"no-store"}});})());});`;
 }

@@ -4,17 +4,34 @@
  * No clone survives a gesture and no receipt chooses which command to undo. */
 import * as Y from "yjs";
 import {applyBodyEdits, bodyInline, createNote, encodeBytes, hydrateNote, noteEncodingBound, readBody, sliceInline, splitBody} from "@nexus/authored/documents";
-import {emptyBody, parseBody, type NoteBody} from "@nexus/authored/body";
+import {emptyBody, parseBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
 import {canonicalSerialization} from "@nexus/authored/canonical";
 import {prepareChange, type Intent} from "@nexus/authored/commands";
 import {linkId} from "@nexus/authored/identity";
 import {advanceCoverage, isVisible, mergeChanges, mergeVector} from "@nexus/authored/merge";
-import {CommandTooLargeError, MAX_COMMAND_BYTES, type LinkState, type MergeResult, type Vector} from "@nexus/authored/types";
+import {CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, MAX_COMMAND_BYTES, type LinkState, type MergeResult, type Vector} from "@nexus/authored/types";
 import {preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/links";
 import {lowerGraph, LocalCommitError, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
 import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
 import type {InputBookmark, Placement, RangePlan, RangeReason, RangeSnapshot} from "./outlineSelection";
 import {OutlineHistoryAllowance} from "./outlineHistoryAllowance";
+import type {WorkIntent} from "./work";
+
+function inverseWork(receipt: LocalCommit): Intent[] {
+  return receipt.change.resources.flatMap(patch => {
+    if (patch.kind !== "note" || patch.work === null) return [];
+    const before = receipt.before.resources.find(resource => resource.ref === patch.ref)?.work ?? null;
+    const work = patch.work, result: Intent[] = [];
+    const changed = (prior: {stamp: unknown} | null | undefined, next: {stamp: unknown}) => canonicalSerialization(prior?.stamp ?? null) !== canonicalSerialization(next.stamp);
+    if (changed(before?.designation, work.designation)) result.push({kind:"restore_work_designation",ref:patch.ref,expected:work.designation.stamp,
+      designation:before?.designation.value ?? {...work.designation.value,enabled:false}});
+    if (work.task_completed_on && changed(before?.task_completed_on, work.task_completed_on)) result.push({kind:"restore_task_completion",ref:patch.ref,
+      expected:work.task_completed_on.stamp,local_date:before?.task_completed_on?.value ?? null});
+    for (const [local_date, check] of Object.entries(work.habit_checks)) if (changed(before?.habit_checks[local_date], check))
+      result.push({kind:"restore_habit_completion",ref:patch.ref,local_date,expected:check.stamp,completed:before?.habit_checks[local_date]?.value ?? false});
+    return result;
+  });
+}
 
 export interface EditorHistory {
   origin: unknown;
@@ -23,6 +40,7 @@ export interface EditorHistory {
   redo(): void;
   boundary(): void;
   record(edit?: Pick<NoteEdit, "selectionBefore" | "selectionAfter">, admission?: number, bookmark?: InputBookmark): void;
+  taskPrefix?(body_state: string): void;
 }
 export interface OccurrenceBookmark {
   row_id: string; ref: string; placement: Placement | null; link: LinkState | Promise<LinkState> | null;
@@ -261,8 +279,76 @@ export class OutlineHistory {
     return result;
   }
 
+  /** One work gesture owns its exact conditional inverse, including any typed prefix. */
+  work(intent: WorkIntent, prefix: {document: WritingDocument; body_state: string} | null = null): AdmittedStructure {
+    this.boundary();
+    const bookmark = this.focus?.capture() ?? null;
+    const group = this.reserve({before: bookmark, after: bookmark}), origin = Symbol("note work");
+    const manager = prefix ? new Y.UndoManager(scope(prefix.document), {trackedOrigins: new Set([origin]), captureTimeout: 0}) : null;
+    let update: Uint8Array | null = null;
+    if (prefix) {
+      const shown = hydrateNote(prefix.body_state);
+      try {
+        const body = noteBodySchema.nodeFromJSON(readBody(shown).body_pm_json);
+        if (body.textBetween(0, Math.min(4,body.content.size), "", "\uFFFC") !== "[ ] ") throw new Error("task prefix is no longer present");
+        const vector = Y.encodeStateVector(shown);
+        applyBodyEdits(shown, [{kind:"replace",from:0,to:4,content:[]}]);
+        update = Y.encodeStateAsUpdate(shown, vector);
+      } finally {shown.destroy();}
+    }
+    group.refs.push(intent.ref);
+    group.cleanup = () => {manager?.clear(); manager?.destroy();};
+    this.hold(group, prefix ? [prefix.document] : []);
+    let inverse: Intent[] = [];
+    group.metadata = () => inverse;
+    const eligible = this.groups();
+    const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [],
+      mutate: () => {if (prefix && update) Y.applyUpdate(prefix.document.doc, update, origin);}, prepare: async () => [intent]});
+    group.apply = (redo, lower) => {
+      const eligible = this.groups();
+      const applied = this.runtime.admitWriting({existing: this.participants(group.documents, manager ?? origin), notes: [],
+        mutate: () => {if (manager) {if (redo) manager.redo(); else manager.undo();}},
+        prepare: async () => {
+          // An initially refused designation still owes its admitted text undo.
+          try {await lower;} catch (error) {if (error instanceof WorkConversionError || error instanceof WorkUnavailableError) return []; throw error;}
+          return inverse;
+        }});
+      return {result: applied.result, committed: this.track(group, applied.result, eligible, receipt => {inverse = inverseWork(receipt);})};
+    };
+    const committed = this.track(group, admitted.result, eligible, receipt => {inverse = inverseWork(receipt); if (!inverse.length && !manager?.undoStack.length && !manager?.redoStack.length) this.release(group);});
+    void admitted.result.catch(error => {
+      if (!(error instanceof WorkConversionError) && !(error instanceof WorkUnavailableError)) return;
+      if (prefix && manager && manager.undoStack.length) {
+        const rollback = this.runtime.admitWriting({existing:[{document:prefix.document,origin:manager}],notes:[],
+          mutate:() => {manager.undo();},prepare:async () => []});
+        group.settled = this.settle(rollback.result).then(() => null);
+      }
+      this.release(group);
+    });
+    return {result: admitted.result, committed};
+  }
+
+  /** Capture uses the same prepared page/note/link transaction as ordinary daily capture. */
+  captureTask(ref: string, link_id: string, intents: readonly Intent[]): Promise<LocalCommit> {
+    this.boundary();
+    const group = this.reserve({before: this.focus?.capture() ?? null, after: null});
+    group.refs.push(ref); group.coverage.resources.set(ref, {}); group.coverage.links.set(link_id, {});
+    const eligible = this.groups(), result = this.runtime.run({kind:"batch",intents:[...intents]});
+    group.apply = (redo, lower) => {
+      const eligible = this.groups();
+      const admitted = this.runtime.admitWriting({existing: [], notes: [], mutate: () => {}, prepare: async () => {
+        await lower;
+        return redo ? [{kind:"restore_resource",ref},{kind:"restore_link",link_id}]
+          : [{kind:"delete_resource",ref,observed_touch:{...group.coverage.resources.get(ref)!}},
+            {kind:"unlink",link_id,observed_add:{...group.coverage.links.get(link_id)!}}];
+      }});
+      return {result: admitted.result, committed: this.track(group, admitted.result, eligible)};
+    };
+    return this.track(group, result, eligible);
+  }
+
   editor(document: WritingDocument, suppliedOrigin?: unknown): EditorHistory {
-    if (this.closed) return {origin: suppliedOrigin ?? Symbol("closed outline typing"), retain: () => () => {}, undo: () => {}, redo: () => {}, boundary: () => {}, record: () => {}};
+    if (this.closed) return {origin: suppliedOrigin ?? Symbol("closed outline typing"), retain: () => () => {}, undo: () => {}, redo: () => {}, boundary: () => {}, record: () => {}, taskPrefix: () => {}};
     let entry = this.texts.get(document.ref);
     if (!entry) {
       const origin = Symbol("outline typing");
@@ -282,6 +368,7 @@ export class OutlineHistory {
     const history = entry, origin = suppliedOrigin ?? history.origin;
     return {origin, retain: () => {history.active++; return () => {history.active--; this.pruneText(history);};},
       undo: this.undo, redo: this.redo, boundary: () => history.manager.stopCapturing(),
+      taskPrefix: body_state => {void this.work({kind:"set_work_designation", ref:document.ref, designation:{kind:"task",enabled:true}}, {document,body_state}).result.catch(() => {});},
       record: (edit, _admission, bookmark) => {
         const current = bookmark ?? this.focus?.capture() ?? null;
         // A resolver captured after an edit cannot describe its numeric before.
@@ -561,27 +648,45 @@ export class OutlineHistory {
     group.removed = [sourceOccurrence];
     const origin = Symbol("outline join"), manager = new Y.UndoManager(scope(destinationDocument), {trackedOrigins: new Set([origin]), captureTimeout: 0});
     group.cleanup = () => {manager.clear(); manager.destroy();}; this.hold(group, [sourceDocument, destinationDocument]);
+    const recover = (result: Promise<LocalCommit>, basis: Uint8Array, owner: FocusOwner | null, mayFocus: () => boolean): Promise<LocalCommit> => result.catch(error => {
+      if (!(error instanceof WorkJoinError)) throw error;
+      this.failure(error);
+      const rollback = this.runtime.admitWriting({existing: [{document: destinationDocument, origin: manager, state_vector: basis}], notes: [],
+        mutate: () => {manager.undo();}, prepare: async () => []});
+      const committed = this.settle(rollback.result);
+      // Restore only the consumed occurrence. Later destination placement and
+      // typing are independent of this refused join.
+      const acknowledge = owner?.prepare?.([], mayFocus, {show: [sourceOccurrence], hide: []});
+      acknowledge?.(committed);
+      owner?.publish(group.documents, change.before, group.after, mayFocus, committed, "undo");
+      this.release(group);
+      return committed;
+    });
     const proof = Promise.all([sourceObserved, destinationObserved]);
     void proof.catch(() => {});
-    const eligible = this.groups();
+    const eligible = this.groups(), owner = this.focus, mayFocus = owner?.lease() ?? (() => false), basis = Y.encodeStateVector(destinationDocument.doc);
+    group.suspended++;
     const admitted = this.runtime.admitWriting({existing: this.participants(group.documents, origin), notes: [],
       mutate: () => {Y.applyUpdate(destinationDocument.doc, update, origin);},
       prepare: async () => {
         const [observed_touch] = await proof;
         group.coverage.resources.set(sourceDocument.ref, observed_touch);
-        return [{kind: "delete_resource", ref: sourceDocument.ref, observed_touch}];
+        return [{kind: "delete_joined_note", ref: sourceDocument.ref, observed_touch}];
       }});
     group.apply = (redo, lower) => {
-      const eligible = this.groups();
+      const eligible = this.groups(), owner = this.focus, mayFocus = owner?.lease() ?? (() => false), basis = Y.encodeStateVector(destinationDocument.doc);
+      group.suspended++;
       const inverse = this.runtime.admitWriting({existing: this.participants(group.documents, manager), notes: [],
         mutate: () => {if (redo) manager.redo(); else manager.undo();},
         prepare: async () => {await lower; return [redo
-          ? {kind: "delete_resource", ref: sourceDocument.ref, observed_touch: {...group.coverage.resources.get(sourceDocument.ref)!}}
+          ? {kind: "delete_joined_note", ref: sourceDocument.ref, observed_touch: {...group.coverage.resources.get(sourceDocument.ref)!}}
           : {kind: "restore_resource", ref: sourceDocument.ref}];}});
-      return {result: inverse.result, committed: this.track(group, inverse.result, eligible)};
+      const result = recover(inverse.result, basis, owner, mayFocus);
+      return {result, committed: this.track(group, result, eligible, () => {group.suspended--;})};
     };
-    const committed = this.track(group, admitted.result, eligible);
-    return {result: admitted.result, committed, selection};
+    const result = recover(admitted.result, basis, owner, mayFocus);
+    const committed = this.track(group, result, eligible, () => {group.suspended--;});
+    return {result, committed, selection};
   }
   range(args: {
     plan: RangePlan; documents: readonly WritingDocument[]; snapshot: RangeSnapshot; metadata(): unknown; canRetain(): boolean;

@@ -90,7 +90,7 @@ function meaning(title: string, content: MenuContent): string {
       ];
       const state = option.kind === "command" ? option.state : undefined;
       return [
-        option.id, option.kind, option.label, option.href, option.tone,
+        option.id, option.kind, option.label, option.description, option.href, option.tone,
         option.disabledReason, option.waiting, option.separatorBefore,
         state?.kind === "toggle" ? [state.kind, state.pressed] : state ?
           [state.kind, state.expanded, state.controls, state.menuLabels.collapsed, state.menuLabels.expanded] : null,
@@ -717,6 +717,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
     </li>;
     const control = projectActionControlState(option.label, option.kind === "command" ? option.state : undefined);
     const reason = option.disabled && option.disabledReason ? `${menuId}-reason-${index}` : undefined;
+    const description = option.description ? `${menuId}-description-${index}` : undefined;
     const activate = (event: MouseEvent | KeyboardEvent) => {
       if (!("key" in event)) event.stopPropagation();
       const action = latestOption(option.id);
@@ -740,7 +741,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       "aria-disabled": option.disabled || undefined,
       "aria-busy": option.busy || undefined,
       "aria-haspopup": option.hasPopup,
-      "aria-describedby": reason,
+      "aria-describedby": [description, reason].filter(Boolean).join(" ") || undefined,
       onKeyDown: activate, onClick: activate,
     };
     const body = <>
@@ -750,6 +751,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       </span>
       <span className={`${collection.content} ${styles.menuText}`}>
         <span>{sheet ? option.label : control.menuLabel}</span>
+        {description ? <span id={description} className={collection.detail}>{option.description}</span> : null}
         {reason ? <span id={reason} className={option.waiting ? "sr-only" : collection.detail}>{option.disabledReason}</span> : null}
       </span>
     </>;

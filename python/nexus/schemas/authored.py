@@ -1,5 +1,6 @@
 """Closed replication envelopes. Counters are decimal signed-64-bit strings."""
 
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -40,6 +41,34 @@ class Stamp(Closed):
 class Register[T](Closed):
     value: T
     stamp: Stamp
+
+
+def _local_date(value: str) -> str:
+    if date.fromisoformat(value).isoformat() != value:
+        raise ValueError("expected a YYYY-MM-DD civil date")
+    return value
+
+
+LocalDate = Annotated[str, AfterValidator(_local_date)]
+
+
+class WorkDesignation(Closed):
+    kind: Literal["task", "habit"]
+    enabled: bool = Field(strict=True)
+
+
+class NoteWork(Closed):
+    captured: Stamp
+    designation: Register[WorkDesignation]
+    task_completed_on: Register[LocalDate | None] | None
+    habit_checks: dict[LocalDate, Register[Annotated[bool, Field(strict=True)]]]
+
+
+class WorkView(Closed):
+    captured: Stamp
+    designation: WorkDesignation
+    task_completed_on: LocalDate | None
+    habit_dates: list[LocalDate]
 
 
 class ReaderPublication(Closed):
@@ -84,6 +113,7 @@ class Causality(Closed):
 class NotePatch(Causality):
     kind: Literal["note"]
     body_update: str | None
+    work: NoteWork | None
 
 
 class PagePatch(Causality):
@@ -106,6 +136,7 @@ ResourcePatch = Annotated[NotePatch | PagePatch | HighlightPatch, Field(discrimi
 class NoteState(Causality):
     kind: Literal["note"]
     body_state: str
+    work: NoteWork | None
 
 
 class PageState(Causality):
@@ -194,6 +225,7 @@ class ResourceProjection(Closed):
     embedded_refs: list[str]
     excerpt: ExcerptView | None
     capture_revision: str | None
+    work: WorkView | None
 
 
 class MergeResult(Corpus):
@@ -206,7 +238,7 @@ class ProvisionReplica(Closed):
 
 
 class UploadChanges(Closed):
-    format_revision: Literal[4]
+    format_revision: Literal[5]
     replica_id: UUID
     changes: list[Change] = Field(min_length=1, max_length=64)
 
@@ -231,7 +263,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[4]
+    format_revision: Literal[5]
     head_cursor: Counter
     lamport: Counter
 
@@ -265,7 +297,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[4]
+    format_revision: Literal[5]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts

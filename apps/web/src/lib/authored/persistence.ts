@@ -13,7 +13,7 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL } from "@nexus/authored/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_4_TO_5_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
@@ -53,7 +53,11 @@ export class Persistence {
     await this.db.transaction(async () => {
       const state = await this.replica();
       if (state.account_id !== accountId) throw new Error("authored account mismatch");
-      if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
+      if (state.format_revision === 4) {
+        if ((await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0)
+          throw Object.assign(new Error("sync all writing with the previous client before updating this device"), { code: "E_AUTHORED_UPGRADE_PENDING" });
+        for (const sql of UPGRADE_4_TO_5_SQL) await this.db.run(sql);
+      } else if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
     });
   }
   async readSnapshot(selection: StateSelection): Promise<{ replica: ReplicaState; states: Corpus }> {
@@ -118,7 +122,7 @@ export class Persistence {
     const compiled = compileQuery(query);
     const raw = await this.db.all(compiled.sql, compiled.params);
     if (query.kind === "daily_index") return {store_revision: (await this.replica()).store_revision,
-      daily_index: raw.map(row => ({local_date: String(row.local_date), ref: String(row.ref)})),
+      daily_index: raw.map(row => ({local_date: String(row.local_date), ref: row.ref === null ? null : String(row.ref)})),
       rows: [], children: [], next_cursor: null, previous_cursor: null, binding_id: null, canonical_source_ref: null,
       positions: [], scope_available: true, outline_windows: null};
     if (query.kind === "outline_children") return {

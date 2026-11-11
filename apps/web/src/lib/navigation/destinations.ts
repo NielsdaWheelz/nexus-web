@@ -58,6 +58,7 @@ const REGISTRY = {
     href: "/imports",
     keywords: ["uploads", "ingest", "processing", "failed", "retry", "activity"],
   },
+  habits: {label:"habits",href:"/habits",keywords:["daily","tasks","routine"],icon:Icon.Check},
   stats: {
     label: "Stats",
     href: "/stats",

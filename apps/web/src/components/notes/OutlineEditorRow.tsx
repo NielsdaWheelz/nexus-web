@@ -29,6 +29,9 @@ import {resourceType, resourceTypeName} from "@/lib/resources/type";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
 import styles from "./OutlineEditorRow.module.css";
 import factualStyles from "@/components/resources/ResourceContent.module.css";
+import WorkCheckbox from "./WorkCheckbox";
+import type {OutlineHistory} from "@/lib/notes/structure";
+import {useAccountToday} from "@/lib/notes/accountDay";
 
 /** Accepted live identities remain; cold offline references read the saved catalog. */
 function EpisodeBibliography({mediaId, returnFocus}: {mediaId: string; returnFocus: () => HTMLElement | null}) {
@@ -81,8 +84,9 @@ export interface OutlineRowChrome {
 /** `openMenu` is the bullet menu's opener while the bullet is mounted; a touch hold released in place calls it. */
 export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTMLElement; disclose: HTMLElement; trailing: HTMLElement; content: HTMLElement; presentation: HTMLElement; annotation: HTMLElement; openMenu: (() => void) | null}
 
-export default function OutlineEditorRows({mounts, rows}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>}) {
+export default function OutlineEditorRows({mounts, rows, history}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>; history:OutlineHistory}) {
   const runtime = usePaneRuntime();
+  const today = useAccountToday();
   return mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
     if (!row) return [];
@@ -126,6 +130,7 @@ export default function OutlineEditorRows({mounts, rows}: {mounts: readonly Outl
       aria-label={`${row.open ? "collapse" : "expand"} ${row.label}`} aria-expanded={row.open} aria-busy={row.read.pending}
       onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}><Icon.Disclose open={row.open} size={12}/></button> : null;
     const trailing = <>
+      {row.resource ? <WorkCheckbox resource={row.resource} today={today} history={history}/> : null}
       {row.mirrors > 1 ? <span data-mirrors={row.mirrors}><span aria-hidden="true">{row.mirrors}</span><span className="sr-only">appears under {row.mirrors} parents</span></span> : null}
       <AuthoredReadFailure {...row.read} noun="linked items"/>
     </>;

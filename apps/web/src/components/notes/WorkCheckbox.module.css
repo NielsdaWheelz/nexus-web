@@ -1,0 +1,8 @@
+.checkbox {
+  width: var(--size-xs);
+  height: var(--size-xs);
+  flex: none;
+  margin: var(--space-1);
+  accent-color: var(--accent);
+  cursor: pointer;
+}

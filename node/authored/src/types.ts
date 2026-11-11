@@ -1,16 +1,39 @@
 /** Shared authored state and replication vocabulary. Decimal counters are exact signed
  * 64-bit SQL values. Patches carry causal evidence, never replacement projections. */
 import type { FrozenExcerpt, ExcerptView } from "./excerpt.ts";
-export const FORMAT_REVISION = 4;
+export const FORMAT_REVISION = 5;
 export const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
 export class CommandTooLargeError extends TypeError {
   constructor() { super("this selection is too large to save. select a shorter passage."); this.name = "CommandTooLargeError"; }
+}
+export class WorkConversionError extends TypeError {
+  constructor() { super("use a new note to change work type while completion history exists"); this.name = "WorkConversionError"; }
+}
+export class WorkJoinError extends TypeError {
+  constructor() { super("join would remove independent work history"); this.name = "WorkJoinError"; }
+}
+export class WorkUnavailableError extends TypeError {
+  constructor() { super("this note is no longer available"); this.name = "WorkUnavailableError"; }
 }
 export type Counter = string;
 export type ResourceRef = string;
 export type Vector = Readonly<Record<string, Counter>>;
 export interface Stamp { lamport: Counter; replica_id: string }
 export interface Register<T> { value: T; stamp: Stamp }
+export type LocalDate = string;
+export interface WorkDesignation { kind: "task" | "habit"; enabled: boolean }
+export interface NoteWork {
+  captured: Stamp;
+  designation: Register<WorkDesignation>;
+  task_completed_on: Register<LocalDate | null> | null;
+  habit_checks: Readonly<Record<LocalDate, Register<boolean>>>;
+}
+export interface WorkView {
+  captured: Stamp;
+  designation: WorkDesignation;
+  task_completed_on: LocalDate | null;
+  habit_dates: LocalDate[];
+}
 export type Publication = { kind: "reader"; generation: number } | { kind: "note_text"; sha256: string } | { kind: "x_capture"; capture_id: string };
 export interface QuoteSelector extends Record<string, unknown> { exact: string; prefix: string | null; suffix: string | null }
 export interface Quad { x1: number; y1: number; x2: number; y2: number; x3: number; y3: number; x4: number; y4: number }
@@ -30,11 +53,11 @@ export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "purple";
 export type HighlightLocator = Extract<Locator, {type:"x_capture_offsets" | "web_text_offsets" | "epub_fragment_offsets" | "pdf_page_geometry"}>;
 export interface SelectionCapture { excerpt: FrozenExcerpt; publication: Publication | null; locator: HighlightLocator; quote_exact: string; prefix: string | null; suffix: string | null; passage_ref: ResourceRef | null }
 interface ResourceCausality { ref: ResourceRef; touch_vv: Vector; delete_vv: Vector }
-export interface NotePatch extends ResourceCausality { kind: "note"; body_update: string | null }
+export interface NotePatch extends ResourceCausality { kind: "note"; body_update: string | null; work: NoteWork | null }
 export interface PagePatch extends ResourceCausality { kind: "page"; local_date: string | null; title_update: string | null }
 export interface HighlightPatch extends ResourceCausality { kind: "highlight"; source_ref: ResourceRef; selection: Register<SelectionCapture>; color: Register<HighlightColor>; body_update: string | null }
 export type ResourcePatch = NotePatch | PagePatch | HighlightPatch;
-export interface NoteState extends ResourceCausality { kind: "note"; body_state: string }
+export interface NoteState extends ResourceCausality { kind: "note"; body_state: string; work: NoteWork | null }
 export interface PageState extends ResourceCausality { kind: "page"; local_date: string | null; title_state: string }
 export interface HighlightState extends ResourceCausality { kind: "highlight"; source_ref: ResourceRef; selection: Register<SelectionCapture>; color: Register<HighlightColor>; body_state: string }
 export type ResourceState = NoteState | PageState | HighlightState;
@@ -46,7 +69,7 @@ export interface SourceStub { source_ref: ResourceRef; capture: Register<SourceC
 export interface Change { command_seq: Counter; lamport: Counter; resources: ResourcePatch[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
 export interface Corpus { resources: ResourceState[]; links: LinkState[]; passages: PassageState[]; source_stubs: SourceStub[] }
 export type SelectionLocation = Omit<SelectionCapture, "excerpt">;
-export interface ResourceProjection { excerpt: ExcerptView | null; capture_revision: string | null; authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: import("./body.ts").BodyJson | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; source_publication: Publication | null; selection: SelectionLocation | null; color: HighlightColor | null; embedded_refs: string[] }
+export interface ResourceProjection { excerpt: ExcerptView | null; capture_revision: string | null; authored_by_viewer: boolean; ref: ResourceRef; kind: ResourceState["kind"] | "source"; visible: boolean; body_pm_json: import("./body.ts").BodyJson | null; body_text: string | null; title: string | null; local_date: string | null; source_ref: ResourceRef | null; source_publication: Publication | null; selection: SelectionLocation | null; color: HighlightColor | null; embedded_refs: string[]; work: WorkView | null }
 export interface MergeResult extends Corpus { projections: ResourceProjection[] }
 export interface FeedChange { server_seq: Counter; replica_id: string; change: Change }
 export interface ReplicaState { account_id: string; replica_id: string; command_seq: Counter; store_revision: Counter; lamport: Counter; server_cursor: Counter; format_revision: number; provisioning_complete: boolean }
@@ -67,11 +90,14 @@ export interface OutlineChildrenOccurrence { refs: ResourceRef[]; excluded_link_
 /** Raw rows own their projections; this proof adds only the root and missing
  * boundary peers. Every field belongs to the same serialized SQL read. */
 export interface OutlineWindowProof { resources: ResourceProjection[]; before: LinkState | null; after: LinkState | null; tail: LinkState | null }
-export interface DailyIndexEntry { local_date: string; ref: ResourceRef }
+export interface DailyIndexEntry { local_date: string; ref: ResourceRef | null }
 export interface OutlineRange { cursor: string | null; anchor_link_id: string | null; limit: number }
 export interface OutlineWindowSlice { rows: QueryRow[]; children: (boolean | null)[]; next_cursor: string | null; previous_cursor: string | null; proof: OutlineWindowProof }
 export type AuthoredQuery =
   | { kind: "daily_index" }
+  | { kind: "work_pending"; local_date: LocalDate; cursor: string | null; limit: number }
+  | { kind: "work_completed"; local_date: LocalDate; cursor: string | null; limit: number }
+  | { kind: "habits"; cursor: string | null; limit: number }
   | { kind: "outline_windows"; ref: ResourceRef; ranges: OutlineRange[]; excluded_link_ids: string[]; entering_link_id: string | null }
   | { kind: "outline_children"; occurrences: OutlineChildrenOccurrence[] }
   | { kind: "positions"; ref: ResourceRef; exclude_link_id: string | null; at: PositionQuery }

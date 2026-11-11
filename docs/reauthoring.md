@@ -740,6 +740,19 @@ lines (62 added, 40 deleted) in a 142-line bun patch. generated wire, dependency
 metadata, build/lab tooling, docs and temporary qualification cases are excluded.
 the touched rows record this feature's deltas; historical bases remain unchanged.
 
+daily work loop against `71bee9b5a` adds 1,301 authored runtime lines
+(1,415 added, 114 deleted across 57 files): notes/editor/history +502,
+work/journal/habits views +358, authored kernel +227, actions/panes/shared
+controls +81, internal tools +68, server authored schema/admission +39,
+android authored host +9, browser authored host +9 and theme +8. note metadata
+and existing registers replace scattered commitment tracking; the journal and
+ordinary note editors retain their owners. obsolete format-4 admission literals
+and the civil-date parser's 1900-based year remapping are removed. existing row
+pins and the shared pane anchor owner handle continuity; no task tables, occurrence
+notes, membership links, conflict workflow or second scroll writer. generated
+wire/helper, migrations, build tooling, docs and disposable cases are excluded;
+historical area bases and totals remain unchanged.
+
 authored runtime is every `python/nexus/**/*.py`, `apps/{api,worker,codex_agent}/**/*.py`, `node/ingest/**/*.mjs`, `apps/android/app/src/main/**/*.{kt,xml}` and `apps/web/src/**/*.{ts,tsx,css,html,svg}` file except five generated ones (web `lib/api/wire.gen.ts`, `lib/resources/resourceCapabilities.ts`, `lib/chat/toolContractProjection.ts`, `lib/brand.ts`, `app/brand.css`), in raw physical lines (`str.splitlines()`), unformatted. migrations, tests, scripts, deploy, docs and generated files are outside it. ordered path rules put each file in exactly one area (first match wins; every file matches).
 
 the historical counting scripts were in `nexus-web-campaign-artifacts/2026-10-18/`: `classify.py` (the rules; counts any rev), `areas.py` (the 62 areas over its rows, their PRs and status), `attribute.py` (each merged PR's lines per row, from `prs.json`) and `table.py` (this table, its totals and next column). the owner retired that archive on 2026-10-22; these scripts are no longer available. attribution is rename-aware: a renamed file's diff counts in its new path's row. a PR that adds a path the rules miss adds a rule; a path replaced without a detected rename keeps a rule for its successor's row (synapse → connections). deleted paths no rule matches drop out: about 6.9k gross lines, all in non-campaign PRs merged 09-28 to 10-10.

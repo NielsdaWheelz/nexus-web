@@ -207,3 +207,16 @@ no undo ownership. filing personally retains media; undo removes only the named
 filing. account history uses the same receipt eligibility predicate as execution.
 historical entry receipts carry required `order_revision:null`; their provenance
 survives, but their old undo authority is unproved.
+
+## note work facts
+
+`nexus.resource.read` accepts required nullable `work_date_range` for admitted
+notes only, at most 366 inclusive civil dates. required nullable `work` returns
+current designation, task date, whether any habit check exists and requested
+positive dates; absent range returns null dates. non-notes and never-designated
+notes return null work. `source:server_accepted` excludes unsynced device changes.
+
+body and work come from one repeatable-read snapshot under existing admission and
+visibility. text content hashes retain their meaning; a note receipt also hashes
+the returned text/work material, so an in-range date-only correction changes
+`snapshot_revision`. this adds neither work discovery nor an agent write surface.

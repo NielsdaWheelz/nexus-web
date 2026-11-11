@@ -17,6 +17,8 @@ import {OutlineHistory} from "@/lib/notes/structure";
 import {useOutlineWindows, type OutlineWindow} from "@/lib/notes/useOutlineWindow";
 import {OutlinePresentationAllowance} from "@/lib/notes/outlinePresentationAllowance";
 import {OutlineHistoryAllowance} from "@/lib/notes/outlineHistoryAllowance";
+import {WorkHistoryContext} from "@/lib/notes/work";
+import {WorkConversionError, WorkJoinError, WorkUnavailableError} from "@nexus/authored/types";
 import {usePaneAnchorGeometry, usePaneBeforeLayout, usePaneInputLease, usePaneRevealAnchor, usePaneVisitRetained} from "@/lib/workspace/paneReturnMemento";
 import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
@@ -218,14 +220,14 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
   // at risk, held below, and says nothing else meanwhile.
   useEffect(() => {
     if (failure === null || pendingError !== null) return;
-    if (failed !== null) say({fact: "couldn’t change this outline on this device."});
+    if (failed !== null) say({fact: failed instanceof WorkConversionError || failed instanceof WorkJoinError || failed instanceof WorkUnavailableError ? failed.message : "couldn’t change this outline on this device."});
     setFailure(null);
   }, [failure, failed, pendingError, say, setFailure]);
   useEffect(() => {
     if (refusal === null || pendingError !== null) return;
     return say(refusal instanceof OutlineActionRefusal ? refusal.line : {fact: "couldn’t change this outline on this device."});
   }, [refusal, pendingError, say]);
-  const defect = [pendingError, failed, refusal].find(error => error !== null && !(error instanceof OutlineActionRefusal) && !isAuthoredStorageFailure(error));
+  const defect = [pendingError, failed, refusal].find(error => error !== null && !(error instanceof OutlineActionRefusal) && !(error instanceof WorkConversionError) && !(error instanceof WorkJoinError) && !(error instanceof WorkUnavailableError) && !isAuthoredStorageFailure(error));
   if (defect !== undefined) throw defect;
   // A retry keeps its slip, and the caret its danger, until the retry settles.
   const retryPending: CommandVerb = {label: "retry", commandKey: "RetryPendingOutline", busy: pending.value.input.retrying, run: () => pending.value.input.retry()};
@@ -233,7 +235,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
     const text = guard.readCopyText({scopes: [], ownerIds: [pending.owner]});
     if (text !== null) void copy(text);
   }};
-  return <SharedOutline value={controller}>
+  return <WorkHistoryContext value={history}><SharedOutline value={controller}>
     <div data-outline-session={pending.value.input.root_id} data-pane-return-scope={`outline:${occurrencePrefix}`} onFocusCapture={event => {
       if (event.target instanceof Element && event.target.matches('.ProseMirror') && event.target.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === `outline:${occurrencePrefix}`) controller.setFocused(true);
     }} onBlurCapture={event => {
@@ -254,9 +256,9 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
         history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} onEditorReady={editorReady}/>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
-      <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()}/>
+      <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()} history={history}/>
     </OutlineDrag></div>
-  </SharedOutline>;
+  </SharedOutline></WorkHistoryContext>;
 }
 
 function BranchCollector({controller, request, received}: {controller: OutlineController; request: BranchRequest; received: ((window: OutlineWindow) => void) | null}) {

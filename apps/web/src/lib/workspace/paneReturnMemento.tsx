@@ -255,8 +255,18 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   /** The memento is the sole pane scroll writer, including logical row positions. */
   function place(port: Scrollport, memento: Memento): void {
     const { element } = port;
+    let moved = false;
+    // A sibling can move a window without rerendering it. Keep its committed
+    // row offsets, but acknowledge the live origin before range publication.
+    for (const entry of frames(port)) {
+      const frame = entry.geometry.read();
+      if (frame === null) { entry.frame = null; continue; }
+      const origin = frame.root.getBoundingClientRect().top - element.getBoundingClientRect().top - element.clientTop + element.scrollTop;
+      moved ||= origin !== entry.frame?.origin;
+      entry.frame = origin === frame.origin ? frame : { ...frame, origin };
+    }
     const anchor = memento.eyeLine;
-    const frame = anchor === null ? null : geometryFor(port, anchor)?.geometry.read() ?? null;
+    const frame = anchor === null ? null : geometryFor(port, anchor)?.frame ?? null;
     const position = frame !== null && anchor !== null ? frame.position(anchor.id) : null;
     const offset = position?.kind === "ready" ? position.offset : position?.kind === "pending" ? position.estimate : null;
     const row = anchor && findAnchor(port.content, anchor);
@@ -267,7 +277,7 @@ export function createPaneReturnMemento(guard: WorkGuard) {
         : memento.scrollTop;
     const previous = element.scrollTop;
     element.scrollTop = Math.min(Math.max(0, element.scrollHeight - element.clientHeight), Math.max(0, top));
-    if (element.scrollTop !== previous) refreshRanges(port);
+    if (element.scrollTop !== previous || moved) refreshRanges(port);
   }
 
   function updateAnchoring(): void {

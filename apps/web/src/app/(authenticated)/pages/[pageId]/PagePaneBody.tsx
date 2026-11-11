@@ -80,7 +80,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   usePaneReturnReady(root.ready || root.error !== null);
   const { inputRef, focusInput } = usePaneQueryInput();
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
-  usePaneChrome({
+  usePaneChrome({workHistory: root.controller?.history,
     displayTitle, editor: root.rootEditor ?? undefined,
     header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,

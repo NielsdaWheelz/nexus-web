@@ -25,12 +25,16 @@ type ServerCommand =
 const commandKeys = new Map<string, string>(Object.entries({
   create_note: "ref body_pm_json", create_page: "ref title local_date",
   edit_body: "ref body_update", edit_title: "ref title_update",
-  delete_resource: "ref observed_touch", restore_resource: "ref",
+  delete_resource: "ref observed_touch", delete_joined_note: "ref observed_touch", restore_resource: "ref",
   add_link: "link_id endpoint_a endpoint_b position_a position_b", restore_link: "link_id",
   unlink: "link_id observed_add", restore_position: "link_id endpoint_ref expected position",
   move_link: "link_id endpoint_ref position", create_highlight: "ref source_ref selection color body_pm_json", clear_annotation: "ref",
   update_highlight: "ref selection color", capture_source: "source_ref capture",
   capture_passage: "anchor_id source_ref normalized_exact prefix suffix capture", batch: "intents",
+  set_work_designation: "ref designation", set_task_completion: "ref local_date today",
+  set_habit_completion: "ref local_date completed today", clear_work_day: "ref local_date",
+  restore_work_designation: "ref expected designation", restore_task_completion: "ref expected local_date",
+  restore_habit_completion: "ref expected local_date completed",
 } satisfies Record<Intent["kind"] | "clear_annotation", string>));
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected semantic object");
@@ -60,6 +64,9 @@ function serverCommand(value: unknown): ServerCommand {
   if ("color" in command && !(kind === "update_highlight" && command.color === null)) text(command.color);
   for (const field of ["observed_touch", "observed_add", "capture"]) if (field in command) object(command[field]);
   if ("selection" in command && !(kind === "update_highlight" && command.selection === null)) object(command.selection);
+  if ("designation" in command) object(command.designation);
+  if ("today" in command) text(command.today);
+  if ("completed" in command && typeof command.completed !== "boolean") throw new TypeError("Expected completion boolean");
   if ("expected" in command) { const stamp = closed(command.expected, "lamport replica_id"); text(stamp.lamport); text(stamp.replica_id); }
   if (kind === "batch" && !Array.isArray(command.intents)) throw new TypeError("Expected semantic batch intents");
   // justify-type-assertion: keys/scalars are checked above; nested records are trusted Python inputs, whose effects shared merge and the closed Python result decoder validate.

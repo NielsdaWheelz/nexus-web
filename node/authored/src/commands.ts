@@ -5,18 +5,23 @@
  * explicit restore. */
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import type { Change, Corpus, HighlightColor, PassageCapture, SourceCapture, LinkState, ResourcePatch, ResourceState, SelectionCapture, Stamp, Vector } from "./types.ts";
+import { WorkJoinError, WorkUnavailableError } from "./types.ts";
 import { createNote, createTitle } from "./documents.ts";
 import { canonicalSelection } from "./geometry.ts";
 import { mergeChanges, counter, isVisible } from "./merge.ts";
 import { sortedEndpoints } from "./identity.ts";
 import type { NoteBody } from "./body.ts";
+import { prepareWorkPatch, type WorkIntent } from "./work.ts";
+export type { WorkIntent } from "./work.ts";
 export interface CommandContext { replica_id:string; command_seq:string; lamport:string }
 export type Intent =
+  | WorkIntent
   | { kind:"create_note"; ref:string; body_update:string }
   | { kind:"create_page"; ref:string; title:string; local_date:string|null }
   | { kind:"edit_body"; ref:string; body_update:string }
   | { kind:"edit_title"; ref:string; title_update:string }
   | { kind:"delete_resource"; ref:string; observed_touch:Vector }
+  | { kind:"delete_joined_note"; ref:string; observed_touch:Vector }
   | { kind:"restore_resource"; ref:string }
   | { kind:"add_link"; link_id:string; endpoint_a:string; endpoint_b:string; position_a:string; position_b:string }
   | { kind:"restore_link"; link_id:string }
@@ -41,7 +46,7 @@ function newSelection(selection:SelectionCapture):SelectionCapture {
 }
 function patchOf(r:ResourceState):ResourcePatch {
   switch(r.kind) {
-    case "note": return {ref:r.ref,kind:"note",touch_vv:{},delete_vv:{},body_update:null};
+    case "note": return {ref:r.ref,kind:"note",touch_vv:{},delete_vv:{},body_update:null,work:null};
     case "page": return {ref:r.ref,kind:"page",touch_vv:{},delete_vv:{},local_date:r.local_date,title_update:null};
     case "highlight": return {ref:r.ref,kind:"highlight",source_ref:r.source_ref,selection:r.selection,color:r.color,touch_vv:{},delete_vv:{},body_update:null};
   }
@@ -63,7 +68,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
       case "create_note": {
         const known=knownResource(action.ref);
         if(known){if(known.kind!=="note")throw new TypeError("Resource kind is immutable");return;}
-        change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update});return;
+        change.resources.push({kind:"note",ref:action.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update,work:null});return;
       }
       case "create_page": {
         const known=knownResource(action.ref);
@@ -74,7 +79,7 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
         const old=resource(action.ref);
         if(old.kind==="page")throw new TypeError("Body edit addresses a note or highlight");
         change.resources.push(old.kind==="note"
-          ? {kind:"note",ref:old.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update}
+          ? {kind:"note",ref:old.ref,touch_vv:dot,delete_vv:{},body_update:action.body_update,work:null}
           : {kind:"highlight",ref:old.ref,source_ref:old.source_ref,selection:old.selection,color:old.color,touch_vv:dot,delete_vv:{},body_update:action.body_update});return;
       }
       case "edit_title": {
@@ -82,7 +87,31 @@ export function prepareChange(context:CommandContext,intent:Intent,states:Corpus
         change.resources.push({kind:"page",ref:old.ref,local_date:old.local_date,title_update:action.title_update,touch_vv:dot,delete_vv:{}});return;
       }
       case "delete_resource":change.resources.push({...patchOf(resource(action.ref)),delete_vv:action.observed_touch});return;
+      case "delete_joined_note": {
+        const old=resource(action.ref);
+        if(old.kind!=="note")throw new TypeError("Join deletion addresses a note");
+        if(old.work!==null)throw new WorkJoinError();
+        change.resources.push({...patchOf(old),delete_vv:action.observed_touch});return;
+      }
       case "restore_resource":change.resources.push({...patchOf(resource(action.ref)),touch_vv:dot});return;
+      case "set_work_designation":
+      case "set_task_completion":
+      case "set_habit_completion":
+      case "clear_work_day":
+      case "restore_work_designation":
+      case "restore_task_completion":
+      case "restore_habit_completion": {
+        const old=knownResource(action.ref);
+        if(old!==null&&old.kind!=="note")throw new TypeError("Work addresses an owned note");
+        if(old===null||!isVisible(old.touch_vv,old.delete_vv)) {
+          // Conditional history cannot restore the existence of its note.
+          if(action.kind==="restore_work_designation"||action.kind==="restore_task_completion"||action.kind==="restore_habit_completion")return;
+          throw new WorkUnavailableError();
+        }
+        const work=prepareWorkPatch(old.work,action,stamp);
+        if(work!==null)change.resources.push({kind:"note",ref:old.ref,touch_vv:dot,delete_vv:{},body_update:null,work});
+        return;
+      }
       case "add_link": {
         const [a,b]=sortedEndpoints(action.endpoint_a,action.endpoint_b);
         if(a!==action.endpoint_a||b!==action.endpoint_b)throw new TypeError("Link endpoints and positions must be sorted");
