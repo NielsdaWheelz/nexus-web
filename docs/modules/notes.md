@@ -10,9 +10,9 @@ retain their separate owners.
 `/daily` resolves the account's current civil date; `/daily/:date` opens the
 continuous journal at that date. newest dates precede older dates; writing keeps
 each page's own relationship order. `/pages/:id` is a separate standalone view.
-the compact local `daily_index` contains visible persisted date/ref pairs,
-including empty pages. only the requested unwritten date adds a presentation
-section. reading, focus and scrolling create or restore nothing; canonical daily
+the local `daily_index` unions visible daily pages and recorded work dates.
+completion-only dates have a null page ref; empty authored pages remain indexed.
+only the requested unwritten date adds a presentation section. reading, focus and scrolling create or restore nothing; canonical daily
 bindings, including historical refs, remain authoritative.
 
 one pane coordinates dates, one controller owns each day, and one memento owns
@@ -56,9 +56,58 @@ may require revisiting the day; a reading hold is not an archive snapshot.
 the complete index and visited geometry cost `o(days)`. unseen heights are
 estimates; active selections and rich bodies have no hard total-memory bound.
 android's existing 16-mib result cap applies to the compact index and compound
-windows. wire 21 pairs the ui, worker and packaged native plan arrays; storage
-format and database schema are unchanged. provisioning and dated-page patches
-invalidate the index; note/link/status changes do not.
+windows. the ui, worker and packaged native plans share the same closed query
+contract. provisioning, dated-page patches and note changes invalidate the index.
+note invalidation is conservative: body edits can revive a deleted work note.
+this accepts extra local index reads without a second dependency cache.
+link/status changes do not invalidate it.
+
+## work
+
+a task or daily habit is the same note with optional structured work metadata.
+`[ ] ` at the beginning of typed prose or `make task` designates it; `repeat daily`
+selects daily repetition. paste and code retain literal text. source return creates
+ordinary writing. source bullets, graph operations and independent child tasks
+retain their existing contracts.
+
+work designation, one task completion date and each habit date are separate stamped
+registers. false habit checks remain causal clearing facts. capture keeps the first
+designation stamp and supplies deterministic ordering, including offline captures.
+normal conversion refuses currently recorded history; concurrent conversions retain
+both typed histories and the winning designation controls current behavior. disabling
+tracking retains dates. unlink changes placement; deletion hides work and restoration
+returns it. text always uses the note's current wording.
+
+`work_pending`, `work_completed` and `habits` query visible notes before cursor
+pagination. unfinished tasks and today's unchecked habits share one capture order.
+work sits above the measured journal feed. each day's completed section includes
+one live reference per note, even when its source writing is also present. no query
+manufactures a page, relationship or daily occurrence note.
+
+today uses one account timezone clock. new completions permit today or any past
+civil date, including dates before creation. existing dates never rebucket. task
+reopening clears its date; retrospective clearing addresses its displayed date;
+habit checks remain independent. blank means no record. no deadline, eligibility,
+missed-day, streak, score, automatic parent completion or midnight write exists.
+
+derived panes own one visit-scoped outline history; source actions borrow their
+outline's history. conditional inverses restore only their expected winning field.
+undo survives row removal and never overwrites a subsequently received field.
+an inverse against a deleted note does nothing; a direct work gesture against an
+unavailable note is refused without consuming the writing queue. source
+split retains the original work identity and creates ordinary writing; joining away
+a work-bearing source is refused. inline work uses the existing note editor with
+hard-break return and focus-traversing tab. focused editors, controls and owned
+dialogs retain only their mounted occurrence through completion; departure releases
+it. existing row pins own pending writing and menu preparation. stale reads never
+authorize new work commands.
+
+`/habits?year=YYYY` summarizes binary checks. year activation opens the exact date
+in the existing correction dialog; month navigation never writes. year and month
+each use one roving keyboard stop. a normal history button remains available on
+small screens. stopped habits retain editable history. full positive date arrays
+travel in resource projections: simple existing subscriptions cost about 5 kb per
+fully checked habit-year and retain the hosts' existing result limits.
 
 ## ownership
 
@@ -670,7 +719,7 @@ introduced. the runtime's unpinned document cache remains a separate owner.
 ## device ownership
 
 firefox ports share the stable `/_nexus/authored/worker.js` worker named
-`nexus-authored-<account>-format-4`. `IDBBatchAtomicVFS` uses strict indexeddb commit
+`nexus-authored-<account>-format-5`. `IDBBatchAtomicVFS` uses strict indexeddb commit
 and sqlite synchronous full. a browser web lock spans command preparation through
 uncertain commit settlement; an ephemeral port lease fences a late message from a
 retired or crashed owner. compatible shells reuse one account/format owner.
@@ -704,6 +753,17 @@ reopen before the cached shell loads.
 the product does not add a second activation protocol to repair that platform
 boundary. local corpus ownership remains independent of shell asset delivery.
 
+both hosts transactionally upgrade a drained format-4 store to format 5: add null
+work to canonical notes and every resource/passage projection; preserve replica
+identity, body bytes, source sequence and cursor. a nonempty outbox refuses the
+upgrade without writes. both hosts carry `E_AUTHORED_UPGRADE_PENDING` into the
+existing setup refusal: drain the previous version on this device, then retry.
+that surface offers no sign-out or discard action. unknown formats remain errors.
+canonical migration 0339
+adds note metadata, advances format-4 admissions and fences prior feed bytes at the
+locked head. coordinated release requires drained, caught-up devices and stopped
+old writers; pending immutable commands are never rewritten.
+
 ## replication
 
 `POST /authored/replicas` provisions a fresh account replica. immutable contiguous
@@ -726,7 +786,7 @@ or passive stream exists. hide stops successors, never durable commits or an
 admitted acknowledgement; return and local commits wake the document scheduler.
 two visible documents may share one running unit without owning each other's lifetime.
 hello checks account, wire and format before storage, with an exact revision echo.
-wire changes do not change durable format 4.
+wire admission and durable format admission remain separate. current authored format is 5.
 
 `GET /authored/snapshot` streams a repeatable-read corpus with head and lamport in
 its header and completion footer, plus exact record counts. interrupted staging

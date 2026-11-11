@@ -8,6 +8,7 @@ import { MAX_COMMAND_BYTES, CommandTooLargeError } from "./types.ts";
 import { bodyHasContent } from "./body.ts";
 import { mergeNote, mergeTitle } from "./documents.ts";
 import { isResourceRef, sortedEndpoints } from "./identity.ts";
+import { mergeWork, projectWork } from "./work.ts";
 export function counter(value:string):bigint {
   if(typeof value !== "string" || !/^(0|[1-9][0-9]*)$/u.test(value)) throw new TypeError("Counter must be a canonical nonnegative decimal");
   const n=BigInt(value);
@@ -42,7 +43,7 @@ export function mergeRegister<T>(a:Register<T>|null,b:Register<T>|null):Register
 }
 function requiredRegister<T>(a:Register<T>|null,b:Register<T>):Register<T> { return mergeRegister(a,b)!; }
 export function projectResource(state:ResourceState):ResourceProjection {
-  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[]};
+  const common={excerpt:null,capture_revision:null,authored_by_viewer:true,ref:state.ref,kind:state.kind,visible:isVisible(state.touch_vv,state.delete_vv),body_pm_json:null,body_text:null,title:null,local_date:null,source_ref:null,source_publication:null,selection:null,color:null,embedded_refs:[],work:null};
   switch(state.kind) {
     case "note":
     case "highlight": {
@@ -52,7 +53,7 @@ export function projectResource(state:ResourceState):ResourceProjection {
       if(Array.isArray(content)) for(const node of content) if(node.type==="resource_embed" && typeof node.attrs?.resource_ref==="string") embedded_refs.push(node.attrs.resource_ref);
       const projected=state.kind==="highlight"&&!bodyHasContent(body)?{body_pm_json:null,body_text:null}:body;
       const bodyProjection={...common,...projected,embedded_refs:[...new Set(embedded_refs)]};
-      if(state.kind==="note") return bodyProjection;
+      if(state.kind==="note") return {...bodyProjection,work:projectWork(state.work)};
       const {excerpt,...selection}=state.selection.value;
       return {...bodyProjection,source_ref:state.source_ref,source_publication:state.selection.value.publication,selection,color:state.color.value,excerpt:excerptView(excerpt,"compact",{kind:"capture"}),capture_revision:captureRevision(state.source_ref,{kind:"selection",value:state.selection.value})};
     }
@@ -62,7 +63,7 @@ export function projectResource(state:ResourceState):ResourceProjection {
 export function projectPassage(state: PassageState): ResourceProjection {
   const excerpt = excerptView(state.capture.value.excerpt, "compact", {kind:"capture"});
   const text = excerpt.kind === "content" ? excerptTextParts(excerpt.body).exact : "table excerpt";
-  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value})};
+  return {ref:`passage_anchor:${state.anchor_id}`,kind:"source",authored_by_viewer:true,visible:true,body_pm_json:null,body_text:null,title:text,local_date:null,source_ref:state.source_ref,source_publication:state.capture.value.publication,selection:null,color:null,embedded_refs:[],excerpt,capture_revision:captureRevision(state.source_ref,{kind:"passage",value:state.capture.value}),work:null};
 }
 function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState {
   if(!isResourceRef(patch.ref)) throw new TypeError("Invalid resource reference");
@@ -71,7 +72,7 @@ function resourceMerge(old:ResourceState|null,patch:ResourcePatch):ResourceState
   if(old && old.kind!==patch.kind) throw new TypeError("Resource kind is immutable");
   const causal={ref:patch.ref,touch_vv:mergeVector(old?.touch_vv??{},patch.touch_vv),delete_vv:mergeVector(old?.delete_vv??{},patch.delete_vv)};
   switch(patch.kind) {
-    case "note": return {...causal,kind:"note",body_state:mergeNote(old?.kind==="note"?old.body_state:null,patch.body_update).body_state};
+    case "note": return {...causal,kind:"note",body_state:mergeNote(old?.kind==="note"?old.body_state:null,patch.body_update).body_state,work:mergeWork(old?.kind==="note"?old.work:null,patch.work)};
     case "page": {
       if(old?.kind==="page" && old.local_date!==patch.local_date) throw new TypeError("Daily binding is immutable");
       return {...causal,kind:"page",local_date:patch.local_date,title_state:mergeTitle(old?.kind==="page"?old.title_state:null,patch.title_update).title_state};

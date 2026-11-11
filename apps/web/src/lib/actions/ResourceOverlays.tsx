@@ -17,6 +17,10 @@ import type { Overlay } from "@/lib/actions/ResourceActionsProvider";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
+import TaskCompletionDialog from "@/components/notes/TaskCompletionDialog";
+import HabitHistoryDialog from "@/components/notes/HabitHistoryDialog";
+import {workHistoryKey} from "@/lib/notes/useWorkHistoryKeys";
+import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 
 /**
  * The overlays verbs open, under one synthetic pane visit so their
@@ -40,6 +44,7 @@ export function ResourceOverlays({
   readonly close: () => void;
 }) {
   const workspace = useLatestWorkspace();
+  const {platform} = useRenderEnvironment();
   const navigated = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (overlay?.kind !== "Metadata") navigated.current = null;
@@ -62,6 +67,8 @@ export function ResourceOverlays({
       visitId="resource-action-overlays"
       routeKey="resource-action-overlays"
     >
+      {overlay?.kind === "TaskCompletion" ? <div onKeyDown={event => workHistoryKey(overlay.history,event.nativeEvent,platform)}><TaskCompletionDialog key={overlay.key} noteRef={overlay.ref} history={overlay.history} onClose={close} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback}/></div> : null}
+      {overlay?.kind === "HabitHistory" ? <div onKeyDown={event => workHistoryKey(overlay.history,event.nativeEvent,platform)}><HabitHistoryDialog key={overlay.key} open={overlay.open} noteRef={overlay.ref} local_date={overlay.local_date} history={overlay.history} onClose={close} returnFocusTo={overlay.anchor} returnFocusFallback={overlay.focusFallback}/></div> : null}
       {overlay?.kind === "Metadata" ? (
         <div onClickCapture={activateMetadataAnchor} onKeyDownCapture={activateMetadataAnchor}>
           <ResourceMetadataOverlay

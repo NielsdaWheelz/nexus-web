@@ -115,6 +115,16 @@
   --highlight-purple: rgba(156, 39, 176, 0.35);
 }
 
+/* Native controls follow the room; the document rule outranks vendor :root defaults. */
+html:root,
+[data-theme] {
+  color-scheme: dark;
+}
+html:root[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
+}
+
 /* the press is the default room. nested dark scopes redeclare only tokens
    another room overrides, preserving the shared tokens of their ancestors. */
 :root,
@@ -222,8 +232,6 @@
 
 /* The Solar: green twilight, aged brass (not the brand gold), moon-metal. */
 [data-theme="elvish"] {
-  /* Native controls must not punch white through the canopy. */
-  color-scheme: dark;
   /* green-black: the canopy */
   --overlay-scrim: rgb(5 15 10 / 0.45);
   --surface-canvas: #15201b;

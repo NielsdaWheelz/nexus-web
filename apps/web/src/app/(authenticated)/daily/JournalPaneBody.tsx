@@ -24,6 +24,9 @@ import { requirePaneRuntime, usePaneEntryDelivery, usePaneParam, usePaneRuntime 
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { PaneRefreshAnchor, usePaneAnchorGeometry, usePaneInputLease, usePaneReturnReady, usePaneRevealAnchor } from "@/lib/workspace/paneReturnMemento";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import WorkSection from "@/components/work/WorkSection";
+import CompletedWork from "@/components/work/CompletedWork";
+import { WorkHistoryContext, useWorkHistory } from "@/lib/notes/work";
 import styles from "./journal.module.css";
 
 const EMPTY_INTENTS: readonly Intent[] = [];
@@ -57,6 +60,8 @@ function Journal({ arrival }: { arrival: string }) {
   const mayArrive = useCallback((activation: string) => arrivalLease?.activation === activation ? arrivalLease.valid() : null, [arrivalLease]);
   const root = useRef<HTMLDivElement>(null);
   const [allowance] = useState(() => new OutlineHistoryAllowance());
+  const work = useWorkHistory(allowance);
+  if (work.error) throw work.error;
   const [, presentationChanged] = useState(0);
   const [presentationAllowance] = useState(() => new OutlinePresentationAllowance(() => presentationChanged(value => value + 1)));
   const [retained, setRetained] = useState<ReadonlyMap<string, RetainedDay>>(() => new Map());
@@ -99,7 +104,8 @@ function Journal({ arrival }: { arrival: string }) {
     ...days.filter(day => window.dates.includes(day.local_date) || receiving && day.local_date === arrival)
       .map(day => [day.local_date, day] as const)]);
   const shown = [...mounted.values()].sort((a, b) => b.local_date.localeCompare(a.local_date));
-  return <>
+  return <WorkHistoryContext.Provider value={work.history}>
+    {work.history ? <WorkSection history={work.history} /> : null}
     {index.error === null ? null : <AuthoredReadFailure error={index.error} pending={index.pending} retry={index.retry} noun="your journal" />}
       <PaneRefreshAnchor identity="journal" value={days} ready={members !== null}><div ref={root} role="feed" aria-label="journal" data-pane-return-scope="journal"
         className={styles.feed} style={{ height: members === null ? undefined : window.height }}>
@@ -124,7 +130,7 @@ function Journal({ arrival }: { arrival: string }) {
         <Button type="submit" disabled={!isLocalDate(picked)}>go</Button>
       </form>
     </Dialog>
-  </>;
+  </WorkHistoryContext.Provider>;
 }
 
 function JournalDay(props: {
@@ -180,6 +186,7 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
   const heading = useId();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [focused,setFocused] = useState(false);
   const rootField = useMemo(() => ({ label: "page title", placeholder: "" }), []);
   const outline = useLocalOutlineRoot({ rootRef: resolved.ref, prelude: resolved.prelude, rootField, apiRef: api,
     occurrencePrefix: `journal:${day.local_date}:outline`, attached, historyAllowance: allowance, presentationAllowance, rootPresentation: "inline", initialRows: 1 });
@@ -188,10 +195,10 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
   useLayoutEffect(() => {
     admit(day.local_date, outline.rootRead.known && outline.ready ? "ready" : outline.error !== null ? "failed" : "pending");
   }, [day.local_date, outline.rootRead.known, outline.ready, outline.error, admit]);
-  const visible = attached || outline.view !== null || menuOpen;
+  const visible = attached || outline.view !== null || menuOpen || focused;
   useLayoutEffect(() => {
-    retain({ local_date: day.local_date, ref: resolved.ref }, outline.retainSession || menuOpen, visible);
-  }, [day.local_date, resolved.ref, outline.retainSession, menuOpen, visible, retain]);
+    retain({ local_date: day.local_date, ref: resolved.ref }, outline.retainSession || menuOpen || focused, visible);
+  }, [day.local_date, resolved.ref, outline.retainSession, menuOpen, focused, visible, retain]);
   useLayoutEffect(() => {
     const node = article.current;
     measure(day.local_date, visible ? node : null);
@@ -239,10 +246,15 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
     data-pane-return-scope="journal" data-collection-row-id={day.local_date} data-row-focusable="true"
     tabIndex={0} aria-labelledby={heading} aria-posinset={rank < 0 ? undefined : rank + 1} aria-setsize={count}
     onFocus={event => {
+      setFocused(true);
+      retain({local_date:day.local_date,ref:resolved.ref},true,true);
       if (event.target === event.currentTarget && controller) { hold.current?.(); hold.current = controller.holdReadingWindow(null); }
     }} onBlur={event => {
       if (event.relatedTarget === null && controller?.ownsReadingHandoff()) return;
-      if (!event.currentTarget.contains(event.relatedTarget)) { hold.current?.(); hold.current = null; }
+      if (!event.currentTarget.contains(event.relatedTarget)) {
+        hold.current?.(); hold.current = null;
+        if (event.relatedTarget !== null) setFocused(false);
+      }
     }} onKeyDown={event => {
       if (event.target !== event.currentTarget || !["PageUp", "PageDown"].includes(event.key)) return;
       event.preventDefault(); reading(event.key === "PageUp" ? newer : older);
@@ -261,6 +273,7 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
     </div>
     {outline.rootEditor?.kind === "Inline" ? <div className={styles.title}>{outline.rootEditor.content}{outline.rootEditor.feedback}</div> : null}
     {outline.view}
+    <CompletedWork date={day.local_date} />
     <nav className={`${styles.continuation} sr-only`} aria-label="journal reading">
       {newer === null ? null : <Button onClick={() => reading(newer)}>newer day</Button>}
       {older === null ? null : <Button onClick={() => reading(older)}>older day</Button>}

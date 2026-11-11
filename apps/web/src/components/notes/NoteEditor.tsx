@@ -114,6 +114,7 @@ export interface NoteInspection {
 /** Editor-owned structural intents run after native reconciliation and before
  * the consumed event releases its packet. External refresh stays fenced. */
 export interface StructuralKeys {
+  taskPrefix?(body_state: string): void;
   /** The shown neighbours may trail an unsettled arrangement. Boundary deletion must refuse rather than replay later. */
   arranging?(): boolean;
   enter?(): void;
@@ -801,6 +802,15 @@ function NoteEditorContent(props: NoteEditorProps) {
     const redoCommand: Command = (_state, _dispatch, current) => current ? historyInput(current, true) : false;
     const binding = latest.current.projection?.binding ?? (latest.current.writingDocument ? new InlineBinding(latest.current.writingDocument, latest.current.writingOrigin) : null);
     bindingRef.current = binding;
+    const taskPrefix = (current: EditorView, before: NoteBody, row_id: string | null) => {
+      const prior = canonicalSchema.nodeFromJSON(before.body_pm_json);
+      if (current.composing || compositionBase.current !== null || referenceRef.current.getState() !== null || prior.textBetween(0,Math.min(4,prior.content.size),"","\uFFFC") === "[ ] ") return;
+      const field = row_id === null ? editingField(current.state) : editingRow(current.state.doc,row_id);
+      if (!field || field.kind !== "body" || field.node.attrs.presentation === "code" || field.node.firstChild?.marks.some(mark => mark.type.name === "code") || field.node.textBetween(0,Math.min(4,field.node.content.size),"","\uFFFC") !== "[ ] ") return;
+      const body_state = binding?.bodyState(row_id ?? undefined);
+      const keys = row_id === null ? latest.current.keys : latest.current.projection?.keys(row_id);
+      if (body_state) keys?.taskPrefix?.(body_state);
+    };
     nativeInputOpen.current = false;
     let nativePacket = 0;
     let shiftedReturn = false;
@@ -999,6 +1009,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           compositionBase.current = null;
           if (packet !== null && packet === nativePacket) nativeInputOpen.current = false;
           if (suspended.current) cancelReference(current);
+          if (!returning) taskPrefix(current,original.body,original.row_id);
           if (returning && original.returning?.active && original.returning.packet === nativePacket && current.hasFocus() && !suspended.current) structuralInput(current, "insertParagraph");
           notifySelection(current.state);
           binding?.refresh();
@@ -1508,7 +1519,7 @@ function NoteEditorContent(props: NoteEditorProps) {
             const row_id = typeof editedRow === "string" ? editedRow : null;
             const edited = row_id ? fieldById(before.doc, row_id) : changed;
             const next = edited?.row_id ? editingRow(after.doc, edited.row_id) : editingField(after);
-            if (edited && next)
+            if (edited && next) {
             reportEdit({
               before: fieldBody(edited),
               after: fieldBody(next),
@@ -1516,6 +1527,8 @@ function NoteEditorContent(props: NoteEditorProps) {
               selectionAfter: selectionForEdit(after, next, first ? tr.mapping.map(first.from) : undefined, first ? tr.mapping.map(first.to) : undefined),
               source,
             }, edited.row_id);
+            if (source === "input") taskPrefix(view,fieldBody(edited),edited.row_id);
+            }
           }
           if (editingField(after)?.node.content.size === 0 && literalSuppressed.current?.row_id === editingField(after)?.row_id)
             literalSuppressed.current = null;

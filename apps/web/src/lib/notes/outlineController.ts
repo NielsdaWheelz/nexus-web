@@ -1513,7 +1513,10 @@ export class OutlineController {
       enter: () => {if (this.admitNew()) {const id = this.born(row.parent_id!, row.parent_ref, row.row_id, {beside: row.row_id}); void this.focus(id, {anchor: 1, head: 1});}},
       emptyDelete: () => {void this.convertReference(row);}, selectBlock: () => {this.referenceRow = null; this.changed("semantic"); this.selectPrepared(row_id);}}
       : arrangement;
-    return {...arrangement, split: (left, right, displayed) => {
+    return {...arrangement, taskPrefix: body_state => {
+      const document = this.binding.document(row_id);
+      if (document?.ref.startsWith("note_block:")) this.history.editor(document,row.origin).taskPrefix?.(body_state);
+    }, split: (left, right, displayed) => {
       if (!this.admitNew()) return;
       if (row.seed && !this.pending.fields.has(row_id)) return;
       const size = docFromBody(this.binding.body(row_id)).firstChild!.content.size;
@@ -1578,6 +1581,7 @@ export class OutlineController {
     if (peer?.gap) {this.refuse(rangeReasonMessage("gap")); return;}
     if (!peer || peer.kind !== "body" || peer.terminal || peer.ref !== null && peer.ref === row.ref) return;
     const destination = direction === "backward" ? peer : row, source = direction === "backward" ? row : peer;
+    if (source.resource?.work) {this.refuse("this note has work records. remove its outline link instead."); return;}
     if (this.hasChildren(source)) {this.refuse("join its children first"); return;}
     const displayed = {destination: this.captureField(destination), source: this.captureField(source)};
     const selection = this.pending.join(destination.row_id, source.row_id, this.capture(), displayed);
@@ -2121,7 +2125,7 @@ export class OutlineController {
       // the chevron leaves with its children; its focus returns to the bullet before React unmounts it.
       if (!(row.children?.available === true || this.requests.has(row.row_id)) && document.activeElement && disclose.contains(document.activeElement))
         leading.querySelector<HTMLElement>("[data-outline-bullet]")?.focus({preventScroll: true});
-      trailing.hidden = this.branchRead(id).error === null && this.mirrors(row) <= 1;
+      trailing.hidden = this.branchRead(id).error === null && this.mirrors(row) <= 1 && !row.resource?.work?.designation.enabled;
       if (row.ref) dom.dataset.resourceRef = row.ref; else delete dom.dataset.resourceRef;
       if (row.parent_id) dom.dataset.parentRow = row.parent_id;
       const ancestors: OutlineRow[] = [];

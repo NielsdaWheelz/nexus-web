@@ -162,7 +162,8 @@ export function AuthoredProvider(props: { accountId: string; children: ReactNode
   const transport = failure !== null && isApiError(failure) ? transportOf(failure) : null;
   const fact = (line: Line, verbs?: Verbs) => <Fact line={line} verbs={verbs} speak />;
   return <section className={styles.setup}>{
-    transport !== null ? fact(TRANSPORT_LINES[transport].read("your notes"), transport === "Update" ? updateVerbs : transport === "SignIn" ? signInVerbs : recover)
+    failure instanceof AuthoredSetupError && failure.reason === "PendingUpgrade" ? fact({ fact: NOT_OPENED, reason: "sync all writing with the previous version on this device, then retry." }, [retryVerb])
+    : transport !== null ? fact(TRANSPORT_LINES[transport].read("your notes"), transport === "Update" ? updateVerbs : transport === "SignIn" ? signInVerbs : recover)
     : failure !== null ? fact(failure instanceof AuthoredSetupError ? { fact: NOT_OPENED, reason: failure.reason === "Persistence" ? "this browser hasn’t allowed persistent storage." : "this browser has no shared workers." } : { fact: NOT_OPENED }, recover)
     : signInResult !== null ? fact(signInResult, signInVerbs)
     : sync.status === "sign_in_required" ? fact({ fact: "sign in to see your notes." }, signInVerbs)

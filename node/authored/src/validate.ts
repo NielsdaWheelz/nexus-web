@@ -4,7 +4,8 @@ import { validateExcerpt } from "./excerpt.ts";
 import { isResourceRef, normalizeQuote } from "./identity.ts";
 import { canonicalQuads } from "./geometry.ts";
 import { counter } from "./merge.ts";
-import type { Change, Locator, Publication, Register, SelectionCapture, Vector } from "./types.ts";
+import type { Change, Locator, NoteWork, Publication, Register, SelectionCapture, Stamp, Vector } from "./types.ts";
+import { validateLocalDate } from "./work.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 export function uuid(value: string): void {
   if (typeof value !== "string" || !UUID.test(value)) throw new TypeError("Expected canonical UUID");
@@ -13,10 +14,30 @@ function vector(value: Vector): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected version vector");
   for (const [replica, sequence] of Object.entries(value)) { uuid(replica); counter(sequence); }
 }
+function stamp(value: Stamp): void {
+  if (!value || typeof value !== "object") throw new TypeError("Expected register stamp");
+  uuid(value.replica_id);
+  if (counter(value.lamport) < 1n) throw new TypeError("Register lamport must be positive");
+}
 function register<T>(value: Register<T>): void {
-  if (!value || typeof value !== "object" || !value.stamp) throw new TypeError("Expected stamped register");
-  uuid(value.stamp.replica_id);
-  if (counter(value.stamp.lamport) < 1n) throw new TypeError("Register lamport must be positive");
+  if (!value || typeof value !== "object") throw new TypeError("Expected stamped register");
+  stamp(value.stamp);
+}
+function work(value: NoteWork | null): void {
+  if (value === null) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected note work or null");
+  stamp(value.captured); register(value.designation);
+  const designation = value.designation.value;
+  if (!designation || !["task", "habit"].includes(designation.kind) || typeof designation.enabled !== "boolean") throw new TypeError("Invalid work designation");
+  if (value.task_completed_on !== null) {
+    register(value.task_completed_on);
+    if (value.task_completed_on.value !== null) validateLocalDate(value.task_completed_on.value);
+  }
+  if (!value.habit_checks || typeof value.habit_checks !== "object" || Array.isArray(value.habit_checks)) throw new TypeError("Expected independent habit date checks");
+  for (const [date, check] of Object.entries(value.habit_checks)) {
+    validateLocalDate(date); register(check);
+    if (typeof check.value !== "boolean") throw new TypeError("A habit date is checked or unchecked");
+  }
 }
 function publication(value: Publication | null): void {
   if (value === null) return;
@@ -130,7 +151,8 @@ export function validateChange(change: Change): void {
       if (!["yellow", "green", "blue", "pink", "purple"].includes(resource.color.value)) throw new TypeError("Unknown highlight color");
     } else if (resource.kind === "page") {
       if (resource.local_date !== null && (!/^\d{4}-\d{2}-\d{2}$/u.test(resource.local_date) || new Date(`${resource.local_date}T00:00:00Z`).toISOString().slice(0, 10) !== resource.local_date)) throw new TypeError("Invalid daily date");
-    } else if (resource.kind !== "note") throw new TypeError("Unknown resource kind");
+    } else if (resource.kind === "note") work(resource.work);
+    else throw new TypeError("Unknown resource kind");
   }
   for (const link of change.links) {
     uuid(link.link_id); vector(link.add_vv); vector(link.remove_vv);

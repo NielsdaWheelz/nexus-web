@@ -53,6 +53,11 @@ path `/`, lax, secure on https. no authenticated request, router refresh or save
 message; the final choice wins even while offline. `data-theme` may nest (the settings plates). the oracle and atlas
 routes set `[data-theme="oracle"]`, a manuscript palette that ignores the room.
 
+native controls follow the nearest room's `color-scheme`: study is light; press,
+solar and oracle are dark. the document's explicit room rule outranks generic
+vendor `:root` defaults, independent of stylesheet load order. nested rooms retain
+their own scheme.
+
 ## tokens
 
 a module names `--danger`, never a colour. colour literals live only in

@@ -1,5 +1,6 @@
 "use client";
-import { useLayoutEffect, useState } from "react";
+import { useContext, useLayoutEffect, useState } from "react";
+import {WorkHistoryContext} from "@/lib/notes/work";
 import { useWritingDocument } from "@/lib/notes/hooks";
 import { type WritingDocument } from "@/lib/notes/runtime";
 import {Ruling} from "@/components/feedback/Ruling";
@@ -7,7 +8,7 @@ import AuthoredReadFailure from "./AuthoredReadFailure";
 import type { EditorHistory, OutlineHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys, NoteEditorHandle, NoteEditorProps } from "./NoteEditor";
 import AuthoredNoteEditor from "./AuthoredNoteEditor";
-export default function BoundNoteEditor({ noteRef, document: suppliedDocument, history: suppliedHistory, label = "edit note", editable = true, onSplit, onJoin, session, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange }: {
+export default function BoundNoteEditor({ noteRef, document: suppliedDocument, history: suppliedHistory, label = "edit note", editable = true, onSplit, onJoin, session: suppliedSession, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange }: {
   document?: WritingDocument; history?: EditorHistory;
   onAttachmentActiveChange?: NoteEditorProps["onAttachmentActiveChange"]; onLinkInputActiveChange?: NoteEditorProps["onLinkInputActiveChange"];
   focus?: NoteEditorProps["focus"]; onSelectionChange?: NoteEditorProps["onSelectionChange"]; onEditorReady?: (editor: NoteEditorHandle | null) => void;
@@ -19,6 +20,7 @@ export default function BoundNoteEditor({ noteRef, document: suppliedDocument, h
   onJoin?: (direction:"backward"|"forward",displayed:Promise<import("@/lib/notes/runtime").WritingSnapshot>) => void;
   session?: OutlineHistory; structuralKeys?: StructuralKeys; inspection?: NoteInspection | null;
 }) {
+  const inherited = useContext(WorkHistoryContext), session = suppliedSession ?? inherited;
   const kind = noteRef.startsWith("highlight:") ? "annotation" : "note";
   const { document: opened, error, pending, retry } = useWritingDocument(suppliedDocument ? null : noteRef);
   const document = suppliedDocument ?? opened;

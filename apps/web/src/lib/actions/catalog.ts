@@ -36,6 +36,15 @@ interface Entry {
  * direct read of a wordless entry does not compile where a glyph is required.
  */
 export const ACTION_CATALOG = {
+  MakeTask: {label:"make task",icon:null,group:"CreateTransform"},
+  CompleteTask: {label:"complete",icon:null,group:"Consume"},
+  ReopenTask: {label:"reopen",icon:null,group:"Consume"},
+  TaskCompletionDate: {label:"change completion date",icon:null,group:"Consume"},
+  StopTask: {label:"stop tracking task",icon:null,group:"Organize"},
+  ResumeTask: {label:"track task again",icon:null,group:"Organize"},
+  RepeatDaily: {label:"repeat daily",icon:null,group:"Organize"},
+  StopDaily: {label:"stop repeating daily",icon:null,group:"Organize"},
+  HabitHistory: {label:"habit history",icon:null,group:"Navigate"},
   Open: { label: "Open", icon: null, group: "Navigate" },
   OpenInNewPane: {
     label: "Open in new pane",

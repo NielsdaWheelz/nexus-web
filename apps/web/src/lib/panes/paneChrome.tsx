@@ -28,6 +28,8 @@ import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
+import type {OutlineHistory} from "@/lib/notes/structure";
+import {useWorkHistoryKeys} from "@/lib/notes/useWorkHistoryKeys";
 
 /** Why a pane command holds its place while the fact deciding it loads: a wait, so its controls
  * keep it for a screen reader alone. */
@@ -103,6 +105,8 @@ export type PaneHeaderEditor = { readonly feedback: ReactNode } & (
 );
 
 export interface PaneChrome {
+  /** Source menus borrow their actual mounted writing history. */
+  readonly workHistory?: OutlineHistory;
   /** Display title of the currently shown body; never canonical or writing evidence. */
   readonly displayTitle?: string;
   /** The pending source body uses a retained visit hint as a machine pointer. */
@@ -226,6 +230,7 @@ export function usePaneOutlineCommands(commands: PaneOutlineCommands | null): vo
 
 /** A body's identity, independent navigation and query controls, menu and refresh. */
 export function usePaneChrome(chrome: PaneChrome | null): void {
+  useWorkHistoryKeys(chrome?.workHistory ?? null);
   usePublish("chrome", chrome);
 }
 
@@ -265,5 +270,11 @@ const noSubscription = () => () => {};
 export function usePaneSubject(): CanonicalResourceRef | null {
   const store = useContext(PaneChromeContext);
   const read = () => store?.get().chrome?.resourceRef ?? null;
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, read, read);
+}
+
+export function usePaneWorkHistory(): OutlineHistory | null {
+  const store = useContext(PaneChromeContext);
+  const read = () => store?.get().chrome?.workHistory ?? null;
   return useSyncExternalStore(store?.subscribe ?? noSubscription, read, read);
 }

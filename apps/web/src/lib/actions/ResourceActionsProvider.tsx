@@ -62,6 +62,9 @@ import { useFeedCommands } from "@/lib/feeds/commands";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import type { FeedTarget } from "@/lib/feeds/api";
+import type {OutlineHistory} from "@/lib/notes/structure";
+import {AccountDayProvider} from "@/lib/notes/accountDay";
+import {WorkOverlayContext} from "@/lib/notes/work";
 
 import { usePodcastEpisodeCommands } from "@/lib/podcasts/episodeCommands";
 import { installedApp, subscribeAdmission, updateRemedy, type UpdateRemedy } from "@/lib/native/admission";
@@ -75,6 +78,8 @@ import {
 
 /** The one overlay a verb can open; it loads its own facts by id. */
 export type Overlay =
+  | {readonly kind:"HabitHistory"; readonly ref:string; readonly local_date:string; readonly history:OutlineHistory}
+  | {readonly kind:"TaskCompletion"; readonly ref:string; readonly history:OutlineHistory}
   | {
       readonly kind: "Metadata";
       readonly subject: MetadataSubject;
@@ -496,7 +501,7 @@ export default function ResourceActionsProvider({
   }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, chatCommandFeedback, podcastSettings.feedback, feeds.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, feedLibraryCreation.holds, resendFeedback]);
 
   return (
-    <RuntimeContext.Provider value={runtime}>
+    <AccountDayProvider><RuntimeContext.Provider value={runtime}><WorkOverlayContext value={overlay?.kind === "TaskCompletion" || overlay?.kind === "HabitHistory" ? overlay.ref : null}>
       {children}
       <Dialog open={confirmation !== null} title={confirmation?.command.confirmation?.title ?? "confirm change"}
         returnFocusFallback={confirmation?.command.afterRemoval} onClose={() => setConfirmation(null)}>
@@ -510,7 +515,7 @@ export default function ResourceActionsProvider({
           <Button onClick={() => setConfirmation(null)}>cancel</Button>
         </> : null}
       </Dialog>
-    </RuntimeContext.Provider>
+    </WorkOverlayContext></RuntimeContext.Provider></AccountDayProvider>
   );
 }
 

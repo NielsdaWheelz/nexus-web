@@ -4209,7 +4209,7 @@ export interface components {
             /** Passages */
             passages: components["schemas"]["PassageState-Input"][];
             /** Resources */
-            resources: (components["schemas"]["NotePatch"] | components["schemas"]["PagePatch"] | components["schemas"]["HighlightPatch-Input"])[];
+            resources: (components["schemas"]["NotePatch-Input"] | components["schemas"]["PagePatch"] | components["schemas"]["HighlightPatch-Input"])[];
             /** Source Stubs */
             source_stubs: components["schemas"]["SourceStub-Input"][];
         };
@@ -4224,7 +4224,7 @@ export interface components {
             /** Passages */
             passages: components["schemas"]["PassageState-Output"][];
             /** Resources */
-            resources: (components["schemas"]["NotePatch"] | components["schemas"]["PagePatch"] | components["schemas"]["HighlightPatch-Output"])[];
+            resources: (components["schemas"]["NotePatch-Output"] | components["schemas"]["PagePatch"] | components["schemas"]["HighlightPatch-Output"])[];
             /** Source Stubs */
             source_stubs: components["schemas"]["SourceStub-Output"][];
         };
@@ -9704,7 +9704,7 @@ export interface components {
             type: "note_block_offsets";
         };
         /** NotePatch */
-        NotePatch: {
+        "NotePatch-Input": {
             /** Body Update */
             body_update: string | null;
             /** Delete Vv */
@@ -9722,6 +9722,28 @@ export interface components {
             touch_vv: {
                 [key: string]: string;
             };
+            work: components["schemas"]["NoteWork-Input"] | null;
+        };
+        /** NotePatch */
+        "NotePatch-Output": {
+            /** Body Update */
+            body_update: string | null;
+            /** Delete Vv */
+            delete_vv: {
+                [key: string]: string;
+            };
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "note";
+            /** Ref */
+            ref: string;
+            /** Touch Vv */
+            touch_vv: {
+                [key: string]: string;
+            };
+            work: components["schemas"]["NoteWork-Output"] | null;
         };
         /** NotePublication */
         NotePublication: {
@@ -9752,6 +9774,27 @@ export interface components {
             touch_vv: {
                 [key: string]: string;
             };
+            work: components["schemas"]["NoteWork-Output"] | null;
+        };
+        /** NoteWork */
+        "NoteWork-Input": {
+            captured: components["schemas"]["Stamp"];
+            designation: components["schemas"]["Register_WorkDesignation_"];
+            /** Habit Checks */
+            habit_checks: {
+                [key: string]: components["schemas"]["Register_Annotated_bool__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True_____"];
+            };
+            task_completed_on: components["schemas"]["Register_Union_Annotated_str__AfterValidator___NoneType__"] | null;
+        };
+        /** NoteWork */
+        "NoteWork-Output": {
+            captured: components["schemas"]["Stamp"];
+            designation: components["schemas"]["Register_WorkDesignation_"];
+            /** Habit Checks */
+            habit_checks: {
+                [key: string]: components["schemas"]["Register_Annotated_bool__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True_____"];
+            };
+            task_completed_on: components["schemas"]["Register_Union_Annotated_str__AfterValidator___NoneType__"] | null;
         };
         /** OfflineCatalogOut */
         OfflineCatalogOut: {
@@ -12467,6 +12510,12 @@ export interface components {
              */
             expected_attempt_id: string;
         };
+        /** Register[Annotated[bool, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True)])]] */
+        Register_Annotated_bool__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True_____: {
+            stamp: components["schemas"]["Stamp"];
+            /** Value */
+            value: boolean;
+        };
         /** Register[Literal['yellow', 'green', 'blue', 'pink', 'purple']] */
         Register_Literal__yellow____green____blue____pink____purple___: {
             stamp: components["schemas"]["Stamp"];
@@ -12505,6 +12554,17 @@ export interface components {
         "Register_SourceCapture_-Output": {
             stamp: components["schemas"]["Stamp"];
             value: components["schemas"]["SourceCapture"];
+        };
+        /** Register[Union[Annotated[str, AfterValidator], NoneType]] */
+        Register_Union_Annotated_str__AfterValidator___NoneType__: {
+            stamp: components["schemas"]["Stamp"];
+            /** Value */
+            value: string | null;
+        };
+        /** Register[WorkDesignation] */
+        Register_WorkDesignation_: {
+            stamp: components["schemas"]["Stamp"];
+            value: components["schemas"]["WorkDesignation"];
         };
         /** Register[str] */
         Register_str_: {
@@ -13465,7 +13525,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 4;
+            format_revision: 5;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -13482,7 +13542,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 4;
+            format_revision: 5;
             /** Head Cursor */
             head_cursor: string;
             /** Lamport */
@@ -14373,7 +14433,7 @@ export interface components {
              * Format Revision
              * @constant
              */
-            format_revision: 4;
+            format_revision: 5;
             /**
              * Replica Id
              * Format: uuid
@@ -14780,6 +14840,16 @@ export interface components {
              * @enum {string}
              */
             kind: "resource";
+        };
+        /** WorkDesignation */
+        WorkDesignation: {
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "task" | "habit";
         };
         /** WorkspaceCaptureLocator */
         WorkspaceCaptureLocator: {

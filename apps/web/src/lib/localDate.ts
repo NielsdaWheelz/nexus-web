@@ -22,31 +22,22 @@ export function formatLocalDateInTimeZone(date: Date, timeZone: string): string 
       "Unable to format a calendar date in the authenticated account time zone",
     );
   }
-  return `${year}-${month}-${day}`;
+  return `${year.padStart(4, "0")}-${month}-${day}`;
 }
 
 export function isLocalDate(value: string): boolean {
   if (!LOCAL_DATE_RE.test(value)) {
     return false;
   }
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-  return (
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() === month - 1 &&
-    parsed.getUTCDate() === day
-  );
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return !value.startsWith("0000-") && Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 export function shiftLocalDate(value: string, days: number): string {
   if (!isLocalDate(value)) {
     return value;
   }
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-  return [
-    String(date.getUTCFullYear()).padStart(4, "0"),
-    String(date.getUTCMonth() + 1).padStart(2, "0"),
-    String(date.getUTCDate()).padStart(2, "0"),
-  ].join("-");
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }

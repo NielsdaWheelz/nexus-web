@@ -4,6 +4,14 @@ import { PAGE_TITLE_SQL } from "./queries.ts";
 /** Both outboxes read the server's maximum 64 changes in immutable source order;
  * each host then takes the prefix fitting the existing upload byte budget. */
 export const PENDING_CHANGES_SQL = "SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 64";
+/** Run only in the host's transaction after proving format 4 and an empty
+ * outbox. Immutable commands, merge bytes and replica counters stay untouched. */
+export const UPGRADE_4_TO_5_SQL = [
+  "UPDATE resources SET state_json=json_set(state_json,'$.work',NULL) WHERE kind='note'",
+  "UPDATE resources SET projection_json=json_set(projection_json,'$.work',NULL)",
+  "UPDATE passages SET projection_json=json_set(projection_json,'$.work',NULL)",
+  "UPDATE replica_state SET format_revision=5,store_revision=store_revision+1 WHERE singleton=1",
+] as const;
 export const DEVICE_SCHEMA = [
   "PRAGMA foreign_keys = ON",
   "PRAGMA synchronous = FULL",

@@ -137,7 +137,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
                         }
                         val operation = request.getString("op")
                         if (operation == "hello") {
-                            if (request.opt("wire_revision") != BuildConfig.NEXUS_WIRE || request.opt("format_revision") != 4)
+                            if (request.opt("wire_revision") != BuildConfig.NEXUS_WIRE || request.opt("format_revision") != AUTHORED_FORMAT_REVISION)
                                 throw NexusOriginError(426, "E_WIRE_MISMATCH")
                             require(request.has("account_id"))
                             if (!request.isNull("account_id") && request.getString("account_id") != account.toString())
@@ -216,6 +216,7 @@ internal class AuthoredBridge(private val webView: WebView, private val session:
             } catch (error: Exception) {
                 val code = when {
                     error is NexusOriginError -> error.code ?: JSONObject.NULL
+                    error is app.nexus.android.LocalStateError && error.code == "E_AUTHORED_UPGRADE_PENDING" -> error.code
                     error is AuthoredStorageError || error is androidx.sqlite.SQLiteException || error is java.io.IOException && !remoteOperation -> "E_AUTHORED_LOCAL"
                     else -> "E_AUTHORED"
                 }

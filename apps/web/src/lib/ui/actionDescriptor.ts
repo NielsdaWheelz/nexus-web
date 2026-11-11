@@ -104,6 +104,7 @@ export function projectActionControlState(
 interface ActionBase {
   readonly id: string;
   readonly label: string;
+  readonly description?: string;
   readonly disabled?: boolean;
   readonly busy?: boolean;
   readonly hasPopup?: "dialog";

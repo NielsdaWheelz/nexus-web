@@ -140,6 +140,10 @@ binding and live store across remote admission changes. account retirement
 discards the subtree. local room selection writes its browser cookie without
 an authenticated request or refresh.
 
+notes, pages, the journal and habits admit their local bodies while remote
+credentials are unavailable. mounted local content grants no remote capability;
+each existing writer and reader retains its account and admission contract.
+
 launcher `?nexus=…` commands are one-shot entry input, never pane identity.
 `nexus/urlIntent.ts` supplies one strict parser. restored states are used as
 stored; the web never writes a command into an href, so stored data never
@@ -1213,6 +1217,9 @@ failed. nested geometry refines only its actual enclosing logical anchor.
 `usePaneBeforeLayout` captures before imperative editor/binding mutations;
 placement waits until measured extents reach the committed frame. geometry
 owners never compete with the memento by writing scroll offsets.
+restoration rebases committed row offsets onto each root's live document origin;
+a sibling may move that root without rerendering it. moved origins refresh the
+existing measured ranges even when the scroll offset is clamped.
 
 `CollectionView` keeps the most recently interacted row and its neighbours
 mounted in a large index; an active menu or drag adds scoped demand. this preserves

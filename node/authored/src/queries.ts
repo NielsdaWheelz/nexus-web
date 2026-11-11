@@ -6,6 +6,8 @@
 import { excerptTextParts, excerptView, scopeExcerpt, type ExcerptScope, type ExcerptNode } from "./excerpt.ts";
 import type { AuthoredQuery, Change, OutlineRange, PassageState, QueryResult, QueryRow, ResourceProjection, SelectionCapture, ResourceState, PassageCapture } from "./types.ts";
 import { normalizeQuote } from "./identity.ts";
+import { counter } from "./merge.ts";
+import { validateLocalDate } from "./work.ts";
 import { clippedHighlightFields, highlightFitsReading, ScopeQuoteScanner, SCOPE_SQL, SEARCH_FAMILIES, type ScopeInterval, type ScopeReading } from "./scope.ts";
 export interface CompiledQuery { sql: string; params: (string | number | null)[] }
 const HIGHLIGHT_TEXT_FIELDS = ["prefix", "quote_exact", "suffix"] as const;
@@ -53,7 +55,7 @@ const DAILY_TITLE_SQL = `(CASE CAST(substr(local_date,6,2) AS INTEGER) ${MONTHS.
 const READABLE = `WITH readable AS (
   SELECT ref,json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM resources WHERE visible=1
   UNION ALL
-  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT source_ref AS ref,json_object('ref',source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',source_ref,'source_publication',json_extract(state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL) AS projection_json
   FROM source_stubs WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.ref=source_stubs.source_ref) AND NOT EXISTS (SELECT 1 FROM passages p WHERE p.anchor_id=substr(source_stubs.source_ref,16) AND source_stubs.source_ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||anchor_id AS ref,projection_json FROM passages
@@ -82,7 +84,7 @@ const INCIDENT = `
 const BOUNDED_READABLE = `
   SELECT r.ref,json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json FROM wanted w CROSS JOIN resources r ON r.ref=w.ref WHERE r.visible=1
   UNION ALL
-  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]')) AS projection_json
+  SELECT s.source_ref AS ref,json_object('ref',s.source_ref,'kind','source','authored_by_viewer',json('false'),'visible',json('true'),'body_pm_json',NULL,'body_text',NULL,'title',json_extract(s.state_json,'$.capture.value.label'),'local_date',NULL,'source_ref',s.source_ref,'source_publication',json_extract(s.state_json,'$.capture.value.publication'),'selection',NULL,'excerpt',NULL,'capture_revision',NULL,'color',NULL,'embedded_refs',json('[]'),'work',NULL) AS projection_json
   FROM wanted w CROSS JOIN source_stubs s ON s.source_ref=w.ref WHERE NOT EXISTS(SELECT 1 FROM resources r WHERE r.ref=w.ref) AND NOT EXISTS(SELECT 1 FROM passages p WHERE p.anchor_id=substr(w.ref,16) AND w.ref='passage_anchor:'||p.anchor_id)
   UNION ALL
   SELECT 'passage_anchor:'||p.anchor_id AS ref,p.projection_json
@@ -378,9 +380,10 @@ function outlineWindow(query: Omit<Extract<AuthoredQuery, {kind: "outline_window
     params: [query.ref, query.anchor_link_id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit, JSON.stringify(query.excluded_link_ids), query.entering_link_id]};
 }
 
-/** Membership depends only on dated page patches, including title-only touches. */
+/** A note touch can revive retained completion dates after observed deletion,
+ * including a body-only edit. The complete local query decides membership. */
 export function changesDailyIndex(change: Change): boolean {
-  return change.resources.some(resource => resource.kind === "page" && resource.local_date !== null);
+  return change.resources.some(resource => resource.kind === "note" || resource.kind === "page" && resource.local_date !== null);
 }
 
 /** Every compiled slice is executed in one host store turn, under one revision. */
@@ -391,10 +394,57 @@ export function compileOutlineWindows(query: Extract<AuthoredQuery, {kind: "outl
   return query.ranges.map(range => outlineWindow({...query, ...range}));
 }
 
+function workQuery(query: Extract<AuthoredQuery, {kind: "work_pending" | "work_completed" | "habits"}>, limit: number): CompiledQuery {
+  let cursor: [string, string, string] | null = null;
+  if (query.cursor !== null) {
+    const value: unknown = JSON.parse(query.cursor);
+    if (!Array.isArray(value) || value.length !== 3 || value.some(part => typeof part !== "string")) throw new TypeError("Invalid work cursor");
+    if (counter(value[0]) < 1n) throw new TypeError("Invalid capture clock");
+    cursor = [value[0], value[1], value[2]];
+  }
+  const params: CompiledQuery["params"] = [];
+  const task_date = "json_extract(state_json,'$.work.task_completed_on.value')";
+  const work_kind = "json_extract(state_json,'$.work.designation.value.kind')";
+  const habit_day = "EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE day.key=? AND json_extract(day.value,'$.value')=1)";
+  let where: string;
+  switch (query.kind) {
+    case "work_pending":
+      validateLocalDate(query.local_date); params.push(query.local_date);
+      where = `json_extract(state_json,'$.work.designation.value.enabled')=1 AND ((${work_kind}='task' AND ${task_date} IS NULL) OR (${work_kind}='habit' AND NOT ${habit_day}))`;
+      break;
+    case "work_completed":
+      validateLocalDate(query.local_date); params.push(query.local_date, query.local_date);
+      where = `(${task_date}=? OR ${habit_day})`;
+      break;
+    case "habits":
+      where = `(${work_kind}='habit' OR EXISTS(SELECT 1 FROM json_each(state_json,'$.work.habit_checks') day WHERE json_extract(day.value,'$.value')=1))`;
+      break;
+  }
+  if (cursor !== null) params.push(...cursor);
+  params.push(limit);
+  return {sql: `WITH work AS (
+    SELECT ref,projection_json,CAST(json_extract(state_json,'$.work.captured.lamport') AS INTEGER) AS captured_lamport,
+      json_extract(state_json,'$.work.captured.replica_id') AS captured_replica
+    FROM resources WHERE kind='note' AND visible=1 AND ${where}
+  ) SELECT projection_json,NULL AS link_json,json_array(CAST(captured_lamport AS TEXT),captured_replica,ref) AS cursor_json
+    FROM work ${cursor === null ? "" : "WHERE (captured_lamport,captured_replica,ref)>(CAST(? AS INTEGER),?,?)"}
+    ORDER BY captured_lamport,captured_replica,ref LIMIT ?`, params};
+}
+
 export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission" | "outline_windows"}>): CompiledQuery {
   const limit = "limit" in query ? Math.max(1, Math.min(100, Math.floor(query.limit))) : 100;
   switch (query.kind) {
-    case "daily_index": return {sql: "SELECT local_date, ref FROM resources WHERE kind = 'page' AND visible = 1 AND local_date IS NOT NULL ORDER BY local_date DESC", params: []};
+    case "daily_index": return {sql: `WITH dates(local_date) AS (
+      SELECT local_date FROM resources WHERE kind='page' AND visible=1 AND local_date IS NOT NULL
+      UNION SELECT json_extract(state_json,'$.work.task_completed_on.value') FROM resources
+        WHERE kind='note' AND visible=1 AND json_extract(state_json,'$.work.task_completed_on.value') IS NOT NULL
+      UNION SELECT day.key FROM resources r,json_each(r.state_json,'$.work.habit_checks') day
+        WHERE r.kind='note' AND r.visible=1 AND json_extract(day.value,'$.value')=1
+    ) SELECT dates.local_date,p.ref FROM dates LEFT JOIN resources p
+      ON p.kind='page' AND p.visible=1 AND p.local_date=dates.local_date ORDER BY dates.local_date DESC`, params: []};
+    case "work_pending":
+    case "work_completed":
+    case "habits": return workQuery(query, limit);
     case "outline_children": {
       if(query.occurrences.length>100||query.occurrences.some(item=>item.refs.length>2||item.excluded_link_ids.length>1000))throw new RangeError("Child occurrence batch exceeds bound");
       const eligible=eligibleChildren("endpoint.value", "EXISTS(SELECT 1 FROM json_each(occurrence.value,'$.excluded_link_ids') excluded WHERE excluded.value=l.link_id)");

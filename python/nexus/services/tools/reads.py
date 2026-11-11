@@ -26,6 +26,7 @@ from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
+from nexus.schemas.authored import NoteWork
 from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
@@ -87,6 +88,7 @@ from nexus.services.tools.contract import (
     ResourceInspectSuccess,
     ResourceReadInput,
     ResourceReadSuccess,
+    ResourceWork,
     refuse,
 )
 
@@ -462,12 +464,47 @@ def read(value: ResourceReadInput, call: Call) -> ResourceReadSuccess:
         if len(body) > READ_DOCUMENT_MAX_CHARS:
             refuse("TooLarge")
         citation = _cite(call, *cited, value.uri, field=value.field) if cited else None
+        work = None
+        if value.uri.startswith("note_block:"):
+            metadata = call.db.execute(
+                text(
+                    "SELECT state FROM authored_resources WHERE account_id=:a AND ref=:r AND visible"
+                ),
+                {"a": call.principal, "r": value.uri},
+            ).scalar_one_or_none()
+            if metadata is None:
+                refuse("ResourceUnavailable")
+            if metadata["work"] is not None:
+                state = NoteWork.model_validate(metadata["work"])
+                dates = sorted(day for day, check in state.habit_checks.items() if check.value)
+                requested = value.work_date_range
+                work = ResourceWork(
+                    designation=state.designation.value,
+                    task_completed_on=state.task_completed_on.value
+                    if state.task_completed_on
+                    else None,
+                    has_habit_completions=bool(dates),
+                    work_date_range=requested,
+                    habit_dates=None
+                    if requested is None
+                    else [day for day in dates if requested.from_date <= day <= requested.to_date],
+                    source="server_accepted",
+                )
+        evidence = _evidence(call, value.uri, None, citation, content=body, field=value.field)
+        if value.uri.startswith("note_block:"):
+            evidence.snapshot_revision = _sha256(
+                {
+                    "text": body,
+                    "work": None if work is None else work.model_dump(mode="json"),
+                }
+            )
         return ResourceReadSuccess(
-            evidence=_evidence(call, value.uri, None, citation, content=body, field=value.field),
+            evidence=evidence,
             kind=kind,
             text=body,
             uri=value.uri,
             next_cursor=next_cursor,
+            work=work,
         )
     finally:
         call.db.rollback()

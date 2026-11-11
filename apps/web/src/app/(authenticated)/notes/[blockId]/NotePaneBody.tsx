@@ -94,7 +94,7 @@ export default function NotePaneBody() {
   const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} />, [blockId]);
   useResourceInspector({ scheme: "note_block", handle: resource ? blockId : null, bodies: { linkedItems: connections } });
   const resourceRef = resource ? canonicalResourceRef({ scheme: "note_block", id: blockId }) : undefined;
-  usePaneChrome({resourceRef, editor: resource ? read.rootEditor ?? undefined : undefined, displayTitle: resource ? read.rootTitle ?? undefined : undefined,
+  usePaneChrome({workHistory: read.controller?.history,resourceRef, editor: resource ? read.rootEditor ?? undefined : undefined, displayTitle: resource ? read.rootTitle ?? undefined : undefined,
     header: resource ? {kind: "Resource", resource: {status: "Ready", creditGroups: []}} : undefined});
   // An arrival's failure is its command's outcome: one slip, retracted when it clears.
   const arrivalFailure = arrival.failure?.title ?? null;

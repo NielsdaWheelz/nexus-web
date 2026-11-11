@@ -16,7 +16,7 @@ import { FORMAT_REVISION, type AuthoredStore, type QueryResult, type SyncFailure
 
 /** Existing host admission refusals are recoverable setup conditions. */
 export class AuthoredSetupError extends Error {
-  constructor(readonly reason: "Persistence" | "SharedWorker") { super("authored setup unavailable"); }
+  constructor(readonly reason: "Persistence" | "SharedWorker" | "PendingUpgrade") { super("authored setup unavailable"); }
 }
 const retiredAccounts = new Set<string>();
 export function admitAuthoredAccount(accountId: string): void { retiredAccounts.delete(accountId); }
@@ -42,7 +42,11 @@ export async function openAuthoredStore(accountId: string): Promise<AuthoredStor
   owner.users++;
   let store: AuthoredStore;
   try { store = await owner.promise; }
-  catch (error) { owner.users--; throw error; }
+  catch (error) {
+    owner.users--;
+    if (error instanceof Error && "code" in error && error.code === "E_AUTHORED_UPGRADE_PENDING") throw new AuthoredSetupError("PendingUpgrade");
+    throw error;
+  }
   const current = owner;
   let released = false;
   return { ...store, close: async () => {

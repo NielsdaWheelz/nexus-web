@@ -5,9 +5,12 @@ import android.util.Base64
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import app.nexus.android.LocalStateError
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+
+internal const val AUTHORED_FORMAT_REVISION = 5
 
 /** One serialized bundled-SQLite connection per bound account. Kotlin owns SQL
  * transactions, never CRDT merging. Every projection accompanies merged states
@@ -34,13 +37,18 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
         for (index in 0 until schema.length()) run(schema.getString(index))
         run("CREATE VIRTUAL TABLE temp.authored_fts_probe USING fts5(text)")
         run("DROP TABLE temp.authored_fts_probe")
-        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,4,0)", account.toString(), UUID.randomUUID().toString())
+        run("INSERT OR IGNORE INTO replica_state VALUES(1,?,?,0,0,0,0,?,0)", account.toString(), UUID.randomUUID().toString(), AUTHORED_FORMAT_REVISION)
         try {
             transaction {
                 val state = replica()
                 check(state.getString("account_id") == account.toString())
                 val format = state.getInt("format_revision")
-                check(format == 4) { "authored format mismatch; drain the previous client before reprovisioning this device" }
+                if (format == 4) {
+                    if (rows("SELECT 1 FROM pending_changes LIMIT 1").length() > 0)
+                        throw LocalStateError("E_AUTHORED_UPGRADE_PENDING", "sync all writing with the previous client before updating this device")
+                    val upgrade = JSONArray(context.assets.open("app/authored-upgrade-4-to-5.json").bufferedReader().use { it.readText() })
+                    for (index in 0 until upgrade.length()) run(upgrade.getString(index))
+                } else check(format == AUTHORED_FORMAT_REVISION) { "authored format mismatch; drain the previous client before reprovisioning this device" }
             }
         } catch (error: Throwable) { connection.close(); throw error }
     }
@@ -382,7 +390,7 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
             val dates = JSONArray()
             for (index in 0 until records.length()) {
                 val record = records.getJSONObject(index)
-                dates.put(JSONObject().put("local_date", record.getString("local_date")).put("ref", record.getString("ref")))
+                dates.put(JSONObject().put("local_date", record.getString("local_date")).put("ref", record.get("ref")))
             }
             return result.put("daily_index", dates)
         }
