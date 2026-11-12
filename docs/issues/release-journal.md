@@ -1,22 +1,19 @@
-# journal delivery
+# journal installed acceptance
 
-the journal replaces the daily presenter and the authored outline query contract.
-web, shared worker and installed android must agree on the new compound plan
-framing. release ui and packaged queries together; existing wire admission must
-reject older hosts. this journal cut changes no authored storage format and
-introduces no schema migration; bundled changes retain their release preflights.
+production `dbaa832ea` shipped the journal at wire `21` on 2026-11-12.
+the bundled migration chain reached `0341` through the canonical release;
+old wire `20` is refused. hosted delivery and the in-place android `0.3.13`
+upgrade are complete. [ordinary phone writing](release-daily-work.md) passed
+offline restart and reconnect; this does not establish every journal journey.
+the journal itself adds no schema migration or authored storage format.
 
-deliver web, shared worker and android with wire 21. confirm that the deployed
-web and installed apk report the intended release, then observe a real compound
-read and local edit/upload on each host. older contracts must reach the existing
-update-required path. no journal migration or compatibility reader belongs in
-this cut. apply the canonical migration preflight for other bundled changes.
+remaining on the installed phone: a journal compound read and local edit/upload,
+continuous reading, day-local history, journal-specific offline restart/input and
+spoken continuation. static, keyboard and aria checks do not establish spoken
+reading. the owner deferred this release's
+[desktop browser checks](release-browser-client-acceptance.md).
 
-before delivery, qualify continuous reading, day-local history, offline process
-restart, installed android input and spoken continuation through the real owners.
-static checks and keyboard/aria checks do not establish spoken reading. keep
-qualification proof in the change's pr.
-
-resolve after the paired release is observed. deployment remains outside the
-implementation worktree's qualification; recover by delivering a coherent pair,
-not by retaining the retired query contract.
+web, shared worker and android must retain the same compound query contract.
+preserve pending writing through updates; recover with a coherent pair rather
+than the retired query interface. resolve when the remaining observations or
+explicit owner dispositions are recorded in the release pr.

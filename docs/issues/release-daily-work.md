@@ -1,36 +1,25 @@
-# daily work format cutover
+# daily work installed acceptance
 
-status: implementation locally qualified; installed cutover remains outstanding.
-production migration, deployment and physical-device upgrade remain undone.
+production `dbaa832ea` reached schema `0341`, wire `21` and authored format `6`
+on 2026-11-12. the daily-work and librarian migrations shipped together after
+the newest-backup rehearsal and the canonical stopped-writer, verified-backup
+release. the owner confirmed devices synced and closed before cutover.
 
-problem: authored format 5 adds required work metadata. its one-time browser and
-android upgrades require an empty outbox. rewriting pending changes would violate
-the immutable source command contract.
+server checks retained all 1,036 original changes and source prefixes. six active
+replicas now admit format `6`; three retired format-3 replicas remain unchanged.
+these server facts alone do not establish an installed device's snapshot or outbox.
 
-implementation: `0339_authored_work.py` follows `0338`; both device hosts consume
-the shared transactional `UPGRADE_4_TO_5_SQL`. format-4 feed bytes and source
-prefixes remain immutable. retain the server actor identity `authored:server:4`:
-its suffix identifies the actor, not the storage format. existing release contract is
-[local-first writing](release-local-first-writing.md).
+the physical phone upgraded in place from `0.3.12` to `0.3.13`, retaining its
+account and old writing. an offline edit survived force-stop/reopen with both
+radios disabled, then reached production after reconnection on the original
+format-6 replica with its accepted sequence advanced. no app data was cleared.
 
-required release order:
+remaining: a task completion and habit date correction on the installed phone.
+the owner deferred this release's [desktop browser checks](release-browser-client-acceptance.md).
+preserve local identity, source counters and pending bytes in later upgrades;
+never clear storage or rewrite commands to pass them.
 
-1. verify exact migration ancestry and paired browser/native assets. current wire
-   stays 21: released `android-v0.3.12` uses 20, and the next release's bump to 21
-   already occurred. rehearse on the newest production backup before merge.
-2. prove every provisioned device has an empty outbox and is caught up. stop old
-   writers, take and verify a backup. unavailable devices require explicit owner
-   disposition; never assume their pending writing can be discarded.
-3. migrate canonical note metadata with `work:null`; preserve bodies, causal
-   state, identities, source prefixes and immutable feed bytes. set snapshot
-   floors to locked account heads and advance drained replica format admission.
-4. deploy paired clients. upgrade note state and all resource/passage projections transactionally only
-   with an empty outbox; preserve identity/sequence/cursor. refusal changes nothing.
-   old clients/formats stay rejected; do not clear storage or rewrite commands.
-5. verify exact schema/assets, installed-host upgrade and offline reopen/reconnect,
-   existing writing identity, a task completion and habit date correction. record
-   physical-device/live limits separately from disposable proof.
-
-resolved when the paired cutover is qualified and installed devices retain all
-old writing and exchange new work facts without compatibility paths. the durable
-contract lives in [notes](../modules/notes.md).
+the durable contract lives in [notes](../modules/notes.md) and the
+[local-first cutover](release-local-first-writing.md). resolve after the remaining
+work-specific observations pass, distinguishing actual device observations from
+disposable proof in the release pr.

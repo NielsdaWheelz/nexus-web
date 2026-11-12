@@ -1,48 +1,32 @@
-# release: native execution recovery
+# native recovery deployed acceptance
 
-problem: the [native recovery contract](../modules/llms.md) changes
-host transport, generation control metadata and dependency pins together. mixed
-versions cannot establish incarnation identity or safe retirement.
+production `dbaa832ea` reached schema `0341` and wire `21` on 2026-11-12.
+the newest-backup rehearsal and canonical stopped-writer, verified-backup release
+completed. the paired host/provider/consumer cohort is active; the controller's
+first-install option initialized native identity with mode `0600`, owner `10001`.
+the post-release census found no open model calls. existing credentials were
+retained. the canonical release check passed all eight services, isolation,
+no-swap, backup freshness and the enabled nightly timer.
 
-impact: release requires coordinated downtime; neither a fixed native socket nor
-an old boolean `settled` record is a compatibility path.
+one real codex / gpt-6-luna turn on the upgraded phone completed and visibly
+returned `phone ready`, establishing fresh admission and ordinary completion.
+two further turns completed before a cancel press. they establish neither a
+cancellation pass nor a cancellation failure; that live path remains unverified.
+remaining: old receipt reads, cancellation/recovery and editorial retention
+through the deployed cohort. a successful turn does not establish recovery.
+preserve the isolated qualification's scope: ordinary shared live labs cannot
+retire their host. destructive recovery needs an exclusively owned host through
+the normal lab owner, with separate enrollment custody.
 
-required order:
+the shared lab host still needs its owner-led upgrade after attachments drain.
+do not replace it as a side effect of a production check.
 
-- qualify pinned provider/host protocol and actual owned-container retirement;
-  ordinary shared live labs never receive retirement authority.
-- provision/enroll the exclusive qualification account volume through existing
-  custody tooling if absent. no production/shared credential copying. the owned
-  lab mode retains enrollment and removes only its runtime resources.
-- stop new admissions, then drain/reconcile outstanding work with the existing
-  release controller. stop remaining workers/native host, prove predecessor
-  container teardown and verify a backup. require zero open old bindings; unresolved
-  old bindings require reviewed live repair before migration; no guessed epoch.
-- rehearse the one migration after head against the newest backup. preserve old
-  terminal binding metadata; atomically reject open/unconvertible rows.
-- initialize private host state explicitly; ship matching host, provider pin,
-  control/native address configuration and nexus consumers. keep one container
-  owning each state volume. never recreate lost state silently.
-  select `deploy/release.sh <manifest> --initialize-native-host` for this first
-  installation. after stopped-writer proof and verified backup, the release runs
-  the candidate host service's one-off initializer before migration or startup.
-  it initializes only missing state; retry validates existing identity without
-  replacing it. do not re-enroll or copy existing credentials merely to initialize
-  identity. the option does not authorize recovery of a lost identity.
-- verify exact schema, old-receipt observation, fresh native admission, foreground
-  send/cancel/recovery and editorial retention before declaring release qualified.
-- update shared lab configuration only after its existing owner drains attachments;
-  preserve enrollment custody. qualify destructive recovery on an exclusively
-  owned host through the normal lab owner.
+[native recovery](../modules/llms.md) and the
+[host runbook](../runbooks/codex-personal-agent-host.md) own the durable contract.
+keep one host per state volume. never recreate lost identity silently, rewind
+counters on database restore or overlap old and new hosts. the first-install
+option does not authorize recovery of a lost identity.
 
-recovery uses the existing stopped-writer release procedure and verified backup;
-no backward reader or overlapping host replacement. database restoration must
-never rewind private host state/counters or reuse an incarnation. host-state loss requires
-proof of old host teardown and deliberate operator repair, not a manufactured
-retirement receipt.
-
-resolved when the paired release and listed runtime observations are complete.
-source implementation and isolated qualification are complete, with provider
-`adf5a5a4` and kernel `e5c46d39`.
-production has not been changed; the coordinated cutover and release observations
-above remain outstanding. the shared lab host also requires its owner-led upgrade.
+resolve when the remaining deployed observations and separate shared-host
+upgrade are recorded. retain actual provider and installed-device limits in the
+release pr.
