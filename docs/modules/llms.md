@@ -71,8 +71,20 @@ state explains unreadiness (or an absent seed in a ready catalog). neither the
 picker nor admission substitutes a provider model. unavailable Codex selections
 are refused as runtime unavailable before dispatch, including background policy
 selections; they are not mislabeled as invalid merely because facts are unread.
-reads retain the existing synchronous refresh deadline; [latency isolation](../issues/catalog-refresh-blocks-api-reads.md)
-is separate from this readiness contract.
+reads await the complete catalog. the api's `Catalog` instance coalesces native
+refresh through one lock and rechecks the cache after acquisition. process-wide
+`_CODEX` retains data only; worker event loops share no async lock or task.
+the metadata read allows 8 seconds including lock wait and cleanup, with at most
+5 seconds of native acquisition and 2 seconds reserved for cleanup. this is an
+operational deadline, not a guarantee against a stalled event loop. the browser
+bounds the whole retry group to 10 seconds, below the 30-second proxy deadline.
+owner cancellation publishes no failed-host observation; waiter cancellation or
+expiry cannot change the owner's work or cache. deadline expiry is
+`504 E_GENERATION_TIMEOUT`; a completed native failure keeps existing unavailable
+readiness and any retained rows. only the completed owner publishes a source result.
+the picker exposes retry for native unavailability without changing the chosen
+model. retry observes the existing 10-second failed-refresh interval; it does
+not force another native attempt. successful facts remain cached for 60 seconds.
 
 each reasoning row carries required `mode: string | null`, `effort: string`
 and nonnegative `effort_order`. provider-runtime owns these native facts beside

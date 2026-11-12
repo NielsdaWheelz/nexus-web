@@ -102,6 +102,10 @@ server components: callFastAPI ────────────────�
   result thereafter. `ServerArrivalsSpent` closes that entry offer and retires
   unclaimed work. retirement cancels unused work; no completed-read cache remains. bootstrap consumption observations reach the existing native owner
   once its account facts and transport are ready.
+  librarian entry shares its timeline/catalog descriptors with its body; message,
+  before and after selectors retain that precedence. the catalog's shared read
+  policy bounds the whole retry group to 10 seconds. timeline and selection
+  recall remain independent of catalog completion.
   `initialRead: ServerReadSeed<T>` supplies one completed read for a hook's
   initial key: success carries data and its accepted-stale token; modeled failure
   carries its `ApiError`. matching success paints immediately without repeating

@@ -23,6 +23,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
   const shown = run.run_selection.display_at_dispatch;
   const panel = useRef<HTMLElement>(null);
   const focused = useRef<{ element: HTMLElement; actionTrigger: HTMLButtonElement | null } | null>(null);
+  const [inspected, setInspected] = useState(open);
   // A saved read can remove a context link, result link or its action disclosure.
   useLayoutEffect(() => {
     const previous = focused.current;
@@ -31,6 +32,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
       (previous.actionTrigger?.isConnected ? previous.actionTrigger : trigger.current)?.focus({ preventScroll: true });
     }
   });
+  if (open && !inspected) setInspected(true);
   return <section ref={panel} id={id} hidden={!open} aria-label="message details" aria-live="off"
     onFocusCapture={(event) => {
       focused.current = {
@@ -41,7 +43,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
     onBlurCapture={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget) && event.target.isConnected) focused.current = null;
     }}>
-    <div className={styles.details}>
+    {inspected ? <div className={styles.details}>
       <p className={styles.identity}>{[shown.route_label, shown.model_label, shown.reasoning_label].join(" · ")}</p>
       {actions.length ? <div>
         <h3 className={styles.heading}>actions</h3>
@@ -50,7 +52,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
             action={action} undone={action.id !== null && undone.has(action.id)} onInspect={onInspect} />)}
         </ol>
       </div> : null}
-    </div>
+    </div> : null}
   </section>;
 });
 export default MessageDetails;

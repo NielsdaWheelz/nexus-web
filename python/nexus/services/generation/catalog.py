@@ -1,8 +1,8 @@
 """Every runnable selection: the Codex host's catalog plus the configured provider rows.
 
-One fetch of the Codex catalog per 60 s per process gives both its rows and its
-readiness; a failed fetch keeps the last rows, marks the route unavailable and is
-retried after 10 s, so a Codex host restart does not fail a minute of work.
+Codex observations remain current for 60 s per process; one Catalog serializes
+its due refreshes. A failed fetch keeps the last rows, marks the route unavailable
+and is retried after 10 s, so a Codex host restart does not fail a minute of work.
 Before the first successful fetch, Codex has no model rows or seed presentation;
 its route readiness still explains why the exact developer seed cannot run.
 Provider rows are static and ready: settings refuse to boot without their keys,
@@ -43,6 +43,7 @@ from provider_runtime.types import ApiModelFacts, ApiReasoningFacts
 from provider_runtime.types import Present as RuntimePresent
 
 from nexus.config import GenerationApiProvider, Settings
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.llm import (
     ChatSeed,
     CodexPersonalRoute,
@@ -81,7 +82,12 @@ if TYPE_CHECKING:
 
 _TTL_SECONDS = 60
 _RETRY_SECONDS = 10
-_FETCH_SECONDS = 120.0
+# One caller has eight seconds, including contention and transport teardown.
+# Native discovery gets five; reserve the client's two-second WebSocket close.
+_READ_SECONDS = 8.0
+_FETCH_SECONDS = 5.0
+_CLEANUP_SECONDS = 2.0
+_TIMEOUT_MESSAGE = "model discovery did not finish before its deadline."
 _PROVIDERS: dict[GenerationApiProvider, tuple[str, str]] = {
     "openai": ("OpenAI", "OpenAI"),
     "anthropic": ("Anthropic", "Anthropic"),
@@ -156,26 +162,49 @@ class Catalog:
             provider for provider in _PROVIDERS if provider in configured
         )
         self._tools = tools
+        # Worker attempts have separate event loops; the global map owns data only.
+        self._refresh_lock = asyncio.Lock()
 
     async def read(self) -> CatalogSnapshot:
-        cached = _CODEX.get(self._endpoint)
-        if cached is None or time.monotonic() - cached[2] >= (
-            _TTL_SECONDS if isinstance(cached[1], Ready) else _RETRY_SECONDS
-        ):
-            cached = await _refresh(self._endpoint, None if cached is None else cached[0])
-            _CODEX[self._endpoint] = cached
-        codex, readiness, _ = cached
-        return _compose(codex, readiness, self._providers, self._tools)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _READ_SECONDS
+        try:
+            async with asyncio.timeout_at(deadline):
+                await self._refresh_lock.acquire()
+        except TimeoutError as error:
+            raise ApiError(ApiErrorCode.E_GENERATION_TIMEOUT, _TIMEOUT_MESSAGE) from error
+        try:
+            cached = _CODEX.get(self._endpoint)
+            if cached is None or time.monotonic() - cached[2] >= (
+                _TTL_SECONDS if isinstance(cached[1], Ready) else _RETRY_SECONDS
+            ):
+                work_deadline = deadline - _CLEANUP_SECONDS
+                if work_deadline <= loop.time():
+                    raise ApiError(ApiErrorCode.E_GENERATION_TIMEOUT, _TIMEOUT_MESSAGE)
+                cached = await _refresh(
+                    self._endpoint,
+                    None if cached is None else cached[0],
+                    deadline=work_deadline,
+                )
+                _CODEX[self._endpoint] = cached
+            codex, readiness, _ = cached
+            return _compose(codex, readiness, self._providers, self._tools)
+        finally:
+            self._refresh_lock.release()
 
 
 async def _refresh(
-    endpoint: CodexHostEndpoint, previous: AgentModelCatalog | None
+    endpoint: CodexHostEndpoint, previous: AgentModelCatalog | None, *, deadline: float
 ) -> tuple[AgentModelCatalog | None, Readiness, float]:
     """Fetch now; a failed fetch keeps the last catalog and marks the route unavailable."""
 
     checked = datetime.now(UTC)
     try:
-        return await fetch_codex_catalog(endpoint), Ready(last_checked=checked), time.monotonic()
+        return (
+            await fetch_codex_catalog(endpoint, deadline=deadline),
+            Ready(last_checked=checked),
+            time.monotonic(),
+        )
     except CodexContractDefect:
         readiness: Readiness = OperatorActionRequired(
             code="codex_host_unavailable",
@@ -231,11 +260,17 @@ def _budgets(context_window: int | None, max_output_tokens: int | None) -> tuple
     return context, output
 
 
-async def fetch_codex_catalog(host: CodexHostEndpoint) -> AgentModelCatalog:
+async def fetch_codex_catalog(
+    host: CodexHostEndpoint, *, deadline: float | None = None
+) -> AgentModelCatalog:
     """Read the authenticated host's model catalog; also the host's health probe."""
 
+    native_deadline = asyncio.get_running_loop().time() + _FETCH_SECONDS
+    timeout = asyncio.timeout_at(
+        native_deadline if deadline is None else min(deadline, native_deadline)
+    )
     try:
-        async with asyncio.timeout(_FETCH_SECONDS):
+        async with timeout:
             resolved = await resolve_codex_host(host)
             if isinstance(resolved, CodexHostUnavailable):
                 if resolved.reason in {
@@ -263,7 +298,12 @@ async def fetch_codex_catalog(host: CodexHostEndpoint) -> AgentModelCatalog:
                     )
     except AgentRuntimeDefect as error:
         raise CodexContractDefect("the Codex catalog contract is invalid") from error
-    except (AgentRuntimeError, TimeoutError) as error:
+    except TimeoutError as error:
+        if timeout.expired() and deadline is not None and deadline < native_deadline:
+            # Contention spent this caller's allowance; it says nothing about the host.
+            raise ApiError(ApiErrorCode.E_GENERATION_TIMEOUT, _TIMEOUT_MESSAGE) from error
+        raise CodexUnavailable("the authenticated Codex host is unavailable") from error
+    except AgentRuntimeError as error:
         raise CodexUnavailable("the authenticated Codex host is unavailable") from error
     if catalog.backend_contract_revision != AGENT_BACKEND_CONTRACT_REVISION or not catalog.models:
         raise CodexContractDefect("the Codex catalog differs from this build's contract")

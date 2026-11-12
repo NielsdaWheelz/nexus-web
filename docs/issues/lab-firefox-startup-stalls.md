@@ -34,3 +34,12 @@ navigation. the latter had zero frame snapshots and no admitted page, so no
 screenshot or body aria existed. the unchanged enlarged-text case passed on the
 same source in fresh run `20261102-225404-fedad53f3a99` (5.4s). no assertion,
 timeout, helper or product changed. this establishes intermittence, not repair.
+
+librarian recurrence: `20261112-133045-bb3193c7aecd` at `c2bc4e62c` plus the
+librarian candidate changes. the disclosure case stopped at
+`browser.ts:64`, `launchPersistentContext`, before any page or app assertion.
+its fixture and worker teardown exceeded their existing 60-second bounds.
+the next firefox fixture launched normally. the owned residual profile retained
+`.startup-incomplete`; no owned firefox process remained. the unchanged disclosure
+fixture launched normally in `20261112-133811-b97cf6609586`, then reached a distinct
+product refresh failure. no launcher or deadline change was made.

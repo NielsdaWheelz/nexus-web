@@ -187,7 +187,12 @@ def resource_items_out(
     """Batch one reading per canonical ref; absent entries use authorized preference.
 
     A reading chooses presentation, never visibility or an additional audience.
+    Each input occurrence retains its position, including duplicate refs.
     """
+    if not refs:
+        return []
+    requested = refs
+    refs = list(dict.fromkeys(refs))
     resource_refs = [ref.uri for ref in refs if ref.scheme in ("note_block", "page", "highlight")]
     anchor_ids = [str(ref.id) for ref in refs if ref.scheme == "passage_anchor"]
     authored_by_viewer: set[str] = set()
@@ -239,22 +244,20 @@ def resource_items_out(
         scoped=source_passages,
     )
     sources = _source_attributions(owner_refs, source_rows, credits, source_activations)
-    out: list[ResourceItemOut] = []
+    out: dict[str, ResourceItemOut] = {}
     for ref in refs:
         row = rows.get(ref.uri)
-        out.append(
-            _resource_item_out(
-                ref=ref,
-                authored_by_viewer=ref.uri in authored_by_viewer,
-                row=row,
-                credits=credits.get(ref.uri),
-                media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
-                source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
-                activation=activations[ref.uri],
-                reading_media_id=(reading_media_ids or {}).get(ref.uri),
-            )
+        out[ref.uri] = _resource_item_out(
+            ref=ref,
+            authored_by_viewer=ref.uri in authored_by_viewer,
+            row=row,
+            credits=credits.get(ref.uri),
+            media_summary=summaries.get(ref.id) if ref.scheme == "media" else None,
+            source=sources.get(row["owner_ref"]) if row and row.get("owner_ref") else None,
+            activation=activations[ref.uri],
+            reading_media_id=(reading_media_ids or {}).get(ref.uri),
         )
-    return out
+    return [out[ref.uri] for ref in requested]
 
 
 def _resource_item_out(

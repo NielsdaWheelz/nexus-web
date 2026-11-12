@@ -44,6 +44,8 @@ def project_excerpts(items: Sequence[dict[str, Any]]) -> list[ExcerptProjection]
 
 def read_captures(db: Any, refs: Sequence[str]) -> dict[str, dict[str, Any]]:
     """Canonical capture identity belongs to its author, including readable peer highlights."""
+    if not refs:
+        return {}
     from sqlalchemy import text
 
     return {
