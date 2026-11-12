@@ -10,10 +10,12 @@ remaining: observe resumed finite work, independent head refresh, durable opml
 continuation and the next 07:00 edition in the account's calendar zone. source
 coverage and article availability remain separate facts.
 
-qualify the paired installed clients and catalogue format `4`. old snapshots
+the phone upgraded in place to `0.3.13`, retaining its account and writing.
+qualify its catalogue format `4` and saved browsing. old snapshots
 need an online rebuild; retain local authored data, downloads and account binding.
 old wire `20` is refused. deployment alone does not establish installed browsing
-or reconnect behavior.
+or catalogue reconnect behavior. this release's
+[desktop browser checks](release-browser-client-acceptance.md) are owner-deferred.
 
 contracts live in [feeds](../modules/feeds.md),
 [selections](../modules/suggestions.md) and

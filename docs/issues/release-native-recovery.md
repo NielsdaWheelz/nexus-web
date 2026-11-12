@@ -5,10 +5,15 @@ the newest-backup rehearsal and canonical stopped-writer, verified-backup releas
 completed. the paired host/provider/consumer cohort is active; the controller's
 first-install option initialized native identity with mode `0600`, owner `10001`.
 the post-release census found no open model calls. existing credentials were
-retained. deployment and healthy startup do not establish generation recovery.
+retained. the canonical release check passed all eight services, isolation,
+no-swap, backup freshness and the enabled nightly timer.
 
-remaining: observe old receipts, fresh native admission, foreground
-send/cancel/recovery and editorial retention through the deployed cohort.
+one real codex / gpt-6-luna turn on the upgraded phone completed and visibly
+returned `phone ready`, establishing fresh admission and ordinary completion.
+two further turns completed before a cancel press. they establish neither a
+cancellation pass nor a cancellation failure; that live path remains unverified.
+remaining: old receipt reads, cancellation/recovery and editorial retention
+through the deployed cohort. a successful turn does not establish recovery.
 preserve the isolated qualification's scope: ordinary shared live labs cannot
 retire their host. destructive recovery needs an exclusively owned host through
 the normal lab owner, with separate enrollment custody.
