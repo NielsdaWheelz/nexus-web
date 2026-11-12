@@ -163,7 +163,7 @@ account `EMAIL_INGEST_OWNER_USER_ID` names.
 
 Each rule is spelled once, in SQL binding `:viewer_id`; the module docstring
 states them. Point checks (`can_read_media`, `can_restore_media`,
-`can_read_conversation`, `can_read_highlight`, `is_library_member`) answer a
+`can_read_highlight`, `is_library_member`) answer a
 bool; not found and not visible are the same False. The ORM adapters
 `highlight_visibility_filter(viewer)` and `highlight_readability_filter(viewer)`
 are text clauses correlated to the unaliased `highlights` table: a query that

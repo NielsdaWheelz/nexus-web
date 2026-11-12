@@ -2,8 +2,8 @@
 
 Rows of one owner take dense ``generation_seq`` positions under the owner
 advisory lock. A row is open (``outcome IS NULL``) only while its job attempt
-runs it; a dead attempt's row closes ``interrupted`` when its job next starts an
-attempt, dies or is revoked.
+runs it; a dead attempt's row closes ``interrupted`` only after any bound native
+turn confirms finality. An unresolved native turn holds its existing job.
 """
 
 from __future__ import annotations
@@ -71,6 +71,9 @@ def close_generation(
 ) -> None:
     """Stage the one terminal write; a row already closed ``interrupted`` stays closed."""
 
+    from nexus.services.generation.native_execution import require_settled
+
+    require_settled(db, [terminal.generation_id])
     outcome = type(terminal).__name__
     code = terminal.code if isinstance(terminal, Failed) else None
     document: dict[str, JsonValue] = {"kind": outcome, "route": route, "evidence": evidence}
@@ -109,6 +112,9 @@ def interrupt_locked_generations(db: Session, ids: Collection[UUID], *, detail: 
     """Close exactly the rows the caller locked; never acquire a generation after a job."""
     if not ids:
         return
+    from nexus.services.generation.native_execution import require_settled
+
+    require_settled(db, list(ids))
     db.execute(
         text("""UPDATE llm_calls SET outcome='Failed', failure_code='interrupted',
             completed_at=now(), terminal=jsonb_build_object('kind','Failed',
@@ -118,11 +124,6 @@ def interrupt_locked_generations(db: Session, ids: Collection[UUID], *, detail: 
         {"ids": list(ids), "detail": detail},
     )
     _settle_running_tools(db, ids, cancelled=False)
-
-
-def interrupt_job_generations(db: Session, *, job_id: UUID, detail: str) -> None:
-    """Owner revocation: lock generations before domain and queue rows."""
-    interrupt_locked_generations(db, lock_job_generations(db, job_id=job_id), detail=detail)
 
 
 def recover_job_generations(db: Session, *, context: JobExecutionContext) -> bool:

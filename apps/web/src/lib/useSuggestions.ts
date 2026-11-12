@@ -50,12 +50,12 @@ interface ActiveSuggestions {
 }
 
 /** Keep survivors in place, then fill vacancies from the already hydrated pool. */
-function displayedRefs(items: SuggestionItem[], previous: string[]): string[] {
+function displayedRefs(items: SuggestionItem[], previous: string[], limit: number): string[] {
   const eligible = new Set(items.map((item) => item.target.ref));
   const next = previous.filter((ref) => eligible.has(ref));
   const used = new Set(next);
   for (const item of items) {
-    if (next.length === 10) break;
+    if (next.length === limit) break;
     if (!used.has(item.target.ref)) {
       next.push(item.target.ref);
       used.add(item.target.ref);
@@ -72,9 +72,11 @@ function displayedRefs(items: SuggestionItem[], previous: string[]): string[] {
  */
 export function useSuggestions(destination: SuggestionsDestination, eligible: boolean) {
   const daily = destination.kind === "Daily";
+  const browse = destination.kind === "Browse";
+  const limit = browse ? 20 : daily ? 5 : 10;
   const libraryId = destination.kind === "Library" ? destination.id : null;
-  const key = daily ? "/daily-brief" : libraryId === null ? "/lectern/suggestions" : `/libraries/${libraryId}/suggestions`;
-  const path: ApiPath = daily ? "/api/daily-brief" : libraryId === null
+  const key = browse ? "/browse/selection" : daily ? "/daily-brief" : libraryId === null ? "/lectern/suggestions" : `/libraries/${libraryId}/suggestions`;
+  const path: ApiPath = browse ? "/api/browse/selection" : daily ? "/api/daily-brief" : libraryId === null
     ? "/api/lectern/suggestions"
     : `/api/libraries/${encodeURIComponent(libraryId)}/suggestions`;
   const captured = useRef<AdoptedPool | null>(null);
@@ -99,7 +101,7 @@ export function useSuggestions(destination: SuggestionsDestination, eligible: bo
     state: seed?.state ?? null,
     adopted: seed?.state.capability === "NotApplicable" ? null : restored ?? (seed?.publication != null ? {
       publication: seed.publication,
-      displayed: displayedRefs(seed.publication.items, []),
+      displayed: displayedRefs(seed.publication.items, [], limit),
     } : null),
     readFailure: null,
     admissionError: null, initialCompleted: false,
@@ -231,7 +233,7 @@ export function useSuggestions(destination: SuggestionsDestination, eligible: bo
           const publication = { ...response.publication, items: eligibleReceiptItems(response.publication.items, beganAt) };
           return { ...value, readFailure: clearReadFailure(value, intention),
             initialCompleted: value.initialCompleted || (automatic && replacement === null && !retrying && value.adopted === null),
-            adopted: { publication, displayed: displayedRefs(publication.items, []) } };
+            adopted: { publication, displayed: displayedRefs(publication.items, [], limit) } };
         });
         if (current.current.adopted !== null && current.current.state !== null &&
             response.state.input_revision < current.current.state.input_revision) void queue({ view: true });
@@ -268,9 +270,10 @@ export function useSuggestions(destination: SuggestionsDestination, eligible: bo
           pendingView = true;
           return outcome();
         }
-        const items = eligibleReceiptItems(response.items, beganAt);
+        const rationales = new Map(selected.publication.items.map(item => [item.target.ref, item.rationale]));
+        const items = eligibleReceiptItems(response.items.map(item => ({ ...item, rationale: rationales.get(item.target.ref) ?? null })), beganAt);
         commit((value) => ({ ...value, readFailure: clearReadFailure(value, "Reconcile"), adopted: {
-          publication: { ...selected.publication, items }, displayed: displayedRefs(items, selected.displayed),
+          publication: { ...selected.publication, items }, displayed: displayedRefs(items, selected.displayed, limit),
         } }));
         return outcome();
       } catch (error) {
@@ -458,7 +461,7 @@ export function useSuggestions(destination: SuggestionsDestination, eligible: bo
     };
   // The descriptor policy is fixed for this destination; the first claim alone adopts preparation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, libraryId, key, accountId, demand, commit, writeVisit]);
+  }, [path, libraryId, key, accountId, demand, commit, writeVisit, limit]);
 
   const acknowledge = useCallback((ref: string) => {
     accepted.current.set(ref, ++receiptSequence.current);
@@ -466,11 +469,11 @@ export function useSuggestions(destination: SuggestionsDestination, eligible: bo
       const adopted = value.adopted;
       const items = adopted?.publication.items.filter((item) => item.target.ref !== ref) ?? [];
       return { ...value, adopted: adopted === null ? null : {
-        publication: { ...adopted.publication, items }, displayed: displayedRefs(items, adopted.displayed),
+        publication: { ...adopted.publication, items }, displayed: displayedRefs(items, adopted.displayed, limit),
       } };
     });
     void runtime.current?.reconcile();
-  }, [commit]);
+  }, [commit, limit]);
   const retry = useCallback(() => runtime.current?.retry() ?? Promise.reject<RefreshOutcome>(new DOMException("Suggestions owner inactive", "AbortError")), []);
   const refresh = useCallback((signal: AbortSignal) => {
     if (signal.aborted || accountRetired.current) return Promise.reject<RefreshOutcome>(new DOMException("Suggestions refresh cancelled", "AbortError"));

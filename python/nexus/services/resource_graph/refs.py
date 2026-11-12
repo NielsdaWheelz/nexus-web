@@ -18,7 +18,6 @@ ResourceScheme = Literal[
     "page",
     "note_block",
     "fragment",
-    "conversation",
     "message",
     "oracle_reading",
     "oracle_passage_anchor",

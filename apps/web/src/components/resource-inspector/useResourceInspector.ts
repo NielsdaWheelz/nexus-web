@@ -25,7 +25,7 @@ export function useResourceInspector({
   bodies,
 }: UseResourceInspectorParams): void {
   const policy = RESOURCE_CAPABILITIES[scheme].inspector;
-  const { contents, members, linkedItems, forks } = bodies;
+  const { contents, members, linkedItems } = bodies;
   if (
     members != null &&
     RESOURCE_CAPABILITIES[scheme].sharing !== "LibraryMembership"
@@ -38,9 +38,9 @@ export function useResourceInspector({
     if (!policy || handle === null) return null;
     const plan = planInspectorSurfaces({
       policy,
-      bodies: { contents, members, linkedItems, forks },
+      bodies: { contents, members, linkedItems },
     });
     return { groupId: "resource-inspector", ...plan };
-  }, [contents, forks, handle, linkedItems, members, policy]);
+  }, [contents, handle, linkedItems, members, policy]);
   usePaneCompanion(companion);
 }

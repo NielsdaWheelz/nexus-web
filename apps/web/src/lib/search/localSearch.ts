@@ -23,7 +23,7 @@ export const WRITING_REF = /^(note_block|page|highlight|passage_anchor):/u;
 /** Discovery families for local refs, matching the shared authored query owner. */
 const FAMILIES: Partial<Record<string, SearchKind>> = {
   note_block: "notes", page: "notes", highlight: "highlights", passage_anchor: "saved_passages",
-  media: "documents", podcast: "documents", feed: "documents", conversation: "conversations", contributor: "people",
+  media: "documents", podcast: "documents", feed: "documents", message: "messages", contributor: "people",
   library: "libraries", oracle_reading: "readings",
 };
 const kindOf = (resource: ResourceProjection): SearchKind | null => FAMILIES[parseResourceRef(resource.ref)?.scheme ?? ""] ?? null;
@@ -34,7 +34,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 export function localSearchScopes(scope: string): SearchScope[] | null {
   if (scope === "all") return [{kind: "all", id: null}];
   const parsed = parseResourceRef(scope);
-  return parsed && (parsed.scheme === "media" || parsed.scheme === "library" || parsed.scheme === "conversation")
+  return parsed && (parsed.scheme === "media" || parsed.scheme === "library")
     ? [{kind: parsed.scheme, id: parsed.id}] : null;
 }
 
@@ -143,7 +143,7 @@ export function useLocalSearchPreview(text: string | null, kinds: SearchQuery["r
   readonly retry: () => void;
 } {
   const scopes = localSearchScopes(scope);
-  const families: SearchFamily[] | null = kinds === null ? null : [...kinds].filter(kind => kind !== "web").sort();
+  const families: SearchFamily[] | null = kinds === null ? null : [...kinds].sort();
   const query: Extract<AuthoredQuery, {kind: "search_preview"}> | null = text === null || scopes === null ? null
     : {kind: "search_preview", text, limit: 8, scopes, families};
   const result = useAuthoredQuery(query);
@@ -173,7 +173,7 @@ export function useLocalSearch(text: string | null, kinds: SearchQuery["requeste
   readonly retry: () => void;
 } {
   const scopes = localSearchScopes(scope);
-  const families: SearchFamily[] | null = kinds === null ? null : [...kinds].filter(kind => kind !== "web").sort();
+  const families: SearchFamily[] | null = kinds === null ? null : [...kinds].sort();
   const query: Extract<AuthoredQuery, {kind: "search"}> | null = text === null || scopes === null ? null
     : { kind: "search", text, cursor: null, limit: PAGE, scopes, families };
   const prefix = useAuthoredPrefix(query, pages);

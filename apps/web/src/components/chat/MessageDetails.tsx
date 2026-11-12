@@ -2,24 +2,24 @@
 
 import { memo, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
+import { RetrievalReference } from "./LiveReference";
 import ResourceLink from "@/components/resources/ResourceLink";
 import type { MessageAction } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
-import { useChatPane } from "./ChatSurface";
 import { truncateText } from "@/lib/display/format";
 import styles from "./MessageDetails.module.css";
 
 /** The run's recorded identity, attached references and observed actions. */
-const MessageDetails = memo(function MessageDetails({ id, message, actions, open, undone, trigger }: {
+const MessageDetails = memo(function MessageDetails({ id, message, actions, open, undone, trigger, onInspect }: {
   id: string;
   message: Message;
   actions: readonly MessageAction[];
   open: boolean;
   undone: ReadonlySet<string>;
   trigger: RefObject<HTMLButtonElement | null>;
+  onInspect(trigger: HTMLElement): void;
 }) {
-  const { scroll } = useChatPane();
-  const { run, context } = message.trust_trail!; // an answer's trail always carries its run
+  const { run } = message.trust_trail!; // an answer's trail always carries its run
   const shown = run.run_selection.display_at_dispatch;
   const panel = useRef<HTMLElement>(null);
   const focused = useRef<{ element: HTMLElement; actionTrigger: HTMLButtonElement | null } | null>(null);
@@ -31,7 +31,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
       (previous.actionTrigger?.isConnected ? previous.actionTrigger : trigger.current)?.focus({ preventScroll: true });
     }
   });
-  return <section ref={panel} id={id} hidden={!open} aria-label="Message details" aria-live="off"
+  return <section ref={panel} id={id} hidden={!open} aria-label="message details" aria-live="off"
     onFocusCapture={(event) => {
       focused.current = {
         element: event.target,
@@ -43,17 +43,11 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
     }}>
     <div className={styles.details}>
       <p className={styles.identity}>{[shown.route_label, shown.model_label, shown.reasoning_label].join(" · ")}</p>
-      {context.length ? <div>
-          <h3 className={styles.heading}>context</h3>
-          <ul className={styles.list} role="list" aria-label="resource references attached to this run">
-            {context.map((item) => <li key={item.ref}><ResourceLink item={item} /></li>)}
-          </ul>
-        </div> : null}
       {actions.length ? <div>
         <h3 className={styles.heading}>actions</h3>
         <ol className={styles.list} role="list" aria-label="actions">
           {actions.map((action) => <Action key={`${message.id}:${action.tool_call_index}`}
-            action={action} undone={action.id !== null && undone.has(action.id)} onInspect={scroll.inspectDisclosure} />)}
+            action={action} undone={action.id !== null && undone.has(action.id)} onInspect={onInspect} />)}
         </ol>
       </div> : null}
     </div>
@@ -95,7 +89,7 @@ function Action({ action, undone, onInspect }: {
       <div className={styles.actionContent}>
         {activity.detail ? <p className={styles.parameters}>{activity.detail}</p> : null}
         {action.retrievals.length ? <ul className={styles.list} role="list" aria-label={`results for ${label}`}>
-          {action.retrievals.map((result) => <li key={result.id}><ResourceLink item={result.item} /></li>)}
+          {action.retrievals.map((result) => <li key={result.id}><RetrievalReference retrieval={result} /></li>)}
         </ul> : null}
       </div>
     </div>

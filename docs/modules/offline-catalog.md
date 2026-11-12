@@ -2,7 +2,7 @@
 
 the android catalog is a complete, dated browsing projection. it contains personal
 library memberships, authorized sources with their known entry metadata, lectern
-selections and owned chat index summaries. authored notes retain their local owner. metadata inclusion creates no
+selections. authored notes retain their local owner. metadata inclusion creates no
 membership. the snapshot contains no bodies or downloaded assets and authorizes
 no command. hosted reads keep their existing owners.
 
@@ -12,7 +12,7 @@ no command. hosted reads keep their existing owners.
 the existing bff exposes `/api/offline-catalog`. query parameters are refused.
 responses require the current wire revision and are private/no-store.
 
-format 4 stores `sources`, `library_sources`, audio `episodes` and article `articles`.
+format 5 stores `sources`, `library_sources`, audio `episodes` and article `articles`.
 every episode summary retains its canonical `show`. it rejects every older format through the existing incompatible/online-rebuild outcome. replacement
 never purges downloads or authored data. it retains the positive decimal-string
 `consumption_revision`, each episode’s

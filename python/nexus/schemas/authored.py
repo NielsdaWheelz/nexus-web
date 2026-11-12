@@ -238,7 +238,7 @@ class ProvisionReplica(Closed):
 
 
 class UploadChanges(Closed):
-    format_revision: Literal[5]
+    format_revision: Literal[6]
     replica_id: UUID
     changes: list[Change] = Field(min_length=1, max_length=64)
 
@@ -263,7 +263,7 @@ class DownloadChanges(Closed):
 
 class SnapshotHeader(Closed):
     type: Literal["header"]
-    format_revision: Literal[5]
+    format_revision: Literal[6]
     head_cursor: Counter
     lamport: Counter
 
@@ -297,7 +297,7 @@ class SnapshotCounts(Closed):
 
 class SnapshotFooter(Closed):
     type: Literal["footer"]
-    format_revision: Literal[5]
+    format_revision: Literal[6]
     head_cursor: Counter
     lamport: Counter
     counts: SnapshotCounts
@@ -347,12 +347,6 @@ class ScopeLibraryMember(Closed):
     reading_ref: str
 
 
-class ScopeConversationFact(Closed):
-    kind: Literal["conversation_fact"]
-    conversation_ref: str
-    target_ref: str
-
-
 class ScopeSourceAlias(Closed):
     kind: Literal["source_alias"]
     reading_ref: str
@@ -400,7 +394,6 @@ ScopeInput = Annotated[
     | ScopeWorkspaceMember
     | ScopeMediaMember
     | ScopeLibraryMember
-    | ScopeConversationFact
     | ScopeSourceAlias
     | ScopeHighlightMember
     | ScopeReading

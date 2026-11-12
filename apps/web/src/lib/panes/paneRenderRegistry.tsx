@@ -25,10 +25,7 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
     import("@/app/(authenticated)/browse/preview/BrowsePreviewPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
   xCapture: () => import("@/app/(authenticated)/x/captures/[id]/CapturePaneBody"),
-  conversations: () =>
-    import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
-  conversationNew: () => import("@/components/chat/Conversation"),
-  conversation: () => import("@/components/chat/Conversation"),
+  librarian: () => import("@/components/chat/Librarian"),
   feeds: () => import("@/app/(authenticated)/feeds/FeedsPaneBody"),
   feedDetail: () => import("@/app/(authenticated)/feeds/[feedId]/FeedDetailPaneBody"),
   podcasts: () => import("@/app/(authenticated)/podcasts/PodcastsPaneBody"),

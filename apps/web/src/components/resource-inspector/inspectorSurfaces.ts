@@ -1,4 +1,4 @@
-// Compose route-owned Contents, Members, Connections and Forks in that order.
+// Compose route-owned Contents, Members and Connections in that order.
 // The capability policy owns the default preference; Connections is always
 // published, including when it is the inspector's only tab.
 import type { ReactNode } from "react";
@@ -18,8 +18,6 @@ export interface InspectorDomainBodies {
   members?: ReactNode;
   /** The single LinkedItems body (Connections). */
   linkedItems?: ReactNode;
-  /** `resource-forks` — Conversation only. */
-  forks?: ReactNode;
 }
 
 interface InspectorSurfacePlan {
@@ -55,11 +53,7 @@ export function planInspectorSurfaces(input: {
       `Resource Inspector policy requires a linked-items body for ${policy.linked_items}`,
     );
   }
-  if (policy.forks === "ConversationForks" && bodies.forks == null) {
-    throw new Error("Resource Inspector policy requires a Forks body");
-  }
-
-  // Fixed tab order: Contents · Members · Connections · Forks.
+  // Fixed tab order: Contents · Members · Connections.
   if (bodies.contents != null) {
     surfaces.push({ id: "resource-contents", body: bodies.contents });
   }
@@ -67,9 +61,7 @@ export function planInspectorSurfaces(input: {
     surfaces.push({ id: "resource-members", body: bodies.members });
   }
   surfaces.push({ id: linkedId, body: bodies.linkedItems });
-  if (policy.forks === "ConversationForks") {
-    surfaces.push({ id: "resource-forks", body: bodies.forks });
-  }
+
 
   const publishedIds = new Set(surfaces.map((surface) => surface.id));
   const roleSurfaceId = (
@@ -80,8 +72,6 @@ export function planInspectorSurfaces(input: {
         return publishedIds.has("resource-contents") ? "resource-contents" : null;
       case "LinkedItems":
         return publishedIds.has(linkedId) ? linkedId : null;
-      case "Forks":
-        return publishedIds.has("resource-forks") ? "resource-forks" : null;
       default: {
         const exhaustive: never = role;
         throw new Error(`Unhandled surface role: ${String(exhaustive)}`);

@@ -38,10 +38,10 @@ export const NEXUS_COMMANDS: Record<
     } }),
   },
   "Nexus.Quick.Chat": {
-    label: "new chat", aliases: ["/c", "/a"], argumentLabel: "message", icon: Icon.NewChat,
-    keywords: ["chat", "new chat", "start chat", "conversation"],
+    label: "ask librarian", aliases: ["/c", "/a"], argumentLabel: "message", icon: Icon.Chat,
+    keywords: ["librarian", "ask", "messages"],
     action: (argument) => ({ kind: "Available", target: {
-      kind: "InternalHref", href: "/conversations/new", labelHint: "new chat",
+      kind: "InternalHref", href: "/librarian", labelHint: "librarian",
       ...(argument ? { entry: { kind: "ComposeChat", text: argument } as const } : {}),
     } }),
   },
@@ -84,7 +84,6 @@ export interface NexusQuery {
 const CREATE_NOUNS: Record<string, NexusCommandId> = {
   note: "Nexus.Quick.Note",
   page: "Nexus.Quick.Page",
-  chat: "Nexus.Quick.Chat",
   library: "Nexus.Quick.Library",
 };
 const BROWSE_NOUNS: Record<string, BrowseKind> = {
@@ -124,7 +123,7 @@ function parseIntent(text: string, norm: string): NexusIntent {
   if (links !== null) return { kind: "ImportLinks", links };
   const afterOne = text.replace(/^\S+/, "").trim();
   const afterTwo = text.replace(/^\S+\s+\S+/, "").trim();
-  const create = /^(?:new|create)\s+(note|page|chat|library)(?:\s+.*)?$/.exec(norm);
+  const create = /^(?:new|create)\s+(note|page|library)(?:\s+.*)?$/.exec(norm);
   if (create) return { kind: "Command", id: CREATE_NOUNS[create[1]!]!, argument: afterTwo };
   if (/^ask\s+\S/.test(norm)) return { kind: "Command", id: "Nexus.Quick.Chat", argument: afterOne };
   const browse = /^(?:browse|find)\s+(article|podcast|video|book)(?:\s+.*)?$/.exec(norm);

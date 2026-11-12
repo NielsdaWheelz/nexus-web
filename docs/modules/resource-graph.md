@@ -28,8 +28,8 @@ a user link has `kind=context`, no ordinal or rationale snapshot, and one perman
 id per sorted endpoint pair. new pairs derive uuid5; seeded known pairs retain
 their old ids, including while semantically removed. conflicting bindings are
 invalid. old insertion orientation may remain in the relational projection;
-semantic membership is undirected. conversation endpoints do not create a second
-ordinary-link authority.
+semantic membership is undirected. message endpoints use this same ordinary-link
+authority.
 
 membership compares add vectors with observed removal vectors. a link is visible
 only while its membership and authored endpoints are live. deleting an endpoint
@@ -71,9 +71,11 @@ replacement quote text or approximate identity matches.
 
 ordinal citations are source-owned `origin=citation`, `kind=context` facts with
 null user ownership. source readability authorizes their visibility; null ownership
-never means public. messages, oracle readings, article embeds and native quoted
-posts use the same writer and output. no role or relationship taxonomy is exposed.
-bare conversation context remains account-owned and has no ordinal.
+never means public. oracle readings, article embeds and native quoted posts use
+the native citation writer and captured output. librarian citations instead belong
+to their assistant message and retain only resource references or urls with live
+locators. they do not create graph context membership. no relationship taxonomy
+is exposed.
 
 `source_citations.py` binds imported occurrences to ordinary citation ids.
 article publication retires old bindings before their citation rows; immutable
@@ -109,25 +111,16 @@ capture saving freezes that readable body manifest and publication transfers onl
 authorized direct bodies; supplementary metadata proofs add no body admission.
 provider acquisition retains its separate pinned-context manifest.
 
-## chat context
+## librarian references
 
-canonical admission is direct incident user links plus outgoing bare
-citation/system context facts. past message citation ordinals are not admission.
-`resource_view_states.context_order_key` preserves admission order independently
-of mutable display position; automatic facts retain their own source order.
-display moves never change context membership.
+attachments belong to an immutable user message; citations belong to its answer.
+opening either resolves current source availability and exact coordinates. a missing
+or changed source is not reconstructed from graph snapshots. ordinary authored
+message links use the shared graph and open `/librarian?message=<id>`.
 
-the context lane of `ResourceVersion` remains an opaque equality fence for
-explicit chat admission edits. complete target detachment checks its observed
-context version; an absent target succeeds, and a stale retry cannot erase a
-new attachment. ordinary user-link additions/removals still pass through the
-shared authored transaction; directed automatic facts retain their own owner.
-
-run admission stores its context version after attachment edits. publication
-preserves historical citations and adds future context only while that admitted
-version still matches. automatic additions do not advance the explicit-user fence.
-provider work never runs under domain locks. prompt expansion remains read-only
-and never broadens source permissions.
+message attachment membership does not gate model reads. the librarian uses current
+account authorization and its run's message-sequence horizon. source context is
+assembled at execution; the [chat owner](chat.md) defines its bounds and queue.
 
 ## retention and source availability
 

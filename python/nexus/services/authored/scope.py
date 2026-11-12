@@ -24,12 +24,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    can_read_conversation,
     can_read_media,
     highlight_visibility_sql,
     is_library_member,
     requested_media_ids_cte_sql,
-    visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -88,11 +86,6 @@ def _ctes() -> str:
         UNION SELECT e.target_scheme||':'||e.target_id::text FROM resource_edges e
             WHERE e.user_id=:viewer_id AND e.origin='note_body'
                 AND e.source_scheme IN ('note_block','highlight')
-        UNION SELECT 'media:'||e.target_id::text FROM resource_edges e
-            JOIN conversations c ON c.id=e.source_id AND c.owner_user_id=:viewer_id
-            WHERE e.user_id=:viewer_id AND e.source_scheme='conversation'
-                AND e.target_scheme='media' AND e.origin IN ('citation','system')
-                AND e.ordinal IS NULL AND e.authored_visible
     """
     expanded = reading_media_ids_sql("SELECT root.media_id")
     library = reading_media_ids_sql(library_media_ids_cte_sql(library_param="library.id"))
@@ -135,7 +128,6 @@ def _ctes() -> str:
             FROM scope_libraries library CROSS JOIN LATERAL ({library}) expanded
             JOIN readings reading ON reading.media_id=expanded.media_id
         ),
-        scope_conversations AS MATERIALIZED ({visible_conversation_ids_cte_sql()}),
         capture_readings AS MATERIALIZED (
             SELECT f.id AS fragment_id,f.x_post_capture_id AS capture_id,f.idx,char_length(f.canonical_text) AS size
             FROM fragments f JOIN ({captures}) readable ON readable.capture_id=f.x_post_capture_id
@@ -216,8 +208,6 @@ def _facts() -> str:
             jsonb_build_object('kind','scope','scope_ref','media:'||media_id::text) AS state FROM roots
         UNION ALL SELECT 'scope:library:'||id::text,
             jsonb_build_object('kind','scope','scope_ref','library:'||id::text) FROM scope_libraries
-        UNION ALL SELECT 'scope:conversation:'||conversation_id::text,
-            jsonb_build_object('kind','scope','scope_ref','conversation:'||conversation_id::text) FROM scope_conversations
         UNION ALL SELECT 'workspace:'||workspace.media_id::text,
             jsonb_build_object('kind','workspace_member','reading_ref','media:'||workspace.media_id::text)
             FROM workspace JOIN readings reading ON reading.media_id=workspace.media_id
@@ -225,11 +215,6 @@ def _facts() -> str:
             jsonb_build_object('kind','media_member','root_ref','media:'||root_id::text,'reading_ref','media:'||media_id::text) FROM members
         UNION ALL SELECT 'library:'||library_id::text||':'||media_id::text,
             jsonb_build_object('kind','library_member','library_ref','library:'||library_id::text,'reading_ref','media:'||media_id::text) FROM library_members
-        UNION ALL SELECT DISTINCT 'context:'||e.source_id::text||':'||e.target_scheme||':'||e.target_id::text,
-            jsonb_build_object('kind','conversation_fact','conversation_ref','conversation:'||e.source_id::text,'target_ref',e.target_scheme||':'||e.target_id::text)
-            FROM resource_edges e JOIN scope_conversations c ON c.conversation_id=e.source_id
-            WHERE e.user_id=:viewer_id AND e.source_scheme='conversation'
-                AND e.origin IN ('citation','system') AND e.ordinal IS NULL AND e.authored_visible
         UNION ALL SELECT 'capture-reading:'||fragment_id::text,
             jsonb_build_object('kind','reading','reading_ref','fragment:'||fragment_id::text,'source_ref','fragment:'||fragment_id::text,'source_kind','x_capture','body_generation',NULL,'source_generation',NULL) FROM capture_readings
         UNION ALL SELECT 'capture-scope:'||fragment_id::text,
@@ -345,8 +330,6 @@ def _authorized(db: Session, viewer_id: UUID, ref: str) -> bool:
         )
     if value.scheme == "library":
         return is_library_member(db, viewer_id, value.id)
-    if value.scheme == "conversation":
-        return can_read_conversation(db, viewer_id, value.id)
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid search scope reference")
 
 

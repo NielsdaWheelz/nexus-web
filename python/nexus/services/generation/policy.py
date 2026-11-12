@@ -81,6 +81,7 @@ _BACKGROUND: tuple[tuple[BackgroundOperation, OwnerKind, str, str, int, int], ..
     ("media_summary", "media_summary", "gpt-6-luna", "low", 120, 256),
     ("connection_discovery", "connection_discovery_scan", "gpt-6-luna", "low", 120, 256),
     ("oracle", "oracle_reading", "gpt-6.1-sol", "medium", 180, 256),
+    ("selection_curation", "suggestion_feed", "gpt-6.1-sol", "medium", 180, 256),
 )
 
 
@@ -105,7 +106,11 @@ _TABLE: dict[Operation, OperationPolicy] = {
             timeout_seconds=timeout,
             input_max_bytes=kib * 1024,
             tool_plans=frozenset(
-                {"MetadataResearch"} if operation == "metadata_enrichment" else ()
+                {"MetadataResearch"}
+                if operation == "metadata_enrichment"
+                else {"SelectionRead"}
+                if operation == "selection_curation"
+                else ()
             ),
         )
         for operation, owner, model, reasoning, timeout, kib in _BACKGROUND

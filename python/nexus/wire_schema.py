@@ -32,9 +32,8 @@ from nexus.schemas.authored import (
     SnapshotResource,
     SnapshotSourceStub,
 )
-from nexus.schemas.conversation import (
+from nexus.schemas.chat import (
     ChatRunAssistantTextDeltaEventPayload,
-    ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
     ChatRunExecutionOut,
     ChatRunToolCallStartEventOut,
@@ -57,7 +56,6 @@ SSE_PAYLOADS = (
     ChatRunToolResultEventOut,
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunDoneEventPayload,
-    ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
 )
 

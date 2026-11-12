@@ -2,13 +2,13 @@
 
 // A visit owns its server-fact removals independently of filtered/folded rows.
 // Sending and unknown commands hold the loss guard synchronously. Only accepted
-// identical removal or a permanent context-version fence settles an unknown;
+// identical removal settles an unknown;
 // row absence is never evidence. Local authored unlinks keep their own owner.
 import {createContext} from "react";
 import {Hold, useOutcome, useResendFeedback} from "@/components/feedback/Feedback";
 import type {Retract} from "@/components/feedback/stage";
 import {useActionRuntime} from "@/lib/actions/ResourceActionsProvider";
-import {isApiError, outcomeUnknown} from "@/lib/api/client";
+import {outcomeUnknown} from "@/lib/api/client";
 import {UNKNOWN_OUTCOME_REASON} from "@/lib/api/failure";
 import {handleUnauthenticatedApiError} from "@/lib/auth/UnauthenticatedApiBoundary";
 import {useWritingRuntime} from "@/lib/notes/hooks";
@@ -80,14 +80,6 @@ export function useFactRemovals(scopeName: string) {
     } catch (error) {
       if (!current()) return;
       if (outcomeUnknown(error)) { removal.unknown++; publish(); return; }
-      // This endpoint serializes against context writes and compares a monotone
-      // version. The old command cannot apply after this permanent fence.
-      if (removal.command.kind === "detach_context" && isApiError(error) && error.code === "E_CONTEXT_CHANGED") {
-        forget(removal);
-        removal.report = outcome.say({fact: "couldn’t remove this from future context.", reason: "the context changed."});
-        removal.settled(false);
-        return;
-      }
       if (removal.unknown > 0) removal.unknown++;
       publish();
       if (!handleUnauthenticatedApiError(error))

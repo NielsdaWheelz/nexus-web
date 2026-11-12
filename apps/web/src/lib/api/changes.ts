@@ -14,7 +14,7 @@ import { useSyncExternalStore } from "react";
 //   Metadata     resource display metadata: titles, credits, publication, visibility
 //   Podcasts     show identity, library subscription rules, imports, sync or playback defaults
 //   PodcastEpisodes transcript admission or episode observation uncertainty
-//   Chats        the chats index
+//   Chats        the librarian timeline
 //   Notes        the viewer's pages, page titles and outline structure
 //   NoteBodies   the text of the viewer's notes
 export type ChangeTopic =

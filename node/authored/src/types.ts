@@ -1,7 +1,7 @@
 /** Shared authored state and replication vocabulary. Decimal counters are exact signed
  * 64-bit SQL values. Patches carry causal evidence, never replacement projections. */
 import type { FrozenExcerpt, ExcerptView } from "./excerpt.ts";
-export const FORMAT_REVISION = 5;
+export const FORMAT_REVISION = 6;
 export const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
 export class CommandTooLargeError extends TypeError {
   constructor() { super("this selection is too large to save. select a shorter passage."); this.name = "CommandTooLargeError"; }
@@ -47,7 +47,7 @@ export type Locator =
   | { type: "pdf_page"; media_id: string; page_number: number }
   | { type: "transcript_time_range"; media_id: string; t_start_ms: number; t_end_ms: number; text_quote_selector: QuoteSelector | null }
   | { type: "audio_time_range" | "video_time_range"; media_id: string; t_start_ms: number; t_end_ms: number }
-  | { type: "message_offsets"; conversation_id: string; message_id: string; start_offset: number; end_offset: number; message_seq: number | null; text_quote_selector: QuoteSelector | null }
+  | { type: "message_offsets"; message_id: string; start_offset: number; end_offset: number; message_seq: number | null; text_quote_selector: QuoteSelector | null }
   | { type: "external_url"; url: string; title: string | null; display_url: string | null; accessed_at: string | null };
 export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "purple";
 export type HighlightLocator = Extract<Locator, {type:"x_capture_offsets" | "web_text_offsets" | "epub_fragment_offsets" | "pdf_page_geometry"}>;

@@ -90,7 +90,8 @@ class SuggestionFeed(Base):
     library_id: Mapped[UUID | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     current_job_id: Mapped[UUID | None]
-    mode: Mapped[Literal["suggestions", "daily"]] = mapped_column(Text)
+    mode: Mapped[Literal["suggestions", "daily", "browse"]] = mapped_column(Text)
+    last_admitted_at: Mapped[datetime | None]
 
 
 class SuggestionShortlist(Base):
@@ -102,7 +103,7 @@ class SuggestionShortlist(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     ranked_at: Mapped[datetime]
     ranked_revision: Mapped[int] = mapped_column(BigInteger)
-    target_refs: Mapped[list[str]] = mapped_column(JSONB)
+    items: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
     edition_date: Mapped[date | None]
     time_zone: Mapped[str | None]
     window_start: Mapped[datetime | None]
@@ -117,6 +118,8 @@ class User(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     email: Mapped[str | None]
     display_name: Mapped[str | None]
+    reading_brief: Mapped[str | None]
+    reading_brief_version: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     calendar_time_zone: Mapped[str] = mapped_column(server_default=FetchedValue())
     lectern_order_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
     consumption_revision: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
@@ -135,12 +138,13 @@ class ChatSelection(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
-class ChatDeletionRevision(Base):
-    """The monotonic account fence for replay after hard chat deletion."""
+class LibrarianState(Base):
+    """The account timeline sequence and deletion fence, locked together at admission."""
 
-    __tablename__ = "chat_deletion_revisions"
+    __tablename__ = "librarian_state"
     user_id: Mapped[UUID] = mapped_column(primary_key=True)
-    revision: Mapped[int] = mapped_column(BigInteger)
+    next_seq: Mapped[int] = mapped_column(BigInteger)
+    deletion_revision: Mapped[int] = mapped_column(BigInteger)
 
 
 class Page(Base):
@@ -194,9 +198,7 @@ class ResourceVersion(Base):
 
 
 class ResourceViewState(Base):
-    """One link's rank at one endpoint: dense ``%010d`` display ``order_key`` and the
-    conversation's independent admission ``context_order_key``.
-    """
+    """One link's display rank at one endpoint."""
 
     __tablename__ = "resource_view_states"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
@@ -207,7 +209,6 @@ class ResourceViewState(Base):
     target_scheme: Mapped[str | None]
     target_id: Mapped[UUID | None]
     order_key: Mapped[str | None]
-    context_order_key: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
@@ -224,7 +225,6 @@ class ResourceEdge(Base):
     source_id: Mapped[UUID]
     target_scheme: Mapped[str]
     target_id: Mapped[UUID]
-    source_order_key: Mapped[str | None]
     ordinal: Mapped[int | None]
     snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     authored_visible: Mapped[bool] = mapped_column(server_default=FetchedValue())
@@ -1008,21 +1008,6 @@ class PdfPageTextSpan(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
-class Conversation(Base):
-    """A thread of messages owned by one user."""
-
-    __tablename__ = "conversations"
-    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    owner_user_id: Mapped[UUID]
-    title: Mapped[str] = mapped_column(server_default=FetchedValue())
-    next_seq: Mapped[int] = mapped_column(server_default=FetchedValue())
-    branch_revision: Mapped[int] = mapped_column(server_default=FetchedValue())
-    # null exactly when empty; admission, selection and deletion keep a leaf.
-    active_leaf_message_id: Mapped[UUID | None]
-    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-    updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
-
-
 class LLMCall(Base):
     """One generation, opened before dispatch and closed once (sole writer: the ledger)."""
 
@@ -1037,32 +1022,25 @@ class LLMCall(Base):
     outcome: Mapped[str | None]
     failure_code: Mapped[str | None]
     terminal: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
+    native_execution: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     completed_at: Mapped[datetime | None]
 
 
 class Message(Base):
-    """A single message in a conversation."""
+    """An immutable question or its answer in the account timeline."""
 
     __tablename__ = "messages"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
-    conversation_id: Mapped[UUID]
-    seq: Mapped[int]
+    owner_user_id: Mapped[UUID]
+    seq: Mapped[int] = mapped_column(BigInteger)
     role: Mapped[Literal["user", "assistant"]] = mapped_column(Text)
     content: Mapped[str]
-    # the immutable reader-quote snapshot of a quoted user message.
-    reader_selection_snapshot: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True)
-    )
+    attachments: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
     status: Mapped[Literal["pending", "complete", "error", "cancelled"]] = mapped_column(
         Text, server_default=FetchedValue()
     )
-    parent_message_id: Mapped[UUID | None]
-    branch_anchor_kind: Mapped[str] = mapped_column(server_default=FetchedValue())
-    branch_anchor: Mapped[dict[str, object]] = mapped_column(JSONB, server_default=FetchedValue())
-    # a user turn's optional fork name (the Forks outline title).
-    fork_title: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
@@ -1095,16 +1073,10 @@ class MessageRetrieval(Base):
     # null: the answer's attached context, retrieved by no call.
     tool_call_id: Mapped[UUID | None]
     ordinal: Mapped[int]
-    result_type: Mapped[str]
-    source_id: Mapped[str]
-    media_id: Mapped[UUID | None]
-    evidence_span_id: Mapped[UUID | None]
-    context_ref: Mapped[dict[str, object]] = mapped_column(JSONB)
-    captured_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB)
-    result_ref: Mapped[dict[str, object]] = mapped_column(JSONB)
+    target: Mapped[dict[str, object]] = mapped_column(JSONB)
     selected: Mapped[bool] = mapped_column(server_default=FetchedValue())
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     citation_candidate_ordinal: Mapped[int | None]
+    citation_ordinal: Mapped[int | None]
     # the citation edge, set when this result is cited; may dangle.
     cited_edge_id: Mapped[UUID | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
@@ -1116,13 +1088,10 @@ class ChatRun(Base):
     __tablename__ = "chat_runs"
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     owner_user_id: Mapped[UUID]
-    conversation_id: Mapped[UUID]
+    retry_of_run_id: Mapped[UUID | None]
     user_message_id: Mapped[UUID]
     assistant_message_id: Mapped[UUID]
     generation_spec: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
-    # the frozen prompt (GenerationIntent) the worker runs; never re-read live.
-    generation_intent: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
-    admitted_context_version: Mapped[int | None]
     status: Mapped[str] = mapped_column(server_default=FetchedValue())
     cancel_requested_at: Mapped[datetime | None]
     started_at: Mapped[datetime | None]

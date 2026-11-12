@@ -64,12 +64,11 @@ function chipFor(operator: string, raw: string): SearchChip | null {
       return CONTRIBUTOR_ROLES.has(role) ? { dim: "role", value: role } : null;
     }
     default: {
-      // in: names an app search scope or a conversation (I7)
+      // in: names an app search scope
       const ref = parseResourceRef(value);
       const scope =
         ref !== null &&
-        (resourceSchemeIsAppSearchScope(ref.scheme) ||
-          ref.scheme === "conversation");
+        resourceSchemeIsAppSearchScope(ref.scheme);
       return scope ? { dim: "scope", value } : null;
     }
   }

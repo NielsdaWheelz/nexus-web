@@ -65,7 +65,7 @@ type SearchVisit = {
 const VISIT = definePaneVisitDataKey<SearchVisit>("Search.Phase");
 const LEXICAL_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Lexical");
 const HYBRID_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Hybrid");
-const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND", "E_CONVERSATION_NOT_FOUND"];
+const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND"];
 const phaseRank = { lexical: 0, hybrid: 1 };
 /** What the last key showed, rows or none, so the next key can stand them dimmed until it adopts. */
 type Shown = { readonly accountId: string; readonly view: SearchQuery["view"]; readonly rows: readonly Row[] };

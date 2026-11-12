@@ -125,8 +125,8 @@ export const ACTION_CATALOG = {
   SubscribeFeed: { label: "Subscribe", icon: null, group: "Organize" },
   UnsubscribeFeed: { label: "Unsubscribe", icon: null, group: "Organize" },
   Chat: {
-    label: "Chat about this…",
-    icon: Icon.NewChat,
+    label: "ask librarian",
+    icon: Icon.Chat,
     group: "CreateTransform",
   },
   EditHighlight: {
@@ -144,17 +144,7 @@ export const ACTION_CATALOG = {
     icon: null,
     group: "CreateTransform",
   },
-  ForkMessage: {
-    label: "Fork from here",
-    icon: Icon.Forks,
-    group: "CreateTransform",
-  },
-  RerunMessage: { label: "Rerun", icon: Icon.Again, group: "CreateTransform" },
-  RegenerateMessage: {
-    label: "Regenerate",
-    icon: Icon.Again,
-    group: "CreateTransform",
-  },
+  RetryTurn: { label: "retry answer", icon: Icon.Again, group: "CreateTransform" },
   EditPageTitle: {
     label: "Edit title…",
     icon: null,
@@ -228,23 +218,9 @@ export const ACTION_CATALOG = {
       body: "Delete “{title}”? Its items stay in Nexus. This can’t be undone.",
     },
   },
-  DeleteConversation: {
-    label: "Delete chat",
-    icon: null,
-    group: "Danger",
-    confirmation: {
-      title: "delete chat?",
-      body: "deletes “{title}” and all its messages, replies and forks. this cannot be undone.",
-    },
-  },
-  DeleteMessage: {
-    label: "Delete message and replies",
-    icon: null,
-    group: "Danger",
-    confirmation: {
-      title: "delete message and replies?",
-      body: "deletes this message and all descendant replies and forks. if no messages remain, the chat is deleted. this cannot be undone.",
-    },
+  DeleteTurn: {
+    label: "delete turn", icon: null, group: "Danger",
+    confirmation: { title: "delete this turn?", body: "deletes this question and its answer. completed actions and later messages remain. this cannot be undone." },
   },
   DeleteHighlight: {
     label: "Delete highlight",

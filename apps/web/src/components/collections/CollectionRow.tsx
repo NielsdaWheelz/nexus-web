@@ -3,7 +3,6 @@
 import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
 import ResourceActions from "@/components/resources/ResourceActions";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
-import ConversationMetadata from "@/components/chat/ConversationMetadata";
 import FeedMenu from "@/components/feeds/FeedMenu";
 import ExternalMediaMenu from "@/components/media/ExternalMediaMenu";
 import MediaIdentity, { MediaFacts } from "@/components/media/MediaIdentity";
@@ -32,7 +31,6 @@ function renderContext(context: CollectionContext): ReactNode {
   switch (context.kind) {
     case "Snippet": return <EmphasisSegments segments={context.segments} emphasisClassName={styles.mark} />;
     case "Text": return context.text;
-    case "Conversation": return <ConversationMetadata metadata={context.metadata} />;
     default: return assertNever(context, "Unsupported collection context");
   }
 }

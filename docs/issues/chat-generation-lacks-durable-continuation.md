@@ -1,6 +1,6 @@
 # interrupted chat cannot automatically continue
 
-open, separately deferred capability. `python/nexus/services/chat/worker.py:104`
+open, separately deferred capability. `python/nexus/services/chat/worker.py:98`
 ends a run when a prior generation exists. `generation/ledger.py:70` records a
 terminal audit result; it does not persist accepted turns and decoded output
 sufficient for continuation. interrupted chats are not promised to finish
@@ -14,5 +14,5 @@ the existing generation, tool and kernel owners.
 
 resolve when cross-process continuation after committed tool effects preserves
 text, cancellation and effect identity without repeating an uncertain external
-write. this capability remains unqualified; preserving a known terminal failure
-is the smaller [settlement repair](chat-recovery-erases-generation-failure.md).
+write. this capability remains unqualified. the librarian cutover preserves
+committed partial text and known failures without resubmitting the original turn.

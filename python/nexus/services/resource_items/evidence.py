@@ -35,15 +35,15 @@ from nexus.schemas.resource_evidence import (
 from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.schemas.resource_items import (
     CitationSourceTargetKey,
+    LiveReferenceSourceTargetKey,
+    LiveSourceLocationOut,
     LocatedSourceLocationOut,
     NamedResourceBodyOut,
     PointSourceLocationOut,
-    ReaderQuoteSourceTargetKey,
     ResourceActivationOut,
     ResourceItemOut,
     ResourcePreviewOut,
     ResourceSourceTargetKey,
-    RetrievalSourceTargetKey,
     SourceAttributionOut,
     SourceTargetKey,
     SourceTargetOut,
@@ -98,7 +98,6 @@ _WHOLE = frozenset(
         "media",
         "note_block",
         "page",
-        "conversation",
         "library",
         "podcast",
         "contributor",
@@ -789,14 +788,13 @@ def _bounded_locator(
             else None
         )
     elif kind == "message_offsets":
-        if owner.scheme != "conversation" or str(owner.id) != str(raw["conversation_id"]):
+        if owner.scheme != "message" or str(owner.id) != str(raw["message_id"]):
             return None
         parameters |= {
-            "message": UUID(str(raw["message_id"])),
             "start": raw["start_offset"],
             "size": raw["end_offset"] - raw["start_offset"],
         }
-        sql = "SELECT substring(content FROM :start+1 FOR :size) AS words FROM messages WHERE id=:message AND conversation_id=:id"
+        sql = "SELECT substring(content FROM :start+1 FOR :size) AS words FROM messages WHERE id=:id AND owner_user_id=:viewer"
     elif kind == "external_url":
         return locator
     elif kind in TIMED_KINDS:
@@ -1225,10 +1223,8 @@ def _capture(
             }
     elif ref.scheme == "message":
         row = db.execute(
-            text("SELECT conversation_id, content, seq FROM messages WHERE id = :id"),
-            {"id": ref.id},
+            text("SELECT content, seq FROM messages WHERE id = :id"), {"id": ref.id}
         ).one()
-        owner = ResourceRef("conversation", row.conversation_id)
         quote = CapturedQuote(
             excerpt=plain_excerpt(row.content, None, None),
             exact=row.content,
@@ -1239,7 +1235,6 @@ def _capture(
         if row.content:
             locator = {
                 "type": "message_offsets",
-                "conversation_id": str(owner.id),
                 "message_id": str(ref.id),
                 "message_seq": row.seq,
                 "start_offset": 0,
@@ -1804,8 +1799,8 @@ def _occurrence_activation(
     evidence: CapturedEvidence,
     source: ResourceActivationOut | None,
 ) -> ResourceActivationOut:
-    """The owner's route with the occurrence as its fragment (I5): ``#quote-``,
-    ``#citation-``, ``#retrieval-``; an outside source opens as itself."""
+    """The owner's route with the occurrence as its fragment (I5): ``#citation-``; an
+    outside source opens as itself."""
     if evidence.target.field == "annotation":
         owner = require_ref(evidence.target.owner_ref or "")
         return ResourceActivationOut(
@@ -1833,14 +1828,10 @@ def _occurrence_activation(
     if source.kind == "external" or isinstance(key, ResourceSourceTargetKey):
         return source.model_copy(update={"resource_ref": ref})
     match key:
-        case ReaderQuoteSourceTargetKey():
-            fragment = f"quote-{key.message_id}"
         case CitationSourceTargetKey():
             fragment = f"citation-{'source-' if key.side == 'source' else ''}{key.edge_id}"
-        case RetrievalSourceTargetKey():
-            fragment = f"retrieval-{key.retrieval_id}"
-        case XPostSourceTargetKey():
-            raise ValueError("a logical post target cannot name captured evidence")
+        case XPostSourceTargetKey() | LiveReferenceSourceTargetKey():
+            raise ValueError("a logical post or live reference cannot name captured evidence")
     href = source.href.split("#", 1)[0] + "#" + fragment if source.href else None
     return ResourceActivationOut(field=None, resource_ref=ref, kind=source.kind, href=href)
 
@@ -1959,8 +1950,8 @@ def resolve_source_target(
     """Where a key opens now (J9, I18). A whole resource answers its activation; a passage
     its proven current extent, else ``unavailable``. A resource key the viewer cannot see,
     or whose publication moves during this read, is ``unavailable``, never an error; a
-    quote, citation or retrieval key naming nothing the viewer can read is 404 (a citation
-    reads for whoever reads what cites it); a malformed resource ref is 400."""
+    citation key naming nothing the viewer can read is 404 (a citation reads for whoever
+    reads what cites it); a malformed resource ref is 400."""
     match target:
         case XPostSourceTargetKey():
             assert reading_media_id is not None
@@ -2042,39 +2033,62 @@ def resolve_source_target(
                     source_activation=source.activation if source else None,
                     location=UnavailableSourceLocationOut(reason="location_unavailable"),
                 )
-        case RetrievalSourceTargetKey():
-            raw = db.scalar(
-                text(
-                    "SELECT r.captured_evidence FROM message_retrievals r"
-                    " JOIN messages m ON m.id = r.assistant_message_id"
-                    " JOIN conversations c ON c.id = m.conversation_id"
-                    " WHERE r.id = :id AND c.owner_user_id = :viewer_id"
-                ),
-                {"id": target.retrieval_id, "viewer_id": viewer_id},
-            )
-            if raw is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Retrieval not found")
-            evidence = CapturedEvidence.model_validate(raw)
-        case ReaderQuoteSourceTargetKey():
-            from nexus.services.chat.quotes import decode
+        case LiveReferenceSourceTargetKey():
+            from nexus.services.live_references import reference_visible, resolve_location
 
-            raw = db.scalar(
-                text(
-                    "SELECT m.reader_selection_snapshot FROM messages m"
-                    " JOIN conversations c ON c.id = m.conversation_id"
-                    " WHERE m.id = :id AND c.owner_user_id = :viewer_id"
-                ),
-                {"id": target.message_id, "viewer_id": viewer_id},
+            reference = target.reference
+            ref = require_ref(reference.resource_ref)
+            if (
+                reading_media_id is not None
+                and ref.scheme == "media"
+                and ref.id != reading_media_id
+            ):
+                return _UNAVAILABLE_SOURCE
+            # One owner decides this for chat, tools and navigation: resource authority,
+            # and for an annotation its author's still-present private field.
+            if not reference_visible(db, viewer_id=viewer_id, reference=reference):
+                return _UNAVAILABLE_SOURCE
+            item = resource_item_out(
+                db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id
             )
-            if raw is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Quote not found")
-            evidence = decode(raw).evidence
+            if item.missing:
+                return _UNAVAILABLE_SOURCE
+            activation = (
+                ResourceActivationOut(
+                    field="annotation",
+                    resource_ref=ref.uri,
+                    kind="route",
+                    href=f"/highlights/{ref.id}#annotation",
+                )
+                if reference.field == "annotation"
+                else item.activation
+            )
+            if reference.locator is None:
+                return SourceTargetOut(
+                    source_activation=activation, location=WholeSourceLocationOut()
+                )
+            # Current bounds only: an invalid range is unavailable, never repaired.
+            if not resolve_location(db, reference, byte_limit=None)[0]:
+                return SourceTargetOut(
+                    source_activation=activation,
+                    location=UnavailableSourceLocationOut(reason="location_unavailable"),
+                )
+            return SourceTargetOut(
+                source_activation=activation,
+                location=LiveSourceLocationOut(
+                    locator=reference.locator,
+                    source_identity=source_identities(db, [ref.id]).get(ref.id)
+                    if ref.scheme == "media"
+                    else None,
+                ),
+            )
         case CitationSourceTargetKey():
             from nexus.services.resource_graph.citations import citation_source_visible_sql
 
             row = db.execute(
                 text(
-                    "SELECT snapshot, source_scheme || ':' || source_id AS source"
+                    "SELECT snapshot, source_scheme || ':' || source_id AS source,"
+                    " target_scheme || ':' || target_id AS target"
                     " FROM resource_edges"
                     " WHERE id = :id AND origin = 'citation' AND ordinal IS NOT NULL"
                     f" AND {edge_live_sql('resource_edges')}"
@@ -2090,6 +2104,14 @@ def resolve_source_target(
                     viewer_id=viewer_id,
                     edge_id=target.edge_id,
                     source_ref=assert_resource_ref(row.source),
+                    reading_media_id=reading_media_id,
+                )
+            if row.snapshot is None:
+                # A message citation froze nothing: its target opens as it is now.
+                return resolve_source_target(
+                    db,
+                    viewer_id=viewer_id,
+                    target=ResourceSourceTargetKey(resource_ref=row.target, field=None),
                     reading_media_id=reading_media_id,
                 )
             snapshot = CitationSnapshot.model_validate(row.snapshot)

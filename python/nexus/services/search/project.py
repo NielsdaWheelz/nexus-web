@@ -54,7 +54,6 @@ _LOCATED = frozenset(get_args(LocatorBackedResultType))
 SCHEMES = {
     "episode": "media",
     "video": "media",
-    "web_result": "external_snapshot",
     "highlight_annotation": "highlight",
 }
 
@@ -141,8 +140,6 @@ def _refs(row: Mapping[str, Any]) -> tuple[ResourceRef, ResourceRef]:
         return ref, _ref("fragment", UUID(str(row["chunk_locator"]["fragment_id"])))
     if (row.get("locator") or {}).get("type") == "x_capture_offsets":
         return ref, _ref("fragment", UUID(str(row["locator"]["fragment_id"])))
-    if t == "message":
-        return ref, _ref("conversation", row["conversation_id"])
     if t == "evidence_span":
         return ref, _ref(row["owner_kind"], row["media_id"])
     return ref, _ref("media", row["media_id"]) if "media_title" in row else ref
@@ -314,7 +311,7 @@ def project(
             values["media_summary"] = summaries[rid]
         handle = row["contributor_handle"] if t == "contributor" else None
         values |= {
-            "id": handle or (str(rid) if t == "web_result" else rid),
+            "id": handle or rid,
             "score": round(score, 4),
             "snippet": snippet(row["text"] or "", terms),
             "resource_ref": ref.uri,

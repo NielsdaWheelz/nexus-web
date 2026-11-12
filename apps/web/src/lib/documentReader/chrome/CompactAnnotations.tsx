@@ -56,9 +56,7 @@ export interface CompactReaderQuestion {
   readonly question: NoteBody;
 }
 export interface CompactReaderChat {
-  readonly reviewing: boolean;
   submit(input: CompactReaderQuestion): boolean;
-  cancelReview(): void;
 }
 
 /** `available` false: this host has no source text (missing or failed); annotations still list. */
@@ -151,7 +149,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
     const anchor = open.kind === "selection" ? open.anchor : selectedAnnotation?.placement.kind === "placed" ? selectedAnnotation.placement.anchor : null;
     if (open.kind === "selection" && open.identity !== current.doc.identity || open.kind === "annotation" && !selectedAnnotation?.display) return;
     // Asking never submits the independent saved-annotation editor as a question.
-    if (!guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, ...(chat.reviewing ? [draft.owner] : [])] })) return;
+    if (!guard.confirmLoss({ scopes: [], ownerIds: annotationOwners.current })) return;
     if (chat.submit({ identity: current.doc.identity, anchor, capture: open.kind === "selection" ? open.capture : null,
       annotation: selectedAnnotation, question: open.kind === "selection" ? submitted.body : emptyBody() })) {
       skipReturn.current = true;
@@ -183,7 +181,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
         {editor(chat ? "write an annotation or ask a question…" : "write an annotation…", () => save(open.capture, true))}
         <div className={styles.compactActions}>
           <Button emphasis="strong" aria-busy={busy} aria-describedby={saveDescribedBy} disabled={sourceChanged || busy || blocked || note.hyperlink || note.attachment} onClick={() => save(open.capture, true)}>{hasNote ? "save annotation" : "save highlight"}</Button>
-          {chat ? <Button disabled={sourceChanged || busy || note.hyperlink || note.attachment} onClick={ask}>{chat.reviewing ? "replace quoted passage" : "ask about this passage"}</Button> : null}
+          {chat ? <Button disabled={sourceChanged || busy || note.hyperlink || note.attachment} onClick={ask}>ask librarian</Button> : null}
           <Button onClick={close}>cancel</Button>
         </div>
       </div> : null}
@@ -205,7 +203,7 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
           <HighlightAnnotation highlightRef={shownAnnotation.ref} resource={annotation?.display?.projection ?? null} occurrenceKey={`compact:${shownAnnotation.ref}`} onWorkOwners={protectOwners} />
         </PreparedResourcesContext> : null}
         <div className={styles.compactActions}>
-          {chat ? <Button disabled={!annotation?.display || busy} onClick={ask}>{chat.reviewing ? "replace quoted passage" : "ask about this passage"}</Button> : null}
+          {chat ? <Button disabled={!annotation?.display || busy} onClick={ask}>ask librarian</Button> : null}
 
           <Button tone="danger" aria-busy={busy} aria-describedby={!annotation ? changedId : undefined} disabled={!annotation || busy || blocked || !writing} onClick={() => commit(() => deleteResource(writing!, { ref: shownAnnotation.ref }), close, "Delete")}>delete highlight</Button>
         </div>
@@ -216,8 +214,6 @@ export function useCompactAnnotations(reader: Reader, mediaId: string, source: S
   /** Annotations this publication cannot place, or every annotation when its text is unavailable. */
   const unplaced = state.annotations.filter(entry => entry.placement.kind !== "placed");
   const list = <>
-    {chat?.reviewing ? <Fact line={{ fact: "select the passage to use in your question." }}
-      verbs={[{ label: "cancel review", commandKey: "CancelQuoteReview", run: chat.cancelReview }]} /> : null}
     {showPlaced && state.annotations.length ? <ResourceOutlineList scope={`capture-highlights:${mediaId}`} ariaLabel="your highlights">
       {state.annotations.map(entry => entry.display ? <PreparedResourcesContext key={entry.ref} value={entry.display.resources}>
         <ResourceOutlineRow resource={entry.display.projection} incoming={null} occurrenceKey={`capture-highlight:${entry.ref}`} occurrenceLabel="highlight" />

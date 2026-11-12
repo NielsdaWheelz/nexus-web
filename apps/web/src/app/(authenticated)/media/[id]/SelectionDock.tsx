@@ -2,13 +2,10 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type FocusEventHandler, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
-import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import { Hold, useOutcome } from "@/components/feedback/Feedback";
 import { Announcement } from "@/components/feedback/Announcement";
 import { Field } from "@/components/feedback/Fact";
-import { useTransportVerbs } from "@/components/feedback/stage";
 import type { Retract, Verb, Verbs } from "@/components/feedback/stage";
-import { TRANSPORT_LINES, transportOf } from "@/lib/api/failure";
 import NoteEditor, { type NoteEditorHandle } from "@/components/notes/NoteEditor";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -33,7 +30,6 @@ import { useKeyboardReport } from "@/lib/ui/useKeyboardInset";
 import { useOverlay } from "@/lib/ui/overlay";
 import { isTextEntryTarget } from "@/lib/ui/eventTarget";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
-import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { bodyHasContent } from "@nexus/authored/body";
 import type { MediaAnnotations } from "./annotations";
 import type { AnnotationVerbs, MobileSelection } from "./useAnnotationVerbs";
@@ -116,7 +112,6 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
   readonly returnFocus: () => HTMLElement | null;
   readonly sharePiece: ((trigger: HTMLElement | null) => void) | null;
 }) {
-  const transportVerbs = useTransportVerbs();
   const { composer, menu } = verbs;
   const { platform } = useRenderEnvironment();
   const visitScope = usePaneVisitWorkScope();
@@ -149,13 +144,10 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
   };
   const moreTrigger = useRef<HTMLButtonElement | null>(null);
   const copyTrigger = useRef<HTMLButtonElement | null>(null);
-  const destinationTrigger = useRef<HTMLButtonElement | null>(null);
   const annotationSerial = useRef(0);
   const [annotationRequest, setAnnotationRequest] = useState<{
     openingId: string; highlightId: string; serial: number; trigger: HTMLElement;
   } | null>(null);
-  const pickerId = useId();
-  const pickerAnchor = useCallback(() => destinationTrigger.current, []);
   const mobileSurface = useRef<HTMLDivElement | null>(null);
   const mobileActive = isMobile && paneActive && (draft !== null && opening !== null || verbs.bounds !== null);
   const confirming = verbs.bounds !== null || composer.reselection !== null;
@@ -351,10 +343,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     const blockedReason = localReason ?? composer.selectionBlocked
       ?? (sourceChanged && draft.highlightId === null ? "the text changed. select the passage again."
         : refused ? refused.line.fact : unavailable && !draft.highlightId ? "this passage is no longer available." : null);
-    const destination = draft.destination;
-    const selected = destination.kind === "Selected" ? destination : null;
-    const hasMessage = convertReaderQuestion(draft.body).kind !== "Blank";
-    const chatLabel = selected ? `${hasMessage ? "send to" : "open in"} “${selected.title}”` : "choose chat";
+
     const shortcut = usesMeta(platform) ? "cmd" : "ctrl";
     const command = (id: string, label: string, icon: ReactElement, onSelect: Extract<ActionDescriptor, { kind: "command" }>["onSelect"], reason: string | null): Extract<ActionDescriptor, { kind: "command" }> & { readonly icon: ReactElement } => ({
       kind: "command", id, label, icon, onSelect, disabled: reason !== null, disabledReason: reason ?? undefined,
@@ -372,21 +361,15 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     const saveAction = failed ? command("RetryPassageSave", "retry saving", <Icon.Again size={16} aria-hidden="true" />, failed.retry, saving ? "saving." : null)
       : command("SavePassageNote", hasNote ? "save annotation" : "save highlight", <Icon.Save size={16} aria-hidden="true" />,
         ({ triggerEl }) => { if (settleInput(triggerEl)) composer.save(); }, blockedReason);
-    const newLabel = hasMessage ? "send in new chat" : "open in new chat";
-    const newAction = command("NewChat", newLabel, <Icon.NewChat size={16} aria-hidden="true" />,
-      ({ triggerEl }) => { if (settleInput(triggerEl)) composer.newChat(); }, blockedReason);
-    const existingAction = command("ExistingChat", chatLabel, <Icon.Chat size={16} aria-hidden="true" />,
-      ({ triggerEl }) => {
-        if (!selected) composer.chooseChat();
-        else if (settleInput(triggerEl)) composer.continueChat();
-      }, blockedReason);
+    const chatAction = command("AskLibrarian", "ask librarian", <Icon.Chat size={16} aria-hidden="true" />,
+      ({ triggerEl }) => { if (settleInput(triggerEl)) composer.askLibrarian(); }, blockedReason);
     const highlightId = draft.highlightId;
     const selectAgain: Verb | null = highlightId === null
       ? { label: "select again", commandKey: "ReselectPassage", run: composer.reselect }
       : annotation?.placement.kind === "placed" ? { label: "adjust selection", commandKey: "EditHighlightBounds", run: () => verbs.editBounds(highlightId) }
         : annotation?.placement.kind === "unlocated" ? { label: "relocate highlight", commandKey: "RelocateHighlight", run: () => verbs.relocate(highlightId) } : null;
     const copyText: Verb = { label: "copy text", commandKey: "CopyDraftText", run: () => copy(draft.body.body_text) };
-    const chatField = chatFieldOf(composer, transportVerbs);
+    const chatField = chatFieldOf(composer);
     const copyAction = command("CopyPassage", "copy passage", copying.copied ? <Icon.Check size={16} aria-hidden="true" /> : <Icon.Copy size={16} aria-hidden="true" />, () => { if (composer.copyQuote !== null) copy(composer.copyQuote); }, composer.copyUnavailable);
     const shareAction = { ...(sharePiece !== null
       ? command("SharePiece", "share piece", <Icon.Share aria-hidden="true" />, ({ triggerEl }) => sharePiece(triggerEl), blockedReason)
@@ -424,16 +407,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
           setAnnotationRequest(current => current?.openingId === opening.id && current.highlightId === annotationId && current.trigger === trigger ? null : current);
         }} /> : null}
       {(!isMobile && fresh) || failed && !fresh ? save : null}
-      {canQuote ? <>
-        <SelectionAction action={newAction} help={`${newLabel} · ${shortcut}-enter`} busy={false} describedBy={chatDescription} />
-        <div className={styles.highlightControl}>
-          <SelectionAction action={existingAction} help={`${chatLabel}${composer.branchCue ? ` · ${composer.branchCue}` : ""} · ${shortcut}-shift-enter`} busy={false} describedBy={chatDescription} />
-          <Button ref={destinationTrigger} iconOnly className={styles.selectionIcon} aria-label="choose existing chat" aria-haspopup="dialog"
-            aria-expanded={composer.pickerOpen} aria-controls={composer.pickerOpen ? pickerId : undefined}
-            aria-disabled={blockedReason !== null || undefined} tooltip={{ text: blockedReason ? `choose existing chat. ${blockedReason}` : "choose existing chat" }}
-            icon={<Icon.Choose aria-hidden="true" />} onClick={() => { if (blockedReason === null) composer.chooseChat(); }} />
-        </div>
-      </> : null}
+      {canQuote ? <SelectionAction action={chatAction} help={`ask librarian · ${shortcut}-enter`} busy={false} describedBy={chatDescription} /> : null}
       {!isMobile ? <>
         <SelectionAction action={copyAction} help={copyAction.label} busy={false} buttonRef={copyTrigger} />
         <RecoverableSelectionAction action={shareAction} help={shareAction.label} busy={sharePiece === null && draft.operation?.kind === "Ensure"}
@@ -441,12 +415,6 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
         {more}
       </> : null}
     </div>;
-    const review = composer.quoteReview ? <div className={styles.dock} data-passage-interaction>
-      <Button disabled={blockedReason !== null} onClick={event => {
-        if (settleInput(event.currentTarget)) composer.replaceQuote();
-      }}>replace quoted passage</Button>
-      <Button onClick={composer.quoteReview.finish}>cancel review</Button>
-    </div> : null;
     const savedAnnotation = <>
       {annotation && annotation.placement.kind !== "placed" ? <PlacementNote kind={annotation.placement.kind} /> : null}
       {annotationId ? <PreparedResourcesContext value={annotation?.display?.resources ?? null}>
@@ -466,7 +434,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     </>;
     return <div data-mobile={isMobile} className={styles.selectionComposer}>
       {toolbar}
-      {isMobile ? <div className={styles.selectionDetails} data-fresh={fresh}>{refinementControls}{review}{savedAnnotation}{feedback}</div> : <>{review}{savedAnnotation}</>}
+      {isMobile ? <div className={styles.selectionDetails} data-fresh={fresh}>{refinementControls}{savedAnnotation}{feedback}</div> : <>{savedAnnotation}</>}
       <div className={isMobile ? styles.selectionInputRow : undefined}>
         <div data-selection-composer={opening.id} data-passage-interaction data-passage-question className={styles.selectionInput}
           onCompositionStartCapture={composer.compositionStart} onChangeCapture={composer.compositionStart} onPasteCapture={composer.compositionStart} onDropCapture={composer.compositionStart}>
@@ -478,8 +446,7 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
               focus={!isMobile && placed && opening.focus ? { selection: draft.selection ?? "end", serial: opening.serial, preventScroll: true } : null}
               onEdit={edit => { setInputRefusal(null); composer.edit(edit); }} onSelectionChange={composer.selection} onAttachmentActiveChange={composer.attachmentActive} onLinkInputActiveChange={composer.linkInputActive}
               history={{ undo: composer.undo, redo: composer.redo, boundary: composer.historyBoundary }}
-              onSave={!isMobile && fresh ? composer.save : undefined} onNewChat={canQuote ? () => composer.newChat() : undefined}
-              onContinueChat={canQuote ? () => composer.continueChat() : undefined} />
+              onSave={!isMobile && fresh ? composer.save : undefined} onAskLibrarian={canQuote ? () => composer.askLibrarian() : undefined} />
           </PaneReturnVisitScope>
         </div>
         {isMobile ? <div className={styles.selectionSecondary}>
@@ -493,8 +460,6 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
   };
   const recolouring = verbs.recolouring ? store.annotation(verbs.recolouring) : null;
   return <>
-    {composer.quoteReview && draft === null ? <Field id={fieldId} line={{fact: "select the passage to use in your question."}}
-      verbs={[{label: "cancel review", commandKey: "CancelQuoteReview", run: composer.quoteReview.finish}]} /> : null}
     {composer.hiddenPreparationFailures.map(failure => <HiddenPreparationFailure key={failure.id} failure={failure} copy={copy} />)}
     {draft === null ? copying.notice : null}
     {isMobile ? (draft && opening) || verbs.bounds ? <div ref={mobileSurface} className={styles.mobileComposer} role="group" aria-label="passage composer"
@@ -524,32 +489,16 @@ export default function SelectionDock({ verbs, store, reader, readerScrollport, 
     <Dialog open={verbs.recolouring !== null} title="edit highlight" onClose={() => verbs.recolour(null)}>
       <Colours selected={recolouring?.color ?? null} onSelect={verbs.recolour} />
     </Dialog>
-    {draft ? <ConversationDestinationOverlay key={draft.id} anchor={pickerAnchor} panelId={pickerId} open={composer.pickerOpen} mediaId={draft.sourceMediaId}
-      onClose={composer.closePicker} onSelectConversation={composer.chooseDestination} /> : null}
+
   </>;
 }
 
 const UNSAVED = { fact: "this note isn’t saved yet." };
 const retrySave = (retry: () => void, busy: boolean): Verb => ({ label: "retry", commandKey: "RetryPassagePreparation", run: retry, busy });
 
-/** The source owns destination lookup and refusal before the new tab accepts. */
-function chatFieldOf(composer: SelectionComposer,
-  transportVerbs: ReturnType<typeof useTransportVerbs>): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
-  const draft = composer.draft;
-  if (!draft) return null;
-  const issue = draft.chatIssue;
-  if (issue) {
-    switch (issue.kind) {
-      case "Missing": return { line: issue.line, verbs: [{ label: "choose chat", commandKey: "ChooseDraftChat", run: composer.chooseChat }] };
-      case "Failed": return { line: issue.line };
-    }
-  }
-  if (draft.destination.kind === "LookupFailed") {
-    const transport = transportOf(draft.destination.error);
-    return { line: TRANSPORT_LINES[transport].read("recent chats"),
-      verbs: transportVerbs(transport, { retry: { label: "retry", commandKey: "RetryRecentChats", run: composer.retryDefault } }) ?? undefined };
-  }
-  return null;
+/** A failed handoff leaves the question in its source composer. */
+function chatFieldOf(composer: SelectionComposer): { line: { fact: string; reason?: string }; verbs?: Verbs } | null {
+  return composer.draft?.chatIssue ? { line: composer.draft.chatIssue.line } : null;
 }
 
 /** A draft that is no longer shown still owns its failed preparation: words at risk hold a risk

@@ -3,7 +3,7 @@
 A write's created targets live on its one row. The author of a target is the
 successful write whose ``created_refs`` name it; the history is the principal's
 finished writes; undo reverts the targets and stamps the row in one transaction.
-Each outlives the conversation (its link is set null) and the target itself.
+Each outlives the turn (its link is set null) and the target itself.
 Undo replays the whole database attempt under the central serializable commit
 owner; a reverted receipt is already complete and changes nothing.
 """
@@ -97,9 +97,8 @@ def _edge_rows(db: Session, viewer_id: UUID, edge_ids: Iterable[UUID]) -> list[A
     return list(
         db.execute(
             text(
-                "SELECT t.*, m.conversation_id, CAST(ref ->> 'id' AS uuid) AS edge_id"
+                "SELECT t.*, CAST(ref ->> 'id' AS uuid) AS edge_id"
                 " FROM tool_calls t CROSS JOIN jsonb_array_elements(t.created_refs) ref"
-                " LEFT JOIN messages m ON m.id = t.assistant_message_id"
                 " WHERE t.principal_user_id = :viewer AND t.tool_id = 'nexus.edge.create'"
                 " AND t.status = 'complete' AND ref ->> 'kind'='edge' AND ref -> 'field'='null'::jsonb AND ref ->> 'id' = ANY(:edges)"
             ),
@@ -129,7 +128,6 @@ def edge_provenance(
             authorship=_authorship_of(row, "resource_edge", row.edge_id, None),
             tool_call_id=row.id,
             generation_id=row.generation_id,
-            conversation_id=row.conversation_id,
             message_id=row.assistant_message_id,
         )
         for row in _edge_rows(db, viewer_id, edge_ids)

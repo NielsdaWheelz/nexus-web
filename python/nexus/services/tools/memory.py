@@ -325,7 +325,7 @@ def _handler(spec: ToolSpec[Any, Any, Any], config: MemoryClientConfig) -> Any:
         if spec is MEMORY_SAVE_NOTE_SPEC:
             arguments |= {
                 "submission_id": str(call.id),
-                "native_conversation_id": str(chat.conversation_id),
+                "native_conversation_id": str(call.principal),
             }
         return await _call_memory(config, spec, arguments)
 

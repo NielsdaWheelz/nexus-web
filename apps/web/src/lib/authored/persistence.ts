@@ -13,7 +13,7 @@
 import { validateBindings } from "@nexus/authored/identity";
 import { mergeChanges } from "@nexus/authored/merge";
 import { encodeBytes, decodeBytes } from "@nexus/authored/documents";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_4_TO_5_SQL } from "@nexus/authored/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "@nexus/authored/schema";
 import { bindingQueries, compileQuery, compileOutlineWindows, excerptQuery, searchQuery, sourceAliasQuery, SEARCH_MATCH_SQL, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL } from "@nexus/authored/queries";
 import { FORMAT_REVISION, MAX_COMMAND_BYTES, type AuthoredQuery, type CommitFrame, type CommitResult, type Corpus, type MergeResult, type QueryResult, type ReplicaState, type StateSelection, type Change, type FeedChange, type LinkState, type OutlineWindowProof, type OutlineWindowSlice, type ResourceProjection } from "@nexus/authored/types";
 import type { Database } from "./sqlite";
@@ -53,10 +53,10 @@ export class Persistence {
     await this.db.transaction(async () => {
       const state = await this.replica();
       if (state.account_id !== accountId) throw new Error("authored account mismatch");
-      if (state.format_revision === 4) {
+      if (state.format_revision === 4 || state.format_revision === 5) {
         if ((await this.db.all("SELECT 1 FROM pending_changes LIMIT 1")).length > 0)
           throw Object.assign(new Error("sync all writing with the previous client before updating this device"), { code: "E_AUTHORED_UPGRADE_PENDING" });
-        for (const sql of UPGRADE_4_TO_5_SQL) await this.db.run(sql);
+        for (const sql of UPGRADE_TO_6_SQL) await this.db.run(sql);
       } else if (state.format_revision !== FORMAT_REVISION) throw new Error("authored format mismatch; drain the previous client before reprovisioning this device");
     });
   }

@@ -8,7 +8,9 @@ import { MODEL_UNAVAILABLE } from "./selection";
 
 // Chat's names for the generated FastAPI wire (docs/local-rules/typed-wire.md).
 export type Message = Schema<"MessageOut">;
-export type Conversation = Schema<"ConversationOut">;
+export type Timeline = Schema<"TimelineOut">;
+export type Turn = Schema<"ChatRunResponse">;
+export type LiveReference = RunCreateRequest["attachments"][number];
 export type RunRead = ApiJson<"/chat-runs/{run_id}", "get">["data"];
 /** Create and repeat answer the same receipt. */
 export type Receipt = ApiJson<"/chat-runs", "post">["data"];
@@ -25,10 +27,6 @@ export type Selection =
   Schema<"CodexPersonalSelection"> | Schema<"ProviderApiSelection">;
 export type Catalog = ApiJson<"/llm-catalog", "get">["data"];
 export type Execution = Schema<"ChatRunExecutionOut">;
-export type BranchAnchor =
-  | Schema<"AssistantMessageBranchAnchor">
-  | Schema<"AssistantSelectionBranchAnchor">;
-
 /** A failed chat call, by what its owner does next. Total over thrown values: nothing here throws. */
 export type ChatFailure =
   | { kind: "Handled" } // the sign-in boundary took it
@@ -51,40 +49,18 @@ export function failureOf(error: unknown): ChatFailure {
     ? { kind: "Unknown", error: failure.error } : { kind: "Refused", error: failure.error };
 }
 
-const MISSING = "it doesn’t exist.";
-const UNQUOTABLE = "this passage can’t be quoted.";
-/** A refusal's reason after its command's fact, by the server's code; null leaves the bare fact.
- * Closed: a server's explanation never reaches the screen. */
-const REASONS: Readonly<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE", string | null>> = {
-  E_CONVERSATION_CHANGED: "this chat changed meanwhile.",
-  E_CHAT_CREATION_STALE: "this send can no longer be retried.",
+const REASONS: Readonly<Partial<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE", string>>> = {
+  E_CHAT_CREATION_STALE: "this send can no longer be retried. review your question and send again.",
   E_MESSAGE_TOO_LONG: "this message is over 20,000 characters.",
   E_INVALID_GENERATION_SELECTION: MODEL_UNAVAILABLE,
   E_GENERATION_SELECTION_UNAVAILABLE: MODEL_UNAVAILABLE,
   E_GENERATION_RUNTIME_UNAVAILABLE: "the model isn’t ready.",
-  E_INVALID_REQUEST: null,
-  E_BRANCH_PATH_INVALID: "you can reply only to a complete answer.",
-  E_BRANCH_ANCHOR_INVALID: null,
   E_FORBIDDEN: "you don’t have access.",
-  E_NOT_FOUND: MISSING,
-  E_CONVERSATION_NOT_FOUND: MISSING,
-  E_MESSAGE_NOT_FOUND: MISSING,
-  E_RETRY_NOT_ALLOWED: "this answer can’t be rerun.",
-  E_REGENERATION_NOT_ALLOWED: "this answer isn’t complete.",
-  E_READER_SELECTION_STALE: "the quoted passage changed.",
-  E_READER_SELECTION_NOT_FOUND: UNQUOTABLE,
-  E_READER_SELECTION_FORBIDDEN: UNQUOTABLE,
-  E_READER_SELECTION_GEOMETRY_ONLY: "this passage has no text to quote.",
-  E_READER_SELECTION_TOO_LARGE: "this passage is too long to quote.",
-  E_CONVERSATION_NO_LONGER_EMPTY: "this chat has messages now.",
-  E_GENERATION_CONTEXT_TOO_LARGE: "this chat is too long for this model.",
+  E_NOT_FOUND: "it doesn’t exist.",
+  E_MESSAGE_NOT_FOUND: "it doesn’t exist.",
+  E_RETRY_NOT_ALLOWED: "only failed or cancelled answers can be retried.",
 };
 const isReasoned = (code: string): code is keyof typeof REASONS => code in REASONS;
-
-/** The reader's refusal of a passage, by the same record: its sentence, or null for any other code. */
-export const unquotable = (error: ApiError): string | null =>
-  isReasoned(error.code) && (REASONS[error.code] === UNQUOTABLE || error.code === "E_READER_SELECTION_GEOMETRY_ONLY" || error.code === "E_READER_SELECTION_TOO_LARGE")
-    ? REASONS[error.code] : null;
 
 /** A refused chat command as it reads. `error` is the failure whose transport gave the reason, so
  * that transport's verbs follow the line; a domain or local reason takes none. */
@@ -93,7 +69,6 @@ export type Refusal = { readonly line: Line; readonly error: ApiError | null };
 /** A refusal by the server's code: the command's fact, then the domain's reason, or the bare fact. */
 export function rejected(fact: string, code: keyof typeof REASONS): Refusal {
   const reason = REASONS[code];
-  if (reason === undefined) throw new Error("chat rejection has no owned explanation");
   return { line: { fact, reason: reason ?? undefined }, error: null };
 }
 

@@ -31,7 +31,6 @@ from nexus.schemas.highlights import (
     HIGHLIGHT_COLORS,
     FragmentAnchorOut,
     HighlightAnnotationOut,
-    LinkedConversationRef,
     PdfAnchorOut,
     PdfQuadOut,
     TypedHighlightOut,
@@ -43,7 +42,6 @@ from nexus.services.media_text_scope import (
     text_scope_rows_sql,
 )
 from nexus.services.resource_grants import invalidate_annotation_visibility
-from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 
 
 def read_highlight_annotations(
@@ -291,7 +289,6 @@ def _highlight_out(
     highlight: Highlight,
     viewer_id: UUID,
     anchor: FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut,
-    conversations: list[LinkedConversationRef],
 ) -> TypedHighlightOut:
     annotation = None
     if highlight.user_id == viewer_id and highlight.annotation_body_pm_json is not None:
@@ -312,7 +309,6 @@ def _highlight_out(
         updated_at=highlight.updated_at,
         author_user_id=highlight.user_id,
         is_owner=highlight.user_id == viewer_id,
-        linked_conversations=conversations,
         annotation=annotation,
     )
 
@@ -323,22 +319,7 @@ def _project_anchored(
     anchored: list[tuple[Highlight, FragmentAnchorOut | XCaptureAnchorOut | PdfAnchorOut]],
     reading_media_id: UUID | None = None,
 ) -> list[TypedHighlightOut]:
-    ids = [highlight.id for highlight, _ in anchored]
-    conversations = {
-        highlight_id: [LinkedConversationRef(conversation_id=r.id, title=r.title) for r in rows]
-        for highlight_id, rows in batch_conversations_with_any_edge_to_ref(
-            db, viewer_id=viewer_id, targets=ids, target_scheme="highlight"
-        ).items()
-    }
-    projected = [
-        _highlight_out(
-            highlight,
-            viewer_id,
-            anchor,
-            conversations.get(highlight.id, []),
-        )
-        for highlight, anchor in anchored
-    ]
+    projected = [_highlight_out(highlight, viewer_id, anchor) for highlight, anchor in anchored]
 
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.resource_items.locations import media_passages

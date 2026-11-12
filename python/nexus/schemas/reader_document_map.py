@@ -28,7 +28,6 @@ ReaderEvidenceUnavailableReason = Literal["Missing", "Unanchorable", "Stale"]
 ReaderDocumentMapMarkerKind = Literal[
     "Embed",
     "Highlight",
-    "ReaderQuote",
     "SourceReference",
     "GeneratedCitation",
     "Link",
@@ -152,17 +151,8 @@ class ReaderEvidenceResourceOut(_ReaderMapOut):
     item: ResourceItemOut
 
 
-class ReaderEvidenceQuoteOut(_ReaderMapOut):
-    kind: Literal["ReaderQuote"] = "ReaderQuote"
-    item: ResourceItemOut
-    quotation: ResourceItemOut
-
-
 ReaderEvidenceContentOut = Annotated[
-    ReaderEvidenceHighlightOut
-    | ReaderEvidenceSourceReferenceOut
-    | ReaderEvidenceResourceOut
-    | ReaderEvidenceQuoteOut,
+    ReaderEvidenceHighlightOut | ReaderEvidenceSourceReferenceOut | ReaderEvidenceResourceOut,
     Field(discriminator="kind"),
 ]
 
@@ -218,7 +208,6 @@ class ReaderEvidenceRootOut(_ReaderMapOut):
 
 class ReaderEvidenceCountsOut(_ReaderMapOut):
     highlights: int = Field(ge=0)
-    quotes: int = Field(ge=0)
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
     machine_links: int = Field(ge=0)

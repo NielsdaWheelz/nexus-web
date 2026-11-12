@@ -22,8 +22,6 @@ SEARCH_RESULT_TYPES = Literal[
     "highlight",
     "message",
     "evidence_span",
-    "conversation",
-    "web_result",
     "reader_apparatus_item",
 ]
 ALL_RESULT_TYPES: tuple[str, ...] = get_args(SEARCH_RESULT_TYPES)

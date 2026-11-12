@@ -1,269 +1,172 @@
-# suggestions
+# selection
 
-suggestions propose what to put on the lectern or into a library; quick reads
-are short unfinished documents; daily selection is a finite account-wide edition.
-`services/suggestions.py` owns one closed selection policy, current eligibility
-and hydration. `selection_context.py` owns bounded committed intent;
-`daily_selection.py` owns account-calendar windows and publication-evidenced
-admission. `services/suggestion_shortlists.py` owns admission, publication, reads
-and the queue handlers.
-`services/suggestion_changes.py` owns the input revision, the engagement gate and
-feed deletion. web: `lib/useSuggestions.ts` (the visit model),
-`components/collections/SuggestionsSection.tsx`, `QuickReadsSection.tsx`.
-this module owns retrieval, admission and complete publication. [search](search.md)
-owns shared admission, quality and progress; [deployment](../../deployment.md#capacity-contract)
-owns aggregate physical resources. fixed scheduling intervals are not latency guarantees.
+browse, contextual suggestions and daily use one librarian editorial pipeline.
+quick reads applies its direct time/progress predicate without generation.
+`services/suggestions.py` owns bounded candidates, eligibility and hydration;
+`selection_context.py` owns committed intent; `daily_selection.py` owns calendar
+windows and publisher evidence; `suggestion_shortlists.py` owns admission,
+editorial output acceptance, publication and queue handlers. shared search,
+generation, tool, resource and consumption owners retain their contracts.
 
-## product contract
+## product
 
-- destinations: the lectern (every viewer) and each library the viewer admins,
-  All included. member-only and system libraries have none (`NotApplicable`).
-- suggestions eligibility, one predicate for ranking and delivery: on the lectern, a visible
-  unfinished media not on it; in a library, a visible media it does not hold,
-  through actual media placements, and for a named library a followed source it does not
-  file. All proposes what the viewer can read but has not saved (grants, the
-  oracle corpus).
-- a feed exists only while its user administers its library: losing admin
-  (demotion, removal, leaving) or deleting the library deletes the feed and its
-  publication in the same transaction.
-- one retained logical pane visit owns a hydrated pool (at most 80), including
-  a successful empty publication. ten refs are displayed; survivors retain order,
-  acknowledged additions leave, and vacancies refill only from that same pool.
-  new publications do not replace it, fetch another pool, or announce freshness.
-- current eligibility and metadata are reconciled independently through `/view`.
-  ranking age never grants access or settles a pending command. a ref acknowledged
-  after a read began is filtered from that read; adding locks only that command.
-  a full lectern leaves suggestions browsable and disables additions.
-- mobile switching, back/forward, minimize/restore and layout changes restore the
-  existing account-scoped visit snapshot through `usePaneVisitData`. restore
-  revalidates eligibility, never ranking. close/reopen follows its existing
-  forgetting rules. no browser storage or extra retention owner.
-- a new visit, reload or ordinary explicit refresh reads the latest completed
-  snapshot. initial absence automatically accepts its first publication; empty
-  is complete. an adopted empty or exhausted pool can stay empty until refresh.
-- explicit refresh awaits its own bounded GET and installation, never queue work
-  or another newer publication. a concurrent first automatic completion cannot
-  regress to pending if this GET captured an older null snapshot. observed state
-  can advance separately; the GET's coherent ranking remains adoptable.
-- refresh outcomes: `Refreshed` (readable completed pool, empty included), `Finding`
-  (no publication), `Repair` (no publication and suspended work), `Failed` (modeled
-  read failure), `NotApplicable` (neutral library branch). lectern inapplicability
-  is a defect. library refresh also syncs shows and retains that result, downgraded
-  from complete to partial if the suggestions read fails or needs repair.
-- the shell owns pane-refresh outcome speech. inline retry repeats only the
-  failed suggestions intention and owns its own outcome. restored pools and
-  background publications are silent. one initial collection loader, completed
-  empty, actual read/admission failures, capacity and repair remain visible.
-- cancellation retires request ownership; withdrawal clears retained selection.
-  old `/view` reads are fenced to the exact adopted selection, even when explicit
-  refresh reads the same publication id. later observer state never authorizes a
-  retired response. only matching read success clears its failure intention;
-  observation recovery cannot erase a failed explicit read.
-- quick reads: lectern only, at most five visible unfinished documents with
-  `0 < remaining_seconds < 600`. complete current reader publications prove
-  duration; excerpt and unknown extent cannot qualify. in progress first, then
-  lectern/context preference and current engagement/recency ties. this is a direct
-  read without a semantic scan; display and ordinary actions stay unchanged.
-- daily selection: at most five individual held media acquired in the previous
-  account-local morning window, from currently followed sources or individually
-  saved articles. history and pre-cutover unknown discovery are excluded. choose
-  the earliest credible original publication fact across source occurrences and
-  reader publications; never use import, update or model-enriched dates. timestamps
-  qualify within seven civil days of cutoff; date-only values within the edition
-  day and preceding six dates. a current readable publication, playable audio or
-  authorized source link is required for initial admission.
-- daily `/view` only checks existence, access, metadata and action capabilities.
-  finishing, filing or unfollowing never replaces selected rows. retained visits
-  remain independently readable after the server replaces its latest edition.
+| surface | eligibility | publication / display |
+| --- | --- | --- |
+| browse | visible unfinished individual media, including held and older work | 20 / 20 |
+| lectern suggestions | visible unfinished media absent from lectern | 20 / 10 |
+| library suggestions | visible media absent from an administered library; a named library also admits followed sources it does not file | 20 / 10 |
+| daily | held individual media acquired in the prior account morning window, with current publisher evidence and usable reading, audio or source link | 5 / 5 |
+| quick reads | complete current readable documents, unfinished, `0 < remaining_seconds < 600` | direct 5 |
 
-## context and ranking
+system/member-only libraries have no contextual selection. a full lectern keeps
+suggestions readable and disables additions. losing library administration deletes
+its feed and publication through the existing library owner. recommendations never
+save resources or create graph links merely because the librarian chose them.
 
-contextual modes combine at most five canonical destination anchors with at most
-five deduplicated recent intent anchors. daily uses account intent only. reading,
-listening, accepted notes/highlights, individual saves and one latest complete
-user message per conversation supply facts. assistant output, automatic arrivals,
-unsynchronized writing and device-local opens do not. repeated actions do not add
-votes. quoted readable media supply anchors; unquoted user text supplies lexical
-evidence through search's exact-reading port, including body passages.
-the discovery row's last individual-save timestamp supplies manual intent;
-automatic/bulk acquisition cannot change it. its independent first-discovery
-timestamp never moves and remains the daily admission clock.
+one retained pane visit owns its adopted order, rationales and scroll. contextual
+vacancies refill from that finite pool. a new background publication does not
+replace an adopted pool, including an empty or exhausted one. current eligibility
+and capabilities update through `/view`; it returns no replacement rationale.
+a ref acknowledged after a read began cannot reappear from that read. closing a
+visit follows the existing pane owner’s forgetting rules; no extra storage owner.
 
-graph evidence precedes shared authors, user-text lexical evidence and supported
-stored-vector similarity. each lane retains its own strength order; canonical
-identities break ties. recency supplies direct candidates, with a soft cap of two
-per source, author, anchor, reason and kind before available alternatives are
-exhausted. no provider calls or editorial prose are part of ranking.
-daily gives its source cap precedence over the other soft preferences, across
-all eligible arrivals; it chooses five before truncating alternatives. its source
-is the lowest canonical feed id among authorized catalogue occurrences, independent
-of current-follow admission; individually saved articles retain known source
-identity after unfollowing. unknown sources stay null, without domain inference. suggestions
-retains its existing twenty-per-family pool and soft-preference order.
+explicit refresh adopts the latest completed publication through its own bounded
+read, never waits for a model. initial absence adopts the first completed pool.
+empty is a successful publication. failed reads keep the last adopted content;
+matching read success clears only that intention’s failure. queue repair and read
+retry remain separate. routine publication and observation are quiet.
 
-## durable facts
+quick reads remains immediate and model-independent. in-progress works precede
+lectern/context preference, then engagement/recency. complete reader publications
+prove duration; excerpts and unknown extents do not qualify. rationale is null.
 
-- `suggestion_inputs` holds durable per-source clocks plus the migration-owned
-  baseline. canonical writers pass their changed namespaced source identities to
-  `suggestion_changes.record_input_change` in the source transaction; each clock
-  advances once per call. sorted
-  keys give multi-owner updates consistent lock order. only readers compute the
-  sum; it includes late commits, and clock rows survive source deletion. unrelated
-  writers do not share a singleton publication mutex.
-- reading and listening advance it only when they move an anchor list or the
-  read state. `engagement_gate`, taken before the write, reads the head of each
-  anchor list the write can move (the lectern's, and each admin library's that
-  holds the media or its show; a transcript save on an episode moves only the
-  lectern's) and the read state; the write stamps the media's engagement now, so
-  the anchors moved exactly when one of those lists was headed by something else.
-- `suggestion_feeds` registers a viewer/mode/destination and points to its current
-  job. a null library means lectern suggestions or the account's daily edition,
-  distinguished by `mode`. dead work retains its pointer within the same due work.
-- `suggestion_shortlists` holds only the latest successful ordered pool of at
-  most 80 canonical refs. empty is a successful publication. metadata is hydrated
-  from current facts; stored relevance age never grants access. daily adds its civil
-  date, captured zone, immutable window and frozen head-coverage counts; suggestions
-  carries null edition metadata. no edition archive exists.
+## context, retrieval and editorial judgment
 
-`suggestion_shortlist_refresh` runs on the existing serial background lane with
-its normal three-attempt policy and `keep_dead=True`. its payload is
-`{feed_id, edition}`; edition is null for suggestions and a frozen window for daily.
-admission is serializable and joins existing work. a read-only repeatable-read
-snapshot captures the input revision, database time and ranking.
-media anchors use their first chunk's current active vector; a piece uses its
-first eligible admitted chunk. each selected anchor requests independent
-graph-thread and rediscovery windows. sequential postgres queries score original vectors and
-project canonical reading/chunk rows before ordering by distance, reading id and
-chunk id and taking 400 per anchor/family; only then are rows grouped by media.
-vectors and eligibility stay in postgres. there is no shared ann traversal or
-all-anchor cross-product.
-ranking uses the native async search gate with one finite
-absolute allowance for checkout, nonblocking admission and the complete snapshot.
-the [search contract](search.md#work-bounds) separates capacity waiting
-from the execution allowance. background contention defers through the existing
-job owner; browser capacity waiting belongs to the current client intent.
-retirement confirms the search pid is absent before any publication transaction;
-a known-unconfirmed backend prevents publication and fails that scope's search
-capacity closed. there is no retained partial ranking across attempts.
+bounded intent combines recent reading/listening, notes, highlights, individual
+saves and recent committed user questions. retries, assistant answers, automatic
+arrivals, unsynchronized writing and local opens add no votes. the first currently
+visible media attachment of a question supplies a resource anchor; each recent
+question keeps its own lexical anchor, including successive questions about the
+same work. repeated resource actions advance its clock, not its weight. user text
+stays bounded by the existing context owner.
 
-only observed admission contention returns a same-job reschedule at database
-`now() + 5 seconds`. normal queue settlement keeps
-the payload and feed pointer and refunds the claimed attempt. each later attempt
-reruns the entire read. setup and admitted computation expiry spend the ordinary
-bounded failure budget. arbitrary `57014`, connection loss and shutdown retain
-their own error or lifecycle handling. the deferral claim check and database-time read use one short ordinary
-transaction after the search scope has closed. this sequential child handler has
-no concurrent frame/provider/ordinary owner; the supervisor heartbeat is separate.
-reschedule logs identify `admission_busy`; owned read expiry retains its error.
+retrieval combines destination anchors and intent through graph, shared-author,
+lexical, stored-vector and recency evidence. canonical identities break ties.
+existing twenty-per-family retrieval and soft diversity supply at most 80 offered
+candidates. daily retains its source preference before the other soft preferences.
+bounded retrieval may miss good work; the model cannot choose a context-only ref.
 
-once the complete read and retirement succeed, a separate short serializable
-transaction locks the current execution claim, verifies the feed pointer and
-current destination authority, replaces the publication, clears the pointer and
-finishes that same job atomically. lost/superseded claims cannot publish. failed
-or deferred reads leave the prior publication intact. a later input revision
-remains visibly dirty. workers never enqueue successors. the publisher may finish
-its own job, so the outer worker need not emit another settlement event.
+one `selection_curation` generation runs under owner `suggestion_feed`, codex
+personal `gpt-6.1-sol`, medium reasoning, strict json, 180 seconds and 256 kib input.
+`SelectionRead` grants only resource inspection, current resource reading and
+document search, scoped to offered candidates and intent refs. no web discovery,
+shared memory, authored writes, saves, subscriptions or graph writes. no alternate
+model or mechanical fallback. all tool reads still enforce current visibility.
 
-source changes record dirtiness even with no registered feed. an active suggestions
-observer requests work for meaningful changes or the 15-minute age target.
-later builds become available no earlier than the previous snapshot time plus
-30 seconds. sustained competing activity may leave suggestions stale; observers
-retain current publication and truthful queued/recovering/suspended state.
+input contains the manual reading brief, surface constraints, bounded intent and
+canonical target projections. retrieved material and prior messages are evidence,
+not instructions that can expand authority. the brief has no inferred biography
+and only the user edits it in account settings. a changed save advances selection
+input revision; the publication fence compares its captured brief version.
 
-the existing periodic worker runs `daily_brief_due_job` every minute and ensures
-each account's latest due edition without a client observer. cutoff is 07:00 in
-`users.calendar_time_zone`; civil mornings handle daylight-saving boundaries.
-after a zone change the window starts at the later of the nominal previous morning
-and the prior successful cutoff. older cutoffs and captured old zones cannot
-publish. missed editions are skipped; failed builds retain the dated prior result.
-same-edition retries retain their budget, while a later due window supersedes old
-work. first successful publication fixes the edition's order, including empty.
+output is exactly `{items:[{ref,rationale}]}`: unique offered refs, at most twenty
+(or five daily), with a nullable plain-text rationale of at most 240 characters.
+invalid shape, duplicates and unoffered refs reject the entire attempt. fewer or
+zero picks is valid. model prose cannot replace titles, urls, dates, artwork,
+durations or capabilities. no quota-filling, invented popularity or endorsement
+chips. select for substance, deliberate relevance, intellectual stretch and variety.
 
-publication rechecks the claim, current pointer, current due window and account
-zone under the account lock. successful daily publication enqueues at most five
-linked-article preparations through the source owner, after the ranking read.
-preparation accepts authorized feed links and individually saved article urls;
-it never requests model enrichment or delays the edition. selection itself never
-fetches. the minute sweep re-offers the same visible
-nominations and edition attempt ids after an in-flight feed-body parse settles;
-it neither rebuilds the edition nor resets an extraction's retry budget.
-frozen coverage counts only current followed sources with no pending head whose
-latest head check succeeded without gaps no earlier than one hour
-before cutoff. archive runs do not count. partial coverage is visible even with
-rows; complete empty editions say `no eligible items today.`.
+content acceptance: one supported sentence, or null. metadata can justify topic
+relevance but cannot establish an unread argument. `a primary account of the
+dispute you’re studying.` is good only when both claims have evidence.
+`an insightful must-read perfectly tailored to you.` is empty praise. app-authored
+copy is lowercase; source identities and quotations keep their original case.
+empty browse says `no picks right now.`; suspended updates say
+`selection stopped updating.` while retaining prior rows.
 
-qualification freezes the active due-feed cohort and a finite observation window
-before work begins. every due feed must publish the settled input within that
-window after competing work drains. pre-existing suspended failures are identified
-at the start; failures created by the workload are not exempt. there is no
-quiet-period latency target or promise of freshness during sustained activity.
-heavy work may queue behind other work, then must resume and drain; simultaneous
-peak execution is not required. backup-window enforcement is not required by the
-current prototype acceptance. idle normal
-services and retained memory remain part of capacity accounting.
-backend retirement, useful publication and the resource envelope remain separate
-obligations under the [search contract](search.md#qualification-contract).
+## publication and scheduling
 
-## ports
+`suggestion_inputs` retains the existing per-source clocks. canonical mutations
+advance only their owner identities in the same transaction; aggregate reads
+include late commits. reading/listening marks dirty only when an anchor or read
+state changes. manual brief and calendar-zone changes mark dirty too.
 
-`/lectern/suggestions`, `/libraries/{library_id}/suggestions` and `/daily-brief` expose:
+`suggestion_feeds` names account, mode and nullable library, with its current job
+and `last_admitted_at`. `suggestion_shortlists` stores only the latest successful
+ordered `{ref,rationale}` items, captured revision/time and optional daily metadata.
+no edition archive or candidate/source copies are stored here.
 
-- `GET`: `{observed_at, state, publication: {id, edition, items} | null}`, the latest
-  publication's currently eligible hydrated items. `state = {input_revision,
-  latest: {id} | null, work: Queued | Running | Recovering | Suspended | null,
-  capability: Available | LecternFull | NotApplicable, automatic_refresh: Now |
-  At{at} | Stopped}`; an item's target is `Media{ref, media_summary, href}` or
-  `Feed{ref, feed_id, feed_kind, title, subtitle, image_url, href}`. podcast refs
-  and routes keep their existing identity; article sources use feed refs.
-- `POST /view`: reconcile up to 80 distinct supplied refs in their original
-  order, independently of the latest publication. daily accepts at most five
-  media refs. no ranking or admission.
-- `POST /refresh`: no body; ensure-fresh admission only, 202 after commit.
-  each request rechecks current need: retain existing work (including suspended),
-  no-op for a fresh publication, otherwise enqueue one build. repeats can admit
-  later work only when the then-current publication is due. ordinary ui refresh
-  calls GET; daily refresh only ensures a missing due edition, never rebuilds one
-  that completed. daily read capability is independent of lectern capacity.
+first non-daily work is due immediately. later new admissions require meaningful
+input change or a new account-local day and at least fifteen minutes since the
+last admission. the floor applies after failed/superseded initial work too.
+existing work, including suspended work, keeps its job and budget. the explicit
+same-job repair owner retries failed work; navigation and dirtiness cannot bypass
+it. no age-based fifteen-minute refresh or thirty-second build delay remains.
+active reading can cause one build per visible feed per fifteen minutes; there is
+no freshness guarantee under contention.
 
-presented foreground consumers read every 30 seconds, or every 10 seconds while
-state is `Queued`, `Running` or `Recovering`; `Suspended` does not poll fast.
-before pool adoption they use GET; afterward read-only `/view` preserves the
-adopted pool and ranking while reconciling current eligibility and server time.
-return and local actions revalidate immediately. polls never request `Refresh`.
-there is no suggestions stream or notification producer.
+one existing `suggestion_shortlist_refresh` job performs:
 
-library deletion and loss of admin delete shortlist then feed. orphaned jobs
-finish superseded. non-admin/system libraries expose no publication. a full lectern
-keeps browsable suggestions; its capability separately disables new additions.
+1. read-only repeatable-read candidate/context capture under shared bounded search
+   admission; record current brief version and database time.
+2. retire the search backend and transaction completely.
+3. run generation through its existing ledger, runtime and scoped tools.
+4. validate schema, candidate membership, uniqueness and surface cap.
+5. a short serializable transaction locks account then current job claim, checks
+   feed pointer, destination authority, brief version and daily window. recheck
+   selected eligibility; remove newly ineligible rows without substitution. replace
+   the previous publication, clear the pointer and finish the job atomically.
 
-## operator repair
+zero survivors publishes empty. malformed/model failure retains previous success.
+brief supersession clears and finishes that job without publication, leaving new
+inputs due through normal admission. a lost claim cannot publish. interrupted
+search retirement fails its existing capacity owner closed. only observed search
+admission contention reschedules the same job at database now plus five seconds;
+setup/computation failures retain normal bounded failure policy.
 
-diagnose and fix the recorded queue failure first. source changes and navigation
-cannot bypass dead work. a later daily window supersedes it; the same window
-retains its budget. identify the feed's `current_job_id`, inspect
-that row and its `execution_id`, `error_code`, `last_error` and result, then use
-the existing same-job repair in the intended environment. this grants one fresh
-budget; it does not replace the job or discard the last publication.
+## daily
 
-```python
-from uuid import UUID
+cutoff is 07:00 in the account’s calendar zone; the existing minute scheduler
+admits the latest due edition without a mounted browser. first success fixes the
+edition, including empty. missed editions are skipped, not backfilled. a timezone
+change cannot publish an old captured window; the next window starts no earlier
+than the previous successful cutoff. later windows can supersede failed older work.
 
-from sqlalchemy import text
+daily candidates were acquired in the previous civil morning window from currently
+followed sources or individually saved articles. history/unknown acquisition is
+excluded. choose the earliest credible publisher fact across occurrences and reader
+publications; never import, update or model-enriched timestamps. instants qualify
+within seven civil days of cutoff; dates qualify within the edition day and six
+preceding dates. initial admission and publication require a current readable
+publication, playable audio or authorized source link.
 
-from nexus.db.session import get_session_factory
-from nexus.jobs.queue import get_job, requeue_dead_job
+daily `/view` only checks existence, access, metadata and action capabilities.
+finishing, filing or unfollowing cannot replace an adopted edition. publication
+prefetches at most five linked articles through the existing source owner; it does
+not request model enrichment or delay the edition. the scheduler re-offers the same
+nominations and attempt ids after source work settles without resetting budgets.
+coverage captures followed sources whose current head succeeded without gaps in
+the hour before cutoff. archive checks do not count; incomplete coverage stays
+visible even with selected rows.
 
-job_id = UUID("the-diagnosed-job-uuid")
-with get_session_factory()() as db:
-    job = get_job(db, job_id, lock=True)
-    assert job is not None and job.kind == "suggestion_shortlist_refresh"
-    assert db.scalar(text(
-        "SELECT EXISTS (SELECT 1 FROM suggestion_feeds WHERE current_job_id = :id)"
-    ), {"id": job_id})
-    requeue_dead_job(db, job_id=job_id)
-    db.commit()
-```
+## ports and repair
 
-the queue repair commits normally. a job already repaired is unchanged. confirm
-the same still-current job publishes successfully and its feed
-pointer becomes null; do not delete a dead row to obtain another attempt budget.
+`/browse/selection`, `/lectern/suggestions`,
+`/libraries/{library_id}/suggestions` and `/daily-brief` expose the same protocol:
+
+- `GET`: `{observed_at,state,publication}`; publication is null or
+  `{id,edition,items:[{target,rationale}]}` with current targets.
+- `POST /view`: `{refs}`; returns current `{target}` rows in requested order.
+  at most twenty refs; daily at most five; browse/daily accept media only.
+- `POST /refresh`: no body, returns 202 after ordinary due admission/join, never
+  waits for generation. GET alone does not admit work.
+
+state retains input revision, latest id, queue phase, capability and automatic
+advice `Now | At{at} | Stopped`. mounted observers separately request refresh using
+that advice; existing observation cadence is thirty seconds or ten during active
+work. suspended work does not poll fast. `/lectern/quick-reads` stays a direct GET.
+
+repair the recorded failure first, then use the existing queue
+`resume_held_job` on the feed’s still-current `suggestion_shortlist_refresh` job.
+retain its identity, feed pointer and prior publication. confirm it publishes and
+clears the pointer; deleting a suspended row to obtain a new attempt budget is not repair.

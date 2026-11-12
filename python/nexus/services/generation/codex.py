@@ -53,11 +53,13 @@ from provider_runtime.agent_runtime import (
     AgentRuntimeConfig,
     AgentRuntimeError,
     CodexEndpoint,
+    CodexThreadTarget,
     CredentialRef,
     CredentialRejected,
     CredentialUnavailable,
     InvalidAgentRequest,
     JsonSchemaAgentOutput,
+    NativeTerminalEvidence,
     TextAgentOutput,
     terminal_to_json,
     thaw_json_value,
@@ -142,6 +144,8 @@ async def run_codex(
         deadline_at=deadline_at,
         through_checkpoint=None,
     )
+    from nexus.services.generation import native_execution
+
     ports = _Ports(owner, stopped, on_event, tools)
     cwd_root.mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="nexus-native-runtime-") as state:
@@ -164,6 +168,13 @@ async def run_codex(
                     return RouteResult(
                         "failed", None, None, "runtime_unavailable", detail, {}, sent=False
                     )
+                await native_execution.bind(
+                    owner,
+                    generation_id,
+                    CodexThreadTarget(
+                        lease.session.ref.profile_key, lease.session.ref.native_session_id
+                    ),
+                )
                 result = await run_native(
                     definition=definition,
                     request=request,
@@ -177,6 +188,10 @@ async def run_codex(
                     messages=ports,
                     cancellation=CancellationToken(),
                 )
+                if isinstance(result, AgentNotSubmitted) or isinstance(
+                    result.evidence, NativeTerminalEvidence
+                ):
+                    native_execution.record_settled(generation_id)
             finally:
                 await provider.shutdown()
     if isinstance(result, AgentNotSubmitted):

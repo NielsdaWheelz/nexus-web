@@ -22,18 +22,17 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 ShareMode = Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
 LinkMode = Literal["none", "direct", "materialize_passage"]
-InspectorRole = Literal["Contents", "LinkedItems", "Forks"]
+InspectorRole = Literal["Contents", "LinkedItems"]
 
 
 @dataclass(frozen=True, slots=True)
 class InspectorPolicy:
     linked_items: Literal["MediaEvidence", "ResourceConnections"]
-    forks: Literal["ConversationForks"] | None
     # Fallback preference, not tab order.
     default_surface_order: tuple[InspectorRole, ...]
 
 
-_CONNECTIONS = InspectorPolicy("ResourceConnections", None, ("LinkedItems",))
+_CONNECTIONS = InspectorPolicy("ResourceConnections", ("LinkedItems",))
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +61,7 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
     "media": Capability(
         sharing="ResourceGrants",
         readable="media",
-        inspector=InspectorPolicy("MediaEvidence", None, ("LinkedItems",)),
+        inspector=InspectorPolicy("MediaEvidence", ("LinkedItems",)),
         citable_result_type="media",
         citation_output_source=True,
         app_search_scope=True,
@@ -107,13 +106,6 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
         citable_result_type="fragment",
         citation_output_source=True,
     ),
-    "conversation": Capability(
-        sharing="CopyOnly",
-        inspector=InspectorPolicy(
-            "ResourceConnections", "ConversationForks", ("LinkedItems", "Forks")
-        ),
-        prompt_render="label",
-    ),
     "message": Capability(citable_result_type="message", citation_output_source=True),
     "oracle_reading": Capability(sharing="CopyOnly", citation_output_source=True),
     "oracle_passage_anchor": Capability(
@@ -125,7 +117,6 @@ CAPABILITIES: dict[ResourceScheme, Capability] = {
         embeddable=False,
         chat_subject=False,
         readable="none",
-        citable_result_type="web_result",
         prompt_render="none",
     ),
     "contributor": Capability(

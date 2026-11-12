@@ -21,7 +21,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.listen import Listener, open_listener
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.conversation import EXECUTION_ADVISORY_EVENT_TYPE
+from nexus.schemas.chat import EXECUTION_ADVISORY_EVENT_TYPE
 from nexus.services.chat import events as chat_events
 from nexus.services.chat import reads as chat_reads
 

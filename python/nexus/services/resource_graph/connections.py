@@ -1,7 +1,8 @@
 """The connections read model: the viewer's live edges around a set of refs, hydrated
 once per page into ``ConnectionOut``. An authored link is undirected and matches either
 way; ``other`` is always the far endpoint and ``mutation`` names the one server command
-that may remove a machine fact. Remote child availability shares this exact
+that may remove a machine fact. An evidence-owning citation shows its captured words; a
+message citation shows its target as it is now. Remote child availability shares this exact
 predicate and tests complete server-owned facts without hydrating children.
 Authored child existence belongs exclusively to the device's canonical graph."""
 
@@ -19,7 +20,7 @@ from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.auth.permissions import highlight_visibility_filter
-from nexus.db.models import Highlight, PassageAnchor, ResourceEdge, ResourceVersion
+from nexus.db.models import Highlight, PassageAnchor, ResourceEdge
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.resource_graph import (
     CitationSnapshot,
@@ -28,7 +29,6 @@ from nexus.schemas.resource_graph import (
     ConnectionOut,
     ConnectionPageOut,
     ConnectionQueryRequest,
-    DetachContextMutation,
     EdgeKind,
     EdgeOrigin,
     RemoteChildrenItem,
@@ -256,7 +256,7 @@ def query_remote_children(
             direction="both",
             rollup="owner",
             filters=ConnectionFiltersRequest(
-                origins=["citation", "discovery", "assistant", "system", "document_embed"]
+                origins=["citation", "discovery", "assistant", "document_embed"]
             ),
             limit=1,
             cursor=None,
@@ -292,7 +292,7 @@ def hydrate_connections(
         }.values()
     )
     endpoints = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=refs)}
-    citation_rows = [row for row in rows if row.origin == "citation" and row.ordinal is not None]
+    citation_rows = [row for row in rows if row.origin == "citation"]
     # Reader inventory supplies its presentation refs. Resolve additional primary
     # membership here too, so its direction agrees with paginated connection reads.
     membership: dict[UUID, tuple[bool, bool]] = {}
@@ -308,7 +308,8 @@ def hydrate_connections(
             membership[edge_id] = (source_matches, target_matches)
     occurrences = []
     admitted_snapshots = {}
-    for row in citation_rows:
+    captured_rows = [row for row in citation_rows if row.snapshot is not None]
+    for row in captured_rows:
         snapshot = CitationSnapshot.model_validate(row.snapshot)
         admitted_snapshots[row.id] = admit_citation_snapshot(
             db, viewer_id=viewer_id, snapshot=snapshot
@@ -323,32 +324,11 @@ def hydrate_connections(
         )
     captured = dict(
         zip(
-            [row.id for row in citation_rows],
+            [row.id for row in captured_rows],
             evidence_items(db, viewer_id=viewer_id, occurrences=occurrences),
             strict=True,
         )
     )
-    chat_ids = {
-        row.source_id
-        for row in rows
-        if row.origin in ("citation", "system")
-        and row.ordinal is None
-        and row.source_scheme == "conversation"
-    }
-    chat_versions = dict.fromkeys(chat_ids, 1)
-    if chat_ids:
-        chat_versions.update(
-            db.execute(
-                select(ResourceVersion.resource_id, ResourceVersion.version).where(
-                    ResourceVersion.user_id == viewer_id,
-                    ResourceVersion.resource_scheme == "conversation",
-                    ResourceVersion.resource_id.in_(chat_ids),
-                    ResourceVersion.lane == "context",
-                )
-            )
-            .tuples()
-            .all()
-        )
     provenance = assistant_writes.edge_provenance(
         db, viewer_id, [row.id for row in rows if row.origin == "assistant"]
     )
@@ -377,15 +357,7 @@ def hydrate_connections(
                 }
             )
         creation = provenance.get(row.id) if row.origin == "assistant" else None
-        mutation: RemoveFactMutation | DetachContextMutation | None = None
-        if row.origin in ("discovery", "assistant"):
-            mutation = RemoveFactMutation()
-        elif row.origin in ("citation", "system") and row.ordinal is None:
-            mutation = DetachContextMutation(
-                conversation_id=row.source_id,
-                target_ref=target,
-                expected_context_version=chat_versions[row.source_id],
-            )
+        mutation = RemoveFactMutation() if row.origin in ("discovery", "assistant") else None
         items.append(
             ConnectionOut(
                 edge_id=row.id,

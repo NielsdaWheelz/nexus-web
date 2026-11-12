@@ -179,11 +179,11 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
           continue;
         }
         const item = rootItem(root), facet = markerFacet(root);
-        const body = root.content.kind === "ReaderQuote" ? root.content.quotation.preview.body : item.preview.body;
+        const body = item.preview.body;
         markers.push({ id: key, position: structure.fraction(extent.start), end: structure.fraction(extent.end),
-          kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" || root.content.kind === "ReaderQuote" ? root.content.kind
+          kind: root.content.kind === "Highlight" || root.content.kind === "SourceReference" ? root.content.kind
             : facet === "citations" ? "GeneratedCitation" : facet === "links" ? "Link" : "MachineLink",
-          tone: facet === "highlights" ? "Highlight" : facet === "quotes" ? "Neutral" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
+          tone: facet === "highlights" ? "Highlight" : facet === "citations" ? "Citation" : facet === "links" ? "Link" : "MachineLink", label: item.label,
           preview: body.kind === "passage" ? (body.excerpt.kind === "content" ? excerptTextParts(body.excerpt.body).exact : "table excerpt") : body.kind === "prose" ? body.excerpt.text : null });
       }
       if (wire && wire.identity === doc.identity) markers.push(...wire.markers.filter(marker => marker.item_id.startsWith("embed:")).map(marker => ({

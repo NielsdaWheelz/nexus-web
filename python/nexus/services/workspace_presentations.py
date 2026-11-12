@@ -15,7 +15,6 @@ from nexus.auth.permissions import (
     feed_catalog_ids_sql,
     requested_media_ids_cte_sql,
     visible_contributor_ids_cte_sql,
-    visible_conversation_ids_cte_sql,
 )
 from nexus.db.models import MediaKind
 from nexus.schemas.workspace_presentations import (
@@ -95,18 +94,6 @@ def read_presentations(
             facts[ref] = WorkspacePresentationOut(
                 resource_ref=ref, title="All" if row.is_default else row.name
             )
-
-    if ids["conversation"]:
-        rows = db.execute(
-            text(f"""
-                SELECT id, title FROM conversations
-                WHERE id = ANY(:ids) AND id IN ({visible_conversation_ids_cte_sql()})
-            """),
-            {"ids": list(ids["conversation"]), "viewer_id": viewer_id},
-        )
-        for row in rows:
-            ref = f"conversation:{row.id}"
-            facts[ref] = WorkspacePresentationOut(resource_ref=ref, title=row.title)
 
     if ids["podcast"]:
         # Podcast detail admits any persisted catalog show, without a subscription.

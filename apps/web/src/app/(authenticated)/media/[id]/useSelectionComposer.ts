@@ -10,7 +10,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import * as Y from "yjs";
 import {encodeBytes, hydrateNote, readBody} from "@nexus/authored/documents";
 import {applyDraftBody} from "@/lib/notes/editorBinding";
-import { flushSync } from "react-dom";
 import { noteEditorAttachmentOwnerId } from "@/components/notes/NoteEditor";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useWorkGuard } from "@/lib/unsavedWork";
@@ -20,13 +19,10 @@ import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import { getInteractionGeneration, getInteractionOwner, type Layer } from "@/lib/ui/overlay";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
-import { readConversationTree, type ConversationTree } from "@/lib/chat/commands";
-import { fetchLatestSourceConversation, type ConversationListItem } from "@/lib/chat/conversationIndex";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import { chatView } from "@/lib/chat/tree";
 import { readCatalog } from "@/lib/chat/catalog";
-import { captureReaderQuote, launchReaderChat, replaceReaderQuote, type ReaderQuoteReturn } from "@/lib/chat/readerIntent";
+import { captureReaderQuote, launchReaderChat } from "@/lib/chat/readerIntent";
 import { type Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { rejectedSelectionFact, useReaderState, type DraftAnchor, type Mark, type SelectionCapture, type SelectionEvent, type SelectionNotice } from "@/lib/documentReader/DocumentReader";
@@ -42,8 +38,6 @@ import { definePaneVisitDataKey, usePaneVisitIdentity } from "@/lib/workspace/pa
 import type { MediaAnnotations } from "./annotations";
 import { emptyDraftHistory, recordDraftEdit, samePassage, type ComposerDraft, type NoteEdit } from "./selectionDrafts";
 
-const DEFAULT_VISIT = definePaneVisitDataKey<Visit<{ conversation: ConversationListItem | null }>>("Reader.ChatDefault");
-const TREE_VISIT = definePaneVisitDataKey<Visit<{ tree: ConversationTree | null }>>("Reader.ChatTree");
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Reader.ChatCatalog");
 type Opening = { id: string; draftId: string; focus: boolean; ownsFocus: boolean; serial: number };
 type Refinement = { id: string; draftId: string; identity: string; candidate: SelectionEvent | null; explicit: boolean; inputHeld: boolean };
@@ -65,7 +59,6 @@ export function useSelectionComposer(input: {
   active: boolean;
   isMobile: boolean;
   boundsActive: boolean;
-  quoteReview: { readonly target: ReaderQuoteReturn; readonly finish: () => void } | null;
   onError: (error: unknown, title: string, retry?: () => Promise<unknown>) => void;
 }) {
   const { reader, mediaId, annotations, sourceLabel, active, isMobile, onError } = input;
@@ -104,7 +97,6 @@ export function useSelectionComposer(input: {
     });
   }, [set, showRefinement]);
   const reselection = refinement?.explicit ? refinement : null;
-  const [pickerDraftId, setPickerDraftId] = useState<string | null>(null);
   const [opening, setOpening] = useState<Opening | null>(() => retained.value
     ? {id: createRandomId(), draftId: retained.value.id, focus: false, ownsFocus: false, serial: 0} : null);
   const current = useRef<Opening | null>(opening);
@@ -116,12 +108,10 @@ export function useSelectionComposer(input: {
   const show = useCallback((next: Opening | null) => {
     current.current = next; interaction.current = next?.id ?? null; setOpening(next);
   }, []);
-  useEffect(() => { if (!active) setPickerDraftId(null); }, [active]);
   useEffect(() => { cancelReselection(); }, [active, publication, isMobile, cancelReselection]);
   useEffect(() => {
     const entry = read();
     if (publication && entry?.highlightId === null && entry.passage.identity !== publication) {
-      setPickerDraftId(null);
       store.update(entry.id, value => value.issue?.kind === "Source" ? value : {...value, issue: {kind: "Source", line: SOURCE_CHANGED}});
     }
   }, [publication, read, store]);
@@ -166,45 +156,6 @@ export function useSelectionComposer(input: {
     const id = read()?.id;
     return id === undefined || guard.confirmLoss({ scopes: [], ownerIds: [...annotationOwners.current, draftOwner, noteEditorAttachmentOwnerId(visitId, `reader-draft:${id}`)] });
   };
-  const destination = draft?.destination ?? null;
-  const defaultId = destination?.kind === "Resolving" ? draft!.id : null;
-  const defaultSource = draft?.sourceMediaId ?? null;
-  const defaultRead = useServerValue({ key: defaultId ? `reader-chat-default:${defaultId}:${defaultSource}` : null,
-    stale: "", visit: DEFAULT_VISIT,
-    load: async signal => ({ conversation: await fetchLatestSourceConversation(defaultSource!, signal) }),
-  });
-  useEffect(() => {
-    if (!defaultId || !defaultSource || defaultRead.status === "loading") return;
-    store.update(defaultId, entry => {
-      if (entry.destination.kind !== "Resolving" || entry.sourceMediaId !== defaultSource) return entry;
-      if (defaultRead.status === "failed") return { ...entry, destination: { kind: "LookupFailed", error: defaultRead.error } };
-      const candidate = defaultRead.data.conversation;
-      return { ...entry, destination: candidate
-        ? { kind: "Selected", id: candidate.id, title: candidate.title, snapshot: { kind: "Loading" } }
-        : { kind: "Absent" } };
-    });
-  }, [defaultId, defaultRead, defaultSource, store]);
-  const loadingChatId = destination?.kind === "Selected" && destination.snapshot.kind === "Loading" ? destination.id : null;
-  const treeRead = useServerValue({ key: draft && loadingChatId ? `reader-chat-tree:${draft.id}:${loadingChatId}` : null,
-    stale: "", visit: TREE_VISIT, load: async () => ({ tree: await readConversationTree(loadingChatId!) }),
-  });
-  useEffect(() => {
-    if (!draft || !loadingChatId || treeRead.status === "loading") return;
-    store.update(draft.id, entry => {
-      const selected = entry.destination;
-      if (selected.kind !== "Selected" || selected.id !== loadingChatId || selected.snapshot.kind !== "Loading") return entry;
-      if (treeRead.status === "failed") return { ...entry, destination: { ...selected, snapshot: { kind: "Failed" } } };
-      return treeRead.data.tree ? { ...entry, destination: { ...selected, title: treeRead.data.tree.conversation.title,
-        snapshot: { kind: "Ready", tree: treeRead.data.tree } } }
-        : { ...entry, destination: { ...selected, snapshot: { kind: "Failed" } }, chatIssue: { kind: "Missing", line: { fact: "this chat isn’t available." } } };
-    });
-  }, [draft, loadingChatId, treeRead, store]);
-  const observedTree = destination?.kind === "Selected" && destination.snapshot.kind === "Ready" ? destination.snapshot.tree : null;
-  const chat = observedTree ? chatView({ messages: new Map(observedTree.messages.map(message => [message.id, message])),
-    leafId: observedTree.active_leaf_message_id, history: "Ready" }, observedTree.conversation.id, null) : null;
-  // Target and branch come from the canonical stored leaf, never another pane's endpoint.
-  const branchCue = chat && [...chat.children.values()].some(children => children.filter(message => message.role === "user").length > 1)
-    ? `branch · response ${chat.path.at(-1)?.seq ?? "empty"}` : null;
   // Deleted highlights retain their independent question until deliberate discard.
   const annotationState = useSyncExternalStore(annotations.subscribe, annotations.getState, annotations.getState);
   const seen = useRef(new Set<string>());
@@ -250,7 +201,7 @@ export function useSelectionComposer(input: {
       body: carried?.body ?? emptyBody(), revision: (carried?.revision ?? -1) + 1, selection: carried?.selection ?? null, history: carried?.history ?? emptyDraftHistory(),
       operation: null, issue: highlightId || capture ? null : { kind: "Capture", line: { fact: refused ? "nexus can’t capture some text in this passage." : "couldn’t capture this passage.", reason: "your words are kept." } },
       referenceActive: false, linkInputActive: false, attachmentActive: false,
-      sourceMediaId: mediaId, destination: carried?.destination ?? { kind: "Resolving" }, chatIssue: null,
+      sourceMediaId: mediaId, chatIssue: null,
     };
     store.put(entry);
     return entry;
@@ -263,7 +214,6 @@ export function useSelectionComposer(input: {
     memory.enter();
     refreshCatalog();
     const prepared = prepare(passage, highlightId, carried);
-    setPickerDraftId(null);
     const opened = current.current;
     show({ id: opened?.draftId === prepared.id ? opened.id : createRandomId(), draftId: prepared.id, focus, ownsFocus: focus, serial: ++serial.current });
     return true;
@@ -275,14 +225,16 @@ export function useSelectionComposer(input: {
   }, [read, store]);
 
   const close = (id: string | null) => {
-    if (id !== null) store.remove(id);
-    show(null); setPickerDraftId(null); cancelReselection();
+    if (id === null) return;
+    store.remove(id);
+    if (current.current?.draftId === id) show(null);
+    if (refining.current?.draftId === id) cancelReselection();
   };
 
   const currentSource = (capture: SelectionCapture) => {
     const shown = reader.getState().document;
     return activeRef.current && isMobile && document.visibilityState !== "hidden" && shown.status === "ready" &&
-      !shown.refreshing && shown.doc.identity === capture.identity && reader.measureBounds() !== null;
+      shown.doc.identity === capture.identity && reader.measureBounds() !== null;
   };
   const selectionCurrent = (subject: SelectionSubject) => selectionActivation.current === subject &&
     refining.current?.id === subject.id && currentSource(subject.capture);
@@ -357,7 +309,7 @@ export function useSelectionComposer(input: {
     // a just-committed highlight joins the local reads a moment after its commit.
     if (entry.highlightId && !annotation) return null;
     const shown = reader.getState().document;
-    if (!annotation && (!entry.capture || shown.status !== "ready" || shown.refreshing || shown.doc.identity !== entry.passage.identity)) {
+    if (!annotation && (!entry.capture || shown.status !== "ready" || shown.doc.identity !== entry.passage.identity)) {
       store.update(entry.id, value => ({ ...value, issue: { kind: "Source", line: SOURCE_CHANGED } }));
       return null;
     }
@@ -377,9 +329,9 @@ export function useSelectionComposer(input: {
       const value = get(entry.id);
       if (!value) return { id };
       const unchanged = value.revision === submitted.revision && !value.referenceActive && !value.linkInputActive && !value.attachmentActive;
-      const complete = command.kind === "Save" && unchanged;
+      const complete = command.kind === "Save" && unchanged && current.current?.id === opened.id && current.current.draftId === entry.id;
       const restoreFocus = complete && !isMobile && intent !== null && activeRef.current &&
-        current.current?.id === intent.openingId && current.current.draftId === entry.id &&
+        current.current?.id === intent.openingId &&
         attention.current === intent.attention && getInteractionOwner() === intent.layer && getInteractionGeneration() === intent.generation;
       store.update(entry.id, value => ({ ...value, highlightId: id, capture: null, annotationBase: createdBody ?? value.annotationBase,
         ...(command.kind === "Highlight" && value.color === submitted.color ? {color: command.color} : {}),
@@ -463,53 +415,22 @@ export function useSelectionComposer(input: {
     }
   };
 
-  const restoreEditor = () => {
-    flushSync(() => setPickerDraftId(null));
-    if (!isMobile && current.current) show({ ...current.current, focus: true, ownsFocus: true, serial: ++serial.current });
-  };
-  const chooseChat = () => {
-    if (!prepareInteraction()) return;
-    const entry = current.current && get(current.current.draftId);
-    if (!entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive) return;
-    setPickerDraftId(entry.id);
-  };
   const quoteFor = (entry: ComposerDraft) => {
     const shown = reader.getState().document;
-    if (shown.status !== "ready" || shown.refreshing || !activeRef.current ||
+    if (shown.status !== "ready" || !activeRef.current ||
       entry.highlightId === null && shown.doc.identity !== entry.passage.identity) return null;
     // The render snapshot is the row the user saw; a later lookup cannot authorize it.
     const annotation = entry.highlightId ? copyAnnotation : null;
     if (entry.highlightId && annotation?.id !== entry.highlightId) return null;
-    const sourceRef = entry.capture?.sourceRef ?? annotation?.sourceRef ?? `media:${mediaId}`;
-    const label = sourceLabel(sourceRef);
     return captureReaderQuote({ doc: shown.doc, scope: {kind: "media", media_id: mediaId},
-      anchor: entry.passage.anchor, capture: entry.capture, annotation,
-      source: {ref: sourceRef, title: label?.label ?? null, media_kind: null, contributors: null, location_label: null} });
-  };
-  const replaceQuote = () => {
-    const review = input.quoteReview;
-    if (!review || !prepareInteraction()) return;
-    const entry = current.current && get(current.current.draftId);
-    if (!entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue) return;
-    const quote = quoteFor(entry);
-    if (!quote) {
-      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "select the passage again.", reason: "your words are kept."}}}));
-      return;
-    }
-    if (!canAbandon()) return;
-    if (!replaceReaderQuote(ctx.workspace(), review.target, quote)) {
-      store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "the original draft changed or closed."}}}));
-      return;
-    }
-    review.finish();
-    if (get(entry.id)?.revision === entry.revision) close(entry.id);
+      anchor: entry.passage.anchor, capture: entry.capture, annotation });
   };
   const transferringChat = useRef(false);
-  const sendChat = (target: "New" | "Existing") => {
+  const sendChat = () => {
     if (transferringChat.current || !prepareInteraction()) return;
     const opened = current.current;
     const entry = opened && get(opened.draftId);
-    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue || pickerDraftId !== null) return;
+    if (!opened || !entry || entry.operation || entry.referenceActive || entry.linkInputActive || entry.attachmentActive || entry.issue) return;
     const question = convertReaderQuestion(entry.body);
     if (question.kind === "Unsupported") {
       store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "images and embeds can’t be sent from here."}}}));
@@ -520,10 +441,6 @@ export function useSelectionComposer(input: {
       store.update(entry.id, value => ({...value, chatIssue: {kind: "Failed", line: {fact: "this question is too long.", reason: "the limit is 20,000 characters."}}}));
       return;
     }
-    const selected = entry.destination;
-    if (target === "Existing" && selected.kind !== "Selected") { chooseChat(); return; }
-    const observed = selected.kind === "Selected" && selected.snapshot.kind === "Ready" ? selected.snapshot.tree : null;
-    const view = observed ? chatView({messages: new Map(observed.messages.map(message => [message.id,message])), leafId: observed.active_leaf_message_id, history: "Ready"}, observed.conversation.id, null) : null;
     const selection = memory.fresh(catalog) ?? {kind: "Uninitialized" as const};
     const quote = quoteFor(entry);
     if (!quote) {
@@ -535,10 +452,7 @@ export function useSelectionComposer(input: {
     try {
       const result = launchReaderChat({ctx, guard, originPaneId: pane.paneId, question: text,
         quote,
-        selection, catalog,
-        destination: target === "Existing" && selected.kind === "Selected" ? {kind: "Existing", conversationId: selected.id,
-          write: observed && view && (view.target.kind === "Empty" || view.target.kind === "Reply") ? {expected_revision: observed.conversation.branch_revision,
-            insertion: view.target.kind === "Empty" ? {kind: "Empty"} : {kind: "Reply", parent_message_id: view.target.parentId, branch_anchor: view.target.anchor}} : null} : {kind: "New"}});
+        selection });
       if (result.kind === "Opened" && get(entry.id)?.revision === revision) close(entry.id);
     } finally { transferringChat.current = false; }
   };
@@ -548,8 +462,7 @@ export function useSelectionComposer(input: {
   const hidden = retained.value?.id !== draft?.id && retained.value?.issue?.kind === "Failed" && retained.value.issue.phase === "Preparation" ? retained.value : null;
   return {
     protectOwners(owners: readonly string[]) {annotationOwners.current = owners;},
-    draft, opening, copyQuote, copyUnavailable, branchCue, prepareInteraction, selectionBlocked,
-    quoteReview: input.quoteReview, replaceQuote,
+    draft, opening, copyQuote, copyUnavailable, prepareInteraction, selectionBlocked,
     hiddenPreparationFailures: hidden && hidden.issue?.kind === "Failed" && hidden.issue.phase === "Preparation"
       ? [{id: hidden.id, issue: hidden.issue, busy: hidden.operation !== null, text: bodyHasContent(hidden.body) ? hidden.body.body_text : null}] : [],
     annotation: copyAnnotation,
@@ -574,7 +487,7 @@ export function useSelectionComposer(input: {
     reselect() {
       const shown = reader.getState().document;
       const entry = read();
-      if (!entry || entry.highlightId !== null || entry.operation || shown.status !== "ready" || shown.refreshing) return;
+      if (!entry || entry.highlightId !== null || entry.operation || shown.status !== "ready") return;
       showRefinement({id: createRandomId(), draftId: entry.id, identity: shown.doc.identity, candidate: null, explicit: true, inputHeld: false});
       selectionActivation.current = null;
       reader.focusSource();
@@ -582,7 +495,7 @@ export function useSelectionComposer(input: {
     applyReselection(capture: SelectionCapture) {
       const selected = refining.current, previous = selected && get(selected.draftId);
       const shown = reader.getState().document;
-      if (!selected?.explicit || !previous || previous.highlightId !== null || !activeRef.current || shown.status !== "ready" || shown.refreshing ||
+      if (!selected?.explicit || !previous || previous.highlightId !== null || !activeRef.current || shown.status !== "ready" ||
         capture.identity !== selected.identity || shown.doc.identity !== selected.identity) return;
       prepare(capture, null, previous);
       cancelReselection();
@@ -595,15 +508,6 @@ export function useSelectionComposer(input: {
         anchor: capture.anchor.kind === "text" ? capture.anchor : {kind: "pdf", page: capture.anchor.page, quads: capture.anchor.quads}};
       store.update(entry.id, value => ({...value, passage, revision: value.revision + 1}));
     },
-    pickerOpen: draft !== null && pickerDraftId === draft.id,
-    chooseChat, closePicker: restoreEditor,
-    chooseDestination(conversation: Pick<ConversationListItem, "id" | "title">) {
-      if (!draft || draft.operation || draft.referenceActive || draft.linkInputActive || draft.attachmentActive) return;
-      store.update(draft.id, entry => ({ ...entry, chatIssue: null, destination: { kind: "Selected", id: conversation.id,
-        title: conversation.title, snapshot: { kind: "Loading" } } }));
-      restoreEditor();
-    },
-    retryDefault() { if (draft && draft.destination.kind === "LookupFailed") store.update(draft.id, entry => ({ ...entry, destination: { kind: "Resolving" } })); },
     /** A reference typed in the composer links the passage's highlight to its target. */
     reference(): ReferenceInputHost | null {
       if (!draft || !writing) return null;
@@ -673,8 +577,7 @@ export function useSelectionComposer(input: {
       restoreHistoryFocus();
     },
     save() { if (draft) void submit({ command: { kind: "Save" }, opened: current.current }); },
-    newChat() { sendChat("New"); },
-    continueChat() { sendChat("Existing"); },
+    askLibrarian: sendChat,
     setColor(color: HighlightColor) {
       if (!prepareInteraction()) return;
       const entry = read();

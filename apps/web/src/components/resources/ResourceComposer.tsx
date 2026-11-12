@@ -180,7 +180,6 @@ export default function ResourceComposer({ destinationRef, occurrenceKey, label,
   const saving = value.state === "saving";
   if (defect) throw defect.error;
   return <div className={styles.composer} data-composer-destination={destinationRef}>
-    {destinationRef.startsWith("conversation:") ? <p className={styles.status}>linked items supply context to future turns in this conversation</p> : null}
     {value.state === "saved" ? <BoundNoteEditor noteRef={value.noteRef} label="edit saved note" /> : <>
       <NoteEditor editorKey={`resource-composer:${occurrenceKey}`} body={value.body} revision={value.revision} label={label}
         wordsAtRisk={value.unsaved !== null && (value.unsaved.retry !== null || bodyHasContent(value.body))}

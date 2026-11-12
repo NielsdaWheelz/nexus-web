@@ -2,7 +2,7 @@
 
 Candidate ordinals are dense from 1 across one answer and fixed once numbered: each
 numbering continues after the answer's largest ordinal so far, under the run lock.
-Attached evidence (retrieved by no call) is numbered at admission, so it holds 1..k and
+Attached references (retrieved by no call) are numbered at execution, so it holds 1..k and
 every tool call's candidates follow it, in whatever order the calls complete.
 """
 
@@ -10,32 +10,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
 from uuid import UUID
 
+from pydantic import TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.errors import NotFoundError
-from nexus.schemas.conversation import ChatRunContextRefAddedEventPayload
-from nexus.schemas.resource_evidence import CapturedEvidence
-from nexus.schemas.resource_graph import CitationSnapshot
-from nexus.services.chat import events
+from nexus.schemas.live_reference import ResourceRetrievalTarget, RetrievalTarget
 from nexus.services.chat.markdown_citations import Marker, parse_markers
-from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
+from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.resource_graph.citations import (
     CitationInput,
     replace_citations_for_source,
 )
-from nexus.services.resource_graph.context import add_context_ref_without_commit, context_version
-from nexus.services.resource_graph.refs import (
-    ResourceRef,
-    ResourceRefParseFailure,
-    parse_resource_ref,
-)
-from nexus.services.resource_items.capabilities import capability
-from nexus.services.resource_items.evidence import admit_evidence
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
 from nexus.services.resource_items.items import ref_visible
 
 
@@ -43,7 +32,6 @@ from nexus.services.resource_items.items import ref_visible
 class Numbered:
     retrieval_ordinal: int
     candidate_ordinal: int | None
-    result_ref: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,21 +47,6 @@ class Degraded:
     detail: str
 
 
-def citable_target(result_ref: dict[str, Any]) -> ResourceRef | None:
-    """The search-owned citable target a retrieval row stores, if it has one."""
-
-    raw = result_ref.get("citation_target")
-    if raw is None:
-        return None
-    target = parse_resource_ref(str(raw))
-    if (
-        isinstance(target, ResourceRefParseFailure)
-        or capability(target.scheme).citable_result_type is None
-    ):
-        raise AssertionError(f"retrieval citation_target is not citable: {raw!r}")
-    return target
-
-
 def number_candidates(
     db: Session, *, assistant_message_id: UUID, tool_call_id: UUID | None
 ) -> list[Numbered]:
@@ -86,7 +59,7 @@ def number_candidates(
     rows = db.execute(
         text(
             """
-            SELECT id, ordinal, result_ref, citation_candidate_ordinal AS n
+            SELECT id, ordinal, citation_candidate_ordinal AS n
             FROM message_retrievals
             WHERE assistant_message_id = :answer
               AND tool_call_id IS NOT DISTINCT FROM CAST(:call AS uuid) AND selected
@@ -105,14 +78,14 @@ def number_candidates(
     numbered: list[Numbered] = []
     for row in rows:
         n = row.n
-        if n is None and citable_target(row.result_ref) is not None:
+        if n is None:
             last += 1
             n = last
         db.execute(
             text("UPDATE message_retrievals SET citation_candidate_ordinal = :n WHERE id = :id"),
             {"n": n, "id": row.id},
         )
-        numbered.append(Numbered(row.ordinal, n, row.result_ref))
+        numbered.append(Numbered(row.ordinal, n))
     return numbered
 
 
@@ -120,7 +93,6 @@ def persist_attached(db: Session, run: ChatRun, citations: Sequence[RetrievalCit
     """The citable ``<resources>`` as the answer's attached retrievals, candidates 1..k
     (their ``n`` attributes)."""
 
-    lock_retrieval_media(db, citations)
     for ordinal, citation in enumerate(citations):
         insert_retrieval(
             db,
@@ -148,15 +120,15 @@ def unpublished(markdown: str) -> str:
 def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     """Canonicalize the used markers by first appearance and publish them.
 
-    Writes the citation edges, their retrieval back-pointers, the cited resources'
-    context refs and their events. The caller holds conversation, run, then job locks.
+    Writes message-owned ordinals and optional local-resource edge projections.
+    The caller holds account, run, then job locks.
     Never commits.
     """
 
     rows = db.execute(
         text(
             """
-            SELECT id, citation_candidate_ordinal AS n, result_ref, captured_evidence
+            SELECT id, citation_candidate_ordinal AS n, target
             FROM message_retrievals
             WHERE assistant_message_id = :answer AND citation_candidate_ordinal IS NOT NULL
             ORDER BY citation_candidate_ordinal
@@ -185,56 +157,27 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     content = "".join(chunks) + markdown[cursor:]
     if parse_markers(content) != tuple(expected):
         return Degraded(unpublished(markdown), "renumbered markers change markdown syntax")
-    citations: list[CitationInput] = []
+    targets = TypeAdapter(RetrievalTarget)
+    local: list[CitationInput] = []
+    local_ids: list[UUID] = []
     for n, ordinal in final.items():
         row = by_n[n]
-        target = cast(ResourceRef, citable_target(row.result_ref))  # only citable rows are numbered
-        snapshot = CitationSnapshot(evidence=CapturedEvidence.model_validate(row.captured_evidence))
-        citations.append(CitationInput(target, ordinal, snapshot))
-    edges = replace_citations_for_source(
-        db,
-        source=ResourceRef("message", run.assistant_message_id),
-        citations=citations,
-    )
-    # Caller holds the chat lock: one decision covers the complete automatic batch.
-    admit_context = (
-        run.admitted_context_version is not None
-        and run.admitted_context_version
-        == context_version(db, viewer_id=run.owner_user_id, conversation_id=run.conversation_id)
-    )
-    for n, edge in zip(final, edges, strict=True):
         db.execute(
-            text("UPDATE message_retrievals SET cited_edge_id = :edge WHERE id = :id"),
-            {"edge": edge.id, "id": by_n[n].id},
+            text("UPDATE message_retrievals SET citation_ordinal=:ordinal WHERE id=:id"),
+            {"ordinal": ordinal, "id": row.id},
         )
-        if (
-            not admit_context
-            or edge.target.scheme == "external_snapshot"
-            or not ref_visible(db, viewer_id=run.owner_user_id, ref=edge.target)
-            or admit_evidence(
-                db,
-                viewer_id=run.owner_user_id,
-                evidence=CapturedEvidence.model_validate(by_n[n].captured_evidence),
-            )
-            is None
-        ):
-            continue
-        try:
-            added = add_context_ref_without_commit(
-                db,
-                viewer_id=run.owner_user_id,
-                conversation_id=run.conversation_id,
-                target=edge.target,
-                origin="citation",
-            )
-        except NotFoundError:
-            # Access may disappear after the batch read. The admission writer
-            # checks visibility before mutating; the historical citation survives.
-            continue
-        if added is not None:
-            event = ChatRunContextRefAddedEventPayload(
-                id=added.edge_id,
-                resource_ref=added.target.uri,
-            )
-            events.append(db, run, event)
+        target = targets.validate_python(row.target)
+        if isinstance(target, ResourceRetrievalTarget):
+            ref = require_ref(target.reference.resource_ref)
+            if ref_visible(db, viewer_id=run.owner_user_id, ref=ref):
+                local.append(CitationInput(ref, ordinal, None))
+                local_ids.append(row.id)
+    edges = replace_citations_for_source(
+        db, source=ResourceRef("message", run.assistant_message_id), citations=local
+    )
+    for retrieval_id, edge in zip(local_ids, edges, strict=True):
+        db.execute(
+            text("UPDATE message_retrievals SET cited_edge_id=:edge WHERE id=:id"),
+            {"edge": edge.id, "id": retrieval_id},
+        )
     return Published(content)

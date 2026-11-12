@@ -1,8 +1,8 @@
 /** Raw UTF-8 markdown on stdin; JSON markers in original codepoint offsets. */
-import { readFileSync } from "node:fs";
+import { text } from "node:stream/consumers";
 import { parseCitationMarkers } from "../src/lib/chat/markdownCitations";
 
-const markdown = readFileSync(0, "utf8");
+const markdown = await text(process.stdin);
 const codepoints: number[] = [];
 let offset = 0;
 let count = 0;

@@ -100,7 +100,7 @@ export function useNexusFind({ open, composing, query, retainedLocalTargets }: {
     ? localResult(localRow, "", localSource.admission.href(localRow, null, null)) : null, [localRow, localSource.admission]);
   const local = useLocalSearchPreview(open && !composing && query.intent.kind === "Search" && localSearchApplies(query.searchQuery) ? query.searchQuery.text.trim() : null, query.searchQuery.requestedKinds, query.searchQuery.scope);
   const scopes = localSearchScopes(query.searchQuery.scope);
-  const families: SearchFamily[] | null = query.searchQuery.requestedKinds === null ? null : [...query.searchQuery.requestedKinds].filter(kind => kind !== "web").sort();
+  const families: SearchFamily[] | null = query.searchQuery.requestedKinds === null ? null : [...query.searchQuery.requestedKinds].sort();
   const retainedLocal = useAuthoredQuery(open && !composing && query.intent.kind === "Search" && retainedLocalTargets.length && scopes !== null && localSearchApplies(query.searchQuery)
     ? { kind: "search_admission", text: query.searchQuery.text.trim(), targets: [...retainedLocalTargets], scopes, families } : null);
   const localValidationReady = query.intent.kind === "Resource" ? localRead.data !== null && localSource.admission !== null
@@ -128,7 +128,7 @@ export function useNexusFind({ open, composing, query, retainedLocalTargets }: {
   const supported = previewHref.length <= MAX_WORKSPACE_HREF_LENGTH && `/search?${identity}`.length <= MAX_WORKSPACE_HREF_LENGTH;
   const searchUnavailable = open && !composing && text !== "" && query.intent.kind === "Search" && !supported;
   const queryLength = Array.from(query.searchQuery.text.trim()).length;
-  const identityKey = open && !composing && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).some(kind => kind !== "web") ? `${accountId}:nexus-preview:${identity}` : null;
+  const identityKey = open && !composing && text && query.intent.kind === "Search" && supported && effectiveSearchKinds(query.searchQuery).length > 0 ? `${accountId}:nexus-preview:${identity}` : null;
   const directAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.direct);
   const lexicalAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.lexical);
   const hybridAsked = useSettled(identityKey, PREVIEW_SETTLE_MS.hybrid);

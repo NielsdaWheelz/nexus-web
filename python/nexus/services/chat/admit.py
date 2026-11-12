@@ -1,30 +1,22 @@
-"""Chat admission: one send or repeat is one queued run, named by the client.
+"""One immutable account turn per client uuid; replays acknowledge its receipt.
 
-The ``Idempotency-Key`` is a uuid and becomes the run's id. The envelope: an advisory
-lock on the key, then the run with that id answers a resend (any body); another user's
-run is 409; else every domain check and write commits run ``K``. A modeled rejection is
-not stored, so a resend decides again; volatile catalog unreadiness is an error. Every
-existing-chat insertion locks the conversation and checks its observed branch revision
-before it reads a parent, as deletion does. A surviving run answers its uuid before
-catalog resolution; retries neither reselect it nor revalidate today's availability.
-Admission freezes everything the worker needs: spec, prompt, attached evidence.
-Stop commits idempotent authorized intent through control before ordinary dead-job
-finalization and response hydration; a later busy response does not revoke that intent.
+The account state owns sequence and deletion ordering. Only the first unsettled
+turn has a job. Context is resolved when that job begins, never frozen here.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Literal, cast, get_args
+from typing import cast, get_args
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.db.models import ChatRun, Conversation, Message
+from nexus.db.models import ChatRun, Message
 from nexus.db.retries import TransactionRestart, integrity_constraint_name, retry_serializable
 from nexus.db.session import (
     get_control_session_factory,
@@ -32,31 +24,25 @@ from nexus.db.session import (
     get_session_factory,
 )
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.jobs.queue import cancel_held_job, enqueue_job, jobs_for_payload
-from nexus.schemas.conversation import (
+from nexus.jobs.queue import jobs_for_payload
+from nexus.schemas.chat import (
     MAX_MESSAGE_CONTENT_LENGTH,
     AcceptedChatAdmission,
-    BranchAnchor,
     ChatAdmissionReceipt,
     ChatAdmissionRejection,
     ChatRunCreateRequest,
     ChatRunResponse,
-    ExistingChatDestination,
-    HighlightReaderSelectionInput,
-    ReaderSelectionInput,
     RejectedChatAdmission,
     RejectionCode,
-    ReplyInsertion,
 )
+from nexus.schemas.live_reference import LiveReference
 from nexus.schemas.llm import (
     GenerationSelection,
     GenerationSelectionUnavailable,
     Ineligible,
     InvalidGenerationSelection,
 )
-from nexus.services import authored
-from nexus.services.chat import citations, context, deletion, events, quotes, reads, selection
-from nexus.services.chat.conversations import DEFAULT_TITLE, require_branch_revision
+from nexus.services.chat import deletion, events, reads, selection
 from nexus.services.generation.catalog import (
     Catalog,
     InvalidSelection,
@@ -66,14 +52,10 @@ from nexus.services.generation.catalog import (
     chat_row,
 )
 from nexus.services.generation.contract import GenerationSpec
+from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.generation.policy import chat_tool_plan
-from nexus.services.resource_graph.context import (
-    add_context_ref_without_commit,
-    context_version,
-)
-from nexus.services.resource_graph.refs import ResourceRef, require_ref
 from nexus.services.search import projection
-from nexus.services.seq import assign_next_message_seq
+from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools.run import Toolbox
 
 _REJECTABLE = frozenset(get_args(RejectionCode))
@@ -87,17 +69,14 @@ async def create_chat_run(
     catalog: Catalog,
     tools: Toolbox,
 ) -> ChatAdmissionReceipt:
-    """Admit one send. A modeled rejection is a receipt, not an error."""
-
     run_id = _run_id(idempotency_key)
     existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
     if existing is not None:
         return ChatAdmissionReceipt(outcome=existing)
-    quote = request.reader_selection
     row = await _catalog_row(catalog, request.selection)
 
     def build(db: Session, resolved: Row | ApiError) -> ChatRun:
-        conversation, parent, anchor = _destination(db, viewer_id, request)
+        deletion.require_revision(db, viewer_id, request.expected_deletion_revision)
         if isinstance(resolved, ApiError):
             raise resolved
         if len(request.content) > MAX_MESSAGE_CONTENT_LENGTH:
@@ -105,39 +84,23 @@ async def create_chat_run(
                 ApiErrorCode.E_MESSAGE_TOO_LONG,
                 f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
             )
-        anchor_kind, anchor_json = _branch_anchor(parent, anchor)
-        snapshot = _quote(db, viewer_id, conversation.id, quote) if quote else None
-        user, assistant = _insert_pair(
-            db,
-            conversation.id,
-            request.content,
-            parent.id if parent else None,
-            anchor_kind,
-            anchor_json,
-            snapshot,
+        return _insert(
+            db, viewer_id, run_id, request.content, request.attachments, resolved, tools, None
         )
-        if user.seq == 1 and conversation.title == DEFAULT_TITLE:
-            conversation.title = " ".join(request.content.split())[:120].rstrip()
-        return _start_run(db, viewer_id, run_id, user, assistant, resolved, tools)
 
     return await run_in_threadpool(_settle, viewer_id, run_id, row, build)
 
 
-async def repeat(
+async def retry(
     *,
-    operation: Literal["rerun", "regenerate"],
     viewer_id: UUID,
-    assistant_message_id: UUID,
+    source_run_id: UUID,
     selection: GenerationSelection,
-    expected_revision: int,
+    expected_deletion_revision: str,
     idempotency_key: str | None,
     catalog: Catalog,
     tools: Toolbox,
 ) -> ChatAdmissionReceipt:
-    """A sibling turn under the source turn's parent, copied from its frozen user turn.
-
-    The same receipt as a send: every refusal below is a modeled rejection."""
-
     run_id = _run_id(idempotency_key)
     existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
     if existing is not None:
@@ -145,91 +108,67 @@ async def repeat(
     row = await _catalog_row(catalog, selection)
 
     def build(db: Session, resolved: Row | ApiError) -> ChatRun:
-        # Lock the chat in its own statement, as deletion does, then read the source
-        # fresh: rows read beside the lock predate any delete the lock waited on.
-        locked = db.scalar(
-            select(Conversation)
-            .where(
-                Conversation.id
-                == select(ChatRun.conversation_id)
-                .where(ChatRun.assistant_message_id == assistant_message_id)
-                .scalar_subquery(),
-                Conversation.owner_user_id == viewer_id,
+        deletion.require_revision(db, viewer_id, expected_deletion_revision)
+        source = reads.require_run(db, viewer_id=viewer_id, run_id=source_run_id)
+        if not reads.can_retry(source):
+            raise ApiError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED, "Only failed or cancelled turns can be retried"
             )
-            .with_for_update()
-        )
-        source = db.execute(
-            select(ChatRun, Message)
-            .join(Message, Message.id == ChatRun.user_message_id)
-            .where(ChatRun.assistant_message_id == assistant_message_id)
-        ).one_or_none()
-        if locked is None or source is None:
-            raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-        require_branch_revision(locked, expected_revision)
         if isinstance(resolved, ApiError):
             raise resolved
-        run, user = source
-        if operation == "regenerate" and run.status != "complete":
-            raise ApiError(
-                ApiErrorCode.E_REGENERATION_NOT_ALLOWED,
-                "Only a completed assistant answer can be regenerated",
-            )
-        if operation == "rerun" and not reads.can_rerun(run):
-            raise ApiError(
-                ApiErrorCode.E_RETRY_NOT_ALLOWED, "This assistant outcome cannot be rerun"
-            )
-        snapshot = user.reader_selection_snapshot
-        sibling, assistant = _insert_pair(
+        question = db.get_one(Message, source.user_message_id)
+        return _insert(
             db,
-            run.conversation_id,
-            user.content,
-            user.parent_message_id,
-            user.branch_anchor_kind,
-            dict(user.branch_anchor),
-            dict(snapshot) if snapshot is not None else None,
+            viewer_id,
+            run_id,
+            question.content,
+            [LiveReference.model_validate(value) for value in question.attachments],
+            resolved,
+            tools,
+            source.id,
         )
-        return _start_run(db, viewer_id, run_id, sibling, assistant, resolved, tools)
 
     return await run_in_threadpool(_settle, viewer_id, run_id, row, build)
 
 
 def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
-    """Commit idempotent stop intent first; domain finalization stays ordinary."""
-
+    """Commit stop intent; a waiting turn has no provider and settles immediately."""
     with get_control_session_factory()() as db:
 
-        def stop_intent() -> None:
-            run = events.lock_run(db, run_id)
-            if run is None or run.owner_user_id != viewer_id:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-            if run.status not in events.TERMINAL and run.cancel_requested_at is None:
-                run.cancel_requested_at = datetime.now(UTC)
-                run.updated_at = datetime.now(UTC)
-
-        retry_serializable(db, "cancel_chat_run", stop_intent)
-    with get_session_factory()() as db:
-
-        def finalize_dead() -> None:
+        def stop() -> None:
             run = events.lock_run(db, run_id)
             if run is None or run.owner_user_id != viewer_id:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
             if run.status in events.TERMINAL:
                 return
-            jobs = jobs_for_payload(
-                db,
-                kind="chat_run",
-                match={"run_id": str(run.id)},
-                statuses=("dead", "held"),
-                lock=True,
+            if run.cancel_requested_at is None:
+                run.cancel_requested_at = datetime.now(UTC)
+                run.updated_at = datetime.now(UTC)
+            jobs = jobs_for_payload(db, kind="chat_run", match={"run_id": str(run.id)})
+            if not jobs:
+                events.finalize(db, run, status="cancelled", content="")
+
+        retry_serializable(db, "cancel_chat_run", stop)
+    with get_session_factory()() as db:
+
+        def settle_dead() -> None:
+            lock_generation_owner(db, kind="chat_run", id=run_id)
+            generations = db.execute(
+                text(
+                    "SELECT outcome FROM llm_calls WHERE owner_kind='chat_run' AND owner_id=:id ORDER BY generation_seq FOR UPDATE"
+                ),
+                {"id": run_id},
+            ).all()
+            run = events.lock_run(db, run_id)
+            if run is None or run.owner_user_id != viewer_id or run.status in events.TERMINAL:
+                return
+            dead = jobs_for_payload(
+                db, kind="chat_run", match={"run_id": str(run.id)}, statuses=("dead",), lock=True
             )
-            if jobs:
-                for job in jobs:
-                    if job.status == "held":
-                        assert cancel_held_job(db, job_id=job.id)
+            if dead and all(row.outcome is not None for row in generations):
                 events.finalize_dead(db, run)
 
-        retry_serializable(db, "cancel_chat_run_finalize", finalize_dead)
-    with get_session_factory()() as db:
+        retry_serializable(db, "cancel_chat_run_settle", settle_dead)
         return reads.run_response(db, viewer_id=viewer_id, run_id=run_id)
 
 
@@ -242,6 +181,14 @@ def _run_id(raw: str | None) -> UUID:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key must be a uuid") from None
 
 
+def _accepted(run: ChatRun) -> AcceptedChatAdmission:
+    return AcceptedChatAdmission(
+        run_id=run.id,
+        user_message_id=run.user_message_id,
+        assistant_message_id=run.assistant_message_id,
+    )
+
+
 def _existing_run(viewer_id: UUID, run_id: UUID) -> AcceptedChatAdmission | None:
     with get_session_factory()() as db:
         get_repeatable_read_db(db)
@@ -250,18 +197,12 @@ def _existing_run(viewer_id: UUID, run_id: UUID) -> AcceptedChatAdmission | None
             return None
         if run.owner_user_id != viewer_id:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
-        return AcceptedChatAdmission(
-            conversation_id=run.conversation_id,
-            run_id=run.id,
-            assistant_message_id=run.assistant_message_id,
-        )
+        return _accepted(run)
 
 
-async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row | ApiError:
-    """Resolved outside the key lock; its error settles inside it (a racing twin may win)."""
-
+async def _catalog_row(catalog: Catalog, selected: GenerationSelection) -> Row | ApiError:
     try:
-        return chat_row(await catalog.read(), selection)
+        return chat_row(await catalog.read(), selected)
     except InvalidSelection:
         failure = InvalidGenerationSelection(
             field="selection",
@@ -274,7 +215,6 @@ async def _catalog_row(catalog: Catalog, selection: GenerationSelection) -> Row 
         )
     except SelectionUnavailable as error:
         if not isinstance(error.state, Ineligible):
-            # Readiness is volatile evidence, not a rejection: leave the key unsettled.
             return ApiError(
                 ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE,
                 "The selected generation route is unavailable; retry the same command",
@@ -293,19 +233,12 @@ def _settle(
     row: Row | ApiError,
     build: Callable[[Session, Row | ApiError], ChatRun],
 ) -> ChatAdmissionReceipt:
-    """One decision per run id, on one worker-thread session.
-
-    A client disconnect cannot close the session mid-transaction, and lock waits
-    never hold the event loop. The lock is on the id alone (run ids are global), under
-    its own namespace: the run's execution locks ``chat_run:{id}``.
-    """
-
     with get_session_factory()() as db:
 
         def attempt() -> ChatAdmissionReceipt:
             db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-                {"lock_key": f"chat_admission:{run_id}"},
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": f"chat_admission:{run_id}"},
             )
             run = db.get(ChatRun, run_id)
             if run is not None and run.owner_user_id != viewer_id:
@@ -316,229 +249,33 @@ def _settle(
                 except IntegrityError as error:
                     if integrity_constraint_name(error) != "chat_runs_pkey":
                         raise
-                    # The advisory-lock wait can predate this fixed snapshot. A
-                    # same-id winner must be reread with all staged writes discarded.
-                    raise TransactionRestart(
-                        "chat admission id committed during lock wait"
-                    ) from error
-            return ChatAdmissionReceipt(
-                outcome=AcceptedChatAdmission(
-                    conversation_id=run.conversation_id,
-                    run_id=run.id,
-                    assistant_message_id=run.assistant_message_id,
-                )
-            )
+                    raise TransactionRestart("chat admission committed during lock wait") from error
+            return ChatAdmissionReceipt(outcome=_accepted(run))
 
         try:
             return retry_serializable(db, "chat_admission", attempt)
         except ApiError as error:
             if error.code.value not in _REJECTABLE:
                 raise
-            # The whole failed attempt has rolled back before a rejection is returned.
-            reason = ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
-            return ChatAdmissionReceipt(outcome=RejectedChatAdmission(reason=reason))
-
-
-def _destination(
-    db: Session, viewer_id: UUID, request: ChatRunCreateRequest
-) -> tuple[Conversation, Message | None, BranchAnchor | None]:
-    """The target chat, the reply's parent and its anchor; ``New`` creates the chat."""
-
-    destination = request.destination
-    if not isinstance(destination, ExistingChatDestination):
-        deletion.require_revision(db, viewer_id, destination.expected_deletion_revision)
-        conversation = Conversation(owner_user_id=viewer_id, title=DEFAULT_TITLE, next_seq=1)
-        db.add(conversation)
-        db.flush()
-        return conversation, None, None
-    conversation = db.scalar(
-        select(Conversation).where(Conversation.id == destination.conversation_id).with_for_update()
-    )
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    require_branch_revision(conversation, destination.expected_revision)
-    insertion = destination.insertion
-    if isinstance(insertion, ReplyInsertion):
-        parent = db.get(Message, insertion.parent_message_id)
-        if (
-            parent is None
-            or parent.conversation_id != conversation.id
-            or parent.role != "assistant"
-            or parent.status != "complete"
-        ):
-            raise ApiError(
-                ApiErrorCode.E_BRANCH_PATH_INVALID,
-                "parent_message_id must point to a complete assistant message",
+            return ChatAdmissionReceipt(
+                outcome=RejectedChatAdmission(
+                    reason=ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
+                )
             )
-        return conversation, parent, insertion.branch_anchor
-    # Empty: the context-bearing chat ``POST /conversations`` made; a raced first
-    # turn wins and this send must be resent as its reply.
-    if db.scalar(select(func.count()).where(Message.conversation_id == conversation.id)):
-        raise ApiError(
-            ApiErrorCode.E_CONVERSATION_NO_LONGER_EMPTY,
-            "Conversation is no longer empty; resend as a reply to its active leaf",
-        )
-    return conversation, None, None
 
 
-def _branch_anchor(
-    parent: Message | None, anchor: BranchAnchor | None
-) -> tuple[str, dict[str, object]]:
-    """A reply names its parent; a selection anchor also quotes it (never mapped)."""
-
-    if parent is None or anchor is None:
-        return "none", {}
-    if anchor.kind == "none":
-        raise ApiError(
-            ApiErrorCode.E_BRANCH_ANCHOR_INVALID, "A reply requires a non-none branch_anchor"
-        )
-    if anchor.message_id != parent.id:
-        raise ApiError(
-            ApiErrorCode.E_BRANCH_ANCHOR_INVALID,
-            "Branch anchor message_id must match parent_message_id",
-        )
-    if anchor.kind == "assistant_message":
-        return "assistant_message", {"message_id": str(parent.id)}
-    return "assistant_selection", anchor.model_dump(mode="json", exclude={"kind"})
-
-
-def _quote(
-    db: Session, viewer_id: UUID, conversation_id: UUID, selection: ReaderSelectionInput
-) -> dict[str, object]:
-    """Freeze evidence, retain source access and link an explicitly selected highlight."""
-
-    from nexus.services.library_entries import lock_media_for_reference
-
-    if isinstance(selection, HighlightReaderSelectionInput):
-        key = selection.key
-        authored.lock_account(db, viewer_id)
-        if key.media_id is not None:
-            lock_media_for_reference(db, key.media_id)
-        snapshot = quotes.build_snapshot(
-            db,
-            viewer_id=viewer_id,
-            key=key,
-            expected_capture_revision=selection.expected_capture_revision,
-        )
-        if quotes.revision(snapshot) != selection.revision:
-            raise ApiError(
-                ApiErrorCode.E_READER_SELECTION_STALE,
-                "Reader selection changed since it was previewed",
-            )
-        source = (
-            ResourceRef("media", key.media_id)
-            if key.media_id is not None
-            else require_ref(snapshot.evidence.target.owner_ref or "")
-        )
-        from nexus.services.resource_graph.edges import create_link
-
-        create_link(
-            db,
-            viewer_id=viewer_id,
-            source=ResourceRef("conversation", conversation_id),
-            target=ResourceRef("highlight", key.highlight_id),
-        )
-    else:
-        source = require_ref(selection.reading_ref)
-        if source.scheme == "media":
-            lock_media_for_reference(db, source.id)
-        snapshot = quotes.capture_snapshot(db, viewer_id=viewer_id, selection=selection)
-    target = snapshot.evidence.target
-    if target.kind == "passage" and target.locator.type == "x_capture_offsets":
-        from nexus.services.x_source import admit_x_captures_for_accounts
-
-        admit_x_captures_for_accounts(
-            db, account_ids=[viewer_id], capture_ids=[target.locator.capture_id]
-        )
-    add_context_ref_without_commit(
-        db,
-        viewer_id=viewer_id,
-        conversation_id=conversation_id,
-        target=source,
-        origin="system",
-        user_edit=True,
-    )
-    return quotes.encode(snapshot)
-
-
-def _insert_pair(
-    db: Session,
-    conversation_id: UUID,
-    content: str,
-    parent_id: UUID | None,
-    anchor_kind: str,
-    anchor: dict[str, object],
-    snapshot: dict[str, object] | None,
-) -> tuple[Message, Message]:
-    """The user turn and its pending answer; the answer becomes the active leaf."""
-
-    user = Message(
-        conversation_id=conversation_id,
-        seq=assign_next_message_seq(db, conversation_id),
-        role="user",
-        content=content,
-        reader_selection_snapshot=snapshot,
-        status="complete",
-        parent_message_id=parent_id,
-        branch_anchor_kind=anchor_kind,
-        branch_anchor=anchor,
-    )
-    db.add(user)
-    db.flush()
-    assistant = Message(
-        conversation_id=conversation_id,
-        seq=assign_next_message_seq(db, conversation_id),
-        role="assistant",
-        content="",
-        status="pending",
-        parent_message_id=user.id,
-        branch_anchor_kind="none",
-        branch_anchor={},
-    )
-    db.add(assistant)
-    db.flush()
-    db.execute(
-        text(
-            """
-            UPDATE conversations SET active_leaf_message_id = :leaf,
-              branch_revision = branch_revision + 1 WHERE id = :id
-            """
-        ),
-        {"leaf": assistant.id, "id": conversation_id},
-    )
-    projection.refresh(db, "message", [user.id])
-    from nexus.services.suggestion_changes import record_input_change
-
-    record_input_change(db, owners=[f"conversation:{conversation_id}"])
-    return user, assistant
-
-
-def _start_run(
+def _insert(
     db: Session,
     viewer_id: UUID,
     run_id: UUID,
-    user: Message,
-    assistant: Message,
+    content: str,
+    attachments: list[LiveReference],
     row: Row,
     tools: Toolbox,
+    retry_of_run_id: UUID | None,
 ) -> ChatRun:
-    """Freeze prompt, spec and attached evidence; enqueue the one job; bump the index."""
-
-    conversation_id = user.conversation_id
+    """The caller holds librarian_state. Pair, queue head and choice commit together."""
     context_budget, output_budget = chat_budgets(row)
-    try:
-        assembly = context.assemble(
-            db,
-            viewer_id=viewer_id,
-            conversation_id=conversation_id,
-            user=user,
-            context_budget=context_budget,
-        )
-    except context.ContextTooLarge as error:
-        raise ApiError(
-            ApiErrorCode.E_GENERATION_CONTEXT_TOO_LARGE,
-            "This conversation no longer fits the model context window",
-        ) from error
     plan = chat_tool_plan(
         tools.memory_config,
         user_id=viewer_id,
@@ -554,44 +291,49 @@ def _start_run(
         selection=row.selection,
         display_at_dispatch=row.presentation,
         tool_plan=plan,
-        tool_scope=tuple(sorted(assembly.scope_refs)),
+        tool_scope=(),
         effect_mode="AdditiveWrites",
         context_budget_tokens=context_budget,
         output_budget_tokens=output_budget,
     )
-    run = ChatRun(
-        admitted_context_version=context_version(
-            db, viewer_id=viewer_id, conversation_id=conversation_id
+    seq = db.execute(
+        text(
+            "UPDATE librarian_state SET next_seq=next_seq+2 WHERE user_id=:viewer RETURNING next_seq-2"
         ),
+        {"viewer": viewer_id},
+    ).scalar_one()
+    user = Message(
+        owner_user_id=viewer_id,
+        seq=seq,
+        role="user",
+        content=content,
+        attachments=[reference.model_dump(mode="json") for reference in attachments],
+        status="complete",
+    )
+    assistant = Message(
+        owner_user_id=viewer_id,
+        seq=seq + 1,
+        role="assistant",
+        content="",
+        attachments=[],
+        status="pending",
+    )
+    db.add_all([user, assistant])
+    db.flush()
+    run = ChatRun(
         id=run_id,
         owner_user_id=viewer_id,
-        conversation_id=conversation_id,
         user_message_id=user.id,
         assistant_message_id=assistant.id,
+        retry_of_run_id=retry_of_run_id,
         status="queued",
         generation_spec=spec.model_dump(mode="json"),
-        generation_intent=assembly.intent.model_dump(mode="json"),
     )
     db.add(run)
     db.flush()
-    quotes.changed(db, viewer_id=viewer_id, message_ids=[user.id])
-    citations.persist_attached(db, run, assembly.attached)
-    enqueue_job(
-        db,
-        kind="chat_run",
-        payload={"run_id": str(run.id)},
-        priority=50,
-        dedupe_key=f"chat_run:{run.id}",
-    )
-    projection.refresh(db, "conversation", [conversation_id])
-    if db.scalar(
-        text("""SELECT EXISTS (
-            SELECT 1 FROM message_retrievals WHERE assistant_message_id=:assistant
-                AND locator->>'type'='x_capture_offsets'
-            UNION ALL SELECT 1 FROM messages msg WHERE msg.id=:user
-                AND msg.reader_selection_snapshot #>> '{evidence,target,locator,type}'='x_capture_offsets' )"""),
-        {"assistant": assistant.id, "user": user.id},
-    ):
-        projection.refresh_viewer_contributors(db, [viewer_id])
+    projection.refresh(db, "message", [user.id])
+    if retry_of_run_id is None:
+        record_input_change(db, owners=[f"message:{user.id}"])
     selection.remember(db, user_id=viewer_id, admitted=row)
+    events.enqueue_head(db, viewer_id)
     return run

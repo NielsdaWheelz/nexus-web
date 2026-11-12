@@ -15,19 +15,18 @@ from collections.abc import Callable, Mapping
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun
 from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import JobExecutionContext, JobRow, finish_job
 from nexus.logging import get_logger, set_flow_id
-from nexus.schemas.conversation import ChatRunAssistantTextDeltaEventPayload
+from nexus.schemas.chat import ChatRunAssistantTextDeltaEventPayload
 from nexus.services.chat import citations, events, reads
+from nexus.services.chat import context as chat_context
 from nexus.services.generation.contract import (
     Cancelled,
     Event,
-    GenerationIntent,
     Owner,
     Succeeded,
     Terminal,
@@ -73,13 +72,8 @@ def on_dead_letter(db: Session, job: JobRow) -> None:
     """A dead job ends its run: ``cancelled`` if asked, else ``interrupted``."""
 
     run_id = UUID(str(job.payload["run_id"]))
-    # Worker settlement already holds generation → conversation → run → job.
-    run = db.scalar(
-        select(ChatRun)
-        .where(ChatRun.id == run_id)
-        .execution_options(populate_existing=True)
-        .with_for_update()
-    )
+    # Worker settlement already holds generation → account → run → job.
+    run = events.lock_run(db, run_id)
     if run is not None:
         events.finalize_dead(db, run)
     logger.warning(
@@ -115,7 +109,16 @@ async def _execute(
     run.status = "running"
     run.started_at = run.started_at or func.now()
     spec = reads.spec(run)
-    intent = GenerationIntent.model_validate(run.generation_intent)
+    assert spec.context_budget_tokens is not None, "chat admission requires a context budget"
+    try:
+        assembly = chat_context.assemble(db, run=run, context_budget=spec.context_budget_tokens)
+    except chat_context.ContextTooLarge:
+        events.finalize(db, run, status="error", content="", error_code="context_too_large")
+        finish_job(db, context=context, result=None)
+        db.commit()
+        return
+    citations.persist_attached(db, run, assembly.attached)
+    intent = assembly.intent
     owner = Owner("chat_run", run_id, run.owner_user_id, context)
     db.commit()
 
@@ -170,15 +173,8 @@ def _publish(
     terminal: Terminal[str],
 ) -> tuple[str, str] | None:
     """Commit the terminal answer and this execution's queue receipt together."""
-    # The serializable attempt preserves conversation → run → job ordering.
-    db.execute(
-        text(
-            "SELECT c.id FROM conversations c JOIN chat_runs r ON r.conversation_id=c.id WHERE r.id=:id FOR UPDATE OF c"
-        ),
-        {"id": run_id},
-    )
     run = events.lock_run(db, run_id)
-    if run is None:  # deleted mid-generation, together with its job
+    if run is None:  # the completed turn may already have been deleted
         return None
     events.fence(db, context)
     degradation: tuple[str, str] | None = None

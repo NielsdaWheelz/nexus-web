@@ -12,7 +12,7 @@ export interface SearchQuery {
   formats: MediaFormat[];
   authors: string[];
   roles: string[];
-  /** "all", or a media, library or conversation ref. */
+  /** "all", or a media or library ref. */
   scope: string;
 }
 

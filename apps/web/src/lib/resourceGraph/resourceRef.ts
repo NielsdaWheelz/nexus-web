@@ -24,7 +24,6 @@ const SCHEMES: Record<ResourceScheme, [Icon.Glyph, string]> = {
   page: [Icon.Page, "page"],
   note_block: [Icon.Note, "note"],
   fragment: [Icon.Passage, "passage"],
-  conversation: [Icon.Chat, "chat"],
   message: [Icon.Chat, "chat message"],
   oracle_reading: [Icon.Oracle, "oracle reading"],
   oracle_passage_anchor: [Icon.Passage, "oracle passage"],

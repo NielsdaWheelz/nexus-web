@@ -20,9 +20,9 @@ MAX_LIMIT = 50
 MIN_QUERY_LENGTH = 2
 MAX_OFFSET = 1000  # the deepest page start a cursor names; it bounds every family's k
 
-SearchKind = Literal["documents", "notes", "highlights", "conversations", "people", "web"]
+SearchKind = Literal["documents", "notes", "highlights", "messages", "people"]
 MediaFormat = Literal["article", "pdf", "epub", "video", "episode", "podcast"]
-ScopeKind = Literal["all", "media", "library", "conversation"]
+ScopeKind = Literal["all", "media", "library"]
 
 SEARCH_KINDS: tuple[SearchKind, ...] = get_args(SearchKind)
 SEARCH_FORMATS: tuple[MediaFormat, ...] = get_args(MediaFormat)
@@ -32,9 +32,8 @@ DISCOVERY_FAMILIES: dict[DiscoveryKind, tuple[str, ...]] = {
     "documents": ("media", "podcast", "content_chunk", "fragment", "reader_apparatus_item"),
     "notes": ("page", "note_block"),
     "highlights": ("highlight", "highlight_annotation"),
-    "conversations": ("conversation", "message"),
+    "messages": ("message",),
     "people": ("contributor",),
-    "web": ("web_result",),
     "libraries": ("library",),
     "readings": ("oracle_reading",),
     "saved_passages": ("passage_anchor",),
@@ -53,9 +52,8 @@ KIND_TO_RESULT_TYPES: dict[SearchKind, tuple[str, ...]] = {
     ),
     "notes": ("page", "note_block"),
     "highlights": ("highlight",),
-    "conversations": ("conversation", "message"),
+    "messages": ("message",),
     "people": ("contributor",),
-    "web": ("web_result",),
 }
 # Public format -> the media.kind value (podcasts are their own table).
 FORMAT_STORAGE: dict[MediaFormat, str] = {
@@ -80,7 +78,9 @@ class SearchScope:
 class SearchQuery:
     """The input to search. ``requested_kinds`` None means all kinds; empty means none.
 
-    ``frozen_context_refs`` turns the "all" scope into exactly those refs (chat).
+    ``frozen_context_refs`` turns the "all" scope into exactly those refs (a confined
+    generation). ``message_horizon_seq`` hides every later timeline message (a librarian
+    run sees its own question and earlier turns only).
     """
 
     text: str
@@ -92,6 +92,7 @@ class SearchQuery:
     cursor: str | None = None
     limit: int = DEFAULT_LIMIT
     frozen_context_refs: tuple[ResourceRef, ...] | None = None
+    message_horizon_seq: int | None = None
 
     @property
     def effective_kinds(self) -> frozenset[SearchKind]:
@@ -213,11 +214,11 @@ def _tokens[T: str](raw: list[str] | None, vocabulary: tuple[T, ...], label: str
 
 
 def scope_from_uri(scope: str) -> SearchScope:
-    """Parse ``all``, ``media:<id>``, ``library:<id>`` or ``conversation:<id>``."""
+    """Parse ``all``, ``media:<id>`` or ``library:<id>``."""
     if scope == "all":
         return SearchScope("all")
     kind, _, raw_id = scope.partition(":")
-    if kind not in ("media", "library", "conversation"):
+    if kind not in ("media", "library"):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
     try:
         return SearchScope(kind, UUID(raw_id))

@@ -1,4 +1,4 @@
-"""The locator grammar: where a passage is, for chat, search, the reader and evidence.
+"""The locator grammar: where a passage is, for search, the reader and evidence.
 
 One discriminated union, validated wherever a locator enters storage or a response,
 and which locator kinds each locator-backed search result type may carry.
@@ -203,8 +203,9 @@ class PlaybackTimeRangeLocator(BaseModel):
 
 
 class MessageOffsetsLocator(BaseModel):
+    """Codepoint offsets in one message, which owns itself in the account timeline."""
+
     type: Literal["message_offsets"]
-    conversation_id: UUID | str
     message_id: UUID | str
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
@@ -264,7 +265,6 @@ LocatorBackedResultType = Literal[
     "evidence_span",
     "note_block",
     "message",
-    "web_result",
     "reader_apparatus_item",
 ]
 RetrievalLocatorType = Literal[
@@ -305,7 +305,6 @@ _LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[Retrieval
     "evidence_span": _SOURCE_LOCATOR_TYPES | _NOTE_LOCATOR_TYPES | _ANNOTATION_LOCATOR_TYPES,
     "note_block": _NOTE_LOCATOR_TYPES,
     "message": frozenset({"message_offsets"}),
-    "web_result": frozenset({"external_url"}),
     "reader_apparatus_item": _SOURCE_LOCATOR_TYPES,
 }
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from nexus.schemas.highlight_color import HighlightColor
 
@@ -47,11 +47,6 @@ class PdfAnchorOut(BaseModel):
     quads: list[PdfQuadOut]
 
 
-class LinkedConversationRef(BaseModel):
-    conversation_id: UUID
-    title: str
-
-
 class HighlightAnnotationOut(BaseModel):
     body_pm_json: dict[str, object]
     body_text: str
@@ -68,7 +63,6 @@ class TypedHighlightOut(BaseModel):
     updated_at: datetime
     author_user_id: UUID
     is_owner: bool
-    linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
     annotation: HighlightAnnotationOut | None
 
     model_config = ConfigDict(

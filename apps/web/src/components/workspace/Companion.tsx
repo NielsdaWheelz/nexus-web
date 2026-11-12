@@ -59,7 +59,6 @@ const ICONS: Record<TabId, Icon.Glyph> = {
   "resource-contents": Icon.Contents,
   "resource-members": Icon.Members,
   "resource-connections": Icon.Link,
-  "resource-forks": Icon.Forks,
   "import-detail": Icon.Upload,
   "find-results": Icon.Search,
 };

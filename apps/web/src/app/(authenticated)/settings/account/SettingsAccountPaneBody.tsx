@@ -30,6 +30,7 @@ import { accountEmailChange } from "@/lib/native/client";
 import { useSettingsRefresh } from "@/lib/native/settingsRefresh";
 import type { EmailChangeResult } from "@/lib/account/settingsWire";
 import AssistantWrites from "./AssistantWrites";
+import ReadingBrief from "./ReadingBrief";
 import styles from "./page.module.css";
 
 type Profile = ApiJson<"/me", "get">["data"];
@@ -295,6 +296,7 @@ export default function SettingsAccountPaneBody() {
           <p className={styles.current}>The Post Room is not configured.</p>
         )}
       </PaneSection>
+      <ReadingBrief profile={profile} onSaved={profile => { setSaved({profile, over: account.status === "ready" ? account.generation : -1}); void account.refetch(); }} reload={() => void account.refetch()} />
       <AssistantWrites
         key={`${generationId ?? "all"}:${toolCallId ?? "none"}`}
         generationId={generationId}

@@ -11,7 +11,7 @@ import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQ
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
 import type { AuthoredQuery } from "../../node/authored/src/types";
-import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_4_TO_5_SQL } from "../../node/authored/src/schema";
+import { DEVICE_SCHEMA, PENDING_CHANGES_SQL, UPGRADE_TO_6_SQL } from "../../node/authored/src/schema";
 import { appCsp } from "./src/lib/security/csp";
 import { STATIC_SECURITY_HEADERS } from "./src/lib/security/headers";
 import { BRAND_BG_DARK } from "./src/lib/brand";
@@ -45,7 +45,7 @@ export default defineConfig({
           "Content-Security-Policy": appCsp({ nonce: "__NEXUS_NONCE__", dev: false, https: false, ws: [], connect }),
         }));
         writeFileSync(path.join(outDir, "authored-schema.json"), JSON.stringify(DEVICE_SCHEMA));
-        writeFileSync(path.join(outDir, "authored-upgrade-4-to-5.json"), JSON.stringify(UPGRADE_4_TO_5_SQL));
+        writeFileSync(path.join(outDir, "authored-upgrade-to-6.json"), JSON.stringify(UPGRADE_TO_6_SQL));
         const cursor = JSON.stringify(["a0", ""]);
         const workCursors = [null, JSON.stringify(["1", "22222222-2222-4222-8222-222222222222", "note_block:33333333-3333-4333-8333-333333333333"])];
         type PackagedQuery = Exclude<AuthoredQuery, {kind: "search_preview" | "search_admission"}>;

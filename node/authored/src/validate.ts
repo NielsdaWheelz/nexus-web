@@ -99,7 +99,7 @@ function validateLocatorCapture(locator: Locator, source_ref: string): void {
     case "audio_time_range":
     case "video_time_range": range(locator.t_start_ms, locator.t_end_ms); break;
     case "message_offsets":
-      uuid(locator.conversation_id); uuid(locator.message_id);
+      uuid(locator.message_id);
       if (source_ref !== `message:${locator.message_id}`) throw new TypeError("Locator message disagrees with source");
       range(locator.start_offset, locator.end_offset);
       break;

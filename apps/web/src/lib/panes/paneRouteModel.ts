@@ -4,7 +4,6 @@
 import * as Icon from "@/lib/ui/icons";
 import type { DestinationId } from "@/lib/navigation/destinations";
 import type { Schema } from "@/lib/api/wire";
-import { conversationEndpoint } from "@/lib/chat/view";
 import { isContributorHandle } from "@/lib/contributors/credits";
 import { isLocalDate } from "@/lib/localDate";
 import { pageTitle } from "@nexus/authored/queries";
@@ -31,9 +30,7 @@ const ROUTES = {
   browsePreview: ["browse/preview", "Preview", Icon.Browse],
   media: ["media/:id", "Source", resourceIconForScheme("media")],
   xCapture: ["x/captures/:id", "Post", Icon.WebText],
-  conversations: ["conversations", "Chats", Icon.Chat],
-  conversationNew: ["conversations/new", "New chat", Icon.NewChat],
-  conversation: ["conversations/:id", "Chat", resourceIconForScheme("conversation")],
+  librarian: ["librarian", "librarian", Icon.Chat],
   podcasts: ["podcasts", "Podcasts", Icon.Podcast],
   feeds: ["feeds", "Feeds", Icon.Feed],
   feedDetail: ["feeds/:feedId", "Feed", resourceIconForScheme("feed")],
@@ -67,7 +64,6 @@ type Traits<T> = Partial<Record<PaneRouteId, T>>;
 const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
   library: ["library", "id"],
   media: ["media", "id"],
-  conversation: ["conversation", "id"],
   podcastDetail: ["podcast", "podcastId"],
   feedDetail: ["feed", "feedId"],
   author: ["contributor_handle", "handle"],
@@ -83,7 +79,7 @@ const IN_PLACE = new Set<PaneRouteId>([
   "libraries",
   "library",
   "browse",
-  "conversations",
+  "librarian",
   "podcasts",
   "feeds",
   "feedDetail",
@@ -96,13 +92,11 @@ const IN_PLACE = new Set<PaneRouteId>([
 ]);
 // Not shareable by pathname: private or transient routes (resource panes
 // share their resource instead).
-const UNSHARED = new Set<PaneRouteId>(["downloads", "conversationNew", "pageNew", "search", "dailyDate", "xCapture"]);
+const UNSHARED = new Set<PaneRouteId>(["downloads", "librarian", "pageNew", "search", "dailyDate", "xCapture"]);
 // Section, where it is not the first path segment.
 const SECTION: Traits<DestinationId> = {
   media: "libraries",
-  conversations: "chats",
-  conversationNew: "chats",
-  conversation: "chats",
+  librarian: "librarian",
   pageNew: "notes",
   page: "notes",
   dailyDate: "notes",
@@ -113,8 +107,7 @@ export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Ch
 const RETURN_KIND: Traits<PaneReturnKind> = {
   media: "Reader",
   xCapture: "Reader",
-  conversationNew: "Chat",
-  conversation: "Chat",
+  librarian: "Chat",
   atlas: "NoVerticalScroll",
 };
 const BODY_MODE = {
@@ -165,7 +158,7 @@ export interface ResolvedPaneRouteModel extends PaneRouteTraits {
   id: PaneRouteId | "unsupported";
   pathname: string;
   params: Record<string, string>;
-  /** Visit/memento identity excludes hashes and a conversation's local endpoint. */
+  /** Visit/memento identity excludes hashes and a librarian message arrival. */
   routeKey: string;
   locator: PaneResourceLocator | null;
   /** e.g. `resource_ref:media:<id>`; null when the route names no resource. */
@@ -291,7 +284,7 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     if (id === "oracleReading" && !locator) continue;
     // `via` names the link a bullet opened the route through: an arrival on every route, never a view.
     const query = new URLSearchParams(search);
-    for (const key of id === "conversation" ? ["via", "leaf", "loc"] : ["via"]) query.delete(key);
+    for (const key of id === "librarian" ? ["via", "message"] : ["via"]) query.delete(key);
     const viewSearch = query.size ? `?${query}` : "";
     const routeKey = `${id}:${pathname}${viewSearch}`;
     const resourceKey = paneResourceLocatorKey(locator);
@@ -333,32 +326,15 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
   const arrival = route.id === "media" || route.id === "xCapture"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post", "post_revision"]
-    : route.id === "conversation" ? ["message", "loc"] : [];
+    : route.id === "librarian" ? ["message"] : [];
   for (const key of [...arrival, "via"]) query.delete(key);
   query.sort();
   return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
 }
 
-/** Matching is asymmetric: a bare chat names its owner; an explicit leaf names one view. */
+/** Arrival selectors address a location within the same librarian timeline. */
 export function matchWorkspaceTargetHref(currentHref: string, targetHref: string): string | null {
-  const target = resolvePaneRouteModel(targetHref);
-  if (target.id !== "conversation")
-    return resolveWorkspaceActivationRouteId(currentHref) === resolveWorkspaceActivationRouteId(targetHref) ? targetHref : null;
-  const current = resolvePaneRouteModel(currentHref);
-  if (target.resourceKey === null || current.resourceKey !== target.resourceKey) return null;
-  const url = parseWorkspaceHref(targetHref)!;
-  const endpoint = conversationEndpoint(url.searchParams);
-  if (endpoint.kind === "Invalid") return null;
-  if (endpoint.kind === "Endpoint") {
-    const candidate = conversationEndpoint(parseWorkspaceHref(currentHref)!.searchParams);
-    if (candidate.kind !== "Endpoint" || candidate.messageId !== endpoint.messageId) return null;
-  }
-  if (url.search || url.hash) return targetHref;
-  const retained = parseWorkspaceHref(currentHref)!;
-  retained.searchParams.delete("message");
-  retained.searchParams.delete("loc");
-  retained.hash = "";
-  return `${retained.pathname}${retained.search}${retained.hash}`;
+  return resolveWorkspaceActivationRouteId(currentHref) === resolveWorkspaceActivationRouteId(targetHref) ? targetHref : null;
 }
 
 /**
@@ -412,13 +388,9 @@ export function recentValueForHref(href: string, titleHint: string | null = null
   if (target === null) return null;
   const query = new URLSearchParams();
   if (target.kind === "preview") query.set("target", target.target);
-  if (route.id === "conversation") {
-    const leaf = url.searchParams.get("leaf");
-    if (leaf && conversationEndpoint(url.searchParams).kind === "Endpoint") query.set("leaf", leaf);
-  }
   const path = target.kind === "resource_ref" ? (() => {
     const ref = parseResourceRef(target.ref)!;
-    const prefix: Partial<Record<ResourceScheme, string>> = { media: "media", library: "libraries", conversation: "conversations", podcast: "podcasts", feed: "feeds", page: "pages", note_block: "notes", highlight: "highlights", oracle_reading: "oracle" };
+    const prefix: Partial<Record<ResourceScheme, string>> = { media: "media", library: "libraries", podcast: "podcasts", feed: "feeds", page: "pages", note_block: "notes", highlight: "highlights", oracle_reading: "oracle" };
     return `/${prefix[ref.scheme]}/${ref.id}`;
   })() : target.kind === "contributor_handle" ? `/authors/${target.handle}`
     : target.kind === "daily_date" ? `/daily/${target.local_date}`

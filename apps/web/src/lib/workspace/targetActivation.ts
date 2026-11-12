@@ -4,7 +4,6 @@ import { matchWorkspaceTargetHref } from "@/lib/panes/paneRouteModel";
 import type { SourceArrivalTarget } from "@/lib/resources/sourceTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceState } from "@/lib/workspace/model";
-import type { ReaderQuote, ReaderQuoteReturn } from "@/lib/chat/readerIntent";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export interface WorkspaceTarget {
@@ -23,11 +22,11 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
+  | { readonly kind: "FocusLibrarian"; readonly send: boolean }
   | { readonly kind: "ComposeChat"; readonly text: string }
   | { readonly kind: "ComposePage"; readonly title: string }
   | { readonly kind: "RevealDailyDate" }
   | { readonly kind: "InspectSource"; readonly target: SourceArrivalTarget; readonly purpose: "Open" | "RestoreVisit" }
-  | { readonly kind: "ReviewReaderQuote"; readonly quote: ReaderQuote; readonly target: ReaderQuoteReturn }
   // page or daily pane: a new empty row at the end, focused (a latent day: its draft)
   | { readonly kind: "AppendNote" }
   // page or daily pane: the caret at the end of that note's row
@@ -39,12 +38,7 @@ export type WorkspacePaneEntry =
   | { readonly kind: "EditHighlight"; readonly highlightId: string }
   | { readonly kind: "EditHighlightAnnotation"; readonly highlightId: string }
   | { readonly kind: "EditHighlightBounds"; readonly highlightId: string }
-  | { readonly kind: "DeleteHighlight"; readonly highlightId: string }
-  // chat pane: one message of the loaded transcript
-  | {
-      readonly kind: "ForkMessage" | "DeleteMessage";
-      readonly messageId: string;
-    };
+  | { readonly kind: "DeleteHighlight"; readonly highlightId: string };
 
 export interface WorkspaceTargetActivationRequest {
   originPaneId: string;

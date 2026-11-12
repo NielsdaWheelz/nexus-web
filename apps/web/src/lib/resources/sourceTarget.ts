@@ -1,7 +1,6 @@
 // Public source links and workspace arrivals name the same target. Coordinates
 // come from the source owner after landing, never from a display excerpt.
 import type { Schema } from "@/lib/api/wire";
-import { parseChatFindDestination, type ChatFindDestination } from "@/lib/chat/findDestination";
 import { parseReaderDestination, type ReaderDestination } from "@/lib/documentReader/location";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { isCanonicalUuid } from "@/lib/validation";
@@ -10,7 +9,6 @@ import { MAX_WORKSPACE_HREF_LENGTH, parseWorkspaceHref } from "@/lib/workspace/w
 export type SourceTargetKey = Schema<"ResolveSourceTargetRequest">["target"];
 export type SourceArrivalTarget = SourceTargetKey
   | { readonly kind: "reader_destination"; readonly destination: ReaderDestination }
-  | { readonly kind: "chat_destination"; readonly destination: ChatFindDestination; readonly leaf_id: string }
   | { readonly kind: "invalid_destination"; readonly reason: "invalid_reader_destination" | "location_too_long" };
 export type SourceTarget = Schema<"SourceTargetOut">;
 export type SourceLocator = Extract<SourceTarget["location"], { kind: "located" }>["locator"];
@@ -54,26 +52,18 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
       const destination = parseReaderDestination(query.get("loc")!);
       if (destination) return { kind: "reader_destination", destination };
     }
-    if (route.id === "conversation" && [...query.keys()].every((key) => key === "loc" || key === "leaf")) {
-      const leaf = query.get("leaf");
-      const destination = parseChatFindDestination(query.get("loc")!);
-      if (leaf && isCanonicalUuid(leaf) && query.getAll("leaf").length === 1 && destination)
-        return { kind: "chat_destination", destination, leaf_id: leaf };
-    }
     return { kind: "invalid_destination", reason: "invalid_reader_destination" };
   }
   if (route.id === "highlight" && url.hash === "#annotation" && route.locator?.kind === "resource_ref") return {kind: "resource", resource_ref: route.locator.ref, field: "annotation"};
-  const match = /^#(quote|citation-source|citation|retrieval|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
+  const match = /^#(citation-source|citation|highlight|evidence|passage|fragment|chunk|apparatus|message|oracle-passage)-(.+)$/.exec(url.hash);
   if (match && isCanonicalUuid(match[2])) {
     const [, kind, id] = match;
-    if (kind === "quote") return { kind: "reader_quote", message_id: id };
     if (kind === "citation" || kind === "citation-source") return { kind: "citation", edge_id: id, side: kind === "citation" ? "target" : "source" };
-    if (kind === "retrieval") return { kind: "retrieval", retrieval_id: id };
     // justify-type-assertion: the regex exhausts these keys after occurrence keys return.
     const scheme = SCHEMES[kind as keyof typeof SCHEMES];
     return { kind: "resource", field: null, resource_ref: `${scheme}:${id}` };
   }
-  const message = url.pathname.startsWith("/conversations/") && query.get("message");
+  const message = url.pathname === "/librarian" && query.get("message");
   if (message && isCanonicalUuid(message)) return { kind: "resource", field: null, resource_ref: `message:${message}` };
   if (url.pathname.startsWith("/media/")) {
     const apparatus = query.get("apparatus_id");
@@ -81,7 +71,7 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
     const fragment = query.get("fragment");
     if (fragment && isCanonicalUuid(fragment)) return { kind: "resource", field: null, resource_ref: `fragment:${fragment}` };
   }
-  if (wholeSource && !url.hash && (route.id === "media" || route.id === "note" || route.id === "highlight" || route.id === "conversation") && route.locator?.kind === "resource_ref")
+  if (wholeSource && !url.hash && (route.id === "media" || route.id === "note" || route.id === "highlight") && route.locator?.kind === "resource_ref")
     return { kind: "resource", field: null, resource_ref: route.locator.ref };
   return null;
 }

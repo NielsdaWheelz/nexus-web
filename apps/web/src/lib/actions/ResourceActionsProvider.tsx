@@ -39,8 +39,6 @@ import { ProgressPreparationError, PROGRESS_PREPARATION_FACT } from "@/lib/consu
 import { useConsumptionCommands } from "@/lib/consumption/state";
 import { useMediaAdmissions } from "@/lib/media/admissions";
 import { setChatCommandAccount } from "@/lib/chat/commands";
-import { useConversationCreationOwner, type ConversationCreationInput } from "@/lib/chat/conversationIndex";
-import { useChatCommandFeedback } from "@/lib/chat/commandFeedback";
 import {
   useLectern,
   useLecternCommands,
@@ -122,6 +120,7 @@ export interface ActionContext {
   };
   /** The workspace when a verb runs; menus do not re-render on its changes. */
   readonly workspace: () => WorkspaceStoreValue;
+  readonly workGuard: ReturnType<typeof useWorkGuard>;
   /** A command captures this provider lifetime before awaiting its result. */
   readonly sessionSignal: () => AbortSignal;
   /** Results and chat outcomes after the invoker leaves. A verb's own failures are `run`'s,
@@ -139,8 +138,6 @@ export interface ActionContext {
   readonly podcastEpisodes: ReturnType<typeof usePodcastEpisodeCommands>["commands"];
   readonly admissions: ReturnType<typeof useMediaAdmissions>;
   readonly mediaContinuations: ReturnType<typeof useMediaContinuationOwner>;
-  readonly createConversationAbout: (input: ConversationCreationInput) => Promise<void>;
-  readonly observeChatCommand: ReturnType<typeof useChatCommandFeedback>["observe"];
   readonly feedLibraryCreation: ReturnType<typeof useDestinationCreation>;
   readonly overlays: { readonly open: (overlay: Overlay, options?: { anchor: ReturnFocusTarget; returnFocusFallback: ReturnFocusTarget }) => void };
 }
@@ -153,7 +150,7 @@ const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "RefreshFeed", "Chat", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
   "LibrarySettings", "PodcastSettings", "RemoveUpload",
-  "RemoveMedia", "DeleteLibrary", "DeleteConversation", "RerunMessage", "RegenerateMessage",
+  "RemoveMedia", "DeleteLibrary", "DeleteTurn", "RetryTurn",
 ]);
 export function resourceActionRequiresRemote(id: string, tracked = true): boolean {
   return REMOTE_ACTIONS.has(id.startsWith("View.") ? id.split(".")[1] : id) || id === "Transcript" && tracked;
@@ -282,7 +279,6 @@ export default function ResourceActionsProvider({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const consumption = useConsumptionCommands(setDefect);
   const admissions = useMediaAdmissions();
-  const { observe: observeChatCommand, feedback: chatCommandFeedback } = useChatCommandFeedback();
   const [busy] = useState(createBusyKeys);
   const busyKeys = useSyncExternalStore(busy.subscribe, busy.keys, busy.keys);
   const [attempts] = useState(() => new Map<string, Execution>());
@@ -293,7 +289,6 @@ export default function ResourceActionsProvider({
   const podcastEpisodes = usePodcastEpisodeCommands(accountId, setDefect);
   const feeds = useFeedCommands(accountId, setDefect);
   const podcastSettings = usePodcastSettingsOwner(accountId, setDefect);
-  const conversationCreation = useConversationCreationOwner(accountId);
   const [destinationCreation] = useState(createDestinationCreation);
   const feedLibraryCreation = useDestinationCreation(`podcast-libraries:${accountId}`, destinationCreation);
   const workGuard = useWorkGuard();
@@ -349,6 +344,7 @@ export default function ResourceActionsProvider({
       lectern,
       player: { queue: playerSession.queue, state: playerSession.state, pendingPlayback: playerSession.pendingPlayback, commands: playerCommands },
       workspace,
+      workGuard,
       sessionSignal: () => session.controller.signal,
       feedback,
       reportDefect: setDefect,
@@ -361,8 +357,6 @@ export default function ResourceActionsProvider({
       feeds: feeds.commands,
       podcastSettings: podcastSettings.commands,
       mediaContinuations,
-      observeChatCommand,
-      createConversationAbout: conversationCreation.create,
       feedLibraryCreation,
       overlays: { open },
     }),
@@ -377,6 +371,7 @@ export default function ResourceActionsProvider({
       playerSession.pendingPlayback,
       playerCommands,
       workspace,
+      workGuard,
       session,
       feedback,
       openShare,
@@ -387,9 +382,7 @@ export default function ResourceActionsProvider({
       podcastEpisodes.commands,
       feeds.commands,
       podcastSettings.commands,
-      conversationCreation.create,
       mediaContinuations,
-      observeChatCommand,
       feedLibraryCreation,
       open,
     ],
@@ -492,13 +485,13 @@ export default function ResourceActionsProvider({
           run: () => {
             if (attempts.get(key) === attempt && attempt.line !== null) run(attempt.command, attempt.outcome);
           } } })} />)}
-      {chatCommandFeedback}{podcastSettings.feedback}{feeds.feedback}{podcastEpisodes.feedback}{conversationCreation.feedback}
+      {podcastSettings.feedback}{feeds.feedback}{podcastEpisodes.feedback}
       {consumption.collectionFailures.filter(failure => failure.key !== consumptionReviewKey).map(failure =>
         <Hold key={failure.key} id={failure.key} attempt={failure.attempt} line={failure.line} verbs={failure.verbs} />)}
       {lectern.collectionFailure && !lecternReview ? <Hold id={lectern.collectionFailure.key} attempt={lectern.collectionFailure.attempt}
         line={lectern.collectionFailure.line} verbs={lectern.collectionFailure.verbs} /> : null}
       {feedLibraryCreation.holds}</>,
-  }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, chatCommandFeedback, podcastSettings.feedback, feeds.feedback, podcastEpisodes.feedback, conversationCreation.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, feedLibraryCreation.holds, resendFeedback]);
+  }), [ctx, run, busy, defect, overlay, close, localUnknown, attempts, busyKeys, podcastSettings.feedback, feeds.feedback, podcastEpisodes.feedback, consumption.collectionFailures, lectern.collectionFailure, consumptionReviewKey, lecternReview, feedLibraryCreation.holds, resendFeedback]);
 
   return (
     <AccountDayProvider><RuntimeContext.Provider value={runtime}><WorkOverlayContext value={overlay?.kind === "TaskCompletion" || overlay?.kind === "HabitHistory" ? overlay.ref : null}>

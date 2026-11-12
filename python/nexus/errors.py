@@ -21,7 +21,6 @@ class ApiErrorCode(str, Enum):
         return member
 
     # Authentication errors
-    E_CONTEXT_CHANGED = ("E_CONTEXT_CHANGED", 409)
     E_UNAUTHENTICATED = ("E_UNAUTHENTICATED", 401)
 
     # Authorization errors
@@ -36,7 +35,6 @@ class ApiErrorCode(str, Enum):
     E_NOT_FOUND = ("E_NOT_FOUND", 404)
     E_LIBRARY_NOT_FOUND = ("E_LIBRARY_NOT_FOUND", 404)
     E_MEDIA_NOT_FOUND = ("E_MEDIA_NOT_FOUND", 404)
-    E_CONVERSATION_NOT_FOUND = ("E_CONVERSATION_NOT_FOUND", 404)
     E_MESSAGE_NOT_FOUND = ("E_MESSAGE_NOT_FOUND", 404)
     E_USER_NOT_FOUND = ("E_USER_NOT_FOUND", 404)
     E_INVITE_NOT_FOUND = ("E_INVITE_NOT_FOUND", 404)
@@ -68,7 +66,6 @@ class ApiErrorCode(str, Enum):
     E_EMPTY_NOTE_BODY = ("E_EMPTY_NOTE_BODY", 400)
 
     # Conflict errors
-    E_CONVERSATION_CHANGED = ("E_CONVERSATION_CHANGED", 409)
     E_INVITE_ALREADY_EXISTS = ("E_INVITE_ALREADY_EXISTS", 409)
     E_INVITE_MEMBER_EXISTS = ("E_INVITE_MEMBER_EXISTS", 409)
     E_INVITE_NOT_PENDING = ("E_INVITE_NOT_PENDING", 409)
@@ -108,17 +105,12 @@ class ApiErrorCode(str, Enum):
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
     E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # live-stream listener capacity (db/listen.py)
 
-    # Reader-selection quote-to-chat errors
+    # Reader selection and timeline admission errors
     E_CHAT_CREATION_STALE = ("E_CHAT_CREATION_STALE", 409)
     E_READER_SELECTION_NOT_FOUND = ("E_READER_SELECTION_NOT_FOUND", 404)  # highlight/media absent
-    E_READER_SELECTION_FORBIDDEN = ("E_READER_SELECTION_FORBIDDEN", 403)  # not viewer-readable
     E_READER_SELECTION_GEOMETRY_ONLY = ("E_READER_SELECTION_GEOMETRY_ONLY", 400)  # blank exact
     E_READER_SELECTION_TOO_LARGE = ("E_READER_SELECTION_TOO_LARGE", 400)  # bounded field over limit
     E_READER_SELECTION_STALE = ("E_READER_SELECTION_STALE", 409)  # revision precondition failed
-    E_CONVERSATION_NO_LONGER_EMPTY = (
-        "E_CONVERSATION_NO_LONGER_EMPTY",
-        409,
-    )  # Empty insertion raced
 
     # Consumption/Lectern errors
     E_MEDIA_DELETING = ("E_MEDIA_DELETING", 409)  # target media has a teardown intent
@@ -133,10 +125,6 @@ class ApiErrorCode(str, Enum):
     E_RETRY_INVALID_STATE = ("E_RETRY_INVALID_STATE", 409)
     E_RETRY_NOT_ALLOWED = ("E_RETRY_NOT_ALLOWED", 409)
     E_REPAIR_NOT_ALLOWED = ("E_REPAIR_NOT_ALLOWED", 409)
-    E_REGENERATION_NOT_ALLOWED = (
-        "E_REGENERATION_NOT_ALLOWED",
-        409,
-    )  # completed answer not regeneratable
     E_ARCHIVE_UNSAFE = ("E_ARCHIVE_UNSAFE", 400)
 
     # Podcast provider errors

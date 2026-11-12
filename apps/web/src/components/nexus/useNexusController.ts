@@ -452,7 +452,7 @@ export function useNexusController() {
     if (request.entry?.kind === "ComposeChat" || request.entry?.kind === "ComposePage") {
       const plan = planWorkspaceTarget(state, request);
       if (plan.kind !== "CreatedPane") {
-        if (request.entry.kind === "ComposeChat") ownerIds.push(chatDraftOwnerId(accountId, plan.paneId, "new"));
+        if (request.entry.kind === "ComposeChat") ownerIds.push(chatDraftOwnerId(accountId, plan.paneId));
         else if (plan.kind === "Unchanged" || plan.kind === "ActivatedExisting") {
           const visit = state.panes.find(pane => pane.id === plan.paneId)!.current_visit;
           ownerIds.push(resourceDraftOwnerId(JSON.stringify([visit.id, resolvePaneRouteModel(visit.href).routeKey]), "Notes.NewPage"));
@@ -825,6 +825,12 @@ export function useNexusController() {
 
   const keydown = useRef<(event: KeyboardEvent) => void>(() => undefined);
   keydown.current = (event) => {
+    if (open && page.kind === "Root" && isTopmostInteractionOwner("Nexus") && !composing && query.trim()
+      && matchesShortcut(SHORTCUTS["Nexus.Ask"], event, platform)) {
+      event.preventDefault();
+      if (!event.repeat) activate(NEXUS_COMMANDS["Nexus.Quick.Chat"].action(query), PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
+      return;
+    }
     if (!matchesShortcut(SHORTCUTS["Nexus.Open"], event, platform)) return;
     if (hasActiveInteractionOwner() && !isTopmostInteractionOwner("Nexus")) return;
     event.preventDefault();

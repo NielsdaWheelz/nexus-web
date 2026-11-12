@@ -16,7 +16,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    can_read_conversation,
     can_read_media,
     is_library_member,
     media_containment_edges_sql,
@@ -26,7 +25,6 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.library_entries import library_feed_rows_sql, library_media_ids_cte_sql
 from nexus.services.media_text_scope import highlight_in_reading_scope_sql
-from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.liveness import authored_link_sql, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.query import SearchScope
@@ -40,14 +38,6 @@ def authorize_scope(db: Session, viewer_id: UUID, scope: SearchScope) -> None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
     if scope.kind == "library" and not is_library_member(db, viewer_id, scope.id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library not found")
-    if scope.kind == "conversation" and not can_read_conversation(db, viewer_id, scope.id):
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-
-
-def _context(scheme: str, column: str) -> str:
-    """The row is a direct fact of the scoped conversation's context."""
-    return f"""EXISTS (SELECT 1 FROM ({context_facts_sql(":{s}")}) facts
-        WHERE facts.target_scheme = '{scheme}' AND facts.target_id = {column})"""
 
 
 def reading_media_ids_sql(roots_sql: str) -> str:
@@ -73,18 +63,9 @@ _LIBRARY_PODCASTS = (
     "WHERE feed_kind='podcast'"
 )
 
-_CONTEXT_PODCASTS = (
-    f"SELECT entry.feed_id AS podcast_id FROM podcast_episodes pe "
-    f"JOIN feed_entries entry ON entry.id=pe.media_id WHERE {_context('media', 'pe.media_id')}"
-)
 
-
-def _media_cells(conversation: str, library_media: str) -> dict[str, str]:
-    return {
-        "media": f"m.id IN ({_MEDIA})",
-        "library": f"m.id IN ({library_media})",
-        "conversation": conversation,
-    }
+def _media_cells(library_media: str) -> dict[str, str]:
+    return {"media": f"m.id IN ({_MEDIA})", "library": f"m.id IN ({library_media})"}
 
 
 def _highlight_cells(alias: str, library_media: str) -> dict[str, str]:
@@ -92,8 +73,6 @@ def _highlight_cells(alias: str, library_media: str) -> dict[str, str]:
     return {
         kind: f"EXISTS (SELECT 1 FROM ({readings}) reading WHERE reading.media_id={alias}.anchor_media_id OR {highlight_in_reading_scope_sql(f'{alias}.id', 'reading.media_id')})"
         for kind, readings in (("media", _MEDIA), ("library", library_media))
-    } | {
-        "conversation": f"({_context('highlight', f'{alias}.id')} OR {_context('media', f'{alias}.anchor_media_id')})"
     }
 
 
@@ -114,56 +93,39 @@ def _note_cells(scheme: str, column: str, library_media: str) -> dict[str, str]:
     return {
         "media": edge.replace("MEDIA_SET", _MEDIA),
         "library": edge.replace("MEDIA_SET", library_media),
-        "conversation": _context(scheme, column),
     }
 
 
 # family -> scope kind -> predicate; a missing cell means the family contributes nothing.
 def _cells(library_media: str) -> dict[str, dict[str, str]]:
+    reading = _media_cells(library_media)
     return {
-        "media": _media_cells(_context("media", "m.id"), library_media),
-        "content_chunk": _media_cells(_context("media", "m.id"), library_media),
-        "fragment": _media_cells(_context("media", "m.id"), library_media),
-        "reader_apparatus_item": _media_cells(_context("media", "m.id"), library_media),
+        "media": reading,
+        "content_chunk": reading,
+        "fragment": reading,
+        "reader_apparatus_item": reading,
         "highlight_annotation": _highlight_cells("h", library_media),
-        "highlight": _media_cells(
-            f"({_context('highlight', 'h.id')} OR {_context('media', 'm.id')})", library_media
-        ),
-        "podcast": {
-            "library": f"p.id IN ({_LIBRARY_PODCASTS})",
-            "conversation": f"p.id IN ({_CONTEXT_PODCASTS})",
-        },
+        "highlight": reading,
+        "podcast": {"library": f"p.id IN ({_LIBRARY_PODCASTS})"},
         "contributor": {
             "media": f"vc.media_id IN ({_MEDIA})",
             "library": f"(vc.media_id IN ({library_media}) OR vc.podcast_id IN ({_LIBRARY_PODCASTS}))",
-            "conversation": f"""((vc.media_id IS NOT NULL AND {_context("media", "vc.media_id")})
-            OR vc.podcast_id IN ({_CONTEXT_PODCASTS}))""",
         },
         "page": _note_cells("page", "p.id", library_media),
         "note_block": _note_cells("note_block", "nb.id", library_media),
-        "message": {
-            "conversation": f"""(ms.conversation_id = :{{s}} OR {_context("message", "ms.id")}
-            OR {_context("conversation", "ms.conversation_id")})"""
-        },
-        "conversation": {"conversation": f"(c.id = :{{s}} OR {_context('conversation', 'c.id')})"},
-        "web_result": {"conversation": "msg.conversation_id = :{s}"},
         "passage_anchor": {
             kind: f"""((pa.owner_scheme = 'media' AND m.id IN ({media}))
             OR (pa.owner_scheme = 'note_block'
                 AND {_note_cells("note_block", "pa.owner_id", library_media)[kind]})
             OR (pa.owner_scheme='highlight' AND {_highlight_cells("annotation_h", library_media)[kind]}))"""
             for kind, media in (("media", _MEDIA), ("library", library_media))
-        }
-        | {
-            "conversation": f"({_context('passage_anchor', 'pa.id')} OR (pa.owner_scheme='media' AND {_context('media', 'm.id')}) OR (pa.owner_scheme='highlight' AND {_highlight_cells('annotation_h', library_media)['conversation']}))"
         },
     }
 
 
 _CELLS = _cells(_LIBRARY_MEDIA)
 
-# family -> the (scheme, column) pairs a frozen chat context admits by exact ref; a frozen
-# conversation admits its completed messages.
+# family -> the (scheme, column) pairs a frozen generation scope admits by exact ref.
 _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
     "media": (("media", "m.id"),),
     "content_chunk": (("content_chunk", "cc.id"), ("evidence_span", "cc.primary_evidence_span_id")),
@@ -176,12 +138,7 @@ _FROZEN: dict[str, tuple[tuple[str, str], ...]] = {
     "contributor": (("contributor", "vc.contributor_id"),),
     "page": (("page", "p.id"),),
     "note_block": (("note_block", "nb.id"),),
-    "message": (
-        ("message", "ms.id"),
-        ("conversation", "ms.conversation_id"),
-    ),
-    "conversation": (("conversation", "c.id"),),
-    "web_result": (("conversation", "msg.conversation_id"),),
+    "message": (("message", "ms.id"),),
 }
 
 
@@ -193,7 +150,7 @@ def _scope_predicate(
 ) -> tuple[str, dict[str, Any]] | None:
     """``AND (...)`` admitting the union of ``scopes`` for ``family``, or None for nothing.
 
-    An unfrozen "all" admits everything visible; under a frozen chat context "all" admits
+    An unfrozen "all" admits everything visible; under a frozen scope "all" admits
     exactly the frozen refs. Media and library scopes keep their displayed sources. Families
     without cells (picker and browse families) are admitted only by an unfrozen "all".
     """
@@ -302,12 +259,6 @@ def admitted_reading_media_sql(
                     library_media[index]
                     if library_media is not None and index in library_media
                     else reading_media_ids_sql(library_media_ids_cte_sql(library_param=f":{param}"))
-                )
-            elif scope.kind == "conversation":
-                roots.append(
-                    reading_media_ids_sql(
-                        f"SELECT target_id AS media_id FROM ({context_facts_sql(f':{param}')}) context WHERE target_scheme='media'"
-                    )
                 )
     selected = (
         " UNION ".join(f"SELECT media_id FROM ({root}) root" for root in roots)

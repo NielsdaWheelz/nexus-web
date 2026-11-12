@@ -163,7 +163,6 @@ export function WorkspacePresentationsProvider({ accountId, initial = null, chil
       }
       else if (scheme === "library") saved = catalog.libraries.get(id)?.value.name ?? null;
       else if (scheme === "podcast" || scheme === "feed") saved = catalog.sources.get(id)?.detail.feed.title ?? null;
-      else if (scheme === "conversation") saved = catalog.chats.get(id)?.title ?? null;
     }
     const rawName=canonical?.title ?? saved ?? visit.title_hint;
     const name=rawName?.trim()?rawName:null;

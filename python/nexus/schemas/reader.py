@@ -73,17 +73,17 @@ class ReaderTextOffsets(ReaderTargetModel):
 
 class WebTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["WebTextOffsets"] = "WebTextOffsets"
-    fragment_id: UUID
+    fragment_id: UUID = Field(strict=False)
 
 
 class EpubTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["EpubTextOffsets"] = "EpubTextOffsets"
-    fragment_id: UUID
+    fragment_id: UUID = Field(strict=False)
 
 
 class TranscriptTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["TranscriptTextOffsets"] = "TranscriptTextOffsets"
-    fragment_id: UUID
+    fragment_id: UUID = Field(strict=False)
     time_range: ReaderTimeRange | None
 
 

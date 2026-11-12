@@ -690,21 +690,6 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
                   AND ((e.source_scheme='passage_anchor' AND e.source_id=pa.id)
                     OR (e.target_scheme='passage_anchor' AND e.target_id=pa.id)))
             UNION
-            SELECT f.x_post_capture_id FROM message_retrievals r
-            JOIN messages m ON m.id=r.assistant_message_id
-            JOIN conversations c ON c.id=m.conversation_id
-            JOIN fragments f ON {x_evidence_capture_match_sql("r.captured_evidence", "f")}
-            JOIN x_post_capture_admissions admission
-              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
-            WHERE c.owner_user_id={viewer_id}
-            UNION
-            SELECT f.x_post_capture_id FROM messages m
-            JOIN conversations c ON c.id=m.conversation_id
-            JOIN fragments f ON {x_evidence_capture_match_sql("m.reader_selection_snapshot->'evidence'", "f")}
-            JOIN x_post_capture_admissions admission
-              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
-            WHERE c.owner_user_id={viewer_id}
-            UNION
             SELECT f.x_post_capture_id FROM resource_edges e
             JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
             JOIN x_post_capture_admissions admission

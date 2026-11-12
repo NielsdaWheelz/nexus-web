@@ -11,12 +11,11 @@ import { getContributor, listContributorWorks } from "@/lib/contributors/api";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { librariesIndex, libraryEntriesIndex } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
-import { fetchConversationIndex } from "@/lib/chat/conversationIndex";
 import { listFeeds, listFeedEntries } from "@/lib/feeds/api";
 
 import { usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
-import { SuggestionEntryRead, QuickReadsEntryRead, suggestionRead } from "@/lib/panes/suggestionEntryReads";
+import { SuggestionEntryRead, QuickReadsEntryRead, suggestionRead, browseSelectionRead } from "@/lib/panes/suggestionEntryReads";
 import { getQuickReads } from "@/lib/suggestions";
 import { PaneEntryReads } from "@/lib/api/serverState";
 
@@ -25,7 +24,6 @@ const Libraries = createContext<ReadDescriptor<Result<typeof librariesIndex>> | 
 const Entries = createContext<{ read: ReadDescriptor<Result<typeof libraryEntriesIndex>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Feeds = createContext<{ read: ReadDescriptor<Result<typeof listFeeds>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const FeedEntries = createContext<{ read: ReadDescriptor<Result<typeof listFeedEntries>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
-const Chats = createContext<ReadDescriptor<Result<typeof fetchConversationIndex>> | null>(null);
 const Author = createContext<{ detail: ReadDescriptor<Result<typeof getContributor>>; works: ReadDescriptor<Result<typeof listContributorWorks>> } | null>(null);
 function requireRead<T>(value: T | null): T {
   // justify-defect: selected pane bodies always render below their route entry.
@@ -36,7 +34,6 @@ export const useLibrariesIndexRead = () => requireRead(useContext(Libraries));
 export const useLibraryEntriesRead = () => requireRead(useContext(Entries));
 export const useFeedsIndexRead = () => requireRead(useContext(Feeds));
 export const useFeedEntriesRead = () => requireRead(useContext(FeedEntries));
-export const useChatsIndexRead = () => requireRead(useContext(Chats));
 export const useAuthorIndexReads = () => requireRead(useContext(Author));
 
 function LibrariesEntry({ query, children }: EntryProps) {
@@ -76,12 +73,8 @@ function EpisodesEntry({ query, params, children }: EntryProps) {
   const read = useMemo(() => ({ key: `/feeds/${id}/entries?${text}`, stale, load: (signal: AbortSignal) => listFeedEntries(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
   return <FeedEntries.Provider value={{ read, group }}>{children}</FeedEntries.Provider>;
 }
-function ChatsEntry({ query, children }: EntryProps) {
-  const text = indexPaneQuery("conversations", query);
-  const stale = useChangeStamp("Chats");
-  const key = text === null ? null : `/conversations?${text}`;
-  const read = { key, stale, load: (signal: AbortSignal) => fetchConversationIndex(new URLSearchParams(text ?? ""), signal) };
-  return <Chats.Provider value={read}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Chats.Provider>;
+function BrowseEntry({ children }: EntryProps) {
+  return <SuggestionEntryRead.Provider value={browseSelectionRead}><PaneEntryReads reads={[browseSelectionRead]}>{children}</PaneEntryReads></SuggestionEntryRead.Provider>;
 }
 function AuthorEntry({ query, params, children }: EntryProps) {
   const handle = params.handle;
@@ -108,7 +101,7 @@ export function IndexPaneEntry({ routeId, ...props }: EntryProps & { routeId: Pa
     case "feeds": return <FeedsEntry {...props} kind="article" />;
     case "feedDetail":
     case "podcastDetail": return <EpisodesEntry {...props} />;
-    case "conversations": return <ChatsEntry {...props} />;
+    case "browse": return <BrowseEntry {...props} />;
     case "author": return <AuthorEntry {...props} />;
     default: return props.children;
   }

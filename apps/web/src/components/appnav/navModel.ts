@@ -18,7 +18,7 @@ function navItem(id: DestinationId): NavItem {
 
 /** The rail, in its exact order; the first is home. */
 export const NAV_RAIL: readonly NavItem[] = (
-  ["lectern", "libraries", "browse", "podcasts", "chats", "notes", "atlas", "oracle"] as const
+  ["lectern", "libraries", "browse", "podcasts", "librarian", "notes", "atlas", "oracle"] as const
 ).map(navItem);
 export const NAV_IMPORTS = navItem("imports");
 export const NAV_STATS = navItem("stats");

@@ -95,6 +95,12 @@ its viewport. metadata labels do not own the text or pdf viewer lifecycle.
 visit capture projects that owned measurement; it does not recapture transient
 layout during host resize or unmount.
 
+the media host consumes each observed generation, title/transcript metadata,
+child publication and citation change once. a newer fact supersedes an in-flight
+read, including a title reverting to the displayed value. only a newly observed
+generation selects versioned reload; later metadata reads retain that generation
+fence. failed reads use the reader's existing repair owner.
+
 a capture host registers its reader with the same mobile chrome and viewport
 owners as a media host. ready-source annotations and evidence use
 `DocumentReaderView.end` inside that scrollport and its palette; they cannot shrink
@@ -495,6 +501,12 @@ selection gestures consume only their matching click, so preserving or clearing
 a selection cannot activate an underlying link or mark. trusted native long
 press admits its touch session; later handle changes remain observable. local
 `onSelecting` painting describes range existence, and suspends focus dimming.
+
+a pending source read leaves the rendered publication valid. selection, refinement,
+highlight creation and librarian transfer use its exact identity and current
+geometry; fetch activity alone cannot retire them. a replacement publication
+invalidates old selections through the existing identity checks. reading-position
+writes retain their separate source/cursor binding fence.
 
 `Reader.captureSelection()` synchronously delegates to the mounted surface of the
 current publication and this same validation/capture path. it returns null for

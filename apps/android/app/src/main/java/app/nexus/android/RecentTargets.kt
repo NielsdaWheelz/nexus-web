@@ -58,16 +58,11 @@ internal class RecentTargets(directory: File) {
                 val parts = target.getString("ref").split(":")
                 require(parts.size == 2 && UUID.fromString(parts[1]).toString() == parts[1])
                 val path = when (parts[0]) {
-                    "media" -> "media"; "library" -> "libraries"; "conversation" -> "conversations"
+                    "media" -> "media"; "library" -> "libraries"
                     "podcast" -> "podcasts"; "feed" -> "feeds"; "page" -> "pages"; "note_block" -> "notes"; "highlight" -> "highlights"; "oracle_reading" -> "oracle"
                     else -> throw IllegalArgumentException("invalid recent resource")
                 }
-                val base = "/$path/${parts[1]}"
-                if (parts[0] == "conversation" && href.startsWith("$base?leaf=")) {
-                    val leaf = href.substringAfter("?leaf=")
-                    require(leaf == "empty" || UUID.fromString(leaf).toString() == leaf)
-                    "$base?leaf=$leaf"
-                } else base
+                "/$path/${parts[1]}"
             }
             "contributor_handle" -> {
                 val handle = target.getString("handle")
@@ -108,7 +103,11 @@ internal class RecentTargets(directory: File) {
         if (entry) { require(row.opt("used_revision") is String); revision(row.getString("used_revision")) }
     }
 
-    private fun read(account: UUID): JSONObject {
+    private fun emptySnapshot(account: UUID): JSONObject = JSONObject()
+        .put("format_version", 2).put("account_id", account.toString())
+        .put("epoch", UUID.randomUUID().toString()).put("revision", "1").put("entries", JSONArray())
+
+    private fun read(account: UUID, resetObsolete: Boolean = false): JSONObject {
         val bytes = file.readFully()
         val text = Charsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
             .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(bytes)).toString()
@@ -116,7 +115,14 @@ internal class RecentTargets(directory: File) {
         val snapshot = parser.nextValue() as? JSONObject ?: throw IllegalArgumentException("invalid recent snapshot")
         require(parser.nextClean() == '\u0000')
         require(snapshot.keys().asSequence().toSet() == setOf("format_version", "account_id", "epoch", "revision", "entries"))
-        require(snapshot.opt("format_version") == 1 && snapshot.opt("account_id") is String && snapshot.getString("account_id") == account.toString())
+        require(snapshot.opt("account_id") is String && snapshot.getString("account_id") == account.toString())
+        if (resetObsolete && snapshot.opt("format_version") == 1) {
+            val fresh = emptySnapshot(account)
+            write(fresh)
+            failure = null
+            return fresh
+        }
+        require(snapshot.opt("format_version") == 2)
         require(snapshot.opt("epoch") is String && snapshot.opt("revision") is String)
         val epoch = snapshot.getString("epoch")
         require(UUID.fromString(epoch).toString() == epoch)
@@ -153,11 +159,9 @@ internal class RecentTargets(directory: File) {
     }
 
     fun operation(account: UUID, op: String, epoch: String?, input: JSONObject?): JSONObject {
-        val snapshot = try { read(account) } catch (error: FileNotFoundException) {
+        val snapshot = try { read(account, resetObsolete = op == "open" && epoch == null) } catch (error: FileNotFoundException) {
             if (op != "open" || file.baseFile.exists()) throw error
-            JSONObject().put("format_version", 1).put("account_id", account.toString())
-                .put("epoch", UUID.randomUUID().toString()).put("revision", "1").put("entries", JSONArray())
-                .also {
+            emptySnapshot(account).also {
                     val previous = failure
                     try { write(it) } catch (error: IOException) { failure = previous; throw error }
                 }

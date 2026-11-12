@@ -1,8 +1,9 @@
 # Model tools
 
-What a model may do inside Nexus on a user's behalf, inside a frozen grant: read
-what the chat may see, make five kinds of additive writes, search and read the web,
-and (for one configured owner) use shared memory. every call leaves one row;
+what a model may do inside nexus on a user's behalf, inside a frozen grant: read
+account-authorized resources within the librarian's message horizon, make five
+kinds of additive writes, search and read the web, and (for one configured owner)
+use shared memory. every call leaves one row;
 nexus writes are attributable and undoable. remote memory saves are append-only.
 
 Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`, `writes`,
@@ -13,7 +14,7 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
 
 ## Concepts
 
-- **tool contract** (`contract.py`): the closed vocabulary. Ten Nexus specs plus
+- **tool contract** (`contract.py`): the closed vocabulary. the Nexus specs plus
   llm-tools' web pair and universal-memory's six; per tool its input, success and
   error schemas, effect, byte limits, per-tool deadlines, result kind and
   activity verb. input schemas are what providers publish; nothing else is.
@@ -28,20 +29,22 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
   queue filing report added/already present. admission does not mean import completion.
 - **plan**: plan id -> granted tool ids, in publication order: `NoModelTools`,
   `ChatReadAdditiveWrite`, `ChatMemoryRead`, `ChatMemoryReadSave`,
-  `MetadataResearch`. Generation policy picks one; admission freezes it into the
-  generation spec. unavailable required tools refuse admission. metadata research
+  `MetadataResearch` and `SelectionRead`. generation policy picks one; admission
+  freezes it into the generation spec. unavailable required tools refuse admission. metadata research
   omits unconfigured optional web search; an exposed web search or page-read
   refusal, unavailability or timeout is a typed result, so research may continue
   with saved text and learned knowledge.
-- **admitted scope**: the frozen resource URIs a generation may touch (a chat: its
-  context refs at admission; metadata research: `media:{id}`). Reads also accept a
-  pointer into an admitted parent: a `page_range:` of an admitted media, a complete
-  user/assistant `message:` of an admitted conversation, a fragment-like ref whose
-  media is admitted. Arguments and outputs never widen it.
+- **admission**: librarian tools use current account visibility, with messages
+  bounded before the active turn's user-message sequence. attachments focus the
+  question without restricting resource access. background tools use frozen
+  resource URIs: metadata research admits its media; selection admits offered
+  candidates and intent refs. a read may follow an admitted media to exact page or
+  fragment pointers. arguments and outputs cannot expand background scope.
 - **tool call**: one `tool_calls` row per call that reached dispatch: generation,
-  seq, dense position, principal, the chat answer (while it exists), tool, arguments,
-  result, created refs, status, revert stamp. Its id is the effect id: note and
-  highlight ids are `uuid5(call id, component)`; a memory save submits it.
+  seq, dense position, principal, the answer (while it exists), tool, target identifiers,
+  outcome, created refs, status and revert stamp. librarian and editorial receipts
+  omit copied source text and full successful outputs; current labels hydrate reads.
+  its id is the effect id: note and highlight ids are `uuid5(call id, component)`; a memory save submits it.
 - **write budget**: complete, unreverted Nexus writes of the generation; at 8 the
   next write is `WriteCapReached`; undo frees one. No-op writes count (D-Q4).
 - **undo**: one route, `POST /assistant-writes/{tool_call_id}/undo`, for the chat
@@ -74,11 +77,11 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
   requires current named-library authority, the exact inserted entry id and its
   unchanged receipt revision. stale, absent or historical null-revision entry
   receipts return `E_RESOURCE_CONFLICT` atomically; default holdings survive.
-- I8 history, authorship and undo outlive the conversation and the target.
+- I8 history, authorship and undo outlive the deleted turn and the target.
 - I9 the model sees a call's output only after its row committed; in a chat the
   output carries the call's numbered `tool_citation` sections.
 - I10 memory tools run only for the config's owner, in a live chat; a save submits
-  `submission_id` = call id, `native_conversation_id` = the chat.
+  `submission_id` = call id, `native_conversation_id` = the stable account id.
 - I11 terminal states: `complete` (Success), `error` (Failure, an escaping handler
   exception, or chat finalize), `cancelled` (a cancelled callback or stopped chat).
   An escaping exception rolls back local effects, settles its still-running row
@@ -103,8 +106,8 @@ canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
    anything else propagates after settling the receipt (I11). A stop cancels the
    codex callback here and marks its unfinished receipt `cancelled`.
 3. `_complete` (one transaction): a Failure rolls back locally staged effects; lock the
-   chat run; complete the row; in a chat, web snapshots for `web.search`, the call's
-   retrievals, the `tool_result` frame and the numbered output; commit.
+   chat run; complete the row; persist live retrieval targets, the `tool_result`
+   frame and numbered citations. full source output is transient model input; commit.
 
 Writes (`writes._write`) admit every URI field directly, take the fence (held to
 commit), count the cap, run the domain owner, and map reviewed owner refusals to
@@ -112,11 +115,11 @@ declared errors.
 
 ## canonical reads and native captures
 
-background research selects canonical search and `read_evidence`; retained chat
-citations select explicit rich ports. both retain one scope/source/locator proof.
-rich excerpts are frozen within the read snapshot before `_complete` opens its
-publication transaction. existing authored snapshots use their shared clipping
-owner; canonical research never fetches native html or hydrates its excerpts.
+background research selects canonical search and `read_evidence`. librarian reads
+select current authorized source text and exact locators. retrieval receipts keep
+resource references or urls, never source bodies, web snippets or native excerpts.
+source reads close their snapshots before publication. reopening a citation resolves
+its current source; a changed or missing source is not historically reconstructed.
 
 full resource reads refuse `TooLarge` above 50,000 characters before their sql
 producer sends body text to python. accepted reads return the complete requested
@@ -143,10 +146,9 @@ answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
 `E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
 pass through.
 
-Coordinator defaults the owner may reverse: one undo route (D-T3; reversing
-restores a chat-scoped route), and rows outlive the conversation (D-T4;
-`assistant_message_id ON DELETE SET NULL`, so "View creation" then opens settings
-at `?generation_id=&tool_call_id=`).
+one account-wide undo route serves every surface. receipts outlive turn deletion
+(`assistant_message_id ON DELETE SET NULL`); "view creation" then opens settings
+at `?generation_id=&tool_call_id=`.
 
 ## Shared memory
 
@@ -175,12 +177,12 @@ normalized only when every leaf is recognized; mixed known codes become
 `unavailable`. unknown defects and cancellation propagate; the outer tool deadline
 retains `DeadlineExceeded`. no retry, reconnect or alternate endpoint is added.
 
-a save uses the original `tool_calls.id` and host-known conversation. after
+a save uses the original `tool_calls.id` and host-known stable account id. after
 submission, failure does not prove absence: the central note may have committed
 even if nexus rolls back, times out or stops. client-normalized failures say so
 in their existing notice; outer deadline/cancellation keeps its existing result.
 report success only after a valid receipt. an intentional same-intent replay uses
-the exact id/text/owner/conversation; a new model call, rerun or regeneration is
+the exact id/text/owner/account association; a new model call or retry is
 a new intent. there is no new recovery ledger or endpoint. local transaction
 completion and undo cannot reverse a central note.
 

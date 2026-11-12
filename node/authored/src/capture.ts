@@ -26,7 +26,7 @@ export function captureLocator(value: unknown, source_ref: string): Locator {
     case "transcript_time_range": return { type: raw.type, media_id: raw.media_id, t_start_ms: raw.t_start_ms, t_end_ms: raw.t_end_ms, text_quote_selector: selector };
     case "audio_time_range":
     case "video_time_range": return { type: raw.type, media_id: raw.media_id, t_start_ms: raw.t_start_ms, t_end_ms: raw.t_end_ms };
-    case "message_offsets": return { type: raw.type, conversation_id: raw.conversation_id, message_id: raw.message_id, start_offset: raw.start_offset, end_offset: raw.end_offset, message_seq: raw.message_seq ?? null, text_quote_selector: selector };
+    case "message_offsets": return { type: raw.type, message_id: raw.message_id, start_offset: raw.start_offset, end_offset: raw.end_offset, message_seq: raw.message_seq ?? null, text_quote_selector: selector };
     case "external_url": return { type: raw.type, url: raw.url, title: raw.title ?? null, display_url: raw.display_url ?? null, accessed_at: raw.accessed_at ?? null };
     default: throw new TypeError("Unknown locator type");
   }

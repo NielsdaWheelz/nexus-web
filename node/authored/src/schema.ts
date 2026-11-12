@@ -4,13 +4,26 @@ import { PAGE_TITLE_SQL } from "./queries.ts";
 /** Both outboxes read the server's maximum 64 changes in immutable source order;
  * each host then takes the prefix fitting the existing upload byte budget. */
 export const PENDING_CHANGES_SQL = "SELECT change_json,byte_length FROM pending_changes ORDER BY command_seq LIMIT 64";
-/** Run only in the host's transaction after proving format 4 and an empty
- * outbox. Immutable commands, merge bytes and replica counters stay untouched. */
-export const UPGRADE_4_TO_5_SQL = [
-  "UPDATE resources SET state_json=json_set(state_json,'$.work',NULL) WHERE kind='note'",
-  "UPDATE resources SET projection_json=json_set(projection_json,'$.work',NULL)",
-  "UPDATE passages SET projection_json=json_set(projection_json,'$.work',NULL)",
-  "UPDATE replica_state SET format_revision=5,store_revision=store_revision+1 WHERE singleton=1",
+/** Empty-outbox cutover: preserve replica/source counters and re-enter verified
+ * snapshot provisioning. Neither host may expose old grammar while awaiting it. */
+export const UPGRADE_TO_6_SQL = [
+  "DELETE FROM resources",
+  "DELETE FROM links",
+  "DELETE FROM passages",
+  "DELETE FROM source_stubs",
+  "DELETE FROM reference_index",
+  "DELETE FROM search_documents",
+  "DELETE FROM scope_facts",
+  "DELETE FROM scope_readings",
+  "DELETE FROM scope_intervals",
+  "DELETE FROM scope_text",
+  "DELETE FROM scope_normalized",
+  "DELETE FROM scope_normalized_complete",
+  "DELETE FROM scope_text_complete",
+  "DELETE FROM scope_text_progress",
+  "DELETE FROM scope_revocations",
+  "UPDATE scope_state SET active_revision=NULL,staging_revision=NULL,metadata_cursor=NULL,metadata_complete=0 WHERE singleton=1",
+  "UPDATE replica_state SET format_revision=6,provisioning_complete=0,store_revision=store_revision+1 WHERE singleton=1",
 ] as const;
 export const DEVICE_SCHEMA = [
   "PRAGMA foreign_keys = ON",

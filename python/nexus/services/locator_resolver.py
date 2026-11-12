@@ -250,14 +250,15 @@ def read_passage_sources(
         else {}
     )
     annotations = (
-        dict(
-            db.execute(
+        {
+            identity: body
+            for identity, body in db.execute(
                 text(
                     "SELECT id,annotation_body_text FROM highlights WHERE id=ANY(:ids) AND user_id=:viewer_id AND authored_visible AND annotation_body_pm_json IS NOT NULL"
                 ),
                 {"ids": highlight_ids, "viewer_id": viewer_id},
-            ).tuples()
-        )
+            )
+        }
         if highlight_ids
         else {}
     )

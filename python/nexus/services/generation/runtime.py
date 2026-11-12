@@ -43,8 +43,7 @@ def run_generation_job[R](
 ) -> R:
     """Run one job attempt's async work on its own event loop with a fresh runtime.
 
-    The attempt first closes its job's open rows: only an earlier, dead attempt
-    can have left one. ``httpx`` clients and the provider runtime are bound to this
+    The attempt first confirms native finality and closes its job's stale open rows. ``httpx`` clients and the provider runtime are bound to this
     loop, so each attempt composes its own; the Codex catalog is cached per process.
     """
 
@@ -81,8 +80,15 @@ def run_generation_job[R](
             )
             return await work(db, runtime)
 
+    from nexus.services.generation.native_execution import NativeFinalityPending, confirm_job
+
     db = get_session_factory()()
     try:
+        finality = confirm_job(context.job_id, claim=context)
+        if finality == "lost":
+            raise JobFailure("E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry")
+        if finality == "pending":
+            raise NativeFinalityPending()
         if not recover_job_generations(db, context=context):
             raise JobFailure("E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry")
         db.commit()

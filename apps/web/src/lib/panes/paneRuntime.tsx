@@ -20,7 +20,7 @@ import type {
   WorkspaceSecondaryPane,
 } from "@/lib/workspace/model";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import { useWorkspaceStore, type PaneViewHrefUpdate, type PaneHistoryOptions, type WorkspaceNavigationResult } from "@/lib/workspace/store";
+import { useWorkspaceStore, type PaneHistoryOptions, type WorkspaceNavigationResult } from "@/lib/workspace/store";
 import type {
   PaneEntryDelivery,
   WorkspaceTarget,
@@ -73,7 +73,6 @@ interface PaneRuntimeFacts {
 }
 interface PaneRuntimeCommands {
   router: PaneScopedRouter;
-  updatePaneViewHref(input: Omit<PaneViewHrefUpdate, "paneId">): boolean;
   activateTarget(input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
@@ -142,7 +141,6 @@ export function PaneRuntimeProvider(props: {
     };
     const commands: PaneRuntimeCommands = {
       router,
-      updatePaneViewHref: (input) => now().store.updatePaneViewHref({ paneId: pane.id, ...input }),
       activateTarget: (input) =>
         now().store.activateWorkspaceTarget({ originPaneId: pane.id, ...input }),
       setPreviewTitleHint: (input) => {

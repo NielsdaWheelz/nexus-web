@@ -26,7 +26,7 @@ class IntentAnchor:
 
 
 def recent_intent(db: Session, *, viewer_id: UUID) -> tuple[IntentAnchor, ...]:
-    """One latest user turn per conversation; repeated actions never add votes."""
+    """Recent committed user intent; retries and automatic output never add votes."""
     facts = [
         IntentAnchor(ResourceRef("media", fact.media_id), fact.activity_at)
         for read in (
@@ -43,28 +43,31 @@ def recent_intent(db: Session, *, viewer_id: UUID) -> tuple[IntentAnchor, ...]:
         text(f"""
             WITH visible AS MATERIALIZED ({visible_media_ids_cte_sql()}),
             user_turns AS (
-                SELECT DISTINCT ON (m.conversation_id) m.id,m.created_at,m.content,
-                    m.reader_selection_snapshot #>> '{{evidence,target,owner_ref}}' AS quoted_ref
-                FROM messages m JOIN conversations c ON c.id=m.conversation_id
-                WHERE c.owner_user_id=:viewer_id AND m.role='user' AND m.status='complete'
-                  AND (m.content<>'' OR m.reader_selection_snapshot IS NOT NULL)
-                ORDER BY m.conversation_id,m.created_at DESC,m.id DESC
+                SELECT m.id,m.created_at,m.content,m.attachments
+                FROM messages m JOIN chat_runs r ON r.user_message_id=m.id
+                WHERE m.owner_user_id=:viewer_id AND m.role='user' AND m.status='complete'
+                  AND r.retry_of_run_id IS NULL
+                  AND (m.content<>'' OR jsonb_array_length(m.attachments)>0)
             ), recent AS (
                 SELECT * FROM user_turns ORDER BY created_at DESC,id DESC LIMIT :limit
             )
             SELECT r.id,r.created_at,NULLIF(left(r.content,:text_limit),'') AS terms,v.media_id
-            FROM recent r LEFT JOIN visible v ON r.quoted_ref='media:' || v.media_id::text
+            FROM recent r LEFT JOIN LATERAL (
+                SELECT media_id FROM jsonb_array_elements(r.attachments) WITH ORDINALITY a(value,n)
+                JOIN visible ON a.value->>'resource_ref'='media:' || visible.media_id::text
+                ORDER BY a.n LIMIT 1
+            ) v ON true
             ORDER BY r.created_at DESC,r.id DESC
         """),
         {"viewer_id": viewer_id, "limit": ANCHOR_LIMIT, "text_limit": _MESSAGE_TEXT_LIMIT},
-    )
+    ).all()
     facts += [
-        IntentAnchor(
-            ResourceRef("media", row.media_id) if row.media_id else ResourceRef("message", row.id),
-            row.created_at,
-            row.terms,
-        )
+        IntentAnchor(ResourceRef("message", row.id), row.created_at, row.terms) for row in rows
+    ]
+    facts += [
+        IntentAnchor(ResourceRef("media", row.media_id), row.created_at)
         for row in rows
+        if row.media_id is not None
     ]
     saved = db.execute(
         text(f"""
@@ -81,16 +84,12 @@ def recent_intent(db: Session, *, viewer_id: UUID) -> tuple[IntentAnchor, ...]:
         IntentAnchor(ResourceRef("media", row.media_id), row.last_manually_saved_at)
         for row in saved
     ]
-    facts.sort(key=lambda fact: (-fact.activity_at.timestamp(), fact.ref.uri, fact.terms is None))
+    facts.sort(key=lambda fact: (-fact.activity_at.timestamp(), fact.terms is None, fact.ref.uri))
     distinct: dict[ResourceRef, IntentAnchor] = {}
     for fact in facts:
         prior = distinct.get(fact.ref)
         if prior is None:
             distinct[fact.ref] = fact
-        elif prior.terms is None and fact.terms is not None:
-            # Reading/saving a quoted work advances its activity, not the user's words.
-            # The sorted, bounded message facts supply its latest accepted text once.
-            distinct[fact.ref] = IntentAnchor(prior.ref, prior.activity_at, fact.terms)
     return tuple(distinct.values())[:ANCHOR_LIMIT]
 
 

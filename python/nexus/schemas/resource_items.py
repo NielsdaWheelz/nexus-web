@@ -19,6 +19,7 @@ from nexus.schemas.imports import (
     RepairSourceOffer,
     RetrySourceOffer,
 )
+from nexus.schemas.live_reference import LiveLocator, LiveReference
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.reader_excerpts import ExcerptView
@@ -51,20 +52,17 @@ class ResourceSourceTargetKey(_Out):
         return self
 
 
-class ReaderQuoteSourceTargetKey(_Out):
-    kind: Literal["reader_quote"] = "reader_quote"
-    message_id: UUID
-
-
 class CitationSourceTargetKey(_Out):
     kind: Literal["citation"] = "citation"
     edge_id: UUID
     side: Literal["source", "target"]
 
 
-class RetrievalSourceTargetKey(_Out):
-    kind: Literal["retrieval"] = "retrieval"
-    retrieval_id: UUID
+class LiveReferenceSourceTargetKey(_Out):
+    """Raw structural coordinates in a live resource; nothing was captured with them."""
+
+    kind: Literal["live_reference"] = "live_reference"
+    reference: LiveReference
 
 
 class XPostSourceTargetKey(_Out):
@@ -74,9 +72,8 @@ class XPostSourceTargetKey(_Out):
 
 SourceTargetKey = Annotated[
     ResourceSourceTargetKey
-    | ReaderQuoteSourceTargetKey
     | CitationSourceTargetKey
-    | RetrievalSourceTargetKey
+    | LiveReferenceSourceTargetKey
     | XPostSourceTargetKey,
     Field(discriminator="kind"),
 ]
@@ -202,6 +199,15 @@ class LocatedSourceLocationOut(_Out):
     apparatus_reference_id: UUID | None
 
 
+class LiveSourceLocationOut(_Out):
+    """A live reference's own coordinates, proven to lie inside the source as it is now.
+    No words travel with them; ``source_identity`` names a media's current publication."""
+
+    kind: Literal["live"] = "live"
+    locator: LiveLocator
+    source_identity: str | None
+
+
 class PointSourceLocationOut(_Out):
     kind: Literal["point"] = "point"
     point: ReaderPointOut
@@ -223,6 +229,7 @@ class SourceTargetOut(_Out):
     location: Annotated[
         WholeSourceLocationOut
         | LocatedSourceLocationOut
+        | LiveSourceLocationOut
         | PointSourceLocationOut
         | UnavailableSourceLocationOut
         | XPostSourceLocationOut,
@@ -275,11 +282,6 @@ SimpleActionKind = Literal[
     "UnsubscribeFeed",
     "RemoveFeedItems",
     "RefreshFeed",
-    "DeleteConversation",
-    "ForkMessage",
-    "RerunMessage",
-    "RegenerateMessage",
-    "DeleteMessage",
     "EditHighlight",
     "EditHighlightAnnotation",
     "EditHighlightBounds",
@@ -292,6 +294,13 @@ SimpleActionKind = Literal[
 
 class SimpleAction(_Action):
     kind: SimpleActionKind
+
+
+class TurnAction(_Action):
+    """A librarian turn's verb, offered on either message of its pair."""
+
+    kind: Literal["RetryTurn", "DeleteTurn"]
+    run_id: UUID
 
 
 class RetryMetadataAction(_Action):
@@ -358,6 +367,7 @@ class LecternMembershipAction(_Action):
 
 ResourceActionOut = Annotated[
     SimpleAction
+    | TurnAction
     | RefreshSourceAction
     | RetryMetadataAction
     | RecoveryAction

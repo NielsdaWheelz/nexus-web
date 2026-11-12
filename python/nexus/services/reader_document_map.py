@@ -230,20 +230,15 @@ def get_capture_document_map(
         ReaderEvidenceCountsOut,
         ReaderEvidenceHighlightOut,
         ReaderEvidenceOut,
-        ReaderEvidenceQuoteOut,
         ReaderEvidenceResolvedOut,
         ReaderEvidenceResourceOut,
         ReaderEvidenceRootOut,
-        ReaderEvidenceUnavailableOut,
     )
-    from nexus.schemas.resource_items import LocatedSourceLocationOut, ReaderQuoteSourceTargetKey
     from nexus.schemas.retrieval import XCaptureOffsetsLocator
-    from nexus.services.chat import quotes
     from nexus.services.reader_document import read_capture_document, reading_source_ranges
     from nexus.services.reader_evidence_markers import build_markers
     from nexus.services.resource_graph import order
     from nexus.services.resource_graph.connections import hydrate_connections
-    from nexus.services.resource_items.evidence import resolve_source_target
     from nexus.services.resource_items.items import resource_items_out
 
     document = read_capture_document(db, viewer_id, capture_id)
@@ -268,9 +263,7 @@ def get_capture_document_map(
         )
         .order_by(Highlight.created_at, Highlight.id)
     ).all()
-    quotations = quotes.reader_quotes(db, viewer_id=viewer_id, fragment_ids=list(owners))
     refs = [ResourceRef("highlight", highlight.id) for highlight, _ in rows]
-    refs.extend(ResourceRef("message", message_id) for message_id, _ in quotations)
     items = {item.ref: item for item in resource_items_out(db, viewer_id=viewer_id, refs=refs)}
     roots: dict[str, ReaderEvidenceRootOut] = {}
     for highlight, anchor in rows:
@@ -310,41 +303,6 @@ def get_capture_document_map(
             continuation=None,
             authored_placement=None,
         )
-    owner_refs = {f"fragment:{fragment}" for fragment in owners}
-    for message_id, snapshot in quotations:
-        quotation = quotes.selection_out(
-            db, viewer_id=viewer_id, snapshot=snapshot, message_id=message_id
-        ).item
-        if quotation.missing:
-            continue
-        target = resolve_source_target(
-            db, viewer_id=viewer_id, target=ReaderQuoteSourceTargetKey(message_id=message_id)
-        )
-        if (
-            target.source_activation is None
-            or target.source_activation.resource_ref not in owner_refs
-        ):
-            continue
-        resolution: ReaderEvidenceResolvedOut | ReaderEvidenceUnavailableOut = (
-            ReaderEvidenceUnavailableOut(reason="Unanchorable")
-        )
-        if isinstance(target.location, LocatedSourceLocationOut):
-            locator = target.location.locator
-            if (
-                locator.type == "x_capture_offsets"
-                and owners.get(locator.fragment_id) == locator.capture_id
-            ):
-                resolution = ReaderEvidenceResolvedOut(
-                    anchor=ReaderEvidenceAnchorOut(locator=locator),
-                    order_key=f"fragment:{indexes[str(locator.fragment_id)]:010d}:{locator.start_offset:010d}",
-                )
-        roots[quotation.ref] = ReaderEvidenceRootOut(
-            ref=quotation.ref,
-            content=ReaderEvidenceQuoteOut(item=items[quotation.ref], quotation=quotation),
-            resolution=resolution,
-            continuation=None,
-            authored_placement=None,
-        )
     for fragment_id in owners:
         endpoint = ResourceRef("fragment", fragment_id)
         edges = [edge for edge, _ in order.ordered(db, viewer_id, endpoint)]
@@ -378,7 +336,6 @@ def get_capture_document_map(
     values = list(roots.values())
     counts = ReaderEvidenceCountsOut(
         highlights=len(rows),
-        quotes=sum(isinstance(root.content, ReaderEvidenceQuoteOut) for root in values),
         citations=sum(
             any(f.origin == "citation" and f.ordinal is not None for f in root.direct_facts)
             for root in values

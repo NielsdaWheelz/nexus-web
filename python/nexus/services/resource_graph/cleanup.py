@@ -7,7 +7,7 @@
    liveness, and its projection row and endpoint positions stay. A gone endpoint is a
    source stub to devices and unreadable to every server reader.
 
-View states go before their edges, and external snapshots no longer cited by anything
+View states go before their edges, and external snapshots no longer cited by any edge
 go too. Flush-only; death is global, so nothing here filters by viewer.
 """
 
@@ -34,7 +34,6 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
-    MessageRetrieval,
     ResourceEdge,
     ResourceExternalSnapshot,
     ResourceViewState,
@@ -144,7 +143,7 @@ def delete_edges_for_deleted_resources(
 
 
 def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UUID]) -> None:
-    """Delete captured web snapshots that no edge and no retrieval row references."""
+    """Delete captured external snapshots that no edge references."""
     ids = list(set(snapshot_ids))
     if not ids:
         return
@@ -155,13 +154,5 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
                 ResourceEdge.target_scheme == "external_snapshot",
                 ResourceEdge.target_id == ResourceExternalSnapshot.id,
             ),
-            ~exists().where(
-                MessageRetrieval.result_type == "web_result",
-                MessageRetrieval.source_id == cast(ResourceExternalSnapshot.id, String),
-            ),
         )
     )
-
-    from nexus.services.search import projection
-
-    projection.refresh(db, "web_result", ids)

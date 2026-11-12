@@ -35,9 +35,10 @@ from nexus.schemas.resource_items import (
     SimpleActionKind,
     TranscriptAction,
     TranscriptState,
+    TurnAction,
 )
 from nexus.services import highlights, libraries, library_entries
-from nexus.services.chat import conversations
+from nexus.services.chat import timeline
 from nexus.services.consumption import lectern, projection
 from nexus.services.feeds.queries import feed_states
 from nexus.services.media import media_facts
@@ -94,8 +95,6 @@ def _scheme_actions(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> list[R
             return [_simple("EditPageTitle"), _simple("DeletePage")]
         case "note_block":
             return [_simple("EditNoteBody")]
-        case "conversation":
-            return [_simple("DeleteConversation")]
         case (
             "evidence_span"
             | "content_chunk"
@@ -268,18 +267,17 @@ def _highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[Resourc
 
 
 def _message(db: Session, viewer_id: UUID, message_id: UUID) -> list[ResourceActionOut]:
-    facts = conversations.message_action_facts(
-        db, viewer_id=viewer_id, message_ids=[message_id]
-    ).get(message_id)
+    facts = timeline.message_action_facts(db, viewer_id=viewer_id, message_ids=[message_id]).get(
+        message_id
+    )
     if facts is None:
         return []
-    applicable: list[tuple[bool, SimpleActionKind]] = [
-        (facts.fork_applicable, "ForkMessage"),
-        (facts.rerun_applicable, "RerunMessage"),
-        (facts.regenerate_applicable, "RegenerateMessage"),
-        (True, "DeleteMessage"),
-    ]
-    return [_simple(kind) for applies, kind in applicable if applies]
+    actions: list[ResourceActionOut] = []
+    if facts.can_retry:
+        actions.append(TurnAction(kind="RetryTurn", run_id=facts.run_id, blocked=None))
+    if facts.can_delete:
+        actions.append(TurnAction(kind="DeleteTurn", run_id=facts.run_id, blocked=None))
+    return actions
 
 
 def _simple(kind: SimpleActionKind, blocked: BlockReason | None = None) -> SimpleAction:

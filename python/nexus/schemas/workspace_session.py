@@ -34,7 +34,6 @@ SURFACE_GROUP = {
     "resource-contents": "resource-inspector",
     "resource-members": "resource-inspector",
     "resource-connections": "resource-inspector",
-    "resource-forks": "resource-inspector",
     "import-detail": "imports-inspector",
 }
 
@@ -81,7 +80,6 @@ class WorkspaceSecondaryPane(_Model):
         "resource-contents",
         "resource-members",
         "resource-connections",
-        "resource-forks",
         "import-detail",
     ]
     width_px: float = Field(gt=0)

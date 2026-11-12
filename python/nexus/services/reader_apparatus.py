@@ -983,15 +983,6 @@ def _delete_apparatus_item_dependents(db: Session, item_ids: list[UUID]) -> None
     db.execute(
         text(
             """
-            DELETE FROM message_retrievals
-            WHERE result_type = 'reader_apparatus_item' AND source_id = ANY(:source_ids)
-            """
-        ),
-        {"source_ids": [str(item_id) for item_id in item_ids]},
-    )
-    db.execute(
-        text(
-            """
             DELETE FROM resource_versions
             WHERE resource_scheme = 'reader_apparatus_item' AND resource_id = ANY(:ids)
             """
@@ -1168,17 +1159,16 @@ def _reconcile_items(
         text("""
             SELECT EXISTS (
                 SELECT 1 FROM resource_edges
-                WHERE (source_scheme='reader_apparatus_item' AND source_id=ANY(:ids))
-                   OR (target_scheme='reader_apparatus_item' AND target_id=ANY(:ids))
-                UNION ALL SELECT 1 FROM message_retrievals
-                WHERE result_type='reader_apparatus_item' AND source_id=ANY(:strings)
+                WHERE ((source_scheme='reader_apparatus_item' AND source_id=ANY(:ids))
+                   OR (target_scheme='reader_apparatus_item' AND target_id=ANY(:ids)))
+                  AND NOT (source_scheme='message' AND origin='citation')
                 UNION ALL SELECT 1 FROM resource_view_states
                 WHERE target_scheme='reader_apparatus_item' AND target_id=ANY(:ids)
                 UNION ALL SELECT 1 FROM resource_versions
                 WHERE resource_scheme='reader_apparatus_item' AND resource_id=ANY(:ids)
             )
         """),
-        {"ids": removed, "strings": [str(value) for value in removed]},
+        {"ids": removed},
     ):
         raise ApiError(
             ApiErrorCode.E_RESOURCE_CONFLICT,

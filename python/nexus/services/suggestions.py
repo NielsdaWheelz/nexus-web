@@ -1,11 +1,7 @@
-"""Suggestions: three deterministic next-read lists over one snapshot.
+"""Selection candidates and current eligibility shared by every destination.
 
-read-only, without provider calls; the caller's repeatable-read transaction makes
-``now()`` one instant. SQL decides each target's one family (Continuity,
-Arrival, then Rediscovery or GraphThread) and its order within it; a relational
-target needs evidence from an anchor (Connected, SharedAuthor, Similar, in that
-priority). Complete target and visibility facts are acquired once per caller-owned
-snapshot and reused by semantic and final ranking; Python only composes.
+Bounded deterministic retrieval supplies candidates for editorial publication.
+Quick reads directly applies its time/progress policy without a model.
 """
 
 from __future__ import annotations
@@ -27,6 +23,7 @@ from nexus.schemas.suggestions import (
     MediaSuggestionTargetOut,
     QuickReadsOut,
     SuggestionItemOut,
+    SuggestionTargetOut,
 )
 from nexus.services import (
     daily_selection,
@@ -56,12 +53,18 @@ _EDGE_ORIGINS = ["user", "citation", "note_body", "document_embed", "discovery"]
 _EMBEDDING = ("openai", "openai_text_embedding_3_small_256_v1", 256)
 _MIN_SIMILARITY = 0.80
 
-Surface = Literal["lectern", "library", "default_library", "daily"]
+Mode = Literal["suggestions", "daily", "browse"]
+Surface = Literal["lectern", "library", "default_library", "daily", "browse"]
 
 
 @dataclass(frozen=True, slots=True)
 class SuggestionsSelection:
     library_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class BrowseSelection:
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +77,7 @@ class DailySelection:
     window: daily_selection.DailyWindow
 
 
-Selection = SuggestionsSelection | QuickReadSelection | DailySelection
+Selection = SuggestionsSelection | QuickReadSelection | DailySelection | BrowseSelection
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,9 +97,12 @@ class _Candidate:
 
 def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
     return QuickReadsOut(
-        items=_hydrate(
-            db, viewer_id, select_refs(db, viewer_id=viewer_id, selection=QuickReadSelection())
-        )
+        items=[
+            SuggestionItemOut(target=item.target, rationale=None)
+            for item in _hydrate(
+                db, viewer_id, select_refs(db, viewer_id=viewer_id, selection=QuickReadSelection())
+            )
+        ]
     )
 
 
@@ -184,16 +190,18 @@ def select_refs(db: Session, *, viewer_id: UUID, selection: Selection) -> list[R
     if isinstance(selection, DailySelection):
         surface: Surface = "daily"
         params = daily_selection.bindings(selection.window)
-        limit = 5
+    elif isinstance(selection, BrowseSelection):
+        surface = "browse"
+        params = {}
     else:
         authorized = suggestion_surface(db, viewer_id=viewer_id, library_id=selection.library_id)
         if authorized is None:
             return []
         surface = authorized
         params = {"library_id": selection.library_id}
-        limit = 80
+    limit = 80
     candidates = _candidates(db, viewer_id, surface, params)
-    if surface == "lectern":
+    if surface in ("lectern", "browse"):
         return [ResourceRef(c.scheme, c.id) for c in _rotate(candidates, limit=80)]
     ordered = sorted(
         candidates, key=lambda c: (c.lane, c.lane_strength or c.strength, c.scheme, c.id)
@@ -234,6 +242,8 @@ def _context_anchors(
 def _eligible_media_sql(surface: Surface) -> str:
     """A visible media `m` the destination may be offered. The lectern's predicate needs `e`,
     the viewer's engagement with `m`; a library's needs `held`, everything it holds."""
+    if surface == "browse":
+        return "COALESCE(e.read_state, 'Unread') <> 'Finished'"
     if surface == "lectern":
         return f"""COALESCE(e.read_state, 'Unread') <> 'Finished'
             AND m.id NOT IN ({lectern.membership_rows_sql()})"""
@@ -250,11 +260,13 @@ def hydrate_current_suggestions(
     viewer_id: UUID,
     library_id: UUID | None,
     refs: Sequence[ResourceRef],
-    daily: bool = False,
-) -> list[SuggestionItemOut]:
+    mode: Mode = "suggestions",
+) -> list[SuggestionTargetOut]:
     """Revalidate only supplied identities; no ranking, graph or embedding acquisition."""
     surface = (
-        "daily" if daily else suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
+        mode
+        if mode in ("daily", "browse")
+        else suggestion_surface(db, viewer_id=viewer_id, library_id=library_id)
     )
     if surface is None or not refs:
         return []
@@ -266,13 +278,13 @@ def hydrate_current_suggestions(
     }
     held = (
         ""
-        if surface in ("lectern", "daily")
+        if surface in ("lectern", "daily", "browse")
         else f"WITH held AS ({library_entries.destination_membership_rows_sql()})"
     )
     engagement = (
         f"""LEFT JOIN ({projection.engagement_fact_rows_sql(media_ids_param="media_ids")}) e
         ON e.media_id = m.id"""
-        if surface == "lectern"
+        if surface in ("lectern", "browse")
         else ""
     )
     shows = f"""
@@ -290,7 +302,7 @@ def hydrate_current_suggestions(
                 SELECT 'media' AS scheme, m.id FROM media m
                 JOIN ({visible_media_ids_cte_sql()}) visible ON visible.media_id = m.id
                 {engagement}
-                WHERE m.id = ANY(:media_ids) AND {"true" if daily else _eligible_media_sql(surface)}
+                WHERE m.id = ANY(:media_ids) AND {"true" if mode == "daily" else _eligible_media_sql(surface)}
                 {shows if surface == "library" else ""}
             """),
             params,
@@ -313,7 +325,7 @@ def _targets_sql(surface: Surface) -> str:
             FROM ({daily_selection.eligible_media_rows_sql()}) d JOIN media m ON m.id=d.media_id
             LEFT JOIN engagement e ON e.media_id=m.id
         """
-    on_lectern = surface == "lectern"
+    on_lectern = surface in ("lectern", "browse")
     feeds = (
         f"""
         UNION ALL
@@ -911,7 +923,7 @@ def _take(
 
 def _hydrate(
     db: Session, viewer_id: UUID, picked: Sequence[ResourceRef]
-) -> list[SuggestionItemOut]:
+) -> list[SuggestionTargetOut]:
     media = media_service.hydrate_compact_media_targets(
         db, viewer_id=viewer_id, media_ids=[c.id for c in picked if c.scheme == "media"]
     )
@@ -919,7 +931,7 @@ def _hydrate(
         db, viewer_id=viewer_id, feed_ids=[c.id for c in picked if c.scheme in ("podcast", "feed")]
     )
     return [
-        SuggestionItemOut(
+        SuggestionTargetOut(
             target=MediaSuggestionTargetOut(
                 kind="Media",
                 ref=f"media:{c.id}",

@@ -32,7 +32,6 @@ import {
   Eye,
   EyeOff,
   FileText,
-  GitBranch,
   Globe,
   Headphones,
   Highlighter,
@@ -50,7 +49,6 @@ import {
   Map as MapDrawing,
   Maximize2,
   MessageSquare,
-  MessageSquarePlus,
   Minimize2,
   Minus,
   NotebookTabs,
@@ -163,8 +161,6 @@ export const Passage: Glyph = Quote;                  // its words
 export const Highlight: Glyph = Highlighter;          // a marked passage
 export const Library: Glyph = LibraryDrawing;         // a collection
 export const Chat: Glyph = MessageSquare;             // a conversation
-export const NewChat: Glyph = MessageSquarePlus;      // a conversation not yet begun
-export const Forks: Glyph = GitBranch;                // branches of a conversation
 export const Podcast: Glyph = PodcastDrawing;         // a show
 export const Feed: Glyph = Rss;                       // a feed
 export const SourceReference: Glyph = NotebookTabs;   // a reference in the source

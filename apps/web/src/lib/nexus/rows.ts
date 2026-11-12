@@ -28,7 +28,7 @@ export const OPEN_CAP = 5;
 const RECENT_CAP = 8;
 const COMMAND_IDS = Object.keys(NEXUS_COMMANDS) as NexusCommandId[];
 /** The sheet's places chips, rail order. */
-const PLACES: readonly DestinationId[] = ["today", "lectern", "libraries", "browse", "podcasts", "feeds", "chats", "notes", "atlas", "oracle"];
+const PLACES: readonly DestinationId[] = ["today", "lectern", "libraries", "browse", "podcasts", "feeds", "librarian", "notes", "atlas", "oracle"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
 const NO_USAGE: UsageMap = {};
 const UNSCORED = { href: null, evidence: false, frecency: 0, recency: 0 } as const;
@@ -446,7 +446,7 @@ export function choiceRows(page: NexusPage): NexusRow[] {
     key: `Choice:${label}`, localMatch: null, label, icon, action, ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
   });
   if (page.kind === "UseText") return [
-    choice("ask nexus", Icon.NewChat, NEXUS_COMMANDS["Nexus.Quick.Chat"].action(page.text)),
+    choice("ask librarian", Icon.Chat, NEXUS_COMMANDS["Nexus.Quick.Chat"].action(page.text)),
     choice("add to today", Icon.Today, NEXUS_COMMANDS["Nexus.Quick.Note"].action(page.text)),
     choice("browse…", Icon.Browse, NEXUS_COMMANDS["Nexus.Quick.Browse"].action(page.text)),
     choice("create…", Icon.Add, { kind: "Available", target: { kind: "ChooseCreate", initialDraft: page.text } }),
@@ -456,7 +456,7 @@ export function choiceRows(page: NexusPage): NexusRow[] {
     return [
       choice(page.draft ? "save note to today" : "quick note", Icon.Today, target("Nexus.Quick.Note")),
       choice("page", Icon.Page, target("Nexus.Quick.Page")),
-      choice("chat", Icon.NewChat, target("Nexus.Quick.Chat")),
+      choice("librarian", Icon.Chat, target("Nexus.Quick.Chat")),
       choice("library", Icon.Library, target("Nexus.Quick.Library")),
     ];
   }

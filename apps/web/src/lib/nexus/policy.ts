@@ -17,7 +17,7 @@ export const RAIL_CHIPS = 4;
 /** Read verbs the rail prefers after the fixed pair, in order; everything else stays in `more`. */
 export const RAIL_VERBS: readonly string[] = [
   "Nexus.OpenMatchingPassage", "Nexus.ShowExcerpt", "Playback", "LecternMembership", "SubscribeFeed",
-  "UnsubscribeFeed", "EditHighlightAnnotation", "EditNoteBody", "ForkMessage", "AddUnfinishedToLectern",
-  "RefreshFeed", "Chat", "Consumption", "EditPageTitle", "RegenerateMessage", "RerunMessage",
+  "UnsubscribeFeed", "EditHighlightAnnotation", "EditNoteBody", "AddUnfinishedToLectern",
+  "RefreshFeed", "Chat", "Consumption", "EditPageTitle", "RetryTurn",
   "FeedLibraries", "LibraryPlacement", "Share", "Transcript", "LibrarySettings", "PodcastSettings", "Metadata",
 ];

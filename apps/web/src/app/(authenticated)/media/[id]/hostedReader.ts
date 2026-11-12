@@ -177,6 +177,27 @@ export function targetOfLocator(
   }
 }
 
+/** Structural references resolve against the mounted source as it is now. No
+ * copied quote, revision fallback or nearest-text repair participates. */
+export function targetOfLiveLocation(location: Schema<"LiveSourceLocationOut">, doc: ReaderDocument): ReaderTarget | null {
+  const locator = location.locator;
+  if (location.source_identity !== null && location.source_identity !== readingPublicationIdentity(doc)) return null;
+  switch (locator.kind) {
+    case "WebTextOffsets": case "EpubTextOffsets": case "TranscriptTextOffsets": {
+      if (doc.kind !== "text") return null;
+      const unit = doc.units.find(unit => unit.id === locator.fragment_id || unit.xPost?.owner?.fragment_id === locator.fragment_id);
+      if (!unit) return null;
+      const start = localPoint(doc, { unit: unit.id, offset: locator.start_offset });
+      const end = localPoint(doc, { unit: unit.id, offset: locator.end_offset });
+      return start && end ? { kind: "range", unit: unit.id, start: start.offset, end: end.offset } : null;
+    }
+    case "PdfPageGeometry": return doc.kind === "pdf" ? { kind: "quads", page: locator.page_number, quads: locator.quads } : null;
+    case "PdfPage": return doc.kind === "pdf" ? { kind: "point", point: { kind: "pdf", page: locator.page_number, y: 0 } } : null;
+    case "TimeRange": return doc.kind === "text" && doc.format === "transcript" && transcriptUnitAtTime(doc.units, locator.start_ms) !== null ? { kind: "time", ms: locator.start_ms } : null;
+    case "TextOffsets": return null;
+  }
+}
+
 export const targetOfResolution = (resolution: Resolution, doc?: ReaderDocument) =>
   resolution.kind === "Resolved" ? targetOfLocator(resolution.anchor.locator,doc) : null;
 

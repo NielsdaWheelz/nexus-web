@@ -190,15 +190,8 @@ def _clear(db: Session, owner: IndexOwner) -> None:
         """),
             {"id": owner.id},
         )
-    # Chat citations keep rendering from their snapshots; their reopen fails closed.
-    db.execute(
-        text(
-            "UPDATE message_retrievals mr SET evidence_span_id = NULL FROM evidence_spans es"
-            " WHERE mr.evidence_span_id = es.id AND es.owner_kind = :kind AND es.owner_id = :id"
-        ),
-        params,
-    )
-    # Bare graph edges die with the rows; cited edges keep rendering from snapshots.
+    # Bare graph edges die with the rows. Citations retain their target identity;
+    # live message references become unavailable, while source-owned evidence remains.
     refs = [
         ResourceRef(scheme=scheme, id=row_id)
         for scheme in ("evidence_span", "content_chunk")  # each in its table, <scheme>s

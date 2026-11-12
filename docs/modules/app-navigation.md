@@ -31,7 +31,7 @@ the incoming command once. restored data never dispatches commands.
 - **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes, Atlas, Oracle.
 - **mobile places order is exact:** today, lectern, libraries, browse,
-  podcasts, chats, notes, atlas, oracle. the sheet presents one horizontal
+  podcasts, librarian, notes, atlas, oracle. the sheet presents one horizontal
   chip row; stats remains in account and retrievable through nexus.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. personalized retrieval belongs in lectern suggestions and
@@ -143,7 +143,7 @@ nexus is one intent router with platform-native renderers. dialog and rail entry
 are named `Nexus`; the input is labelled and placeholdered `find anything…`.
 blank opens on `here`, the current pane's resource, followed by other panes
 under `tabs · {total}`, up to eight `recent picks` excluding the current
-resource, and `actions`: quick note, new chat, import, plus resume only while
+resource, and `actions`: quick note, ask librarian, import, plus resume only while
 playback is paused. recent history is device-local; unknown history is not empty.
 `loading recent…` and `resources you open will appear here.` retain their
 recent-read meanings. failure exposes retry while usable rows remain visible.
@@ -170,7 +170,7 @@ targets explain refusal without falling through.
 
 the command registry owns exact case-insensitive slash tokens followed by end of
 input or whitespace. `/n`, `/p`, `/c` or `/a`, `/l`, `/i` and `/b`
-select note, page, chat, library, import and browse. recognized commands show their
+select note, page, librarian, library, import and browse. recognized commands show their
 prepared action without generic continuations. `/` and unknown heads show all
 six commands in registry order with their first alias as a trailing kbd, no
 default, literal search and lookup guidance. enter without a choice announces
@@ -178,7 +178,8 @@ that guidance. choosing a command starts it empty; unknown text never becomes
 a guessed command or an implicit corpus request.
 
 nonempty quick note says `save note to today` and commits locally; empty quick
-note opens insertion. page/chat/library/import/browse open their existing draft
+note opens insertion. a librarian question appends through its retained composer;
+blank opens the librarian. page/library/import/browse open their existing draft
 or chooser without submitting. `import policy` searches; `/i policy` opens an
 import draft. literal search retains outer-trimmed text without filter parsing.
 commands participate in latching. use-text's ask/browse/create choices do not.
@@ -313,6 +314,7 @@ the keyboard layout's `event.key` rather than a physical key position.
   palette consumes the chord without changing query, selection, page or focus.
   repeated keydown does not perform a second action.
   the chord yields to any other active overlay owner, including a nested menu.
+- command/control+enter sends nonempty root palette text to the librarian.
 - command/control+f belongs to the active pane. it yields to overlays and only
   prevents browser find when the pane accepts search.
 - command/control+shift+left/right moves between visible panes without wrapping.
@@ -386,7 +388,7 @@ declare `sectionDestinationId` because their header has no section identity:
 - `/media/{id}` and `/libraries/{id}` keep **Libraries** active;
 - `/browse` and `/browse/preview` keep **Browse** active;
 - `/podcasts/{id}` keeps **Podcasts** active;
-- chat detail and new-chat panes keep **Chats** active;
+- the librarian and message anchors keep **librarian** active;
 - pages and note blocks keep **Notes** active;
 - Atlas, Oracle, and Lectern map to their own destinations;
 - Stats, Imports (including query variants), and Settings mark account current
