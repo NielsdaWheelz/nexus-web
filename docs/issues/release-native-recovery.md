@@ -9,6 +9,8 @@ an old boolean `settled` record is a compatibility path.
 
 required order:
 
+- after the librarian base merges, retarget the stacked recovery review to `main`
+  and require hosted ci; its workflow runs only for that base branch.
 - qualify pinned provider/host protocol and actual owned-container retirement;
   ordinary shared live labs never receive retirement authority.
 - provision/enroll the exclusive qualification account volume through existing
