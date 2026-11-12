@@ -1,6 +1,6 @@
 """The private, monotone identity of one exclusively owned native container.
 
-Only enrollment initializes it. Every container startup advances it before any
+Explicit enrollment or release initializes it. Every container startup advances it before any
 listener or native process exists. Database restoration must never rewind it.
 """
 

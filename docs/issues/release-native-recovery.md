@@ -23,10 +23,12 @@ required order:
 - initialize private host state explicitly; ship matching host, provider pin,
   control/native address configuration and nexus consumers. keep one container
   owning each state volume. never recreate lost state silently.
-  with the old host stopped and the new image selected, run the host service's
-  one-off `python -m apps.codex_agent.state` before first startup; it initializes
-  only a missing state file and refuses replacement. do not re-enroll or copy
-  existing credentials merely to initialize identity.
+  select `deploy/release.sh <manifest> --initialize-native-host` for this first
+  installation. after stopped-writer proof and verified backup, the release runs
+  the candidate host service's one-off initializer before migration or startup.
+  it initializes only missing state; retry validates existing identity without
+  replacing it. do not re-enroll or copy existing credentials merely to initialize
+  identity. the option does not authorize recovery of a lost identity.
 - verify exact schema, old-receipt observation, fresh native admission, foreground
   send/cancel/recovery and editorial retention before declaring release qualified.
 - update shared lab configuration only after its existing owner drains attachments;

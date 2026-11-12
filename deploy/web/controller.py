@@ -46,6 +46,11 @@ def interrupt(_signal: int, _frame: FrameType | None) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path, help="local sealed candidate's manifest.json")
+    parser.add_argument(
+        "--initialize-native-host",
+        action="store_true",
+        help="explicit first installation of native identity after stopped writers and backup",
+    )
     arguments = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupt)
     stage = "preflight"
@@ -199,6 +204,7 @@ def main() -> int:
                     "-B",
                     str(ROOT / "deploy/hetzner/release.py"),
                     source,
+                    *(("--initialize-native-host",) if arguments.initialize_native_host else ()),
                 ),
                 timeout=None,  # the backend owner bounds its own phases, including backup lock wait.
             )

@@ -277,6 +277,16 @@ proves selected bytes/configuration/process identity and public `/version` with
 coordinator print `released`. this command does not establish installed-client
 journeys.
 
+for the first native-host identity installation, explicitly add
+`--initialize-native-host` to this same command. after the controller proves
+the predecessor stopped and the backup verified, it runs the candidate host
+service's identity initializer as a one-off before migration or startup. the
+initializer creates only missing state; a retry validates existing state without
+changing its identity or incarnation. malformed state refuses. without this
+option, missing state refuses before stopping writers. never use this first-install
+option to recover a lost identity: state loss requires the deliberate operator
+repair described in [native recovery](docs/issues/release-native-recovery.md).
+
 ### web candidates and host ownership
 
 on linux/x64, publish a private frontend environment outside the clean source
