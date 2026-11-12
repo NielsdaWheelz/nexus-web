@@ -9,8 +9,6 @@ an old boolean `settled` record is a compatibility path.
 
 required order:
 
-- after the librarian base merges, retarget the stacked recovery review to `main`
-  and require hosted ci; its workflow runs only for that base branch.
 - qualify pinned provider/host protocol and actual owned-container retirement;
   ordinary shared live labs never receive retirement authority.
 - provision/enroll the exclusive qualification account volume through existing
@@ -42,7 +40,7 @@ proof of old host teardown and deliberate operator repair, not a manufactured
 retirement receipt.
 
 resolved when the paired release and listed runtime observations are complete.
-source implementation and isolated qualification are complete on
-`feat/native-recovery`, with provider `adf5a5a4` and kernel `e5c46d39`.
+source implementation and isolated qualification are complete, with provider
+`adf5a5a4` and kernel `e5c46d39`.
 production has not been changed; the coordinated cutover and release observations
 above remain outstanding. the shared lab host also requires its owner-led upgrade.
