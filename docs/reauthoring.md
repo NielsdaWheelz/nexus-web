@@ -4,9 +4,9 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-librarian history search against `70a77b959`: +533 net authored runtime lines
-(663 added, 130 deleted): chat web +440, markdown renderer +18, pane/shared
-interaction +17, prose consumers/source targets +23, search/resource api +35.
+librarian history search against `f73c5fedb`: +542 net authored runtime lines
+(688 added, 146 deleted): chat web +436, markdown renderer +18, pane/shared
+interaction +30, prose consumers/source targets +23, search/resource api +35.
 shared query, search, visit and source-arrival owners supply message retrieval
 and return continuity. removed duplicate selected-passage quotations,
 obsolete chat-find markers and prose role fields. migration 0342, generated wire,

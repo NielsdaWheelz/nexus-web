@@ -1,7 +1,7 @@
 # chat timeline import cycle
 
 importing `nexus.services.chat.timeline` directly fails before its read types are
-defined: `timeline.py:14` imports `chat/reads.py:46`, which imports
+defined: `timeline.py:14` imports `chat/reads.py:47`, which imports
 `tools/presentation.py:27`, which imports `tools/reads.py:38`, which imports
 `MessageReadRefusal` and `read_message_page` from the partially initialized timeline.
 

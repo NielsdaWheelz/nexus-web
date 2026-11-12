@@ -583,78 +583,91 @@ def media_passages(
     capture_captures = read_captures(
         db, [ref.uri for ref in refs if ref.scheme in ("highlight", "passage_anchor")]
     )
-    capture_rows = db.execute(
-        text(f"""
-            WITH readable AS ({readable_x_capture_ids_sql()}), capture_candidates AS (
-                SELECT 'fragment' AS scheme,f.id,f.id AS fragment_id,f.x_post_capture_id AS capture_id,
-                    f.canonical_text AS exact,''::text AS prefix,''::text AS suffix,NULL::text AS color,
-                    0 AS lo,char_length(f.canonical_text) AS hi
-                FROM fragments f WHERE f.id=ANY(:fragments) AND f.x_post_capture_id IS NOT NULL
-                UNION ALL
-                SELECT 'highlight',h.id,f.id,f.x_post_capture_id,h.exact,h.prefix,h.suffix,h.color,
-                    a.start_offset,a.end_offset
-                FROM highlights h JOIN highlight_fragment_anchors a ON a.highlight_id=h.id
-                JOIN fragments f ON f.id=a.fragment_id
-                WHERE h.id=ANY(:highlights) AND f.x_post_capture_id IS NOT NULL
-                  AND {highlight_visibility_sql("h")}
-                UNION ALL
-                SELECT 'passage_anchor',p.anchor_id::uuid,f.id,f.x_post_capture_id,
-                    p.state #>> '{{capture,value,quote_exact}}',p.state->>'prefix',p.state->>'suffix',NULL::text,
-                    (p.state #>> '{{capture,value,locator,start_offset}}')::integer,
-                    (p.state #>> '{{capture,value,locator,end_offset}}')::integer
-                FROM authored_passages p JOIN fragments f ON p.state->>'source_ref'='fragment:'||f.id::text
-                WHERE p.account_id=:viewer_id AND p.anchor_id=ANY(CAST(:passages AS text[]))
-                  AND p.state #>> '{{capture,value,locator,type}}'='x_capture_offsets'
-                  AND p.state #>> '{{capture,value,locator,capture_id}}'=f.x_post_capture_id::text
-                  AND p.state #>> '{{capture,value,locator,fragment_id}}'=f.id::text
-                UNION ALL
-                SELECT 'content_chunk',cc.id,f.id,f.x_post_capture_id,cc.chunk_text,
-                    ''::text,''::text,NULL::text,
-                    (cc.summary_locator->>'start_offset')::integer,(cc.summary_locator->>'end_offset')::integer
-                FROM content_chunks cc JOIN fragments f ON f.id=cc.owner_id AND cc.owner_kind='fragment'
-                JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
-                    AND state.lexical_revision=state.revision
-                WHERE cc.id=ANY(:chunks) AND cc.summary_locator->>'type'='x_capture_offsets'
-                  AND cc.summary_locator->>'capture_id'=f.x_post_capture_id::text
-                  AND cc.summary_locator->>'fragment_id'=f.id::text
-                UNION ALL
-                SELECT 'evidence_span',es.id,f.id,f.x_post_capture_id,es.span_text,
-                    COALESCE(es.selector #>> '{{text_quote,prefix}}',''),
-                    COALESCE(es.selector #>> '{{text_quote,suffix}}',''),NULL::text,
-                    (es.selector->>'start_offset')::integer,(es.selector->>'end_offset')::integer
-                FROM evidence_spans es JOIN fragments f ON f.id=es.owner_id AND es.owner_kind='fragment'
-                JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
-                    AND state.lexical_revision=state.revision
-                WHERE es.id=ANY(:spans) AND es.selector->>'type'='x_capture_offsets'
-                  AND es.selector->>'capture_id'=f.x_post_capture_id::text
-                  AND es.selector->>'fragment_id'=f.id::text
+    capture_rows = (
+        db.execute(
+            text(f"""
+                WITH readable AS ({readable_x_capture_ids_sql()}), capture_candidates AS (
+                    SELECT 'fragment' AS scheme,f.id,f.id AS fragment_id,f.x_post_capture_id AS capture_id,
+                        f.canonical_text AS exact,''::text AS prefix,''::text AS suffix,NULL::text AS color,
+                        0 AS lo,char_length(f.canonical_text) AS hi
+                    FROM fragments f WHERE f.id=ANY(:fragments) AND f.x_post_capture_id IS NOT NULL
+                    UNION ALL
+                    SELECT 'highlight',h.id,f.id,f.x_post_capture_id,h.exact,h.prefix,h.suffix,h.color,
+                        a.start_offset,a.end_offset
+                    FROM highlights h JOIN highlight_fragment_anchors a ON a.highlight_id=h.id
+                    JOIN fragments f ON f.id=a.fragment_id
+                    WHERE h.id=ANY(:highlights) AND f.x_post_capture_id IS NOT NULL
+                      AND {highlight_visibility_sql("h")}
+                    UNION ALL
+                    SELECT 'passage_anchor',p.anchor_id::uuid,f.id,f.x_post_capture_id,
+                        p.state #>> '{{capture,value,quote_exact}}',p.state->>'prefix',p.state->>'suffix',NULL::text,
+                        (p.state #>> '{{capture,value,locator,start_offset}}')::integer,
+                        (p.state #>> '{{capture,value,locator,end_offset}}')::integer
+                    FROM authored_passages p JOIN fragments f ON p.state->>'source_ref'='fragment:'||f.id::text
+                    WHERE p.account_id=:viewer_id AND p.anchor_id=ANY(CAST(:passages AS text[]))
+                      AND p.state #>> '{{capture,value,locator,type}}'='x_capture_offsets'
+                      AND p.state #>> '{{capture,value,locator,capture_id}}'=f.x_post_capture_id::text
+                      AND p.state #>> '{{capture,value,locator,fragment_id}}'=f.id::text
+                    UNION ALL
+                    SELECT 'content_chunk',cc.id,f.id,f.x_post_capture_id,cc.chunk_text,
+                        ''::text,''::text,NULL::text,
+                        (cc.summary_locator->>'start_offset')::integer,(cc.summary_locator->>'end_offset')::integer
+                    FROM content_chunks cc JOIN fragments f ON f.id=cc.owner_id AND cc.owner_kind='fragment'
+                    JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
+                        AND state.lexical_revision=state.revision
+                    WHERE cc.id=ANY(:chunks) AND cc.summary_locator->>'type'='x_capture_offsets'
+                      AND cc.summary_locator->>'capture_id'=f.x_post_capture_id::text
+                      AND cc.summary_locator->>'fragment_id'=f.id::text
+                    UNION ALL
+                    SELECT 'evidence_span',es.id,f.id,f.x_post_capture_id,es.span_text,
+                        COALESCE(es.selector #>> '{{text_quote,prefix}}',''),
+                        COALESCE(es.selector #>> '{{text_quote,suffix}}',''),NULL::text,
+                        (es.selector->>'start_offset')::integer,(es.selector->>'end_offset')::integer
+                    FROM evidence_spans es JOIN fragments f ON f.id=es.owner_id AND es.owner_kind='fragment'
+                    JOIN content_index_states state ON state.owner_kind='fragment' AND state.owner_id=f.id
+                        AND state.lexical_revision=state.revision
+                    WHERE es.id=ANY(:spans) AND es.selector->>'type'='x_capture_offsets'
+                      AND es.selector->>'capture_id'=f.x_post_capture_id::text
+                      AND es.selector->>'fragment_id'=f.id::text
+                )
+                SELECT capture_candidates.* FROM capture_candidates JOIN readable ON readable.capture_id=capture_candidates.capture_id
+                JOIN fragments retained ON retained.id=capture_candidates.fragment_id
+                WHERE lo>=0 AND lo<hi AND hi<=char_length(retained.canonical_text)
+                  AND (CAST(:audience AS uuid[]) IS NULL OR EXISTS (
+                    SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:audience AS uuid[])) AS media_id")}) audience_occurrence
+                    WHERE audience_occurrence.capture_id=capture_candidates.capture_id
+                  ))
+                  AND substring(retained.canonical_text FROM lo+1 FOR hi-lo)=capture_candidates.exact
+                  AND (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text) IS NULL OR EXISTS (
+                    SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text))::uuid AS media_id")}) occurrence
+                    WHERE occurrence.capture_id=capture_candidates.capture_id
+                ))
+            """),
+            {
+                "viewer_id": viewer_id,
+                "fragments": ids["fragment"],
+                "highlights": ids["highlight"],
+                "passages": [str(value) for value in ids["passage_anchor"]],
+                "chunks": ids["content_chunk"],
+                "spans": ids["evidence_span"],
+                "owners": json.dumps(reading_owners, default=str),
+                "audience": list(admitted_reading_media_ids)
+                if admitted_reading_media_ids is not None
+                else None,
+            },
+        ).mappings()
+        if any(
+            ids[scheme]
+            for scheme in (
+                "fragment",
+                "highlight",
+                "passage_anchor",
+                "content_chunk",
+                "evidence_span",
             )
-            SELECT capture_candidates.* FROM capture_candidates JOIN readable ON readable.capture_id=capture_candidates.capture_id
-            JOIN fragments retained ON retained.id=capture_candidates.fragment_id
-            WHERE lo>=0 AND lo<hi AND hi<=char_length(retained.canonical_text)
-              AND (CAST(:audience AS uuid[]) IS NULL OR EXISTS (
-                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT unnest(CAST(:audience AS uuid[])) AS media_id")}) audience_occurrence
-                WHERE audience_occurrence.capture_id=capture_candidates.capture_id
-              ))
-              AND substring(retained.canonical_text FROM lo+1 FOR hi-lo)=capture_candidates.exact
-              AND (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text) IS NULL OR EXISTS (
-                SELECT 1 FROM ({x_capture_scope_rows_sql("SELECT (CAST(:owners AS jsonb)->>(capture_candidates.scheme||':'||capture_candidates.id::text))::uuid AS media_id")}) occurrence
-                WHERE occurrence.capture_id=capture_candidates.capture_id
-            ))
-        """),
-        {
-            "viewer_id": viewer_id,
-            "fragments": ids["fragment"],
-            "highlights": ids["highlight"],
-            "passages": [str(value) for value in ids["passage_anchor"]],
-            "chunks": ids["content_chunk"],
-            "spans": ids["evidence_span"],
-            "owners": json.dumps(reading_owners, default=str),
-            "audience": list(admitted_reading_media_ids)
-            if admitted_reading_media_ids is not None
-            else None,
-        },
-    ).mappings()
+        )
+        else ()
+    )
     for row in capture_rows:
         uri = f"{row['scheme']}:{row['id']}"
         fields = {
@@ -826,21 +839,29 @@ def media_passages(
                     scoped.owner, scoped.quote, locator, scoped.excerpt_scope
                 )
             out[f"highlight:{id}"] = scoped
-    fragments = list(
-        db.execute(
-            text(
-                "SELECT f.id,f.media_id,f.canonical_text,f.t_start_ms,f.t_end_ms,m.kind FROM fragments f JOIN media m ON m.id=f.media_id WHERE f.id=ANY(:ids)"
-            ),
-            {"ids": ids["fragment"]},
+    fragments = (
+        list(
+            db.execute(
+                text(
+                    "SELECT f.id,f.media_id,f.canonical_text,f.t_start_ms,f.t_end_ms,m.kind FROM fragments f JOIN media m ON m.id=f.media_id WHERE f.id=ANY(:ids)"
+                ),
+                {"ids": ids["fragment"]},
+            )
         )
+        if ids["fragment"]
+        else []
     )
-    apparatus = list(
-        db.execute(
-            text(
-                "SELECT item.id,item.media_id,item.body_text,item.label,item.locator FROM reader_apparatus_items item JOIN reader_apparatus_states state ON state.id=item.state_id WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')"
-            ),
-            {"ids": ids["reader_apparatus_item"]},
+    apparatus = (
+        list(
+            db.execute(
+                text(
+                    "SELECT item.id,item.media_id,item.body_text,item.label,item.locator FROM reader_apparatus_items item JOIN reader_apparatus_states state ON state.id=item.state_id WHERE item.id=ANY(:ids) AND state.status IN ('ready','partial')"
+                ),
+                {"ids": ids["reader_apparatus_item"]},
+            )
         )
+        if ids["reader_apparatus_item"]
+        else []
     )
     scope_sources = _scope_source_reads(
         db,
@@ -905,13 +926,17 @@ def media_passages(
         )
         if scoped is not None:
             out[f"reader_apparatus_item:{row.id}"] = scoped
-    anchors = list(
-        db.execute(
-            text(
-                "SELECT a.id,a.owner_scheme,a.owner_id,a.selector,p.state #>> '{capture,value,quote_exact}' AS quote_exact FROM passage_anchors a JOIN authored_passages p ON p.account_id=a.user_id AND p.anchor_id=a.id::text WHERE a.id=ANY(:ids) AND a.user_id=:viewer_id AND a.owner_scheme='media'"
-            ),
-            {"ids": ids["passage_anchor"], "viewer_id": viewer_id},
+    anchors = (
+        list(
+            db.execute(
+                text(
+                    "SELECT a.id,a.owner_scheme,a.owner_id,a.selector,p.state #>> '{capture,value,quote_exact}' AS quote_exact FROM passage_anchors a JOIN authored_passages p ON p.account_id=a.user_id AND p.anchor_id=a.id::text WHERE a.id=ANY(:ids) AND a.user_id=:viewer_id AND a.owner_scheme='media'"
+                ),
+                {"ids": ids["passage_anchor"], "viewer_id": viewer_id},
+            )
         )
+        if ids["passage_anchor"]
+        else []
     )
     anchor_scopes = _scope_source_reads(
         db,
@@ -1117,7 +1142,9 @@ def location_reads(
                 text("SELECT id FROM media WHERE id=ANY(:ids) AND kind='text_part'"),
                 {"ids": media_ids},
             )
-        ],
+        ]
+        if media_ids
+        else [],
     )
     fragment_ids = list(
         {

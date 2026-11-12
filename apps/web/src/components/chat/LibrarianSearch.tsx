@@ -14,9 +14,9 @@ import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
+import { librarianSearchQuery } from "@/lib/panes/indexPaneQuery";
 import { truncatePaneSearchQuery, type PaneQuery } from "@/lib/panes/paneChrome";
-import { requirePaneRuntime, usePaneIsActive, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
+import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import { searchHref } from "@/lib/search/searchParams";
@@ -37,15 +37,14 @@ const QUERY_SETTLE_MS = 120;
 
 export function useLibrarianSearch() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianSearch");
-  const params = usePaneSearchParams();
   const { accountId } = useAuthenticatedAccount();
   const active = usePaneIsActive();
   const workspace = useLatestWorkspace();
   const { inputRef, focusInput } = usePaneQueryInput();
   const id = useId();
-  const queryText = (params.get("q") ?? "").trim();
-  const searching = queryText !== "" && sourceTargetFromHref(runtime.href)?.kind !== "invalid_destination";
-  const applied = searching ? queryText : "";
+  const queryText = librarianSearchQuery(runtime.href);
+  const searching = queryText !== null;
+  const applied = queryText ?? "";
   const entry = runtime.paneEntryDelivery?.entry;
   const [input, setInput] = useState(() => ({ applied, text: entry?.kind === "FocusLibrarianSearch" ? entry.text : applied }));
   if (input.applied !== applied) setInput({ applied, text: applied });
@@ -53,7 +52,7 @@ export function useLibrarianSearch() {
   const [composing, setComposing] = useState(false);
   const previous = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.history.back.at(-1);
   const previousUrl = previous ? parseWorkspaceHref(previous.href) : null;
-  const previousSearch = previous !== undefined && (previousUrl?.searchParams.get("q") ?? "").trim() !== "" && sourceTargetFromHref(previous.href)?.kind !== "invalid_destination";
+  const previousSearch = previous !== undefined && librarianSearchQuery(previous.href) !== null;
   const hasOrigin = previousUrl?.pathname === "/librarian" && !previousSearch;
   const backToResults = !searching && previousUrl?.pathname === "/librarian" && previousSearch;
   const clear = useCallback(() => {

@@ -1,5 +1,16 @@
 // Exact request grammar shared by bootstrap, arrival and mounted index reads.
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
+import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
+import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+
+/** Search owns valid nonblank queries; malformed arrivals stay with the transcript. */
+export function librarianSearchQuery(href: string): string | null {
+  const url = parseWorkspaceHref(href);
+  if (url?.pathname !== "/librarian") return null;
+  const text = (url.searchParams.get("q") ?? "").trim();
+  return text !== "" && sourceTargetFromHref(href)?.kind !== "invalid_destination" ? text : null;
+}
+
 export function indexPaneQuery(routeId: PaneRouteId | "unsupported", query: URLSearchParams): string | null {
   if ((routeId === "podcastDetail" || routeId === "feedDetail")) return new URLSearchParams({ state: query.get("state") ?? "all", sort: query.get("sort") ?? "newest" }).toString();
   if (routeId === "podcasts" || routeId === "feeds") {

@@ -8,7 +8,7 @@ import type { ServerValue } from "@/lib/api/serverState";
 import { useChatDraft, type Draft } from "@/lib/chat/drafts";
 import { pendingReason, refusalOf, type CommandState, type LibrarianCommands } from "@/lib/chat/commands";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import type { SelectionEditor } from "@/lib/chat/selection";
+import { unavailability, type SelectionEditor } from "@/lib/chat/selection";
 import type { Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -28,30 +28,30 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
   const active = usePaneIsActive();
   const { draft, setText, setSelection, setQuote, getCaret, setCaret, entry, refusal, refuse } = useChatDraft(runtime.paneId);
   const memory = useChatSelection();
-  const enterMemory = memory.enter;
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
   const textarea = useRef<HTMLTextAreaElement>(null);
   const mobile = useIsMobileViewport();
-  useEffect(() => { if (active) enterMemory(); }, [active, enterMemory]);
   useEffect(() => { if (active && focusKey) textarea.current?.focus({ preventScroll: true }); }, [active, focusKey]);
   useEffect(() => { const caret = getCaret(); if (caret) textarea.current?.setSelectionRange(caret.start, caret.end, caret.direction); }, [getCaret]);
   const canSend = command.kind === "Idle" && catalog !== null && selection.kind === "Selected" && reason === null && draft.text.trim().length > 0;
   const submit = () => {
-    if (!canSend || selection.kind !== "Selected" || entry.getSnapshot().draft !== draft) return;
+    if (!canSend || catalog === null || entry.getSnapshot().draft !== draft) return false;
+    // Entry can invalidate recall after this render. Check its fence at dispatch.
+    const selected = draft.selection.kind === "Uninitialized" ? memory.fresh(catalog) : draft.selection;
+    if (selected?.kind !== "Selected" || unavailability(catalog, selected) !== null) return false;
     const submitted = draft;
     refuse(null);
     void owner.execute({ kind: "Send", runId: createRandomId(), viewId: runtime.paneId,
-      request: { content: submitted.text, selection: selection.selection, attachments: submitted.quote ? [submitted.quote.reference] : [] } }, receipt => {
+      request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.reference] : [] } }, receipt => {
       entry.accept(receipt, submitted, true, runtime.visitId); memory.enter();
     }).then(outcome => { if (outcome.kind === "Failed") refuse(refusalOf(outcome)); }).catch(error => owner.reportDefect(error));
+    return true;
   };
   const sentEntry = useRef<string | null>(null);
   useEffect(() => {
     if (!autoSend || sentEntry.current === autoSend.id) return;
     if (entry.getSnapshot().draft !== autoSend.draft) { sentEntry.current = autoSend.id; return; }
-    if (!canSend) return;
-    sentEntry.current = autoSend.id;
-    submit();
+    if (submit()) sentEntry.current = autoSend.id;
   });
   return <div className={styles.composer}>
     {draft.quote ? <DraftReference reference={draft.quote.reference} onRemove={() => setQuote(null)} /> : null}
@@ -62,7 +62,7 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
     {memory.read.status === "failed" ? <Failed error={memory.read.error} noun="saved model" retry={{ run: memory.read.refetch, busy: memory.read.retrying }} /> : null}
     {refusal ? <Fact line={refusal.line} /> : reason ? <Fact line={{ fact: reason }} /> : null}
     <div className={styles.row}><GenerationPicker catalogRead={catalogRead} value={selection} onChange={setSelection} disabled={false} waiting={selection.kind === "Uninitialized"} />
-      <Button emphasis="strong" iconOnly icon={<Icon.Send />} aria-label="send" disabled={!canSend} title={pendingReason(command) ?? undefined} onClick={submit} />
+      <Button emphasis="strong" iconOnly icon={<Icon.Send />} aria-label="send" disabled={!canSend} aria-busy={command.kind === "Busy" || undefined} title={pendingReason(command) ?? undefined} onClick={submit} />
     </div>
   </div>;
 }

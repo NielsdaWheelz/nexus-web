@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
@@ -25,6 +25,7 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.jobs.queue import DurableExecutionPhase, project_execution_phase
 from nexus.schemas.chat import (
     AssistantTrustTrailOut,
+    AttachmentOut,
     ChatCitationOut,
     ChatFailureOut,
     ChatPublicationWarning,
@@ -41,7 +42,7 @@ from nexus.schemas.live_reference import LiveReference, ResourceRetrievalTarget,
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.chat import events, references
 from nexus.services.generation.contract import GenerationSpec
-from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.services.resource_items.items import resource_items_out
 from nexus.services.tools import assistant_writes, presentation
 
@@ -104,10 +105,125 @@ def run_response(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunRespon
 
 
 def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResponse]:
+    """Project selected runs in the caller's snapshot with one shared resource batch."""
+    if not runs:
+        return []
     ids = [identity for run in runs for identity in (run.user_message_id, run.assistant_message_id)]
     messages = list(db.scalars(select(Message).where(Message.id.in_(ids)).order_by(Message.seq)))
-    outs = {message.id: message for message in _message_outs(db, viewer_id, messages)}
     executions = _executions(db, runs)
+    calls = list(
+        db.scalars(
+            select(ToolCall)
+            .where(ToolCall.assistant_message_id.in_([run.assistant_message_id for run in runs]))
+            .order_by(ToolCall.assistant_message_id, ToolCall.position)
+        )
+    )
+    retrieval_rows = list(
+        db.scalars(
+            select(MessageRetrieval)
+            .where(MessageRetrieval.assistant_message_id.in_(ids))
+            .order_by(MessageRetrieval.ordinal)
+        )
+    )
+    message_references = {
+        message.id: [LiveReference.model_validate(raw) for raw in message.attachments]
+        for message in messages
+    }
+    targets = _targets(retrieval_rows)
+    live = [reference for values in message_references.values() for reference in values]
+    live.extend(
+        target.reference
+        for target in targets.values()
+        if isinstance(target, ResourceRetrievalTarget)
+    )
+    refs = {
+        reference.resource_ref: assert_resource_ref(reference.resource_ref) for reference in live
+    }
+    for call in calls:
+        refs.update({ref.uri: ref for ref in presentation.references(call.arguments, call.result)})
+    items = {
+        item.ref: item
+        for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
+    }
+    attachments = references.attachments_by_reference(db, viewer_id, live, items=items)
+    retrieved = _retrieved(
+        [row for row in retrieval_rows if row.tool_call_id is not None], targets, attachments
+    )
+    tools: dict[UUID, list[TrustToolCallOut]] = defaultdict(list)
+    for call in calls:
+        projected = presentation.project(
+            call.tool_id,
+            arguments=call.arguments,
+            result=call.result,
+            status=call.status,
+            items=items,
+        )
+        tools[cast(UUID, call.assistant_message_id)].append(
+            TrustToolCallOut.model_validate(
+                {
+                    **projected.model_dump(),
+                    "id": call.id,
+                    "tool_call_index": call.position,
+                    "status": call.status,
+                    "created_refs": presentation.created_refs(call.created_refs),
+                    "machine_authorships": assistant_writes.authorships(call),
+                    "reverted_at": call.reverted_at,
+                    "undo_allowed": assistant_writes.undo_eligible(
+                        db,
+                        viewer_id=viewer_id,
+                        result=call.result,
+                        created_refs=call.created_refs,
+                        reverted_at=call.reverted_at,
+                    ),
+                    "retrievals": retrieved[call.id],
+                }
+            )
+        )
+    trails = {
+        run.assistant_message_id: AssistantTrustTrailOut(
+            run=_trust_run(run, executions[run.id]),
+            context=[
+                items[reference.resource_ref]
+                for reference in message_references[run.user_message_id]
+            ],
+            tool_calls=tools[run.assistant_message_id],
+        )
+        for run in runs
+    }
+    citations: dict[UUID, list[ChatCitationOut]] = defaultdict(list)
+    for row in sorted(
+        (row for row in retrieval_rows if row.citation_ordinal is not None),
+        key=lambda row: cast(int, row.citation_ordinal),
+    ):
+        target = targets[row.id]
+        item, available = _target_item(target, attachments)
+        citations[row.assistant_message_id].append(
+            ChatCitationOut(
+                id=row.id,
+                ordinal=cast(int, row.citation_ordinal),
+                target=target,
+                item=item,
+                location_available=available,
+            )
+        )
+    outs = {
+        message.id: MessageOut(
+            id=message.id,
+            seq=str(message.seq),
+            role=message.role,
+            content=message.content,
+            status=message.status,
+            attachments=[
+                attachments[reference.model_dump_json()]
+                for reference in message_references[message.id]
+            ],
+            citations=citations[message.id],
+            trust_trail=trails.get(message.id),
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+        )
+        for message in messages
+    }
     return [
         ChatRunResponse(
             run_id=run.id,
@@ -155,168 +271,33 @@ def _executions(db: Session, runs: list[ChatRun]) -> dict[UUID, Execution]:
     return out
 
 
-def _message_outs(db: Session, viewer_id: UUID, messages: list[Message]) -> list[MessageOut]:
-    trails = _trails(
-        db, viewer_id, [message for message in messages if message.role == "assistant"]
-    )
-    rows = list(
-        db.scalars(
-            select(MessageRetrieval)
-            .where(
-                MessageRetrieval.assistant_message_id.in_([message.id for message in messages]),
-                MessageRetrieval.citation_ordinal.is_not(None),
-            )
-            .order_by(MessageRetrieval.citation_ordinal)
-        )
-    )
-    citation_outs: dict[UUID, list[ChatCitationOut]] = defaultdict(list)
-    for row, target, item, available in _targets(db, viewer_id, rows):
-        citation_outs[row.assistant_message_id].append(
-            ChatCitationOut(
-                id=row.id,
-                ordinal=cast(int, row.citation_ordinal),
-                target=target,
-                item=item,
-                location_available=available,
-            )
-        )
-    result = []
-    for message in messages:
-        trail, _ = trails.get(message.id, (None, None))
-        attached = references.attachments_out(
-            db, viewer_id, [LiveReference.model_validate(raw) for raw in message.attachments]
-        )
-        result.append(
-            MessageOut(
-                id=message.id,
-                seq=str(message.seq),
-                role=message.role,
-                content=message.content,
-                status=message.status,
-                attachments=attached,
-                citations=citation_outs[message.id],
-                trust_trail=trail,
-                created_at=message.created_at,
-                updated_at=message.updated_at,
-            )
-        )
-    return result
+def _targets(rows: Sequence[MessageRetrieval]) -> dict[UUID, RetrievalTarget]:
+    decoder = TypeAdapter(RetrievalTarget)
+    return {row.id: decoder.validate_python(row.target) for row in rows}
 
 
-def _targets(
-    db: Session, viewer_id: UUID, rows: Sequence[MessageRetrieval]
-) -> Iterator[tuple[MessageRetrieval, RetrievalTarget, ResourceItemOut | None, bool]]:
-    targets = [TypeAdapter(RetrievalTarget).validate_python(row.target) for row in rows]
-    local = references.attachments_out(
-        db,
-        viewer_id,
-        [target.reference for target in targets if isinstance(target, ResourceRetrievalTarget)],
-    )
-    items = iter(local)
-    for row, target in zip(rows, targets, strict=True):
-        if isinstance(target, ResourceRetrievalTarget):
-            item = next(items)
-            yield row, target, item.item, item.location_available
-        else:
-            yield row, target, None, True
+def _target_item(
+    target: RetrievalTarget, attachments: Mapping[str, AttachmentOut]
+) -> tuple[ResourceItemOut | None, bool]:
+    if isinstance(target, ResourceRetrievalTarget):
+        attached = attachments[target.reference.model_dump_json()]
+        return attached.item, attached.location_available
+    return None, True
 
 
 def _retrieved(
-    db: Session, viewer_id: UUID, rows: Sequence[MessageRetrieval]
+    rows: Sequence[MessageRetrieval],
+    targets: Mapping[UUID, RetrievalTarget],
+    attachments: Mapping[str, AttachmentOut],
 ) -> dict[UUID, list[TrustRetrievalOut]]:
     out: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
-    for row, target, item, available in _targets(db, viewer_id, rows):
+    for row in rows:
+        target = targets[row.id]
+        item, available = _target_item(target, attachments)
         out[cast(UUID, row.tool_call_id)].append(
             TrustRetrievalOut(id=row.id, target=target, item=item, location_available=available)
         )
     return out
-
-
-def _trails(
-    db: Session, viewer_id: UUID, answers: list[Message]
-) -> dict[UUID, tuple[AssistantTrustTrailOut, ChatRun]]:
-    """Live attachment identities and surviving operational action receipts."""
-
-    ids = [answer.id for answer in answers]
-    if not ids:
-        return {}
-    runs = {
-        run.assistant_message_id: run
-        for run in db.scalars(select(ChatRun).where(ChatRun.assistant_message_id.in_(ids)))
-    }
-    questions = {
-        run.assistant_message_id: db.get_one(Message, run.user_message_id) for run in runs.values()
-    }
-    scopes = {
-        answer: [
-            assert_resource_ref(LiveReference.model_validate(raw).resource_ref)
-            for raw in question.attachments
-        ]
-        for answer, question in questions.items()
-    }
-    executions = _executions(db, list(runs.values()))
-    calls = list(
-        db.scalars(
-            select(ToolCall)
-            .where(ToolCall.assistant_message_id.in_(ids))
-            .order_by(ToolCall.assistant_message_id, ToolCall.position)
-        )
-    )
-    refs = {ref.uri: ref for scope in scopes.values() for ref in scope}
-    for call in calls:
-        refs.update({ref.uri: ref for ref in presentation.references(call.arguments, call.result)})
-    items = {
-        item.ref: item
-        for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
-    }
-    retrieval_rows = list(
-        db.scalars(
-            select(MessageRetrieval)
-            .where(MessageRetrieval.assistant_message_id.in_(ids))
-            .order_by(MessageRetrieval.ordinal)
-        )
-    )
-    retrieved = _retrieved(db, viewer_id, [r for r in retrieval_rows if r.tool_call_id is not None])
-    tools: dict[UUID, list[TrustToolCallOut]] = defaultdict(list)
-    for call in calls:
-        projected = presentation.project(
-            call.tool_id,
-            arguments=call.arguments,
-            result=call.result,
-            status=call.status,
-            items=items,
-        )
-        tools[cast(UUID, call.assistant_message_id)].append(
-            TrustToolCallOut.model_validate(
-                {
-                    **projected.model_dump(),
-                    "id": call.id,
-                    "tool_call_index": call.position,
-                    "status": call.status,
-                    "created_refs": presentation.created_refs(call.created_refs),
-                    "machine_authorships": assistant_writes.authorships(call),
-                    "reverted_at": call.reverted_at,
-                    "undo_allowed": assistant_writes.undo_eligible(
-                        db,
-                        viewer_id=viewer_id,
-                        result=call.result,
-                        created_refs=call.created_refs,
-                        reverted_at=call.reverted_at,
-                    ),
-                    "retrievals": retrieved[call.id],
-                }
-            )
-        )
-    trails: dict[UUID, tuple[AssistantTrustTrailOut, ChatRun]] = {}
-    for answer in answers:
-        run = runs[answer.id]  # every answer has its run; the chat reslice migration refused others
-        trail = AssistantTrustTrailOut(
-            run=_trust_run(run, executions[run.id]),
-            context=[items[ref.uri] for ref in scopes[answer.id]],
-            tool_calls=tools[answer.id],
-        )
-        trails[answer.id] = (trail, run)
-    return trails
 
 
 def _trust_run(run: ChatRun, execution: Execution) -> TrustRunOut:
@@ -384,8 +365,15 @@ def read_events(
         if result_ids
         else []
     )
-    retrieved = _retrieved(db, viewer_id, retrieval_rows)
-    refs: dict[str, ResourceRef] = {}
+    targets = _targets(retrieval_rows)
+    live = [
+        target.reference
+        for target in targets.values()
+        if isinstance(target, ResourceRetrievalTarget)
+    ]
+    refs = {
+        reference.resource_ref: assert_resource_ref(reference.resource_ref) for reference in live
+    }
     for position, call in calls.items():
         result = call.result if position in results else None
         refs.update({ref.uri: ref for ref in presentation.references(call.arguments, result)})
@@ -393,6 +381,8 @@ def read_events(
         item.ref: item
         for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
     }
+    attachments = references.attachments_by_reference(db, viewer_id, live, items=items)
+    retrieved = _retrieved(retrieval_rows, targets, attachments)
     out = []
     for row in rows:
         if row.event_type not in tool_types:

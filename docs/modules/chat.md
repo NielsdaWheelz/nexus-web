@@ -58,6 +58,14 @@ own existing data contracts.
 - `DELETE /chat-runs/{id}`: terminal pair only; absent is success, active is conflict.
   later retries and independent action/undo receipts survive.
 
+one timeline/turn response loads shared facts once inside its existing database
+snapshot. runs, messages, tools and retrievals feed both message projection and
+trust trails. resource hydration deduplicates full references and reconstructs
+input order and multiplicity. attachment availability distinguishes source,
+field and locator; response-local reuse never crosses viewers or snapshots.
+stream pages keep their own snapshot: text pages hydrate nothing, start frames
+exclude later results, and result frames hydrate only that page's retrievals.
+
 foreground tools may read authorized account resources. every message access is
 bounded by the run's horizon: its current question and earlier settled pairs only.
 later queued questions cannot enter an earlier run through attachments or tools.
@@ -98,6 +106,23 @@ owns editable input and one chosen model. `lib/chat/drafts.ts` retains pane inpu
 and uncertain outcome. acceptance clears only the submitted draft object and
 immediately frees admission while the server continues generation. source
 handoffs and the palette focus or submit through that same composer.
+
+`IndexPaneEntry` starts the librarian's timeline and catalog reads while its lazy
+code loads; a search visit starts only the catalog read. the body claims those
+exact descriptors through `PaneEntryReads`;
+subsequent cursor changes belong to the mounted hooks. active entry starts saved
+selection recall once per activation. dispatch rechecks that recall's current
+freshness for an uninitialized selection; explicit draft selections bypass it.
+messages remain visible during refresh and expose retry if refresh fails.
+the pane refresh adapter leaves modeled read failures with that read's feedback;
+cancellation and defects retain the shared refresh owner's handling.
+
+detail regions retain their identity but construct children only on first
+opening. inspected children remain until the turn unmounts, preserving nested
+state at the cost of that memory. visible mutation receipts remain outside the
+disclosure; opening details requires no additional read.
+the floating `latest` control contributes no height to the scroll range, so its
+appearance cannot change an inspection anchor's available position.
 
 `ChatTurn` paints a pending run's event overlay, then reads its terminal message.
 per-turn cancel leaves send available. retries append using the current composer

@@ -9,9 +9,6 @@ partial answers to the keyword index without changing canonical messages.
 
 before shipping:
 
-- reconcile `fix/librarian-responsiveness` before release: its current head
-  `9b435d881` also changes `Librarian.tsx` and `ChatSurface.module.css`. preserve
-  the search/transcript ownership split when integrating the independent work.
 - confirm actual migration head and last released wire before merging. share an
   already-taken pre-release wire bump; never bump twice between releases.
 - qualify the frozen migration on a predecessor-schema fixture backup through
