@@ -24,7 +24,7 @@ export type FindResult =
     }
   | { readonly kind: "Failed"; readonly message: string };
 
-/** One pane's find session, independent of whether its input is visible. */
+/** Query and movement controls for a ready find source. */
 export interface FindController {
   readonly label: string;
   readonly query: string;
@@ -35,7 +35,6 @@ export interface FindController {
   readonly narrowed: boolean;
   readonly result: FindResult;
   readonly returnable: boolean;
-  clear(): void;
   setQuery(query: string): void;
   setMatchCase(value: boolean): void;
   setWholeWord(value: boolean): void;
@@ -45,6 +44,12 @@ export interface FindController {
   targetHref(row: FindRow<unknown>): string | null;
   retry(): void;
   goBack(): void;
+}
+
+/** The mounted session can be cleared while its source is unavailable. */
+export interface FindSession {
+  readonly controller: FindController | null;
+  clear(): void;
 }
 
 const IDLE: FindResult = { kind: "Idle" };
@@ -82,7 +87,7 @@ export function useFind({
   readonly presentation?: unknown;
   /** An authored query/options command, never an automatic source recomputation. */
   readonly onSearchIntent?: () => void;
-}): FindController | null {
+}): FindSession {
   const searchIntent = useRef(onSearchIntent);
   searchIntent.current = onSearchIntent;
   const computed = useRef<{
@@ -297,8 +302,8 @@ export function useFind({
     source?.paint(NO_ROWS, -1);
     update({ query: "", narrow: null, scopeLabel: null, result: IDLE });
   }, [lifetime, source, update]);
-  const controller = useMemo<FindController | null>(() => {
-    if (!source) return null;
+  const find = useMemo<FindSession>(() => {
+    if (!source) return { controller: null, clear };
     const currentIndex = (row: FindRow<unknown>): number | null => {
       const current = latest.current;
       const publication = computed.current;
@@ -320,62 +325,64 @@ export function useFind({
       update({ [name]: value, result: latest.current.query ? { kind: "Searching" } : IDLE });
     };
     return {
-      label: source.label,
-      query,
-      matchCase,
-      wholeWord,
-      narrowLabel: query ? session.scopeLabel : source.narrowLabel,
-      narrow: session.narrow,
-      narrowed,
-      result,
-      returnable: session.returnable,
       clear,
-      setQuery(value) {
-        const next = truncatePaneSearchQuery(value);
-        if (!next) return clear();
-        if (next === latest.current.query) return;
-        searchIntent.current?.();
-        restart();
-        prepare();
-        update({ query: next, result: { kind: "Searching" } });
-      },
-      setMatchCase: (value) => option("matchCase", value),
-      setWholeWord: (value) => option("wholeWord", value),
-      setNarrowed: (value) => option("narrowed", value),
-      activate(row) {
-        const index = currentIndex(row);
-        return index === null ? Promise.resolve(false) : show(index, null);
-      },
-      targetHref(row) {
-        return currentIndex(row) === null ? null : source.href(row.at);
-      },
-      step(direction) {
-        const current = latest.current.result;
-        if (current.kind !== "Rows" || current.rows.length === 0) return;
-        const next = current.active + direction;
-        const count = current.rows.length;
-        void show(
-          (next + count) % count,
-          next === count ? "first" : next < 0 ? "last" : null,
-        );
-      },
-      retry() {
-        if (latest.current.query) searchIntent.current?.();
-        restart();
-        update({
-          attempt: latest.current.attempt + 1,
-          result: latest.current.query ? { kind: "Searching" } : IDLE,
-        });
-      },
-      goBack() {
-        lifetime.autoRevealAllowed = false;
-        lifetime.movement?.abort();
-        source.returnToOrigin?.();
-        update({ returnable: false });
+      controller: {
+        label: source.label,
+        query,
+        matchCase,
+        wholeWord,
+        narrowLabel: query ? session.scopeLabel : source.narrowLabel,
+        narrow: session.narrow,
+        narrowed,
+        result,
+        returnable: session.returnable,
+        setQuery(value) {
+          const next = truncatePaneSearchQuery(value);
+          if (!next) return clear();
+          if (next === latest.current.query) return;
+          searchIntent.current?.();
+          restart();
+          prepare();
+          update({ query: next, result: { kind: "Searching" } });
+        },
+        setMatchCase: (value) => option("matchCase", value),
+        setWholeWord: (value) => option("wholeWord", value),
+        setNarrowed: (value) => option("narrowed", value),
+        activate(row) {
+          const index = currentIndex(row);
+          return index === null ? Promise.resolve(false) : show(index, null);
+        },
+        targetHref(row) {
+          return currentIndex(row) === null ? null : source.href(row.at);
+        },
+        step(direction) {
+          const current = latest.current.result;
+          if (current.kind !== "Rows" || current.rows.length === 0) return;
+          const next = current.active + direction;
+          const count = current.rows.length;
+          void show(
+            (next + count) % count,
+            next === count ? "first" : next < 0 ? "last" : null,
+          );
+        },
+        retry() {
+          if (latest.current.query) searchIntent.current?.();
+          restart();
+          update({
+            attempt: latest.current.attempt + 1,
+            result: latest.current.query ? { kind: "Searching" } : IDLE,
+          });
+        },
+        goBack() {
+          lifetime.autoRevealAllowed = false;
+          lifetime.movement?.abort();
+          source.returnToOrigin?.();
+          update({ returnable: false });
+        },
       },
     };
   }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.scopeLabel, session.returnable, show, source, update, wholeWord]);
 
   if (session.defect) throw session.defect.error;
-  return controller;
+  return find;
 }

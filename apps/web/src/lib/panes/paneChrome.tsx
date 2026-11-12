@@ -17,7 +17,7 @@ import {
 } from "react";
 import type { ApiError } from "@/lib/api/client";
 import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorTypes";
-import type { FindController } from "@/lib/find/useFind";
+import type { FindSession } from "@/lib/find/useFind";
 import { FIND_QUERY_LIMIT } from "@/lib/find/find";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import type {
@@ -47,7 +47,7 @@ export type PaneQuery =
       readonly content: ReactNode;
       readonly focusInput: () => boolean;
     }
-  | { readonly kind: "Find"; readonly find: FindController | null };
+  | { readonly kind: "Find"; readonly session: FindSession };
 
 export type PaneRefreshProgress =
   | { readonly kind: "Indeterminate" }

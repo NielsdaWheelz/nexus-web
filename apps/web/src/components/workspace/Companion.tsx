@@ -273,7 +273,7 @@ export function companionExpanded(
     !(
       results !== null &&
       chrome?.query?.kind === "Find" &&
-      chrome.query.find !== null
+      chrome.query.session.controller !== null
     ) &&
     companion !== null &&
     secondary?.group_id === companion.groupId &&

@@ -553,7 +553,10 @@ control. the existing viewport owns keyboard/chrome clearance, counted once.
 workspace navigation remains available, and explicit close uses the work guard.
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
-it only after restore. `useFind` receives the pane's required `ownerKey`.
+it only after restore. `useFind` receives the pane's required `ownerKey` and
+returns a `FindSession`: its source-ready controller is nullable, but its sole
+clear command remains available through restoration. closing during source
+replacement clears retained query state before the replacement can resume it.
 visibility/focus does not capture a session: the first nonempty query freezes
 the current section/page; later navigation and option changes retain it. idle
 scope labels describe capability; active labels name the captured scope.

@@ -64,7 +64,7 @@ const FindBar = forwardRef<
   {
     readonly find: FindController | null;
     readonly onClear: () => void;
-    readonly onClose?: () => void;
+    readonly onClose: () => void;
     readonly resultsExpanded: boolean;
     readonly onShowResults: (opener: HTMLElement) => void;
   }
@@ -88,7 +88,7 @@ const FindBar = forwardRef<
   ];
   return (
     <div className={styles.bar} onKeyDown={(event) => {
-      if (!onClose || event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+      if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
       event.preventDefault();
       event.stopPropagation();
       onClose();
@@ -106,7 +106,7 @@ const FindBar = forwardRef<
           onClear,
           onKeyDown(event) {
             if (event.nativeEvent.isComposing) return;
-            if (event.key === "Escape" && onClose) {
+            if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
               onClose();
@@ -171,9 +171,7 @@ const FindBar = forwardRef<
             }}
               icon={<Icon.Locate aria-hidden="true" />} />
           ) : null}
-          {onClose ? (
-            <Button iconOnly aria-label="Close find" onClick={onClose} icon={<Icon.Dismiss aria-hidden="true" />} />
-          ) : null}
+          <Button iconOnly aria-label="Close find" onClick={onClose} icon={<Icon.Dismiss aria-hidden="true" />} />
         </>}
       />
       <span id={statusId} className="sr-only" role="status" aria-live="polite" aria-atomic="true">

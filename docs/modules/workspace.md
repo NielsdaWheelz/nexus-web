@@ -418,14 +418,16 @@ readers keep their own document viewport and collection return anchors stay in
 `.routeContent`. canvas dragging begins only in the identity header's
 noninteractive region. controls and option labels never drag the canvas.
 
-`query` is `Controls {content, focusInput}` or `Find {find}`. absent means
-unsupported; null find means a promised source is not ready. desktop renders
-every supported field, including a disabled resolving find field. mobile keeps
-ordinary collection/page/note controls visible; find starts collapsed, coexists
-with navigation when opened, and closes by clearing text and collapsing. only
-active, visible mobile find holds chrome. navigation/find disclosure and empty
-focused inputs survive an active-pane breakpoint change; source retirement
-ends disclosure and transient companion results.
+`query` is `Controls {content, focusInput}` or `Find {session}`. absent means
+unsupported; a null session controller means a promised source is not ready.
+ordinary collection/page/note controls stay visible. find starts collapsed at
+every width; only explicit disclosure opens its row, alongside navigation.
+closing clears the session and collapses the row. an open find stays visible
+and closable while its source reloads. only active, visible mobile find holds
+chrome. disclosure and empty focused inputs survive pane activation and an
+active-pane breakpoint change; visit retirement ends disclosure and transient
+results. hidden find occupies no space or tab stops. reader reflow owns passage
+continuity when the row changes height.
 
 pane control rows and companion/strip headers consume the shared compact density
 recipe. controls own their appearance; the shell owns layout and available space.
@@ -487,11 +489,17 @@ enters browser storage.
 
 clear and reset preserve a live focus target; chip removal uses the surviving
 neighbour/input. options escape collapses only options, preserving selections.
-desktop input escape clears nonempty text; mobile find escape clears/collapses.
+ordinary input escape clears nonempty text; find escape clears and collapses at
+every width. clearing its input alone leaves find open. closing stays at the
+shown passage and returns focus to pane chrome or its surviving landmark,
+without scrolling; returning to the held reading position is a separate command.
 only the active capable pane consumes `Pane.Search` (cmd/ctrl+f); existing
 interaction overlays win and unsupported/resolving panes retain native find.
-only mobile find publishes the query menu command, retaining its disclosure
-while open. permanent query fields have no duplicate menu entry. source identity is
+find publishes `find in document…` in overflow at every width. that command and
+the shortcut open or refocus the input and select its text; neither toggles find
+closed nor opens results. the command is disabled while its source is unavailable.
+menu dismissal leaves focus transfer to find. permanent query fields have no
+duplicate menu entry. source identity is
 `paneSourceKey(runtime)` (`visitId:routeId:pathname`), excluding query/hash.
 
 `usePaneFilterRows` owns source-local text and honest complete/partial/failed
@@ -503,8 +511,10 @@ retires the abandoned wait. its notice is literal null when quiet; mount its per
 node outside optional footer/state wrappers so hidden speech creates no gap.
 initial/refresh errors remain with their feature owner. inactive/abandoned waits
 retire without replay; restored-ready mounts and passive traversal stay silent.
-`useFind({ownerKey, source, presentation?})` owns
-find lifetime, frozen first-query scope, computation, movement and painting.
+`useFind({ownerKey, source, presentation?})` owns find lifetime, frozen first-query
+scope, computation, movement and painting. its `FindSession` exposes one `clear`
+command independently of its nullable, source-ready controller. clear remains
+effective through source replacement, so readiness cannot resume a closed search.
 return aborts movement while pending computation settles at the restored origin;
 new query/options/retry allow automatic navigation again. the shell
 retires only its disclosure/results; ordinary clear preserves find preferences
@@ -513,7 +523,7 @@ retires old geometry, then recaptures after restore. `FindBar` adapts the shared
 query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
 by the word `results` (named and tooltipped "Show search results"), the optional
-icon-only return and mobile close. applied-option chips remain visible. options
+icon-only return and close. applied-option chips remain visible. options
 draws `Filter`, return `Locate`; the companion's search-results tab draws
 `Search`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.

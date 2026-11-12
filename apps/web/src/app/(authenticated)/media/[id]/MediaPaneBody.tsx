@@ -383,7 +383,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const readerRef = useRef<Reader | null>(null);
   const verbsRef = useRef<{ readonly isMobile: boolean; readonly verbs: AnnotationVerbs } | null>(null);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
-  const findRef = useRef<ReturnType<typeof useFind>>(null);
+  const findRef = useRef<ReturnType<typeof useFind> | null>(null);
   const navigationRuntime = useRef(runtime);
   navigationRuntime.current = runtime;
   const outcome = useOutcome();
