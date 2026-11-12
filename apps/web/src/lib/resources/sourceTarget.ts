@@ -25,6 +25,28 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
   if (!url) return null;
   const query = url.searchParams;
   const route = resolvePaneRouteModel(href);
+  if (route.id === "librarian") {
+    const located = ["message", "start_offset", "end_offset"].some(key => query.has(key));
+    if (query.has("q") && (located || ["before_seq", "after_seq", "loc"].some(key => query.has(key)) || url.hash || query.getAll("q").length !== 1))
+      return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+    if (located) {
+      if (`${url.pathname}${url.search}${url.hash}`.length > MAX_WORKSPACE_HREF_LENGTH)
+        return { kind: "invalid_destination", reason: "location_too_long" };
+      const message = query.get("message");
+      const start = query.get("start_offset");
+      const end = query.get("end_offset");
+      if (!message || !isCanonicalUuid(message) || query.getAll("message").length !== 1 || url.hash ||
+          [...query.keys()].some(key => !["message", "start_offset", "end_offset", "via"].includes(key)))
+        return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+      if (start === null && end === null) return { kind: "resource", field: null, resource_ref: `message:${message}` };
+      if (start === null || end === null || query.getAll("start_offset").length !== 1 || query.getAll("end_offset").length !== 1 ||
+          !/^(0|[1-9][0-9]*)$/.test(start) || !/^(0|[1-9][0-9]*)$/.test(end) ||
+          !Number.isSafeInteger(Number(start)) || !Number.isSafeInteger(Number(end)) || Number(start) >= Number(end) || Number(end) > 2 ** 31 - 1)
+        return { kind: "invalid_destination", reason: "invalid_reader_destination" };
+      return { kind: "live_reference", reference: { resource_ref: `message:${message}`, field: null,
+        locator: { kind: "TextOffsets", start_offset: Number(start), end_offset: Number(end) } } };
+    }
+  }
   if (query.has("post_revision")) {
     const revision = query.get("post_revision");
     const attempt = query.get("source_attempt_id");
@@ -63,8 +85,6 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
     const scheme = SCHEMES[kind as keyof typeof SCHEMES];
     return { kind: "resource", field: null, resource_ref: `${scheme}:${id}` };
   }
-  const message = url.pathname === "/librarian" && query.get("message");
-  if (message && isCanonicalUuid(message)) return { kind: "resource", field: null, resource_ref: `message:${message}` };
   if (url.pathname.startsWith("/media/")) {
     const apparatus = query.get("apparatus_id");
     if (apparatus && isCanonicalUuid(apparatus)) return { kind: "resource", field: null, resource_ref: `reader_apparatus_item:${apparatus}` };

@@ -80,7 +80,7 @@ export function rootItem(root: EvidenceRoot): Schema<"ResourceItemOut"> {
   return {
     authored_by_viewer: false, ref: root.ref, action_ref: content.action_ref, label: content.label,
     preview: {
-      body: { kind: "prose", excerpt: content.excerpt, role: null, format: "plain", image_count: 0 },
+      body: { kind: "prose", excerpt: content.excerpt, message: null, format: "plain", image_count: 0 },
       source: root.source.apparatus_source === null ? null : { ...root.source.apparatus_source, location_label: content.location_label },
     },
     activation: content.activation, missing: false,

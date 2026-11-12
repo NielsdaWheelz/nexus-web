@@ -47,7 +47,10 @@ export function resourceMetadata({ item, matchMethod = null, occurrenceLabel, re
   if (source?.attribution_text) bibliography.unshift({ kind: "text", key: "attribution", text: source.attribution_text, href: null, date: null });
   const parts: ResourceMetadataPart[] = [];
   if (occurrenceLabel?.trim()) parts.push({ kind: "text", key: "occurrence", text: occurrenceLabel, href: null, date: null });
-  if (body.kind === "prose" && body.role?.trim()) parts.push({ kind: "text", key: "role", text: body.role, href: null, date: null });
+  if (body.kind === "prose" && body.message !== null) {
+    parts.push({ kind: "text", key: "role", text: body.message.role === "user" ? "you" : "librarian", href: null, date: null });
+    if (body.message.status !== "complete") parts.push({ kind: "text", key: "status", text: "incomplete", href: null, date: null });
+  }
   if (source && source.ref !== item.ref && (source.title?.trim() || source.activation?.href))
     parts.push({ kind: "text", key: "source", text: source.title?.trim() ? source.title : "source", href: source.activation?.href ?? null, date: null });
   if (source?.location_label?.trim()) parts.push({ kind: "text", key: "location", text: source.location_label, href: null, date: null });

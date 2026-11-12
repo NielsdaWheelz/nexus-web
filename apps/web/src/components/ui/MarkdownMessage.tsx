@@ -16,6 +16,7 @@ import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { remarkCitations } from "@/lib/chat/markdownCitations";
+import { rehypeMessagePassages, remarkMessagePassages, type MarkdownPassage } from "@/lib/chat/markdownPassages";
 import type { Schema } from "@/lib/api/wire";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { RetrievalReference } from "@/components/chat/LiveReference";
@@ -70,12 +71,19 @@ function Code({
   className,
   children,
   node,
+  "data-message-code": messageCode,
+  "data-message-passage": passage,
+  "data-message-source-start": sourceStart,
+  "data-message-source-end": sourceEnd,
   ...rest
-}: ComponentProps<"code"> & {
-  node?: { position?: { start: { line: number }; end: { line: number } } };
+}: ComponentProps<"code"> & ExtraProps & {
+  "data-message-code"?: boolean;
+  "data-message-passage"?: boolean;
+  "data-message-source-start"?: number;
+  "data-message-source-end"?: number;
 }) {
   const language = /language-(\w+)/.exec(className ?? "")?.[1];
-  const block =
+  const block = messageCode ||
     node?.position !== undefined &&
     node.position.end.line > node.position.start.line;
   if (!language && !block) {
@@ -86,7 +94,7 @@ function Code({
     );
   }
   return (
-    <CodeBlock language={language ?? "text"}>
+    <CodeBlock language={language ?? "text"} passage={passage ? { start: sourceStart!, end: sourceEnd! } : null}>
       <code className={className} {...rest}>
         {children}
       </code>
@@ -102,9 +110,11 @@ function codeText(node: ReactNode): string {
 function CodeBlock({
   language,
   children,
+  passage,
 }: {
   language: string;
   children: ReactNode;
+  passage: MarkdownPassage | null;
 }) {
   const text = codeText(children);
   const copy = useCopyFeedback(text);
@@ -124,7 +134,8 @@ function CodeBlock({
     else setDefect({ error });
   });
   return (
-    <div className={styles.codeBlock}>
+    <div className={styles.codeBlock} data-message-passage={passage ? "true" : undefined}
+      data-message-source-start={passage?.start} data-message-source-end={passage?.end}>
       <div className={styles.codeHeader} data-pane-find-exclude="true">
         <span>{language}</span>
         <Button iconOnly icon={copy.copied ? <Icon.Check /> : <Icon.Copy />} aria-label="copy code"
@@ -165,10 +176,12 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   content,
   citations,
   presentation,
+  passage = null,
 }: {
   content: string;
   citations?: (Schema<"CitationOut"> | Schema<"ChatCitationOut">)[];
   presentation?: "chat";
+  passage?: MarkdownPassage | null;
 }) {
   const cited = useMemo(
     () =>
@@ -183,8 +196,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     <div className={presentation === "chat" ? `${styles.markdown} ${styles.chat}` : styles.markdown}>
       <CitationContext value={cited}>
         <ReactMarkdown
-          remarkPlugins={cited ? [remarkGfm, remarkCitations] : [remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
+          remarkPlugins={cited ? [remarkGfm, remarkCitations, [remarkMessagePassages, passage]] : [remarkGfm, [remarkMessagePassages, passage]]}
+          rehypePlugins={[rehypeHighlight, rehypeMessagePassages]}
           components={components}
         >
           {content}

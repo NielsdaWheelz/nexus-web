@@ -23,6 +23,7 @@ import AssistantTrust from "./AssistantTrust";
 import MessageDetails from "./MessageDetails";
 import LiveReference from "./LiveReference";
 import styles from "./ChatSurface.module.css";
+import inspection from "./messageInspection.module.css";
 
 const FAILURE_REASON = {
   cancelled: "the turn was cancelled.",
@@ -35,7 +36,7 @@ const FAILURE_REASON = {
 
 /** Tailing paints one pending turn. A terminal read alone adopts its final text,
  * citations, trust trail and capabilities; stream loss never implies failure. */
-export default function ChatTurn({ turn, passage, ordinal, refresh, onInspect, onRetry, retryAvailable }: { onRetry(): void; retryAvailable: boolean; turn: Turn; passage: { messageId: string; start: number; end: number } | null; ordinal: number; refresh(): void; onInspect(trigger: HTMLElement): void }) {
+export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryAvailable }: { onRetry(): void; retryAvailable: boolean; turn: Turn; passage: { messageId: string; start: number; end: number } | null; refresh(): void; onInspect(trigger: HTMLElement): void }) {
   const [saved, setSaved] = useState(turn);
   const [live, setLive] = useState<Live | null>(null);
   const [reconnect, setReconnect] = useState(0);
@@ -88,23 +89,22 @@ export default function ChatTurn({ turn, passage, ordinal, refresh, onInspect, o
   const reason = run?.failure ? FAILURE_REASON[run.failure.code] : null;
   const failedLine: Line = { fact: text.trim() ? "this answer is incomplete." : message.status === "cancelled" ? "cancelled." : "couldn’t answer.",
     reason: [reason, run?.support_id ? `support id ${run.support_id}.` : null].filter(Boolean).join(" ") || undefined };
-  const selectedMessage = passage?.messageId === saved.user_message.id ? saved.user_message : passage?.messageId === message.id ? message : null;
-  const selectedPassage = passage && selectedMessage ? <blockquote aria-label="selected passage"><p>selected passage</p>
-    <span>{Array.from(selectedMessage.content).slice(passage.start, passage.end).join("")}</span></blockquote> : null;
   if (defect) throw defect.error;
   return <>
     <div className={styles.message} data-message-id={saved.user_message.id} data-role="user" role="group" aria-label="your message">
       <div className={styles.userPrompt}>
         {saved.retry_of_run_id ? <p>retry of an earlier question</p> : null}
         {saved.user_message.attachments.map((attachment, index) => <div key={index}><LiveReference reference={attachment.reference} item={attachment.item} locationAvailable={attachment.location_available} /></div>)}
-        <span className={styles.userBody} data-message-content="true" data-pane-find-block="true" data-pane-find-message-ordinal={ordinal} data-pane-find-role="user">{saved.user_message.content}</span>
+        <span className={styles.userBody} data-message-content="true">{passage?.messageId === saved.user_message.id
+          ? <>{saved.user_message.content.slice(0, passage.start)}<mark className={inspection.literal} data-message-passage="true"
+              data-message-source-start={passage.start} data-message-source-end={passage.end}>{saved.user_message.content.slice(passage.start, passage.end)}</mark>{saved.user_message.content.slice(passage.end)}</>
+          : saved.user_message.content}</span>
       </div>
-      {passage?.messageId === saved.user_message.id ? selectedPassage : null}
       <MessageMenu messageId={saved.user_message.id} content={saved.user_message.content} />
     </div>
     <div className={styles.message} data-message-id={message.id} data-role="assistant" role="group" aria-label="librarian answer">
-      {text ? <div className={styles.answer} data-message-content="true" data-pane-find-block={pending ? undefined : "true"} data-pane-find-message-ordinal={ordinal + 1} data-pane-find-role="assistant"><MarkdownMessage presentation="chat" content={text} citations={message.citations} /></div> : null}
-      {passage?.messageId === message.id ? selectedPassage : null}
+      {text ? <div className={styles.answer} data-message-content="true"><MarkdownMessage presentation="chat" content={text} citations={message.citations}
+        passage={passage?.messageId === message.id ? passage : null} /></div> : null}
       {status ? <p>{status}</p> : null}
       {message.status === "cancelled" || message.status === "error" ? <Fact line={failedLine} /> : null}
       {run?.publication_warning ? <Fact line={{ fact: "couldn’t attach citations.", reason: "the answer is complete." }} /> : null}

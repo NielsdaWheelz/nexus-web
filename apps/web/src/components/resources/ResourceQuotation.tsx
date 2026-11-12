@@ -62,7 +62,7 @@ export default function ResourceQuotation(props: ({ item: Schema<"ResourceItemOu
     <ResourceTypeIcon type={type} />
     {identity === null && source === null ? null : <span className="sr-only">{resourceTypeName(type)}: </span>}
   </span> : null;
-  const role = body?.kind === "prose" && body.role?.trim() ? body.role : null;
+  const role = body?.kind === "prose" && body.message !== null ? body.message.role === "user" ? "you" : "librarian" : null;
   const content = "excerpt" in props
     ? <ReaderExcerpt excerpt={props.excerpt} color={null} full />
     : body !== null ? <ResourceBody body={body} full /> : null;
@@ -80,7 +80,7 @@ export default function ResourceQuotation(props: ({ item: Schema<"ResourceItemOu
             : "href" in props && props.href !== null ? <a className={linkStyles.link} href={props.href} data-pane-label-hint={title}>{title}</a> : title)}
           {authors.length > 0 ? <> — <ContributorCreditList credits={authors} maxVisible={authors.length} /></> : null}
           {!distinctSource && source?.location_label?.trim() ? <> · {source.location_label}</> : null}
-          {role ? <> · {role}</> : null}
+          {role ? <> · {role}{body?.kind === "prose" && body.message?.status !== "complete" ? " · incomplete" : null}</> : null}
         </span>
       </div>
       {distinctSource ? <div className={styles.identity}>

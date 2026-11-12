@@ -52,7 +52,7 @@ export function authoredPreview(resource: ResourceProjection, readingRef: string
     return { label: alts.find(alt => alt?.text)?.text || (images.length === 1 ? "image" : `${images.length} images`), body: { kind: "images", count: images.length, alts } };
   }
   const value = excerpt(prose);
-  return { label: value.text || "empty note", body: { kind: "prose", excerpt: value, role: null, format: parsed.body_pm_json.attrs?.presentation === "code" ? "code" : "plain", image_count: images.length } };
+  return { label: value.text || "empty note", body: { kind: "prose", excerpt: value, message: null, format: parsed.body_pm_json.attrs?.presentation === "code" ? "code" : "plain", image_count: images.length } };
 }
 
 /** The caller supplies its admitted destination; projecting a preview never invents a route. */

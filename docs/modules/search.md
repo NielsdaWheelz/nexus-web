@@ -139,6 +139,14 @@ semantic-only matches; relevance and canonical ref break ties. no passage-count
 summation or frontend score merging. filter-only listings retain label order.
 generated media hits group by their permitted reading owner in sql before limiting.
 messages retain their own identity and account ownership. owner classification is independent of the direct result window.
+browser message eligibility includes nonempty complete, error and cancelled text;
+pending assistant text is excluded. strict tool search remains complete-only under
+its own admission predicate, with the run horizon applied before ranking.
+canonical prose bodies carry nullable message metadata (role, creation time and
+terminal status); all non-message prose carries null. a native positive body
+witness gives message activation its absolute codepoint offset pair through the
+routing owner. snippet emphasis remains excerpt-relative. no positive witness
+means a valid whole-message activation, never an invented highlight.
 selected owners receive one best child from the same lexical scoring traversal,
 including children outside the global window. composition carries these proven
 facts; it performs no second ranking query. semantic-only facts use the approved

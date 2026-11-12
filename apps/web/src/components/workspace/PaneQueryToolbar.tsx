@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState, type CompositionEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ComponentProps, type CompositionEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
 import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import Button from "@/components/ui/Button";
@@ -29,6 +29,7 @@ export default function PaneQueryToolbar({
     readonly onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
     readonly onCompositionStart?: CompositionEventHandler<HTMLInputElement>;
     readonly onCompositionEnd?: CompositionEventHandler<HTMLInputElement>;
+    readonly bindings?: Pick<ComponentProps<"input">, "role" | "aria-autocomplete" | "aria-expanded" | "aria-controls" | "aria-activedescendant">;
   };
   readonly submit?: { readonly onSubmit: () => void; readonly disabled?: boolean };
   readonly options?: {
@@ -103,6 +104,7 @@ export default function PaneQueryToolbar({
       <div className={cx(styles.entry, submit && styles.submitted)}>
         <div className={styles.search}>
           <Input
+            {...input.bindings}
             ref={inputRef}
             className={styles.input}
             type="search"

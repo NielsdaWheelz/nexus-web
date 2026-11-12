@@ -2,6 +2,7 @@
 
 import {
   useLayoutEffect,
+  useRef,
   useState,
   type RefObject,
   type FocusEvent,
@@ -12,6 +13,7 @@ import {
   type WheelEvent,
 } from "react";
 import type { SourceArrivalContext } from "@/lib/reader/sourceArrival";
+import type { MarkdownPassage } from "@/lib/chat/markdownPassages";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import styles from "./messageInspection.module.css";
 import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
@@ -28,7 +30,7 @@ export interface ChatReadingPosition {
   readonly pinMode: PinMode;
 }
 export interface ChatScrollHandle {
-  inspectMessage(id: string, move: boolean): HTMLElement | null;
+  inspectMessage(id: string, move: boolean, passage: MarkdownPassage | null): HTMLElement | null;
   /** Hold the inspected control's eye-line while content above it changes. */
   inspectDisclosure(trigger: HTMLElement): void;
   captureReadingPosition(): ChatReadingPosition | null;
@@ -41,6 +43,7 @@ function createScrollOwner(
   transcript: RefObject<HTMLDivElement | null>,
   setSpacer: (px: number) => void,
   setLatestBelow: (below: boolean) => void,
+  onAttention: () => void,
 ) {
   let mode: PinMode = "released";
   let anchorId: string | null = null;
@@ -146,6 +149,7 @@ function createScrollOwner(
     mode = "released";
   };
   const expectUserScroll = () => {
+    onAttention();
     const port = scrollport.current;
     if (inspection) inspection.focus = null;
     if (port) scrollGesture = port.scrollTop;
@@ -183,11 +187,14 @@ function createScrollOwner(
   };
 
   const handle: ChatScrollHandle = {
-    inspectMessage(id, move) {
-      const target = message(id);
+    inspectMessage(id, move, passage) {
+      const root = message(id);
+      const target = passage ? root?.querySelector<HTMLElement>("[data-message-passage]") ?? null : root;
       if (!target) return null;
+      if (passage && !(Number(target.dataset.messageSourceStart) <= passage.start && Number(target.dataset.messageSourceEnd) >= passage.end)) return null;
       releaseInspection();
-      if (move) jump(target.offsetTop - inset(), false);
+      const port = scrollport.current;
+      if (move && port) jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
       return target;
     },
     inspectDisclosure(trigger) {
@@ -293,6 +300,7 @@ function createScrollOwner(
       scrollGesture = null;
       if (inspection) inspection.focus = null;
       if (event.target === event.currentTarget) expectUserScroll();
+      else if (event.isPrimary && !event.defaultPrevented) onAttention();
     },
     onClick(event: MouseEvent<HTMLElement>) {
       scrollGesture = null;
@@ -302,6 +310,7 @@ function createScrollOwner(
     onComposerWheel(event: WheelEvent<HTMLElement>) {
       const port = scrollport.current;
       if (!port || event.defaultPrevented || event.ctrlKey || event.deltaY === 0) return;
+      onAttention();
       for (
         let node = event.target instanceof Element ? event.target : null;
         node;
@@ -332,11 +341,14 @@ export function useChatScroll(
   lastUserId: string | null,
   leafId: string | null,
   ready: boolean,
+  onAttention: () => void,
 ) {
   const [spacer, setSpacer] = useState(0);
   const [latestBelow, setLatestBelow] = useState(false);
+  const attention = useRef(onAttention);
+  attention.current = onAttention;
   const [owner] = useState(() =>
-    createScrollOwner(scrollport, transcript, setSpacer, setLatestBelow),
+    createScrollOwner(scrollport, transcript, setSpacer, setLatestBelow, () => attention.current()),
   );
   useLayoutEffect(
     () => owner.turn(lastUserId, leafId, ready),
@@ -352,11 +364,12 @@ export async function inspectChatMessage(
   handle: ChatScrollHandle | null,
   id: string,
   context: SourceArrivalContext,
+  passage: MarkdownPassage | null,
 ): Promise<boolean> {
   if (!handle || context.signal.aborted) return false;
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   if (context.signal.aborted) return false;
-  const target = handle.inspectMessage(id, !context.restored);
+  const target = handle.inspectMessage(id, !context.restored, passage);
   if (!target) return false;
   target.dataset.sourceInspection = context.activationId;
   target.classList.add(styles.inspected);

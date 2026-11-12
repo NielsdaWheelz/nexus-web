@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 21;
+export const WIRE_REVISION = 22;
 
 export interface paths {
     "/assistant-writes": {
@@ -8863,6 +8863,24 @@ export interface components {
             media_id: string;
             summary: components["schemas"]["MediaSummaryOut"] | null;
         };
+        /** MessageMetadataOut */
+        MessageMetadataOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "complete" | "error" | "cancelled";
+        };
         /**
          * MessageOffsetsLocator
          * @description Codepoint offsets in one message, which owns itself in the account timeline.
@@ -10826,8 +10844,7 @@ export interface components {
              * @enum {string}
              */
             kind: "prose";
-            /** Role */
-            role: string | null;
+            message: components["schemas"]["MessageMetadataOut"] | null;
         };
         /** ProviderApiRoute */
         ProviderApiRoute: {

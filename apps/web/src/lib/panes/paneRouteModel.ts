@@ -284,7 +284,7 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     if (id === "oracleReading" && !locator) continue;
     // `via` names the link a bullet opened the route through: an arrival on every route, never a view.
     const query = new URLSearchParams(search);
-    for (const key of id === "librarian" ? ["via", "message"] : ["via"]) query.delete(key);
+    for (const key of id === "librarian" ? ["via", "message", "start_offset", "end_offset"] : ["via"]) query.delete(key);
     const viewSearch = query.size ? `?${query}` : "";
     const routeKey = `${id}:${pathname}${viewSearch}`;
     const resourceKey = paneResourceLocatorKey(locator);
@@ -326,7 +326,7 @@ export function resolveWorkspaceActivationRouteId(href: string): string {
   const query = parseWorkspaceHref(href)?.searchParams ?? new URLSearchParams();
   const arrival = route.id === "media" || route.id === "xCapture"
     ? ["fragment", "loc", "apparatus", "apparatus_id", "x_post", "post_revision"]
-    : route.id === "librarian" ? ["message"] : [];
+    : route.id === "librarian" ? ["message", "start_offset", "end_offset"] : [];
   for (const key of [...arrival, "via"]) query.delete(key);
   query.sort();
   return `${route.id}:${route.resourceKey ?? route.pathname}${query.size ? `?${query}` : ""}`;
