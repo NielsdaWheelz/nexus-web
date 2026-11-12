@@ -511,25 +511,22 @@ retires the abandoned wait. its notice is literal null when quiet; mount its per
 node outside optional footer/state wrappers so hidden speech creates no gap.
 initial/refresh errors remain with their feature owner. inactive/abandoned waits
 retire without replay; restored-ready mounts and passive traversal stay silent.
-`useFind({ownerKey, source, presentation?})` owns find lifetime, frozen first-query
-scope, computation, movement and painting. its `FindSession` exposes one `clear`
-command independently of its nullable, source-ready controller. clear remains
-effective through source replacement, so readiness cannot resume a closed search.
-return aborts movement while pending computation settles at the restored origin;
-new query/options/retry allow automatic navigation again. the shell
-retires only its disclosure/results; ordinary clear preserves find preferences
-and a held return origin. publication replacement retains text/preferences,
-retires old geometry, then recaptures after restore. `FindBar` adapts the shared
+`useFind` supplies the pane's mounted `FindSession`: a nullable source-ready
+controller and a clear command that remains effective through source replacement.
+the shell owns disclosure/results; clear preserves find preferences and the
+reader's held return origin. [reader implementation](reader-implementation.md)
+owns scope, computation, navigation supersession and painting. `FindBar` adapts the shared
 query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
-by the word `results` (named and tooltipped "Show search results"), the optional
-icon-only return and close. applied-option chips remain visible. options
-draws `Filter`, return `Locate`; the companion's search-results tab draws
+by the word `results` (named and tooltipped "Show search results") and icon-only
+close. applied-option chips remain visible. options draws `Filter`;
+the companion's search-results tab draws
 `Search`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
-retry/return transfer focus before their controls disappear; companion results
-remain transient. `useFind` and `FindBar` own find movement, cancellation and
-focus; the shared field primitives own ordinary text editing and keyboard behavior.
+retry transfers focus before its control disappears; companion results remain
+transient. `useFind` owns find movement and cancellation; the shell owns
+disclosure/focus, and the shared field primitives own ordinary text editing and
+keyboard behavior.
 the chrome's canonical resource identity is `resourceRef?: CanonicalResourceRef`.
 [the visual system](visual-system.md) owns query-toolbar sizing, wrapping and
 refinement presentation. historical #628 browser/dom and native zoom observations

@@ -34,7 +34,6 @@ export interface FindController {
   readonly narrow: string | null; // scope captured by the first nonempty query
   readonly narrowed: boolean;
   readonly result: FindResult;
-  readonly returnable: boolean;
   setQuery(query: string): void;
   setMatchCase(value: boolean): void;
   setWholeWord(value: boolean): void;
@@ -43,7 +42,6 @@ export interface FindController {
   activate(row: FindRow<unknown>): Promise<boolean>;
   targetHref(row: FindRow<unknown>): string | null;
   retry(): void;
-  goBack(): void;
 }
 
 /** The mounted session can be cleared while its source is unavailable. */
@@ -68,7 +66,6 @@ interface Session {
   readonly narrowed: boolean;
   readonly narrow: string | null;
   readonly result: FindResult;
-  readonly returnable: boolean;
   readonly attempt: number;
   readonly defect: { readonly error: unknown } | null;
 }
@@ -109,7 +106,6 @@ export function useFind({
     narrowed: false,
     narrow: null,
     result: IDLE,
-    returnable: false,
     attempt: 0,
     defect: null,
   };
@@ -129,7 +125,6 @@ export function useFind({
       // Keep the clear reason through the unavailable-source gap while restoring.
       result: invalidated ? { kind: "Failed", message: session.source?.scopeChangeMessage ?? "search scope changed; search cleared" }
         : session.query ? IDLE : session.result,
-      returnable: false,
       defect: null,
     });
   }
@@ -225,7 +220,6 @@ export function useFind({
         update({ result: outcome });
         return false;
       }
-      if (source.returnToOrigin) update({ returnable: true });
       return true;
     },
     [source, update],
@@ -343,7 +337,6 @@ export function useFind({
         narrow: session.narrow,
         narrowed,
         result,
-        returnable: session.returnable,
         setQuery(value) {
           const next = truncatePaneSearchQuery(value);
           if (!next) return clear();
@@ -381,15 +374,9 @@ export function useFind({
             result: latest.current.query ? { kind: "Searching" } : IDLE,
           });
         },
-        goBack() {
-          lifetime.autoRevealAllowed = false;
-          lifetime.movement?.abort();
-          source.returnToOrigin?.();
-          update({ returnable: false });
-        },
       },
     };
-  }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.scopeLabel, session.returnable, show, source, update, wholeWord]);
+  }, [clear, lifetime, matchCase, narrowed, prepare, query, result, session.narrow, session.scopeLabel, show, source, update, wholeWord]);
 
   if (session.defect) throw session.defect.error;
   return find;

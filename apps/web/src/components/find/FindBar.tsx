@@ -164,13 +164,6 @@ const FindBar = forwardRef<
         </>}
         trailingActions={<>
           <Button aria-label="Show search results" tooltip={{ text: "Show search results" }} disabled={count === 0} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>results</Button>
-          {find?.returnable ? (
-            <Button iconOnly aria-label="Return to reading position" onClick={() => {
-              inputRef.current?.focus({ preventScroll: true });
-              find.goBack();
-            }}
-              icon={<Icon.Locate aria-hidden="true" />} />
-          ) : null}
           <Button iconOnly aria-label="Close find" onClick={onClose} icon={<Icon.Dismiss aria-hidden="true" />} />
         </>}
       />

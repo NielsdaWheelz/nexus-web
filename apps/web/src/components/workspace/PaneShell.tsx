@@ -358,15 +358,6 @@ function PaneView({
       onSelect: openQuery,
     });
   }
-  if (find?.returnable) {
-    paneActions.push({
-      kind: "command",
-      id: "Pane.SearchReturn",
-      label: "Go back to reading position",
-      icon: <Icon.Locate aria-hidden="true" />,
-      onSelect: find.goBack,
-    });
-  }
   if (refresh.command) paneActions.push(refresh.command);
   if (installedApp) paneActions.push({
     kind: "command", id: "Catalog.Save", label: "Save catalog for offline",
