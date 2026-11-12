@@ -1029,8 +1029,17 @@ def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
     save_original(cohort)
 
 
-def release(source_sha: str, workspace: Path) -> None:
+def release(source_sha: str, workspace: Path, *, initialize_native_host: bool) -> None:
     candidate = preflight(source_sha, workspace, deploying=True)
+    if not initialize_native_host:
+        present = host(
+            f"if sudo test -f {CODEX_ACCOUNT_ROOT}/host-state.json; then echo present; fi"
+        ).strip()
+        if present != "present":
+            raise Failure(
+                "native host identity is missing; first installation requires"
+                " --initialize-native-host; lost identity requires reviewed operator repair"
+            )
     pull_image(candidate, candidate.images.api)
     pull_image(candidate, candidate.images.worker)
     host(f"docker pull {config_value('CLOUDFLARED_IMAGE')}", timeout=900)
@@ -1059,6 +1068,23 @@ def release(source_sha: str, workspace: Path) -> None:
         backup(candidate, starting_revision)
     else:
         note("the database is empty; there is nothing to back up")
+
+    if initialize_native_host:
+        note("initializing native host identity once, with predecessor stopped")
+        initialize = """import os
+from pathlib import Path
+from apps.codex_agent.state import initialize, read
+
+account = Path(os.environ['NEXUS_CODEX_CREDENTIAL_FILE']).parent
+if (account / 'host-state.json').exists():
+    read(account)
+else:
+    initialize(account)
+"""
+        compose(
+            candidate,
+            f"run --rm --no-deps --no-TTY {CODEX_AGENT_HOST} python -c {shlex.quote(initialize)}",
+        )
 
     # A backup receipt can describe an earlier revision on a rerun. Compare the
     # live database across recreation, before any migration changes it.
@@ -1152,6 +1178,11 @@ def check(source_sha: str | None, workspace: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Release the Nexus backend to Hetzner.")
     parser.add_argument("source_sha", nargs="?")
+    parser.add_argument(
+        "--initialize-native-host",
+        action="store_true",
+        help="explicit first installation of native identity after stopped writers and backup",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--check",
@@ -1169,6 +1200,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("source SHA must be 40 lowercase hex characters")
     if arguments.restore_original and source_sha is not None:
         parser.error("original-cohort restoration takes no candidate SHA")
+    if arguments.initialize_native_host and (arguments.check or arguments.restore_original):
+        parser.error("--initialize-native-host applies only to a release")
     if not arguments.check and not arguments.restore_original and source_sha is None:
         parser.error("a release requires its source SHA")
     with tempfile.TemporaryDirectory(prefix="nexus-release.") as temporary:
@@ -1197,7 +1230,11 @@ def main(argv: list[str] | None = None) -> int:
             if arguments.restore_original:
                 restore_original()
             else:
-                release(str(source_sha), Path(temporary))
+                release(
+                    str(source_sha),
+                    Path(temporary),
+                    initialize_native_host=arguments.initialize_native_host,
+                )
     return 0
 
 
