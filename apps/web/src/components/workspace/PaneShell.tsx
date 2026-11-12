@@ -255,18 +255,15 @@ function PaneView({
   const inputRef = useRef<HTMLInputElement>(null);
   const focusFrame = useRef(0);
   const source = paneSourceKey(runtime);
-  const rowId = `${paneId}-pane-search`;
   const bodyId = `${paneId}-body`;
 
-  // Find alone is collapsible on mobile. Its controller owns query lifetime.
+  // The shell owns disclosure; the find session survives source readiness changes.
   const query = body?.query;
-  const find = query?.kind === "Find" ? query.find : null;
+  const find = query?.kind === "Find" ? query.session.controller : null;
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
-  const findVisible =
-    query?.kind === "Find" &&
-    (!isMobile || expandedFor === source || Boolean(find?.query));
+  const findVisible = query?.kind === "Find" && expandedFor === source;
   const clearFind = () => {
-    find?.clear();
+    if (query?.kind === "Find") query.session.clear();
     chrome.set({ results: null });
   };
   useLayoutEffect(
@@ -347,34 +344,18 @@ function PaneView({
       )
     : undefined;
   const paneActions: ActionDescriptor[] = [];
-  if (isMobile && query?.kind === "Find") {
+  if (query?.kind === "Find") {
     const resolving = find === null;
-    const menuLabels = {
-      collapsed: "Find",
-      expanded: "Close find",
-    };
     paneActions.push({
       kind: "command",
       id: "Pane.Search",
-      label: "Find",
+      label: "find in document…",
       icon: <Icon.Search aria-hidden="true" />,
       disabled: resolving || undefined,
       disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
       waiting: resolving || undefined,
       restoreFocusOnClose: false,
-      state: findVisible
-        ? { kind: "disclosure", expanded: true, controls: rowId, menuLabels }
-        : { kind: "disclosure", expanded: false, menuLabels },
-      onSelect: () => findVisible ? closeFind() : openQuery(),
-    });
-  }
-  if (find?.returnable) {
-    paneActions.push({
-      kind: "command",
-      id: "Pane.SearchReturn",
-      label: "Go back to reading position",
-      icon: <Icon.Locate aria-hidden="true" />,
-      onSelect: find.goBack,
+      onSelect: openQuery,
     });
   }
   if (refresh.command) paneActions.push(refresh.command);
@@ -557,28 +538,20 @@ function PaneView({
               ) : null}
               {query ? (
                 <div
+                  key={source}
                   className={`${styles.controlRow} ${compact.compact}`}
                   hidden={query.kind === "Find" && !findVisible}
                 >
-                  <div
-                    key={source}
-                    id={rowId}
-                    className={styles.queryControls}
-                    hidden={query.kind === "Find" && !findVisible}
-                    onFocusCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
-                    onClickCapture={query.kind === "Find" ? () => setExpandedFor(source) : undefined}
-                  >
-                    {query.kind === "Find" ? (
-                      <FindBar
-                        ref={inputRef}
-                        find={find}
-                        onClear={clearFind}
-                        onClose={isMobile ? closeFind : undefined}
-                        resultsExpanded={state.results?.expanded ?? false}
-                        onShowResults={controller.showResults}
-                      />
-                    ) : query.content}
-                  </div>
+                  {query.kind === "Find" ? (
+                    <FindBar
+                      ref={inputRef}
+                      find={find}
+                      onClear={clearFind}
+                      onClose={closeFind}
+                      resultsExpanded={state.results?.expanded ?? false}
+                      onShowResults={controller.showResults}
+                    />
+                  ) : query.content}
                 </div>
               ) : null}
             </div>

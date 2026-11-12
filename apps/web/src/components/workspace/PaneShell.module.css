@@ -96,13 +96,8 @@
   background: var(--surface-2);
 }
 
-.controlRow[hidden],
-.queryControls[hidden] {
+.controlRow[hidden] {
   display: none;
-}
-
-.queryControls {
-  min-inline-size: 0;
 }
 
 .body {

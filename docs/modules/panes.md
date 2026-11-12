@@ -137,15 +137,13 @@ desktop-attached secondary columns. Secondary content is presented by the
 workspace mobile secondary sheet.
 
 pane-local controls are source-local chrome. identity, reader navigation and
-queries compose independently above the content scrollport. supported desktop
-fields remain visible; mobile find discloses alongside navigation and clears on
-close. only the active capable pane consumes cmd/ctrl+f; overlays win and native
-find remains available for unsupported/resolving panes. source replacement
-retires query lifetime; active-pane resizing preserves it. inactive panes
-unmounted on mobile retain their existing reset behavior.
+queries compose independently above the content scrollport. the
+[workspace controls](workspace.md) contract owns query disclosure, shortcut
+admission and focus. active-pane resizing preserves the mounted query; inactive
+panes unmounted on mobile retain their existing reset behavior.
 
 collections and page/note rows publish the shared query toolbar with inline
-native filter choices. find publishers supply `useFind` controllers and
+native filter choices. find publishers supply `useFind` sessions and
 transient companion results. domains own urls, query timing, results and clear/
 reset semantics. see [workspace controls](workspace.md) for the capability,
 geometry and keyboard contract.

@@ -553,7 +553,10 @@ control. the existing viewport owns keyboard/chrome clearance, counted once.
 workspace navigation remains available, and explicit close uses the work guard.
 
 **find.** the attached surface publishes a `FindSource`; hosted media exposes
-it only after restore. `useFind` receives the pane's required `ownerKey`.
+it only after restore. `useFind` receives the pane's required `ownerKey` and
+returns a `FindSession`: its source-ready controller is nullable, but its sole
+clear command remains available through restoration. closing during source
+replacement clears retained query state before the replacement can resume it.
 visibility/focus does not capture a session: the first nonempty query freezes
 the current section/page; later navigation and option changes retain it. idle
 scope labels describe capability; active labels name the captured scope.
@@ -563,12 +566,15 @@ preferences and the reader's held first departure. owner retirement resets the
 session; a publication change clears a captured narrowed query, retaining the
 source's explanation through replacement loading. whole-document queries and
 preferences survive and prepare against the restored replacement.
-computation and reveal use separate abort signals. return cancels movement and
-revokes pending automatic reveal while results may still settle; a new query,
-option change or retry starts fresh navigation intent. effect cleanup aborts
+computation and reveal use separate abort signals. the existing host `onIntent`
+forwards newer reading/navigation intent to `FindSession.supersedeMovement`:
+it aborts movement and revokes automatic reveal while results may still settle.
+find's own active movement signal preserves its reveal. the reader owns return;
+find owns no second return command. a new query, option change or retry starts
+fresh navigation intent; explicit match steps remain available. effect cleanup aborts
 its captured computation/automatic movement; retirement aborts current movement,
 including explicit later steps. cancelled reveals cannot publish success,
-failure or returnability.
+failure or later positioning.
 
 text searches canonical units and paints css highlights; pdf searches and paints
 through pdf.js. `FindSource.reveal` returns `Shown | Cancelled | Failed`;
