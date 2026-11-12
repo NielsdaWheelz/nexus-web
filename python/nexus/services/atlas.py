@@ -16,7 +16,7 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import JobExecutionContext, finish_job, lock_running_job_claim
 from nexus.schemas.atlas import AtlasEdgeOut, AtlasOut, ConstellationOut, StarOut
@@ -124,7 +124,9 @@ def atlas_project_job(
 ) -> dict[str, int | str]:
     """A retry recomputes the whole frame in one transaction (idempotent)."""
     with get_session_factory()() as db:
-        return retry_serializable(db, "atlas.project", lambda: _project(db, context))
+        # One SELECT supplies the frame; the sole background worker serializes sweeps.
+        # The late exact-claim fence must see heartbeat updates made during computation.
+        return retry_read_committed(db, "atlas.project", lambda: _project(db, context))
 
 
 def _frame(vectors: np.ndarray) -> list[tuple[float, float]]:
