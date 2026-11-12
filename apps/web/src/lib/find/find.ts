@@ -60,7 +60,6 @@ export type FindReveal =
  * - reveal distinguishes a shown row, cancelled movement and a refusal.
  * - href projects a captured locator through its host; standalone sources return null.
  * - paint is declarative: the rows and active index after every change; ([], -1) clears.
- * - returnToOrigin exists only where find owns the way back (no reader owns movement).
  * Methods, not function properties: parameter bivariance lets any FindSource<L>
  * stand where FindSource<unknown> is expected.
  */
@@ -83,7 +82,6 @@ export interface FindSource<L> {
   reveal(at: L, signal: AbortSignal): Promise<FindReveal>;
   href(at: L): string | null;
   paint(rows: readonly FindRow<L>[], active: number): void;
-  returnToOrigin?(): void;
 }
 
 /** ±64 codepoints around a UTF-16 range; a 128-unit window always holds 64 whole codepoints. */

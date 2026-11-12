@@ -11,7 +11,7 @@ import { MAP_RAIL_WIDTH_PX, MapRail, type RailMarker } from "@/lib/documentReade
 import type { ReaderDestination } from "@/lib/documentReader/location";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
-import type { FindController } from "@/lib/find/useFind";
+import type { FindSession } from "@/lib/find/useFind";
 import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome, usePaneLayout } from "@/lib/panes/paneChrome";
@@ -34,7 +34,7 @@ export function useReaderChrome(input: {
   /** A refresh found the item gone: the inspector and find retire over the text still shown. */
   readonly gone: boolean;
   readonly reader: Reader;
-  readonly find: FindController | null;
+  readonly find: FindSession;
   readonly readable: boolean;
   readonly contents: ReactNode;
   readonly evidence: ReactNode;
@@ -113,11 +113,9 @@ export function useReaderChrome(input: {
           knownDescriptor: media.playerDescriptor,
         },
         navigation,
-        query: find
-          ? { kind: "Find" as const, find }
-          : !input.gone && !documentFailed && readable
-            ? { kind: "Find" as const, find: null }
-            : undefined,
+        query: find.controller !== null || (!input.gone && !documentFailed && readable)
+          ? { kind: "Find" as const, session: find }
+          : undefined,
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
         menuActions,
       }),
