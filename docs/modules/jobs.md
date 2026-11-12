@@ -75,6 +75,10 @@ secondary failure also fails.
 
 ## locks and settlement
 
+before locks, generation confirms any recorded native turn ended. unknown native
+finality holds the existing job and leaves its generation open. local process
+termination and an interrupt acknowledgement are not native terminal evidence.
+
 1. a stopped handler/child's settlement locks open generation rows in id order.
 2. its `lock_owner` participant locks domain rows in their publication order.
 3. settlement locks the exact current job, then heavy capacity when required.
@@ -92,7 +96,8 @@ chat events retain notifications; retained jobs remain the source of operation s
 expiry first obtains necessary domain locks, then rechecks and revokes the exact
 expired execution, releases capacity and schedules recovery. it never closes
 generations while holding a queue row. replacement generation startup locks old
-open rows, then its exact current claim, and closes only those locked rows.
+open rows, then its exact current claim, and closes only those locked rows after
+native finality is confirmed outside the transaction.
 opening a generation holds its owner's advisory lock and current queue claim
 through insertion and commit: a displaced opener inserts nothing.
 

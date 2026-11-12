@@ -7,7 +7,7 @@ import { expectExactRecord, expectOrderRevision, isCanonicalUuid } from "@/lib/v
 export type RecentTarget = PanePresentationLocator | { kind: "daily_date"; local_date: string } | { kind: "preview"; target: string };
 export type RecentValue = { target: RecentTarget; href: string; title_hint: string | null; detail_hint: string | null };
 export type RecentEntry = RecentValue & { used_revision: OrderRevision };
-export type RecentSnapshot = { format_version: 1; account_id: string; epoch: string; revision: OrderRevision; entries: RecentEntry[] };
+export type RecentSnapshot = { format_version: 2; account_id: string; epoch: string; revision: OrderRevision; entries: RecentEntry[] };
 export type RecentObservation = { snapshot: RecentSnapshot; write_failure: "failed" | "unconfirmed" | null };
 export type RecentReconcile = { target: RecentTarget; expected_used_revision: OrderRevision; replacement: RecentValue | null };
 
@@ -22,7 +22,7 @@ export function recentTargetKey(target: RecentTarget): string {
 }
 export function parseRecentSnapshot(raw: unknown): RecentSnapshot {
   const row = expectExactRecord(raw, ["format_version", "account_id", "epoch", "revision", "entries"], "recent snapshot");
-  if (row.format_version !== 1 || !isCanonicalUuid(row.account_id) || !isCanonicalUuid(row.epoch) || !Array.isArray(row.entries) || row.entries.length > 100) throw new TypeError("invalid recent snapshot");
+  if (row.format_version !== 2 || !isCanonicalUuid(row.account_id) || !isCanonicalUuid(row.epoch) || !Array.isArray(row.entries) || row.entries.length > 100) throw new TypeError("invalid recent snapshot");
   const snapshotRevision = expectOrderRevision(row.revision);
   const seen = new Set<string>();
   let previous = BigInt(snapshotRevision) + 1n;
@@ -41,7 +41,7 @@ export function parseRecentSnapshot(raw: unknown): RecentSnapshot {
     seen.add(key);
     return { ...value, detail_hint: entry.detail_hint, used_revision: usedRevision };
   });
-  return { format_version: 1, account_id: row.account_id, epoch: row.epoch, revision: snapshotRevision, entries };
+  return { format_version: 2, account_id: row.account_id, epoch: row.epoch, revision: snapshotRevision, entries };
 }
 export function parseRecentObservation(raw: unknown): RecentObservation {
   const row = expectExactRecord(raw, ["snapshot", "write_failure"], "recent observation");

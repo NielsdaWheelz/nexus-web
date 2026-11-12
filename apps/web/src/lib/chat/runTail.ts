@@ -11,7 +11,6 @@ type Events = {
   assistant_text_delta: Schema<"ChatRunAssistantTextDeltaEventPayload">;
   tool_call_start: Schema<"ChatRunToolCallStartEventOut">;
   tool_result: Schema<"ChatRunToolResultEventOut">;
-  context_ref_added: Schema<"ChatRunContextRefAddedEventPayload">;
   done: Schema<"ChatRunDoneEventPayload">;
   ExecutionAdvisory: Execution;
 };
@@ -42,7 +41,6 @@ const TYPES = new Set<string>([
   "assistant_text_delta",
   "tool_call_start",
   "tool_result",
-  "context_ref_added",
   "done",
   "ExecutionAdvisory",
 ]);
@@ -58,7 +56,7 @@ export function emptyLive(runId: string): Live {
   };
 }
 
-/** context_ref_added changes nothing: the terminal read carries it. */
+/** Terminal reads own final message state. */
 export function foldLive(live: Live, event: ChatEvent): Live {
   if (event.seq > 0 && event.seq <= live.lastSeq) return live;
   const next = { ...live, lastSeq: Math.max(live.lastSeq, event.seq) };
@@ -87,7 +85,6 @@ export function foldLive(live: Live, event: ChatEvent): Live {
     }
     case "ExecutionAdvisory":
       return { ...next, execution: event.data };
-    case "context_ref_added":
     case "done":
       return next;
     default:

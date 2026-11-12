@@ -29,7 +29,6 @@ from nexus.auth.permissions import (
     highlight_visibility_sql,
     requested_media_ids_cte_sql,
     visible_content_credit_rows_sql,
-    visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
@@ -46,7 +45,6 @@ from nexus.services.media_text_scope import (
     x_capture_scope_rows_sql,
 )
 from nexus.services.notes import page_title_sql
-from nexus.services.resource_graph.context import context_facts_sql
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_items.locations import (
     media_passages,
@@ -68,7 +66,6 @@ TSQ = "websearch_to_tsquery('english', :q)"
 LISTABLE = frozenset({"media", "podcast", "contributor"})  # works and people; passages need text
 _CTES = f"""WITH visible_media AS ({visible_media_ids_cte_sql()}),
     visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
-    visible_conversations AS ({visible_conversation_ids_cte_sql()}),
     search_readable_captures AS MATERIALIZED ({readable_x_capture_ids_sql()})"""
 _BASE_CTES = _CTES
 _NO_EXACT_PASSAGES = """, frozen_passages AS (
@@ -126,12 +123,6 @@ def _ctes(
     )
     exact_refs = """SELECT scheme,id FROM
         jsonb_to_recordset(CAST(:frozen_passages AS jsonb)) ref(scheme text,id uuid)"""
-    for index, scope in enumerate(r.scopes):
-        if scope.kind == "conversation":
-            params[f"scope_{index}"] = scope.id
-            exact_refs += f""" UNION SELECT target_scheme AS scheme,target_id AS id
-                FROM ({context_facts_sql(f":scope_{index}")}) context
-                WHERE target_scheme IN ('highlight','passage_anchor')"""
     return (
         prefix
         + f""", admitted_media AS ({eligible}),
@@ -376,19 +367,15 @@ SOURCES: dict[str, str] = {
         WHERE h.user_id=:viewer_id AND h.authored_visible
           AND h.annotation_body_pm_json IS NOT NULL AND h.annotation_body_text<>'' {{where}}""",
     "message": """SELECT 'message' AS type, ms.id, NULL AS label, ms.content_tsv AS doc,
-            ms.content AS text, ms.conversation_id, ms.seq,
-            'Conversation message #' || ms.seq AS title, 'message #' || ms.seq AS source_label,
-            jsonb_build_object('type', 'message_offsets', 'conversation_id', ms.conversation_id,
+            ms.content AS text, ms.seq,
+            'Message #' || ms.seq AS title, 'message #' || ms.seq AS source_label,
+            jsonb_build_object('type', 'message_offsets',
                 'message_id', ms.id, 'message_seq', ms.seq, 'start_offset', 0,
                 'end_offset', char_length(ms.content),
                 'text_quote_selector', jsonb_build_object('exact', ms.content)) AS locator
-        FROM messages ms JOIN visible_conversations vc ON vc.conversation_id = ms.conversation_id
-        WHERE ms.status = 'complete' AND ms.content <> '' {where}""",
-    "conversation": """SELECT 'conversation' AS type, c.id, c.title AS label,
-            to_tsvector('english', COALESCE(c.title, '')) AS doc, c.title AS text,
-            COALESCE(c.title, 'Conversation') AS title, 'conversation' AS source_label
-        FROM conversations c JOIN visible_conversations vc ON vc.conversation_id = c.id
-        WHERE TRUE {where}""",
+        FROM messages ms
+        WHERE ms.owner_user_id = :viewer_id AND ms.status = 'complete' AND ms.content <> ''
+            {where}""",
     "reader_apparatus_item": f"""SELECT 'reader_apparatus_item' AS type,rai.id,rai.label,
             {_APPARATUS_DOCUMENT} AS doc,
             COALESCE(rai.body_text,rai.label,rai.kind) AS text,rai.kind AS apparatus_kind,
@@ -426,26 +413,6 @@ SOURCES: dict[str, str] = {
         JOIN media m ON m.id=reading.media_id
         JOIN evidence_spans es ON es.id=cc.primary_evidence_span_id
         WHERE cc.owner_kind IN ('media','fragment') {{where}}""",
-    "web_result": """SELECT 'web_result' AS type, res.id, res.title AS label,
-            to_tsvector('english', concat_ws(' ', res.title, res.url, res.snippet)) AS doc,
-            res.snippet AS text, res.title, res.url, CAST(res.id AS text) AS source_id,
-            mr.locator, mr.selected, mr.ref ->> 'result_ref' AS result_ref,
-            COALESCE(mr.ref ->> 'source_name', mr.ref ->> 'display_url', 'web') AS source_label,
-            mr.ref ->> 'display_url' AS display_url, mr.ref ->> 'source_name' AS source_name,
-            COALESCE(mr.ref -> 'extra_snippets', '[]') AS extra_snippets,
-            mr.ref ->> 'published_at' AS published_at, CAST(mr.ref ->> 'rank' AS int) AS rank,
-            mr.ref ->> 'provider' AS provider,
-            mr.ref ->> 'provider_request_id' AS provider_request_id
-        FROM resource_external_snapshots res
-        JOIN (SELECT DISTINCT ON (mr.source_id) mr.source_id, mr.result_ref AS ref, mr.locator,
-                mr.selected
-            FROM message_retrievals mr JOIN messages msg ON msg.id = mr.assistant_message_id
-            JOIN visible_conversations vc ON vc.conversation_id = msg.conversation_id
-            WHERE mr.result_type = 'web_result' AND mr.locator IS NOT NULL
-              AND mr.locator != 'null' {where}
-            ORDER BY mr.source_id, mr.created_at DESC, mr.id DESC) mr
-            ON mr.source_id = CAST(res.id AS text)
-        WHERE res.user_id = :viewer_id""",
     # Reopen (citations) and link targets only.
     "evidence_span": f"""SELECT 'evidence_span' AS type,es.id,NULL AS label,
             to_tsvector('english',es.span_text) AS doc,es.span_text AS text,es.id AS span_id,
@@ -543,6 +510,15 @@ class Retrieval:
     roles: tuple[str, ...] = ()
     embedding: Embedding | None = None
     exclude_viewer_authored: bool = False
+    # A librarian run's view of the timeline: its own question and earlier turns.
+    message_horizon_seq: int | None = None
+
+
+def _message_horizon(family: str, r: Retrieval) -> str:
+    """Every ranking path applies this before its window; later turns never rank."""
+    if family != "message" or r.message_horizon_seq is None:
+        return ""
+    return f" AND ms.seq <= {int(r.message_horizon_seq)}"
 
 
 def _filters(family: str, r: Retrieval) -> str | None:
@@ -699,7 +675,7 @@ def rank_readings(
 ) -> list[Hit]:
     """Lexical evidence for exact eligible reading identities, without embeddings.
 
-    A frozen chat context intentionally admits only exact passages. Selection instead
+    A frozen generation scope intentionally admits only exact passages. Selection instead
     admits each requested reading's own bounded body and retains its strongest hit;
     visibility and candidate restrictions precede each independent result window.
     """
@@ -767,7 +743,7 @@ def _rank(
                 for row, owner in _saved_passages(db, r)
             ]
             continue
-        where = cell[0] + filters + _STRICT_ADMISSION.get(family, "")
+        where = cell[0] + filters + _STRICT_ADMISSION.get(family, "") + _message_horizon(family, r)
         if reading_media_ids is not None:
             where += " AND m.id=ANY(CAST(:eligible_reading_ids AS uuid[]))"
         active.append((index, family, where))
@@ -933,7 +909,7 @@ def hydrate(
     ]
 
 
-GENERATED_FAMILIES = frozenset({"message", "content_chunk", "fragment", "reader_apparatus_item"})
+GENERATED_FAMILIES = frozenset({"content_chunk", "fragment", "reader_apparatus_item"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -979,7 +955,7 @@ def _discovery_predicates(
     if family in SEMANTIC:
         params |= _semantic_params(family, ())
     _, scope_params = _ctes(r)
-    where = cell[0] + filters
+    where = cell[0] + filters + _message_horizon(family, r)
     if r.exclude_viewer_authored:
         scheme = "highlight" if family == "highlight_annotation" else family
         authored = {"page": "p", "note_block": "nb", "highlight": "h"}.get(scheme)
@@ -1176,9 +1152,7 @@ def discovery_eligible(
                 0 AS name_tier,m.id AS reading_media_id,p.search_id AS native_search_id
                 FROM {source} WHERE {condition} {where}""")
             continue
-        scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
-            family, family
-        )
+        scheme = "highlight" if family == "highlight_annotation" else family
         ref = f"'{scheme}:' || s.id::text"
         key = (
             "'contributor:' || CAST(:viewer_id AS text) || ':' || s.id::text"
@@ -1189,7 +1163,6 @@ def discovery_eligible(
             key = "'highlight:annotation:' || s.id::text"
         if family == "highlight":
             key = "'highlight:' || COALESCE(s.reading_media_id::text,'source') || ':' || s.id::text"
-        owner = "'conversation:' || s.conversation_id::text" if family == "message" else ref
         admission = key
         if family in ("note_block", "highlight_annotation"):
             admission += " || ':' || encode(digest(convert_to(s.text,'UTF8'),'sha256'),'hex')"
@@ -1202,7 +1175,7 @@ def discovery_eligible(
             source = f"SELECT anchor.*,reading.reading_media_id FROM ({source}) anchor JOIN ({saved}) reading ON reading.id=anchor.id"
             reading = "s.reading_media_id"
         branches.append(
-            f"SELECT '{family}'::text AS family,{admission} AS admission_key,{key} AS doc_key,{ref} AS ref,{owner} AS owner_ref,{name} AS name,NULL::text AS discovery_name,{tier} AS name_tier,{reading} AS reading_media_id,NULL::bigint AS native_search_id FROM ({source}) s"
+            f"SELECT '{family}'::text AS family,{admission} AS admission_key,{key} AS doc_key,{ref} AS ref,{ref} AS owner_ref,{name} AS name,NULL::text AS discovery_name,{tier} AS name_tier,{reading} AS reading_media_id,NULL::bigint AS native_search_id FROM ({source}) s"
         )
     relation = (
         " UNION ALL ".join(branches)

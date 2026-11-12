@@ -121,6 +121,7 @@ def _page(
         contributor_ids=None if authors is None else list(authors.values()),
         roles=query.roles,
         embedding=embedding,
+        message_horizon_seq=query.message_horizon_seq,
     )
     hits = merge(rank(db, r, families=families))
     page = hits[offset : offset + limit + 1]

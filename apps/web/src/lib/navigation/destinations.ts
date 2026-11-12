@@ -43,10 +43,10 @@ const REGISTRY = {
     href: "/podcasts",
     keywords: ["audio", "feeds", "episodes"],
   },
-  chats: {
-    label: "Chats",
-    href: "/conversations",
-    keywords: ["conversations", "messages"],
+  librarian: {
+    label: "librarian",
+    href: "/librarian",
+    keywords: ["reading", "messages", "ask"],
   },
   notes: {
     label: "Notes",

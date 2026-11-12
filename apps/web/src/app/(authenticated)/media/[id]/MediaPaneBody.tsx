@@ -109,7 +109,7 @@ import {
   hostedSource,
   inspectionOfLocator,
   targetOfLocator,
-  targetOfSourcePoint,
+  targetOfSourcePoint, targetOfLiveLocation,
   useReaderVisit,
   readerDestinationHref,
   destinationTarget,
@@ -454,12 +454,18 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const authored = useAuthoredStore();
   const [evidenceRevision, setEvidenceRevision] = useState(0);
   const citationStamp = useChangeStamp("Entries", "Metadata");
-  const acceptedCitations = useRef({ stamp: citationStamp, evidenceRevision });
+  const acceptedInputs = useRef<{ stamp: string; evidenceRevision: number; metadata: string | null; generation: number | null }>({ stamp: citationStamp, evidenceRevision, metadata: null, generation: null });
   useEffect(() => readable ? authored.evidence_changed(() => setEvidenceRevision(revision => revision + 1)) : undefined, [authored, readable]);
   useEffect(() => {
     if (!observing || !readable || doc === null) return;
-    let changed = acceptedCitations.current.stamp !== citationStamp || acceptedCitations.current.evidenceRevision !== evidenceRevision;
-    acceptedCitations.current = { stamp: citationStamp, evidenceRevision };
+    const metadata = JSON.stringify([media.title, snapshot?.transcript_reader_key, snapshot?.transcript_coverage]);
+    const metadataChanged = acceptedInputs.current.metadata === null
+      ? !transcript && doc.title !== media.title || snapshot !== null && doc.kind === "text" && doc.format === "transcript"
+        && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key || doc.transcriptCoverage !== snapshot.transcript_coverage)
+      : acceptedInputs.current.metadata !== metadata;
+    const generationChanged = acceptedInputs.current.generation !== media.reader_generation;
+    let changed = metadataChanged || acceptedInputs.current.stamp !== citationStamp || acceptedInputs.current.evidenceRevision !== evidenceRevision;
+    acceptedInputs.current = { stamp: citationStamp, evidenceRevision, metadata, generation: media.reader_generation };
     for (const id of childPublications.current.keys()) if (!children.has(id)) childPublications.current.delete(id);
     for (const [id, state] of children) {
       if (state.status !== "ready") continue;
@@ -475,12 +481,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         changed = true;
       }
     }
-    // One decision coalesces publication, child baseline and citation changes.
+    // Each observed input invalidates once, including while its response is pending.
     // Phase-only updates leave prose alone; hiding retains the accepted facts.
-    if (media.reader_generation !== null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
+    if (generationChanged && media.reader_generation !== null && Number(doc.identity.slice(1).split(":", 1)[0]) !== media.reader_generation)
       reader.reload(media.reader_generation);
-    else if (changed || !transcript && doc.title !== media.title || snapshot !== null && doc.kind === "text" && doc.format === "transcript"
-      && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key || doc.transcriptCoverage !== snapshot.transcript_coverage)) reader.reload();
+    else if (changed) reader.reload();
   }, [children, citationStamp, doc, evidenceRevision, media.reader_generation, media.title, observing, readable, reader, snapshot, transcript]);
   const pendingTranscriptFocus = useRef(false);
   const holdTranscriptFocus = useCallback(() => {
@@ -656,7 +661,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     },
     apply: async (result, context) => {
       if (context.signal.aborted) return "Cancelled";
-      if (result.kind === "chat_destination" || result.kind === "resource") return "Unavailable";
+      if (result.kind === "resource") return "Unavailable";
       if (result.kind === "highlight") return deliverHighlight(result.highlight_id, context);
       if (result.kind === "passage") {
         if (!doc) return "Unavailable";
@@ -689,10 +694,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         return "Applied";
       }
       const destination: ReaderDestination | null = result.kind === "reader_destination" ? result.destination : null;
-      let sourcePoint: ReturnType<typeof targetOfSourcePoint> = null;
-      if (result.kind === "source" && result.source.location.kind === "point") {
+      let sourcePoint: ReturnType<typeof targetOfLiveLocation> = null;
+      if (result.kind === "source" && (result.source.location.kind === "point" || result.source.location.kind === "live")) {
         if (!doc) return "Unavailable";
-        sourcePoint = targetOfSourcePoint(result.source.location, doc);
+        sourcePoint = result.source.location.kind === "live" ? targetOfLiveLocation(result.source.location, doc) : targetOfSourcePoint(result.source.location, doc);
         if (sourcePoint === null) return "Unavailable";
       }
       if (destination !== null || sourcePoint !== null) {
@@ -725,6 +730,10 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
           context.signal.addEventListener("abort", () => {
             setInspection((current) => current?.activationId === context.activationId ? null : current);
           }, { once: true });
+        }
+        if (target.kind === "quads") {
+          setInspection({ identity: doc.identity, anchors: [{ kind: "pdf", page: target.page, quads: target.quads }], pages: [], precision: "exact", activationId: context.activationId });
+          context.signal.addEventListener("abort", () => setInspection(current => current?.activationId === context.activationId ? null : current), { once: true });
         }
         if (context.mayFocus()) reader.focusSource();
         return "Applied";
@@ -829,8 +838,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
     : doc?.kind === "text" && doc.units.some(unit => unit.xPost?.owner && `fragment:${unit.xPost.owner.fragment_id}` === sourceRef) ? { kind: "x_capture", label: "post" }
     : media.part_source && doc?.kind === "text" && doc.part && sourceRef === `media:${doc.part.mediaId}` ? { kind: "media", label: media.part_source.title }
     : null, [doc, id, media]);
-  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence,
-    quoteReview: arrival.quoteReview ? { target: arrival.quoteReview, finish: arrival.finishQuoteReview } : null });
+  const verbs = useAnnotationVerbs({ reader, mediaId: id, sourceLabel, isMobile, active: paneActive && paneVisible, store, marks, openEvidence });
   verbsRef.current = { isMobile, verbs };
 
   const decorations = useMemo<Decorations>(

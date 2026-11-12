@@ -155,8 +155,9 @@ def lock_owner(db: Session, job: JobRow) -> None:
     """Import-light settlement locks, in the same order as each domain publisher."""
     match job.kind:
         case "chat_run":
-            params = {"id": UUID(job.payload["run_id"])}
-            db.execute(text("SELECT id FROM chat_runs WHERE id=:id FOR UPDATE"), params)
+            from nexus.services.chat.events import lock_run
+
+            lock_run(db, UUID(job.payload["run_id"]))
         case "ingest_media_source":
             lock_media_rows_in_order(db, [UUID(job.payload["media_id"])], lock_mode="no_key_update")
             db.execute(

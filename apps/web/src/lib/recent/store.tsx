@@ -24,9 +24,12 @@ function browserOperation(accountId: string, lifetime: string, epoch: string | n
       history.onsuccess = () => {
         try {
           if (!live() || retiring.result != null || token.result !== lifetime || (current.result as BrowserBinding | undefined)?.account.account_id !== accountId) throw new Error("recent account retired");
-          if (history.result === undefined) {
-            if (epoch !== null) throw new Error("recent epoch retired");
-            result = { format_version: 1, account_id: accountId, epoch: crypto.randomUUID(), revision: "1", entries: [] };
+          const obsolete = history.result?.format_version === 1;
+          if (history.result === undefined || obsolete) {
+            if (epoch !== null || op !== null) throw new Error("recent epoch retired");
+            if (obsolete && history.result.account_id !== accountId) throw new Error("recent account mismatch");
+            // The old target grammar is retired. Reset only this derived recall cache.
+            result = { format_version: 2, account_id: accountId, epoch: crypto.randomUUID(), revision: "1", entries: [] };
             store.put(result, "recent_targets");
           } else result = parseRecentSnapshot(history.result);
           if (result.account_id !== accountId || epoch !== null && result.epoch !== epoch) throw new Error("recent epoch mismatch");

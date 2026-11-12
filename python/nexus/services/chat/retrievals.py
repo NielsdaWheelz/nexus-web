@@ -1,43 +1,35 @@
-"""The one ``message_retrievals`` writer: a search result as the row and the model see it.
+"""Transient retrieved content and the sole live-target receipt writer.
 
-App search, web search, attached ``<resources>`` and ``read_resource`` evidence
-enter through ``citation_from_search_result``; selected source passages use
-``citation_from_evidence`` and provider web hits use ``web_citation``, so
-the stored ``result_ref`` shape lives here once. It is also the model-visible
-``tool_citation`` payload and search's web-snapshot source, so its keys are a contract:
-every built key, minus the ones whose value is null, an empty list or ``selected`` false
-a context ref always keeps its ``passage_target`` so reopening a piece passage
-never widens it to the source.
-Numbering and publication belong to ``citations``. The caller starts its serializable
-attempt before source reads and fences, and refreshes retained-X viewer
-contributor text once after its complete insertion batch. This helper never commits.
+Search/read results keep their current text only while composing model input.
+Only resource references, coordinates or URLs cross the persistence boundary.
+Citation numbering and publication belong to ``citations``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
-from nexus.db.models import XPostMedia
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.live_reference import (
+    LiveReference,
+    ResourceRetrievalTarget,
+    RetrievalTarget,
+    UrlRetrievalTarget,
+)
 from nexus.schemas.resource_evidence import (
     CapturedEvidence,
     CapturedPassageTarget,
-    CapturedQuote,
-    CapturedSource,
     CapturedUnavailableTarget,
     ResourceField,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services.library_entries import lock_media_for_reference
-from nexus.services.reader_excerpts import plain_excerpt, quote_parts
+from nexus.services.reader_excerpts import quote_parts
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import admit_evidence, capture_evidence
@@ -62,7 +54,7 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "contributor": ("contributor_handle",),
     "note_block": ("body_text",),
     "highlight": ("color", "exact", "matched_field"),
-    "message": ("conversation_id", "seq"),
+    "message": ("seq",),
     "reader_apparatus_item": ("apparatus_kind",),
 }
 # Media passages whose reopen goes through a reading owner.
@@ -83,7 +75,7 @@ _WEB_KEYS = (
 
 
 def compact(value: Mapping[str, Any]) -> dict[str, Any]:
-    """The stored form: absent, empty and unselected facts are omitted, except a context
+    """The transient model form omits absent, empty and unselected facts, except a context
     ref's always-present ``passage_target``."""
 
     return {
@@ -96,9 +88,9 @@ def compact(value: Mapping[str, Any]) -> dict[str, Any]:
 
 @dataclass(slots=True)
 class RetrievalCitation:
-    """A retrieved or attached result as the model, the browser and the row see it."""
+    """Transient model evidence; only its live target may be persisted."""
 
-    captured_evidence: CapturedEvidence
+    captured_evidence: CapturedEvidence | None
     result_type: str
     source_id: str
     title: str
@@ -116,10 +108,28 @@ class RetrievalCitation:
     contributors: list[dict[str, Any]] = field(default_factory=list)
     payload: dict[str, Any] = field(default_factory=dict)
     selected: bool = False
+    reference: LiveReference | None = None
+
+    @property
+    def target(self) -> RetrievalTarget:
+        from nexus.services.live_references import from_evidence
+
+        if self.reference is not None:
+            return ResourceRetrievalTarget(reference=self.reference)
+        if self.result_type == "web_result":
+            return UrlRetrievalTarget(url=self.deep_link)
+        if (
+            self.captured_evidence is not None
+            and self.captured_evidence.target.owner_ref is not None
+        ):
+            return ResourceRetrievalTarget(reference=from_evidence(self.captured_evidence))
+        uri = self.citation_target or f"{self.context_ref['type']}:{self.context_ref['id']}"
+        return ResourceRetrievalTarget(
+            reference=LiveReference(resource_ref=uri, field=None, locator=None)
+        )
 
     def result_ref_json(self) -> dict[str, Any]:
-        """The built ref. Search's selection budget measures it as is (web refs were always
-        stored-form); ``insert_retrieval`` stores ``compact`` of it."""
+        """Transient model evidence, also measured by search's selection budget."""
 
         kind = self.result_type
         ref: dict[str, Any] = {
@@ -158,9 +168,6 @@ class RetrievalCitation:
 def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
     payload = result.model_dump(mode="json")
     kind = str(payload["type"])
-    if kind == "web_result":
-        source_id = str(payload["source_id"])
-        payload |= {"id": source_id, "context_ref": payload["context_ref"] | {"id": source_id}}
     deep_link = (payload["activation"] or {}).get("href")
     if not isinstance(deep_link, str):
         raise AssertionError(f"{kind} search result is not activatable")
@@ -188,7 +195,7 @@ def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
     return RetrievalCitation(
         captured_evidence=result.captured_evidence,
         result_type=kind,
-        source_id=str(payload["source_id"] if kind == "web_result" else payload["id"]),
+        source_id=str(payload["id"]),
         title=title,
         source_label=source_label,
         snippet=str(payload["snippet"]),
@@ -203,7 +210,7 @@ def citation_from_search_result(result: SearchResultOut) -> RetrievalCitation:
         score=float(payload["score"]) if payload.get("score") is not None else None,
         contributors=contributors,
         payload=payload,
-        selected=bool(payload.get("selected")) if kind == "web_result" else False,
+        selected=False,
     )
 
 
@@ -306,61 +313,20 @@ def citation_from_evidence(
     )
 
 
-def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -> RetrievalCitation:
-    """One provider web hit whose snapshot the caller just stored."""
-
-    ref = f"external_snapshot:{snapshot_id}"
-    locator = retrieval_locator_json(
-        {
-            "type": "external_url",
-            "url": hit["url"],
-            "title": hit["title"],
-            "display_url": hit["display_url"],
-        }
-    )
+def web_citation(hit: Mapping[str, Any], *, selected: bool) -> RetrievalCitation:
+    """Provider words remain transient; the durable citation remembers only the URL."""
     return RetrievalCitation(
-        captured_evidence=CapturedEvidence(
-            completion_ref=None,
-            quote=CapturedQuote(
-                excerpt=plain_excerpt(hit["snippet"], None, None),
-                exact=hit["snippet"],
-                prefix=None,
-                suffix=None,
-                color=None,
-            ),
-            source=CapturedSource(
-                attribution_text=None,
-                ref=ref,
-                title=hit["title"],
-                media_kind=None,
-                contributors=None,
-                location_label=None,
-            ),
-            target=CapturedPassageTarget.model_validate(
-                {
-                    "field": None,
-                    "owner_ref": ref,
-                    "locator": locator,
-                    "precision": "exact",
-                    "source_identity": None,
-                }
-            ),
-        ),
+        captured_evidence=None,
         result_type="web_result",
-        source_id=str(snapshot_id),
-        title=hit["title"],
+        source_id=str(hit["url"]),
+        title=str(hit["title"]),
         source_label=None,
-        snippet=hit["snippet"],
-        deep_link=hit["url"],
-        citation_target=ref,
+        snippet=str(hit["snippet"]),
+        deep_link=str(hit["url"]),
+        citation_target=None,
         citation_label=None,
-        locator=locator,
-        context_ref={
-            "type": "web_result",
-            "id": str(snapshot_id),
-            "field": None,
-            "passage_target": None,
-        },
+        locator=None,
+        context_ref={},
         evidence_span_id=None,
         media_id=None,
         media_kind=None,
@@ -370,34 +336,11 @@ def web_citation(hit: Mapping[str, Any], *, snapshot_id: UUID, selected: bool) -
     )
 
 
-_INSERT = text(
-    """
-    INSERT INTO message_retrievals (
-        assistant_message_id, tool_call_id, ordinal, result_type, source_id, media_id,
-        evidence_span_id, context_ref, result_ref, selected, locator, captured_evidence
-    ) VALUES (
-        :assistant_message_id, :tool_call_id, :ordinal, :result_type, :source_id, :media_id,
-        :evidence_span_id, :context_ref, :result_ref, :selected, :locator, :captured_evidence
-    )
-    RETURNING id
-    """
-).bindparams(
-    *(
-        bindparam(name, type_=JSONB(none_as_null=True))
-        for name in ("context_ref", "result_ref", "locator", "captured_evidence")
-    )
+_INSERT = text("""INSERT INTO message_retrievals
+    (assistant_message_id,tool_call_id,ordinal,target,selected)
+    VALUES (:assistant_message_id,:tool_call_id,:ordinal,:target,:selected) RETURNING id""").bindparams(
+    bindparam("target", type_=JSONB)
 )
-
-
-def lock_retrieval_media(db: Session, citations: Sequence[RetrievalCitation]) -> None:
-    """Batch admission takes canonical post reference locks in media-id order."""
-    ids = sorted({UUID(citation.media_id) for citation in citations if citation.media_id})
-    for media_id in db.scalars(
-        select(XPostMedia.media_id)
-        .where(XPostMedia.media_id.in_(ids))
-        .order_by(XPostMedia.media_id)
-    ):
-        lock_media_for_reference(db, media_id)
 
 
 def insert_retrieval(
@@ -411,25 +354,9 @@ def insert_retrieval(
 ) -> UUID:
     """One row per (call, ordinal) of an answer (no call: attached context).
 
-    Candidate ordinals and cited edges belong to ``citations`` and are never written here.
+    This weak target retains no source. Candidate ordinals and cited edges belong
+    to ``citations`` and are never written here.
     """
-
-    if (
-        citation.media_id is not None
-        and db.scalar(select(XPostMedia.id).where(XPostMedia.media_id == UUID(citation.media_id)))
-        is not None
-    ):
-        media_id = UUID(citation.media_id)
-        lock_media_for_reference(db, media_id)
-        viewer_id = db.scalar(
-            text("""
-            SELECT c.owner_user_id FROM messages msg
-            JOIN conversations c ON c.id = msg.conversation_id WHERE msg.id = :id
-        """),
-            {"id": assistant_message_id},
-        )
-        if viewer_id is None or not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     return db.execute(
         _INSERT,
@@ -437,14 +364,7 @@ def insert_retrieval(
             "assistant_message_id": assistant_message_id,
             "tool_call_id": tool_call_id,
             "ordinal": ordinal,
-            "result_type": citation.result_type,
-            "source_id": citation.source_id,
-            "media_id": citation.media_id,
-            "evidence_span_id": citation.evidence_span_id,
-            "context_ref": compact(citation.context_ref),
-            "result_ref": compact(citation.result_ref_json()),
+            "target": citation.target.model_dump(mode="json"),
             "selected": selected,
-            "locator": citation.locator,
-            "captured_evidence": citation.captured_evidence.model_dump(mode="json"),
         },
     ).scalar_one()

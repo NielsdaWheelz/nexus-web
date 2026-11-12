@@ -11,9 +11,9 @@ recursive direct-link disclosure. filters apply only to roots.
 connection reads remain complete and independent of outline ancestry: exact,
 bidirectional, cursor-paged adjacency. branch projection hides only facts already
 traversed on that path; distinct ancestor facts retain their evidence and actions.
-chat context uses index rows with aggregate versioned removal; exploring ordinary
-connections never admits context or changes its version. reader roots use exact
-media adjacency; membership facts do not enter the outline's traversal history.
+reader roots use exact media adjacency; membership facts do not enter the
+outline's traversal history. librarian attachments belong to individual messages
+and do not create a separate graph membership or admission scope.
 
 keyboard and the touch accessory own structural insertion and rearrangement.
 external resource/file admission keeps its existing owner. source text is primary,
@@ -34,11 +34,11 @@ origins, creation receipts and server-supplied capabilities remain authoritative
 
 | owner | contract |
 | --- | --- |
-| `services/resource_graph/{edges,connections,context}.py` | one link writer; fact projection and mutations; shared chat membership |
+| `services/resource_graph/{edges,connections}.py` | one link writer; fact projection and mutations |
 | `services/resource_items/capabilities.py`, `services/search/pickers.py` | symmetric endpoint admission; read-only target search |
 | `services/connection_discovery.py` | queue, status, retrieval, judgment and fenced publication |
-| `services/suggestions.py` | exact lectern/library ranking; direct quick reads |
-| `services/suggestion_shortlists.py` | background publication, bounded current reads and admission |
+| `services/suggestions.py` | shared bounded candidates and eligibility; direct quick reads |
+| `services/suggestion_shortlists.py` | librarian curation, publication, current reads and admission |
 | `services/resource_graph/owners.py` | endpoint-to-work projection used by exclusions and ranking |
 | web `lib/resourceGraph/useReferenceInput.ts` | visit-owned inline insertion; shared queue sends frozen intent |
 | web `components/connections/useConnectionAttachments.tsx` | visit-owned upload pipeline; shared queue sends each frozen link |
@@ -59,13 +59,10 @@ refs with native highlights and source references, retaining distinct citations
 by edge id even when they share a target. citation roots retain historical items;
 other grouped roots retain their existing native-content precedence. incidental
 quoted context does not become the containing reading's source membership.
-retained quoted user messages supply source-scoped quotation roots, owned by message
-identity. their question opens the chat; their frozen quotation opens its source.
-these roots count under links, have neutral markers and no authored placement,
-unlink or highlight controls. context detachment leaves them; message/subtree/chat
-deletion removes them. source evidence lanes and finite foreground authored catch-up
-refresh other profiles even when source context already existed. capture map versions
-sum distinct fragment lanes, so changing a nonmaximum lane changes the token.
+message links open the message in the single librarian timeline. attached live
+references remain on their message. source evidence lanes and finite foreground authored
+catch-up refresh other profiles. capture map versions sum distinct fragment lanes,
+so changing a nonmaximum lane changes the token.
 current resource presentation is hydrated in batches; primary annotations carry
 their complete canonical rich body and body version.
 
@@ -265,19 +262,11 @@ facts use preserving exact-edge unlink, independently of creation receipts.
 assistant creation and historical undo remain receipt-backed. removing a link
 never deletes its resources, note body or creation history.
 
-chat membership combines incident user links and outgoing bare citation/system
-context facts. its context view reads that membership, not the owner's connection
-rollup. complete detachment removes every current admission fact for the target,
-including ordinary links, and preserves historical message citations. its expected
-context version prevents a stale retry erasing a later attachment. new turns use
-current membership; admitted turns retain frozen scope. a linked chat exposes
-completed branches through bounded reads, without traversing its attachments.
-
 ## admission and actions
 
 `resource_items/capabilities.py` gives each scheme one symmetric `link_mode`:
-`direct` (media, library, highlight, page, note_block, conversation, message,
-oracle_reading, contributor, podcast, passage_anchor),
+`direct` (media, library, highlight, page, note_block, message,
+oracle_reading, contributor, podcast, feed, passage_anchor),
 `materialize_passage` (content_chunk, evidence_span, fragment,
 oracle_passage_anchor, reader_apparatus_item: confirmation creates a durable
 `passage_anchors` row) or `none` (external_snapshot).
@@ -286,22 +275,13 @@ relationship ids are never targets. a link grants no ownership or edit right.
 exclusion, dedupe and cursors (one bounded pass, see [search](search.md)); a
 selected passage is never replaced by its whole document or a nearby match.
 
-`ConnectionOut.mutation` names only what the owning operation can do: `unlink`
-or versioned `detach_context`, otherwise null. `creation` is one flat record: the
-authorship, `tool_call_id`, `generation_id`, and `conversation_id`/`message_id`
-while the answer exists; it is null unless the viewer's own completed
-`nexus.edge.create` call created the edge. citations, embeds and highlight-note
-attachments have no generic unlink; detaching a context fact never erases the
-citation occurrence.
-
-chat attachment ranks come from one allocator in `edges.py`: reuse the target's
-earliest rank or append, under the conversation row lock (two chats lock in id
-order). each chat endpoint ranks independently; removing one reason never
-reorders a still-attached resource. `nexus.resource.read` pages a linked
-conversation's completed messages across branches in `(seq,id)` order, labelled
-per segment and bounded by `READ_DOCUMENT_MAX_CHARS`; a changed source makes the
-cursor stale. old stance/synapse/resonance vocabulary survives only in
-migration inputs and immutable history, never as an active alias.
+`ConnectionOut.mutation` is `remove_fact` for a removable server-owned fact,
+otherwise null. authored user links use the local authored unlink command.
+`creation` holds authorship, `tool_call_id`, `generation_id` and nullable
+`message_id`; it is present only for the viewer's completed `nexus.edge.create`
+receipt. message navigation opens the single librarian timeline. after turn
+deletion, the retained receipt opens assistant-write history. citations, embeds
+and highlight-note attachments have no generic unlink.
 
 ## discovery
 
@@ -340,7 +320,7 @@ retrying removal of the old uuid never removes that replacement.
 
 `useFactRemovals` retains server-fact removal in the existing visit draft above
 filtered rows. dispatch and uncertainty carry the work guard; the held command
-keeps its exact edge or context version. initial row removal stays disabled while
+keeps its exact edge id. initial row removal stays disabled while
 that command is unresolved, and only its held recovery may replay it. read
 freshness alone is not settlement. authored unlink keeps its own local command
 owner; generic outline presentation supplies no removal authority.
@@ -358,29 +338,14 @@ the existing registry owns retries and its renewable 300-second lease.
 
 ## suggestions
 
-background ranking uses one read-only repeatable-read snapshot and one `now()`.
-get/view never rank, admit work or acquire corpus graph/embedding inputs. lectern
-suggestions exclude finished media and current members; library suggestions
-exclude destination members and require relational evidence; quick reads retain
-their separate unfinished-document/time eligibility.
+browse, contextual lectern/library suggestions and daily share the librarian's
+[selection contract](suggestions.md). selection owns ranked refs and optional
+rationales; the destination owns adds. adopted order and rationales remain stable
+through live eligibility updates and background publications. contextual additions
+refill from their finite adopted pool. successful empty, first preparation, read
+failure and suspended work remain distinct.
 
-sql assigns continuity, arrival, rediscovery or graph-thread families and order,
-with twenty candidates per family. lectern rotates families then backfills;
-libraries take strength order. diversity retains the current reason, kind,
-anchor and author caps while alternatives exist. continuity/arrival borrow no
-relation evidence. semantic neighbors use only the calibrated embedding identity
-and threshold before limiting rows. this cutover changes no ranking policy.
-
-both suggestions destinations share the
-[publication contract](suggestions.md): at most 80 retained candidates, ten
-displayed, current eligibility on get and independent `/view`, and active-only
-admission through `/refresh`. later publications stage until request or revisit;
-acknowledged additions refill locally without replacing eligible survivors.
-the destination owns adds; focus repair only acts on the control that still owns
-focus. full lecterns retain links and uncertain-command recovery. successful
-empty, first preparation, read failure and suspended work remain distinct.
-
-`GET /lectern/quick-reads` keeps its direct `QuickReadsOut` owner and current
-eligibility. it includes lectern members and exposes add/check/on-lectern through
-the shared control; opening never enqueues. collection rows show factual item
-metadata; explanations of relationships remain in opened-resource connections.
+`GET /lectern/quick-reads` stays immediate and model-independent. it selects up to
+five unfinished complete documents with under ten minutes remaining, including
+lectern members. the shared add/check/on-lectern control keeps its existing owner;
+opening never enqueues selection. quick-read rationale is null.

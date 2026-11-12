@@ -10,7 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-internal const val AUTHORED_FORMAT_REVISION = 5
+internal const val AUTHORED_FORMAT_REVISION = 6
 
 /** One serialized bundled-SQLite connection per bound account. Kotlin owns SQL
  * transactions, never CRDT merging. Every projection accompanies merged states
@@ -43,10 +43,10 @@ internal class AuthoredStore(private val context: Context, val account: UUID) {
                 val state = replica()
                 check(state.getString("account_id") == account.toString())
                 val format = state.getInt("format_revision")
-                if (format == 4) {
+                if (format == 4 || format == 5) {
                     if (rows("SELECT 1 FROM pending_changes LIMIT 1").length() > 0)
                         throw LocalStateError("E_AUTHORED_UPGRADE_PENDING", "sync all writing with the previous client before updating this device")
-                    val upgrade = JSONArray(context.assets.open("app/authored-upgrade-4-to-5.json").bufferedReader().use { it.readText() })
+                    val upgrade = JSONArray(context.assets.open("app/authored-upgrade-to-6.json").bufferedReader().use { it.readText() })
                     for (index in 0 until upgrade.length()) run(upgrade.getString(index))
                 } else check(format == AUTHORED_FORMAT_REVISION) { "authored format mismatch; drain the previous client before reprovisioning this device" }
             }

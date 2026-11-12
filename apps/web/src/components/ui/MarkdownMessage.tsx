@@ -18,6 +18,7 @@ import remarkGfm from "remark-gfm";
 import { remarkCitations } from "@/lib/chat/markdownCitations";
 import type { Schema } from "@/lib/api/wire";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
+import { RetrievalReference } from "@/components/chat/LiveReference";
 import ReaderCitation from "./ReaderCitation";
 import "./hljs-theme.css";
 import * as Icon from "@/lib/ui/icons";
@@ -36,7 +37,7 @@ type MdNode = {
 };
 
 const CitationContext = createContext<{
-  byIndex: Map<string, Schema<"CitationOut">>;
+  byIndex: Map<string, Schema<"CitationOut"> | Schema<"ChatCitationOut">>;
 } | null>(null);
 
 function Link({
@@ -50,6 +51,7 @@ function Link({
   if (citations && typeof ordinal === "string") {
     const citation = citations.byIndex.get(ordinal);
     if (!citation) return <>{children}</>;
+    if ("target" in citation) return <RetrievalReference retrieval={citation} label={`[${citation.ordinal}]`} />;
     return (
       <ReaderCitation
         {...citation}
@@ -165,7 +167,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   presentation,
 }: {
   content: string;
-  citations?: Schema<"CitationOut">[];
+  citations?: (Schema<"CitationOut"> | Schema<"ChatCitationOut">)[];
   presentation?: "chat";
 }) {
   const cited = useMemo(

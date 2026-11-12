@@ -59,7 +59,10 @@ export default function HighlightPaneBody() {
       if (field === undefined) return "Unavailable";
       annotation = field === "annotation";
       if (!annotation && location.kind !== "resource") return "Unavailable";
-      if (location.kind === "located") {
+      if (location.kind === "live") {
+        if (location.locator.kind !== "TextOffsets" || location.locator.end_offset > Array.from(text).length) return "Unavailable";
+        range = {startOffset: location.locator.start_offset, endOffset: location.locator.end_offset};
+      } else if (location.kind === "located") {
         const locator = location.locator;
         if (locator.type !== "highlight_annotation_offsets" || locator.highlight_id !== id) return "Unavailable";
         const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, "0")).join("");

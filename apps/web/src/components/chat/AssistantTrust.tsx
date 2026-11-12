@@ -13,11 +13,11 @@ import type { MessageAction } from "@/lib/chat/runTail";
 import styles from "./ChatSurface.module.css";
 
 const KICKERS: Record<string, string> = {
-  entry: "Filed to",
-  highlight: "Highlighted",
-  edge: "Connected",
-  note_block: "Noted in",
-  queue: "Queued",
+  entry: "filed to",
+  highlight: "highlighted",
+  edge: "connected",
+  note_block: "noted in",
+  queue: "queued",
 };
 
 /** Saved authorship authorizes undo. Its exact target belongs to the visit through dispatch and
@@ -76,7 +76,7 @@ export default function AssistantTrust({ messageId, actions, undone, onUndone }:
   const replay = primary && "commandKey" in primary && primary.commandKey === `undo ${unknown?.id}` ? primary : null;
   const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
   const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
-  return <div role="list" aria-label="Assistant actions">
+  return <div role="list" aria-label="assistant actions">
     {unknown && recovery ? <Hold id={`undo:${unknown.id}`} attempt={unknown.attempt} {...recovery} /> : null}
     {waits ? <span id={waitsId} className="sr-only" aria-live="off">{waitReason}</span> : null}
     {pending ? <span id={otherId} className="sr-only" aria-live="off">another undo isn’t finished.</span> : null}

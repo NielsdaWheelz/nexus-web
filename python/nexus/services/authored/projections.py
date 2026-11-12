@@ -290,11 +290,10 @@ def _project_links(
 ) -> None:
     """Project explicit link edits; bulk-propagate only changed endpoint liveness."""
     ids = [str(item.link_id) for item in result.links]
-    conversation_links: list[tuple[UUID, bool | None, bool]] = []
     if visibility_changes:
-        changed = db.execute(
+        db.execute(
             text("""WITH old AS MATERIALIZED (
-            SELECT e.id,e.authored_visible AS before,l.state,
+            SELECT e.id,
                 EXISTS (SELECT 1 FROM jsonb_each_text(l.state->'add_vv') dot
                     WHERE dot.value::bigint>COALESCE((l.state->'remove_vv'->>dot.key)::bigint,0))
                 AND NOT EXISTS (SELECT 1 FROM authored_resources r WHERE r.account_id=:a AND NOT r.visible
@@ -302,16 +301,10 @@ def _project_links(
             FROM authored_links l JOIN resource_edges e ON e.id=l.link_id::uuid AND e.user_id=:a
             WHERE l.account_id=:a AND NOT l.link_id=ANY(:ids)
               AND (l.state->>'endpoint_a'=ANY(:refs) OR l.state->>'endpoint_b'=ANY(:refs))
-        ), changed AS (
-            UPDATE resource_edges e SET authored_visible=old.visible FROM old
-            WHERE e.id=old.id AND e.authored_visible IS DISTINCT FROM old.visible
-            RETURNING e.id,old.before,e.authored_visible AS after,old.state
-        ) SELECT id,before,after FROM changed
-            WHERE state->>'endpoint_a' LIKE 'conversation:%' OR state->>'endpoint_b' LIKE 'conversation:%'"""),
+        ) UPDATE resource_edges e SET authored_visible=old.visible FROM old
+            WHERE e.id=old.id AND e.authored_visible IS DISTINCT FROM old.visible"""),
             {"a": account_id, "ids": ids, "refs": visibility_changes},
-        ).tuples()
-        for identity, before, after in changed:
-            conversation_links.append((identity, before, after))
+        )
     for link in result.links:
         value = link.model_dump(mode="json")
         a, b = require_ref(value["endpoint_a"]), require_ref(value["endpoint_b"])
@@ -326,12 +319,6 @@ def _project_links(
             )
             if live is False:
                 visible = False
-        if a.scheme == "conversation" or b.scheme == "conversation":
-            before = db.scalar(
-                text("SELECT authored_visible FROM resource_edges WHERE id=:id"),
-                {"id": value["link_id"]},
-            )
-            conversation_links.append((UUID(value["link_id"]), before, visible))
         db.execute(
             text(
                 "INSERT INTO resource_edges(id,user_id,kind,origin,source_scheme,source_id,"
@@ -366,10 +353,6 @@ def _project_links(
                         "position": position["value"],
                     },
                 )
-    if conversation_links:
-        from nexus.services.resource_graph.context import project_conversation_links
-
-        project_conversation_links(db, viewer_id=account_id, links=conversation_links)
 
 
 def _highlight(

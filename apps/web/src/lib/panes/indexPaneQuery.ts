@@ -1,11 +1,6 @@
 // Exact request grammar shared by bootstrap, arrival and mounted index reads.
-import { decodeUpdatedTitleIndexView, updatedTitleIndexViewQuery } from "@/lib/collections/updatedTitleIndexView";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 export function indexPaneQuery(routeId: PaneRouteId | "unsupported", query: URLSearchParams): string | null {
-  if (routeId === "conversations") {
-    const decoded = decodeUpdatedTitleIndexView(query);
-    return decoded.kind === "Invalid" ? null : updatedTitleIndexViewQuery(decoded.view).slice(1);
-  }
   if ((routeId === "podcastDetail" || routeId === "feedDetail")) return new URLSearchParams({ state: query.get("state") ?? "all", sort: query.get("sort") ?? "newest" }).toString();
   if (routeId === "podcasts" || routeId === "feeds") {
     const result = new URLSearchParams({ kind: routeId === "podcasts" ? "podcast" : "article", sort: query.get("sort") ?? "recent_entry", filter: query.get("filter") ?? "all" });

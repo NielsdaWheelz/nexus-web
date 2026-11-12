@@ -611,23 +611,6 @@ def supersede_unclaimed_job(db: Session, *, job_id: UUID, kind: str) -> None:
     )
 
 
-def revoke_jobs_by_dedupe_keys(db: Session, *, kind: str, dedupe_keys: Collection[str]) -> None:
-    """Chat and media units: delete owned rows, closing their open generations.
-
-    The caller has invalidated the domain owner under its own lock. Generations
-    close first: the tool fence locks a generation before its job.
-    """
-    from nexus.services.generation.ledger import interrupt_job_generations
-
-    params = {"kind": kind, "keys": list(dedupe_keys)}
-    by_key = "SELECT id FROM background_jobs WHERE kind = :kind AND dedupe_key = ANY(:keys)"
-    for job_id in db.scalars(text(by_key), params).all():
-        interrupt_job_generations(db, job_id=job_id, detail="its job was revoked")
-    ids = list(db.scalars(text(f"{by_key} ORDER BY created_at, id FOR UPDATE"), params).all())
-    _release_heavy(db, ids)
-    db.execute(text("DELETE FROM background_jobs WHERE id = ANY(:ids)"), {"ids": ids})
-
-
 # Reads.
 
 

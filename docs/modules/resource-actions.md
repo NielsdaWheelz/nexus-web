@@ -113,14 +113,16 @@ selection scope while execution keeps the same catalog command ids.
   does not erase an authorized relationship.
 - structural insertion/rearrangement/history use the outline session's direct
   command interface, its keys and the touch accessory, never row/header menu shortcuts.
-  chat-context and annotation admission retain their own composers; message
-  menus do not open generic creation. no canonical
+  selected-reference questions and annotation admission retain their own
+  composers; message menus do not open generic creation. no canonical
   `LinkResource` verb or global picker is added. action refs never supply missing
   insertion identity.
 - an edit whose state lives in a mounted pane (page title, note body, highlight colour, note,
-  bounds and delete, message fork, walk and delete) is a pane entry: the
+  bounds and delete) is a pane entry: the
   menu navigates with `paneEntryActivation` and is done; the landing pane claims and serves
-  it ([workspace](workspace.md)).
+  it ([workspace](workspace.md)). message retry outside the librarian opens its
+  timeline anchor; the librarian retries with the current model picker. terminal
+  turn deletion uses the shared account command owner.
 - an inline button outside a menu sends the identity its own view shows: an import's
   recovery runs the menu's `Recovery` verb through the provider with that obligation's offer
   (`recoverMedia`); metadata research (import row, inspector, metadata overlay) runs the
@@ -229,14 +231,6 @@ selection scope while execution keeps the same catalog command ids.
 - destination links and create commands carry explicit opening intent through
   `ActionSelectDetail`. bound links retain full targets and own pointer/keyboard
   handling; shared presenters classify commands and suppress new-pane return focus.
-- `Chat` and message repeat use the shared `openAsyncResult`
-  landing contract ([workspace](workspace.md#target-activation)). later input,
-  including wheel, source departure or competing overlay permanently relinquishes
-  automatic opening; the initiating layer may remain. success offers its exact
-  named result after departure.
-- message repeat uses the shared chat command owner before placement. failure
-  creates no pane. success names the returned assistant endpoint; ordinary
-  placement retains bare-conversation reuse, while shift always forks.
 - source refresh and metadata research send the expectation the viewer saw. their account
   admission owner retains an unconfirmed request and offers *retry*;
   retry resends the same expectation. live recovery survives pane departure,
@@ -258,11 +252,10 @@ selection scope while execution keeps the same catalog command ids.
 - progress preparation refusal means the position is not ready, not necessarily
   that a save failed. no state request is sent; the reader/player retains its
   specific recovery. an unloaded reader keeps its read fence so retry still loads.
-- chat deletion and repeat stay with `ConversationCommands`. `ctx.observeChatCommand` projects
-  its continuing recovery after the originating pane closes; it stores no command
-  or receipt. the target/revision or run id identify the frozen command, its
-  owner's `retry()` checks it, and settlement or a different command removes the
-  condition. retained failure copy and the same busy action survive checking.
+- turn deletion uses the account's `LibrarianCommands` owner. uncertain admission
+  retains its run uuid, exact request and deletion fence beyond the originating
+  pane. retry opens the turn in the librarian, where the user chooses the current
+  model and appends a fresh attempt. successful answers cannot be regenerated.
 
 generic action outcomes belong to the action runtime. an admitted deliberate
 same-subject/action retry retracts its prior report without claiming success;

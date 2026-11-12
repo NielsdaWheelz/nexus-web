@@ -5,9 +5,8 @@ export const SEARCH_KINDS = [
   "documents",
   "notes",
   "highlights",
-  "conversations",
+  "messages",
   "people",
-  "web",
   "libraries",
   "readings",
   "saved_passages",
@@ -18,16 +17,15 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   documents: "Documents",
   notes: "Notes",
   highlights: "Highlights",
-  conversations: "Conversations",
+  messages: "messages",
   people: "People",
-  web: "Web",
   libraries: "Libraries",
   readings: "Readings",
   saved_passages: "Saved passages",
 };
 
 export const PASSAGE_KINDS: ReadonlySet<SearchKind> = new Set([
-  "documents", "notes", "highlights", "conversations", "saved_passages",
+  "documents", "notes", "highlights", "messages", "saved_passages",
 ]);
 
 export const MEDIA_FORMATS = [
@@ -59,13 +57,10 @@ const KIND_ALIASES: Record<string, SearchKind> = {
   note: "notes",
   highlights: "highlights",
   highlight: "highlights",
-  conversations: "conversations",
-  conversation: "conversations",
-  chat: "conversations",
-  chats: "conversations",
+  messages: "messages",
+  message: "messages",
   people: "people",
   person: "people",
-  web: "web",
   library: "libraries",
   libraries: "libraries",
   reading: "readings",

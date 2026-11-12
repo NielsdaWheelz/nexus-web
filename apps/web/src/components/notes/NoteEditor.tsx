@@ -224,8 +224,7 @@ export interface NoteEditorProps {
   onAttachmentActiveChange?(active: boolean): void;
   onLinkInputActiveChange?(active: boolean): void;
   onSave?(): void;
-  onNewChat?(): void;
-  onContinueChat?(): void;
+  onAskLibrarian?(): void;
 }
 
 // [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
@@ -1397,7 +1396,7 @@ function NoteEditorContent(props: NoteEditorProps) {
           const mac = usesMeta(latest.current.platform);
           const modifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
           const command = modifier
-            ? event.shiftKey ? latest.current.onContinueChat : latest.current.onNewChat
+            ? latest.current.onAskLibrarian
             : !event.metaKey && !event.ctrlKey && !event.shiftKey ? latest.current.onSave : null;
           if (command) {
             event.preventDefault();

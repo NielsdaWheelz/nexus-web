@@ -69,8 +69,9 @@ def get_user_profile(
     """
     row = db.execute(
         text(
-            "SELECT u.display_name,u.calendar_time_zone,d.revision AS chat_deletion_revision "
-            "FROM users u JOIN chat_deletion_revisions d ON d.user_id=u.id WHERE u.id=:uid"
+            "SELECT u.display_name,u.calendar_time_zone,u.reading_brief,u.reading_brief_version, "
+            "d.deletion_revision AS chat_deletion_revision "
+            "FROM users u JOIN librarian_state d ON d.user_id=u.id WHERE u.id=:uid"
         ),
         {"uid": user_id},
     ).fetchone()
@@ -85,6 +86,8 @@ def get_user_profile(
         display_name=row.display_name,
         calendar_time_zone=row.calendar_time_zone,
         chat_deletion_revision=str(row.chat_deletion_revision),
+        reading_brief=row.reading_brief,
+        reading_brief_version=str(row.reading_brief_version),
     )
 
 
@@ -121,6 +124,20 @@ def update_user_profile(db: Session, user_id: UUID, request: UpdateProfileReques
 
                 user.calendar_time_zone = request.calendar_time_zone
                 record_input_change(db, owners=[f"user:{user_id}:calendar_time_zone"])
+        if (
+            "reading_brief" in request.model_fields_set
+            and user.reading_brief != request.reading_brief
+        ):
+            assert request.expected_reading_brief_version is not None
+            if user.reading_brief_version != int(request.expected_reading_brief_version):
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT, "reading brief changed; review your draft"
+                )
+            from nexus.services.suggestion_changes import record_input_change
+
+            user.reading_brief = request.reading_brief
+            user.reading_brief_version += 1
+            record_input_change(db, owners=[f"user:{user_id}:reading_brief"])
 
 
 def calendar_local_date(db: Session, user_id: UUID) -> date:

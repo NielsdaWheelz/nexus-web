@@ -477,20 +477,6 @@ def _remove(
     from nexus.services.media_parts import reject_removed_part
 
     reject_removed_part(db, viewer_id=viewer_id, media_id=media_id)
-    remaining_scope = any(can_read_media(db, viewer_id, member) for member in family_ids)
-    if not remaining_scope:
-        # Retrieval references retire with access; authored quotes remain independent writing.
-        _run(
-            db,
-            """
-            UPDATE message_retrievals mr SET media_id = NULL
-            FROM messages msg, conversations c
-            WHERE mr.assistant_message_id = msg.id AND msg.conversation_id = c.id
-              AND c.owner_user_id = :u AND mr.media_id = ANY(:family)
-            """,
-            u=viewer_id,
-            family=family_ids,
-        )
     if kind in _DOCUMENT_KINDS and not _references(db, media_id):
         _claim_teardown(db, media_id)
     elif can_read_media(db, viewer_id, media_id):
@@ -625,7 +611,6 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         *(ResourceRef(scheme="fragment", id=fragment_id) for fragment_id in fragment_ids),
     ):
         cleanup.delete_edges_for_deleted_resource(db, ref=ref)
-    _run(db, "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :m", m=media_id)
     media_intelligence_lifecycle.delete_media_unit(db, media_id=media_id)
     delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
@@ -713,19 +698,42 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
     transaction, then the objects.
     """
     media_id, intent_id = UUID(payload["media_id"]), UUID(payload["intent_id"])
+    discovery_jobs = text("""SELECT id FROM background_jobs
+        WHERE kind='discover_document_parts'
+          AND payload->>'source_media_id'=ANY(:media_ids) ORDER BY id""")
     with get_session_factory()() as db:
+        from nexus.services.generation.native_execution import NativeFinalityPending, confirm_job
+
+        intent = db.scalar(
+            text("SELECT id FROM media_teardown_intents WHERE media_id=:m"), {"m": media_id}
+        )
+        job_ids = (
+            list(
+                db.scalars(
+                    discovery_jobs,
+                    {
+                        "media_ids": [
+                            str(id_) for id_ in media_locks.media_family_ids(db, [media_id])
+                        ]
+                    },
+                )
+            )
+            if intent == intent_id and not _references(db, media_id)
+            else []
+        )
+        db.rollback()
+        for job_id in job_ids:
+            if confirm_job(job_id, claim=None) == "pending":
+                raise NativeFinalityPending()
 
         def op() -> tuple[str, list[str]]:
             from nexus.services.consumption import lectern
             from nexus.services.generation.ledger import lock_generation_owner
 
             family_ids = media_locks.media_family_ids(db, [media_id])
-            discovery_jobs = text("""SELECT id FROM background_jobs
-                WHERE kind='discover_document_parts'
-                  AND payload->>'source_media_id'=ANY(:media_ids) ORDER BY id""")
             params = {"media_ids": [str(id_) for id_ in family_ids]}
             job_ids = list(db.scalars(discovery_jobs, params))
-            # As in chat deletion, owner locks prevent a late opener between this
+            # As in turn deletion, owner locks prevent a late opener between this
             # row-set lock and deletion. All generations precede media and job locks.
             for job_id in job_ids:
                 lock_generation_owner(db, kind="part_discovery", id=job_id)

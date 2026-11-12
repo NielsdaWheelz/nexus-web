@@ -22,7 +22,6 @@ def _workspace_ref(value: str) -> str:
     if isinstance(ref, ResourceRefParseFailure) or ref.scheme not in (
         "media",
         "library",
-        "conversation",
         "podcast",
         "feed",
         "page",

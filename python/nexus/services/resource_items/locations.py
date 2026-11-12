@@ -1204,7 +1204,7 @@ def location_reads(
         {
             row.id: row
             for row in db.execute(
-                text("SELECT id, conversation_id, content FROM messages WHERE id = ANY(:ids)"),
+                text("SELECT id, content FROM messages WHERE id = ANY(:ids)"),
                 {"ids": message_ids},
             )
         }
@@ -1390,7 +1390,7 @@ def current_locator(
         message = reads.messages.get(UUID(raw["message_id"]))
         if (
             message is None
-            or message.conversation_id != owner.id
+            or owner != ResourceRef("message", message.id)
             or exact is None
             or raw["start_offset"] != 0
             or raw["end_offset"] != len(message.content)

@@ -42,9 +42,7 @@ def _csv(value: str | None) -> list[str] | None:
 
 def _query(
     q: str = Query(default="", description="Search query string"),
-    scope: str = Query(
-        default="all", description="all, media:<id>, library:<id> or conversation:<id>"
-    ),
+    scope: str = Query(default="all", description="all, media:<id> or library:<id>"),
     kinds: str | None = Query(
         default=None, description="Comma-separated kinds; omitted means all, empty means none"
     ),

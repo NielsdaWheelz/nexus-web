@@ -23,14 +23,13 @@ import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import type { ShareMode } from "@/lib/sharing/types";
 
 export type ResourceInspectorSurfaceRole =
-  "Contents" | "LinkedItems" | "Forks";
+  "Contents" | "LinkedItems";
 export type ResourceInspectorLinkedItemsSurface =
   "MediaEvidence" | "ResourceConnections";
 
 /** `default_surface_order` is fallback preference, not tab order. */
 export interface ResourceInspectorResourcePolicy {
   readonly linked_items: ResourceInspectorLinkedItemsSurface;
-  readonly forks: "ConversationForks" | null;
   readonly default_surface_order: readonly ResourceInspectorSurfaceRole[];
 }
 
@@ -58,7 +57,6 @@ def _inspector(policy: InspectorPolicy | None) -> list[str]:
     return [
         "    inspector: {",
         f"      linked_items: {json.dumps(policy.linked_items)},",
-        f"      forks: {json.dumps(policy.forks)},",
         f"      default_surface_order: [{order}],",
         "    },",
     ]

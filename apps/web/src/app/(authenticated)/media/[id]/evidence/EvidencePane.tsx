@@ -493,7 +493,7 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
     {state.remote.status === "failed" ? <Failed error={state.remote.error} noun="other connections" retry={{ run: onRetry, busy: state.remote.retrying }} /> : null}
     {remote?.status === "partial" ? <Fact line={{ fact: "some connections couldn’t be loaded." }} /> : null}
   </>;
-  const totals: Record<Filter, number> = { highlights: 0, quotes: 0, citations: 0, links: 0, machine_links: 0 };
+  const totals: Record<Filter, number> = { highlights: 0, citations: 0, links: 0, machine_links: 0 };
   for (const entry of aligned ? placed : entries) for (const facet of entryFacets(entry)) totals[facet]++;
   const remoteComplete = remote?.status === "ready" || remote?.status === "empty";
   const complete = state.local.status === "ready" && state.links.status === "ready" && remoteComplete;

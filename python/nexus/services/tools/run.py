@@ -56,30 +56,45 @@ from llm_tools import (
     web_family,
 )
 from pydantic import BaseModel
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from nexus.config import Settings
-from nexus.db.models import ChatRun, XPostMedia
+from nexus.db.models import ChatRun
 from nexus.db.retries import retry_serializable
 from nexus.db.session import open_async_session
 from nexus.jobs.queue import lock_running_job_claim
-from nexus.schemas.conversation import (
+from nexus.schemas.chat import (
     ChatRunToolCallStartEventPayload,
     ChatRunToolResultEventPayload,
 )
 from nexus.services.chat import events
 from nexus.services.chat.citations import number_candidates
-from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval, lock_retrieval_media
+from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.generation.contract import Owner
 from nexus.services.generation.ledger import lock_open_generation
-from nexus.services.search import projection
 from nexus.services.tools import contract, memory, reads, writes
 
 type ArgumentRefusal = Literal["InvalidJson", "InputTooLarge"]
+
+# Persist only target identities for librarian and editorial receipts. Source
+# material remains transient; authored effects have their own canonical owner.
+_TARGET_KEYS = (
+    "uri",
+    "url",
+    "resource_uri",
+    "media_uri",
+    "source_uri",
+    "target_uri",
+    "page_uri",
+    "note_uri",
+    "highlight_uri",
+    "library_uri",
+    "library_id",
+)
 
 _ONE_AT_A_TIME = RunLimits(None, None, None, None, max_in_flight=1, max_elapsed_seconds=None)
 
@@ -211,6 +226,7 @@ class Call:
     database: AsyncSession
     grant: EffectiveToolGrant  # llm_tools' web handlers read ``grant.limits``
     deadline: float | None = None
+    message_horizon_seq: int | None = None
     created_refs: list[dict[str, Any]] = field(default_factory=list)
     retrieved: list[RetrievalCitation] = field(default_factory=list)
     selected: list[RetrievalCitation] = field(default_factory=list)
@@ -278,8 +294,8 @@ async def run_tool(
                 retrieved, selected = tuple(call.retrieved), tuple(call.selected)
 
                 def complete() -> str:
-                    # Web-result projection appends citations; replay starts from the
-                    # immutable external/read receipt, not a previous failed attempt.
+                    # A transaction retry reuses transient evidence from this read;
+                    # it never replays model or source-provider work.
                     call.retrieved, call.selected = list(retrieved), list(selected)
                     return _complete(call, position, result)
 
@@ -315,6 +331,10 @@ def _start(call: Call, arguments: dict[str, Any] | ArgumentRefusal) -> int:
 
     db = call.db
     chat_run = call.fence()
+    if chat_run is not None:
+        call.message_horizon_seq = db.execute(
+            text("SELECT seq FROM messages WHERE id=:id"), {"id": chat_run.user_message_id}
+        ).scalar_one()
     position = db.execute(
         text("SELECT coalesce(max(position), 0) + 1 FROM tool_calls WHERE generation_id = :id"),
         {"id": call.run.generation_id},
@@ -334,7 +354,13 @@ def _start(call: Call, arguments: dict[str, Any] | ArgumentRefusal) -> int:
             "principal": call.principal,
             "answer": chat_run.assistant_message_id if chat_run else None,
             "tool": call.tool_id,
-            "arguments": arguments if isinstance(arguments, dict) else None,
+            "arguments": (
+                {key: value for key, value in arguments.items() if key in _TARGET_KEYS}
+                if chat_run is not None or call.run.plan.id == "SelectionRead"
+                else arguments
+            )
+            if isinstance(arguments, dict)
+            else None,
         },
     )
     if chat_run is not None:
@@ -420,7 +446,17 @@ def _complete(call: Call, position: int, result: ToolResult) -> str:
         ).bindparams(bindparam("result", type_=JSONB), bindparam("refs", type_=JSONB)),
         {
             "id": call.id,
-            "result": result,
+            "result": {
+                "type": "Success",
+                "value": {
+                    key: value
+                    for key, value in result["value"].items()
+                    if key in _TARGET_KEYS or (call.tool_id == "memory.save_note" and key == "id")
+                },
+            }
+            if result["type"] == "Success"
+            and (chat_run is not None or call.run.plan.id == "SelectionRead")
+            else result,
             "refs": call.created_refs,
             "status": "complete" if result["type"] == "Success" else "error",
         },
@@ -439,7 +475,6 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
     db = call.db
     if call.tool_id == "web.search" and result["type"] == "Success":
         reads.web_citations(call, result["value"])
-    lock_retrieval_media(db, call.retrieved)
     for ordinal, citation in enumerate(call.retrieved):
         insert_retrieval(
             db,
@@ -449,11 +484,6 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
             citation=citation,
             selected=citation in call.selected,
         )
-    media_ids = {UUID(c.media_id) for c in call.retrieved if c.media_id}
-    if media_ids and db.scalar(
-        select(XPostMedia.id).where(XPostMedia.media_id.in_(media_ids)).limit(1)
-    ):
-        projection.refresh_viewer_contributors(db, [call.principal])
     error = str(result["error"]["type"]) if result["type"] == "Failure" else None
     finished = ChatRunToolResultEventPayload(
         error_type=error,
@@ -472,7 +502,7 @@ def _project(call: Call, chat_run: ChatRun, position: int, result: ToolResult) -
                 PromptAttribute(PromptAttributeName("n"), row.candidate_ordinal),
                 PromptAttribute(PromptAttributeName("retrieval_ordinal"), row.retrieval_ordinal),
             ),
-            PromptJson(row.result_ref),
+            PromptJson(call.retrieved[row.retrieval_ordinal].result_ref_json()),
         )
         for row in numbered
         if row.candidate_ordinal is not None

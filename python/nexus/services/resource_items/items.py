@@ -419,41 +419,6 @@ def source_attributions(
     return _source_attributions(refs, rows, credits, activations)
 
 
-def resource_labels(db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]) -> dict[str, str]:
-    """Bounded identity captions for semantic source captures, without reader hydration.
-
-    The existing item queries own audience. Selecting only their caption column
-    leaves excerpt projections, source bodies and activation out of link preparation.
-    Authored endpoints use their local resource state and do not need this capture.
-    """
-    labels: dict[str, str] = {}
-    schemes: dict[ResourceScheme, None] = dict.fromkeys(ref.scheme for ref in refs)
-    for scheme in schemes:
-        column = {
-            "media": "title",
-            "library": "title",
-            "conversation": "title",
-            "podcast": "title",
-            "feed": "title",
-            "contributor": "title",
-            "oracle_reading": "title",
-            "message": "prose",
-            "highlight": "exact",
-            "passage_anchor": "exact",
-        }.get(scheme)
-        if column is None:
-            raise ValueError("resource does not use a source label capture")
-        rows = db.execute(
-            text(f"SELECT id,left({column},601) AS label FROM ({_query(scheme)}) visible"),
-            {"ids": [ref.id for ref in refs if ref.scheme == scheme], "viewer_id": viewer_id},
-        )
-        for row in rows:
-            labels[f"{scheme}:{row.id}"] = (
-                row.label or "Untitled" if column == "title" else passage_label(row.label or "")
-            )
-    return labels
-
-
 def _source_attributions(
     refs: Sequence[ResourceRef],
     rows: dict[str, dict[str, Any]],
@@ -811,8 +776,7 @@ _QUERIES = {
     "library": "SELECT l.id, CASE WHEN l.is_default THEN 'All' ELSE l.name END AS title FROM libraries l WHERE l.id = ANY(:ids) AND EXISTS (SELECT 1 FROM memberships ms WHERE ms.library_id = l.id AND ms.user_id = :viewer_id)",
     "page": f"SELECT p.id, {page_title_sql('p')} AS title FROM pages p WHERE p.id = ANY(:ids) AND p.user_id = :viewer_id AND p.authored_visible",
     "note_block": _NOTE_SQL,
-    "conversation": "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled conversation') AS title FROM conversations WHERE id = ANY(:ids) AND owner_user_id = :viewer_id",
-    "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role, 'conversation:' || c.id AS owner_ref FROM messages m JOIN conversations c ON c.id = m.conversation_id AND c.owner_user_id = :viewer_id WHERE m.id = ANY(:ids) AND m.status != 'pending'",
+    "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role FROM messages m WHERE m.id = ANY(:ids) AND m.owner_user_id = :viewer_id AND m.status != 'pending'",
     "podcast": "SELECT id, title, image_url FROM feeds WHERE kind='podcast' AND id = ANY(:ids)",
     "feed": f"SELECT id, title, image_url FROM feeds WHERE kind='article' AND id=ANY(:ids) AND id IN ({feed_catalog_ids_sql()})",
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",

@@ -96,7 +96,7 @@ def resolve_prompt(
         "content_chunk": "SELECT octet_length(chunk_text) FROM content_chunks WHERE id=:id",
         "note_block": "SELECT octet_length(body_text)+octet_length(body_pm_json::text) FROM note_blocks WHERE id=:id",
         "fragment": "SELECT octet_length(canonical_text) FROM fragments WHERE id=:id",
-        "message": "SELECT octet_length(content)+COALESCE(octet_length(reader_selection_snapshot::text),0) FROM messages WHERE id=:id",
+        "message": "SELECT octet_length(content) FROM messages WHERE id=:id",
         "highlight": "SELECT octet_length(h.exact)+octet_length(h.prefix)+octet_length(h.suffix)+COALESCE(octet_length(h.annotation_body_text),0)+COALESCE(octet_length(h.annotation_body_pm_json::text),0)+COALESCE(octet_length((r.state #> '{selection,value}')::text),0) FROM highlights h LEFT JOIN authored_resources r ON r.account_id=h.user_id AND r.ref='highlight:' || h.id::text WHERE h.id=:id",
         "page": f"SELECT octet_length({page_title_sql('p')}) FROM pages p WHERE id=:id",
         "reader_apparatus_item": "SELECT COALESCE(octet_length(body_text),0) FROM reader_apparatus_items WHERE id=:id",
@@ -476,17 +476,6 @@ def _page(ref: ResourceRef, row: Any) -> ResolvedResource:
     )
 
 
-def _conversation(ref: ResourceRef, row: Any) -> ResolvedResource:
-    title = str(row.title or "").strip() or "Untitled conversation"
-    return ResolvedResource(
-        ref.uri,
-        title,
-        f"Chat history with {row.message_count} messages.",
-        fetch_hint=f'nexus__resource__read("{ref.uri}")',
-        title=title,
-    )
-
-
 def _oracle_reading(ref: ResourceRef, row: Any) -> ResolvedResource:
     """The readable reading; its folio passages live on its citation edges."""
     question = str(row.question_text)
@@ -545,12 +534,6 @@ _LOADERS: dict[str, tuple[str, Callable[[ResourceRef, Any], ResolvedResource]]] 
         lambda ref, row: _read(
             ref, f"{row.title} — fragment {row.idx + 1}", row.body, str(row.title)
         ),
-    ),
-    "conversation": (
-        """SELECT c.id, c.title,
-            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
-        FROM conversations c WHERE c.id = ANY(:ids)""",
-        _conversation,
     ),
     "message": (
         "SELECT id, role, content AS body FROM messages WHERE id = ANY(:ids)",

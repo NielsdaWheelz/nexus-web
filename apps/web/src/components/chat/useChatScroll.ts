@@ -28,14 +28,12 @@ export interface ChatReadingPosition {
   readonly pinMode: PinMode;
 }
 export interface ChatScrollHandle {
-  scrollToMessage(id: string): void;
   inspectMessage(id: string, move: boolean): HTMLElement | null;
   /** Hold the inspected control's eye-line while content above it changes. */
   inspectDisclosure(trigger: HTMLElement): void;
   captureReadingPosition(): ChatReadingPosition | null;
   restoreReadingPosition(position: ChatReadingPosition): void;
   getTranscriptElement(): HTMLDivElement | null;
-  revealRange(at: AbstractRange): void;
 }
 
 function createScrollOwner(
@@ -198,12 +196,6 @@ function createScrollOwner(
       releaseInspection();
       inspection = { trigger, offset: trigger.getBoundingClientRect().top - port.getBoundingClientRect().top, top: port.scrollTop, focus: null };
     },
-    scrollToMessage(id) {
-      const target = message(id);
-      if (!target) return;
-      releaseInspection();
-      jump(target.offsetTop - inset(), true);
-    },
     captureReadingPosition: () => {
       const port = scrollport.current;
       return port && { scrollTop: port.scrollTop, pinMode: mode };
@@ -211,31 +203,10 @@ function createScrollOwner(
     restoreReadingPosition(position) {
       releaseInspection();
       mode = position.pinMode;
-      jump(position.scrollTop, true);
+      jump(position.scrollTop, false);
     },
     getTranscriptElement: () => transcript.current,
-    revealRange(at) {
-      releaseInspection();
-      const range = document.createRange();
-      range.setStart(at.startContainer, at.startOffset);
-      range.setEnd(at.endContainer, at.endOffset);
-      const port = scrollport.current;
-      const code = range.startContainer.parentElement?.closest<HTMLElement>(
-        "[data-pane-find-code-scroll]",
-      );
-      const rect = range.getBoundingClientRect();
-      const box = code?.getBoundingClientRect();
-      if (code && box)
-        code.scrollLeft +=
-          rect.left < box.left
-            ? rect.left - box.left
-            : Math.max(0, rect.right - box.right);
-      if (!port) return;
-      jump(
-        port.scrollTop + rect.top - port.getBoundingClientRect().top - inset(),
-        true,
-      );
-    },
+
   };
 
   return {

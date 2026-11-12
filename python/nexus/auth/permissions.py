@@ -15,8 +15,8 @@ Requested media: workspace-readable media or any canonical podcast episode. The 
 arm ignores personal removal markers; teardown still excludes it. Point tools and source
 hydration use this relation; search, library and suggestion roots remain workspace-scoped.
 Podcast enumeration: an active member-library rule or a retained episode. Contributors:
-a visible credit or a viewer-owned graph edge (pickers: credits only). Conversations:
-the owner only.
+a visible credit or a viewer-owned graph edge (pickers: credits only). Messages: the
+owner only (``messages.owner_user_id``), spelled inline by each reader.
 """
 
 from uuid import UUID
@@ -287,20 +287,6 @@ def visible_contributor_ids_cte_sql() -> str:
         WHERE re.user_id = :viewer_id AND re.target_scheme = 'contributor'
           AND {edge_live_sql("re")}
     """
-
-
-def visible_conversation_ids_cte_sql() -> str:
-    return """
-        SELECT c.id AS conversation_id
-        FROM conversations c
-        WHERE c.owner_user_id = :viewer_id
-    """
-
-
-def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
-    sql = f"SELECT :conversation_id IN ({visible_conversation_ids_cte_sql()})"
-    params = {"viewer_id": viewer_user_id, "conversation_id": conversation_id}
-    return bool(session.scalar(text(sql), params))
 
 
 def highlight_visibility_sql(highlight_alias: str = "h") -> str:

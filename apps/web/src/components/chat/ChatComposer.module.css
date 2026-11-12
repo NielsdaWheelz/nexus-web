@@ -1,24 +1,9 @@
-/* The docked composer, its generation picker, fork header and quote card. */
+/* The docked composer, its generation picker and live reference. */
 
 .composer {
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: var(--space-3) clamp(var(--space-3), 4vw, var(--space-4));
-}
-
-.shell {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: var(--stroke-hairline) solid var(--edge);
-  border-radius: var(--radius-2xl);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-2);
-}
-
-.shell:focus-within {
-  border-color: var(--edge-strong);
 }
 
 .input {
@@ -32,12 +17,6 @@
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--space-2);
-}
-
-.send {
-  --control-min-size: var(--size-lg);
-  flex: 0 0 auto;
-  margin-inline-start: auto;
 }
 
 .picker {
@@ -59,28 +38,6 @@
   display: contents;
 }
 
-
-.fork {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: start;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--edge));
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
-  color: var(--accent);
-}
-
-.fork blockquote {
-  margin: var(--space-2) 0 0;
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--accent);
-  color: var(--ink);
-  font-size: var(--text-xs);
-}
-
-.quote { margin: 0; min-width: 0; }
 
 @media (any-pointer: coarse) {
   .input {

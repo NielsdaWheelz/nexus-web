@@ -27,10 +27,12 @@ the account-bound operations are open, read, use and reconcile. native framing
 names them `recent_open`, `recent_read`, `recent_use`, `recent_reconcile`; the
 renderer supplies an opened epoch, never account authority. opening absent
 history establishes a fresh epoch. mutations cannot recreate absent history.
-malformed persisted state fails without replacing its bytes.
+opening format one atomically replaces the bound account’s derived recall cache
+with empty format two and a fresh epoch. no old target grammar is read. stale
+epochs and all other malformed persisted state reject without changing bytes.
 
 each entry stores a structured target, canonical href, nullable title/detail
-hints and `used_revision`. the snapshot stores format version one, account,
+hints and `used_revision`. the snapshot stores format version two, account,
 epoch, positive int64 decimal-string revision and ordered entries. empty history
 starts at revision one. hints contain settled facts, normalized whitespace and
 at most 512 unicode code points. no bodies, timestamps or usage counts are saved.
@@ -56,8 +58,8 @@ accepted navigation, deliberate pane activation, back/forward and closed-pane
 reopen count. the first visible foreground resource counts once per document
 and account epoch, including reload/restore; inactive restored panes do not.
 unchanged target focus, automatic successor focus, layout and metadata do not.
-chat reopening retains meaningful branch context; passage selectors do not
-create separate resource identities.
+the librarian is a utility destination, excluded from recent resources. passage
+selectors do not create separate resource identities.
 
 explicit accepted play/resume and playing previous/next count at the executing
 owner. browser acceptance follows the exact resolved audio play; android owns

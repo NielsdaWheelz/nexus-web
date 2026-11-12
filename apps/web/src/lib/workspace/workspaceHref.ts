@@ -25,7 +25,7 @@ export function parseWorkspaceHref(href: string): URL | null {
 export function normalizeWorkspaceHref(href: string): string | null {
   const url = parseWorkspaceHref(href);
   if (!url || url.pathname.startsWith("//")) return null;
-  if (url.pathname === "/conversations/new" || url.pathname === "/pages/new") url.search = "";
+  if (url.pathname === "/pages/new") url.search = "";
   const normalized = `${url.pathname}${url.search}${url.hash}`;
   return normalized.length <= MAX_WORKSPACE_HREF_LENGTH ? normalized : null;
 }

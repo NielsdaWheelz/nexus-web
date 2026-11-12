@@ -123,7 +123,6 @@ class SearchResultPageOut(SearchResultTitledOut):
 
 class SearchResultMessageOut(SearchResultLocatorBackedOut[Literal["message"]]):
     id: UUID
-    conversation_id: UUID
     seq: int
 
 
@@ -144,28 +143,6 @@ class SearchResultReaderApparatusItemOut(
     apparatus_kind: str
 
 
-class SearchResultConversationOut(SearchResultTitledOut):
-    type: Literal["conversation"]
-    id: UUID
-
-
-class SearchResultWebOut(SearchResultLocatorBackedOut[Literal["web_result"]]):
-    """A persisted public-web result, one per external snapshot (``id`` is the snapshot)."""
-
-    id: str
-    source_id: str
-    result_ref: str
-    url: str
-    display_url: str | None
-    extra_snippets: list[str]
-    published_at: str | None
-    source_name: str | None
-    rank: int | None
-    provider: str | None
-    provider_request_id: str | None
-    selected: bool
-
-
 RESULT_MODELS: dict[str, type[SearchResultBaseOut]] = {
     "media": SearchResultMediaOut,
     "episode": SearchResultMediaOut,
@@ -180,8 +157,6 @@ RESULT_MODELS: dict[str, type[SearchResultBaseOut]] = {
     "message": SearchResultMessageOut,
     "evidence_span": SearchResultEvidenceSpanOut,
     "reader_apparatus_item": SearchResultReaderApparatusItemOut,
-    "conversation": SearchResultConversationOut,
-    "web_result": SearchResultWebOut,
 }
 SearchResultOut = Annotated[
     SearchResultMediaOut
@@ -194,9 +169,7 @@ SearchResultOut = Annotated[
     | SearchResultHighlightOut
     | SearchResultMessageOut
     | SearchResultEvidenceSpanOut
-    | SearchResultReaderApparatusItemOut
-    | SearchResultConversationOut
-    | SearchResultWebOut,
+    | SearchResultReaderApparatusItemOut,
     Field(discriminator="type"),
 ]
 

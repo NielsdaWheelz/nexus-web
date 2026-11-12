@@ -452,9 +452,7 @@ def repair_reader_html(
     from nexus.schemas.resource_items import (
         CitationSourceTargetKey,
         LocatedSourceLocationOut,
-        ReaderQuoteSourceTargetKey,
         ResourceSourceTargetKey,
-        RetrievalSourceTargetKey,
         SourceTargetKey,
         UnavailableSourceLocationOut,
     )
@@ -490,21 +488,9 @@ def repair_reader_html(
         )
 
     captures = db.execute(
-        text("""SELECT 'retrieval' AS kind,r.id,c.owner_user_id AS viewer,r.captured_evidence AS evidence
-            FROM message_retrievals r JOIN messages m ON m.id=r.assistant_message_id
-            JOIN conversations c ON c.id=m.conversation_id
-            WHERE r.media_id=:id OR r.captured_evidence #>> '{target,owner_ref}'=:ref
-               OR r.captured_evidence #>> '{target,locator,media_id}'=CAST(:id AS text)
-            UNION ALL
-            SELECT 'reader_quote',m.id,c.owner_user_id,m.reader_selection_snapshot->'evidence'
-            FROM messages m JOIN conversations c ON c.id=m.conversation_id
-            WHERE m.reader_selection_snapshot #>> '{evidence,target,owner_ref}'=:ref
-               OR m.reader_selection_snapshot #>> '{evidence,target,locator,media_id}'=CAST(:id AS text)
-            UNION ALL
-            SELECT 'citation',e.id,COALESCE(e.user_id,c.owner_user_id,source.created_by_user_id,target.created_by_user_id),e.snapshot->'evidence'
+        # Only evidence-owning citations froze words here; a message citation is live.
+        text("""SELECT e.id,COALESCE(e.user_id,source.created_by_user_id,target.created_by_user_id) AS viewer,e.snapshot->'evidence' AS evidence
             FROM resource_edges e
-            LEFT JOIN messages m ON e.source_scheme='message' AND m.id=e.source_id
-            LEFT JOIN conversations c ON c.id=m.conversation_id
             LEFT JOIN media source ON e.source_scheme='media' AND source.id=e.source_id
             JOIN media target ON target.id=:id
             WHERE e.origin='citation' AND e.snapshot->'evidence' IS NOT NULL AND (
@@ -524,18 +510,7 @@ def repair_reader_html(
             )
         if row.viewer is None:
             continue
-        match row.kind:
-            case "retrieval":
-                key = RetrievalSourceTargetKey(retrieval_id=row.id)
-            case "reader_quote":
-                key = ReaderQuoteSourceTargetKey(message_id=row.id)
-            case "citation":
-                key = CitationSourceTargetKey(edge_id=row.id, side="target")
-            case _:
-                raise AssertionError(
-                    "Unknown retained reader reference"
-                )  # justify-defect: the closed SQL union above owns these tags.
-        targets.append((row.viewer, key))
+        targets.append((row.viewer, CitationSourceTargetKey(edge_id=row.id, side="target")))
 
     def reference_locations():
         results = []

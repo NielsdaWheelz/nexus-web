@@ -7,7 +7,7 @@ import { parseBody, type BodyJson } from "@nexus/authored/body";
 import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourceRef";
 
 const ROUTES: Partial<Record<string, string>> = {
-  highlight: "/highlights", page: "/pages", note_block: "/notes", media: "/media", conversation: "/conversations",
+  highlight: "/highlights", page: "/pages", note_block: "/notes", media: "/media",
   library: "/libraries", podcast: "/podcasts", feed: "/feeds", oracle_reading: "/oracle",
 };
 const routeFor = (ref: string): string | null => {

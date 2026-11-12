@@ -24,15 +24,15 @@ def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | Non
         raise RuntimeError("user bootstrap requires a fresh session")
     ready = db.execute(
         text(
-            "SELECT u.email,d.revision FROM users u JOIN libraries l ON l.owner_user_id=u.id AND l.is_default "
+            "SELECT u.email,d.deletion_revision FROM users u JOIN libraries l ON l.owner_user_id=u.id AND l.is_default "
             "JOIN memberships m ON m.library_id=l.id AND m.user_id=u.id AND m.role='admin' "
-            "LEFT JOIN chat_deletion_revisions d ON d.user_id=u.id "
+            "LEFT JOIN librarian_state d ON d.user_id=u.id "
             "WHERE u.id=:id"
         ),
         {"id": user_id},
     ).first()
     db.rollback()
-    if ready is not None and ready.revision is None:
+    if ready is not None and ready.deletion_revision is None:
         # justify-defect: account creation and the cutover migration establish this row.
         raise AssertionError("authenticated account has no chat deletion fence")
     if ready is not None and (email is None or ready.email == email):
@@ -45,7 +45,9 @@ def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | Non
         if current is None:
             db.execute(text("INSERT INTO users (id) VALUES (:id)"), params)
             db.execute(
-                text("INSERT INTO chat_deletion_revisions(user_id,revision) VALUES (:id,1)"),
+                text(
+                    "INSERT INTO librarian_state(user_id,next_seq,deletion_revision) VALUES (:id,1,1)"
+                ),
                 params,
             )
         if email is not None and (current is None or current.email != email):

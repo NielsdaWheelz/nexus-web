@@ -80,7 +80,7 @@ def lock_account(db: Session, account_id: UUID) -> int:
 
 
 def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> AcceptedChanges:
-    if request.format_revision != 5:
+    if request.format_revision != 6:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
     if request.replica_id in {
         uuid5(account_id, "authored:server"),
@@ -94,7 +94,7 @@ def provision(db: Session, account_id: UUID, request: ProvisionReplica) -> Accep
         db.execute(
             text(
                 "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) "
-                "VALUES (:a,:r,0,5) ON CONFLICT DO NOTHING"
+                "VALUES (:a,:r,0,6) ON CONFLICT DO NOTHING"
             ),
             {"a": account_id, "r": request.replica_id},
         )
@@ -289,7 +289,7 @@ def require_current_replica(db: Session, account_id: UUID, replica_id: UUID) -> 
         text("SELECT format_revision FROM authored_replicas WHERE account_id=:a AND replica_id=:r"),
         {"a": account_id, "r": replica_id},
     )
-    if revision != 5:
+    if revision != 6:
         raise ApiError(ApiErrorCode.E_WIRE_MISMATCH, "Update nexus to sync")
 
 
@@ -647,7 +647,7 @@ def server_command(
     replica = uuid5(account_id, "authored:server:4")
     db.execute(
         text(
-            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,5) "
+            "INSERT INTO authored_replicas(account_id,replica_id,accepted_seq,format_revision) VALUES (:a,:r,0,6) "
             "ON CONFLICT DO NOTHING"
         ),
         {"a": account_id, "r": replica},
@@ -831,7 +831,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
     )
     yield (
         _json(
-            {"type": "header", "format_revision": 5, "head_cursor": watermark, "lamport": lamport}
+            {"type": "header", "format_revision": 6, "head_cursor": watermark, "lamport": lamport}
         )
         + "\n"
     )
@@ -857,7 +857,7 @@ def snapshot(db: Session, account_id: UUID) -> Iterator[str]:
         _json(
             {
                 "type": "footer",
-                "format_revision": 5,
+                "format_revision": 6,
                 "head_cursor": watermark,
                 "lamport": lamport,
                 "counts": counts,

@@ -33,7 +33,6 @@ _STATIC_PREFIXES = {
     "page": "/pages",
     "note_block": "/notes",
     "media": "/media",
-    "conversation": "/conversations",
     "library": "/libraries",
     "oracle_reading": "/oracle",
     "podcast": "/podcasts",
@@ -66,8 +65,8 @@ def captured_passage_activation(target: CapturedPassageTarget) -> ResourceActiva
         href = f"/notes/{owner.id}"
     elif owner.scheme == "highlight" and target.field == "annotation":
         href = f"/highlights/{owner.id}#annotation"
-    elif owner.scheme == "conversation" and target.locator.type == "message_offsets":
-        href = f"/conversations/{owner.id}?{urlencode({'message': str(target.locator.message_id)})}"
+    elif owner.scheme == "message" and target.locator.type == "message_offsets":
+        href = f"/librarian?message={owner.id}"
     else:
         # justify-defect: captured passage owners have one explicit source route.
         raise AssertionError("captured passage has no source route")
@@ -335,10 +334,8 @@ def _dynamic_routes(
         ).all()
 
     routes: dict[str, str] = {}
-    for id_, conversation_id in rows(
-        "SELECT id, conversation_id FROM messages WHERE id = ANY(:ids)", by_scheme["message"]
-    ):
-        routes[f"message:{id_}"] = f"/conversations/{conversation_id}?message={id_}"
+    for ref in by_scheme["message"]:
+        routes[ref.uri] = f"/librarian?message={ref.id}"
     for id_, handle in rows(
         "SELECT id, handle FROM contributors WHERE id = ANY(:ids)", by_scheme["contributor"]
     ):

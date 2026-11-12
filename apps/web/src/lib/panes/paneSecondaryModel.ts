@@ -8,7 +8,6 @@ export const SECONDARY_SURFACES = {
     groupId: "resource-inspector",
     title: "Connections",
   },
-  "resource-forks": { groupId: "resource-inspector", title: "Forks" },
   "import-detail": { groupId: "imports-inspector", title: "Import details" },
 } as const;
 

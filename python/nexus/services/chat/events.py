@@ -1,8 +1,7 @@
 """The run event log: append, tail, the stop flag and the one terminal fold.
 
 ``chat_run_events`` is append-only with a dense per-run ``seq``; an AFTER trigger
-notifies ``CHANNEL`` with the run id and the SSE tail re-reads on it. Every effect
-locks the run before the job claim (run -> job), everywhere.
+notifies ``CHANNEL`` with the run id and the SSE tail re-reads on it. Account state precedes the run and job claim; generation locks, when needed, precede account state.
 """
 
 from __future__ import annotations
@@ -15,14 +14,14 @@ from sqlalchemy import Row, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import ChatRun, ChatRunEvent
-from nexus.jobs.queue import JobExecutionContext, lock_running_job_claim
-from nexus.schemas.conversation import (
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, lock_running_job_claim
+from nexus.schemas.chat import (
     ChatRunAssistantTextDeltaEventPayload,
-    ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
     ChatRunToolCallStartEventPayload,
     ChatRunToolResultEventPayload,
 )
+from nexus.services.chat import deletion
 from nexus.services.search import projection
 
 TERMINAL = frozenset({"complete", "error", "cancelled"})
@@ -31,7 +30,6 @@ type Event = (
     ChatRunAssistantTextDeltaEventPayload
     | ChatRunToolCallStartEventPayload
     | ChatRunToolResultEventPayload
-    | ChatRunContextRefAddedEventPayload
     | ChatRunDoneEventPayload
 )
 
@@ -43,6 +41,10 @@ class LostClaim(RuntimeError):
 def lock_run(db: Session, run_id: UUID) -> ChatRun | None:
     """Lock the run and refresh it, even in a session that already holds it."""
 
+    owner = db.scalar(select(ChatRun.owner_user_id).where(ChatRun.id == run_id))
+    if owner is None:
+        return None
+    deletion.lock_revision(db, owner)
     return db.scalar(
         select(ChatRun)
         .where(ChatRun.id == run_id)
@@ -119,7 +121,7 @@ def finalize(
 
     A no-op on a terminal run, so ``done`` is written exactly once. Never commits.
     Complete answers require the caller's serializable attempt before run/claim reads;
-    pending-to-error/cancelled transitions have no lexical occurrence.
+    Every settled answer updates its current search projection.
     """
 
     if run.status in TERMINAL:
@@ -149,14 +151,60 @@ def finalize(
     run.support_id = support_id
     run.publication_warning_code = warning
     append(db, run, ChatRunDoneEventPayload(status=status))
-    if status == "complete":
-        projection.refresh(db, "message", [run.assistant_message_id])
+    projection.refresh(db, "message", [run.assistant_message_id])
+    enqueue_head(db, run.owner_user_id)
+
+
+def enqueue_head(db: Session, viewer_id: UUID) -> None:
+    """Admit only the first unsettled turn; the account mutex serializes this decision."""
+    db.flush()
+    head = db.scalar(
+        text("""SELECT r.id FROM chat_runs r JOIN messages m ON m.id=r.user_message_id
+        WHERE r.owner_user_id=:viewer AND r.status IN ('queued','running') ORDER BY m.seq LIMIT 1"""),
+        {"viewer": viewer_id},
+    )
+    if (
+        head is None
+        or db.scalar(
+            text("SELECT id FROM background_jobs WHERE dedupe_key=:key"),
+            {"key": f"chat_run:{head}"},
+        )
+        is not None
+    ):
+        return
+    enqueue_job(
+        db,
+        kind="chat_run",
+        payload={"run_id": str(head)},
+        priority=50,
+        dedupe_key=f"chat_run:{head}",
+    )
 
 
 def finalize_dead(db: Session, run: ChatRun) -> None:
-    """An attempt died after starting: ``cancelled`` if a stop was asked, else ``interrupted``."""
+    """Retain committed text and the ledger's known failure; never reconstruct by generation."""
+    from nexus.services.chat.citations import unpublished
 
-    if run.cancel_requested_at is not None:
-        finalize(db, run, status="cancelled", content="")
-    else:
-        finalize(db, run, status="error", content="", error_code="interrupted")
+    if run.status in TERMINAL:
+        return
+    content = db.scalar(
+        text("""SELECT COALESCE(string_agg(payload->>'text','' ORDER BY seq),'')
+        FROM chat_run_events WHERE run_id=:id AND event_type='assistant_text_delta'"""),
+        {"id": run.id},
+    )
+    generation = db.execute(
+        text("""SELECT id,failure_code FROM llm_calls
+        WHERE owner_kind='chat_run' AND owner_id=:id ORDER BY generation_seq DESC LIMIT 1"""),
+        {"id": run.id},
+    ).first()
+    stopped = run.cancel_requested_at is not None
+    finalize(
+        db,
+        run,
+        status="cancelled" if stopped else "error",
+        content=unpublished(content or ""),
+        error_code=None
+        if stopped
+        else (generation.failure_code if generation and generation.failure_code else "interrupted"),
+        support_id=generation.id.hex[:12] if generation else run.support_id,
+    )

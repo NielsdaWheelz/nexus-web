@@ -78,11 +78,16 @@ export default function NotePaneBody() {
           }
           return "Applied";
         }
+        if (location.kind === "live") {
+          if (location.locator.kind !== "TextOffsets" || location.locator.end_offset > Array.from(text).length) return "Unavailable";
+          range = { startOffset: location.locator.start_offset, endOffset: location.locator.end_offset };
+        } else {
         if (location.kind !== "located" || location.locator.type !== "note_block_offsets" || location.locator.block_id !== blockId) return "Unavailable";
         const locator = location.locator;
         const exact = locator.text_quote_selector?.exact;
         if (typeof exact !== "string" || Array.from(text).slice(locator.start_offset, locator.end_offset).join("") !== exact) return "Unavailable";
         range = { startOffset: locator.start_offset, endOffset: locator.end_offset };
+        }
       }
       if (context.signal.aborted) return "Unavailable";
       if (!restored) outline.current?.revealRoot();

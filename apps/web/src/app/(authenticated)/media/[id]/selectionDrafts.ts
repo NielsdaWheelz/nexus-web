@@ -2,12 +2,10 @@ import type { ExcerptBody } from "@nexus/authored/excerpt";
 import type { NoteEditorProps } from "@/components/notes/NoteEditor";
 import type { Passage } from "@/lib/documentReader/DocumentReader";
 import { sameAnchor } from "@/lib/documentReader/anchors";
-import type { ConversationTree } from "@/lib/chat/commands";
 import type { HighlightColor } from "@/lib/documentReader/model";
 import { sameBody } from "@nexus/authored/body";
 import type { Capture } from "@/lib/documentReader/annotations";
 import type { Line } from "@/components/feedback/stage";
-import type { ApiError } from "@/lib/api/client";
 
 export type NoteEdit = Parameters<NoteEditorProps["onEdit"]>[0];
 type Body = NoteEditorProps["body"];
@@ -35,14 +33,7 @@ export type DraftIssue =
   | { kind: "Failed"; phase: "Preparation"; attempt: number; retry: () => void }
   | { kind: "Failed"; phase: "Commit"; retry: () => void };
 
-export type ChatDestination =
-  | { kind: "Resolving" | "Absent" }
-  | { kind: "LookupFailed"; error: ApiError }
-  | { kind: "Selected"; id: string; title: string; snapshot:
-      | { kind: "Loading" | "Failed" }
-      | { kind: "Ready"; tree: ConversationTree } };
-
-export type ReaderChatIssue = { kind: "Missing" | "Failed"; line: Line };
+export type ReaderChatIssue = { kind: "Failed"; line: Line };
 
 export interface ComposerDraft {
   id: string;
@@ -67,7 +58,6 @@ export interface ComposerDraft {
   attachmentActive: boolean;
   /** The viewed reading; the capture separately owns canonical source coordinates. */
   sourceMediaId: string;
-  destination: ChatDestination;
   chatIssue: ReaderChatIssue | null;
 }
 

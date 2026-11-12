@@ -2,9 +2,9 @@
 
 a resource has one identity; each place showing it is an occurrence. an occurrence
 owns its relationship, rank and folded state. it does not own replacement content
-or a second resource identity. chat context, connections, search, notes, quotes,
+or a second resource identity. librarian references, connections, search, notes, quotes,
 citations, source previews and collection indexes compose this contract.
-conversation messages retain their message layout.
+librarian messages retain their message layout.
 
 ## owners
 
@@ -32,7 +32,7 @@ conversation messages retain their message layout.
 | `notes/OutlineEditorRow.tsx` | authored row chrome and media-reference bibliography through the shared summary batch; no remote occurrence lifecycle |
 | `OutlineSurface.tsx` / `lib/notes/useOutlineSession.ts` | shared rows, structure, selection, continuation and scoped history |
 | `ResourceDisclosure.tsx` / `lib/resourceGraph/useResourceOutline.ts` | one bounded mixed adjacency read supplied to the shared surface |
-| `ResourceComposer.tsx` | chat-context and annotation admission using existing insertion primitives; no message-footer creation |
+| `ResourceComposer.tsx` | annotation admission using existing insertion primitives; no message-footer creation |
 | `OutlineInsertionLine.tsx` | one session-owned insertion draft and captured destination |
 | `PageTitleEditor.tsx` | canonical root/inline title editing and text history |
 | `OutlineCommands.tsx` | accessible icon accessory for the session command interface; the pane shell renders it only on touch-capable devices |
@@ -67,8 +67,7 @@ passage.
 authored_by_viewer}`. an
 activation is `{resource_ref, field, kind: route | external | none, href, unavailable_reason}`;
 a route href alone names the occurrence (`#highlight-`, `#fragment-`, `#evidence-`,
-`#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#quote-`,
-`#citation-`, `#retrieval-`) and the web derives the source-target key from it.
+`#chunk-`, `#passage-`, `#oracle-passage-`, `?apparatus_id`, `?message`, `#citation-`) and the web derives the source-target key from it.
 `field` is required: null addresses ordinary resource meaning, `annotation` addresses
 only a highlight’s private body. embeds, captured evidence, read targets and
 reopening preserve that field, including unavailable destinations. annotation
@@ -87,9 +86,8 @@ every wire key is present and snake_case; absence is null.
 | `reference` | an embed note's stored label, or `embedded resource` |
 
 two row families compose the same resource facts. indexes serve collection panes,
-search and chat context through native links and applicable bibliography. collection
-and search rows retain consumption facts and resource quick actions; context
-shows literal target content, source provenance and minus/overflow controls. indexes
+search through native links and applicable bibliography. collection
+and search rows retain consumption facts and resource quick actions. indexes
 never create outline sessions or editors. passage previews have an independent
 excerpt disclosure; reference pickers keep it outside their listbox. imports/settings retain their
 command primary. only shows have resource-index artwork; episode index rows
@@ -195,17 +193,12 @@ draft attachment controls and citation preview lifetimes remain with their calle
 historical outline items likewise retain supplied evidence before considering local
 authorship; ordinary authored rows keep their authoritative local reads.
 
-an unsent reader quote supplies its actual raw-capture or displayed saved
-`ExcerptView`, known source attribution and nullable source href. it uses the
-shared excerpt projection without
-manufacturing a `ResourceItemOut`, fetching a highlight or owning a second renderer.
-after admission the user message owns the immutable evidence. the quote's `ref`
-and `action_ref` are that message; its title opens the source occurrence through
-`#quote-<message_id>`. a nullable `highlight_ref` records an explicitly selected saved
-highlight; its annotation remains ordinary live owned context. asking about an unsaved passage creates no highlight, passage anchor or
-annotation. reader maps expose it as `ReaderQuote`, with a separate `quotes` count
-and neutral marker; its map action opens the owning chat. admission and deletion
-invalidate the existing reader projections; the message owns the quote's lifetime.
+librarian attachments and citations carry current resource references with nullable
+structural coordinates. their renderer reads the resource's current identity,
+not captured evidence. invalid coordinates remain unavailable; source opening is
+still allowed. selections create no highlight, passage anchor or annotation.
+chat url citations retain only the url. source-owned native and oracle quotations
+keep the captured-evidence contract above.
 
 outlines serve notes, pages and connections: a muted typed opening marker, actual
 disclosure, editable note/annotation prose and page titles, and a quiet resource
@@ -313,9 +306,6 @@ cancel or lost ownership aborts the hold; a completed hold consumes its click.
 opening never executes. authorized exact unlink preserves both resources and all
 other edges. unavailable navigation can retain a focusable context-only bullet.
 provenance details keep useful creation/rationale; routine “linked by” is omitted.
-chat context uses the shared minus icon button and its supplied aggregate
-`detach_context` mutation, never one arbitrarily chosen admission edge. uncertain
-retry retains that exact mutation; definitive refusal requires explicit refresh.
 removal recovers focus to the next usable primary, then the previous, then the pane
 landmark, only while the initiating control still owns focus. a missing writing
 runtime disables activation and explains why.
@@ -356,7 +346,7 @@ arranged adjacency keeps endpoint-owned rank/version/capabilities. indexes retai
 their own order. embeds retain canonical body and target identity; authored targets
 resolve through the local replica, server-owned targets through their item reader.
 the containing note retains its own identity. only the exact directed nonordinal
-`note_body`/`context` embed edge is suppressed. empty states require settled,
+`note_body` embed edge is suppressed. empty states require settled,
 exhausted reads without visible children or failure. index snippets, inline
 citations, picker options and document matches retain their existing semantics.
 
@@ -391,14 +381,12 @@ location resolution may prove where captured words land now; it never rewrites
 the historical words or treats stale offsets as present authority. genuine
 ambiguity stays explicit, even when that refuses an otherwise useful action.
 
-chat admission accepts either an existing highlight key and preview revision or
-an unsaved reader capture with explicit reading and canonical source refs. it
-validates the frozen excerpt, locator, selected words, surroundings and publication
-within its bounded input budget before committing the message snapshot. source
-text checks read only the claimed substrings; pdf quotation retains the reader's
-selected words and validates its publication and geometry. source tool access is a
-separate admitted context fact, so retaining source access never copies the whole
-source into the question's prompt.
+chat admission stores live resource references and structural locators. selecting
+an existing highlight references that highlight; unsaved selections retain only
+coordinates in their current canonical owner. there is no copied excerpt,
+publication or source-context membership. each read resolves current access and
+bounds; an invalid locator is unavailable. message offsets reveal a transient
+exact passage from the current literal message at its timeline location.
 
 body and required-note authority are separate intervals belonging to one reading.
 outside a piece's body, only a genuine in-body reference admits its direct matching

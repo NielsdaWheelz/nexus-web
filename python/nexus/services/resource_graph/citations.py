@@ -1,7 +1,10 @@
-"""Source-owned citations: one occurrence, its observed evidence and both endpoints.
+"""Source-owned citations: one occurrence and both endpoints.
 
-Imported source owners bind their occurrences to these same rows. Only their fenced
-completion may fill unknown observations; a generated citation remains frozen.
+Imported and oracle sources store observed evidence with the occurrence. Imported owners
+bind their occurrences to these rows; only their fenced completion may fill unknown
+observations, and an oracle citation remains frozen. A message's citations are the local
+projection of its retrieval targets: a sparse subset of the message's citation ordinals
+(url targets have no edge), with no evidence. Their words are read live from the target.
 Source authority admits the relationship, while evidence authority admits its words.
 """
 
@@ -42,7 +45,8 @@ if TYPE_CHECKING:
 class CitationInput:
     target: ResourceRef
     ordinal: int
-    snapshot: CitationSnapshot
+    # None exactly for a message source.
+    snapshot: CitationSnapshot | None
 
 
 def generated_citation_source_visible_sql(edge_alias: str, viewer_bind: str = ":viewer_id") -> str:
@@ -50,10 +54,9 @@ def generated_citation_source_visible_sql(edge_alias: str, viewer_bind: str = ":
     return f"""(
         ({edge_alias}.source_scheme='message' AND EXISTS (
             SELECT 1 FROM messages citation_message
-            JOIN conversations citation_chat ON citation_chat.id=citation_message.conversation_id
             WHERE citation_message.id={edge_alias}.source_id
               AND citation_message.status<>'pending'
-              AND citation_chat.owner_user_id={viewer_bind}))
+              AND citation_message.owner_user_id={viewer_bind}))
         OR ({edge_alias}.source_scheme='oracle_reading' AND EXISTS (
             SELECT 1 FROM oracle_readings citation_oracle
             WHERE citation_oracle.id={edge_alias}.source_id
@@ -218,11 +221,14 @@ def replace_citations_for_source(
     source: ResourceRef,
     citations: Sequence[CitationInput],
 ) -> list[EdgeOut]:
-    """Publish one complete citation set; imported owners must first retire old bindings."""
+    """Publish one complete citation set; imported owners must first retire old bindings.
+
+    Evidence-owning sources number their citations densely. A message passes its own
+    citation ordinals, which also number its url citations, so its edges may skip."""
     from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 
     ordinals = sorted(citation.ordinal for citation in citations)
-    if ordinals != list(range(1, len(ordinals) + 1)):
+    if source.scheme != "message" and ordinals != list(range(1, len(ordinals) + 1)):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Citation ordinals must be dense 1..{len(ordinals)}; got {ordinals}",
@@ -299,7 +305,12 @@ def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) ->
 def build_citation_outs_for_sources(
     db: Session, *, viewer_id: UUID, sources: Sequence[ResourceRef]
 ) -> dict[str, list[CitationOut]]:
-    """Each readable source's citations in source-local order."""
+    """Each readable evidence-owning source's citations in source-local order.
+
+    A message has no captured evidence to hydrate; its timeline owner presents its
+    live retrieval targets."""
+    if any(source.scheme == "message" for source in sources):
+        raise ValueError("message citations are live references, not captured evidence")
     out: dict[str, list[CitationOut]] = {source.uri: [] for source in sources}
     if not sources:
         return out
@@ -332,7 +343,7 @@ def build_citation_outs_for_sources(
 def citation_outs_for_rows(
     db: Session, *, viewer_id: UUID, rows: Sequence[ResourceEdge]
 ) -> list[CitationOut]:
-    """Hydrate already authorized citation rows without changing their order."""
+    """Hydrate already authorized evidence-owning rows without changing their order."""
     from nexus.services.resource_items.evidence import evidence_items
 
     occurrences = []

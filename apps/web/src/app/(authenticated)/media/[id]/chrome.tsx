@@ -19,7 +19,8 @@ import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
-import { openConversationAbout } from "@/lib/chat/conversationIndex";
+import { launchChatDraft } from "@/lib/chat/readerIntent";
+import { createRandomId } from "@/lib/createRandomId";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { MenuOption } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
@@ -148,9 +149,7 @@ export function useReaderChrome(input: {
     if (!paneActive) return;
     const region = paneSecondaryRegionId(paneId);
     let pending: number | null = null;
-    const chat = () => void openConversationAbout({
-      ctx, originPaneId: paneId, intent: "default", ref: canonicalResourceRef({ scheme: "media", id }), subject: media.title,
-    });
+    const chat = () => launchChatDraft({ ctx, guard: ctx.workGuard, originPaneId: paneId,       draft: { text: "", selection: { kind: "Uninitialized" }, quote: { id: createRandomId(), reference: { resource_ref: `media:${id}`, field: null, locator: null } } } });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return;
       const owned = !hasActiveInteractionOwner() || isTopmostInteractionOwner(region);

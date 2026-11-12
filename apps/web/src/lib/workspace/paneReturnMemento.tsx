@@ -877,7 +877,7 @@ export function usePaneCollectionGeometry({ scope, window }: {
     layoutReady: () => true,
     demand: pin, element: rowElement, refreshRange,
   }), [readGeometry, pin, rowElement, refreshRange]);
-  usePaneAnchorGeometry({ scope, geometry, ready: window.plan.kind !== "Measure" });
+  usePaneAnchorGeometry({ scope, geometry: window.plan.kind === "Intrinsic" ? null : geometry, ready: window.plan.kind !== "Measure" });
 }
 
 export function usePaneAnchorGeometry({ scope, geometry, ready }: {

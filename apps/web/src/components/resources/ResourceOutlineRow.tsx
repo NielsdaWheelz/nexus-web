@@ -24,7 +24,6 @@ import LocalOutline from "@/components/notes/LocalOutline";
 import type {ActionMenuContextAnchorProps} from "@/components/ui/ActionMenu";
 import {useChangeStamp} from "@/lib/api/changes";
 import {useIndexRowWindow} from "@/lib/collections/indexRowWindow";
-import {assertNever} from "@/lib/assertNever";
 import {usePaneFreeServerValue} from "@/lib/api/serverState";
 import type {Schema} from "@/lib/api/wire";
 import {useResolvedResourceItem} from "@/lib/media/mediaSummary";
@@ -121,12 +120,8 @@ interface Presentation {
 function factRemoval(incoming: Extract<Incoming, {kind: "edge"}>): {id: string; label: string; command: FactRemovalCommand} | null {
   const mutation = incoming.mutation;
   if (mutation === null) return null;
-  switch (mutation.kind) {
-    case "detach_context": return {id: mutation.kind, label: "Remove from future context", command: {...mutation}};
-    case "remove_fact": return {id: mutation.kind, label: "Remove suggested connection",
-      command: {kind: "remove_fact", edge_id: incoming.edge_id}};
-    default: return assertNever(mutation);
-  }
+  return {id: mutation.kind, label: "remove suggested connection",
+    command: {kind: "remove_fact", edge_id: incoming.edge_id}};
 }
 
 export default function ResourceOutlineRow({item, resourceRef, resource, ...shared}: Props) {
@@ -374,8 +369,8 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
     restoreFocusOnClose: false, onSelect: removeFact});
   const made = incoming?.kind === "edge" ? incoming.creation : null;
   if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: null,
-    href: made.conversation_id && made.message_id
-      ? `/conversations/${made.conversation_id}?message=${made.message_id}`
+    href: made.message_id
+      ? `/librarian?message=${made.message_id}`
       : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});
   const bullet = (context: Partial<ActionMenuContextAnchorProps>) => href ? <a
     {...context} data-outline-bullet="true" className={cx(styles.control, styles.bullet)} href={href}

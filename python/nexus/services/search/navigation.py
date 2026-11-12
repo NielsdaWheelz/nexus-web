@@ -28,7 +28,6 @@ _FAMILIES = frozenset(
         "podcast",
         "contributor",
         "page",
-        "conversation",
         "library",
         "oracle_reading",
     }
@@ -107,9 +106,7 @@ def resources(db: Session, r: Retrieval, families: Sequence[str]) -> list[Search
             prefix
             + """,
         navigation_names AS MATERIALIZED (
-            SELECT ref,family,CASE
-                WHEN family='conversation' THEN COALESCE(NULLIF(name,''),'Untitled conversation')
-                ELSE COALESCE(NULLIF(name,''),'Untitled') END AS literal
+            SELECT ref,family,COALESCE(NULLIF(name,''),'Untitled') AS literal
             FROM eligible),
         navigation_variants AS (
             SELECT ref,family,CASE WHEN family='oracle_reading' THEN left(literal,601)

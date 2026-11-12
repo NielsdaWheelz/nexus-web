@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from nexus.schemas.collection_order import OrderRevision
 
 DISPLAY_NAME_MAX_LENGTH = 100
+READING_BRIEF_MAX_LENGTH = 8000
 
 
 class UserSearchOut(BaseModel):
@@ -30,6 +31,8 @@ class UserProfileOut(BaseModel):
     display_name: str | None
     calendar_time_zone: str
     chat_deletion_revision: OrderRevision
+    reading_brief: str | None
+    reading_brief_version: OrderRevision
     email_ingest_address: str | None = None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -50,6 +53,14 @@ class UpdateProfileRequest(BaseModel):
         description="IANA timezone used to resolve account-local calendar dates",
     )
 
+    reading_brief: str | None = Field(default=None, max_length=READING_BRIEF_MAX_LENGTH)
+    expected_reading_brief_version: OrderRevision | None = None
+
+    @field_validator("reading_brief")
+    @classmethod
+    def blank_brief_is_absent(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
     @field_validator("calendar_time_zone", mode="before")
     @classmethod
     def validate_calendar_time_zone(cls, value: object) -> object:
@@ -67,4 +78,8 @@ class UpdateProfileRequest(BaseModel):
     def require_profile_field(self) -> "UpdateProfileRequest":
         if not self.model_fields_set:
             raise ValueError("At least one profile field is required")
+        brief = "reading_brief" in self.model_fields_set
+        version = "expected_reading_brief_version" in self.model_fields_set
+        if brief != version or (brief and self.expected_reading_brief_version is None):
+            raise ValueError("reading_brief and its expected version are required together")
         return self

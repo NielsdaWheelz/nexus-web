@@ -1,6 +1,6 @@
 "use client";
 
-// Server-owned facts about one resource: citations, librarian links, chat context
+// Server-owned facts about one resource: citations, librarian links
 // and document embeds. Authored links, highlight notes and note-body embeds are
 // local and never read here. This section fails on its own; it never hides or
 // replaces local results beside it. A first read that fails stands where its rows
@@ -17,7 +17,7 @@ import { queryConnections, type ConnectionOut } from "@/lib/resourceGraph/links"
 import styles from "./ConnectionsSurface.module.css";
 
 const REMOTE_ORIGINS: NonNullable<NonNullable<Parameters<typeof queryConnections>[0]["filters"]>["origins"]> =
-  ["citation", "discovery", "assistant", "system", "document_embed"];
+  ["citation", "discovery", "assistant", "document_embed"];
 
 /** One read per mounted section: `occurrencePrefix` keeps sections with different invalidation apart. */
 export function useRemoteConnections(ownerRef: string, occurrencePrefix: string, stale: string): ServerList<ConnectionOut> {

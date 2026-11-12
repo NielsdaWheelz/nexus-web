@@ -73,7 +73,7 @@ from nexus.services.search.sources import (
 logger = get_logger(__name__)
 
 _SAVED = frozenset({"highlight", "highlight_annotation", "passage_anchor"})
-_PASSAGES = GENERATED_FAMILIES | _SAVED | {"note_block"}
+_PASSAGES = GENERATED_FAMILIES | _SAVED | {"note_block", "message"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,15 +94,12 @@ class _Resource:
         return (band, -hit.name_tier, -hit.lexical, -hit.relevance, hit.sort_label, self.ref.uri)
 
 
-def _families(
-    query: DiscoveryQuery, *, passages: bool, direct: bool, preview: bool
-) -> tuple[str, ...]:
+def _families(query: DiscoveryQuery, *, passages: bool, direct: bool) -> tuple[str, ...]:
     return tuple(
         family
         for family in query.families
         if (not passages or (query.text and family in _PASSAGES))
         and (not direct or family not in GENERATED_FAMILIES)
-        and (not preview or family != "web_result")
         and scope_predicate(family, (query.scope,), None) is not None
     )
 
@@ -223,15 +220,9 @@ def _classify_owners(
     """A generated candidate's direct admission does not depend on a previous limit."""
     direct = {hit.ref for hit in hits if hit.owner is None}
     owners = {hit.owner for hit in hits if hit.owner is not None and hit.owner not in direct}
-    for family in ("media", "conversation"):
-        identities = [owner.id for owner in owners if owner.scheme == family]
-        if identities and family in families:
-            hits += facts.rank(
-                (family,),
-                k=len(identities),
-                group_owners=False,
-                identities=identities,
-            )
+    identities = [owner.id for owner in owners if owner.scheme == "media"]
+    if identities and "media" in families:
+        hits += facts.rank(("media",), k=len(identities), group_owners=False, identities=identities)
     return sorted(hits, key=lambda hit: hit.order)
 
 
@@ -244,8 +235,7 @@ def _enrich(
     for family in families:
         if family not in GENERATED_FAMILIES:
             continue
-        scheme = "conversation" if family == "message" else "media"
-        owners = [row.ref.id for row in rows if row.ref.scheme == scheme]
+        owners = [row.ref.id for row in rows if row.ref.scheme == "media"]
         if not owners:
             continue
         for hit in facts.rank(
@@ -354,9 +344,7 @@ async def search(
                 ApiErrorCode.E_INVALID_CURSOR, "Cursor belongs to another search"
             )
         offset = position
-    families = _families(
-        query, passages=view == "passages", direct=len(query.text) < 2, preview=False
-    )
+    families = _families(query, passages=view == "passages", direct=len(query.text) < 2)
 
     def page(more: bool) -> SearchPageInfo:
         return SearchPageInfo(
@@ -458,7 +446,7 @@ async def preview(
     deadline: float,
 ) -> SearchPreviewResponse:
     direct = phase == "direct" or len(query.text) < 2
-    families = _families(query, passages=False, direct=direct, preview=True)
+    families = _families(query, passages=False, direct=direct)
 
     def read(db: Session) -> SearchPreviewResponse:
         r = replace(
@@ -502,13 +490,12 @@ async def preview(
             for family in families:
                 if family not in GENERATED_FAMILIES:
                     continue
-                scheme = "conversation" if family == "message" else "media"
                 inside.extend(
                     facts.rank(
                         (family,),
                         k=8,
                         group_owners=True,
-                        excluded_owners=[row.ref.id for row in rows if row.ref.scheme == scheme],
+                        excluded_owners=[row.ref.id for row in rows if row.ref.scheme == "media"],
                     )
                 )
             distinct: dict[ResourceRef | None, DiscoveryHit] = {}

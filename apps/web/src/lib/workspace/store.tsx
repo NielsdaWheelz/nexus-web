@@ -19,7 +19,6 @@ import { overlayOwnsHistoryTraversal } from "@/lib/ui/overlay";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { sourceTargetFromHref } from "@/lib/resources/sourceTarget";
 import { createRandomId } from "@/lib/createRandomId";
-import { conversationEndpoint } from "@/lib/chat/view";
 import { useWorkGuard, type WorkGuard, type WorkScope } from "@/lib/unsavedWork";
 import { recentValueForHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useRecent } from "@/lib/recent/store";
@@ -60,7 +59,6 @@ import { useWorkspaceSession } from "@/lib/workspace/useWorkspaceSession";
 import {
   WORKSPACE_DEFAULT_FALLBACK_HREF,
   normalizeWorkspaceHref,
-  parseWorkspaceHref,
   resolveTodayHref,
 } from "@/lib/workspace/workspaceHref";
 
@@ -79,10 +77,6 @@ export type WorkspaceAdjacentPaneDirection = "Previous" | "Next";
 export interface WorkspaceSelection {
   paneId: string;
   visitId: string;
-}
-export interface PaneViewHrefUpdate extends WorkspaceSelection {
-  href: string;
-  arrival: "preserve" | "clear";
 }
 export type SecondaryPanePatch = Partial<
   Pick<WorkspaceSecondaryPane, "visibility" | "active_surface_id" | "width_px">
@@ -478,45 +472,6 @@ function createWorkspaceStore(
       record(state.panes.find(current => current.id === paneId), previousForeground);
       return { kind: plan.kind, paneId };
     },
-    /** Persist a chat view without navigating or inferring another source arrival. */
-    updatePaneViewHref(input: PaneViewHrefUpdate): boolean {
-      const pane = find(input.paneId);
-      const href = normalizeWorkspaceHref(input.href);
-      if (!pane || pane.current_visit.id !== input.visitId || !href) return false;
-      const currentRoute = resolvePaneRouteModel(pane.current_visit.href);
-      const nextRoute = resolvePaneRouteModel(href);
-      if (currentRoute.id !== "conversation" || nextRoute.id !== "conversation" ||
-        currentRoute.resourceKey === null || currentRoute.resourceKey !== nextRoute.resourceKey) return false;
-      const next = parseWorkspaceHref(href)!;
-      if (conversationEndpoint(next.searchParams).kind !== "Endpoint") return false;
-      if (input.arrival === "preserve") {
-        const current = parseWorkspaceHref(pane.current_visit.href)!;
-        const unchanged = new URL(next);
-        current.searchParams.delete("leaf");
-        unchanged.searchParams.delete("leaf");
-        current.searchParams.sort();
-        unchanged.searchParams.sort();
-        if (current.href !== unchanged.href) return false;
-      } else {
-        next.searchParams.delete("message");
-        next.searchParams.delete("loc");
-        next.hash = "";
-      }
-      const updatedHref = `${next.pathname}${next.search}${next.hash}`;
-      const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
-      if (input.arrival === "clear") deliveries.delete(pane.id);
-      const state = updatePane(data.state, pane.id, current => ({
-        ...current, current_visit: { ...current.current_visit, href: updatedHref },
-      }));
-      if (!admit(state)) return false;
-      commit(state, {
-        pendingPaneEntryDeliveryByPaneId: deliveries,
-        foregroundGeneration: data.foregroundGeneration +
-          (input.arrival === "clear" && data.state.active_primary_pane_id === pane.id ? 1 : 0),
-      });
-      return true;
-    },
-    /** Compare-and-clear the exact request; repeated activation can keep the same visit. */
     claimPaneFocus(expected: WorkspaceSelection): boolean {
       if (data.pendingPaneFocus !== expected) return false;
       set({ pendingPaneFocus: null });

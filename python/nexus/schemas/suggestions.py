@@ -30,10 +30,14 @@ class FeedSuggestionTargetOut(Closed):
     href: str
 
 
-class SuggestionItemOut(Closed):
+class SuggestionTargetOut(Closed):
     target: Annotated[
         MediaSuggestionTargetOut | FeedSuggestionTargetOut, Field(discriminator="kind")
     ]
+
+
+class SuggestionItemOut(SuggestionTargetOut):
+    rationale: str | None = Field(max_length=240)
 
 
 class SuggestionPublicationMetaOut(Closed):
@@ -51,7 +55,7 @@ class DailyEditionOut(Closed):
 
 class SuggestionPublicationOut(SuggestionPublicationMetaOut):
     edition: DailyEditionOut | None
-    items: list[SuggestionItemOut] = Field(max_length=80)
+    items: list[SuggestionItemOut] = Field(max_length=20)
 
 
 class SuggestionRefreshNowOut(Closed):
@@ -91,7 +95,7 @@ class SuggestionsOut(Closed):
 
 
 class SuggestionViewIn(Closed):
-    refs: list[str] = Field(max_length=80)
+    refs: list[str] = Field(max_length=20)
 
     @field_validator("refs")
     @classmethod
@@ -108,7 +112,7 @@ class SuggestionViewIn(Closed):
 class SuggestionViewOut(Closed):
     observed_at: datetime
     state: SuggestionStateOut
-    items: list[SuggestionItemOut] = Field(max_length=80)
+    items: list[SuggestionTargetOut] = Field(max_length=20)
 
 
 class QuickReadsOut(Closed):

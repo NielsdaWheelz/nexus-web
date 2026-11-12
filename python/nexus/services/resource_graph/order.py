@@ -2,8 +2,8 @@
 
 An authored link's rank at an endpoint is the projection of its fractional position
 register: keys compare bytewise, then link id breaks equal keys. Unranked machine
-facts follow in creation/id order. Semantic traversal and conversation admission
-never consume this order, and nothing here writes it.
+facts follow in creation/id order. Semantic traversal never consumes
+this order, and nothing here writes it.
 """
 
 from __future__ import annotations

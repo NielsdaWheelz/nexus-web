@@ -399,7 +399,7 @@ republishes in the same commit. Find's results and the Companion's return
 focus live in the store too, so they end with the body. A body that passes a fresh object
 republishes on every render, which re-renders the shell and each `usePaneSubject`
 reader (the republish passes through null); hot publishers (media,
-`Conversation`) memoize theirs.
+`Librarian`) memoize theirs.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
 
@@ -408,7 +408,7 @@ override.
 and announcement; both activation paths invoke the same fenced operation. The
 pane owner resolves only after its canonical first page is installed. Only the
 eight explicitly supported finite standard-scroll panes publish it (authors,
-chats, lectern, libraries, library, notes, podcasts, podcast). Refresh never
+librarian, lectern, libraries, library, notes, podcasts, podcast). refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
@@ -552,7 +552,7 @@ neither retries the delete nor reads a commit witness.
 `primaryAction` is one link or command descriptor with a required decorative
 icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
 ghost button or native anchor, accessible name, tooltip, projected state and
-disabled explanation. chats publish `new chat`, libraries `new library` and an
+disabled explanation. libraries publish `new library` and an
 individual library `add content`, drawn `Add`; podcasts `browse podcasts`, drawn
 `Browse`. existing menu entries reuse those descriptors; `Libraries.Create`
 exists only as the primary action, independent of list loading, filtering and
@@ -831,6 +831,13 @@ writes no Media, subscription, Library entry, job, progress, completion, or
 activity fact. Successful Add or Subscribe replaces Preview with the canonical
 owned pane; failure leaves Preview and its staged destination choices intact.
 
+empty browse presents its retained curated publication. submitting nonempty
+search pushes a separate browse visit. clearing returns to the preceding empty
+browse visit when present; clearing a direct search opens an empty browse visit.
+the shared pane memento therefore restores feed order, rationales and scroll.
+search refinements replace only the search visit. explicit refresh alone adopts
+a later curated publication.
+
 browse publishes its submitted query and inline facets as stationary query controls. its form
 retains draft/commit semantics; the shared list owns section continuation.
 preview keeps its resource controls and publishes no query capability.
@@ -902,8 +909,7 @@ scrolling and sequential day movement create no history.
 Accepted activation may carry one pane-entry delivery addressed to the chosen
 pane and the exact visit the target lands on (`WorkspacePaneEntry`: a page's new
 empty row or one of its notes, a typed `InspectSource` target, or a resource menu's edit: page title, note body,
-highlight colour, note, bounds or delete, message fork or
-delete); the store mints its activation id. The
+highlight colour, note, bounds or delete); the store mints its activation id. The
 pane body reads its entry and acts only once ready. commands claim before acting
 and act only when `claim` returned true (the one call that removed it). source
 inspection persists its pending target in visit data BEFORE claiming, so an
@@ -916,7 +922,7 @@ on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
 
 `ComposeChat {text}` and `ComposePage {title}` are transient authored entries.
-their hrefs are query-free `/conversations/new` and `/pages/new`; authored seeds
+their hrefs are query-free `/librarian` and `/pages/new`; authored seeds
 never enter saved workspace state, title hints or browser history. the launcher
 supplies the exact destination draft owner to the loss decision, using the pure
 target planner and the feature's owner-id helper. refusal preserves source and
@@ -978,8 +984,7 @@ does not advance it. leaving and returning cannot regain an earlier token.
 Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and
 ordinary input, and only verified return or explicit adoption ends inspection.
-Conversation find keeps its own way back, offered in the find bar and the pane
-header. previews write no pane history entry. named result rows also carry pure
+previews write no pane history entry. named result rows also carry pure
 canonical hrefs: ordinary activation reveals locally, shift opens independently.
 `activate(row)` and `targetHref(row)` validate the captured computation/source;
 stale rows never dispatch. local sheets close after successful reveal; fork
@@ -1022,11 +1027,9 @@ the host, source arrival and delayed-result owner share the native input rule:
 modifier keys and consumed enter repeats preserve attention; real editor input
 and composition relinquish it.
 
-`updatePaneViewHref({paneId, visitId, href, arrival})` changes a chat endpoint
-without history or activation. it requires the same visit and conversation.
-`preserve` changes only `leaf`, retaining source selectors and arrival authority;
-`clear` removes selectors and delivery after the chat owner aborts its inspection.
-chat return/memento identity excludes `leaf`; explicit target matching retains it.
+librarian arrivals name a message in the account timeline. message selectors do
+not change the append destination or material view identity. there is no mutable
+reply endpoint; successful sends reveal the latest bounded window.
 
 ## Recently Closed Panes
 
@@ -1241,20 +1244,13 @@ the stationary query controls. Reader, Chat transcripts, and Atlas keep their se
 scroll/location owners. Mementos and visit data are never persisted and are
 forgotten when their visit leaves every stack.
 
-## reader-to-chat handoff
+## reader-to-librarian handoff
 
-a passage-composer gesture synchronously uses `activateWorkspaceTarget` with
-`disposition: "Fork"`, creating one adjacent pane even when that chat is already
-open. the destination takes the draft before asynchronous preparation. chat owns
-that draft, acceptance, retries and fenced route updates; see
-[chat](chat.md#browser). source-link activation still follows the ordinary
-`Follow`/shift-`Fork` contract.
-
-ordinary passage-composer transfer keeps its complete quote and input in the
-destination's memory owner, never a url, passive pane entry or browser storage.
-quote-only drafts are guarded writing. stale review forks into a source pane with
-the original pane, visit, draft owner and attachment identity. replacement proves
-that exact attachment and its currently visible conversation route before changing
-it; same-conversation leaf changes remain valid. question, caret and model survive,
-and return never sends. cancel review preserves both drafts. successful replacement
-retires only the unchanged source input through its existing loss guard.
+a passage-composer gesture uses `activateWorkspaceTarget` with `Fork`, opening
+an adjacent view of the same account timeline. its retained pane draft receives
+literal user input and a live resource reference before asynchronous admission.
+with a question, the mounted composer submits using its current model; without
+one, it focuses the attached empty draft. the existing loss guard protects both.
+acceptance consumes only the submitted draft object. editing before admission
+never destroys newer input. no source copies, quote review or destination chooser
+travel with the draft. source-link activation retains ordinary `Follow`/shift-`Fork`.

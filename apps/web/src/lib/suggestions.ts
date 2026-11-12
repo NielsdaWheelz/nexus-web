@@ -18,6 +18,7 @@ export type QuickReads = Schema<"QuickReadsOut">;
 export type SuggestionsDestination =
   | { kind: "Lectern" }
   | { kind: "Daily" }
+  | { kind: "Browse" }
   | { kind: "Library"; id: string; name: string };
 
 export async function getSuggestions(path: ApiPath, signal: AbortSignal): Promise<Suggestions> {
@@ -51,10 +52,10 @@ export function suggestionTargetId(target: SuggestionTarget): string {
   return target.ref.slice(target.ref.indexOf(":") + 1);
 }
 
-export function presentSuggestionItem({ target }: SuggestionItem): CollectionRowView {
+export function presentSuggestionItem({ target, rationale }: SuggestionItem): CollectionRowView {
   const resourceRef = assumeCanonicalResourceRef(target.ref);
   if (target.kind === "Media") {
-    return presentMedia(target.media_summary, {
+    const row = presentMedia(target.media_summary, {
       id: target.ref,
       primary: {
         kind: "link",
@@ -63,6 +64,7 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
       resourceRef,
       selected: false,
     });
+    return { ...row, context: rationale === null ? row.context : { kind: "Text", text: rationale } };
   }
   return {
     ...presentFeed({
@@ -74,6 +76,7 @@ export function presentSuggestionItem({ target }: SuggestionItem): CollectionRow
       contributors: [],
       recurring: null,
     }),
+    context: rationale === null ? null : { kind: "Text", text: rationale },
     id: target.ref,
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },
   };

@@ -1,12 +1,10 @@
-"""The five Nexus reads the model may make, inside the generation's admitted scope.
+"""Account-authorized librarian reads and bounded background resource reads.
 
-A read answers only for URIs the frozen scope admits, directly or as a read pointer
-into an admitted parent; its domain owner decides visibility. Every success carries
-an evidence receipt, and stages the citations the chat numbers for the model. Read
-and inspect assemble one read-only snapshot; search metadata and relations are also
-read-only. Each owner releases its reads before durable retrieval publication; the
-captured evidence receipt remains the immutable fact of what the model received.
-A piece passage is followed through its reading identity, never its source pointer.
+Chat reads stop at the current question; background reads stay inside their
+captured resource scope. Domain owners decide visibility. Source evidence is
+transient model input; chat publishes only live citation targets. Each read
+releases its database snapshot before durable retrieval publication.
+A piece passage follows its reading identity, never its source pointer.
 """
 
 from __future__ import annotations
@@ -19,19 +17,17 @@ from typing import TYPE_CHECKING, Any, Never, cast
 from uuid import UUID
 
 from llm_tools import BoundaryFailure, canonical_json_bytes
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MediaKind, Message, ResourceExternalSnapshot
+from nexus.db.models import MediaKind
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.ids import new_uuid7
 from nexus.schemas.authored import NoteWork
 from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
 from nexus.services import libraries
-from nexus.services.chat.conversations import ConversationReadRefusal, read_message_page
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
     citation_from_evidence,
@@ -39,6 +35,7 @@ from nexus.services.chat.retrievals import (
     reopen_search_result,
     web_citation,
 )
+from nexus.services.chat.timeline import MessageReadRefusal, read_message_page
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
     DocumentTooLarge,
@@ -59,7 +56,6 @@ from nexus.services.resource_graph.resolve import (
 )
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import read_evidence
-from nexus.services.search import projection
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.query import (
     KIND_TO_RESULT_TYPES,
@@ -123,37 +119,52 @@ def parse_page_range(uri: str) -> tuple[UUID, int, int] | None:
     return (media_id, start, end) if str(media_id) == media and 1 <= start <= end else None
 
 
-def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
-    """Refuse a URI the frozen scope admits neither directly nor, for reads, as a pointer.
+def message_admitted(call: Call, ref: ResourceRef) -> bool:
+    """Message reads stop at this question, regardless of later queue admissions."""
+    if call.run.chat_run_id is None:
+        return True
+    message_id = ref.id if ref.scheme == "message" else None
+    if ref.scheme == "passage_anchor":
+        message_id = call.db.scalar(
+            text("SELECT owner_id FROM passage_anchors WHERE id=:id AND owner_scheme='message'"),
+            {"id": ref.id},
+        )
+    if message_id is None:
+        return True
+    from nexus.services.chat.timeline import message_visible
 
-    A pointer is a page range of an admitted media, a complete user or assistant
-    message of an admitted conversation, or a fragment-like ref of an admitted media.
-    A displayed canonical X body also admits its exact fragment pointer; it never
-    becomes another admitted media root that could expand further context.
+    horizon = call.message_horizon_seq
+    assert horizon is not None, "a chat tool must capture its horizon before dispatch"
+    return message_visible(call.db, call.principal, message_id, horizon)
+
+
+def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
+    """Enforce account visibility and the chat horizon, or a background scope.
+
+    Background reads may follow admitted media to pages or fragment-like pointers.
+    A displayed canonical X body admits its exact fragment, not another media root.
     """
 
     scope = call.run.scope
+    pages = parse_page_range(uri)
+    if call.run.chat_run_id is not None:
+        ref = _parse(f"media:{pages[0]}" if pages is not None else uri)
+        if not message_admitted(call, ref):
+            refuse("ResourceUnavailable")
+        try:
+            assert_ref_visible(call.db, viewer_id=call.principal, ref=ref)
+        except ApiError as exc:
+            _collapse(exc, ApiErrorCode.E_NOT_FOUND)
+        return
     if uri in scope:
         return
     if not derived_read:
         refuse("ResourceUnavailable")
-    pages = parse_page_range(uri)
     if pages is not None:
         if f"media:{pages[0]}" not in scope:
             refuse("ResourceUnavailable")
         return
     ref = _parse(uri)
-    if ref.scheme == "message":
-        conversation = call.db.scalar(
-            select(Message.conversation_id).where(
-                Message.id == ref.id,
-                Message.status == "complete",
-                Message.role.in_(("user", "assistant")),
-            )
-        )
-        if f"conversation:{conversation}" not in scope:
-            refuse("ResourceUnavailable")
-        return
     media = parent_media_id_for_read_pointer(call.db, scheme=ref.scheme, resource_id=ref.id)
     if f"media:{media}" in scope:
         return
@@ -217,7 +228,11 @@ def _evidence(
 ) -> NexusEvidence:
     """What the model was shown, fixed: its target, locator, content hash and authorship."""
 
-    if citation is not None and citation.captured_evidence.target.field == "annotation":
+    if (
+        citation is not None
+        and citation.captured_evidence is not None
+        and citation.captured_evidence.target.field == "annotation"
+    ):
         field = "annotation"
         uri = citation.captured_evidence.target.owner_ref or uri
     locator = None
@@ -231,7 +246,7 @@ def _evidence(
         excerpt_id = None
     return NexusEvidence(
         field=field,
-        admission_scope="conversation_context" if call.run.chat_run_id else "generation_scope",
+        admission_scope="account_timeline" if call.run.chat_run_id else "generation_scope",
         citation_target=(citation.citation_target if citation else None) or uri,
         content_sha256=hashlib.sha256(content.encode()).hexdigest()
         if content is not None
@@ -323,16 +338,25 @@ def _collapse(exc: ApiError, *codes: ApiErrorCode) -> Never:
 
 async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
     frozen = tuple(_parse(uri) for uri in sorted(call.run.scope))
-    if value.scopes is None:
-        # every admitted target, plus the bounded descendants of admitted media and libraries.
-        scopes = [SearchScope(kind="all")] if frozen else []
-        scopes += [scope_from_uri(ref.uri) for ref in frozen if ref.scheme in ("media", "library")]
-    else:
+
+    def read_scopes(_: Session) -> list[SearchScope]:
+        if value.scopes is None:
+            scopes = [SearchScope(kind="all")] if frozen or call.run.chat_run_id else []
+            scopes += [
+                scope_from_uri(ref.uri) for ref in frozen if ref.scheme in ("media", "library")
+            ]
+            return scopes
         scopes = []
         for uri in value.scopes:
             if not capability(admitted(call, uri).scheme).app_search_scope:
                 refuse("ResourceUnavailable")
             scopes.append(scope_from_uri(uri))
+        return scopes
+
+    try:
+        scopes = await call.database.run_sync(read_scopes)
+    finally:
+        await call.database.rollback()
     if not scopes:
         return NexusSearchSuccess(matches=[], has_more=False)
     filters = {
@@ -361,7 +385,11 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
         )
         response = await search_scopes(
             call.principal,
-            replace(query, frozen_context_refs=frozen),
+            replace(
+                query,
+                frozen_context_refs=None if call.run.chat_run_id else frozen,
+                message_horizon_seq=call.message_horizon_seq,
+            ),
             scopes,
             deadline=call.deadline,
             purpose="foreground",
@@ -369,10 +397,11 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
     except ApiError as exc:
         if exc.code is ApiErrorCode.E_EMBEDDING_PROVIDER_UNAVAILABLE:
             raise BoundaryFailure("ToolUnavailable") from exc
-        _collapse(exc, ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_CONVERSATION_NOT_FOUND)
+        _collapse(exc, ApiErrorCode.E_NOT_FOUND)
 
     def finish(_: Session) -> NexusSearchSuccess:
-        call.retrieved = [citation_from_search_result(r) for r in response.results]
+        results = [r for r in response.results if message_admitted(call, _parse(r.resource_ref))]
+        call.retrieved = [citation_from_search_result(r) for r in results]
         count = _budgeted(
             call.retrieved,
             SEARCH_SELECTED,
@@ -389,7 +418,7 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
                 title=_title(item)[:150],
                 uri=_follow_up(item),
             )
-            for item, citation in zip(response.results, call.retrieved, strict=True)
+            for item, citation in zip(results, call.retrieved, strict=True)
         ]
         return NexusSearchSuccess(matches=matches, has_more=response.page.has_more)
 
@@ -401,7 +430,9 @@ async def search(value: NexusSearchInput, call: Call) -> NexusSearchSuccess:
 
 async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSearchSuccess:
     try:
-        await call.database.run_sync(lambda _: _visible(call, value.uri))
+        ref = await call.database.run_sync(lambda _: _visible(call, value.uri))
+        if not capability(ref.scheme).app_search_scope:
+            refuse("InvalidInput")
     finally:
         await call.database.rollback()
     query = build_search_query(
@@ -427,7 +458,8 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
         _collapse(exc, ApiErrorCode.E_NOT_FOUND)
 
     def finish(_: Session) -> DocumentSearchSuccess:
-        call.retrieved = [citation_from_search_result(r) for r in response.results]
+        results = [r for r in response.results if message_admitted(call, _parse(r.resource_ref))]
+        call.retrieved = [citation_from_search_result(r) for r in results]
         call.selected = call.retrieved
         matches = [
             DocumentSearchMatch(
@@ -439,9 +471,7 @@ async def document_search(value: DocumentSearchInput, call: Call) -> DocumentSea
                 title=_title(item)[:500],
                 uri=_follow_up(item),
             )
-            for ordinal, (item, citation) in enumerate(
-                zip(response.results, call.retrieved, strict=True)
-            )
+            for ordinal, (item, citation) in enumerate(zip(results, call.retrieved, strict=True))
         ]
         return DocumentSearchSuccess(matches=matches, uri=value.uri)
 
@@ -551,16 +581,10 @@ def _read(
             refuse("ResourceUnavailable")
         return "page_range", body, ("media", str(pages[0])), None
     ref = _parse(uri)
-    if ref.scheme in ("conversation", "message"):
+    if ref.scheme == "message":
         page = read_message_page(db, viewer_id=viewer_id, ref=ref, cursor=cursor)
-        if isinstance(page, ConversationReadRefusal):
-            refuse(
-                {"invalid_cursor": "InvalidCursor", "stale_cursor": "StaleCursor"}.get(
-                    page.code, "ResourceUnavailable"
-                )
-            )
-        if ref.scheme == "conversation":
-            return "conversation", page.body, None, page.next_cursor
+        if isinstance(page, MessageReadRefusal):
+            refuse("InvalidCursor" if page.code == "invalid_cursor" else "ResourceUnavailable")
         return "section", page.body, ("message", str(ref.id)), page.next_cursor
     if cursor is not None:
         refuse("InvalidCursor")
@@ -708,6 +732,11 @@ def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
                 target_uri=item.target.ref,
             )
             for item in page.items
+            if all(
+                message_admitted(call, _parse(uri))
+                for uri in (item.source.ref, item.target.ref)
+                if uri is not None
+            )
         ]
         citation = _cite(call, capability(ref.scheme).citable_result_type, str(ref.id), value.uri)
         return RelationsListSuccess(
@@ -722,32 +751,17 @@ def relations(value: RelationsListInput, call: Call) -> RelationsListSuccess:
 
 
 def web_citations(call: Call, value: dict[str, Any]) -> None:
-    """One external snapshot per web hit, staged as citations; leading hits under budget are shown."""
+    """Retain web urls as live targets; transient hit text goes only to the model."""
 
     hits = value["results"]
     count = _budgeted(
         hits, WEB_SELECTED, WEB_SELECTED_CHARS, lambda hit: len(canonical_json_bytes(hit).decode())
     )
-    snapshot_ids: list[UUID] = []
     for index, hit in enumerate(hits):
-        snapshot_id = new_uuid7()
-        call.db.add(
-            ResourceExternalSnapshot(
-                id=snapshot_id,
-                user_id=call.principal,
-                provider=hit["provider"],
-                url=hit["url"],
-                title=hit["title"],
-                snippet=hit["snippet"],
-            )
-        )
-        snapshot_ids.append(snapshot_id)
-        citation = web_citation(hit, snapshot_id=snapshot_id, selected=index < count)
+        citation = web_citation(hit, selected=index < count)
         call.retrieved.append(citation)
         if index < count:
             call.selected.append(citation)
-    call.db.flush()  # the retrieval rows reference the snapshots
-    projection.refresh(call.db, "web_result", snapshot_ids)
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {

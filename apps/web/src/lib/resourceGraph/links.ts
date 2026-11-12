@@ -1,5 +1,5 @@
 /** User links belong to the local authored graph. Server-owned citation, machine
- * and context facts retain their existing query/removal owners. Unlink observes
+ * facts retain their existing query/removal owners. Unlink observes
  * only the selected edge's add vector and never deletes either endpoint. */
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -14,7 +14,7 @@ import { parseResourceRef, resourceTypeLabel } from "./resourceRef";
 import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 export type ConnectionOut = Schema<"ConnectionOut">;
 export type ConnectionMutation = NonNullable<ConnectionOut["mutation"]>;
-export type ConnectionCommand = { kind: "unlink"; link_id: string } | Extract<ConnectionMutation, { kind: "detach_context" }> | { kind: "remove_fact"; edge_id: string };
+export type ConnectionCommand = { kind: "unlink"; link_id: string } | { kind: "remove_fact"; edge_id: string };
 export type LinkTarget = { kind: "resource"; ref: string } | { kind: "passage"; candidate_ref: string; passage_target: Schema<"CapturedPassageTarget"> | null; capture: PassageCapture | null };
 export type InsertionSource = LinkTarget | { kind: "daily_page"; local_date: string; page_id: string };
 export interface Position { after: string | null; before?: string | null; prelude?: readonly Intent[] }
@@ -161,7 +161,6 @@ export async function queryConnections(input: Schema<"ConnectionQueryRequest">, 
 export async function mutateConnection(runtime: WritingRuntime, command: ConnectionCommand, signal?: AbortSignal): Promise<void> {
   if (command.kind === "unlink") return deleteLink(runtime, { linkId: command.link_id });
   if (command.kind === "remove_fact") { await apiFetch(`/api/resource-graph/facts/${command.edge_id}`, { method: "DELETE", signal }); return; }
-  await apiFetch(`/api/conversations/${command.conversation_id}/context/${encodeURIComponent(command.target_ref)}?expected_context_version=${command.expected_context_version}`, { method: "DELETE", signal });
 }
 
 const PASSAGE_REFUSAL: Line = { fact: "couldn’t link this passage.", reason: "its quote or location is missing." };

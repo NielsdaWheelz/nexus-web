@@ -3,7 +3,7 @@
 Pages, notes and highlights are projections of canonical ``authored_*`` state and
 persist while deleted; ``authored_visible`` is the merged verdict. An authored link's
 projection carries its own verdict, endpoint liveness included. A machine fact
-(citation, embed, chat context, discovery, assistant) has no liveness of its own: it
+(citation, embed, discovery, assistant) has no liveness of its own: it
 is live exactly while each authored endpoint is, so revival reveals it again. A
 passage is an independently retained literal quote with no liveness of its own: it
 outlives its source note or media and grants no access to either. Nothing physically

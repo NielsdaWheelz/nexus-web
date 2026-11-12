@@ -1,4 +1,6 @@
 "use client";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
+import { useSuggestions } from "@/lib/useSuggestions";
 
 // Browse fans a query out to independent source sections. Each shared list owns traversal,
 // errors and its pane-visit snapshot, and reports its cold read to the body. The body owns one
@@ -48,7 +50,9 @@ import {
 import { presentBrowseCandidate } from "@/lib/collections/presenters/browse";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
-import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive, usePaneRouter, usePaneSearchParams, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { useLatestWorkspace } from "@/lib/workspace/store";
+import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
   definePaneVisitDataKey,
@@ -242,10 +246,13 @@ export default function BrowsePaneBody() {
 }
 
 function DirectoryBrowse() {
+  const pane = usePaneRuntime();
+  const workspace = useLatestWorkspace();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const query = useMemo(() => readBrowseQuery(params), [params]);
   const text = query?.text ?? "";
+  const selection = useSuggestions({ kind: "Browse" }, text === "");
   const queryKey = query === null ? "" : browseHref(query);
   const sections = useMemo(
     () => (query === null || text === "" ? [] : browseSections(query)),
@@ -280,12 +287,19 @@ function DirectoryBrowse() {
     }
   }, [shared]);
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
-  const onQuery = useCallback(
-    (next: BrowseQuery | null) => {
-      router.replace(next === null ? "/browse" : browseHref(next));
-    },
-    [router],
-  );
+  const onQuery = useCallback((next: BrowseQuery | null) => {
+    const href = next === null ? "/browse" : browseHref(next);
+    if (!text && next?.text) { router.push(href); return; }
+    if (text && !next?.text && pane !== null) {
+      const previous = workspace().state.panes.find(current => current.id === pane.paneId)?.history.back.at(-1);
+      const url = previous ? parseWorkspaceHref(previous.href) : null;
+      if (url?.pathname === "/browse" && readBrowseQuery(url.searchParams)?.text === "") {
+        router.back({ disposition: { kind: "Follow" } });
+        return;
+      }
+    }
+    router.replace(href);
+  }, [router, text, pane, workspace]);
   const queryControls = useMemo(
     () => query === null ? undefined : {
       kind: "Controls" as const,
@@ -294,19 +308,21 @@ function DirectoryBrowse() {
     },
     [focusInput, inputRef, onQuery, query],
   );
-  usePaneChrome({ query: queryControls, header: { kind: "Section", meta: { kind: "None" } } });
+  usePaneChrome({ query: queryControls, header: { kind: "Section", meta: { kind: "None" } }, refresh: text ? undefined : selection.state === null ? { kind: "Resolving" } : {
+    kind: "Refreshable", sourceKey: "browse:selection", execute: async ({ signal }) => { await selection.refresh(signal); return null; },
+  } });
   if (query === null || invalid) return <PaneSurface state={
     <Fact line={{ fact: "browse can’t use this link." }}
       verbs={[{ label: "reset browse", commandKey: "reset browse", run: () => router.replace("/browse") }]} />
   } />;
   return <PaneSurface
-    brief="Discover beyond Nexus. Preview first; add only when it belongs."
-    empty={<p>Search to discover things beyond Nexus.</p>}
+    brief={text ? "search beyond your library." : undefined}
     state={shared === null ? undefined : <Failed error={shared} noun="results" retry={{
       run: () => { for (const status of statuses) void status.refetch().catch(() => {}); },
       busy: statuses.some((status) => status.running),
     }} />}
   >
+    {!text ? <SuggestionsSection destination={{ kind: "Browse" }} suggestions={selection} returnScope="Browse.Selection" /> : null}
     <div ref={chapters}>{text ? [...new Set(sections.map((section) => section.kind))].map((kind) => (
       <section key={kind} className={styles.chapter} hidden={shared !== null}>
         <h2 className={styles.chapterHeading}>{BROWSE_KIND_LABELS[kind]}</h2>

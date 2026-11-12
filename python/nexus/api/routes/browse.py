@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.browse import (
@@ -18,6 +18,13 @@ from nexus.schemas.browse import (
     BrowseSort,
     BrowseSource,
 )
+from nexus.schemas.suggestions import (
+    SuggestionsOut,
+    SuggestionStateOut,
+    SuggestionViewIn,
+    SuggestionViewOut,
+)
+from nexus.services import suggestion_shortlists
 from nexus.services.browse.service import preview_browse, search_browse
 from nexus.services.browse.targets import (
     BrowseProviderFailure,
@@ -74,3 +81,30 @@ def browse_preview(
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "No longer available") from exc
     except BrowseProviderFailure as exc:
         raise provider_api_error(exc) from exc
+
+
+@router.get("/browse/selection")
+def read_selection(viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[SuggestionsOut]:
+    return Data(
+        data=suggestion_shortlists.read_suggestions(db, viewer_id=viewer.user_id, mode="browse")
+    )
+
+
+@router.post("/browse/selection/view")
+def view_selection(
+    request: SuggestionViewIn, viewer: ViewerDep, db: RepeatableReadDbSession
+) -> Data[SuggestionViewOut]:
+    return Data(
+        data=suggestion_shortlists.reconcile_suggestions_view(
+            db, viewer_id=viewer.user_id, request=request, mode="browse"
+        )
+    )
+
+
+@router.post("/browse/selection/refresh", status_code=202)
+def refresh_selection(viewer: ViewerDep, db: DbSession) -> Data[SuggestionStateOut]:
+    return Data(
+        data=suggestion_shortlists.request_suggestions_refresh(
+            db, viewer_id=viewer.user_id, mode="browse"
+        )
+    )

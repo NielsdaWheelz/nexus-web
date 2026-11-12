@@ -4,14 +4,13 @@ import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import type { ShareMode } from "@/lib/sharing/types";
 
 export type ResourceInspectorSurfaceRole =
-  "Contents" | "LinkedItems" | "Forks";
+  "Contents" | "LinkedItems";
 export type ResourceInspectorLinkedItemsSurface =
   "MediaEvidence" | "ResourceConnections";
 
 /** `default_surface_order` is fallback preference, not tab order. */
 export interface ResourceInspectorResourcePolicy {
   readonly linked_items: ResourceInspectorLinkedItemsSurface;
-  readonly forks: "ConversationForks" | null;
   readonly default_surface_order: readonly ResourceInspectorSurfaceRole[];
 }
 
@@ -29,7 +28,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: true,
     inspector: {
       linked_items: "MediaEvidence",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },
@@ -39,7 +37,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: true,
     inspector: {
       linked_items: "ResourceConnections",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },
@@ -67,7 +64,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: false,
     inspector: {
       linked_items: "ResourceConnections",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },
@@ -77,7 +73,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: false,
     inspector: {
       linked_items: "ResourceConnections",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },
@@ -86,16 +81,6 @@ export const RESOURCE_CAPABILITIES = {
     sharing: "None",
     app_search_scope: false,
     inspector: null,
-  },
-  conversation: {
-    link_mode: "direct",
-    sharing: "CopyOnly",
-    app_search_scope: false,
-    inspector: {
-      linked_items: "ResourceConnections",
-      forks: "ConversationForks",
-      default_surface_order: ["LinkedItems", "Forks"],
-    },
   },
   message: {
     link_mode: "direct",
@@ -127,7 +112,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: false,
     inspector: {
       linked_items: "ResourceConnections",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },
@@ -137,7 +121,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: false,
     inspector: {
       linked_items: "ResourceConnections",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },
@@ -147,7 +130,6 @@ export const RESOURCE_CAPABILITIES = {
     app_search_scope: false,
     inspector: {
       linked_items: "ResourceConnections",
-      forks: null,
       default_surface_order: ["LinkedItems"],
     },
   },

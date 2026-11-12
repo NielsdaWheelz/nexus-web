@@ -914,11 +914,15 @@ def delete_source_discovery(db: Session, *, source_media_id: UUID) -> None:
     closed generation audit metadata follows the existing ledger retention contract;
     it stores neither the frozen source catalogue nor accepted model findings.
     """
-    from nexus.services.generation.ledger import interrupt_job_generations
+    from nexus.services.generation.ledger import interrupt_locked_generations, lock_job_generations
 
     jobs = queue.jobs_for_payload(
         db, kind=JOB_KIND, match={"source_media_id": str(source_media_id)}, lock=False
     )
     for job in jobs:
-        interrupt_job_generations(db, job_id=job.id, detail="its source was physically collected")
+        interrupt_locked_generations(
+            db,
+            lock_job_generations(db, job_id=job.id),
+            detail="its source was physically collected",
+        )
     queue.delete_jobs(db, job_ids=[job.id for job in jobs])

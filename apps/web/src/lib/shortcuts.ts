@@ -8,6 +8,12 @@ export const SHORTCUTS = {
     key: "k",
     shift: false,
   },
+  "Nexus.Ask": {
+    label: "ask librarian",
+    description: "sends the command palette text to the librarian.",
+    key: "Enter",
+    shift: false,
+  },
   "Pane.Search": {
     label: "Search this pane",
     description: "Searches the active pane when available; otherwise uses browser find.",

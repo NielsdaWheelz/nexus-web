@@ -1,9 +1,4 @@
-"""Account chat deletion fence; accepted rows remain their own replay receipts.
-
-Fresh creation holds a shared fence through admission. A hard chat/subtree delete
-holds it exclusively before conversation locks and advances it only after removal.
-The fence does not record commands or serialize unrelated account writers.
-"""
+"""The permanent account mutex and replay fence for the librarian timeline."""
 
 from uuid import UUID
 
@@ -13,31 +8,29 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, ConflictError
 
 
-def lock_revision(db: Session, viewer_id: UUID, *, deleting: bool = False) -> int:
+def lock_revision(db: Session, viewer_id: UUID) -> int:
     revision = db.scalar(
-        text(
-            "SELECT revision FROM chat_deletion_revisions WHERE user_id=:viewer "
-            + ("FOR UPDATE" if deleting else "FOR SHARE")
-        ),
+        text("SELECT deletion_revision FROM librarian_state WHERE user_id=:viewer FOR UPDATE"),
         {"viewer": viewer_id},
     )
     if revision is None or revision < 1:
-        # justify-defect: migration and account bootstrap establish this permanent fence.
-        raise AssertionError("authenticated account has no valid chat deletion fence")
+        # justify-defect: migration and account bootstrap establish this permanent row.
+        raise AssertionError("authenticated account has no librarian state")
     return revision
 
 
 def require_revision(db: Session, viewer_id: UUID, expected: str) -> None:
     if lock_revision(db, viewer_id) != int(expected):
-        raise ConflictError(ApiErrorCode.E_CHAT_CREATION_STALE, "Chat creation needs review")
+        raise ConflictError(
+            ApiErrorCode.E_CHAT_CREATION_STALE, "Deleted history requires a fresh send"
+        )
 
 
 def advance(db: Session, viewer_id: UUID) -> None:
-    """The caller holds the exclusive fence and has removed an existing chat/subtree."""
+    """The caller holds the account lock and has removed an existing terminal turn."""
     db.execute(
         text(
-            "UPDATE chat_deletion_revisions SET revision=revision+1 "
-            "WHERE user_id=:viewer RETURNING revision"
+            "UPDATE librarian_state SET deletion_revision=deletion_revision+1 WHERE user_id=:viewer"
         ),
         {"viewer": viewer_id},
-    ).scalar_one()
+    )

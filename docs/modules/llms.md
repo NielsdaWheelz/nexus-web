@@ -31,6 +31,7 @@ Primary owners (the first nine under `services/generation/`):
 - `codex.py`: the kernel's transient native mode (kernel ADR 0012);
 - `provider.py`: ProviderRuntime on the kernel's `run_generation`, held in memory;
 - `ledger.py`: `llm_calls`, one row per generation;
+- `native_execution.py`: opaque native identity and confirmed stop, without replay;
 - `synthesis.py`: the strict-JSON prompt/intent/decode scaffold;
 - `runtime.py`: the process runtime and the one job envelope;
 - `services/tools/`: the model tools, one dispatcher (`run_tool`) and one `tool_calls` row per call, including the private owner-chat client of Jarvis shared memory ([model-tools.md](model-tools.md));
@@ -139,12 +140,15 @@ Model selection does not grant tools. The operation policy independently
 resolves one of:
 
 - `NoModelTools`;
-- `ChatReadAdditiveWrite` for every new chat send, rerun, and regeneration;
+- `ChatReadAdditiveWrite` for librarian sends and failed/cancelled retries;
+- `SelectionRead` for librarian curation;
 - `MetadataResearch`.
 
-on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
-`ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
-additive writes. metadata enrichment selects codex
+on provider api chat, `ExactModelTools` grants account-authorized reads and
+owner-gated additive writes. execution resolves current live references and the
+current reading brief. message reads admit only this turn's question and earlier
+settled turns; attachments focus the question without narrowing account access.
+metadata enrichment selects codex
 personal and freezes `web.read`, `nexus.document.search`, and
 `nexus.resource.read`, plus `web.search` when its binding is configured.
 
@@ -177,7 +181,7 @@ that file; omission denies access. the file holds `null` or the config object
 sharing declaration that Jarvis validates. no credential enters the browser,
 model arguments, prompt, chat history or ordinary logs.
 
-only that viewer's send, rerun and regenerate operations may select the memory
+only that viewer's send and failed/cancelled-turn retry may select the memory
 chat plan. the complete selected frozen processor chain must be declared. a
 connected client gets the five memory reads; admitted notes add the optional
 text-only save tool. other viewers and background operations keep their original
@@ -236,10 +240,15 @@ text output with tools.
 `generate` writes one `llm_calls` row per call: opened before dispatch with its
 spec and job id, closed once with `Succeeded | Failed | Cancelled`, one failure
 code, route evidence (never model text) and summed usage. it is an unreplayable
-multi-mutation: nothing survives a process. a worker that dies mid-generation
-leaves its row open until its job's next attempt starts (`run_generation_job`
-closes the job's open rows first), the job dies (its `on_dead` hook), the
-job is revoked, or migration 0269 closes it `interrupted`. chat never reruns a
+multi-mutation with no prompt or continuation journal. before native submission,
+`native_execution` records the fresh thread's opaque profile/id and unsettled
+state. an observed native terminal or positive local non-submission settles it.
+worker replacement and abnormal settlement inspect/interrupt that exact thread
+outside database locks before closing the ledger. a local stop, expired lease or
+interrupt acknowledgement never establishes remote finality. an unavailable
+controller or bound thread without an observed terminal turn holds the existing
+job and account queue; see [the repair boundary](../issues/native-submission-needs-repair.md).
+only confirmed stale executions close `interrupted`. chat never reruns a
 generation (the run fails `interrupted`; the user reruns); background jobs rerun
 from scratch, repaying the call. completed additive writes still commit effect
 receipts and target authorship with their row, so writes made before a crash
@@ -288,12 +297,12 @@ historical and do not qualify this final graph.
 
 ## Product API and reset boundary
 
-`POST /chat-runs`, rerun, and regenerate carry an explicit selection; chat
-contract revision "5" turns a stale tab into a reload prompt. requests reject
-the retired `tool_authority` field. policy owns new tool authority.
+`POST /chat-runs` and failed/cancelled-turn retry carry an explicit selection;
+the shared wire revision rejects stale clients. successful answers cannot be
+regenerated. policy owns tool authority; requests cannot supply it.
 chat history, sse meta, and trust projections expose the immutable dispatch
 selection derived from the saved generation spec, plus safe execution
-disclosure. saved run/tree and cancel reads do not need a live model
+disclosure. saved turn/timeline and cancel reads do not need a live model
 catalog; current availability is checked for new admission. the tool
 authority frozen at dispatch stays in the saved spec; no projection exposes
 it. these projections never expose

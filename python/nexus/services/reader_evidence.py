@@ -32,7 +32,6 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceCountsOut,
     ReaderEvidenceHighlightOut,
     ReaderEvidenceOut,
-    ReaderEvidenceQuoteOut,
     ReaderEvidenceResolutionOut,
     ReaderEvidenceResolvedOut,
     ReaderEvidenceResourceOut,
@@ -47,14 +46,12 @@ from nexus.schemas.resource_graph import LinkEndpoint, LinkPassageEndpoint, Link
 from nexus.schemas.resource_items import (
     CitationSourceTargetKey,
     LocatedSourceLocationOut,
-    ReaderQuoteSourceTargetKey,
     ResourceItemOut,
     ResourceSourceTargetKey,
     SourceTargetOut,
     UnavailableSourceLocationOut,
 )
 from nexus.schemas.retrieval import PdfPageLocator
-from nexus.services.chat import quotes
 from nexus.services.reader_apparatus import ReaderApparatusResponse, apparatus_resolution
 from nexus.services.reader_connections import ReaderConnections
 from nexus.services.reader_evidence_markers import build_markers
@@ -103,28 +100,7 @@ def build_reader_evidence(
 ) -> ReaderEvidenceProjection:
     """Merge direct facts by exact far ref after constructing domain-owned roots."""
     highlight_refs = {f"highlight:{highlight.id}" for highlight in highlights}
-    quotations = quotes.reader_quotes(db, viewer_id=viewer_id, reading_media_id=media_id)
-    quotation_items: dict[str, ResourceItemOut] = {}
-    quotation_targets: dict[str, SourceTargetOut] = {}
-    for message_id, snapshot in quotations:
-        item = quotes.selection_out(
-            db, viewer_id=viewer_id, snapshot=snapshot, message_id=message_id
-        ).item
-        if item.missing:
-            continue
-        target = resolve_source_target(
-            db,
-            viewer_id=viewer_id,
-            target=ReaderQuoteSourceTargetKey(message_id=message_id),
-            reading_media_id=media_id,
-        )
-        if (
-            target.source_activation is not None
-            and target.source_activation.resource_ref == f"media:{media_id}"
-        ):
-            quotation_items[item.ref] = item
-            quotation_targets[item.ref] = target
-    native_refs = highlight_refs | quotation_targets.keys()
+    native_refs = set(highlight_refs)
     if apparatus.status in ("ready", "partial"):
         native_refs.update(item.resource_ref for item in apparatus.items)
     generic_refs = {
@@ -157,10 +133,7 @@ def build_reader_evidence(
         for item in resource_items_out(
             db,
             viewer_id=viewer_id,
-            refs=[
-                assert_resource_ref(ref)
-                for ref in sorted(highlight_refs | generic_refs | quotation_targets.keys())
-            ],
+            refs=[assert_resource_ref(ref) for ref in sorted(highlight_refs | generic_refs)],
             reading_media_ids=reading_media_ids,
             excerpt_mode="full",
         )
@@ -216,25 +189,6 @@ def build_reader_evidence(
                 identity=reading_identity,
                 resolution=resolution,
             ),
-            authored_placement=None,
-        )
-
-    for ref, target in quotation_targets.items():
-        roots[ref] = ReaderEvidenceRootOut(
-            ref=ref,
-            content=ReaderEvidenceQuoteOut(item=items[ref], quotation=quotation_items[ref]),
-            resolution=_resource_resolution(
-                target=target,
-                media_id=media_id,
-                canonical_media_id=canonical_media_id,
-                item=quotation_items[ref],
-                fragment_indexes=fragment_indexes,
-                page_count=page_count,
-                fragment_ranges=fragment_ranges,
-                fragment_times=fragment_times,
-            )
-            or ReaderEvidenceUnavailableOut(reason="Unanchorable"),
-            continuation=None,
             authored_placement=None,
         )
 
@@ -374,15 +328,13 @@ def build_reader_evidence(
         roots.values(),
         key=lambda root: _root_sort_key(root, first_facts, owner_order),
     )
-    counts = {"highlights": 0, "quotes": 0, "citations": 0, "links": 0, "machine_links": 0}
+    counts = {"highlights": 0, "citations": 0, "links": 0, "machine_links": 0}
     for root in roots_out:
         facets: set[str] = set()
         if isinstance(root.content, ReaderEvidenceHighlightOut):
             facets.add("highlights")
         elif isinstance(root.content, ReaderEvidenceSourceReferenceOut):
             facets.add("citations")
-        elif isinstance(root.content, ReaderEvidenceQuoteOut):
-            facets.add("quotes")
         for fact in root.direct_facts:
             if fact.origin == "citation" and fact.ordinal is not None:
                 facets.add("citations")

@@ -19,12 +19,9 @@ from sqlalchemy.orm import Session
 from nexus.api.edge import WIRE_REVISION
 from nexus.db.models import TranscriptState
 from nexus.schemas import offline_catalog as wire
-from nexus.schemas.conversation import ConversationListItemOut
 from nexus.schemas.feed import FeedEntryCountsOut
 from nexus.services import libraries, library_entries, library_listing, media
-from nexus.services.chat.conversations import conversation_index_rows_sql
 from nexus.services.collection_keyset import (
-    UPDATED_TITLE_PLANS,
     KeysetValueKind,
     SortKey,
     order_by_sql,
@@ -189,15 +186,8 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         )
         for row in followed_rows
     }
-    updated_plans = {
-        "updated_newest": UPDATED_TITLE_PLANS[(None, None)],
-        "updated_oldest": UPDATED_TITLE_PLANS[("updated", "asc")],
-        "title_asc": UPDATED_TITLE_PLANS[("title", "asc")],
-        "title_desc": UPDATED_TITLE_PLANS[("title", "desc")],
-    }
-    chat_rows = _ranked(db, conversation_index_rows_sql(), updated_plans, params)
     return wire.OfflineCatalogOut(
-        format_version=4,
+        format_version=5,
         wire_revision=WIRE_REVISION,
         account_id=viewer_id,
         snapshot_id=uuid4(),
@@ -280,16 +270,4 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
             if details[row["feed_id"]].feed.kind == "article"
         ],
         lectern=lectern.get_lectern(db, viewer_id, summaries=summaries),
-        chats=[
-            wire.CatalogChatOut(
-                value=ConversationListItemOut(
-                    id=row["id"],
-                    title=row["title"],
-                    updated_at=row["updated_at"],
-                    message_count=row["message_count"],
-                ),
-                order=_order(row, wire.UpdatedTitleOrder),
-            )
-            for row in chat_rows
-        ],
     )

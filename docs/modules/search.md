@@ -102,7 +102,7 @@ scopes and unresolved capacity limits stay with their issue owners.
 `{phase, resources, saved, passages, semantic_status}`: at most eight directly matched
 primary resources, eight saved occurrences, and eight passages with distinct owners.
 direct searches literal canonical titles/names and contributor aliases across media,
-podcasts, contributors, pages, conversations, libraries and readings.
+podcasts, contributors, pages, libraries and readings.
 it returns only primary resources: saved/passages are empty and children are null.
 unicode casefold matching orders exact, prefix, then substring; canonical display
 label and ref break ties. choose each ref's best witness before the eight-result
@@ -118,7 +118,7 @@ fields. this contract applies only to explicit direct preview.
 lexical searches all eligible families without
 provider or vector calls. hybrid is a complete server-ranked replacement containing
 lexical and semantic evidence. displayed primary owners are excluded
-before the inside-source budget. web snapshots are full-search-only.
+before the inside-source budget.
 
 `GET /search` requires `phase=lexical|hybrid` and returns that phase with a
 discriminated `view`, `results`, `page` and `semantic_status`. resources is the
@@ -137,8 +137,8 @@ meaningful names have exact/prefix/substring tiers. note, quote and passage pros
 has none. within a band, names precede remaining lexical matches, which precede
 semantic-only matches; relevance and canonical ref break ties. no passage-count
 summation or frontend score merging. filter-only listings retain label order.
-generated message/media hits group by conversation or permitted reading owner in sql before
-limiting. owner classification is independent of the direct result window.
+generated media hits group by their permitted reading owner in sql before limiting.
+messages retain their own identity and account ownership. owner classification is independent of the direct result window.
 selected owners receive one best child from the same lexical scoring traversal,
 including children outside the global window. composition carries these proven
 facts; it performs no second ranking query. semantic-only facts use the approved
@@ -217,20 +217,18 @@ after source deletion. this trades small retained rows and reader aggregation fo
 independent source publication. operational qualification remains
 required by [release-search](../issues/release-search.md).
 
-the browser kinds are documents, notes, highlights, conversations, people, web,
+the browser kinds are documents, notes, highlights, messages, people,
 libraries, readings and saved passages. highlights includes quotation and private
 annotation evidence; notes excludes consumed annotations. the internal
 `highlight_annotation` family admits the owner and current liveness before
 matching, scoring or excerpt generation. quotation and annotation witnesses
 coalesce by highlight using the strongest eligible evidence and deterministic
 ties. `matched_field` and activation retain the winning field.
- libraries/readings are global-only. web snapshots
-are external resources; links and citations are relationships, not extra results.
+libraries/readings are global-only. links and citations are relationships, not extra results.
 
-scopes are all, media, library and conversation, not generic ancestry. each row
+scopes are all, media and library, not generic ancestry. each row
 also requires viewer visibility. media/library membership uses existing source
-and note predicates; saved anchors follow their actual owned source. conversation
-membership uses explicit context facts. unreadable requested scopes return 404,
+and note predicates; saved anchors follow their actual owned source. unreadable requested scopes return 404,
 including when no selected family serves them. blank, unfiltered queries read
 nothing; format/author/role-only requests list media, podcasts and contributors.
 passages require text. one codepoint omits generated families and semantic work;
@@ -239,7 +237,9 @@ full search retains its existing lexical matching, distinct from direct preview.
 note membership starts with the note's eligible adjacent edges, then tests their
 source or highlight against scoped reading media. it does not repeat edge lookup
 for each media in a library. the standalone and shared predicates use this same
-rule; conversation and frozen-context membership retain their separate contracts.
+rule. background frozen-resource scopes retain their separate contract. librarian
+searches admit current account authority and apply the run’s message-sequence horizon
+before ranking; attachments do not grant access.
 
 contributor admission materializes visible credits once using the request's shared
 media and podcast visibility. the permission owner supplies the unchanged catalogue,

@@ -4,10 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { convertReaderQuestion } from "@nexus/authored/markdown";
-import { captureReaderQuote, launchReaderChat, replaceReaderQuote } from "@/lib/chat/readerIntent";
+import { captureReaderQuote, launchReaderChat } from "@/lib/chat/readerIntent";
 import { readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
-import QuotedMessageConnection from "@/components/chat/QuotedMessageConnection";
 import { useRecent } from "@/lib/recent/store";
 import { normalizeVisitTitleHint } from "@/lib/workspace/model";
 import ResourceOutlineList from "@/components/resources/ResourceOutlineList";
@@ -33,7 +32,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { usePaneLayout } from "@/lib/panes/paneChrome";
 import { MapRail, MAP_RAIL_WIDTH_PX } from "@/lib/documentReader/chrome/MapRail";
-import { destinationTarget, inspectionOfLocator, targetOfLocator, targetOfResolution, targetOfSourcePoint, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
+import { destinationTarget, inspectionOfLocator, targetOfLocator, targetOfResolution, targetOfSourcePoint, targetOfLiveLocation, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
 import { PostActions, PostSaveReadFailure } from "@/app/(authenticated)/media/[id]/Embeds";
 import { usePostSaveStates } from "@/lib/media/xPostSaves";
 import { evidenceRootKey, factFacet } from "@/app/(authenticated)/media/[id]/evidence/model";
@@ -163,7 +162,8 @@ function CaptureReader({ id }: { readonly id: string }) {
         return "Applied";
       }
       const location = target.source.location;
-      if (location.kind === "point") destination = targetOfSourcePoint(location, doc);
+      if (location.kind === "live") destination = targetOfLiveLocation(location, doc);
+      else if (location.kind === "point") destination = targetOfSourcePoint(location, doc);
       else if (location.kind === "located") {
         const locator = location.locator;
         if (locator.type !== "x_capture_offsets" || location.source_identity !== locator.capture_id || doc.kind !== "text") return "Unavailable";
@@ -201,26 +201,17 @@ function CaptureReader({ id }: { readonly id: string }) {
   const { say } = useOutcome();
   arrivalRef.current = arrival;
   const annotations = useCompactAnnotations(reader, id, { kind: "x_capture", label: "post" }, true, true, {
-    reviewing: arrival.quoteReview !== null,
-    cancelReview: arrival.finishQuoteReview,
     submit(input) {
       const current = reader.getState().document;
       if (current.status !== "ready" || input.identity !== current.doc.identity) return false;
       const quote = captureReaderQuote({ doc: current.doc, scope: { kind: "x_capture", capture_id: id }, anchor: input.anchor,
-        capture: input.capture, annotation: input.annotation,
-        source: { ref: input.capture?.sourceRef ?? input.annotation?.sourceRef ?? null,
-          title: current.doc.title, media_kind: null, contributors: null, location_label: null } });
+        capture: input.capture, annotation: input.annotation });
       if (!quote) { say({ fact: "couldn’t capture this passage." }); return false; }
-      if (arrival.quoteReview) {
-        if (!replaceReaderQuote(ctx.workspace(), arrival.quoteReview, quote)) { say({ fact: "the original draft changed or closed." }); return false; }
-        arrival.finishQuoteReview(); return true;
-      }
       const question = convertReaderQuestion(input.question);
       if (question.kind === "Unsupported") { say({ fact: "images and embeds can’t be sent from here." }); return false; }
       if (question.kind === "Text" && [...question.content].length > 20_000) { say({ fact: "this question is too long.", reason: "the limit is 20,000 characters." }); return false; }
       return launchReaderChat({ ctx, guard, originPaneId: runtime.paneId, question: question.kind === "Text" ? question.content : "",
-        quote, selection: memory.fresh(catalog) ?? { kind: "Uninitialized" }, catalog,
-        destination: { kind: "New" } }).kind === "Opened";
+        quote, selection: memory.fresh(catalog) ?? { kind: "Uninitialized" } }).kind === "Opened";
     },
   });
   const mapEvidence = useMemo(() => {
@@ -267,9 +258,6 @@ function CaptureReader({ id }: { readonly id: string }) {
     {map.status === "ready" && map.data.identity === doc?.identity && map.data.evidence.roots.length ? <section ref={evidenceRoot} aria-label="source evidence">
       <h2>evidence</h2><ResourceOutlineList scope={`capture-evidence:${id}`} ariaLabel="source evidence">
         {map.data.evidence.roots.filter(root => root.content.kind !== "Highlight" || !root.content.is_owner).map(root => {
-          if (root.content.kind === "ReaderQuote") return <li key={root.ref} tabIndex={0} data-resource-ref={root.ref} data-outline-occurrence={`capture:${id}:${root.ref}`}>
-            <QuotedMessageConnection content={root.content} />
-          </li>;
           const item = root.content.kind === "SourceReference" ? null : root.content.item;
           if (!item) return null;
           const target = root.resolution ? targetOfResolution(root.resolution, doc ?? undefined) : null;

@@ -26,6 +26,7 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
 }) {
   const lectern = destination.kind === "Lectern";
   const daily = destination.kind === "Daily";
+  const browse = destination.kind === "Browse";
   const { receipts } = useLecternCommands();
   const previousReceipts = useRef<typeof receipts>(new Map());
   const [retrying, setRetrying] = useState(false);
@@ -85,9 +86,9 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
   // Section visibility and its facts can move the eye-line independently of rows.
   const noticeGeometry = useMemo(() => sectionVisible ? { visible: sectionVisible, waiting, needsRepair, coldFailure, admissionFailure, edition, partial } : null,
   [sectionVisible, waiting, needsRepair, coldFailure, admissionFailure, edition, partial]);
-  const repair = needsRepair ? <Fact line={{ fact: daily ? "daily selection stopped updating." : "suggestions stopped updating.", reason: "the job that finds them needs a repair." }} /> : null;
+  const repair = needsRepair ? <Fact line={{ fact: "selection stopped updating." }} /> : null;
   if (defect) throw defect.error;
-  const title = daily ? "daily selection" : lectern ? "suggestions" : "suggested for this library";
+  const title = browse ? "curated reading" : daily ? "daily selection" : lectern ? "suggestions" : "suggested for this library";
   const ariaLabel = destination.kind === "Library" ? `suggestions for ${destination.name}` : title;
   const coverage = partial ? <Fact line={{ fact: "some feeds could not be checked." }} /> : null;
   const notice = repair !== null || coverage !== null ? <>{repair}{coverage}</> : null;
@@ -110,7 +111,7 @@ export default function SuggestionsSection({ destination, suggestions, subscribe
         notice={rows.length > 0 ? notice : null}
         empty={coldFailure !== null ? <Failed error={coldFailure} noun="suggestions" retry={{ run: () => void retry(), busy: retrying || suggestions.reconciling }} />
           : admissionFailure !== null ? <Failed error={admissionFailure} noun="suggestions" retry={{ run: suggestions.retryAdmission, busy: suggestions.admitting }} />
-            : notice ?? (suggestions.adopted !== null ? <Fact line={{ fact: daily ? "no eligible items today." : "no suggestions right now." }} /> : undefined)}
+            : notice ?? (suggestions.adopted !== null ? <Fact line={{ fact: browse ? "no picks right now." : daily ? "no eligible items today." : "no suggestions right now." }} /> : undefined)}
         rowControls={subscribe === undefined || destination.kind !== "Library" ? undefined : Object.fromEntries(rows.flatMap(({ target }) => target.kind !== "Feed" ? [] : [[target.ref,
           <Button key={target.ref} aria-label={`add ${target.title} to ${destination.name}`} onClick={() => subscribe(target)}>add</Button>,
         ]]))}

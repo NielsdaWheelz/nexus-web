@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from nexus.db.models import TranscriptState
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.consumption import EpisodeConsumptionState, LecternOut
-from nexus.schemas.conversation import ConversationListItemOut
 from nexus.schemas.feed import FeedDetailOut, LibraryFeedsOut
 from nexus.schemas.library import LibraryOut
 from nexus.schemas.media_summary import MediaSummaryOut
@@ -61,13 +60,6 @@ class EpisodeOrder(_Closed):
     oldest: Rank
     duration_asc: Rank
     duration_desc: Rank
-
-
-class UpdatedTitleOrder(_Closed):
-    updated_newest: Rank
-    updated_oldest: Rank
-    title_asc: Rank
-    title_desc: Rank
 
 
 class CatalogLibraryOut(_Closed):
@@ -128,11 +120,6 @@ class CatalogArticleOut(CatalogEntryOut):
     transcript_state: None
 
 
-class CatalogChatOut(_Closed):
-    value: ConversationListItemOut
-    order: UpdatedTitleOrder
-
-
 def _unique(values: list[object]) -> None:
     if len(set(values)) != len(values):
         raise ValueError("duplicate catalog identity")
@@ -148,7 +135,7 @@ def _orders(values: list[BaseModel]) -> None:
 
 
 class OfflineCatalogOut(_Closed):
-    format_version: Literal[4]
+    format_version: Literal[5]
     wire_revision: int
     account_id: UUID
     snapshot_id: UUID
@@ -162,7 +149,6 @@ class OfflineCatalogOut(_Closed):
     episodes: list[CatalogEpisodeOut]
     articles: list[CatalogArticleOut]
     lectern: LecternOut
-    chats: list[CatalogChatOut]
 
     @model_validator(mode="after")
     def complete(self) -> "OfflineCatalogOut":
@@ -177,13 +163,11 @@ class OfflineCatalogOut(_Closed):
         _unique([row.media_id for row in self.episodes])
         _unique([(row.feed_id, row.media_id) for row in self.articles])
         _unique([row.media_summary.media_id for row in self.lectern.items])
-        _unique([row.value.id for row in self.chats])
         _orders([row.order for row in self.libraries])
         _orders([row.order for row in self.media])
         _orders([row.index.order for row in self.sources if row.index is not None])
         entries = [*self.episodes, *self.articles]
         _orders([row.order for row in entries])
-        _orders([row.order for row in self.chats])
         if {row.library_id for row in self.library_sources} != libraries:
             raise ValueError("catalog library sections are incomplete")
         for library_id in libraries:

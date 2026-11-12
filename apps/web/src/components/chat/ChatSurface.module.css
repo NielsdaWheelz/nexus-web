@@ -1,6 +1,5 @@
-/* The conversation pane: transcript, rows, answer cards and trust surfaces. */
+/* The librarian transcript and trust surfaces. */
 
-.pane,
 .surface {
   flex: 1;
   display: flex;
@@ -117,27 +116,6 @@
   white-space: pre-wrap;
 }
 
-.rootAlternatives {
-  margin-bottom: var(--space-3);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
-/* The live answer's gutter pulse. */
-.cue {
-  position: absolute;
-  inset: 0 auto 0 -8px;
-  width: 2px;
-  background: var(--accent-muted);
-  animation: cue 1.4s var(--ease-glide) infinite;
-}
-
-@keyframes cue {
-  50% {
-    opacity: 0.4;
-  }
-}
-
 /* Write trail: type-forward small-caps rows. */
 .write {
   display: flex;
@@ -169,11 +147,3 @@
     padding-bottom: var(--mobile-content-bottom-clearance);
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .cue {
-    animation: none;
-  }
-}
-
-.detailsLabel { display: inline-flex; align-items: center; gap: var(--space-1); }

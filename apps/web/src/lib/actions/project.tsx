@@ -28,12 +28,9 @@ import { settleDeletedResourcePanes } from "@/lib/actions/settleDeletedResource"
 import { apiFetch, isStaleBuild } from "@/lib/api/client";
 import { admissionReason as currentAdmissionReason, staleBuild, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import {
-  openConversationAbout,
-  deleteConversation,
-} from "@/lib/chat/conversationIndex";
-import { getConversationCommands, readConversationTree, repeatMessage, sayRefusal, type CommandOutcome } from "@/lib/chat/commands";
-import { conversationViewHref } from "@/lib/chat/view";
+import { getLibrarianCommands, readTurn, sayRefusal } from "@/lib/chat/commands";
+import { launchChatDraft } from "@/lib/chat/readerIntent";
+import { createRandomId } from "@/lib/createRandomId";
 import { publishImportsInvalidation, recoverMedia } from "@/lib/imports/api";
 import { lecternFull } from "@/lib/lectern/lectern";
 import { deleteLibrary, leaveLibrary, placements } from "@/lib/libraries/api";
@@ -57,10 +54,7 @@ import type {
   ActionDescriptor,
   ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
-import { openAsyncResult } from "@/lib/panes/openResult";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import type { OpenIntent } from "@/lib/ui/targetActivation";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
@@ -244,7 +238,7 @@ function metadataSubject(parsed: ResourceRef): MetadataSubject {
     case "podcast": case "feed": return { kind: "Feed", feedId: parsed.id };
     case "library": return { kind: "Library", libraryId: parsed.id };
     case "evidence_span": case "content_chunk": case "highlight": case "page": case "note_block":
-    case "fragment": case "conversation": case "message": case "oracle_reading": case "oracle_passage_anchor":
+    case "fragment": case "message": case "oracle_reading": case "oracle_passage_anchor":
     case "external_snapshot": case "contributor":
     case "reader_apparatus_item": case "passage_anchor": throw new Error(`metadata has no subject for ${parsed.scheme}`);
     default: return assertNever(parsed.scheme);
@@ -562,61 +556,6 @@ export function projectResourceActions(
     },
     { afterRemoval: podcastFocus?.afterRemoval, rawWrite },
   ];
-  const deleteChat = async () => {
-    const owner = getConversationCommands(ctx.accountId, id);
-    const present = (outcome: CommandOutcome) => {
-      if (!ctx.isActive()) return;
-      if (outcome.kind === "Failed") {
-        sayRefusal(ctx.feedback, outcome);
-      } else if (outcome.kind === "Pending") {
-        ctx.observeChatCommand({ id, owner, present });
-      }
-    };
-    present(await deleteConversation(ctx.accountId, id));
-  };
-  const repeat = (operation: "rerun" | "regenerate", intent: OpenIntent) => {
-    const route = activation.href === null ? null : resolvePaneRouteModel(activation.href);
-    if (route?.id !== "conversation") throw new Error("A repeat action must name its conversation");
-    const conversationId = route.params.id!;
-    const owner = getConversationCommands(ctx.accountId, conversationId);
-    const present = (outcome: CommandOutcome) => {
-      if (!ctx.isActive()) return;
-      if (outcome.kind === "Failed") {
-        sayRefusal(ctx.feedback, outcome);
-      } else if (outcome.kind === "Pending") {
-        ctx.observeChatCommand({ id: conversationId, owner, present,
-          retry: requested => {
-            const current = owner.getSnapshot();
-            if (current.kind === "Idle" || current.command.kind !== "Repeat") return Promise.resolve();
-            return open(requested === "new_pane" ? requested : current.command.openIntent,
-              ctx.workspace().state.active_primary_pane_id, () => owner.retry(requested));
-          },
-        });
-      }
-    };
-    const open = async (openIntent: OpenIntent, origin: string, command: () => Promise<CommandOutcome>): Promise<void> => {
-      await openAsyncResult({
-        ctx, originPaneId: origin, intent: openIntent, subject: facts.label,
-        create: async () => {
-          const outcome = await command();
-          present(outcome);
-          return outcome.kind === "Accepted" ? {
-            target: { href: conversationViewHref(conversationId, outcome.receipt.outcome.assistant_message_id), labelHint: "Chat" },
-            title: "response started", openLabel: "open",
-          } : null;
-        },
-      });
-    };
-    return open(intent, originPaneId(), async () => {
-      const tree = await readConversationTree(conversationId);
-      if (!ctx.isActive()) return { kind: "Handled" };
-      const message = tree?.messages.find(message => message.id === id);
-      if (!tree || !message) return {
-        kind: "Failed", line: { fact: `couldn’t ${operation}.`, reason: "that message is gone." }, error: null, rejection: null,
-      };
-      return repeatMessage(ctx.accountId, tree.conversation, message, operation, null, intent);
-    });
-  };
   const overlay = (next: Overlay): Verb => [
     ({ triggerEl }) => ctx.overlays.open(next, invocationFocus(triggerEl ?? podcastFocus?.trigger ?? null, returnFocus)),
     { tracked: false },
@@ -675,10 +614,7 @@ export function projectResourceActions(
       },
       { tracked: false },
     ],
-    Chat: [
-      ({ openIntent }) =>
-        openConversationAbout({ ctx, ref, originPaneId: originPaneId(), intent: openIntent, subject: facts.label }),
-    ],
+    Chat: [() => launchChatDraft({ ctx, guard: ctx.workGuard, originPaneId: originPaneId(),       draft: { text: "", selection: { kind: "Uninitialized" }, quote: { id: createRandomId(), reference: { resource_ref: ref, field: null, locator: null } } } }), { tracked: false }],
     DownloadOriginal: [
       async () => {
         const response = await apiFetch<
@@ -709,7 +645,6 @@ export function projectResourceActions(
     }, { rawWrite: true }],
     RemoveMedia: overlay({ kind: "RemoveMedia", mediaId: id }),
     DeleteLibrary: deleted(async acknowledged => { await deleteLibrary(id); acknowledged(); }, "/libraries", true),
-    DeleteConversation: [deleteChat, { confirmation: null }],
     DeletePage: deleted(() => deletePage(getWritingRuntime(ctx.accountId), id), "/notes"),
     EditPageTitle: entry({ kind: "EditPageTitle", pageId: id }),
     EditNoteBody: entry({ kind: "EditNoteBody", noteBlockId: id }),
@@ -721,10 +656,7 @@ export function projectResourceActions(
     DeleteHighlight: entry({ kind: "DeleteHighlight", highlightId: id }),
     // The highlight pane owns its annotation field.
     EditHighlightAnnotation: entry({ kind: "EditHighlightAnnotation", highlightId: id }),
-    ForkMessage: entry({ kind: "ForkMessage", messageId: id }),
-    RerunMessage: [({ openIntent }) => repeat("rerun", openIntent)],
-    RegenerateMessage: [({ openIntent }) => repeat("regenerate", openIntent)],
-    DeleteMessage: entry({ kind: "DeleteMessage", messageId: id }, { confirmation: null }),
+
   };
 
   // A present download's commands are device actions, composed beside these remote facts.
@@ -758,6 +690,19 @@ export function projectResourceActions(
   const project = (action: Action): ActionDescriptor | null => {
     const { blocked } = action;
     switch (action.kind) {
+      case "RetryTurn":
+        return make(action.kind, blocked, async () => {
+          const turn = await readTurn(action.run_id);
+          if (ctx.isActive()) activate({ target: { href: `/librarian?message=${turn.user_message.id}` }, disposition: { kind: "Follow" } });
+        });
+      case "DeleteTurn":
+        return make(action.kind, blocked, async () => {
+          const owner = getLibrarianCommands(ctx.accountId);
+          if (!owner.canExecute()) return;
+          const opened = activate({ target: { href: "/librarian" }, disposition: { kind: "Follow" } });
+          if (!opened || opened.kind === "Cancelled") return;
+          sayRefusal(ctx.feedback, await owner.execute({ kind: "DeleteTurn", runId: action.run_id, viewId: opened.paneId }));
+        });
       case "OpenSource":
       case "OpenFeed": {
         return link(make(action.kind, blocked, () => {}), action.href);

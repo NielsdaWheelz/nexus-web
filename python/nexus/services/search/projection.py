@@ -67,12 +67,10 @@ _FAMILIES = (
     "note_block",
     "highlight",
     "highlight_annotation",
-    "conversation",
     "message",
     "reader_apparatus_item",
     "fragment",
     "content_chunk",
-    "web_result",
     "library",
     "oracle_reading",
     "passage_anchor",
@@ -97,9 +95,7 @@ def _source(
     """The shared twelve-column shape hides only repetitive nullable SQL slots."""
     assert fields.keys() <= set(TEXT_FIELDS)
     _SOURCE_IDS[family] = identity
-    scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
-        family, family
-    )
+    scheme = "highlight" if family == "highlight_annotation" else family
     ref = f"'{scheme}:' || ({identity})::text"
     key = key or (
         f"'contributor:' || CAST(:projection_viewer_id AS text) || ':' || ({identity})::text"
@@ -246,18 +242,10 @@ _SOURCES = {
         fields={"body": "h.annotation_body_text"},
         where="h.authored_visible AND h.annotation_body_pm_json IS NOT NULL AND h.annotation_body_text<>''",
     ),
-    "conversation": _source(
-        "conversation",
-        "conversations c",
-        identity="c.id",
-        name="c.title",
-        fields={"title": "c.title"},
-    ),
     "message": _source(
         "message",
         "messages m",
         identity="m.id",
-        owner="'conversation:' || m.conversation_id::text",
         fields={"body": "m.content"},
         where="m.status='complete' AND m.content<>''",
     ),
@@ -288,13 +276,6 @@ _SOURCES = {
         admission="'content_chunk:' || c.owner_id::text || ':' || s.lexical_revision::text",
         fields={"body": "c.chunk_text"},
         where=f"{_CHUNK_WHERE} AND s.lexical_revision IS NOT NULL",
-    ),
-    "web_result": _source(
-        "web_result",
-        "resource_external_snapshots s",
-        identity="s.id",
-        name="s.title",
-        fields={"title": "s.title", "url": "s.url", "body": "s.snippet"},
     ),
     "library": _source(
         "library",
@@ -338,9 +319,7 @@ _PUBLISHED_CONTENT_CHUNKS = _source(
 def _withdraw_batch(
     db: Session, family: str, identities: Sequence[UUID], *, viewer_id: UUID | None
 ) -> None:
-    scheme = {"web_result": "external_snapshot", "highlight_annotation": "highlight"}.get(
-        family, family
-    )
+    scheme = "highlight" if family == "highlight_annotation" else family
     refs = [f"{scheme}:{identity}" for identity in identities]
     if family == "highlight":
         while True:

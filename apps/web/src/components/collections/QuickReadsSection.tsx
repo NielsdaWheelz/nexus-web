@@ -27,7 +27,7 @@ export default function QuickReadsSection() {
   const summaries = useMediaSummaries(items.map((target) => target.media_summary));
   const rows = items.flatMap((target) => {
     const mediaSummary = summaries.resolve(target.media_summary);
-    return mediaSummary === null ? [] : [presentSuggestionItem({ target: { ...target, media_summary: mediaSummary } })];
+    return mediaSummary === null ? [] : [presentSuggestionItem({ rationale: null, target: { ...target, media_summary: mediaSummary } })];
   });
   const rootRef = useRef<HTMLElement>(null);
   usePaneReturnDescendantReady({ rootRef, ready: read.status !== "loading" });

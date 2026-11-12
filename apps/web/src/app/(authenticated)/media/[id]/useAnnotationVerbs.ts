@@ -102,7 +102,6 @@ export function useAnnotationVerbs(input: {
   /** The marks mounted in the reader; pane entries wait for their first load. */
   readonly marks: readonly Mark[] | null;
   readonly openEvidence: (itemId: string | null) => void;
-  readonly quoteReview: Parameters<typeof useSelectionComposer>[0]["quoteReview"];
 }): AnnotationVerbs {
   const { reader, mediaId, sourceLabel, active, isMobile, store, marks, openEvidence } = input;
   const writing = useWritingRuntime();
@@ -165,9 +164,6 @@ export function useAnnotationVerbs(input: {
     setSelectionIssue(null);
   }, [active, isMobile, publication, retireSelection, setSelectionIssue, showBounds]);
   useEffect(() => {
-    if (documentState.status !== "ready" || documentState.refreshing) retireSelection();
-  }, [documentState, retireSelection]);
-  useEffect(() => {
     const retire = () => { retireSelection(); showBounds(null); setSelectionIssue(null); };
     const visibility = () => { if (document.visibilityState === "hidden") retire(); };
     window.addEventListener("blur", retire);
@@ -193,14 +189,14 @@ export function useAnnotationVerbs(input: {
     [outcome, showNotice],
   );
 
-  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, quoteReview: input.quoteReview, onError: fail });
+  const composer = useSelectionComposer({ reader, mediaId, annotations: store, sourceLabel, active, isMobile, boundsActive: bounds !== null, onError: fail });
   const { highlightDeleted } = composer;
   const withHighlight = composer.ensure;
 
   const currentSource = (capture: SelectionCapture) => {
     const shown = reader.getState().document;
     return activeRef.current && mobileRef.current && document.visibilityState !== "hidden" &&
-      shown.status === "ready" && !shown.refreshing && shown.doc.identity === capture.identity && reader.measureBounds() !== null;
+      shown.status === "ready" && shown.doc.identity === capture.identity && reader.measureBounds() !== null;
   };
   const selectionCurrent = (subject: MobileSelection) => currentBounds.current !== null
     ? activation.current === subject && currentSource(subject.capture) : composer.selectionCurrent(subject);
@@ -376,7 +372,7 @@ export function useAnnotationVerbs(input: {
     relocate(id) {
       const document = reader.getState().document;
       const annotation = store.annotation(id);
-      if (!active || document.status !== "ready" || document.refreshing || document.doc.kind !== "text" || annotation?.placement.kind !== "unlocated") {
+      if (!active || document.status !== "ready" || document.doc.kind !== "text" || annotation?.placement.kind !== "unlocated") {
         showNotice({ fact: "couldn’t start relocating this highlight." });
         return;
       }
@@ -388,7 +384,7 @@ export function useAnnotationVerbs(input: {
       const shown = reader.getState().document;
       if (!active || shown.status !== "ready") return;
       const next = notice.selection;
-      if (shown.refreshing || next && next.identity !== shown.doc.identity) {
+      if (next && next.identity !== shown.doc.identity) {
         retireSelection(); setSelectionIssue({ fact: "the text changed. select again." }); return;
       }
       const session = currentBounds.current;

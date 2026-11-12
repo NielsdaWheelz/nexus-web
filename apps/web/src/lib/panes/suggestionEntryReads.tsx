@@ -21,3 +21,8 @@ export const dailySelectionRead: ReadDescriptor<Suggestions> = {
   key: "/daily-brief", stale: "", timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS,
   load: signal => getSuggestions("/api/daily-brief", signal),
 };
+
+export const browseSelectionRead: ReadDescriptor<Suggestions> = {
+  key: "/browse/selection", stale: "", timeoutMs: SUGGESTIONS_REQUEST_TIMEOUT_MS,
+  load: signal => getSuggestions("/api/browse/selection", signal),
+};

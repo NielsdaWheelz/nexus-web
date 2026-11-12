@@ -33,6 +33,7 @@ type BackgroundOperation = Literal[
     "media_title",
     "media_summary",
     "connection_discovery",
+    "selection_curation",
     "oracle",
 ]
 type Operation = Literal["chat"] | BackgroundOperation
@@ -41,6 +42,7 @@ type OwnerKind = Literal[
     "oracle_reading",
     "media_summary",
     "connection_discovery_scan",
+    "suggestion_feed",
     "media_enrichment",
     "part_discovery",
 ]
@@ -92,7 +94,7 @@ type GenerationOutput = Annotated[TextOutput | JsonSchemaOutput, Field(discrimin
 
 
 class GenerationIntent(BaseModel):
-    """What the model is asked; chat freezes it on ``chat_runs.generation_intent``."""
+    """Transient instructions and input for one generation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

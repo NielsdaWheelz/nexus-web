@@ -130,6 +130,10 @@ async def generate[T](
                 stop,
                 emit,
             )
+        from nexus.services.generation import native_execution
+
+        if not await native_execution.confirm(ref.id, runtime.codex_endpoint):
+            raise native_execution.NativeFinalityPending()
         text = "".join(streamed)
         terminal: Terminal[T]
         if result.status == "succeeded":
@@ -147,6 +151,12 @@ async def generate[T](
             close_generation(db, terminal, route=chosen.route, evidence=result.evidence)
             db.commit()
     except BaseException as error:
+        from nexus.services.generation import native_execution
+
+        if isinstance(error, native_execution.NativeFinalityPending):
+            raise
+        if not await native_execution.confirm(ref.id, runtime.codex_endpoint):
+            raise native_execution.NativeFinalityPending() from error
         transient = is_transient_database_error(error)
         try:
             with runtime.session_factory() as db:

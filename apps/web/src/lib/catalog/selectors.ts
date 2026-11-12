@@ -5,7 +5,6 @@
  * listening over the dated catalog, applied before filtering and sorting. */
 import { ApiError } from "@/lib/api/client";
 import type { Schema } from "@/lib/api/wire";
-import { decodeUpdatedTitleIndexView, updatedTitleSortOptionOf } from "@/lib/collections/updatedTitleIndexView";
 import {
   effectiveEpisode, episodeDuration, episodeProgress, episodeReadState, episodeRemainingSeconds,
   type EffectiveEpisode, type ListeningFacts,
@@ -23,7 +22,6 @@ export function indexCatalog(value: OfflineCatalog) {
     episodes: new Map(value.episodes.map(row => [row.media_id, row])),
     sources: new Map(value.sources.map(row => [row.detail.feed.id, row])),
     librarySources: new Map(value.library_sources.map(row => [row.library_id, row.value])),
-    chats: new Map(value.chats.map(row => [row.value.id, row.value])),
     /** Per source: complete saved entry selection's unfinished count. */
     unfinished,
   };
@@ -111,7 +109,6 @@ function catalogLibraryFeedIndex(catalog: CatalogIndex, id: string): Schema<"Lib
 }
 export const catalogMedia = (catalog: CatalogIndex, id: string) => catalog.media.get(id)?.summary ?? null;
 export const catalogSource = (catalog: CatalogIndex, id: string) => catalog.sources.get(id)?.detail ?? null;
-export const catalogChat = (catalog: CatalogIndex, id: string) => catalog.chats.get(id) ?? null;
 export const catalogLectern = (catalog: CatalogIndex) => catalog.value.lectern;
 
 export function catalogEntries(catalog: CatalogIndex, id: string, params = new URLSearchParams()): Schema<"LibraryEntriesIndexOut"> | null {
@@ -201,19 +198,4 @@ export function catalogFeedEntries(catalog: CatalogIndex, id: string, params = n
     return { id: row.media_id, entry_id: row.entry_id, media_summary: media.summary, transcript_state: row.transcript_state,
       published_at: row.published_at, published_on: row.published_on, entry_url: row.entry_url };
   })) };
-}
-function updatedRank(params: URLSearchParams): keyof Schema<"UpdatedTitleOrder"> {
-  query(params, { sort: ["updated", "title"], direction: ["asc", "desc"] });
-  const decoded = decodeUpdatedTitleIndexView(params);
-  if (decoded.kind === "Invalid") throw invalid();
-  switch (updatedTitleSortOptionOf(decoded.view)) {
-    case "updated-newest": return "updated_newest";
-    case "updated-oldest": return "updated_oldest";
-    case "title-asc": return "title_asc";
-    case "title-desc": return "title_desc";
-  }
-}
-export function catalogChats(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_ConversationListItemOut_"> {
-  const rank = updatedRank(params);
-  return index(sorted(catalog.value.chats, row => row.order[rank]).map(row => row.value));
 }
