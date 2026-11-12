@@ -2,7 +2,7 @@
 
 `nexus-codex-agent-host` runs one stock codex `0.165.0` app-server signed into
 the owner's chatgpt subscription. production/local overlays use unix sockets;
-shared live labs use authenticated websockets. the api reads
+network labs use authenticated host control and websockets. the api reads
 its model catalog; workers run turns on it and execute every tool themselves.
 the host holds the only copy of the account state and reaches nothing but two
 openai names.
@@ -22,15 +22,20 @@ existing drain deadline.
 
 - `python -m apps.codex_agent.main` requires `auth.json` mode `0600`, prepares
   `home/` and `tmp/` in the account directory and the explicit cwd root,
-  removes a stale unix socket path, writes the startup model catalog, and starts
+  atomically advances `host-state.json`, opens host control, writes the startup
+  model catalog, and starts
   codex with an explicit environment (`CODEX_HOME` is the account directory; no
   `*_API_KEY`, so subscription work never bills an api key). native stderr goes
   to account-owned `native-stderr.log` (mode 0600), truncated per launch; an
   unexpected exit names that private file without publishing its contents. it
-  exits 0 when stopped and 1 when codex exits on its own.
+  exits 0 when stopped and 1 when codex exits on its own or its incarnation is
+  retired. it never restarts native children inside a container lifetime.
 - host, api and workers run as uid/gid `10001` and share the socket volume
   `nexus_codex_run` at `/tmp/codex-daemon-10001` (mode `0700`); the api mounts
-  it read-only. codex creates the socket `0600`.
+  it read-only. control uses `control.sock`; codex creates a distinct
+  `native-<host_id>-<incarnation>.sock` mode `0600`. a replacement never reuses
+  an old native socket. the private pid namespace and `init: true` make complete
+  container teardown the process-lifetime boundary.
 - only the host mounts the account directory
   `/srv/nexus/codex-state/codex/codex-personal` (inside the luks volume) at
   `/var/lib/nexus-codex/codex/codex-personal`. codex owns `auth.json` (token
@@ -78,11 +83,14 @@ declaration behaves.
   answered without contacting chatgpt.com.
 - stop (`compose stop`, the release): codex drains running turns; after 30 s the
   host kills it; the container exits 0 and stays stopped.
-- `restart: on-failure:3`: an app-server crash or oom kill exits 1 and docker
-  starts the container again, at most 3 times per release or manual start.
-  docker counts restarts since the container was created or last started by
-  hand, however long it ran in between, so the fourth crash since then leaves
-  it down. a manual `docker kill` is not restarted.
+- `restart: on-failure`: an app-server failure makes the host exit nonzero and
+  docker may restart the container. the declared policy has no retry-count cap;
+  it does not impose a three-crash limit. an explicit operator stop stays stopped.
+- each startup fsyncs a new incarnation before opening listeners. only a later
+  startup can certify an older incarnation retired; the dying host never does.
+  old receipts remain readable when replacement credentials/catalog are unavailable.
+  missing/corrupt host state refuses startup. never reset or restore its counter
+  with a database backup.
 - after a reboot docker cannot create the host until the luks volume is unlocked
   and mounted: the bind source is missing on the guarded underlay
   (`create_host_path: false`, boot guard).
@@ -108,7 +116,8 @@ compose run --rm nexus-codex-agent-host python -m apps.codex_agent.enroll
 
 the one-off is the host's own service definition: same user, read-only root,
 account bind and allowlisted egress. it prints a device code; complete it in any
-browser. it writes `auth.json` (`0600`) and refuses when one exists. it cannot
+browser. it writes `auth.json` (`0600`) and initializes private host identity,
+refusing existing credentials. re-enrollment retains existing identity. it cannot
 start while the host runs (the host's address is taken). then release.
 
 to re-enroll, stop the host, retire the old file inside the encrypted
@@ -184,7 +193,7 @@ that dependency, then deliberately retry the affected metadata operation.
 `./scripts/lab-codex enroll` prepares the immutable worker image and dedicated
 native account volume, then runs device login. complete its browser sign-in;
 it refuses existing credentials. it never reads personal codex state. the
-separate private transport capability lives under
+separate private control capability lives under
 `${XDG_STATE_HOME:-~/.local/state}/nexus-lab/codex/`; never print or copy it.
 
 ```sh
@@ -196,18 +205,18 @@ separate private transport capability lives under
 ```
 
 ordinary live attachment starts the enrolled compatible host when stopped and
-holds shared lifecycle access through worker/session teardown. both worker lanes
-stay in linux; the api reaches the authenticated native websocket through a raw
-tcp listener on the existing nginx peer, published only on host loopback. nginx
-passes bytes to the daemon unchanged; native codex still owns bearer authentication
-and websocket protocol. workers connect directly to the daemon and share the
+holds shared lifecycle access through worker/session teardown. shared hosts refuse
+retirement. both worker lanes stay in linux; the api reaches control and native
+websockets through raw tcp listeners on the existing nginx peer, published only
+on host loopback. nginx passes bytes unchanged; the supervisor authenticates
+control and native codex authenticates websockets. workers connect directly and share the
 internal client network and cwd volume, with separate run/session directories.
 only the daemon/enrollment mount `nexus-lab-codex-account` at
 `/var/lib/nexus-codex`, containing `auth.json`; `nexus-lab-codex-cwds` mounts at
 `/tmp/codex-daemon-10001`. both mount directories are baked uid/gid 10001,
-mode 0700. the daemon receives only the transport token's sha256 verifier through
-native `--ws-auth capability-token --ws-token-sha256`; clients receive the raw
-token as secret configuration.
+mode 0700. the supervisor receives the control token's sha256 verifier; each
+incarnation mints an independent native token and gives native codex only its
+verifier. resolving a current target returns its native capability privately.
 the daemon's networks remain internal; the additional client network grants no
 outbound route. the existing nginx peer carries both raw tcp ingress and the
 allowlisted tls egress. Docker Desktop suppresses host port publication for a
@@ -215,8 +224,11 @@ container with only internal networks, so the peer owns the loopback publication
 the daemon has no published port. fake/core labs never attach or receive the
 account capability.
 
-`NEXUS_CODEX_ENDPOINT` is `unix:///absolute/path` or `ws(s)://host:port`.
-websocket clients require `NEXUS_CODEX_TRANSPORT_TOKEN`; unix clients forbid it.
+`NEXUS_CODEX_CONTROL_ENDPOINT` is `unix:///absolute/control.sock` or
+`http(s)://host:port`. network clients also require `NEXUS_CODEX_NATIVE_ENDPOINT`
+(`ws(s)://host:port`) and `NEXUS_CODEX_CONTROL_TOKEN`; unix clients forbid both.
+network hosts receive `NEXUS_CODEX_CONTROL_TOKEN_SHA256`, never the raw control
+token. host-only `NEXUS_CODEX_HOST_SCOPE` is `shared` or `dedicated`.
 `NEXUS_CODEX_CWD_ROOT` is separate from the endpoint and temporary runtime state.
 live workers receive `/tmp/codex-daemon-10001/cwds/<run_id>` explicitly.
 health qualifies the authenticated catalog and pinned contract without a paid
@@ -225,7 +237,7 @@ without resubmission or shared-host restart. cleanup retains a run cwd when remo
 closure cannot be established; finish/recover its workers and sessions explicitly.
 
 `down` gracefully stops the host, retaining image, stopped containers, account,
-transport capability, networks and cwd volume. enrollment, stop and replacement
+control capability, networks and cwd volume. enrollment, stop and replacement
 refuse active shared-lock holders or running workers mounting the shared cwd
 volume, including workers whose runner crashed. finish/recover those labs first.
 
@@ -236,6 +248,36 @@ deleting its initiating checkout leaves it usable from another checkout.
 re-enrollment follows the stopped-host credential-retirement rule above, inside
 the dedicated account volume. never copy production/personal auth or relax
 permissions. real token refresh remains separately unqualified below.
+
+## owned recovery qualification
+
+```sh
+./scripts/lab-codex enroll --account-volume nexus-native-recovery-account
+./scripts/lab --owned-live-codex nexus-native-recovery-account -- COMMAND ARG
+```
+
+enrollment creates a labeled dedicated volume; complete its device sign-in.
+owned labs hold its exclusive lifecycle lock through teardown and refuse any
+existing container reference, even stopped, or an unlabeled/shared volume.
+teardown removes owned containers, cwd and networks while retaining enrollment
+and host state. this is the live lab mode permitting destructive retirement.
+fake labs use the same container supervisor with synthetic account/upstream data.
+
+## held native jobs
+
+`nexus native-repair JOB_ID` requires existing generation maintenance mode.
+it inspects/interrupts the exact recorded binding, then retires its dedicated
+incarnation if unresolved. one response loss proves nothing: retry observes the
+successor's receipt. results are `resumed`, `still_held`, `not_held` or `obsolete`.
+only a still-relevant held intent resumes; foreground prompts are never replayed.
+committed actions remain saved. held deletion jobs reconcile their retained
+generation dependencies before physical deletion.
+
+retirement interrupts other native work sharing the dedicated host and may waste
+upstream computation. shared hosts refuse it. authorization/identity/protocol
+errors hold for repair instead of guessing. after an outage exhausts the existing
+three-failure allowance, restore control and repeat the job-id repair. do not
+clear ledger metadata, force job completion or manufacture a retirement receipt.
 
 ## diagnostics
 
@@ -304,12 +346,13 @@ PYTHONPATH=python python3 deploy/hetzner/release.py --check
 ./deploy/release.sh <reviewed-web-candidate-manifest.json>
 ```
 
-a host left exited (a manual kill, or its restart budget spent) is repaired by
-`docker start nexus-nexus-codex-agent-host-1`, which also resets the restart
-count. do it before releasing: the release refuses a host whose last exit code
+a host left exited by an explicit operator stop is started with
+`docker start nexus-nexus-codex-agent-host-1`. automatic failures have no fixed
+restart allowance. establish host readiness before releasing: the release refuses a host whose last exit code
 is not 0 (`did not stop cleanly`). a host on a rejected credential is
-re-enrolled first, then started. a worker that loses the host mid-turn fails
-that turn; the user reruns it.
+re-enrolled first, then started. a worker that loses the host mid-turn settles
+only after exact terminal or retirement proof; the user explicitly retries an
+interrupted foreground turn.
 codex refreshes `auth.json` by rewriting it in place, not by rename
 ([codex-auth-json-rewritten-in-place](../issues/codex-auth-json-rewritten-in-place.md));
 a real token rotation is still unqualified

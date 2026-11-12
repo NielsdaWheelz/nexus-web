@@ -17,9 +17,13 @@ from pathlib import Path
 from typing import Annotated, Literal, get_args
 from urllib.parse import unquote, urlparse, urlsplit
 
-from provider_runtime.agent_runtime import CodexEndpoint, CodexUnixEndpoint, CodexWebSocketEndpoint
+from provider_runtime.agent_runtime.codex_host import (
+    CodexHostEndpoint,
+    CodexHostNetwork,
+    CodexHostUnix,
+)
 from provider_runtime.endpoints import normalize_endpoint_overrides
-from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
@@ -85,22 +89,23 @@ _CREDENTIALS = ("openai_api_key", "brave_search_api_key") + tuple(
 _Secret = Annotated[SecretStr | None, Field(repr=False)]
 
 
-def parse_codex_endpoint(value: str, token: SecretStr | None) -> CodexEndpoint:
-    """Accept the explicit client transport once; never include secret input in errors."""
-
+def parse_codex_host(
+    control: str, native: str | None, token: SecretStr | None
+) -> CodexHostEndpoint:
+    """Validate one host's control/native pairing without exposing secret inputs."""
     try:
-        url = urlsplit(value)
+        url = urlsplit(control)
         if url.scheme == "unix":
-            if url.netloc or url.query or url.fragment or token is not None:
+            if url.netloc or url.query or url.fragment or native is not None or token is not None:
                 raise ValueError
-            return CodexUnixEndpoint(Path(unquote(url.path)))
-        if url.scheme in ("ws", "wss") and token is not None:
-            return CodexWebSocketEndpoint(value, token)
+            return CodexHostUnix(Path(unquote(url.path)))
+        if native is not None and token is not None:
+            return CodexHostNetwork(control, native, token)
         raise ValueError
     except ValueError:
         raise ValueError(
-            "NEXUS_CODEX_ENDPOINT requires unix:///absolute/path without a token, or "
-            "ws(s)://host:port with NEXUS_CODEX_TRANSPORT_TOKEN"
+            "NEXUS_CODEX_CONTROL_ENDPOINT requires an absolute unix socket alone, or "
+            "an http(s) origin with NEXUS_CODEX_NATIVE_ENDPOINT and NEXUS_CODEX_CONTROL_TOKEN"
         ) from None
 
 
@@ -172,12 +177,9 @@ class Settings(BaseSettings):
     gemini_generation_api_key: _Secret = None
     deepseek_generation_api_key: _Secret = None
     xai_generation_api_key: _Secret = None
-    codex_transport_token: _Secret = Field(None, alias="NEXUS_CODEX_TRANSPORT_TOKEN")
-    codex_endpoint: Annotated[CodexEndpoint, NoDecode] = Field(
-        default_factory=lambda: CodexUnixEndpoint(Path("/tmp/codex-daemon-10001/app-server.sock")),
-        alias="NEXUS_CODEX_ENDPOINT",
-        repr=False,
-    )
+    codex_control_endpoint: str = Field(alias="NEXUS_CODEX_CONTROL_ENDPOINT")
+    codex_native_endpoint: str | None = Field(None, alias="NEXUS_CODEX_NATIVE_ENDPOINT")
+    codex_control_token: _Secret = Field(None, alias="NEXUS_CODEX_CONTROL_TOKEN")
     codex_cwd_root: Path = Field(Path("/tmp/codex-daemon-10001/cwds"), alias="NEXUS_CODEX_CWD_ROOT")
     memory_client_config_path: Path | None = None
     metadata_enrichment_max_content_words: int = Field(1000, ge=1, le=1000)
@@ -217,15 +219,16 @@ class Settings(BaseSettings):
     def _blank_is_absent(cls, value: object) -> object:
         return (value.strip() or None) if isinstance(value, str) else value
 
-    @field_validator("codex_endpoint", mode="before")
-    @classmethod
-    def _codex_endpoint(cls, value: object, info: ValidationInfo) -> object:
-        token = info.data.get("codex_transport_token")
-        if isinstance(value, str):
-            return parse_codex_endpoint(value, token)
-        if isinstance(value, CodexUnixEndpoint) and token is not None:
-            raise ValueError("NEXUS_CODEX_TRANSPORT_TOKEN must be absent for unix")
-        return value
+    @property
+    def codex_host(self) -> CodexHostEndpoint:
+        return parse_codex_host(
+            self.codex_control_endpoint, self.codex_native_endpoint, self.codex_control_token
+        )
+
+    @model_validator(mode="after")
+    def _codex_host(self) -> "Settings":
+        _ = self.codex_host
+        return self
 
     @field_validator("provider_endpoint_overrides", mode="before")
     @classmethod

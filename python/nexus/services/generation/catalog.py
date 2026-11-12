@@ -29,9 +29,14 @@ from provider_runtime.agent_runtime import (
     AgentRuntimeConfig,
     AgentRuntimeDefect,
     AgentRuntimeError,
-    CodexEndpoint,
     CredentialRef,
     qualify_codex_containment_host,
+)
+from provider_runtime.agent_runtime.codex_host import (
+    CodexHostEndpoint,
+    CodexHostResolved,
+    CodexHostUnavailable,
+    resolve_codex_host,
 )
 from provider_runtime.registry import api_model_catalog
 from provider_runtime.types import ApiModelFacts, ApiReasoningFacts
@@ -140,12 +145,12 @@ class SelectionUnavailable(ValueError):
 
 
 # One entry per endpoint: the last good catalog, the route's readiness, when observed.
-_CODEX: dict[CodexEndpoint, tuple[AgentModelCatalog | None, Readiness, float]] = {}
+_CODEX: dict[CodexHostEndpoint, tuple[AgentModelCatalog | None, Readiness, float]] = {}
 
 
 class Catalog:
     def __init__(self, settings: Settings, tools: Toolbox) -> None:
-        self._endpoint = settings.codex_endpoint
+        self._endpoint = settings.codex_host
         configured = settings.generation_api_providers
         self._providers: tuple[GenerationApiProvider, ...] = tuple(
             provider for provider in _PROVIDERS if provider in configured
@@ -164,7 +169,7 @@ class Catalog:
 
 
 async def _refresh(
-    endpoint: CodexEndpoint, previous: AgentModelCatalog | None
+    endpoint: CodexHostEndpoint, previous: AgentModelCatalog | None
 ) -> tuple[AgentModelCatalog | None, Readiness, float]:
     """Fetch now; a failed fetch keeps the last catalog and marks the route unavailable."""
 
@@ -226,11 +231,24 @@ def _budgets(context_window: int | None, max_output_tokens: int | None) -> tuple
     return context, output
 
 
-async def fetch_codex_catalog(endpoint: CodexEndpoint) -> AgentModelCatalog:
+async def fetch_codex_catalog(host: CodexHostEndpoint) -> AgentModelCatalog:
     """Read the authenticated host's model catalog; also the host's health probe."""
 
     try:
         async with asyncio.timeout(_FETCH_SECONDS):
+            resolved = await resolve_codex_host(host)
+            if isinstance(resolved, CodexHostUnavailable):
+                if resolved.reason in {
+                    "protocol_mismatch",
+                    "invalid_state",
+                    "unknown_host",
+                    "unknown_incarnation",
+                }:
+                    raise CodexContractDefect("the Codex host control contract is invalid")
+                raise CodexUnavailable("the authenticated Codex host is unavailable")
+            if not isinstance(resolved, CodexHostResolved):
+                raise CodexContractDefect("the Codex host retired an unspecified target")
+            endpoint = resolved.endpoint
             await qualify_codex_containment_host(endpoint)
             with tempfile.TemporaryDirectory(prefix="nexus-native-catalog-") as state:
                 async with AgentRuntime(

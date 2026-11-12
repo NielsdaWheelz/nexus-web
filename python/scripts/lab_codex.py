@@ -3,7 +3,7 @@
 Docker's retained daemon container is the installation record; its immutable
 image, contract labels, volumes, networks and listener are checked at attachment.
 No ordinary attachment reconciles Compose or changes the installed image. The
-native bearer capability is private host state, separate from subscription auth.
+control capability is private host state, separate from subscription auth.
 The existing egress peer passes host-loopback TCP unchanged to the internal
 daemon; workers connect directly. The daemon gains no outbound route.
 
@@ -14,6 +14,9 @@ uses nonblocking exclusive access and also refuses running cwd-volume consumers.
 Stopped-host startup upgrades the lock with a bounded recheck, never waits for
 active labs to drain and never restarts a running unhealthy daemon. Retries only
 reobserve/start the same installation; enrollment never overwrites credentials.
+Explicit owned-account enrollment creates a separately labeled volume, holds its
+account lock through teardown, and retains credentials/identity only. Owned labs
+take the same lock and reject every existing container reference to that volume.
 """
 
 from __future__ import annotations
@@ -47,9 +50,10 @@ CLIENT_NETWORK = "nexus-lab-codex-clients"
 ACCOUNT_VOLUME = "nexus-lab-codex-account"
 CWD_VOLUME = "nexus-lab-codex-cwds"
 CWD_ROOT = "/tmp/codex-daemon-10001/cwds"
-WORKER_ENDPOINT = "ws://nexus-codex-agent-host:4500"
+WORKER_CONTROL_ENDPOINT = "http://nexus-codex-agent-host:4501"
+WORKER_NATIVE_ENDPOINT = "ws://nexus-codex-agent-host:4500"
 LABEL_PREFIX = "com.nexus.lab.codex."
-HOST_POLICY_REVISION = 2
+HOST_POLICY_REVISION = 3
 SETUP_SECONDS = 125
 
 
@@ -110,8 +114,10 @@ def _inspect(
         timeout=_remaining(deadline, 15),
     )
     if result.returncode:
-        missing = "No such" in result.stderr or (
-            kind == "network" and f"network {name} not found" in result.stderr
+        missing = (
+            "No such" in result.stderr
+            or (kind == "network" and f"network {name} not found" in result.stderr)
+            or (kind == "volume" and f"get {name}: no such volume" in result.stderr)
         )
         if result.stdout.strip() == "[]" and missing:
             return None
@@ -135,15 +141,15 @@ def _expected() -> dict[str, str]:
 
 
 def _token() -> str:
-    path = _state() / "transport-token"
+    path = _state() / "control-token"
     try:
         token = path.read_text().strip()
     except FileNotFoundError:
         raise RuntimeError(
-            "shared codex transport capability missing; run ./scripts/lab-codex enroll"
+            "shared codex control capability missing; run ./scripts/lab-codex up"
         ) from None
     if path.stat().st_mode & 0o077 or not token:
-        raise RuntimeError("shared codex transport capability must be private and nonempty")
+        raise RuntimeError("shared codex control capability must be private and nonempty")
     return token
 
 
@@ -166,10 +172,12 @@ def _drained(*, deadline: float | None = None) -> None:
 
 
 @contextlib.contextmanager
-def _lock(*, exclusive: bool, deadline: float | None = None) -> Iterator[TextIO]:
+def _lock(
+    *, exclusive: bool, deadline: float | None = None, key: str = "lifecycle"
+) -> Iterator[TextIO]:
     state = _state()
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
-    descriptor = os.open(state / "lifecycle.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    descriptor = os.open(state / f"{key}.lock", os.O_RDWR | os.O_CREAT, 0o600)
     with os.fdopen(descriptor, "r+") as lock:
         deadline = deadline or time.monotonic() + SETUP_SECONDS
         while True:
@@ -179,7 +187,7 @@ def _lock(*, exclusive: bool, deadline: float | None = None) -> Iterator[TextIO]
             except BlockingIOError:
                 if exclusive:
                     raise RuntimeError(
-                        "shared codex is in use; finish/recover those labs"
+                        "codex lifecycle is in use; finish/recover its current owner"
                     ) from None
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
@@ -187,6 +195,40 @@ def _lock(*, exclusive: bool, deadline: float | None = None) -> Iterator[TextIO]
                     ) from None
                 time.sleep(0.1)
         yield lock
+
+
+@contextlib.contextmanager
+def owned_account(volume: str, *, create: bool = False) -> Iterator[None]:
+    """Hold one enrolled account exclusively until its complete runtime teardown."""
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", volume) or volume == ACCOUNT_VOLUME:
+        raise ValueError("owned codex requires a separate named account volume")
+    with _lock(exclusive=True, key=f"account-{volume}"):
+        observed = _inspect(volume, "volume")
+        if observed is None:
+            if not create:
+                raise RuntimeError(
+                    f"owned codex account is not enrolled; run ./scripts/lab-codex enroll --account-volume {volume}"
+                )
+            _run(
+                [
+                    "docker",
+                    "volume",
+                    "create",
+                    "--label",
+                    LABEL_PREFIX + "owned_account=true",
+                    volume,
+                ]
+            )
+        elif (observed.get("Labels") or {}).get(LABEL_PREFIX + "owned_account") != "true":
+            raise RuntimeError(
+                "owned codex refuses a production, shared or unlabeled account volume"
+            )
+        consumers = _run(["docker", "ps", "-aq", "--filter", f"volume={volume}"]).split()
+        if consumers:
+            raise RuntimeError(
+                "owned codex account has container references; finish its exact cleanup"
+            )
+        yield
 
 
 def _installation(token: str, *, deadline: float | None = None) -> dict[str, Any]:
@@ -229,12 +271,14 @@ def _installation(token: str, *, deadline: float | None = None) -> dict[str, Any
         and host["CapDrop"] == ["ALL"]
         and "no-new-privileges:true" in host["SecurityOpt"]
         and not binding
-        and environment.get("NEXUS_CODEX_ENDPOINT") == "ws://0.0.0.0:4500"
+        and environment.get("NEXUS_CODEX_CONTROL_ENDPOINT") == "http://0.0.0.0:4501"
+        and environment.get("NEXUS_CODEX_NATIVE_ENDPOINT") == "ws://0.0.0.0:4500"
+        and environment.get("NEXUS_CODEX_HOST_SCOPE") == "shared"
         and environment.get("NEXUS_CODEX_CREDENTIAL_FILE") == "/var/lib/nexus-codex/auth.json"
         and environment.get("NEXUS_CODEX_CWD_ROOT") == CWD_ROOT
-        and environment.get("NEXUS_CODEX_TRANSPORT_TOKEN_SHA256")
+        and environment.get("NEXUS_CODEX_CONTROL_TOKEN_SHA256")
         == hashlib.sha256(token.encode()).hexdigest()
-        and "NEXUS_CODEX_TRANSPORT_TOKEN" not in environment
+        and "NEXUS_CODEX_CONTROL_TOKEN" not in environment
         and correct_mounts
         and set(networks) == {CLIENT_NETWORK, f"{PROJECT}_codex_private"}
     )
@@ -243,7 +287,7 @@ def _installation(token: str, *, deadline: float | None = None) -> dict[str, Any
     proxy = _inspect(PROXY, deadline=deadline)
     if proxy:
         proxy_config, proxy_host = proxy["Config"], proxy["HostConfig"]
-        proxy_binding = (proxy_host["PortBindings"] or {}).get("4500/tcp", [])
+        proxy_bindings = proxy_host["PortBindings"] or {}
         proxy_environment = dict(item.split("=", 1) for item in proxy_config["Env"])
         policy = proxy_environment.get("NGINX_CONF", "")
         valid = valid and (
@@ -252,12 +296,20 @@ def _installation(token: str, *, deadline: float | None = None) -> dict[str, Any
             and proxy_host["ReadonlyRootfs"]
             and proxy_host["CapDrop"] == ["ALL"]
             and "no-new-privileges:true" in proxy_host["SecurityOpt"]
-            and len(proxy_binding) == 1
-            and proxy_binding[0]["HostIp"] == "127.0.0.1"
+            and set(proxy_bindings) == {"4500/tcp", "4501/tcp"}
+            and all(
+                len(bindings) == 1 and bindings[0]["HostIp"] == "127.0.0.1"
+                for bindings in proxy_bindings.values()
+            )
             and set(proxy["NetworkSettings"]["Networks"])
             == {f"{PROJECT}_codex_private", f"{PROJECT}_codex_proxy_egress"}
             and re.search(
                 r"map\s+\$ssl_preread_server_name\s+\$upstream\s*\{\s*chatgpt\.com\s+chatgpt\.com:443;\s*auth\.openai\.com\s+auth\.openai\.com:443;\s*default\s+127\.0\.0\.1:1;\s*\}",
+                policy,
+            )
+            is not None
+            and re.search(
+                r"server\s*\{\s*listen 4501;\s*proxy_pass 172\.30\.252\.3:4501;\s*proxy_connect_timeout 10s;\s*proxy_timeout 20m;\s*\}",
                 policy,
             )
             is not None
@@ -282,12 +334,16 @@ def _host_environment(token: str, *, deadline: float | None = None) -> dict[str,
     proxy = _inspect(PROXY, deadline=deadline)
     if proxy is None:
         raise RuntimeError("shared codex loopback ingress unavailable; run ./scripts/lab-codex up")
-    bindings = proxy["NetworkSettings"]["Ports"].get("4500/tcp") or []
-    if len(bindings) != 1 or bindings[0]["HostIp"] != "127.0.0.1":
+    ports = proxy["NetworkSettings"]["Ports"]
+    if any(
+        len(ports.get(port) or []) != 1 or ports[port][0]["HostIp"] != "127.0.0.1"
+        for port in ("4500/tcp", "4501/tcp")
+    ):
         raise RuntimeError("shared codex loopback endpoint unavailable")
     return {
-        "NEXUS_CODEX_ENDPOINT": f"ws://127.0.0.1:{int(bindings[0]['HostPort'])}",
-        "NEXUS_CODEX_TRANSPORT_TOKEN": token,
+        "NEXUS_CODEX_CONTROL_ENDPOINT": f"http://127.0.0.1:{int(ports['4501/tcp'][0]['HostPort'])}",
+        "NEXUS_CODEX_NATIVE_ENDPOINT": f"ws://127.0.0.1:{int(ports['4500/tcp'][0]['HostPort'])}",
+        "NEXUS_CODEX_CONTROL_TOKEN": token,
     }
 
 
@@ -312,7 +368,7 @@ def _catalog(environment: dict[str, str], *, timeout: float, diagnostics: bool =
         detail = result.stdout + result.stderr
     if diagnostics:
         path = _state() / "catalog.log"
-        token = environment.get("NEXUS_CODEX_TRANSPORT_TOKEN")
+        token = environment.get("NEXUS_CODEX_CONTROL_TOKEN")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as stream:
             stream.write(detail.replace(token, "[redacted]") if token else detail)
         raise RuntimeError(
@@ -354,7 +410,8 @@ class SharedHost:
 
     def worker_environment(self, run_id: str) -> dict[str, str]:
         return self.host_environment | {
-            "NEXUS_CODEX_ENDPOINT": WORKER_ENDPOINT,
+            "NEXUS_CODEX_CONTROL_ENDPOINT": WORKER_CONTROL_ENDPOINT,
+            "NEXUS_CODEX_NATIVE_ENDPOINT": WORKER_NATIVE_ENDPOINT,
             "NEXUS_CODEX_CWD_ROOT": _run_root(run_id),
         }
 
@@ -369,13 +426,15 @@ class SharedHost:
 
 
 async def _confirm_quiet(environment: dict[str, str], root: str) -> None:
-    from provider_runtime.agent_runtime import CodexWebSocketEndpoint
     from provider_runtime.agent_runtime.codex_app_server import (
         CodexAppServerClient,
         CodexAppServerConfig,
         CodexAppServerResponseError,
     )
+    from provider_runtime.agent_runtime.codex_host import CodexHostResolved, resolve_codex_host
     from pydantic import SecretStr
+
+    from nexus.config import parse_codex_host
 
     async def loaded(client: CodexAppServerClient) -> set[str]:
         cursor = None
@@ -398,11 +457,17 @@ async def _confirm_quiet(environment: dict[str, str], root: str) -> None:
             if not isinstance(cursor, str) or not cursor:
                 raise RuntimeError("shared codex loaded-thread cursor malformed; run cwd retained")
 
-    endpoint = CodexWebSocketEndpoint(
-        url=environment["NEXUS_CODEX_ENDPOINT"],
-        bearer_token=SecretStr(environment["NEXUS_CODEX_TRANSPORT_TOKEN"]),
+    host = parse_codex_host(
+        environment["NEXUS_CODEX_CONTROL_ENDPOINT"],
+        environment["NEXUS_CODEX_NATIVE_ENDPOINT"],
+        SecretStr(environment["NEXUS_CODEX_CONTROL_TOKEN"]),
     )
-    config = CodexAppServerConfig(endpoint, request_policy="observe_only", experimental_api=True)
+    resolved = await resolve_codex_host(host)
+    if not isinstance(resolved, CodexHostResolved):
+        raise RuntimeError("shared codex native identity unavailable; run cwd retained")
+    config = CodexAppServerConfig(
+        resolved.endpoint, request_policy="observe_only", experimental_api=True
+    )
     async with asyncio.timeout(20), CodexAppServerClient(config) as client:
         for thread_id in await loaded(client):
             try:
@@ -519,10 +584,6 @@ def _compose(environment: dict[str, str], *arguments: str, interactive: bool = F
     argv = [
         "docker",
         "compose",
-        "--project-name",
-        PROJECT,
-        "--file",
-        str(ROOT / "docker/docker-compose.lab-codex.yml"),
         *arguments,
     ]
     if interactive:
@@ -531,19 +592,9 @@ def _compose(environment: dict[str, str], *arguments: str, interactive: bool = F
         _run(argv, env=environment, timeout=180)
 
 
-def _install(existing: dict[str, Any] | None, token: str) -> dict[str, Any]:
+def _build_image(state: Path) -> str:
     expected = _expected()
-    if existing:
-        observed_version = (existing["Config"]["Labels"] or {}).get(
-            LABEL_PREFIX + "codex_version", ""
-        )
-        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", observed_version) and tuple(
-            map(int, expected["codex_version"].split("."))
-        ) < tuple(map(int, observed_version.split("."))):
-            raise RuntimeError(
-                f"shared codex downgrade refused: installed {observed_version}, requested {expected['codex_version']}; use the qualified newer checkout"
-            )
-    state = _state()
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
     source_sha = _run(["git", "rev-parse", "HEAD"]).strip()
     with tempfile.TemporaryDirectory(dir=state) as directory:
         iid = Path(directory) / "image-id"
@@ -607,6 +658,22 @@ def _install(existing: dict[str, Any] | None, token: str) -> dict[str, Any]:
         raise RuntimeError(
             f"shared codex built image contract differs: expected {expected}, observed {observed}"
         )
+    return image_id
+
+
+def _install(existing: dict[str, Any] | None, token: str) -> dict[str, Any]:
+    expected = _expected()
+    if existing:
+        observed_version = (existing["Config"]["Labels"] or {}).get(
+            LABEL_PREFIX + "codex_version", ""
+        )
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", observed_version) and tuple(
+            map(int, expected["codex_version"].split("."))
+        ) < tuple(map(int, observed_version.split("."))):
+            raise RuntimeError(
+                f"shared codex downgrade refused: installed {observed_version}, requested {expected['codex_version']}; use the qualified newer checkout"
+            )
+    image_id = _build_image(_state())
     # Native image directories initialize uid-10001 account/cwd volume ownership.
     for volume in (ACCOUNT_VOLUME, CWD_VOLUME):
         _run(
@@ -642,12 +709,49 @@ def _install(existing: dict[str, Any] | None, token: str) -> dict[str, Any]:
 def _compose_environment(image_id: str, token: str) -> dict[str, str]:
     expected = _expected()
     return _environment() | {
+        "COMPOSE_PROJECT_NAME": PROJECT,
+        "COMPOSE_FILE": str(ROOT / "docker/docker-compose.lab-codex.yml"),
         "NEXUS_LAB_CODEX_IMAGE": image_id,
-        "NEXUS_LAB_CODEX_TOKEN_SHA256": hashlib.sha256(token.encode()).hexdigest(),
+        "NEXUS_LAB_CODEX_CONTROL_TOKEN_SHA256": hashlib.sha256(token.encode()).hexdigest(),
+        "NEXUS_LAB_CODEX_SUBNET_PREFIX": "172.30.252",
         "NEXUS_LAB_CODEX_VERSION": expected["codex_version"],
         "NEXUS_LAB_CODEX_CATALOG_REVISION": expected["catalog_revision"],
         "NEXUS_LAB_CODEX_BACKEND_REVISION": expected["backend_contract_revision"],
     }
+
+
+def _enroll_owned(volume: str) -> None:
+    with owned_account(volume, create=True), _lock(exclusive=True, key="enrollment"):
+        image = _build_image(_state() / "owned-enrollment")
+        token = secrets.token_urlsafe(32)
+        environment = _compose_environment(image, token) | {
+            "COMPOSE_PROJECT_NAME": "nexus-codex-enroll-" + secrets.token_hex(6),
+            "COMPOSE_FILE": str(ROOT / "docker/docker-compose.lab-owned.yml"),
+            "NEXUS_LAB_CODEX_ACCOUNT_VOLUME": volume,
+            "NEXUS_LAB_CODEX_SUBNET_PREFIX": "172.31.254",
+            "NEXUS_LAB_CODEX_CONTROL_TOKEN": token,
+        }
+        try:
+            _compose(environment, "up", "-d", "--no-build", "codex-egress-policy")
+            print(
+                "owned codex enrollment: complete this dedicated device login; existing credentials are refused",
+                flush=True,
+            )
+            _compose(
+                environment,
+                "run",
+                "--rm",
+                "--no-deps",
+                *([] if sys.stdin.isatty() else ["-T"]),
+                "nexus-codex-agent-host",
+                "python",
+                "-m",
+                "apps.codex_agent.enroll",
+                interactive=True,
+            )
+        finally:
+            _compose(environment, "down", "--volumes", "--remove-orphans", "--timeout", "10")
+        print(f"owned codex account enrolled: {volume}; no native host remains running")
 
 
 def _status() -> None:
@@ -690,8 +794,14 @@ def main() -> int:
         description="manage the dedicated shared live codex host; account enrollment never reads personal credentials"
     )
     parser.add_argument("command", choices=("enroll", "up", "status", "down"))
+    parser.add_argument("--account-volume", help="enroll a separate account for owned live labs")
     args = parser.parse_args()
+    if args.account_volume is not None and args.command != "enroll":
+        parser.error("--account-volume belongs only to enroll")
     try:
+        if args.account_volume is not None:
+            _enroll_owned(args.account_volume)
+            return 0
         if args.command == "status":
             _status()
             return 0
@@ -725,11 +835,11 @@ def main() -> int:
                 raise RuntimeError(
                     "shared codex is running; ./scripts/lab-codex down before enrollment"
                 )
-            token_path = _state() / "transport-token"
+            token_path = _state() / "control-token"
             if not token_path.exists():
                 if existing and existing["State"]["Running"]:
                     raise RuntimeError(
-                        "shared codex transport capability is missing while running; drain and ./scripts/lab-codex down before repair"
+                        "shared codex control capability is missing while running; drain and ./scripts/lab-codex down before repair"
                     )
                 with os.fdopen(
                     os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"

@@ -31,7 +31,7 @@ Primary owners (the first nine under `services/generation/`):
 - `codex.py`: the kernel's transient native mode (kernel ADR 0012);
 - `provider.py`: ProviderRuntime on the kernel's `run_generation`, held in memory;
 - `ledger.py`: `llm_calls`, one row per generation;
-- `native_execution.py`: opaque native identity and confirmed stop, without replay;
+- `native_execution.py`: incarnation-bound closure, bounded recovery and job repair, without replay;
 - `synthesis.py`: the strict-JSON prompt/intent/decode scaffold;
 - `runtime.py`: the process runtime and the one job envelope;
 - `services/tools/`: the model tools, one dispatcher (`run_tool`) and one `tool_calls` row per call, including the private owner-chat client of Jarvis shared memory ([model-tools.md](model-tools.md));
@@ -212,10 +212,12 @@ remains required. the runtime memory-client declaration remains private.
 
 ## Backend composition
 
-codex personal attaches to one dedicated stock 0.165.0 app-server through its
-private unix socket. the host retains authentication and owns process startup;
-workers own the shared kernel/native callbacks and portable executor. no shell,
-exec-server, http generation bridge, bearer or worker credential mount remains.
+codex personal resolves one dedicated stock 0.165.0 app-server through the
+provider-owned host-control protocol. the host owns authentication and a durable
+host id/incarnation; each complete container lifetime gets a unique unix socket
+or websocket capability. workers own kernel/native callbacks and the portable
+executor. only the host mounts account credentials; network clients receive a
+separate control capability, never exposed to model tools.
 the provider-owned restricted complete model catalogue loads at HOST STARTUP;
 exact public version/config preflight rejects unsupported hosts before thread
 creation. inherited clock, CodeMode, native patching and native user-input are removed. declared
@@ -223,7 +225,9 @@ callbacks, strict json and read-only/no-network session containment qualify toge
 see [the native host runbook](../runbooks/codex-personal-agent-host.md).
 
 codex runs on the kernel's transient native mode (`TransientNative`, kernel ADR
-0012): every in-process ordering guarantee, no durable journal and no recovery.
+0012): in-process ordering guarantees and no durable prompt journal or replay.
+nexus separately owns closure of abandoned native work; the kernel does not
+recover or resubmit it.
 commentary streams as answer text; the sealed native final replaces it on
 success, and a stop or failure keeps what streamed. a stop is a kernel preempt.
 
@@ -241,13 +245,24 @@ text output with tools.
 spec and job id, closed once with `Succeeded | Failed | Cancelled`, one failure
 code, route evidence (never model text) and summed usage. it is an unreplayable
 multi-mutation with no prompt or continuation journal. before native submission,
-`native_execution` records the fresh thread's opaque profile/id and unsettled
-state. an observed native terminal or positive local non-submission settles it.
-worker replacement and abnormal settlement inspect/interrupt that exact thread
-outside database locks before closing the ledger. a local stop, expired lease or
-interrupt acknowledgement never establishes remote finality. an unavailable
-controller or bound thread without an observed terminal turn holds the existing
-job and account queue; see [the repair boundary](../issues/native-submission-needs-repair.md).
+`native_execution` records the fresh thread's profile/id and exact host target
+under the current job claim. closure is an observed native terminal, positive
+non-submission or a provider receipt from a later container incarnation. proofs
+are monotone for that binding. terminal ledger publication locks the current
+claim, archives the binding/proof into `terminal.native_execution`, and clears
+the active column in the same transaction.
+
+worker replacement and abnormal settlement inspect/interrupt exact threads
+outside database locks, with a shared 15-second observation budget per attempt
+and at most one subsequent 5-second retirement request. unresolved work on a dedicated host retires that complete
+container; only its replacement certifies retirement. a timeout, missing turn,
+local stop, expired lease or interrupt acknowledgement is not closure. retirement
+can interrupt unrelated nexus work, and does not promise upstream billing stops.
+unavailable control consumes the job's existing three-failure allowance, then
+holds with `E_NATIVE_FINALITY_UNKNOWN`; no domain failure hook or fifo advancement
+occurs without proof. `nexus native-repair JOB_ID` reconciles only that held job's
+current intent and exact bindings before resuming it; see the
+[host runbook](../runbooks/codex-personal-agent-host.md).
 only confirmed stale executions close `interrupted`. chat never reruns a
 generation (the run fails `interrupted`; the user reruns); background jobs rerun
 from scratch, repaying the call. completed additive writes still commit effect

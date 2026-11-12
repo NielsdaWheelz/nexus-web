@@ -22,6 +22,10 @@ def main() -> None:
         "generation-history", help="inspect one closed generation's audit facts"
     )
     history_parser.add_argument("generation_id", type=UUID)
+    repair_parser = subparsers.add_parser(
+        "native-repair", help="reconcile and resume one job held on native execution closure"
+    )
+    repair_parser.add_argument("job_id", type=UUID)
     subparsers.add_parser(
         "sync-gutenberg-catalog",
         help="download the Project Gutenberg feed and reconcile the mirror",
@@ -29,6 +33,12 @@ def main() -> None:
     args = parser.parse_args()
 
     bind_database_role("maintenance")
+    if args.command == "native-repair":
+        from nexus.services.generation.native_execution import repair
+
+        result = repair(args.job_id)
+        print(json.dumps(result, sort_keys=True))
+        raise SystemExit(1 if result["status"] == "still_held" else 0)
     db = get_session_factory()()
     try:
         if args.command == "generation-history":

@@ -22,9 +22,9 @@ from nexus.runtime_health import get_runtime_identity, is_database_ready
 
 logger = get_logger(__name__)
 
-# What a background supervisor must never import: the storage, provider and parser
-# graphs live in its children, inside the 448 MiB the supervisor shares with them.
-_CHILD_ONLY_MODULES = frozenset({"boto3", "httpx", "lxml"})
+# Startup hooks must not pull in execution graphs. Settlement may later load
+# httpx for bounded native host control; inference/storage/parsing stay in children.
+_STARTUP_FORBIDDEN_MODULES = frozenset({"boto3", "httpx", "lxml"})
 
 
 def main() -> None:
@@ -55,7 +55,7 @@ def main() -> None:
         for hook in (d.lock_owner, d.on_failure, d.on_dead, d.on_history):
             if hook is not None:
                 resolve(hook)
-    if executor is not None and (loaded := _CHILD_ONLY_MODULES & sys.modules.keys()):
+    if executor is not None and (loaded := _STARTUP_FORBIDDEN_MODULES & sys.modules.keys()):
         raise RuntimeError(f"the background supervisor imported {sorted(loaded)}")
 
     # justify-polling: no event says the schema reached this revision.

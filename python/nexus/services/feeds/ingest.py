@@ -221,7 +221,7 @@ def ingest_entries(
                         raise JobFailure(
                             ApiErrorCode.E_RESOURCE_CONFLICT.value,
                             "Feed observation changed during preparation",
-                            "resample",
+                            "bounded_retry",
                         )
                     try:
                         observation = feed_articles.observe(

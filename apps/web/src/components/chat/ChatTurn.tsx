@@ -82,7 +82,7 @@ export default function ChatTurn({ turn, passage, ordinal, refresh, onInspect, o
     finally { setStopping(false); }
   };
   const phase = live?.execution?.phase ?? saved.execution?.phase;
-  const status = !pending ? null : stopped ? "cancelling" : phase === "Queued" ? "queued" : phase === "Suspended" ? "waiting for the model" : phase === "Recovering" ? "recovering" : "answering";
+  const status = !pending ? null : phase === "Suspended" ? "this turn needs a repair." : stopped ? "stopping this turn." : phase === "Queued" ? "queued" : phase === "Recovering" ? "recovering this turn." : "answering";
   const text = pending ? live?.text || message.content : message.content;
   const run = message.trust_trail?.run;
   const reason = run?.failure ? FAILURE_REASON[run.failure.code] : null;

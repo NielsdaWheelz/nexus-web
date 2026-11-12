@@ -44,7 +44,7 @@ admits another heavy execution while the holder can still publish.
 `JobResult` is a mapping/none, `RescheduleRequested(at, payload?)`, or
 `TerminalJobFailure`. mappings succeed; continuations reschedule without a failure
 charge; terminal failures end the owner's intent. `JobFailure` carries an explicit
-retry/resample/hold disposition before a handler can mistake it for a permanent
+retry/bounded_retry/hold disposition before a handler can mistake it for a permanent
 refusal. both lanes use the same `Failed` child codec and `failure_of` classifier.
 
 | cause | disposition |
@@ -116,7 +116,9 @@ rows whose terminal hooks already ran. no generic public repair endpoint exists.
 
 interactive handlers run in the worker process. background handlers run in one
 fresh child sharing the existing 448 mib cgroup with a lean supervisor. hooks and
-shared queue imports must not load storage sdk, httpx or lxml graphs. a worker
+shared queue imports must not load storage sdk, httpx or lxml graphs at startup.
+settlement may load httpx for bounded native host control; inference, storage and
+parsing remain in children. a worker
 refuses that composition at startup. metadata competes with ingestion/indexing;
 existing priorities and capacity remain the scheduler.
 
@@ -142,6 +144,14 @@ their existing process/database identity contracts.
 codex host restarts have no three-crash ceiling. intentional docker stops retain
 their existing semantics. process restart, durable queue delivery and effect
 replay are separate facts.
+
+native finality gates replacement work and abnormal settlement. unresolved
+bindings bypass domain failure hooks and consume the existing bounded failure
+allowance, then hold with `E_NATIVE_FINALITY_UNKNOWN`. the ledger stays open;
+foreground fifo stays blocked. maintenance `nexus native-repair JOB_ID` verifies
+exact bindings and current intent before resuming that same held job. deletion
+repair includes its retained discovery dependencies. no new counter, prompt
+replay or generic reset accompanies repair.
 
 ## checkpoints and model effects
 

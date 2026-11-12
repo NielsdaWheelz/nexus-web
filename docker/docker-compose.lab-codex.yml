@@ -21,7 +21,13 @@ x-codex-egress-conf: &codex-egress-conf |
       }
       server {
           listen 4500;
-          proxy_pass 172.30.252.3:4500;
+          proxy_pass ${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.3:4500;
+          proxy_connect_timeout 10s;
+          proxy_timeout 20m;
+      }
+      server {
+          listen 4501;
+          proxy_pass ${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.3:4501;
           proxy_connect_timeout 10s;
           proxy_timeout 20m;
       }
@@ -41,6 +47,7 @@ services:
     # peer passes raw bytes to the daemon, which still verifies native bearer auth.
     ports:
       - "127.0.0.1::4500"
+      - "127.0.0.1::4501"
     environment:
       NGINX_CONF: *codex-egress-conf
     entrypoint: [sh, -c, 'printf ''%s'' "$$NGINX_CONF" > /tmp/nginx.conf && exec nginx -e stderr -c /tmp/nginx.conf -g ''daemon off;''']
@@ -51,7 +58,7 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=8m
     networks:
       codex_private:
-        ipv4_address: 172.30.252.2
+        ipv4_address: ${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.2
       codex_proxy_egress: {}
 
   nexus-codex-agent-host:
@@ -67,24 +74,26 @@ services:
     user: "10001:10001"
     environment:
       NEXUS_CODEX_CREDENTIAL_FILE: /var/lib/nexus-codex/auth.json
-      NEXUS_CODEX_ENDPOINT: ws://0.0.0.0:4500
-      NEXUS_CODEX_TRANSPORT_TOKEN_SHA256: ${NEXUS_LAB_CODEX_TOKEN_SHA256:?private transport verifier required}
+      NEXUS_CODEX_CONTROL_ENDPOINT: http://0.0.0.0:4501
+      NEXUS_CODEX_NATIVE_ENDPOINT: ws://0.0.0.0:4500
+      NEXUS_CODEX_CONTROL_TOKEN_SHA256: ${NEXUS_LAB_CODEX_CONTROL_TOKEN_SHA256:?private control verifier required}
+      NEXUS_CODEX_HOST_SCOPE: shared
       NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
     labels:
       com.nexus.lab.codex.codex_version: ${NEXUS_LAB_CODEX_VERSION:?locked codex version required}
       com.nexus.lab.codex.catalog_revision: ${NEXUS_LAB_CODEX_CATALOG_REVISION:?locked catalog revision required}
       com.nexus.lab.codex.backend_contract_revision: ${NEXUS_LAB_CODEX_BACKEND_REVISION:?locked backend contract required}
-      com.nexus.lab.codex.host_policy_revision: "2"
+      com.nexus.lab.codex.host_policy_revision: "3"
     working_dir: /tmp
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     extra_hosts:
-      - chatgpt.com:172.30.252.2
-      - auth.openai.com:172.30.252.2
+      - chatgpt.com:${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.2
+      - auth.openai.com:${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.2
     networks:
       codex_private:
-        ipv4_address: 172.30.252.3
+        ipv4_address: ${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.3
       codex_clients:
         aliases: [nexus-codex-agent-host]
     init: true
@@ -118,6 +127,6 @@ networks:
       com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
-        - subnet: 172.30.252.0/29
+        - subnet: ${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.0/29
   codex_proxy_egress:
     driver: bridge

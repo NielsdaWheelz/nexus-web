@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.jobs.queue import JobExecutionContext, finish_job, lock_running_job_claim
+from nexus.jobs.queue import JobExecutionContext, JobRow, finish_job, lock_running_job_claim
 from nexus.services.connection_discovery import queue_connection_discovery_scan
 from nexus.services.generation.contract import Failed, InvalidOutput, Owner, Succeeded
 from nexus.services.generation.run import generate
@@ -96,6 +96,18 @@ def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict
         return {"status": "ok", "outcome": outcome, "media_id": str(media_id)}
 
     return run_generation_job("media_unit_build", context, handler)
+
+
+def lock_native_repair_intent(db: Session, job: JobRow) -> bool:
+    """Repair belongs only to the still-building head at this content version."""
+    fence = {
+        "media_id": UUID(job.payload["media_id"]),
+        "summary_id": UUID(job.payload["summary_id"]),
+        "fingerprint": job.payload["content_fingerprint"],
+    }
+    return _lock_summary(db, fence) and (
+        current_content_fingerprint(db, media_id=fence["media_id"]) == fence["fingerprint"]
+    )
 
 
 async def _build(
@@ -238,13 +250,20 @@ def _fail(db: Session, fence: dict[str, Any], code: str, detail: str | None) -> 
 
 def _lock_head(db: Session, fence: dict[str, Any]) -> bool:
     """The media, exact summary head, then current queue execution; no unlocked claim."""
-    db.execute(
-        text("SELECT id FROM media WHERE id=:media_id FOR NO KEY UPDATE"),
-        fence,
-    )
-    head = db.scalar(text("SELECT id FROM media_summaries " + _OWNED_HEAD + " FOR UPDATE"), fence)
+    owned = _lock_summary(db, fence)
     claim = lock_running_job_claim(
         db,
         context=JobExecutionContext(fence["job_id"], fence["execution_id"], fence["attempt_no"]),
     )
-    return head is not None and claim is not None
+    return owned and claim is not None
+
+
+def _lock_summary(db: Session, fence: dict[str, Any]) -> bool:
+    db.execute(
+        text("SELECT id FROM media WHERE id=:media_id FOR NO KEY UPDATE"),
+        fence,
+    )
+    return (
+        db.scalar(text("SELECT id FROM media_summaries " + _OWNED_HEAD + " FOR UPDATE"), fence)
+        is not None
+    )

@@ -1,0 +1,56 @@
+# The ordinary host and egress owners, scoped to one exclusively held account.
+# The account is retained; Compose owns this run's containers, networks and cwds.
+x-owned-worker: &owned-worker
+  image: ${NEXUS_LAB_CODEX_IMAGE:?pinned owned host image required}
+  environment:
+    NEXUS_CODEX_CONTROL_ENDPOINT: http://nexus-codex-agent-host:4501
+    NEXUS_CODEX_NATIVE_ENDPOINT: ws://nexus-codex-agent-host:4500
+    NEXUS_CODEX_CONTROL_TOKEN: ${NEXUS_LAB_CODEX_CONTROL_TOKEN:?private control capability required}
+    NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
+  volumes:
+    - codex_cwds:/tmp/codex-daemon-10001
+  networks:
+    default: {}
+    codex_clients: {}
+
+services:
+  worker-interactive:
+    <<: *owned-worker
+  worker-background:
+    <<: *owned-worker
+  codex-egress-policy:
+    extends:
+      file: docker-compose.lab-codex.yml
+      service: codex-egress-policy
+    container_name: ${COMPOSE_PROJECT_NAME:?owned project required}-codex-egress-policy
+  nexus-codex-agent-host:
+    extends:
+      file: docker-compose.lab-codex.yml
+      service: nexus-codex-agent-host
+    container_name: ${COMPOSE_PROJECT_NAME:?owned project required}-codex-agent-host
+    environment:
+      NEXUS_CODEX_HOST_SCOPE: dedicated
+    volumes:
+      - ../apps/codex_agent:/app/apps/codex_agent:ro
+      - ../python/nexus:/app/nexus:ro
+
+volumes:
+  codex_account:
+    external: true
+    name: ${NEXUS_LAB_CODEX_ACCOUNT_VOLUME:?explicit dedicated account volume required}
+  codex_cwds: {}
+
+networks:
+  codex_clients:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  codex_private:
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${NEXUS_LAB_CODEX_SUBNET_PREFIX:?explicit codex subnet required}.0/29
+  codex_proxy_egress: {}

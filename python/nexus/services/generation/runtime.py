@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from provider_runtime.agent_runtime import CodexEndpoint
+from provider_runtime.agent_runtime.codex_host import CodexHostEndpoint
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
@@ -34,7 +34,7 @@ class Runtime:
     catalog: Catalog
     tools: Toolbox
     providers: ProviderRuntime | None
-    codex_endpoint: CodexEndpoint
+    codex_host: CodexHostEndpoint
     codex_cwd_root: Path
 
 
@@ -75,20 +75,17 @@ def run_generation_job[R](
                 catalog=Catalog(settings, tools),
                 tools=tools,
                 providers=build_provider_runtime(settings, client),
-                codex_endpoint=settings.codex_endpoint,
+                codex_host=settings.codex_host,
                 codex_cwd_root=settings.codex_cwd_root,
             )
             return await work(db, runtime)
 
-    from nexus.services.generation.native_execution import NativeFinalityPending, confirm_job
+    from nexus.services.generation.native_execution import confirm_job
 
     db = get_session_factory()()
     try:
-        finality = confirm_job(context.job_id, claim=context)
-        if finality == "lost":
+        if not confirm_job(context):
             raise JobFailure("E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry")
-        if finality == "pending":
-            raise NativeFinalityPending()
         if not recover_job_generations(db, context=context):
             raise JobFailure("E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry")
         db.commit()

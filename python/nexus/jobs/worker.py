@@ -183,9 +183,20 @@ class JobWorker:
         """Commit how one attempt ended, and its hooks, in one transaction."""
         if isinstance(outcome, Lost):
             return
-        from nexus.services.generation.native_execution import NativeFinalityPending, confirm_job
+        from nexus.services.generation.native_execution import (
+            RECOVERY_CODE,
+            NativeFinalityPending,
+            confirm_job,
+        )
 
-        native_finality = confirm_job(job.id, claim=context)
+        # The handler already spent this attempt's control budget. Settlement
+        # records that result once; it must not repeat control or run owner hooks.
+        if not (isinstance(outcome, Failed) and outcome.code == RECOVERY_CODE):
+            try:
+                if not confirm_job(context):
+                    return
+            except NativeFinalityPending as error:
+                outcome = failure_of(error)
         with self.session_factory() as db:
 
             def settle() -> queue.JobRow | None:
@@ -203,29 +214,18 @@ class JobWorker:
                         # The owner published its outcome and queue receipt atomically.
                         return stored
                     return None
-                finality = native_finality
-                if finality != "pending":
+                settled = outcome
+                pending = isinstance(settled, Failed) and settled.code == RECOVERY_CODE
+                if not pending:
                     try:
                         interrupt_locked_generations(
                             db, generations, detail="its execution stopped"
                         )
-                    except NativeFinalityPending:
+                    except NativeFinalityPending as error:
                         # A previous writer bound after the unlocked control read.
-                        finality = "pending"
-                settled = outcome
-                if finality == "pending":
-                    settled = failure_of(NativeFinalityPending())
-                elif (
-                    finality == "settled"
-                    and isinstance(settled, Failed)
-                    and settled.code == "E_NATIVE_FINALITY_UNKNOWN"
-                ):
-                    settled = Failed(
-                        "E_WORKER_INTERRUPTED",
-                        "Native execution stopped; retrying owner settlement.",
-                        disposition="retry",
-                    )
-                if finality != "pending" and isinstance(settled, Failed) and d.on_failure:
+                        settled = failure_of(error)
+                        pending = True
+                if not pending and isinstance(settled, Failed) and d.on_failure:
                     finished: Mapping[str, Any] | None = resolve(d.on_failure)(db, owned)
                     if finished is not None:
                         settled = finished

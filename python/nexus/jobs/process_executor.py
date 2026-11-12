@@ -1,7 +1,8 @@
 """How a handler runs: in the worker's own process, or in one fresh bounded child.
 
 The background supervisor keeps the claim, heartbeat and settlement and never
-imports a parser, provider or storage graph; the child imports the handler. A
+imports no parser, inference or storage execution graph; bounded native control
+belongs to settlement. the child imports the handler. A
 child dies with its supervisor by any death (the liveness pipe, PDEATHSIG, the
 container's pid namespace under ``init: true``) and is the kernel's OOM victim
 of choice. Both ends of the request and result files are this module, so the
@@ -90,7 +91,7 @@ def failure_of(exc: Exception) -> Failed:
         )
     if isinstance(exc, ResourceLimitError):
         disposition: FailureDisposition = (
-            "resample" if exc.dimension in {"Memory", "Time"} else "hold"
+            "bounded_retry" if exc.dimension in {"Memory", "Time"} else "hold"
         )
         return Failed(exc.code.value, exc.message, exc.dimension, disposition)
     if isinstance(exc, ApiError):
@@ -208,7 +209,7 @@ class ChildExecutor:
                     return stopped
                 if _oom_kills(self.cgroup) > oom_before:
                     message = "Background job exceeded its memory limit."
-                    return Failed("E_RESOURCE_LIMIT", message, "Memory", "resample")
+                    return Failed("E_RESOURCE_LIMIT", message, "Memory", "bounded_retry")
                 result.seek(0)
                 encoded = result.read(self.result_max_bytes + 1)
                 if process.returncode is not None and -process.returncode in {
@@ -258,7 +259,7 @@ class ChildExecutor:
                     "E_RESOURCE_LIMIT",
                     "Background job exceeded its time limit.",
                     "Time",
-                    "resample",
+                    "bounded_retry",
                 )
             else:
                 # justify-polling: neither an Event nor a child exit is selectable.
@@ -340,7 +341,7 @@ def _decode(encoded: bytes) -> Outcome:
                 and (value["result"] is None or isinstance(value["result"], dict))
             ):
                 raise ValueError("invalid failure result")
-            if value["disposition"] not in {"retry", "resample", "hold"}:
+            if value["disposition"] not in {"retry", "bounded_retry", "hold"}:
                 raise ValueError("unknown failure disposition")
             if value["dimension"] not in {None, "Memory", "Time", "Structure", "Output"}:
                 raise ValueError("unknown resource dimension")
