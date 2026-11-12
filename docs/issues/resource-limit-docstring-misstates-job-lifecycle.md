@@ -2,7 +2,7 @@
 
 `python/nexus/errors.py:247-251` says a resource-limit job goes dead.
 `python/nexus/jobs/process_executor.py:91-95` instead maps memory/time to
-`resample` and structural/output limits to `hold`; `jobs/queue.py` owns the
+`bounded_retry` and structural/output limits to `hold`; `jobs/queue.py` owns the
 resulting transitions. held work is distinct from dead intent and does not
 invoke the dead-intent callback.
 

@@ -794,96 +794,118 @@ def _publish(
     return {"disposition": "next_batch"}
 
 
+def lock_native_repair_intent(db: Session, job: queue.JobRow) -> bool:
+    """A repair retains only this creator's current, frozen source catalogue."""
+    payload = PartDiscoveryJob.model_validate(job.payload)
+    media_locks.lock_media_rows_in_order(db, [payload.source_media_id])
+    try:
+        source = _source(db, payload.requester_user_id, payload.source_media_id)
+    except ApiError:
+        return False
+    lock_source_parts(db, source.id)
+    proof = _navigation(db, source)
+    return proof.navigation.generation == payload.expected_source_generation and (
+        payload.capture is None
+        or payload.capture.fingerprint == _capture(db, source, proof).fingerprint
+    )
+
+
 def run_discovery_job(
     *, payload: Mapping[str, Any], context: queue.JobExecutionContext
 ) -> queue.JobResult:
-    try:
-        with get_session_factory()() as db:
-            snapshot = retry_serializable(
-                db, "part_discovery.snapshot", lambda: _snapshot(db, context)
-            )
-    except _ClaimLost:
-        return {"disposition": "claim_lost"}
-    except _PreparationNeeded as needed:
-        snapshot = needed
-    if isinstance(snapshot, _PreparationNeeded):
-        from nexus.services.content_indexing import prepare_media_parts
-
-        pending = snapshot.payload
-        with get_session_factory()() as db:
-            preparation = prepare_media_parts(
-                db,
-                viewer_id=pending.requester_user_id,
-                source_media_id=pending.source_media_id,
-                request=PartPrepare(
-                    id=uuid5(context.job_id, "prepare-sections"),
-                    expected_source_generation=pending.expected_source_generation,
-                ),
-            )
-
-        def settle(db: Session) -> queue.JobResult:
-            media_locks.lock_media_rows_in_order(db, [pending.source_media_id])
-            try:
-                source = _source(db, pending.requester_user_id, pending.source_media_id)
-            except ApiError:
-                if queue.lock_running_job_claim(db, context=context) is None:
-                    raise _ClaimLost from None
-                return _finish(db, context, pending, "superseded")
-            lock_source_parts(db, source.id)
-            proof = _navigation(db, source)
-            if queue.lock_running_job_claim(db, context=context) is None:
-                raise _ClaimLost
-            if proof.navigation.generation != pending.expected_source_generation:
-                return _finish(db, context, pending, "superseded")
-            prepared_key = db.scalar(
-                select(ContentIndexState.section_witness_key).where(
-                    ContentIndexState.owner_kind == "media",
-                    ContentIndexState.owner_id == pending.source_media_id,
-                )
-            )
-            preparation_job = queue.get_job(db, preparation.job_id)
-            ready = prepared_key == section_witness_key(proof.navigation.generation, proof.sections)
-            if not ready and preparation_job is not None and preparation_job.status == "held":
-                raise queue.JobFailure(
-                    "E_PART_STRUCTURE_PREPARATION_HELD",
-                    "section preparation needs a repair",
-                    "hold",
-                )
-            if (
-                not ready
-                and preparation_job is not None
-                and preparation_job.status in ("dead", "succeeded")
-            ):
-                failure = queue.TerminalJobFailure(
-                    {"outcome": None, "completed_sections": pending.cursor, "total_sections": 0},
-                    "E_PART_STRUCTURE_PREPARATION_FAILED",
-                    "couldn’t prepare sections",
-                )
-                queue.finish_job(db, context=context, result=failure)
-                return failure
-            at = (
-                None
-                if ready
-                else db.scalar(
-                    text("SELECT clock_timestamp()+make_interval(secs=>:seconds)"),
-                    {"seconds": _PREPARATION_POLL_SECONDS},
-                )
-            )
-            queue.reschedule_running_job(db, context=context, at=at)
-            return {"disposition": "preparing_structure"}
-
-        with get_session_factory()() as db:
-            try:
-                return retry_serializable(db, "part_discovery.preparation", lambda: settle(db))
-            except _ClaimLost:
-                return {"disposition": "claim_lost"}
-    if not isinstance(snapshot, tuple):
-        return snapshot
-    frozen, batch = snapshot
-    assert frozen.capture is not None
-    capture = frozen.capture
-
     async def work(db: Session, runtime: Runtime) -> queue.JobResult:
+        try:
+            with get_session_factory()() as db:
+                snapshot = retry_serializable(
+                    db, "part_discovery.snapshot", lambda: _snapshot(db, context)
+                )
+        except _ClaimLost:
+            return {"disposition": "claim_lost"}
+        except _PreparationNeeded as needed:
+            snapshot = needed
+        if isinstance(snapshot, _PreparationNeeded):
+            from nexus.services.content_indexing import prepare_media_parts
+
+            pending = snapshot.payload
+            with get_session_factory()() as db:
+                preparation = prepare_media_parts(
+                    db,
+                    viewer_id=pending.requester_user_id,
+                    source_media_id=pending.source_media_id,
+                    request=PartPrepare(
+                        id=uuid5(context.job_id, "prepare-sections"),
+                        expected_source_generation=pending.expected_source_generation,
+                    ),
+                )
+
+            def settle(db: Session) -> queue.JobResult:
+                media_locks.lock_media_rows_in_order(db, [pending.source_media_id])
+                try:
+                    source = _source(db, pending.requester_user_id, pending.source_media_id)
+                except ApiError:
+                    if queue.lock_running_job_claim(db, context=context) is None:
+                        raise _ClaimLost from None
+                    return _finish(db, context, pending, "superseded")
+                lock_source_parts(db, source.id)
+                proof = _navigation(db, source)
+                if queue.lock_running_job_claim(db, context=context) is None:
+                    raise _ClaimLost
+                if proof.navigation.generation != pending.expected_source_generation:
+                    return _finish(db, context, pending, "superseded")
+                prepared_key = db.scalar(
+                    select(ContentIndexState.section_witness_key).where(
+                        ContentIndexState.owner_kind == "media",
+                        ContentIndexState.owner_id == pending.source_media_id,
+                    )
+                )
+                preparation_job = queue.get_job(db, preparation.job_id)
+                ready = prepared_key == section_witness_key(
+                    proof.navigation.generation, proof.sections
+                )
+                if not ready and preparation_job is not None and preparation_job.status == "held":
+                    raise queue.JobFailure(
+                        "E_PART_STRUCTURE_PREPARATION_HELD",
+                        "section preparation needs a repair",
+                        "hold",
+                    )
+                if (
+                    not ready
+                    and preparation_job is not None
+                    and preparation_job.status in ("dead", "succeeded")
+                ):
+                    failure = queue.TerminalJobFailure(
+                        {
+                            "outcome": None,
+                            "completed_sections": pending.cursor,
+                            "total_sections": 0,
+                        },
+                        "E_PART_STRUCTURE_PREPARATION_FAILED",
+                        "couldn’t prepare sections",
+                    )
+                    queue.finish_job(db, context=context, result=failure)
+                    return failure
+                at = (
+                    None
+                    if ready
+                    else db.scalar(
+                        text("SELECT clock_timestamp()+make_interval(secs=>:seconds)"),
+                        {"seconds": _PREPARATION_POLL_SECONDS},
+                    )
+                )
+                queue.reschedule_running_job(db, context=context, at=at)
+                return {"disposition": "preparing_structure"}
+
+            with get_session_factory()() as db:
+                try:
+                    return retry_serializable(db, "part_discovery.preparation", lambda: settle(db))
+                except _ClaimLost:
+                    return {"disposition": "claim_lost"}
+        if not isinstance(snapshot, tuple):
+            return snapshot
+        frozen, batch = snapshot
+        assert frozen.capture is not None
+        capture = frozen.capture
+
         terminal = await generate(
             runtime,
             owner=Owner("part_discovery", context.job_id, frozen.requester_user_id, context),

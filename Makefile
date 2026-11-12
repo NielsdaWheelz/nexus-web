@@ -14,6 +14,7 @@ SUPABASE_URL ?= http://127.0.0.1:54321
 POSTGRES_PORT ?= 54320
 LOCAL_S3_PORT ?= 8333
 LOCAL_COMPOSE_PROJECT ?= nexus-local
+NEXUS_CODEX_CONTROL_ENDPOINT ?= unix:///tmp/codex-daemon-10001/control.sock
 LOCAL_RUNTIME_IDENTITY := $(abspath .nexus-local/runtime-identity.json)
 WORKER_COMPOSE_FILES := docker/docker-compose.yml:docker/docker-compose.worker.yml
 

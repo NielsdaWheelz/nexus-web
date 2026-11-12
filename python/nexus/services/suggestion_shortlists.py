@@ -426,6 +426,21 @@ def _current_edition(db: Session, feed: SuggestionFeed, request: _RefreshPayload
     return due == request.edition
 
 
+def lock_native_repair_intent(db: Session, job: queue.JobRow) -> bool:
+    """Authorize repair only for this feed's current, still-permitted edition."""
+    request = _RefreshPayload.model_validate(job.payload)
+    feed = db.get(SuggestionFeed, request.feed_id)
+    if feed is None:
+        return False
+    users.lock_viewer(db, feed.user_id)
+    db.refresh(feed)
+    return (
+        feed.current_job_id == job.id
+        and _authorized(db, feed)
+        and _current_edition(db, feed, request)
+    )
+
+
 def run_suggestion_refresh_job(
     *, payload: Mapping[str, Any], context: queue.JobExecutionContext
 ) -> queue.JobResult:

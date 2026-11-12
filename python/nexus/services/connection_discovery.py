@@ -190,6 +190,28 @@ def scan_state(
     return ("failed" if status == "dead" or outcome == "terminal_failed" else "idle"), outcome
 
 
+def lock_native_repair_intent(db: Session, job: queue.JobRow) -> bool:
+    """Current source intent, independent of temporarily unavailable summaries."""
+    from nexus.services import authored, media_locks, users
+
+    if not get_settings().connection_discovery_enabled:
+        return False
+    user_id = UUID(job.payload["user_id"])
+    ref = assert_resource_ref(job.payload["ref"])
+    users.lock_viewer(db, user_id)
+    if ref.scheme != "media":
+        authored.lock_account(db, user_id)
+    media_id = ref.id if ref.scheme == "media" else None
+    if ref.scheme == "highlight":
+        highlight = db.get(Highlight, ref.id)
+        if highlight is None or highlight.user_id != user_id:
+            return False
+        media_id = highlight.anchor_media_id
+    if media_id is not None:
+        media_locks.lock_media_rows_in_order(db, [media_id])
+    return not resolve_ref(db, viewer_id=user_id, ref=ref).missing
+
+
 def connection_discovery_scan_job(
     *, payload: Mapping[str, object], context: JobExecutionContext
 ) -> queue.JobResult:

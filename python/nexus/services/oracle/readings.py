@@ -25,6 +25,7 @@ from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobFailure,
+    JobRow,
     enqueue_job,
     finish_job,
     list_jobs_for_payload_values,
@@ -245,6 +246,18 @@ def _columns(reading: OracleReading, *, held: bool) -> dict[str, Any]:
 
 
 # ---------- the generation job -----------------------------------------------------
+
+
+def lock_native_repair_intent(db: Session, job: JobRow) -> bool:
+    """A settled reading cannot authorize another native recovery attempt."""
+    return (
+        db.scalar(
+            select(OracleReading.status)
+            .where(OracleReading.id == UUID(job.payload["reading_id"]))
+            .with_for_update()
+        )
+        == "pending"
+    )
 
 
 def run_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> dict[str, object]:

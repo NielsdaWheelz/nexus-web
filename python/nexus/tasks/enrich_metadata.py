@@ -26,6 +26,7 @@ from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobFailure,
+    JobRow,
     TerminalJobFailure,
     finish_job,
     lock_running_job_claim,
@@ -154,6 +155,29 @@ def _refusal(
     return None
 
 
+def lock_native_repair_intent(db: Session, job: JobRow) -> bool:
+    """Keep repair within the requester's current source and metadata purpose."""
+    payload = _PAYLOAD.validate_json(json.dumps(job.payload))
+    return _refusal(db, _lock_media(db, payload), payload) is None
+
+
+def _lock_media(db: Session, payload: MetadataJobPayload) -> Media | None:
+    from nexus.db.models import MediaPart
+    from nexus.services.media_locks import lock_media_rows_in_order
+    from nexus.services.media_parts import lock_source_parts
+
+    lock_media_rows_in_order(db, [payload.media_id])
+    part = db.get(MediaPart, payload.media_id)
+    if part is not None:
+        lock_source_parts(db, part.source_media_id)
+    return db.scalar(
+        select(Media)
+        .options(defer(Media.plain_text))
+        .where(Media.id == payload.media_id)
+        .with_for_update()
+    )
+
+
 def _input(
     db: Session, media: Media, payload: MetadataJobPayload
 ) -> MetadataResearchInput | XTitleInput | MetadataFailureCode:
@@ -279,20 +303,9 @@ def _publish(
     terminal: Terminal[MetadataFindings] | Terminal[AcceptedXTitle],
 ) -> _Settled:
     # The complete source family precedes publication/definition/set and claim.
-    from nexus.db.models import MediaPart
-    from nexus.services.media_locks import lock_media_rows_in_order
-    from nexus.services.media_parts import advance_part_definition, lock_source_parts
+    from nexus.services.media_parts import advance_part_definition
 
-    lock_media_rows_in_order(db, [job.media_id])
-    part = db.get(MediaPart, job.media_id)
-    if part is not None:
-        lock_source_parts(db, part.source_media_id)
-    media = db.scalar(
-        select(Media)
-        .options(defer(Media.plain_text))
-        .where(Media.id == job.media_id)
-        .with_for_update()
-    )
+    media = _lock_media(db, job)
     if lock_running_job_claim(db, context=context) is None:
         return _CLAIM_LOST
 
@@ -360,7 +373,7 @@ def _publish(
         raise JobFailure(
             code="E_GENERATION_INVALID_OUTPUT",
             message="metadata contributor identity violated its contract",
-            disposition="resample",
+            disposition="bounded_retry",
         ) from None
     # Every rejection precedes every write; a writer failure rolls back the whole attempt.
     changed = merge_findings(db, media, findings)

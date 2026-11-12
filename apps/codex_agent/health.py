@@ -13,14 +13,16 @@ import os
 from provider_runtime.agent_runtime import CODEX_CONTAINMENT_VERSION
 from pydantic import SecretStr
 
-from nexus.config import parse_codex_endpoint
+from nexus.config import parse_codex_host
 from nexus.services.generation.catalog import fetch_codex_catalog
 
 
 def main() -> None:
-    token = os.environ.get("NEXUS_CODEX_TRANSPORT_TOKEN")
-    endpoint = parse_codex_endpoint(
-        os.environ["NEXUS_CODEX_ENDPOINT"], None if token is None else SecretStr(token)
+    token = os.environ.get("NEXUS_CODEX_CONTROL_TOKEN")
+    endpoint = parse_codex_host(
+        os.environ["NEXUS_CODEX_CONTROL_ENDPOINT"],
+        os.environ.get("NEXUS_CODEX_NATIVE_ENDPOINT"),
+        None if token is None else SecretStr(token),
     )
     catalog = asyncio.run(fetch_codex_catalog(endpoint))
     print(

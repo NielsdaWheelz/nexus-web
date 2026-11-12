@@ -188,9 +188,11 @@ contention. bootstrap the state row through the existing account owner.
 cancelled queued turns retain their question and cancelled answer state. a dead
 active worker follows existing interruption/finality recovery before another turn
 starts; a timeout is not evidence that provider execution ended.
-unknown native finality holds the existing job. a bound thread without an observed
-turn cannot prove that its previous writer will never submit; this narrow crash
-window requires [live repair](issues/native-submission-needs-repair.md).
+unknown native finality retains the existing job. a bound thread without an observed
+turn cannot prove that its previous writer will never submit; bounded native
+reconciliation uses exact terminal or container-retirement proof before settlement.
+exhausted recovery holds for the owner-scoped repair command in the
+[generation contract](modules/llms.md).
 settlement folds committed text frames into terminal partial content and preserves known ledger
 failure/correlation, using existing unpublished-citation cleanup. never rerun the
 model to reconstruct lost output. durable automatic continuation remains deferred.

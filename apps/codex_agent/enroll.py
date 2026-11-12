@@ -11,12 +11,16 @@ import tempfile
 from pathlib import Path
 
 from apps.codex_agent.binary import codex_command
+from apps.codex_agent.state import initialize, read
 
 
 def main() -> None:
     target = Path(os.environ["NEXUS_CODEX_CREDENTIAL_FILE"])
     if target.exists():
         raise SystemExit(f"{target} exists: retire it while the host is stopped, then enroll")
+    existing_state = (target.parent / "host-state.json").exists()
+    if existing_state:
+        read(target.parent)  # Re-enrollment retains the monotone host identity.
     with tempfile.TemporaryDirectory() as home:
         environment = {
             "CODEX_HOME": home,
@@ -31,6 +35,8 @@ def main() -> None:
         stream.write(payload)
         stream.flush()
         os.fsync(stream.fileno())
+    if not existing_state:
+        initialize(target.parent)
 
 
 if __name__ == "__main__":

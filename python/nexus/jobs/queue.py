@@ -95,7 +95,7 @@ class TerminalJobFailure:
     error_message: str
 
 
-type FailureDisposition = Literal["retry", "resample", "hold"]
+type FailureDisposition = Literal["retry", "bounded_retry", "hold"]
 
 
 class JobFailure(Exception):
@@ -397,11 +397,11 @@ def fail_job(
     result: Mapping[str, Any] | None = None,
     retry_at: datetime | None = None,
 ) -> JobRow | None:
-    """Retry a transient cause, charge a resampling failure, hold a defect, or end intent."""
+    """Retry a transient cause, charge a bounded failure, hold a defect, or end intent."""
     owned = lock_running_job_claim(db, context=context)
     if owned is None:
         return None
-    failures = owned.failed_executions + (disposition == "resample")
+    failures = owned.failed_executions + (disposition == "bounded_retry")
     status = (
         "dead"
         if disposition == "dead"

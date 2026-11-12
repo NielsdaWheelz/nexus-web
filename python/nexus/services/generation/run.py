@@ -132,8 +132,8 @@ async def generate[T](
             )
         from nexus.services.generation import native_execution
 
-        if not await native_execution.confirm(ref.id, runtime.codex_endpoint):
-            raise native_execution.NativeFinalityPending()
+        if not await native_execution.confirm_generation(ref.id, owner.job, runtime.codex_host):
+            raise JobFailure("E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry")
         text = "".join(streamed)
         terminal: Terminal[T]
         if result.status == "succeeded":
@@ -148,15 +148,19 @@ async def generate[T](
             assert result.code is not None
             terminal = Failed(ref.id, result.code, result.detail, text, result.usage)
         with runtime.session_factory() as db:
-            close_generation(db, terminal, route=chosen.route, evidence=result.evidence)
+            close_generation(
+                db, terminal, context=owner.job, route=chosen.route, evidence=result.evidence
+            )
             db.commit()
     except BaseException as error:
         from nexus.services.generation import native_execution
 
         if isinstance(error, native_execution.NativeFinalityPending):
             raise
-        if not await native_execution.confirm(ref.id, runtime.codex_endpoint):
-            raise native_execution.NativeFinalityPending() from error
+        if not await native_execution.confirm_generation(ref.id, owner.job, runtime.codex_host):
+            raise JobFailure(
+                "E_WORKER_INTERRUPTED", "The job claim was replaced.", "retry"
+            ) from error
         transient = is_transient_database_error(error)
         try:
             with runtime.session_factory() as db:
@@ -167,7 +171,7 @@ async def generate[T](
                     "",
                     None,
                 )
-                close_generation(db, failure, route=chosen.route, evidence={})
+                close_generation(db, failure, context=owner.job, route=chosen.route, evidence={})
                 db.commit()
         except Exception as close_error:  # justify-ignore-error: the original failure wins.
             error.add_note(f"closing generation {ref.id} failed: {close_error!r}")
@@ -192,7 +196,7 @@ async def generate[T](
                 raise JobFailure(
                     f"E_GENERATION_{code.upper()}",
                     detail,
-                    "resample" if effect_mode == "ReadOnly" else "hold",
+                    "bounded_retry" if effect_mode == "ReadOnly" else "hold",
                 )
             case "content_filtered" | "context_too_large" | "policy_violation":
                 pass  # The owner settles a permanent refusal, never a retry or repair hold.
@@ -296,7 +300,7 @@ async def _dispatch(
                 from nexus.services.generation.codex import run_codex
 
                 result = await run_codex(
-                    endpoint=runtime.codex_endpoint,
+                    host=runtime.codex_host,
                     cwd_root=runtime.codex_cwd_root,
                     owner=owner,
                     generation_id=ref.id,

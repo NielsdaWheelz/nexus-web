@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, text, update
@@ -67,16 +68,29 @@ def open_generation(db: Session, owner: Owner, spec: GenerationSpec) -> Generati
 
 
 def close_generation(
-    db: Session, terminal: Terminal[object], *, route: str, evidence: dict[str, JsonValue]
+    db: Session,
+    terminal: Terminal[object],
+    *,
+    context: JobExecutionContext,
+    route: str,
+    evidence: dict[str, JsonValue],
 ) -> None:
     """Stage the one terminal write; a row already closed ``interrupted`` stays closed."""
 
     from nexus.services.generation.native_execution import require_settled
 
+    call = db.scalar(select(LLMCall).where(LLMCall.id == terminal.generation_id).with_for_update())
+    if call is None or call.outcome is not None:
+        return
+    assert call.job_id == context.job_id
+    if lock_running_job_claim(db, context=context) is None:
+        raise JobFailure("E_WORKER_INTERRUPTED", "The generation no longer owns its job.", "retry")
     require_settled(db, [terminal.generation_id])
     outcome = type(terminal).__name__
     code = terminal.code if isinstance(terminal, Failed) else None
     document: dict[str, JsonValue] = {"kind": outcome, "route": route, "evidence": evidence}
+    if call.native_execution is not None:
+        document["native_execution"] = cast(dict[str, JsonValue], call.native_execution)
     if isinstance(terminal, Failed):
         document["failure_code"] = terminal.code
         if terminal.detail:
@@ -88,6 +102,7 @@ def close_generation(
             outcome=outcome,
             failure_code=code,
             terminal=document,
+            native_execution=None,
             usage=None if terminal.usage is None else terminal.usage.model_dump(mode="json"),
             completed_at=func.now(),
         )
@@ -120,6 +135,9 @@ def interrupt_locked_generations(db: Session, ids: Collection[UUID], *, detail: 
             completed_at=now(), terminal=jsonb_build_object('kind','Failed',
                 'failure_code','interrupted','detail',CAST(:detail AS text),
                 'route',generation_spec #>> '{selection,route}','evidence','{}'::jsonb)
+                || CASE WHEN native_execution IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('native_execution',native_execution) END,
+            native_execution=NULL
             WHERE id=ANY(:ids) AND outcome IS NULL"""),
         {"ids": list(ids), "detail": detail},
     )

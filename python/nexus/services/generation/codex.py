@@ -52,8 +52,7 @@ from provider_runtime.agent_runtime import (
     AgentRuntime,
     AgentRuntimeConfig,
     AgentRuntimeError,
-    CodexEndpoint,
-    CodexThreadTarget,
+    AgentTurnRef,
     CredentialRef,
     CredentialRejected,
     CredentialUnavailable,
@@ -63,6 +62,12 @@ from provider_runtime.agent_runtime import (
     TextAgentOutput,
     terminal_to_json,
     thaw_json_value,
+)
+from provider_runtime.agent_runtime.codex_host import (
+    CodexHostEndpoint,
+    CodexHostResolved,
+    CodexHostUnavailable,
+    resolve_codex_host,
 )
 from provider_runtime.types import Present as RuntimePresent
 
@@ -96,7 +101,7 @@ _CAUSES: dict[str, FailureCode] = {
 
 async def run_codex(
     *,
-    endpoint: CodexEndpoint,
+    host: CodexHostEndpoint,
     cwd_root: Path,
     owner: Owner,
     generation_id: UUID,
@@ -146,12 +151,24 @@ async def run_codex(
     )
     from nexus.services.generation import native_execution
 
+    resolved = await resolve_codex_host(host)
+    if isinstance(resolved, CodexHostUnavailable):
+        return RouteResult(
+            "failed",
+            None,
+            None,
+            "runtime_unavailable",
+            f"codex host unavailable: {resolved.reason}",
+            {},
+            sent=False,
+        )
+    assert isinstance(resolved, CodexHostResolved), "new native work requires an active host"
     ports = _Ports(owner, stopped, on_event, tools)
     cwd_root.mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="nexus-native-runtime-") as state:
         async with AgentRuntime(
             AgentRuntimeConfig(
-                state_root_base=Path(state), codex_endpoints={"codex-personal": endpoint}
+                state_root_base=Path(state), codex_endpoints={"codex-personal": resolved.endpoint}
             )
         ) as runtime:
             provider = CodexProvider(runtime, cwd_parent=cwd_root)
@@ -168,13 +185,12 @@ async def run_codex(
                     return RouteResult(
                         "failed", None, None, "runtime_unavailable", detail, {}, sent=False
                     )
-                await native_execution.bind(
-                    owner,
-                    generation_id,
-                    CodexThreadTarget(
-                        lease.session.ref.profile_key, lease.session.ref.native_session_id
-                    ),
+                binding = native_execution.NativeBinding(
+                    profile_key=lease.session.ref.profile_key,
+                    thread_handle=lease.session.ref.native_session_id,
+                    target=resolved.target,
                 )
+                await native_execution.bind(owner, generation_id, binding)
                 result = await run_native(
                     definition=definition,
                     request=request,
@@ -188,10 +204,26 @@ async def run_codex(
                     messages=ports,
                     cancellation=CancellationToken(),
                 )
-                if isinstance(result, AgentNotSubmitted) or isinstance(
-                    result.evidence, NativeTerminalEvidence
-                ):
-                    native_execution.record_settled(generation_id)
+                if isinstance(result, AgentNotSubmitted):
+                    await native_execution.record_closure(
+                        generation_id, binding, native_execution.NotSubmittedClosure()
+                    )
+                elif isinstance(result.evidence, NativeTerminalEvidence):
+                    native = result.evidence.native_ref
+                    assert isinstance(native, AgentTurnRef)
+                    assert native.session_ref == lease.session.ref
+                    await native_execution.record_closure(
+                        generation_id,
+                        binding,
+                        native_execution.NativeTerminalClosure(
+                            turn_handle=native.native_turn_id,
+                            status="completed"
+                            if result.status == "succeeded"
+                            else "interrupted"
+                            if result.status == "cancelled"
+                            else "failed",
+                        ),
+                    )
             finally:
                 await provider.shutdown()
     if isinstance(result, AgentNotSubmitted):

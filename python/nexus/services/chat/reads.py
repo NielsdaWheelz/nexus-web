@@ -54,7 +54,7 @@ FAILURES = {
     "quota": "assistant_unavailable",
     "rate_limited": "assistant_unavailable",
     "runtime_unavailable": "assistant_unavailable",
-    "interrupted": "assistant_unavailable",
+    "interrupted": "incomplete",
     "context_too_large": "context_too_large",
     "invalid_output": "invalid_output",
     "policy_violation": "operator_defect",

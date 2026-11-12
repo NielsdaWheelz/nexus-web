@@ -690,6 +690,41 @@ def delete_document_storage_objects(paths: list[str]) -> None:
             logger.warning("document_storage_delete_failed storage_path=%s error=%s", path, exc)
 
 
+def capture_native_generations(db: Session, payload: Mapping[str, Any]) -> list[UUID] | None:
+    """Lock exact discovery dependencies of a retained, unreferenced teardown intent.
+
+    The caller checks its job/repair authority last, then commits before native
+    control. The physical deletion transaction repeats the same intent checks.
+    """
+    from nexus.services.generation.ledger import lock_generation_owner
+
+    media_id, intent_id = UUID(payload["media_id"]), UUID(payload["intent_id"])
+    family_ids = media_locks.media_family_ids(db, [media_id])
+    query = text("""SELECT id FROM background_jobs WHERE kind='discover_document_parts'
+        AND payload->>'source_media_id'=ANY(:media_ids) ORDER BY id""")
+    params = {"media_ids": [str(identity) for identity in family_ids]}
+    job_ids = list(db.scalars(query, params))
+    for job_id in job_ids:
+        lock_generation_owner(db, kind="part_discovery", id=job_id)
+    ids = list(
+        db.scalars(
+            text("""SELECT id FROM llm_calls
+        WHERE job_id=ANY(:ids) AND outcome IS NULL ORDER BY id FOR UPDATE"""),
+            {"ids": job_ids},
+        )
+    )
+    media_locks.lock_media_rows_in_order(db, family_ids)
+    intent = db.scalar(
+        text("SELECT id FROM media_teardown_intents WHERE media_id=:id FOR UPDATE"),
+        {"id": media_id},
+    )
+    if intent != intent_id or _references(db, media_id):
+        return None
+    if list(db.scalars(query, params)) != job_ids:
+        raise TransactionRestart
+    return ids
+
+
 def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext) -> JobResult:
     """The ``media_teardown`` job; it acts only on its exact (intent, media) (I6).
 
@@ -701,30 +736,11 @@ def run_teardown_job(*, payload: Mapping[str, Any], context: JobExecutionContext
     discovery_jobs = text("""SELECT id FROM background_jobs
         WHERE kind='discover_document_parts'
           AND payload->>'source_media_id'=ANY(:media_ids) ORDER BY id""")
-    with get_session_factory()() as db:
-        from nexus.services.generation.native_execution import NativeFinalityPending, confirm_job
+    from nexus.services.generation.native_execution import confirm_deletion
 
-        intent = db.scalar(
-            text("SELECT id FROM media_teardown_intents WHERE media_id=:m"), {"m": media_id}
-        )
-        job_ids = (
-            list(
-                db.scalars(
-                    discovery_jobs,
-                    {
-                        "media_ids": [
-                            str(id_) for id_ in media_locks.media_family_ids(db, [media_id])
-                        ]
-                    },
-                )
-            )
-            if intent == intent_id and not _references(db, media_id)
-            else []
-        )
-        db.rollback()
-        for job_id in job_ids:
-            if confirm_job(job_id, claim=None) == "pending":
-                raise NativeFinalityPending()
+    if not confirm_deletion(context):
+        return {"disposition": "Stale", "deleted_paths": 0}
+    with get_session_factory()() as db:
 
         def op() -> tuple[str, list[str]]:
             from nexus.services.consumption import lectern

@@ -1,11 +1,14 @@
 # Explicit provider endpoints and trust; no public-host aliases or CA replacement.
 volumes:
   lab_fake_codex: {}
+  lab_fake_codex_account: {}
 
 x-fake-worker: &fake-worker
   environment:
     PROVIDER_ENDPOINT_OVERRIDES: '{"openai":"https://fake-providers:8443"}'
-    NEXUS_CODEX_ENDPOINT: unix:///tmp/codex-daemon-10001/app-server.sock
+    NEXUS_CODEX_CONTROL_ENDPOINT: http://fake-codex:4501
+    NEXUS_CODEX_NATIVE_ENDPOINT: ws://fake-codex:4500
+    NEXUS_CODEX_CONTROL_TOKEN: ${NEXUS_LAB_CODEX_CONTROL_TOKEN:?private control capability required}
     NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
   volumes:
     - lab_fake_codex:/tmp/codex-daemon-10001
@@ -42,16 +45,38 @@ services:
       - https://fake-providers:8443
       - --ca-file
       - /app/lab-fake-ca.pem
-      - --state
-      - /var/lib/nexus-codex
-      - --socket
-      - /tmp/codex-daemon-10001/app-server.sock
+    environment:
+      NEXUS_CODEX_CREDENTIAL_FILE: /var/lib/nexus-codex/auth.json
+      NEXUS_CODEX_CONTROL_ENDPOINT: http://0.0.0.0:4501
+      NEXUS_CODEX_NATIVE_ENDPOINT: ws://0.0.0.0:4500
+      NEXUS_CODEX_CONTROL_TOKEN_SHA256: ${NEXUS_LAB_CODEX_CONTROL_TOKEN_SHA256:?private control verifier required}
+      NEXUS_CODEX_HOST_SCOPE: dedicated
+      NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
+    ports:
+      - "127.0.0.1:${NEXUS_LAB_FAKE_CODEX_NATIVE_PORT:?reserve native loopback port}:4500"
+      - "127.0.0.1:${NEXUS_LAB_FAKE_CODEX_CONTROL_PORT:?reserve control loopback port}:4501"
     volumes:
       - ../python/scripts/lab_fake_codex.py:/app/lab_fake_codex.py:ro
       - ../apps/codex_agent:/app/apps/codex_agent:ro
+      - ../python/nexus:/app/nexus:ro
       - ${NEXUS_LAB_FAKE_TLS_DIR:?set private fake TLS inputs}/ca.pem:/app/lab-fake-ca.pem:ro
       - lab_fake_codex:/tmp/codex-daemon-10001
+      - lab_fake_codex_account:/var/lib/nexus-codex
     depends_on:
       fake-providers:
         condition: service_started
     init: true
+    restart: on-failure
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 448m
+    memswap_limit: 448m
+    pids_limit: 64
+    stop_grace_period: 45s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    ulimits:
+      core: 0
+      nofile: 1024

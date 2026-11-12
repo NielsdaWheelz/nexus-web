@@ -11,8 +11,9 @@ networks:
 
 x-live-worker: &live-worker
   environment:
-    NEXUS_CODEX_ENDPOINT: ${NEXUS_LAB_CODEX_ENDPOINT:?attach the enrolled shared Codex host}
-    NEXUS_CODEX_TRANSPORT_TOKEN: ${NEXUS_LAB_CODEX_TRANSPORT_TOKEN:?attach the enrolled shared Codex host}
+    NEXUS_CODEX_CONTROL_ENDPOINT: ${NEXUS_LAB_CODEX_CONTROL_ENDPOINT:?attach the enrolled shared Codex host}
+    NEXUS_CODEX_NATIVE_ENDPOINT: ${NEXUS_LAB_CODEX_NATIVE_ENDPOINT:?attach the enrolled shared Codex host}
+    NEXUS_CODEX_CONTROL_TOKEN: ${NEXUS_LAB_CODEX_CONTROL_TOKEN:?attach the enrolled shared Codex host}
     NEXUS_CODEX_CWD_ROOT: ${NEXUS_LAB_CODEX_CWD_ROOT:?prepare the owned run cwd}
   volumes:
     - lab_codex_cwds:/tmp/codex-daemon-10001

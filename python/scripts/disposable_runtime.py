@@ -27,16 +27,17 @@ default_library_id, email, password), browser_state_file, artifacts_dir,
 web_tls (ca_file and leaf_spki_sha256) and
 fake_providers (null, or origin and ca_file for the explicit fake transport).
 client_cpu_throttle is null normally, or the requested integer slowdown rate.
-NEXUS_LAB_CONTEXT is the driver's only extra environment variable. Live JSON
+NEXUS_LAB_CONTEXT and explicit native-host configuration reach the driver. Live JSON
 accepts only LIVE_KEYS, string values or null, including supported provider
 HTTPS origins and additional PEM trust roots; core service topology stays owned.
 Explicit live Codex attachment holds shared access to one enrolled compatible host
-through teardown. The API reads its host websocket; both Linux workers use its
+through teardown. The API resolves its host control; both Linux workers use its
 private client network and separate per-run cwd root. No account state enters a lab.
+Owned live mode locks a separately enrolled account volume through namespace
+teardown, retaining only enrollment and monotone host identity between runs.
 Fake mode owns verified HTTPS Responses SSE/WebSocket and embedding wires plus
-separate real pinned Codex hosts for the host API and Linux workers. Replies
-prove transport, never model quality, tools or structured generation. The short
-private host socket directory is recovery-recorded and removed after host drain.
+one real pinned Linux Codex supervisor shared by the API and workers. Replies
+prove transport, never model quality, tools or structured generation.
 Docker's restarting state is supervised recovery, not a terminal process exit.
 Readiness and each driver's bounded checks still establish availability.
 
@@ -64,7 +65,6 @@ import socket
 import ssl
 import subprocess
 import sys
-import tempfile
 import time
 import tomllib
 from collections.abc import Callable
@@ -364,7 +364,63 @@ def restore_database(
     )
 
 
-def main() -> int:
+def native_composition(
+    environment: dict[str, str],
+    *,
+    fake_tls: Path | None,
+    owned_account: str | None,
+    shared_worker: dict[str, str] | None,
+    host_slot: int,
+) -> dict[str, str]:
+    """Compose one explicit native mode; account admission and teardown stay with the caller."""
+    compose_env = environment.copy()
+    if fake_tls is not None or owned_account is not None:
+        control_token = secrets.token_urlsafe(32)
+        compose_env |= {
+            "NEXUS_LAB_CODEX_CONTROL_TOKEN": control_token,
+            "NEXUS_LAB_CODEX_CONTROL_TOKEN_SHA256": hashlib.sha256(
+                control_token.encode()
+            ).hexdigest(),
+        }
+    if fake_tls is not None:
+        compose_env |= {
+            "NEXUS_LAB_FAKE_TLS_DIR": str(fake_tls),
+            "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
+            + os.pathsep
+            + str(ROOT / "docker/docker-compose.lab-fakes.yml"),
+        }
+    if shared_worker is not None:
+        compose_env |= {
+            "NEXUS_LAB_CODEX_CONTROL_ENDPOINT": shared_worker["NEXUS_CODEX_CONTROL_ENDPOINT"],
+            "NEXUS_LAB_CODEX_NATIVE_ENDPOINT": shared_worker["NEXUS_CODEX_NATIVE_ENDPOINT"],
+            "NEXUS_LAB_CODEX_CONTROL_TOKEN": shared_worker["NEXUS_CODEX_CONTROL_TOKEN"],
+            "NEXUS_LAB_CODEX_CWD_ROOT": shared_worker["NEXUS_CODEX_CWD_ROOT"],
+            "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
+            + os.pathsep
+            + str(ROOT / "docker/docker-compose.lab-live.yml"),
+        }
+    if owned_account is not None:
+        from provider_runtime.agent_runtime import (
+            AGENT_BACKEND_CONTRACT_REVISION,
+            CODEX_CONTAINMENT_CATALOG_REVISION,
+            CODEX_CONTAINMENT_VERSION,
+        )
+
+        compose_env |= {
+            "NEXUS_LAB_CODEX_IMAGE": image_tag(),
+            "NEXUS_LAB_CODEX_ACCOUNT_VOLUME": owned_account,
+            "NEXUS_LAB_CODEX_SUBNET_PREFIX": f"10.{192 + host_slot // 256}.{host_slot % 256}",
+            "NEXUS_LAB_CODEX_VERSION": CODEX_CONTAINMENT_VERSION,
+            "NEXUS_LAB_CODEX_CATALOG_REVISION": CODEX_CONTAINMENT_CATALOG_REVISION,
+            "NEXUS_LAB_CODEX_BACKEND_REVISION": AGENT_BACKEND_CONTRACT_REVISION,
+            "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
+            + os.pathsep
+            + str(ROOT / "docker/docker-compose.lab-owned.yml"),
+        }
+    return compose_env
+
+
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="fresh real nexus application; owned resources removed after the driver exits",
         epilog="prerequisites: docker compose, supabase 2.117.0, node, bun, uv, locked python/web dependencies, "
@@ -395,6 +451,11 @@ def main() -> int:
         "concurrent labs keep separate sessions. enroll with ./scripts/lab-codex enroll.",
     )
     parser.add_argument(
+        "--owned-live-codex",
+        metavar="ACCOUNT_VOLUME",
+        help="own a dedicated enrolled native host through teardown; exclusive account volume access",
+    )
+    parser.add_argument(
         "--fake-providers",
         action="store_true",
         help="fresh verified HTTPS provider wires and real owned Codex hosts; no live credentials",
@@ -414,8 +475,18 @@ def main() -> int:
         parser.error("a nonempty driver command after -- is required")
     if args.client_throttle is not None and args.client_throttle < 1:
         parser.error("--client-throttle requires an integer >= 1")
-    if args.fake_providers and (args.live_config is not None or args.live_codex):
-        parser.error("--fake-providers cannot be combined with --live-config or --live-codex")
+    if (
+        sum(bool(value) for value in (args.fake_providers, args.live_codex, args.owned_live_codex))
+        > 1
+    ):
+        parser.error("choose only one of --fake-providers, --live-codex and --owned-live-codex")
+    if args.fake_providers and args.live_config is not None:
+        parser.error("--fake-providers cannot be combined with --live-config")
+    return args
+
+
+def main() -> int:
+    args = parse_arguments()
     worker_services = ["worker-interactive", "worker-background"]
     try:
         live = live_configuration(args.live_config)
@@ -446,8 +517,7 @@ def main() -> int:
     project = ""
     auth_project = ""
     run_dir: Path | None = None
-    host_codex_dir: Path | None = None
-    shared_access = ExitStack()
+    native_access = ExitStack()
     shared_host = None
     shared_cwd_prepared = False
     compose: list[str] = []
@@ -646,6 +716,7 @@ def main() -> int:
                 supabase_jwks_url="http://127.0.0.1/auth/v1/.well-known/jwks.json",
                 supabase_issuer="http://127.0.0.1/auth/v1",
                 supabase_audiences="authenticated",
+                NEXUS_CODEX_CONTROL_ENDPOINT="unix:///tmp/no-native-control.sock",
                 **{key.lower(): value for key, value in live.items()},
             )
         except ValidationError as exc:
@@ -773,8 +844,14 @@ def main() -> int:
             phase = "shared live codex host"
             from lab_codex import attach
 
-            shared_host = shared_access.enter_context(attach())
+            shared_host = native_access.enter_context(attach())
+        if args.owned_live_codex is not None:
+            phase = "owned live codex account"
+            from lab_codex import owned_account
+
+            native_access.enter_context(owned_account(args.owned_live_codex))
         sockets: list[socket.socket] = []
+        fake_ports: dict[str, str] = {}
         try:
             for offset in range(10):
                 port = 31000 + (host_slot - 1) * 10 + offset
@@ -804,6 +881,15 @@ def main() -> int:
                 smtp_port,
                 pop3_port,
             ) = [s.getsockname()[1] for s in sockets]
+            if args.fake_providers:
+                # Docker must reuse these published addresses when the native host restarts.
+                for name in (
+                    "NEXUS_LAB_FAKE_CODEX_NATIVE_PORT",
+                    "NEXUS_LAB_FAKE_CODEX_CONTROL_PORT",
+                ):
+                    listener = socket.create_server(("127.0.0.1", 0))
+                    sockets.append(listener)
+                    fake_ports[name] = str(listener.getsockname()[1])
         finally:
             for listener in sockets:
                 listener.close()
@@ -847,7 +933,7 @@ def main() -> int:
             "NEXUS_HANDLE_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
             "NEXUS_INTERNAL_SECRET": secrets.token_hex(32),
             "NEXUS_RUNTIME_IDENTITY_FILE": str(identity_path),
-            "NEXUS_CODEX_ENDPOINT": (inputs / "no-native-socket")
+            "NEXUS_CODEX_CONTROL_ENDPOINT": (inputs / "no-native-control.sock")
             .as_uri()
             .replace("file:", "unix:", 1),
         }
@@ -858,17 +944,11 @@ def main() -> int:
         fake_ca_pem: str | None = None
         if args.fake_providers:
             fake_ca_pem, _ = _write_tls(fake_tls, "nexus lab fake providers", ("fake-providers",))
-            # Darwin's Unix socket limit cannot fit the checkout's private-input path.
-            host_codex_dir = Path(tempfile.mkdtemp(prefix="nexus-lab-codex-", dir="/tmp"))
             app_env |= {
                 "OPENAI_API_KEY": "lab-fake-" + secrets.token_hex(24),
                 "OPENAI_GENERATION_API_KEY": "lab-fake-" + secrets.token_hex(24),
                 "GENERATION_API_PROVIDERS": "openai",
                 "PROVIDER_CA_PEM": fake_ca_pem,
-                "NEXUS_CODEX_ENDPOINT": (host_codex_dir / "app-server.sock")
-                .as_uri()
-                .replace("file:", "unix:", 1),
-                "NEXUS_CODEX_CWD_ROOT": str(host_codex_dir / "cwds"),
             }
         compose_env = (
             app_env
@@ -901,25 +981,13 @@ def main() -> int:
             "--env-file",
             os.devnull,
         ]
-        if args.fake_providers:
-            compose_env |= {
-                "NEXUS_LAB_FAKE_TLS_DIR": str(fake_tls),
-                "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
-                + os.pathsep
-                + str(ROOT / "docker/docker-compose.lab-fakes.yml"),
-            }
-        if shared_host is not None:
-            worker_environment = shared_host.worker_environment(run_id)
-            compose_env |= {
-                "NEXUS_LAB_CODEX_ENDPOINT": worker_environment["NEXUS_CODEX_ENDPOINT"],
-                "NEXUS_LAB_CODEX_TRANSPORT_TOKEN": worker_environment[
-                    "NEXUS_CODEX_TRANSPORT_TOKEN"
-                ],
-                "NEXUS_LAB_CODEX_CWD_ROOT": worker_environment["NEXUS_CODEX_CWD_ROOT"],
-                "COMPOSE_FILE": compose_env["COMPOSE_FILE"]
-                + os.pathsep
-                + str(ROOT / "docker/docker-compose.lab-live.yml"),
-            }
+        compose_env = native_composition(
+            compose_env | fake_ports,
+            fake_tls=fake_tls if args.fake_providers else None,
+            owned_account=args.owned_live_codex,
+            shared_worker=None if shared_host is None else shared_host.worker_environment(run_id),
+            host_slot=host_slot,
+        )
         auth_env = base_env | {
             "SUPABASE_AUTH_JWT_SECRET": secrets.token_hex(32),
             "SUPABASE_AUTH_PUBLISHABLE_KEY": publishable_key,
@@ -937,7 +1005,7 @@ def main() -> int:
         recovery = {
             "compose_env": compose_env,
             "auth_env": base_env,
-            "host_codex_dir": str(host_codex_dir) if host_codex_dir is not None else None,
+            "owned_codex_account": args.owned_live_codex,
             "shared_codex_cwd": compose_env.get("NEXUS_LAB_CODEX_CWD_ROOT"),
             "shared_codex_image": None if shared_host is None else shared_host.image_id,
             "shared_codex_run_id": run_id if shared_host is not None else None,
@@ -956,7 +1024,11 @@ def main() -> int:
             f"owned compose project: {project}\nowned auth project: {auth_project}\n"
             f"manual store cleanup: {recovery_command}\n"
             f"inspect host process groups against {run_dir / 'launches.json'}; never blindly kill saved pids.\n"
-            + (f"after verified host shutdown remove {host_codex_dir}.\n" if host_codex_dir else "")
+            + (
+                f"retained dedicated codex account: {args.owned_live_codex}.\n"
+                if args.owned_live_codex
+                else ""
+            )
             + (
                 f"shared codex cwd: {compose_env['NEXUS_LAB_CODEX_CWD_ROOT']}; retain until owned workers and remote sessions are closed; never stop the shared host to clean a lab.\n"
                 if shared_host is not None
@@ -1022,7 +1094,6 @@ def main() -> int:
             log=run_dir / "worker-image.log",
         )
         if args.fake_providers:
-            assert host_codex_dir is not None  # created by this mode before dependency acquisition
             phase = "fake providers"
             command(
                 compose + ["up", "-d", "--no-build", "fake-providers", "fake-codex"],
@@ -1044,37 +1115,39 @@ def main() -> int:
                 lambda: http_json(fake_origin + "/health", context=fake_trust)["kind"]
                 == "lab_fake_providers",
             )
-            start(
-                "fake-codex-host",
-                [
-                    sys.executable,
-                    "-m",
-                    "python.scripts.lab_fake_codex",
-                    "--origin",
-                    fake_origin,
-                    "--ca-file",
-                    str(fake_tls / "ca.pem"),
-                    "--state",
-                    str(inputs / "codex-state"),
-                    "--socket",
-                    str(host_codex_dir / "app-server.sock"),
-                ],
-                base_env,
-                ROOT,
-            )
-            ready(
-                "native codex host socket",
-                lambda: host_codex_dir is not None
-                and (host_codex_dir / "app-server.sock").is_socket(),
-            )
-            command(
-                [sys.executable, "-m", "apps.codex_agent.health"],
-                env=app_env,
-                cwd=inputs,
-                timeout=125,
-                log=run_dir / "native-codex-health.log",
-            )
             fake_providers = {"origin": fake_origin, "ca_file": str(fake_tls / "ca.pem")}
+        if args.owned_live_codex is not None:
+            phase = "owned native host"
+            command(
+                compose
+                + ["up", "-d", "--no-build", "codex-egress-policy", "nexus-codex-agent-host"],
+                env=compose_env,
+                log=run_dir / "native-codex-start.log",
+            )
+        if args.fake_providers or args.owned_live_codex is not None:
+            ingress = "fake-codex" if args.fake_providers else "codex-egress-policy"
+            for key, scheme, port in (
+                ("NEXUS_CODEX_CONTROL_ENDPOINT", "http", "4501"),
+                ("NEXUS_CODEX_NATIVE_ENDPOINT", "ws", "4500"),
+            ):
+                address = command(compose + ["port", ingress, port], env=compose_env).strip()
+                app_env[key] = f"{scheme}://{address}"
+            app_env["NEXUS_CODEX_CONTROL_TOKEN"] = compose_env["NEXUS_LAB_CODEX_CONTROL_TOKEN"]
+
+            def native_ready() -> bool:
+                try:
+                    command(
+                        [sys.executable, "-m", "apps.codex_agent.health"],
+                        env=app_env,
+                        cwd=inputs,
+                        timeout=10,
+                        log=run_dir / "native-codex-health.log",
+                    )
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    return False
+                return True
+
+            ready("native codex authenticated catalog", native_ready)
         phase = "stores"
         message("stores: starting fresh owned database, storage and auth")
         command(
@@ -1117,6 +1190,8 @@ def main() -> int:
         store_services = ["postgres", "storage"]
         if args.fake_providers:
             store_services += ["fake-providers", "fake-codex"]
+        if args.owned_live_codex is not None:
+            store_services += ["codex-egress-policy", "nexus-codex-agent-host"]
         container_ids = command(compose + ["ps", "-q", *store_services], env=compose_env).split()
         if len(container_ids) != len(store_services):
             raise RuntimeError("owned store containers missing")
@@ -1240,7 +1315,7 @@ def main() -> int:
                 return health == {"status": "ready", "lane": lane, **identity}
 
             ready(f"worker-{lane}", worker_ready)
-        if args.fake_providers or shared_host is not None:
+        if args.fake_providers or shared_host is not None or args.owned_live_codex is not None:
             phase = "native codex linux catalog"
             for lane in ("interactive", "background"):
                 command(
@@ -1431,7 +1506,9 @@ def main() -> int:
         driver = launch(
             "driver",
             args.driver[1:],
-            base_env | {"NEXUS_LAB_CONTEXT": str(context)},
+            base_env
+            | {"NEXUS_LAB_CONTEXT": str(context)}
+            | {key: value for key, value in app_env.items() if key.startswith("NEXUS_CODEX_")},
             ROOT,
             None,
             None,
@@ -1540,14 +1617,12 @@ def main() -> int:
             except Exception as exc:
                 cleanup_errors.append(f"shared codex cwd retained ({exc})")
         try:
-            shared_access.close()
+            native_access.close()
         except Exception as exc:
-            cleanup_errors.append(f"shared codex access release failed ({exc})")
+            cleanup_errors.append(f"native codex access release failed ({exc})")
         if lock_owned and run_dir is not None:
             if not cleanup_errors:
                 try:
-                    if host_codex_dir is not None:
-                        shutil.rmtree(host_codex_dir)
                     if (run_dir / "inputs").exists():
                         shutil.rmtree(run_dir / "inputs")
                 except OSError as exc:
