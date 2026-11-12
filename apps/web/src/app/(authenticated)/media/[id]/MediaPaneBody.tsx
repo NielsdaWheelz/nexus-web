@@ -416,10 +416,12 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
             releaseViewport();
           };
         }, onIntent: (intent) => {
+          const preserveSignal = intent.kind === "Navigate" ? intent.signal : null;
           arrivalRef.current?.supersede({
-            preserveSignal: intent.kind === "Navigate" ? intent.signal : null,
+            preserveSignal,
             retireFailure: intent.kind === "Navigate",
           });
+          findRef.current?.supersedeMovement(preserveSignal);
           if (intent.kind === "Navigate") {
             if (verbsRef.current?.isMobile) verbsRef.current.verbs.dismissSelection();
             forkMiss(null);

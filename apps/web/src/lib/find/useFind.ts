@@ -50,6 +50,8 @@ export interface FindController {
 export interface FindSession {
   readonly controller: FindController | null;
   clear(): void;
+  /** New reader intent retires find movement; its own active signal keeps it. */
+  supersedeMovement(preserveSignal: AbortSignal | null): void;
 }
 
 const IDLE: FindResult = { kind: "Idle" };
@@ -303,7 +305,12 @@ export function useFind({
     update({ query: "", narrow: null, scopeLabel: null, result: IDLE });
   }, [lifetime, source, update]);
   const find = useMemo<FindSession>(() => {
-    if (!source) return { controller: null, clear };
+    const supersedeMovement = (preserveSignal: AbortSignal | null) => {
+      if (preserveSignal !== null && preserveSignal === lifetime.movement?.signal) return;
+      lifetime.autoRevealAllowed = false;
+      lifetime.movement?.abort();
+    };
+    if (!source) return { controller: null, clear, supersedeMovement };
     const currentIndex = (row: FindRow<unknown>): number | null => {
       const current = latest.current;
       const publication = computed.current;
@@ -326,6 +333,7 @@ export function useFind({
     };
     return {
       clear,
+      supersedeMovement,
       controller: {
         label: source.label,
         query,
