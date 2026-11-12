@@ -196,27 +196,34 @@ def _activations_from_resolved_passages(
     apparatus_ids = [
         ref.id for ref in visible if ref.scheme == "reader_apparatus_item" and ref.uri in scoped
     ]
-    apparatus = {
-        row.id: row
-        for row in db.execute(
-            text("SELECT id,stable_key FROM reader_apparatus_items WHERE id=ANY(:ids)"),
-            {"ids": apparatus_ids},
-        )
-    }
-    empty_capture_routes = {
-        row.id: row.capture_id
-        for row in db.execute(
-            text("""
+    apparatus = (
+        {
+            row.id: row
+            for row in db.execute(
+                text("SELECT id,stable_key FROM reader_apparatus_items WHERE id=ANY(:ids)"),
+                {"ids": apparatus_ids},
+            )
+        }
+        if apparatus_ids
+        else {}
+    )
+    empty_capture_ids = [
+        ref.id for ref in visible if ref.scheme == "fragment" and ref.uri not in scoped
+    ]
+    empty_capture_routes = (
+        {
+            row.id: row.capture_id
+            for row in db.execute(
+                text("""
             SELECT id,x_post_capture_id AS capture_id FROM fragments
             WHERE id=ANY(:ids) AND x_post_capture_id IS NOT NULL AND canonical_text=''
         """),
-            {
-                "ids": [
-                    ref.id for ref in visible if ref.scheme == "fragment" and ref.uri not in scoped
-                ]
-            },
-        )
-    }
+                {"ids": empty_capture_ids},
+            )
+        }
+        if empty_capture_ids
+        else {}
+    )
     for ref in visible:
         if ref.scheme not in canonical_schemes and ref.scheme != "passage_anchor":
             continue
@@ -245,16 +252,16 @@ def _activations_from_resolved_passages(
             routes[ref.uri] = f"/media/{passage.owner.id}#{fragment}-{ref.id}"
         else:
             routes.pop(ref.uri, None)
-    owned_highlights = list(
+    highlight_ids = [ref.id for ref in visible if ref.scheme == "highlight"]
+    owned_highlights = (
         db.scalars(
             text(
                 "SELECT id FROM highlights WHERE id=ANY(:ids) AND user_id=:viewer_id AND authored_visible"
             ),
-            {
-                "ids": [ref.id for ref in visible if ref.scheme == "highlight"],
-                "viewer_id": viewer_id,
-            },
+            {"ids": highlight_ids, "viewer_id": viewer_id},
         )
+        if highlight_ids
+        else ()
     )
     for id_ in owned_highlights:
         uri = f"highlight:{id_}"

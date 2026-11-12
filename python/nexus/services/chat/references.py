@@ -4,6 +4,7 @@ No source words or publication identities are saved here. A syntactically valid
 reference may be unavailable now; offsets never search for replacement words.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from nexus.schemas.chat import AttachmentOut
 from nexus.schemas.live_reference import LiveReference
+from nexus.schemas.resource_evidence import ResourceField
+from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.live_references import reference_visible, resolve_location
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_graph.resolve import PromptBodyTooLarge, resolve_prompt
@@ -26,22 +29,34 @@ class CurrentReference:
     location_available: bool
 
 
-def attachments_out(
-    db: Session, viewer_id: UUID, references: list[LiveReference]
-) -> list[AttachmentOut]:
-    refs = [require_ref(reference.resource_ref) for reference in references]
-    items = resource_items_out(db, viewer_id=viewer_id, refs=refs)
-    result = []
-    for reference, item in zip(references, items, strict=True):
-        visible = not item.missing and reference_visible(
-            db, viewer_id=viewer_id, reference=reference
-        )
-        result.append(
-            AttachmentOut(
-                reference=reference,
-                item=item if visible else None,
-                location_available=visible and resolve_location(db, reference, byte_limit=None)[0],
+def attachments_by_reference(
+    db: Session,
+    viewer_id: UUID,
+    references: list[LiveReference],
+    *,
+    items: Mapping[str, ResourceItemOut],
+) -> dict[str, AttachmentOut]:
+    """Index full-reference JSON from this viewer/snapshot's hydrated item batch.
+
+    Callers reconstruct occurrence order; field visibility is shared across locators.
+    """
+    visible: dict[tuple[str, ResourceField], bool] = {}
+    result: dict[str, AttachmentOut] = {}
+    for reference in references:
+        key = reference.model_dump_json()
+        if key in result:
+            continue
+        item = items[reference.resource_ref]
+        field = (reference.resource_ref, reference.field)
+        if field not in visible:
+            visible[field] = not item.missing and reference_visible(
+                db, viewer_id=viewer_id, reference=reference
             )
+        result[key] = AttachmentOut(
+            reference=reference,
+            item=item if visible[field] else None,
+            location_available=visible[field]
+            and resolve_location(db, reference, byte_limit=None)[0],
         )
     return result
 

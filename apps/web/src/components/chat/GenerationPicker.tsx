@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect } from "react";
-import { Failed } from "@/components/feedback/Fact";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import ChoicePicker, { type ChoiceOption } from "@/components/ui/ChoicePicker";
 import type { ServerValue } from "@/lib/api/serverState";
@@ -26,7 +26,7 @@ import styles from "./ChatComposer.module.css";
 
 /** The three choices share one read and commit only advertised exact selections. Cold, each
  * trigger stays pressable and opens on the ruling; a failed read opens with its fact, and the press
- * reads again. A failed revalidation over shown rows says nothing. */
+ * reads again. Native unavailability keeps its reason and an explicit retry. */
 export default function GenerationPicker({
   catalogRead,
   value,
@@ -64,6 +64,10 @@ export default function GenerationPicker({
   const routeRow = route ? catalogRoute(catalog, route) : null;
   const variant = editorVariant(catalog, value);
   const routes = catalog.routes;
+  const native = routes.find(row => row.route.kind === "CodexPersonal");
+  const recovery = native && native.readiness.kind !== "Ready" ? <Fact
+    line={{ fact: `${native.label}: ${unreadyReason(native.readiness)}` }}
+    verbs={[{ label: "retry", commandKey: "read model catalog", run: catalogRead.refetch, busy: catalogRead.refreshing }]} /> : null;
   const providers: ChoiceOption[] = routes.map((row) => {
     const choices = modelVariants(row).flatMap((item) => item.reasoning);
     return {
@@ -106,13 +110,13 @@ export default function GenerationPicker({
   return (
     <div className={styles.picker}>
       <ChoicePicker label="provider" value={providerId} options={providers} disabled={disabled}
-        footer={null} onOpen={refresh}
+        footer={recovery} onOpen={refresh}
         onChange={(key) => {
           const selected = routes.find((row) => routeKey(row.route) === key);
           if (selected) onChange(chooseRoute(catalog, selected.route, value));
         }} />
       <ChoicePicker label="model" value={modelId} options={models} disabled={disabled || !routeRow}
-        footer={null} onOpen={refresh}
+        footer={routeRow?.route.kind === "CodexPersonal" ? recovery : null} onOpen={refresh}
         onChange={(key) => {
           const selected = variants.find((item) => item.key === key);
           if (route && selected)
@@ -120,7 +124,7 @@ export default function GenerationPicker({
         }} />
       <EffortPicker variant={variant} value={value}
         disabled={disabled || (!variant && value.kind !== "Selected" && !waiting)}
-        waiting={waiting} unready={waiting && !variant ? <Ruling /> : null}
+        waiting={waiting} unready={routeRow?.route.kind === "CodexPersonal" && recovery !== null ? recovery : waiting && !variant ? <Ruling /> : null}
         onOpen={refresh}
         onChange={(key) => {
           if (route && variant) onChange(chooseThinking(route, variant.model.key, key));
