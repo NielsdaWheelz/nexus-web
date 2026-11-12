@@ -20,12 +20,14 @@ from uuid import UUID
 from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
+from nexus.schemas.reader import ReaderTextOffsets
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.schemas.search import SearchMatchOut, SearchMatchRangeOut
 from nexus.services.content_indexing import reading_chunks_sql
 from nexus.services.media_text_scope import apparatus_scope_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_items.items import excerpt_window, resource_items_out
+from nexus.services.resource_items.routing import message_href
 from nexus.services.search.projection import ANALYZER, TABLE, TEXT_FIELDS
 from nexus.services.search.sources import (
     GENERATED_FAMILIES,
@@ -404,7 +406,9 @@ def _literal_match(
     return SearchMatchOut(excerpt=shown, ranges=ranges)
 
 
-def _witness(row: RowMapping, hit: DiscoveryHit, terms: str) -> SearchMatchOut | None:
+def _witness(
+    row: RowMapping, hit: DiscoveryHit, terms: str
+) -> tuple[SearchMatchOut | None, ReaderTextOffsets | None]:
     """a positive query-term witness need not certify a whole boolean branch."""
     for name in TEXT_FIELDS:
         value, positions = row[name], row[name + "_positions"]
@@ -415,7 +419,12 @@ def _witness(row: RowMapping, hit: DiscoveryHit, terms: str) -> SearchMatchOut |
             # strict decoding rejects offsets inside a utf-8 code point.
             start = len(encoded[:begin].decode("utf-8"))
             stop = len(encoded[:end].decode("utf-8"))
-            return _literal_match(value, anchor=start, span=(start, stop))
+            return (
+                _literal_match(value, anchor=start, span=(start, stop)),
+                ReaderTextOffsets(start_offset=start, end_offset=stop)
+                if hit.family == "message" and name == "body"
+                else None,
+            )
     if hit.name_tier:
         # this anchors the existing raw-name admission only; it neither parses the
         # query nor manufactures positive emphasis for stopword/name-only hits.
@@ -423,10 +432,10 @@ def _witness(row: RowMapping, hit: DiscoveryHit, terms: str) -> SearchMatchOut |
             value = row[name]
             found = re.search(re.escape(terms), value, re.IGNORECASE) if value else None
             if found:
-                return _literal_match(value, anchor=found.start())
+                return _literal_match(value, anchor=found.start()), None
     # negative-only hits need no invented positive span. missing native evidence
     # stays absent, with the canonical selected resource and body still intact.
-    return None
+    return None, None
 
 
 def present(
@@ -510,12 +519,18 @@ def present(
             raise RuntimeError("visible discovery resource missing from canonical item projection")
         key = facts.doc_keys.get(context)
         row = annotations.get(key) if key is not None else None
-        match = (
-            _witness(row, by_context[context], terms)
-            if row is not None and context in by_context
-            else None
-        )
         hit = by_context.get(context)
+        match, message_offsets = (
+            _witness(row, hit, terms) if row is not None and hit is not None else (None, None)
+        )
+        if hit is not None and message_offsets is not None:
+            item = item.model_copy(
+                update={
+                    "activation": item.activation.model_copy(
+                        update={"href": message_href(hit.ref.id, offsets=message_offsets)}
+                    )
+                }
+            )
         if hit is not None and hit.family == "highlight_annotation":
             annotation = annotation_bodies.get(hit.ref.id)
             assert annotation is not None

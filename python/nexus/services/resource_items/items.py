@@ -43,6 +43,7 @@ from nexus.schemas.resource_items import (
     ExcerptOut,
     ImagesResourceBodyOut,
     MediaResourceBodyOut,
+    MessageMetadataOut,
     NamedResourceBodyOut,
     PassageResourceBodyOut,
     ProseResourceBodyOut,
@@ -488,14 +489,16 @@ def _body(
             return ImagesResourceBodyOut(count=images, alts=alts)
         return ProseResourceBodyOut(
             excerpt=excerpt(prose, limit),
-            role=None,
+            message=None,
             format="code" if row["presentation"] == "code" else "plain",
             image_count=images,
         )
     if kind == "prose":
         return ProseResourceBodyOut(
             excerpt=excerpt(row.get("prose") or "", limit),
-            role=row.get("role"),
+            message=MessageMetadataOut(
+                role=row["role"], created_at=row["created_at"], status=row["status"]
+            ),
             format="plain",
             image_count=0,
         )
@@ -779,7 +782,7 @@ _QUERIES = {
     "library": "SELECT l.id, CASE WHEN l.is_default THEN 'All' ELSE l.name END AS title FROM libraries l WHERE l.id = ANY(:ids) AND EXISTS (SELECT 1 FROM memberships ms WHERE ms.library_id = l.id AND ms.user_id = :viewer_id)",
     "page": f"SELECT p.id, {page_title_sql('p')} AS title FROM pages p WHERE p.id = ANY(:ids) AND p.user_id = :viewer_id AND p.authored_visible",
     "note_block": _NOTE_SQL,
-    "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role FROM messages m WHERE m.id = ANY(:ids) AND m.owner_user_id = :viewer_id AND m.status != 'pending'",
+    "message": "SELECT m.id, 'prose' AS body_kind, left(m.content, 601) AS prose, m.role, m.created_at, m.status FROM messages m WHERE m.id = ANY(:ids) AND m.owner_user_id = :viewer_id AND m.status != 'pending'",
     "podcast": "SELECT id, title, image_url FROM feeds WHERE kind='podcast' AND id = ANY(:ids)",
     "feed": f"SELECT id, title, image_url FROM feeds WHERE kind='article' AND id=ANY(:ids) AND id IN ({feed_catalog_ids_sql()})",
     "contributor": "SELECT id, display_name AS title FROM contributors WHERE id = ANY(:ids)",

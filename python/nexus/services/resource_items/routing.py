@@ -19,6 +19,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.schemas.reader import ReaderTextOffsets
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_evidence import CapturedPassageTarget, ResourceField
 from nexus.schemas.resource_items import ResourceActivationOut
@@ -46,6 +47,14 @@ _PASSAGE_ANCHORS = {
 }
 
 
+def message_href(message_id: UUID, *, offsets: ReaderTextOffsets | None = None) -> str:
+    """A whole message or one live codepoint range in its immutable terminal text."""
+    query: dict[str, str | int] = {"message": str(message_id)}
+    if offsets is not None:
+        query |= {"start_offset": offsets.start_offset, "end_offset": offsets.end_offset}
+    return f"/librarian?{urlencode(query)}"
+
+
 def captured_passage_activation(target: CapturedPassageTarget) -> ResourceActivationOut:
     """An already admitted passage's source route, without rereading its body.
 
@@ -66,7 +75,7 @@ def captured_passage_activation(target: CapturedPassageTarget) -> ResourceActiva
     elif owner.scheme == "highlight" and target.field == "annotation":
         href = f"/highlights/{owner.id}#annotation"
     elif owner.scheme == "message" and target.locator.type == "message_offsets":
-        href = f"/librarian?message={owner.id}"
+        href = message_href(owner.id)
     else:
         # justify-defect: captured passage owners have one explicit source route.
         raise AssertionError("captured passage has no source route")
@@ -342,7 +351,7 @@ def _dynamic_routes(
 
     routes: dict[str, str] = {}
     for ref in by_scheme["message"]:
-        routes[ref.uri] = f"/librarian?message={ref.id}"
+        routes[ref.uri] = message_href(ref.id)
     for id_, handle in rows(
         "SELECT id, handle FROM contributors WHERE id = ANY(:ids)", by_scheme["contributor"]
     ):

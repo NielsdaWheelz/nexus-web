@@ -5,6 +5,7 @@ Every key is snake_case on the wire.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -125,10 +126,16 @@ class PassageResourceBodyOut(_Out):
     color: HighlightColor | None
 
 
+class MessageMetadataOut(_Out):
+    role: Literal["user", "assistant"]
+    created_at: datetime
+    status: Literal["complete", "error", "cancelled"]
+
+
 class ProseResourceBodyOut(_Out):
     kind: Literal["prose"] = "prose"
     excerpt: ExcerptOut
-    role: str | None
+    message: MessageMetadataOut | None
     format: Literal["plain", "code"]
     image_count: int
 

@@ -37,6 +37,7 @@ export interface PaneRouterOptions {
   labelHint?: string;
   discardOwnerIds?: readonly string[];
   activate?: boolean;
+  entry?: WorkspacePaneEntry;
 }
 export interface PaneScopedRouter {
   readonly canGoBack: boolean;
@@ -127,8 +128,8 @@ export function PaneRuntimeProvider(props: {
     const go = (target: string, replace: boolean, options: PaneRouterOptions = {}) => {
       const next = normalizeWorkspaceHref(target);
       if (!next) return "unchanged" as const;
-      const { labelHint, activate, discardOwnerIds } = options;
-      return now().store.navigatePane(pane.id, next, { replace, activate, labelHint, discardOwnerIds });
+      const { labelHint, activate, discardOwnerIds, entry } = options;
+      return now().store.navigatePane(pane.id, next, { replace, activate, labelHint, discardOwnerIds, entry });
     };
     const router: PaneScopedRouter = {
       get canGoBack() {

@@ -480,16 +480,17 @@ function createWorkspaceStore(
     navigatePane(
       paneId: string,
       href: string,
-      options: { replace?: boolean; activate?: boolean; labelHint?: string; discardOwnerIds?: readonly string[] } = {},
+      options: { replace?: boolean; activate?: boolean; labelHint?: string; discardOwnerIds?: readonly string[]; entry?: WorkspacePaneEntry } = {},
     ): WorkspaceNavigationResult {
       const target = normalizeWorkspaceHref(resolveTodayHref(href, timeZone()));
       const pane = find(paneId);
       if (!target || !pane) return "unchanged";
       if (pane.current_visit.href === target) {
         if (!guard.confirmLoss({scopes: [], ownerIds: options.discardOwnerIds ?? []})) return "cancelled";
-        if (resolvePaneRouteModel(target).id !== "dailyDate") return "unchanged";
+        const entry = options.entry ?? (resolvePaneRouteModel(target).id === "dailyDate" ? { kind: "RevealDailyDate" as const } : null);
+        if (entry === null) return "unchanged";
         const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
-        deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: pane.current_visit.id, entry: {kind: "RevealDailyDate"}});
+        deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: pane.current_visit.id, entry});
         commit(data.state, {pendingPaneEntryDeliveryByPaneId: deliveries});
         return "committed";
       }
@@ -504,8 +505,8 @@ function createWorkspaceStore(
       if (!admit(state, options.discardOwnerIds, materializing ? visit.id : null)) return "cancelled";
       const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
       const arrival = sourceTargetFromHref(target, true);
-      const entry: WorkspacePaneEntry | null = resolvePaneRouteModel(target).id === "dailyDate" ? {kind: "RevealDailyDate"}
-        : arrival ? {kind: "InspectSource", target: arrival, purpose: "Open"} : null;
+      const entry: WorkspacePaneEntry | null = options.entry ?? (resolvePaneRouteModel(target).id === "dailyDate" ? {kind: "RevealDailyDate"}
+        : arrival ? {kind: "InspectSource", target: arrival, purpose: "Open"} : null);
       if (entry) deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry});
       else deliveries.delete(paneId);
       const previousForeground = find(data.state.active_primary_pane_id);

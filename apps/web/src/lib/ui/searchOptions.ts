@@ -2,7 +2,7 @@
 
 // Controlled suggestion bindings. Admission and active identity belong to the
 // feature; this module owns no query, request, selection or mutation lifetime.
-import { useLayoutEffect, useRef, type MouseEvent, type PointerEvent } from "react";
+import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { revealCollectionItem } from "./collection";
 
 export type SearchOption = {
@@ -13,7 +13,8 @@ export type SearchActive = { readonly context: string; readonly key: string | nu
 
 type SearchKeyEvent = Pick<KeyboardEvent,
   "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "repeat" |
-  "isComposing" | "keyCode" | "defaultPrevented">;
+  "isComposing" | "keyCode" | "defaultPrevented" | "preventDefault">;
+type SearchActivationEvent = SearchKeyEvent | MouseEvent<HTMLElement>;
 
 function searchOptionId(listId: string, key: string): string {
   return `${listId}-option-${encodeURIComponent(key)}`;
@@ -37,7 +38,7 @@ export function reconcileSearchActive({ context, admitted, options, initialKey, 
 }
 
 export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
-  listId, label, open, options, activeKey, onActiveChange, onActivate,
+  listId, label, open, options, activeKey, onActiveChange, onActivate, allowShiftEnter = false,
 }: {
   readonly listId: string;
   readonly label: string;
@@ -45,7 +46,8 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
   readonly options: readonly SearchOption[];
   readonly activeKey: string | null;
   readonly onActiveChange: (key: string | null) => void;
-  readonly onActivate: (key: string) => void;
+  readonly onActivate: (key: string, event: SearchActivationEvent) => void;
+  readonly allowShiftEnter?: boolean;
 }) {
   const listRef = useRef<T | null>(null);
   const latest = useRef({ open, options, onActiveChange, onActivate });
@@ -62,12 +64,12 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
     const item = activeItemKey === null ? null : document.getElementById(searchOptionId(listId, activeItemKey));
     if (list && item) revealCollectionItem(list, item);
   }, [listId, open, activeItemKey, activeIndex]);
-  const activate = (key: string) => {
+  const activate = (key: string, event: SearchActivationEvent) => {
     const current = latest.current;
     const option = current.open ? current.options.find(option => option.key === key) : null;
     if (!option) return;
     current.onActiveChange(key);
-    if (option.disabledReason === null) current.onActivate(key);
+    if (option.disabledReason === null) current.onActivate(key, event);
   };
   return {
     listRef,
@@ -79,9 +81,9 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
     } as const,
     handleKey(event: SearchKeyEvent, composing: boolean): boolean {
       if (!open || event.defaultPrevented || composing || event.isComposing || event.keyCode === 229 ||
-        event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+        event.altKey || event.ctrlKey || event.metaKey || event.shiftKey && !(allowShiftEnter && event.key === "Enter")) return false;
       if (event.key === "Enter") {
-        if (!event.repeat && active?.disabledReason === null) onActivate(active.key);
+        if (!event.repeat && active?.disabledReason === null) onActivate(active.key, event);
         return true;
       }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return false;
@@ -104,6 +106,12 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
         id: searchOptionId(listId, key), role: "option", "aria-selected": active?.key === key,
         "aria-disabled": option.disabledReason !== null || undefined,
         "data-active": active?.key === key || undefined,
+        onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+          if (!allowShiftEnter || event.key !== "Enter" || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
+              event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.repeat) event.preventDefault();
+          else if (event.shiftKey) activate(key, event.nativeEvent);
+        },
         onPointerMove(event: PointerEvent<HTMLElement>) {
           const start = press.current;
           if (start?.pointerId === event.pointerId && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) start.moved = true;
@@ -126,8 +134,12 @@ export function useSearchOptions<T extends HTMLElement = HTMLDivElement>({
         onClick(event: MouseEvent<HTMLElement>) {
           const start = press.current;
           press.current = null;
-          if (event.button !== 0 || (event.detail !== 0 && (!start || start.key !== key || start.moved))) return;
-          activate(key);
+          if (event.button !== 0) return;
+          if (event.detail !== 0 && (!start || start.key !== key || start.moved)) {
+            event.preventDefault();
+            return;
+          }
+          activate(key, event);
         },
       } as const;
     },

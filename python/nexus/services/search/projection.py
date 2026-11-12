@@ -247,7 +247,7 @@ _SOURCES = {
         "messages m",
         identity="m.id",
         fields={"body": "m.content"},
-        where="m.status='complete' AND m.content<>''",
+        where="m.status IN ('complete','error','cancelled') AND m.content<>''",
     ),
     "reader_apparatus_item": _source(
         "reader_apparatus_item",

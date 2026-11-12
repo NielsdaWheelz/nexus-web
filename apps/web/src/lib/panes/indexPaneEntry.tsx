@@ -11,14 +11,14 @@ import { useLiveGroup } from "@/lib/catalog/provider";
 import { catalogReadPolicy, readCatalog } from "@/lib/chat/catalog";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import type { Catalog, Timeline } from "@/lib/chat/wire";
-import { indexPaneQuery } from "@/lib/panes/indexPaneQuery";
+import { indexPaneQuery, librarianSearchQuery } from "@/lib/panes/indexPaneQuery";
 import { getContributor, listContributorWorks } from "@/lib/contributors/api";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
 import { librariesIndex, libraryEntriesIndex } from "@/lib/libraries/api";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { listFeeds, listFeedEntries } from "@/lib/feeds/api";
 
-import { usePaneEntryDelivery, usePaneIsActive, usePaneIsVisible } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneEntryDelivery, usePaneIsActive, usePaneIsVisible, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 import { SuggestionEntryRead, QuickReadsEntryRead, suggestionRead, browseSelectionRead } from "@/lib/panes/suggestionEntryReads";
 import { getQuickReads } from "@/lib/suggestions";
@@ -99,6 +99,8 @@ function LecternEntry({ children }: EntryProps) {
   return <SuggestionEntryRead.Provider value={suggestions}><QuickReadsEntryRead.Provider value={quick}><PaneEntryReads reads={[suggestions, quick]}>{children}</PaneEntryReads></QuickReadsEntryRead.Provider></SuggestionEntryRead.Provider>;
 }
 function LibrarianEntry({ query, children }: EntryProps) {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianEntry");
+  const searching = librarianSearchQuery(runtime.href) !== null;
   const active = usePaneIsActive();
   const foreground = useRefreshStamp(active, 0);
   const stale = `${useChangeStamp("Chats", "Metadata", "Notes", "NoteBodies")}:${foreground}`;
@@ -123,7 +125,7 @@ function LibrarianEntry({ query, children }: EntryProps) {
   const timeline = useMemo(() => ({ key: path, stale,
     load: async (signal: AbortSignal) => (await apiFetch<ApiJson<"/librarian/messages", "get">>(path, { signal })).data }), [path, stale]);
   const catalog = useMemo(() => ({ key: "/llm-catalog", stale: String(foreground), load: readCatalog, ...catalogReadPolicy }), [foreground]);
-  return <Librarian.Provider value={{ timeline, catalog }}><PaneEntryReads reads={[timeline, catalog]}>{children}</PaneEntryReads></Librarian.Provider>;
+  return <Librarian.Provider value={{ timeline, catalog }}><PaneEntryReads reads={searching ? [catalog] : [timeline, catalog]}>{children}</PaneEntryReads></Librarian.Provider>;
 }
 type EntryProps = { params: Record<string, string>; query: URLSearchParams; children: ReactNode };
 export function IndexPaneEntry({ routeId, ...props }: EntryProps & { routeId: PaneRouteId | "unsupported" }) {

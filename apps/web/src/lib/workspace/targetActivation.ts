@@ -23,6 +23,7 @@ export type WorkspaceTargetDisposition =
  */
 export type WorkspacePaneEntry =
   | { readonly kind: "FocusLibrarian"; readonly send: boolean }
+  | { readonly kind: "FocusLibrarianSearch"; readonly text: string; readonly start: number; readonly end: number; readonly direction: "forward" | "backward" | "none" }
   | { readonly kind: "ComposeChat"; readonly text: string }
   | { readonly kind: "ComposePage"; readonly title: string }
   | { readonly kind: "RevealDailyDate" }

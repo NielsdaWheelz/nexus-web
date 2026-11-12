@@ -93,8 +93,14 @@ brief is manual; chat has no brief-writing tool or automatic orientation documen
 
 ## product ownership
 
-`components/chat/Librarian.tsx` owns a bounded window and its navigation; the
-shared pane return and scroll owners retain reading position. `ChatComposer`
+`components/chat/Librarian.tsx` owns mode, timeline reading and chrome.
+`LibrarianTranscript` owns the bounded window's scroll and source arrival;
+`LibrarianSearch` uses shared lexical message search and pane visit restoration.
+first query pushes a search visit, edits replace it, and opening a result pushes
+its exchange. back restores the query, result prefix, selection and scroll.
+clearing returns to the originating timeline, or latest for direct search entry.
+accepted sends push latest while normal history retains the prior search/exchange.
+search and catalog readiness are independent. `ChatComposer`
 owns editable input and one chosen model. `lib/chat/drafts.ts` retains pane input;
 `commands.ts` retains one account admission's uuid, exact body, deletion fence
 and uncertain outcome. acceptance clears only the submitted draft object and
@@ -102,7 +108,8 @@ immediately frees admission while the server continues generation. source
 handoffs and the palette focus or submit through that same composer.
 
 `IndexPaneEntry` starts the librarian's timeline and catalog reads while its lazy
-code loads. the body claims those exact descriptors through `PaneEntryReads`;
+code loads; a search visit starts only the catalog read. the body claims those
+exact descriptors through `PaneEntryReads`;
 subsequent cursor changes belong to the mounted hooks. active entry starts saved
 selection recall once per activation. dispatch rechecks that recall's current
 freshness for an uninitialized selection; explicit draft selections bypass it.
@@ -123,6 +130,18 @@ model and effort; outside the librarian, retry opens the turn for this explicit
 choice. retry never consumes the composer draft. successful answers expose
 no regeneration. deletion names its question/answer pair and says completed
 actions remain. ordinary message resource actions remain available.
+
+the search toolbar covers retained nonempty terminal text across account history,
+including incomplete answers. metadata identifies speaker, admission time and
+incomplete state. word/phrase semantics, ranking and bounded pages belong to search;
+there is no total count or semantic message lane. search text never becomes a send.
+
+message arrivals may carry paired `start_offset`/`end_offset` codepoint coordinates
+beside `message` in the librarian url. they resolve through live `TextOffsets`;
+invalid ranges do not substitute a whole-message success. the same markdown parser
+maps source spans to a containing rendered passage or code line. a hidden link
+destination marks its paragraph; source-only definitions may mark the message.
+this is passage emphasis, not a claim that source and rendered glyphs coincide.
 
 `LiveReference` hydrates current identity and delivers structural coordinates to
 the existing source-arrival owner. unavailable sources say `source unavailable`;

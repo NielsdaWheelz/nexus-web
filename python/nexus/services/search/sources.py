@@ -166,6 +166,7 @@ _FQUOTE = "jsonb_build_object('exact', f.canonical_text, 'prefix', '', 'suffix',
 LIVE_APPARATUS = """ras.status IN ('ready', 'partial') AND rai.locator IS NOT NULL
     AND rai.locator_status != 'missing'"""
 _STRICT_ADMISSION = {
+    "message": " AND ms.status = 'complete'",
     "highlight": """ AND ((h.anchor_kind = 'fragment_offsets' AND f.id IS NOT NULL)
         OR (h.anchor_kind = 'pdf_page_geometry' AND pa.highlight_id IS NOT NULL))""",
     "reader_apparatus_item": " AND rai.locator IS NOT NULL AND rai.locator_status != 'missing'",
@@ -374,7 +375,7 @@ SOURCES: dict[str, str] = {
                 'end_offset', char_length(ms.content),
                 'text_quote_selector', jsonb_build_object('exact', ms.content)) AS locator
         FROM messages ms
-        WHERE ms.owner_user_id = :viewer_id AND ms.status = 'complete' AND ms.content <> ''
+        WHERE ms.owner_user_id = :viewer_id AND ms.status IN ('complete','error','cancelled') AND ms.content <> ''
             {where}""",
     "reader_apparatus_item": f"""SELECT 'reader_apparatus_item' AS type,rai.id,rai.label,
             {_APPARATUS_DOCUMENT} AS doc,

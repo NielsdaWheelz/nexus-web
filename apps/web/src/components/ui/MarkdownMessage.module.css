@@ -172,6 +172,11 @@
   font: inherit;
 }
 
+.codeContent [data-message-code-passage] {
+  display: inline-block;
+  min-inline-size: 100%;
+}
+
 .chat {
   font: inherit;
   letter-spacing: normal;

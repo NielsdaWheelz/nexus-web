@@ -2,3 +2,12 @@
   outline: 2px solid var(--accent);
   outline-offset: 4px;
 }
+
+.literal {
+  background: transparent;
+  color: inherit;
+}
+
+.literal.inspected {
+  background: var(--highlight-yellow);
+}
