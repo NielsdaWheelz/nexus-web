@@ -14,6 +14,12 @@ images or relabel another candidate. use the normal merged-main push and its
 first-attempt candidate for the current release. inspect github event/path-filter
 behavior before relying on branch creation as an early publication mechanism.
 
+the librarian release repeated this with existing source `ff4862ac9`: creating
+its release branch produced no run. advancing that existing branch to new source
+`9b435d881` did produce eligible first-attempt run `43318699213`, which was
+deployed successfully. this establishes a working branch-update path, not the
+cause of the missing branch-creation events.
+
 resolved when the exact supported release-branch push procedure produces an
 eligible first-attempt artifact, or the runbook narrows its publication promise
 with the demonstrated event limitation.

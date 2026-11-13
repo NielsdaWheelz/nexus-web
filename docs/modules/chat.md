@@ -63,6 +63,10 @@ snapshot. runs, messages, tools and retrievals feed both message projection and
 trust trails. resource hydration deduplicates full references and reconstructs
 input order and multiplicity. attachment availability distinguishes source,
 field and locator; response-local reuse never crosses viewers or snapshots.
+attachments reuse hydrated item authority and add the annotation owner's private
+field check. source navigation composes those same proofs. prompt reads retain
+their separate identity and horizon checks. location availability checks bounds
+without constructing source text; bounded prompt reads still enforce byte limits.
 stream pages keep their own snapshot: text pages hydrate nothing, start frames
 exclude later results, and result frames hydrate only that page's retrievals.
 

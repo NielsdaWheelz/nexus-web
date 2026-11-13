@@ -242,7 +242,9 @@ def _scope_source_reads(
     ):
         candidates.setdefault(source, []).append(reading)
     owners = list({id for ids in candidates.values() for id in ids})
-    scopes = text_scope_rows_sql("SELECT unnest(CAST(:ids AS uuid[])) AS media_id")
+    piece_owners = list(set(owners) - set(canonical_ids))
+    # Roots win directly. Only pieces need measured extents and apparatus membership.
+    scopes = text_scope_rows_sql("SELECT unnest(CAST(:pieces AS uuid[])) AS media_id")
     priority = (
         {
             row.id: index
@@ -255,18 +257,18 @@ def _scope_source_reads(
                 GROUP BY m.id,p.media_id
                 ORDER BY (p.media_id IS NULL) DESC,COALESCE(sum(bound.end_offset-bound.start_offset),0),m.id
             """),
-                    {"ids": owners},
+                    {"ids": owners, "pieces": piece_owners},
                 )
             )
         }
-        if owners
-        else {}
+        if piece_owners
+        else {id: index for index, id in enumerate(sorted(owners))}
     )
     apparatus: dict[UUID, set[UUID]] = {}
-    if owners:
+    if piece_owners:
         for owner, item in db.execute(
             text(apparatus_scope_rows_sql("SELECT unnest(CAST(:ids AS uuid[])) AS media_id")),
-            {"ids": owners},
+            {"ids": piece_owners},
         ):
             apparatus.setdefault(owner, set()).add(item)
     words = _scope_words(db, canonical_ids, fragment_ids)
@@ -1066,7 +1068,18 @@ def media_passages(
     for uri, passage in current.items():
         if passage.owner.scheme == "media":
             out[uri] = ScopedMediaPassage(passage.owner, passage.quote, passage.locator)
-    subjects = [uri for uri in out if isinstance(out[uri].quote, CapturedQuote)]
+    # Authored captures are already validated. Clip only scoped readings, retaining
+    # any table-cut rejection obligation even when the capture itself is unchanged.
+    subjects = [
+        uri
+        for uri, passage in out.items()
+        if isinstance(passage.quote, CapturedQuote)
+        and (
+            passage.excerpt_scope is not None
+            and passage.excerpt_scope["kind"] != "capture"
+            or passage.incomplete_tables
+        )
+    ]
     scoped_excerpts = scope_excerpts(
         [
             {
