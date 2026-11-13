@@ -1,16 +1,8 @@
 # account settings release
 
-the slim assistant-write ledger item rides unshipped wire 23 with
-[librarian companion](release-librarian-companion.md),
-[reference quotes](release-reference-quotes.md),
-[composer receipt](release-composer.md) and
-[imports register](release-imports-register.md). implementation is based on
-`79feb68ab`; the newest android tag is `android-v0.3.13`. this change adds no
-migration; the paired release retains reference quotes’ conversion preconditions
-and imports register’s migration 0345.
-before merge, verify wire 23 remains unshipped. if it has shipped, bump once
-and pair api, web, apk, extension and the active email worker through the
-canonical release owner. retain authored replicas and pending writing.
+api, web, android 0.3.15 and firefox 1.1.3 are paired at
+`263d295ebeda5849cd8114725f0a1dbaf5cead41`, wire 23/schema 0345.
+installed observations have the owner's [release-scoped deferral](release-installed-clients-263d295eb.md).
 
 owner checks required outside the chromium lab:
 
