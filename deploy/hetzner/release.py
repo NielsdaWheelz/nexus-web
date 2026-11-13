@@ -564,6 +564,20 @@ def migrate(candidate: CandidateManifest) -> None:
     reached = database_revision(psql)
     if reached != candidate.expected_database_revision:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
+    # Remove this one-time conversion with its command after production verification.
+    note("freezing saved reference quotes with writers stopped")
+    for attempt in range(2):
+        output = compose(
+            candidate,
+            "run --rm --no-deps --no-TTY"
+            " -e NEXUS_CODEX_CONTROL_ENDPOINT=unix:///tmp/codex-daemon-10001/control.sock"
+            " migration python -m nexus.services.chat.convert_reference_quotes",
+            profile="release",
+            timeout=1800,
+        )
+        print(output, end="", flush=True)
+        if attempt == 1 and any(json.loads(output).values()):
+            raise Failure("saved reference quote conversion changed rows on its second pass")
 
 
 # ---------------------------------------------------------------------------

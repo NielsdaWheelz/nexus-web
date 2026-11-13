@@ -393,7 +393,11 @@ host backup lock from before preflight until it exits (see
    existing volume and require the actual 512 mib/no-swap ceiling, 64 mib shared
    buffers and 128 mib shared memory before migration.
 6. **migrate** — `alembic upgrade head`, then re-read the revision. migration
-   0317 checks the exact extension catalog and binary versions.
+   0317 checks the exact extension catalog and binary versions. while the
+   one-time saved-reference conversion ships, run it twice in the separate
+   migration container with writers stopped; require zero changes on its second
+   pass before startup. remove this step with the conversion command after
+   production verification.
 7. **up** — `docker compose up --detach --wait`, then require every service
    healthy. prove the persistent parent unit/property and kernel swap max/current
    are zero, all eight actual process cgroups descend from it, and each actual
