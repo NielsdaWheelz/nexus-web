@@ -30,7 +30,7 @@ class CurrentReference:
     label: str
     body: str
     source_available: bool
-    location_available: bool
+    content_available: bool
 
 
 def attachments_by_reference(

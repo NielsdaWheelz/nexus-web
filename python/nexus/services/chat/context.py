@@ -95,7 +95,7 @@ def assemble(db: Session, *, run: ChatRun, context_budget: int) -> Assembly:
         uri = escape(reference.resource_ref, {'"': "&quot;"})
         if not current.source_available:
             block = f'<resource uri="{uri}">source unavailable</resource>'
-        elif not current.location_available:
+        elif not current.content_available:
             block = f'<resource uri="{uri}">selected passage unavailable</resource>'
         else:
             ref = require_ref(reference.resource_ref)

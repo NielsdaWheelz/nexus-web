@@ -131,11 +131,9 @@ def message_admitted(call: Call, ref: ResourceRef) -> bool:
         )
     if message_id is None:
         return True
-    from nexus.services.chat.timeline import message_visible
-
     horizon = call.message_horizon_seq
     assert horizon is not None, "a chat tool must capture its horizon before dispatch"
-    return message_visible(call.db, call.principal, message_id, horizon)
+    return timeline.message_visible(call.db, call.principal, message_id, horizon)
 
 
 def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:

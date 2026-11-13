@@ -27,6 +27,10 @@ counts. inspect representative attachment/citation, private annotation and parti
 reading rows. a second run must report zero changes. only then restart writers.
 old rows have no saved words until this run; it cannot recover already lost text.
 
+source republication remains blocked while saved text parts pin it. quote
+qualification uses admitted part redefinition and republication of unpinned
+sources; no source-generation or part-lifetime rule changes.
+
 after verified production conversion, remove
 `python/nexus/services/chat/convert_reference_quotes.py` in the next change. qualify a real
 selection, published citation, source republication, unavailable source, reader
