@@ -14,6 +14,15 @@ immediately classifies the requested page. `PdfSurface.tsx:406` accepts an arriv
 within2px; capture at`:185` chooses the next page only at/before the line.
 owner: `apps/web/src/lib/documentReader/pdf/PdfSurface.tsx`.
 
+also observed in chromium at `68836fa2f`, lab
+`20261112-230927-5f7e4afa5d4e`, with a twelve-page pdf: after restoring fitted
+width and resizing, page 5's top was 205px against a 204px reading line, and the
+field said 4. after leaving for notes and returning in the same pane, the top
+and reading line were both 204px and the field said 5. the saved cursor stayed
+unchanged. firefox's corresponding journey had zero delta and said 5. this is
+the same boundary classification defect; fitted mode and the physical reading
+place survived return and subsequent resizing.
+
 reproduce: use numeric zoom2 and Page entry to jump between pages4/5 in webkit;
 compare the requested page's top with the reader's reading line after settling.
 

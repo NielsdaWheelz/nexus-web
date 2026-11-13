@@ -9,14 +9,14 @@ import { useWorkGuard, type WorkGuard } from "@/lib/unsavedWork";
 import { bindChatWorkGuard, revokeChatPreparation, setChatCommandAccount, suspendChatCommands } from "./commands";
 import type { ReaderQuote } from "./readerIntent";
 import type { SelectionEditor } from "./selection";
-import type { AcceptedReceipt, Refusal } from "./wire";
+import type { AcceptedReceipt, Refusal, Turn } from "./wire";
 
 export type Draft = Readonly<{ text: string; selection: SelectionEditor; quote: ReaderQuote | null }>;
 export type DraftCaret = Readonly<{ start: number; end: number; direction: "forward" | "backward" | "none" }>;
 export type AcceptedDraft = Readonly<{ receipt: AcceptedReceipt; visitId: string }>;
-type Snapshot = Readonly<{ draft: Draft; accepted: AcceptedDraft | null; refusal: Refusal | null }>;
+type Snapshot = Readonly<{ draft: Draft; accepted: AcceptedDraft | null; adopted: readonly Turn[]; refusal: Refusal | null }>;
 const EMPTY: Draft = { text: "", selection: { kind: "Uninitialized" }, quote: null };
-const EMPTY_SNAPSHOT: Snapshot = { draft: EMPTY, accepted: null, refusal: null };
+const EMPTY_SNAPSHOT: Snapshot = { draft: EMPTY, accepted: null, adopted: [], refusal: null };
 export const chatDraftOwnerId = (accountId: string, viewId: string) =>
   JSON.stringify(["librarian-draft", accountId, viewId]);
 const drafts = new Map<string, ChatDraftOwner>();
@@ -52,15 +52,16 @@ function createDraft(accountId: string, viewId: string, guard: WorkGuard) {
     setQuote: (quote: ReaderQuote | null) => write({ ...value.draft, quote }),
     seed: (text: string) => write({ ...value.draft, text, quote: null }),
     refuse: (refusal: Refusal | null) => { value = { ...value, refusal }; emit(); },
-    spend(submitted: Draft) {
-      if (value.draft !== submitted) return false;
-      caret = null; write(EMPTY); return true;
-    },
     accept(receipt: AcceptedReceipt, submitted: Draft | null, currentVisit: boolean, visitId: string) {
       // Record the monotonic fact before promotion or observer callbacks can fail.
-      value = { ...value, accepted: currentVisit ? { receipt, visitId } : null, refusal: null };
-      if (submitted !== null && value.draft === submitted) { value = { ...value, draft: EMPTY }; caret = null; }
+      value = { ...value, accepted: currentVisit ? { receipt, visitId } : null,
+        adopted: currentVisit ? [...value.adopted, receipt.outcome.turn] : value.adopted };
+      if (submitted !== null && value.draft === submitted) { value = { ...value, draft: EMPTY, refusal: null }; caret = null; }
       emit();
+    },
+    settleAdopted() {
+      if (value.adopted.length === 0) return;
+      value = { ...value, adopted: [] }; emit();
     },
     accountFor(accepted: AcceptedDraft | null) {
       // The reader captured this token before starting its request. An older read
@@ -70,7 +71,7 @@ function createDraft(accountId: string, viewId: string, guard: WorkGuard) {
     retireAcceptance() { if (value.accepted !== null) { value = { ...value, accepted: null }; emit(); } },
     retain() { drafts.set(chatDraftOwnerId(accountId, viewId), owner); register(); },
     revokePreparation() { revokeChatPreparation(accountId, viewId); },
-    dispose() { owner.revokePreparation(); release?.(); release = null; listeners.clear(); },
+    dispose() { owner.revokePreparation(); release?.(); release = null; value = { ...value, adopted: [] }; listeners.clear(); },
   };
   register();
   return owner;
@@ -104,8 +105,9 @@ export function useChatWorkOwners() {
         if (entry.accountId === accountId && panes.has(entry.viewId)) {
           const accepted = entry.getSnapshot().accepted;
           const visit = currentPanes.find(pane => pane.id === entry.viewId)!.current_visit;
-          if (new URL(visit.href, "https://nexus.invalid").pathname !== "/librarian") entry.revokePreparation();
-          if (accepted && (visit.id !== accepted.visitId || new URL(visit.href, "https://nexus.invalid").pathname !== "/librarian")) entry.retireAcceptance();
+          const librarian = new URL(visit.href, "https://nexus.invalid").pathname === "/librarian";
+          if (!librarian) { entry.revokePreparation(); entry.settleAdopted(); }
+          if (accepted && (visit.id !== accepted.visitId || !librarian)) entry.retireAcceptance();
           continue;
         }
         entry.dispose(); drafts.delete(key);

@@ -3436,25 +3436,11 @@ export interface components {
         /** AcceptedChatAdmission */
         AcceptedChatAdmission: {
             /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Accepted";
-            /**
-             * Run Id
-             * Format: uuid
-             */
-            run_id: string;
-            /**
-             * User Message Id
-             * Format: uuid
-             */
-            user_message_id: string;
+            turn: components["schemas"]["ChatRunResponse"];
         };
         /** ActiveExclusionOut */
         ActiveExclusionOut: {
@@ -3698,12 +3684,10 @@ export interface components {
         /** AttachmentOut */
         AttachmentOut: {
             annotation: components["schemas"]["HighlightAnnotationOut"] | null;
-            /** Excerpt */
-            excerpt: (components["schemas"]["ExcerptContentView"] | components["schemas"]["ExcerptTableSummary"]) | null;
             item: components["schemas"]["ResourceItemOut"] | null;
             /** Location Available */
             location_available: boolean;
-            reference: components["schemas"]["LiveReference-Output"];
+            reference: components["schemas"]["SavedReference-Output"];
             source: components["schemas"]["MediaSummaryOut"] | null;
         };
         /** AudienceAvailableOut */
@@ -4129,8 +4113,6 @@ export interface components {
         /** ChatCitationOut */
         ChatCitationOut: {
             annotation: components["schemas"]["HighlightAnnotationOut"] | null;
-            /** Excerpt */
-            excerpt: (components["schemas"]["ExcerptContentView"] | components["schemas"]["ExcerptTableSummary"]) | null;
             /**
              * Id
              * Format: uuid
@@ -4143,7 +4125,7 @@ export interface components {
             ordinal: number;
             source: components["schemas"]["MediaSummaryOut"] | null;
             /** Target */
-            target: components["schemas"]["ResourceRetrievalTarget"] | components["schemas"]["UrlRetrievalTarget"];
+            target: components["schemas"]["SavedResourceTarget"] | components["schemas"]["UrlRetrievalTarget"];
         };
         /** ChatFailureOut */
         ChatFailureOut: {
@@ -4170,7 +4152,7 @@ export interface components {
         /** ChatRunCreateRequest */
         ChatRunCreateRequest: {
             /** Attachments */
-            attachments: components["schemas"]["LiveReference-Input"][];
+            attachments: (components["schemas"]["ReferenceAttachmentIn"] | components["schemas"]["SelectionAttachmentIn"])[];
             /** Content */
             content: string;
             expected_deletion_revision: components["schemas"]["OrderRevision"];
@@ -8524,7 +8506,7 @@ export interface components {
         };
         /**
          * LiveReferenceSourceTargetKey
-         * @description Raw structural coordinates in a live resource; nothing was captured with them.
+         * @description A source and place, with saved words when this reference quotes a passage.
          */
         LiveReferenceSourceTargetKey: {
             /**
@@ -8532,7 +8514,7 @@ export interface components {
              * @enum {string}
              */
             kind: "live_reference";
-            reference: components["schemas"]["LiveReference-Input"];
+            reference: components["schemas"]["SavedReference-Input"];
         };
         /**
          * LiveSourceLocationOut
@@ -12257,6 +12239,35 @@ export interface components {
             /** Offer */
             offer: components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"];
         };
+        /** ReferenceAttachmentIn */
+        ReferenceAttachmentIn: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Reference";
+            reference: components["schemas"]["LiveReference-Input"];
+        };
+        /** ReferenceQuote */
+        "ReferenceQuote-Input": {
+            /** Exact */
+            exact: string;
+            excerpt: components["schemas"]["FrozenExcerpt-Input"];
+            /** Prefix */
+            prefix: string | null;
+            /** Suffix */
+            suffix: string | null;
+        };
+        /** ReferenceQuote */
+        "ReferenceQuote-Output": {
+            /** Exact */
+            exact: string;
+            excerpt: components["schemas"]["FrozenExcerpt-Output"];
+            /** Prefix */
+            prefix: string | null;
+            /** Suffix */
+            suffix: string | null;
+        };
         /** ReferenceResourceBodyOut */
         ReferenceResourceBodyOut: {
             /** Field */
@@ -12518,8 +12529,8 @@ export interface components {
         };
         /** ResolveLibrarianAttachmentsRequest */
         ResolveLibrarianAttachmentsRequest: {
-            /** References */
-            references: components["schemas"]["LiveReference-Input"][];
+            /** Attachments */
+            attachments: (components["schemas"]["ReferenceAttachmentIn"] | components["schemas"]["SelectionAttachmentIn"])[];
         };
         /** ResolveMediaObservationsIn */
         ResolveMediaObservationsIn: {
@@ -12783,6 +12794,35 @@ export interface components {
             /** Source */
             source: components["schemas"]["BrowserSource"] | components["schemas"]["XStatusSource"];
             target: components["schemas"]["SourceTarget"] | null;
+        };
+        /** SavedReference */
+        "SavedReference-Input": {
+            /** Field */
+            field: "annotation" | null;
+            /** Locator */
+            locator: (components["schemas"]["WebTextOffsetsTargetOut"] | components["schemas"]["EpubTextOffsetsTargetOut"] | components["schemas"]["TranscriptTextOffsetsTargetOut"] | components["schemas"]["PdfPageGeometryTargetOut"] | components["schemas"]["PdfPageTarget"] | components["schemas"]["TextOffsetsTarget"] | components["schemas"]["TimeRangeTarget"]) | null;
+            quote: components["schemas"]["ReferenceQuote-Input"] | null;
+            /** Resource Ref */
+            resource_ref: string;
+        };
+        /** SavedReference */
+        "SavedReference-Output": {
+            /** Field */
+            field: "annotation" | null;
+            /** Locator */
+            locator: (components["schemas"]["WebTextOffsetsTargetOut"] | components["schemas"]["EpubTextOffsetsTargetOut"] | components["schemas"]["TranscriptTextOffsetsTargetOut"] | components["schemas"]["PdfPageGeometryTargetOut"] | components["schemas"]["PdfPageTarget"] | components["schemas"]["TextOffsetsTarget"] | components["schemas"]["TimeRangeTarget"]) | null;
+            quote: components["schemas"]["ReferenceQuote-Output"] | null;
+            /** Resource Ref */
+            resource_ref: string;
+        };
+        /** SavedResourceTarget */
+        SavedResourceTarget: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource";
+            reference: components["schemas"]["SavedReference-Output"];
         };
         /** ScopeFinish */
         ScopeFinish: {
@@ -13175,6 +13215,19 @@ export interface components {
              * @enum {string}
              */
             kind: "Selectable";
+        };
+        /** SelectionAttachmentIn */
+        SelectionAttachmentIn: {
+            capture: components["schemas"]["SelectionCapture-Input"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Selection";
+            /** Reading Ref */
+            reading_ref: string;
+            /** Source Ref */
+            source_ref: string;
         };
         /** SelectionCapture */
         "SelectionCapture-Input": {

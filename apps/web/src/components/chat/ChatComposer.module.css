@@ -1,46 +1,69 @@
-/* The docked composer, its generation picker and live reference. */
-
+/* The transcript's open entry: rule, optional passage, line, facts, imprint. */
 .composer {
-  max-width: var(--content-max-width);
+  max-width: var(--librarian-column);
   margin: 0 auto;
-  padding: var(--space-3) clamp(var(--space-3), 4vw, var(--space-4));
+  padding: 0 var(--librarian-gutter) var(--space-2);
+}
+
+.rule {
+  position: relative;
+  height: var(--stroke-hairline);
+  background: var(--edge);
+}
+
+.rule::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ring);
+  transform: scaleX(0);
+  transform-origin: right center;
+  transition: transform var(--duration-base) var(--ease-bloom);
+}
+
+.composer:has(.input:focus) .rule::after {
+  transform: scaleX(1);
+  transform-origin: left center;
 }
 
 .input {
-  min-height: 1.5em;
+  display: block;
+  max-inline-size: var(--question-measure);
+  min-height: 1lh;
+  margin-block-start: var(--space-3);
+  font: var(--question-font);
+  letter-spacing: var(--question-tracking);
   color: var(--ink);
   caret-color: var(--accent);
 }
 
+.input::placeholder { color: var(--ink-faint); font-weight: var(--weight-regular); }
+
 .row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   gap: var(--space-2);
+  min-height: var(--size-md);
 }
 
-.picker {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-1);
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 100%;
+.send {
+  flex: none;
+  margin-inline-start: auto;
+  margin-inline-end: calc(-1 * var(--space-2));
+  white-space: nowrap;
 }
 
-.picker > * {
-  min-width: 0;
-  max-width: 100%;
+.hint { margin-inline-start: var(--space-2); color: var(--ink-faint); font-family: var(--font-mono); font-size: var(--text-xs); }
+
+@media (max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .composer { --control-min-size: var(--size-xl); }
 }
 
-.row > .picker {
-  display: contents;
+@media (prefers-reduced-motion: reduce) {
+  .rule::after { transition: none; }
 }
 
-
-@media (any-pointer: coarse) {
-  .input {
-    font-size: var(--text-md);
-  }
+@media (forced-colors: active) {
+  .rule { background: CanvasText; forced-color-adjust: none; }
+  .rule::after { background: Highlight; }
 }

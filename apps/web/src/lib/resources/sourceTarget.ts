@@ -43,7 +43,7 @@ export function sourceTargetFromHref(href: string, wholeSource = false): SourceA
           !/^(0|[1-9][0-9]*)$/.test(start) || !/^(0|[1-9][0-9]*)$/.test(end) ||
           !Number.isSafeInteger(Number(start)) || !Number.isSafeInteger(Number(end)) || Number(start) >= Number(end) || Number(end) > 2 ** 31 - 1)
         return { kind: "invalid_destination", reason: "invalid_reader_destination" };
-      return { kind: "live_reference", reference: { resource_ref: `message:${message}`, field: null,
+      return { kind: "live_reference", reference: { resource_ref: `message:${message}`, field: null, quote: null,
         locator: { kind: "TextOffsets", start_offset: Number(start), end_offset: Number(end) } } };
     }
   }

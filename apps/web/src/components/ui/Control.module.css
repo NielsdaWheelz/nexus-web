@@ -88,6 +88,16 @@
   color: var(--ink-on-accent);
 }
 
+.accent {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.accent:is(:hover, :active, [aria-expanded="true"], [aria-pressed="true"], :where([aria-current]:not([aria-current="false"]))) {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
 .control:is(:disabled, [aria-disabled="true"]) {
   background: transparent;
   color: var(--ink-faint);

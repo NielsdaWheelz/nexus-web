@@ -111,6 +111,16 @@ export function outlineShortcuts(platform: PlatformKind): readonly {
 
 type Shortcut = (typeof SHORTCUTS)[keyof typeof SHORTCUTS];
 
+/** The librarian textarea owns these keys; they are not app-wide shortcuts. */
+export function librarianLineShortcuts(platform: PlatformKind) {
+  return [
+    { id: "LibrarianLine.Send", title: "Send", description: "Sends the question in a wide window.", meta: "Enter" },
+    { id: "LibrarianLine.SendAnyWidth", title: "Send at any width", description: "Sends the question at every window width.", meta: usesMeta(platform) ? "⌘↵" : "Ctrl+Enter" },
+    { id: "LibrarianLine.LineBreak", title: "Line break", description: "Enter also breaks the line in a phone-width window.", meta: "Shift+Enter" },
+    { id: "LibrarianLine.Recall", title: "Recall the last question", description: "In an empty line on the latest window, recalls the newest question’s text.", meta: "↑" },
+  ];
+}
+
 export function usesMeta(platform: PlatformKind): boolean {
   return platform === "mac" || platform === "ios";
 }

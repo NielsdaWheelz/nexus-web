@@ -54,7 +54,7 @@ app/(authenticated)/media/[id]   app/s              shelf/
   hosted pane                      public reader      offline reader
         \  ReaderSource · ReaderProgressPort · ReaderHost (ports.ts)  /
 lib/documentReader
-  DocumentReader.tsx   useDocumentReader, useReaderState, DocumentReaderView, status strip
+  DocumentReader.tsx   useDocumentReader, useReaderState, DocumentReaderView, running-head slot, status lane
   runtime.ts           load, restore precedence, viewport policy, surface registry, state
   navigator.ts         reading/exploring, first origin, rollback, scrollbar seek
   progress.ts          cursor sync: 500 ms idle / 5 s max, single flight, keepalive, handoff
@@ -390,7 +390,7 @@ paint survives contents unmount. covering contents presents only its own exact
 failure occurrence; a column leaves feedback in the source. generic contents
 keeps host-independent navigation and native alternate-opening intent.
 
-the quick section picker remains mounted-document navigation. current location
+the running head’s section menu remains mounted-document navigation. current location
 uses `aria-current="location"`, not selection state. ordinary opening reveals it
 once; explicit first/last keyboard opening wins. live location updates neither
 retire the menu nor reclaim focus/scroll.
@@ -592,7 +592,12 @@ writes; clear/new navigation cannot finish an old reveal. cancellation preserves
 completed movement; an unavailable target retains existing failure rollback.
 query/section/page controls never adopt inspected positions as saved progress.
 
-pdf navigation exposes direct zoom out, scale/fit-width reset and zoom in controls.
+the pdf head keeps page entry, zoom out, a fixed-width zoom-state button, zoom in,
+and up/down page links on one row. the bare numeric text field commits on enter,
+validates the page range and drops its draft on blur or escape; its error is the
+only second line. the zoom state says `fitted` or a percent; pressing it restores
+fit width, and fitted is `aria-disabled`. below the head's container thresholds,
+`page` and `of N` hide while the field keeps its name and total description.
 `Reader.setZoom` and its surface capability accept `number | null`: numbers
 use the existing bounds, null selects responsive `page-width` fitting. chosen
 mode participates in equality and restore even when fixed and fitted scales
@@ -694,13 +699,57 @@ a timed reader location without starting playback.
 choosing a local section through its menu focuses the reader source after
 inspection. standalone previous/next controls retain their repeatable focus.
 
-hosted text-section navigation keeps one horizontal row. its authored title is
-visually ellipsized; the trigger name and open menu retain the complete label.
-below 18 times the control font size, the visible counter keeps only the current
-ordinal; screen-reader text retains the complete position. compact coarse-pointer
-arrows keep 44px targets while text may increase row height. pdf controls keep
-their separate wrapping layout. shared menu minimums yield to the positioning
-owner's measured viewport cap.
+the hosted running head is page furniture on desktop and retreating pane chrome
+on the phone. `useReaderChrome` builds one `{label, content}`: desktop returns it
+through `MediaPaneBody` and `HostedReaderView` as `DocumentReaderViewProps.head`;
+mobile publishes it through `PaneChrome.navigation`, with reader typography on a
+`display: contents` wrapper. crossing the breakpoint remounts the head and closes
+its menu. unsectioned text, loading, failure and a pdf without page state publish
+no head, group or reserved height. other reader hosts do not supply this slot.
+
+`DocumentReaderView` places the head first in its frame, then the status lane and
+surface. the head and lane are full-width stable-scrollbar-gutter boxes; their
+inner measure shares the text column's reader face, size, width and 16px gutters.
+this keeps both content edges equal with classic scrollbars as well as overlay
+scrollbars. pdfs keep frame width. the lane is never a containing block: the phone
+status stack still positions against the frame and inherits the inner measure’s
+computed maximum width; the scrollport owner aligns its absolute bounds with
+the actual scrollport client box, including a classic scrollbar's width.
+its ref and `:empty` contract remain on the stack; the measure wraps the stack,
+not its children.
+the head uses the frame's reader-theme remap; mobile navigation uses pane paint.
+
+`ReaderNavigation` knows no placement. text keeps one row: a contents/chapter
+sign and verbatim italic title open the existing destination menu, followed by a
+fixed percent folio and up/down links. title and pdf words use the reader's face
+at `--text-sm`. only the title ellipsizes. below `20rem` only the folio's visible
+digits hide; its spoken ordinal, total and percent remain. the folio uses the
+reading-line fraction, except that the document end says `100%`.
+
+placed sections form one stable order by start fraction. up first lands on the
+enclosing section's start when it lies above the viewport, otherwise the last
+strictly earlier start; without an enclosing section it is disabled. down lands
+on the first strictly later start, except at the document end. duplicate starts
+cannot trap either direction. disabled steps retain a placed link target and
+mounted host, preserving repeated keyboard focus where the host supplies hrefs;
+without placed sections they are disabled buttons. all destinations inspect,
+retain the first origin and never adopt saved progress.
+
+title and gauge keep `structure.sectionAt`'s current-section contract, including
+its transcript membership and end-clamping limits. the gauge clamps the reading
+line's fraction between the current start and the next strictly later start,
+else the document end; an absent or unplaced current section leaves it empty.
+its span is the head root's content box. the folio's terminal `100%` does not
+force the section gauge full. scrolling updates folio, gauge and steps separately
+without rebuilding menu rows; state selectors return primitives or stable refs.
+
+a non-transcript title yields by opacity only when its current start is in view
+and its own words open the canonical unit from that codepoint offset. matching
+collapses whitespace and requires equality or a following space; it runs when
+the current section changes. hover, focus or an open menu restores the title;
+its accessible name always remains `<label>; select <noun>`. a missing section
+uses `contents` or `chapters`. transcripts never yield. shared menu minimums yield
+to the positioning owner's measured viewport cap.
 
 `sourceArrival.ts` applies resolved server sources and direct reader/chat
 locations through one saved-intent, claim, cancellation and focus fence.
@@ -830,7 +879,7 @@ stretch with nothing nearby stays blank.
 | `SelectionDock.tsx` | desktop anchored composer and mobile layout band; pre-focus capture, native-input settlement, refinement, pickers and feedback; overlap chooser and recolour dialog |
 | `HighlightColourPicker.tsx` | split one-click highlight command, anchored palette and shared accessible swatches; its ephemeral presentation never owns or remounts the note draft |
 | `evidence/` | explicit view radios, type filters, measured non-overlapping source alignment, sidebar scrolling/focus and shared recursive resource rows; all items uses normal flow |
-| `chrome.tsx` | pane chrome: header, shared reader navigation, find, inspector bodies, view menu (reader theme choice, reader settings link), the shared 32px document map (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
+| `chrome.tsx` | hosted running-head placement; pane chrome: header, find, inspector bodies, view menu (reader theme choice, reader settings link), the shared 32px document map (desktop), pdf intrinsic width, keys (`g`, `g e`, `g c`/`shift+G`, cmd/ctrl+f, shift+Esc, Esc) |
 | `Transcript.tsx` | transcript admission states, expanded publisher-notes card, memoized reader playback binding and one-shot position action; header playback uses the canonical action projection |
 | `activity.ts` | consumption activity from reader viewports (word ordinal when reading) |
 | `Embeds.tsx` | embed cards |

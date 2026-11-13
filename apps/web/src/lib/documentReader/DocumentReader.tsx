@@ -23,6 +23,7 @@ import { useActiveRegion } from "@/components/feedback/stage";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
+import compact from "@/components/ui/CompactChrome.module.css";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import type { Schema } from "@/lib/api/wire";
 import { useFailedReadRepair } from "@/lib/api/serverState";
@@ -100,10 +101,11 @@ export interface Inspection {
 }
 export type SelectionCandidate =
   | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string; readonly excerpt: ExcerptBody | null; readonly excerpt_start: number | null; readonly excerpt_end: number | null }
-  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" };
+  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" | "PartialTable" };
 /** Why a selection can't become a highlight here: one line per rejection, for every reader host. */
 export function rejectedSelectionFact(reason: Extract<SelectionCandidate, { kind: "Rejected" }>["reason"], doc: ReaderDocument | null): string {
   switch (reason) {
+    case "PartialTable": return "select the whole table to quote it.";
     case "UnsupportedExcerpt": return "nexus can’t capture some text in this passage.";
     case "CrossPage": return "highlights can’t cross pages.";
     case "CrossUnit": return doc?.kind === "text" && doc.units.some(unit => unit.xPost !== null) ? "highlights can’t cross posts." : "highlights can’t cross sections.";
@@ -133,6 +135,8 @@ export type MarkEvent =
     };
 export interface DocumentReaderViewProps {
   readonly reader: Reader;
+  /** Host-owned running head; absent means no row or reserved height. */
+  readonly head?: { readonly label: string; readonly content: ReactNode };
   readonly profile: Schema<"ReaderProfileOut">;
   readonly isMobile: boolean;
   /** Passive source position; never a reader navigation command. */
@@ -317,12 +321,20 @@ export default function DocumentReaderView(
       className={styles.frame}
       tabIndex={-1}
       style={readerSurfaceStyle(props.profile)}
+      data-reader-kind={publication.status === "ready" ? publication.doc.kind : undefined}
       data-theme={props.profile.theme}
       data-hyphenation={props.profile.hyphenation}
     >
-      <div ref={feedback} className={`${styles.statusStack} ${styles.feedback}`}>
-        {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} loadFailure={props.loadFailure} returnFocus={returnFocus} /> : null}
-        {props.lane}
+      {props.head ? <div className={`${styles.head} ${compact.compact}`} role="group" aria-label={props.head.label}>
+        <div className={styles.measure}>{props.head.content}</div>
+      </div> : null}
+      <div className={styles.lane}>
+        <div className={styles.measure}>
+          <div ref={feedback} className={`${styles.statusStack} ${styles.feedback}`}>
+            {tracked ? <StatusStrip reader={runtime} speak={speak} saveFailure={props.saveFailure} loadFailure={props.loadFailure} returnFocus={returnFocus} /> : null}
+            {props.lane}
+          </div>
+        </div>
       </div>
       {body}
       <div

@@ -15,9 +15,13 @@ import { cx } from "@/lib/ui/cx";
 import Tooltip, { type TooltipTriggerProps } from "./Tooltip";
 import styles from "./Control.module.css";
 
-export type ControlAppearance = {
-  emphasis?: "strong";
+export type ControlAppearance = ({
+  emphasis?: undefined;
+  tone?: "danger" | "accent";
+} | {
+  emphasis: "strong";
   tone?: "danger";
+}) & {
   size?: "comfortable";
 };
 
@@ -50,8 +54,13 @@ type Trigger = HTMLButtonElement | HTMLAnchorElement;
  * tooltip composition keeps the same real root even when help or content changes.
  * Native roots retain operation, navigation and focus ownership.
  */
-export function buttonClassName({ emphasis, tone, size, iconOnly }: ControlAppearance & { iconOnly?: boolean }): string {
-  return cx(styles.control, emphasis && styles.strong, tone && styles.danger, size && styles.comfortable, iconOnly && styles.iconOnly);
+export function buttonClassName({ emphasis, tone, size, iconOnly }: {
+  emphasis?: "strong";
+  tone?: "danger" | "accent";
+  size?: "comfortable";
+  iconOnly?: boolean;
+}): string {
+  return cx(styles.control, emphasis && styles.strong, tone && styles[tone], size && styles.comfortable, iconOnly && styles.iconOnly);
 }
 
 /** The spinner mounts with `busy` and appears by css after a delay, so a fast wait paints

@@ -72,9 +72,9 @@ replacement quote text or approximate identity matches.
 ordinal citations are source-owned `origin=citation`, `kind=context` facts with
 null user ownership. source readability authorizes their visibility; null ownership
 never means public. oracle readings, article embeds and native quoted posts use
-the native citation writer and captured output. librarian citations instead belong
-to their assistant message and retain only resource references or urls with live
-locators. they do not create graph context membership. no relationship taxonomy
+the native citation writer and captured output. librarian references instead belong
+to their user or assistant message. messages retain saved quotes beside resource
+references; graph citation edges contain no copied evidence. urls have no edge. they do not create graph context membership. no relationship taxonomy
 is exposed.
 
 `source_citations.py` binds imported occurrences to ordinary citation ids.
@@ -114,8 +114,10 @@ provider acquisition retains its separate pinned-context manifest.
 ## librarian references
 
 attachments belong to an immutable user message; citations belong to its answer.
-opening either resolves current source availability and exact coordinates. a missing
-or changed source is not reconstructed from graph snapshots. ordinary authored
+both write source-owned citation edges after current visibility is checked.
+opening resolves current source availability and place, using the saved quote for
+a unique match when text coordinates fail. quotes remain on the message or cited
+retrieval, never the edge. turn deletion removes both messages and their edges. ordinary authored
 message links use the shared graph and open `/librarian?message=<id>`.
 
 message attachment membership does not gate model reads. the librarian uses current

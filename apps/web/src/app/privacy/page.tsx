@@ -64,8 +64,6 @@ export default function PrivacyPage() {
           Provider API route in Chat, Nexus instead uses the operator-managed API
           credential for that provider. Configurable Provider API processors are
           {` ${CONFIGURABLE_PROCESSOR_LIST}. `}
-          Before dispatch, Chat shows the selected route&apos;s processor chain,
-          retention, training, and billing disclosures.
         </p>
 
         <h2>How information is shared</h2>

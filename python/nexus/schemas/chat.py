@@ -7,16 +7,21 @@ from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
 from llm_tools import ToolEffect
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
+from nexus.schemas.authored import SelectionCapture
 from nexus.schemas.collection_order import OrderRevision
 from nexus.schemas.highlights import HighlightAnnotationOut
-from nexus.schemas.live_reference import LiveReference, RetrievalTarget
+from nexus.schemas.live_reference import (
+    LiveReference,
+    RetrievalTarget,
+    SavedReference,
+    SavedRetrievalTarget,
+)
 from nexus.schemas.llm import GenerationSelection, RunSelectionOut
 from nexus.schemas.media_summary import MediaSummaryOut
-from nexus.schemas.reader_excerpts import ExcerptView
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.tools.contract import ERROR_TYPES
 
@@ -36,25 +41,45 @@ class Out(BaseModel):
 class ReferencePresentationOut(Out):
     item: ResourceItemOut | None
     location_available: bool
-    excerpt: ExcerptView | None
     annotation: HighlightAnnotationOut | None
     source: MediaSummaryOut | None
 
 
 class AttachmentOut(ReferencePresentationOut):
-    reference: LiveReference
+    reference: SavedReference
 
 
 class ChatCitationOut(ReferencePresentationOut):
     id: UUID
     ordinal: int = Field(ge=1)
-    target: RetrievalTarget
+    target: SavedRetrievalTarget
+
+
+class ReferenceAttachmentIn(Wire):
+    kind: Literal["Reference"]
+    reference: LiveReference
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> ReferenceAttachmentIn:
+        if self.reference.locator is not None:
+            raise ValueError("a reference attachment cannot carry a locator")
+        return self
+
+
+class SelectionAttachmentIn(Wire):
+    kind: Literal["Selection"]
+    reading_ref: str
+    source_ref: str
+    capture: SelectionCapture
+
+
+AttachmentIn = Annotated[ReferenceAttachmentIn | SelectionAttachmentIn, Field(discriminator="kind")]
 
 
 class ResolveLibrarianAttachmentsRequest(Wire):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    references: list[LiveReference] = Field(min_length=1, max_length=16)
+    attachments: list[AttachmentIn] = Field(min_length=1, max_length=16)
 
 
 class ChatFailureOut(Out):
@@ -86,7 +111,7 @@ class ChatRunCreateRequest(Wire):
 
     content: str = Field(min_length=1, pattern=r"\S")
     selection: GenerationSelection
-    attachments: list[LiveReference] = Field(max_length=16)
+    attachments: list[AttachmentIn] = Field(max_length=16)
     expected_deletion_revision: OrderRevision
 
 
@@ -116,9 +141,7 @@ class ChatAdmissionRejection(Wire):
 
 class AcceptedChatAdmission(Wire):
     kind: Literal["Accepted"] = "Accepted"
-    run_id: UUID
-    user_message_id: UUID
-    assistant_message_id: UUID
+    turn: ChatRunResponse
 
 
 class RejectedChatAdmission(Wire):

@@ -2,7 +2,7 @@
 
 Chat reads stop at the current question; background reads stay inside their
 captured resource scope. Domain owners decide visibility. Source evidence is
-transient model input; chat publishes only live citation targets. Each read
+transient model input; chat saves bounded quotes only for cited spans. Each read
 releases its database snapshot before durable retrieval publication.
 A piece passage follows its reading identity, never its source pointer.
 """
@@ -28,6 +28,7 @@ from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
 from nexus.schemas.retrieval import EpubFragmentOffsetsLocator, WebTextOffsetsLocator
 from nexus.services import libraries
+from nexus.services.chat import timeline
 from nexus.services.chat.retrievals import (
     RetrievalCitation,
     citation_from_evidence,
@@ -35,7 +36,6 @@ from nexus.services.chat.retrievals import (
     reopen_search_result,
     web_citation,
 )
-from nexus.services.chat.timeline import MessageReadRefusal, read_message_page
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
     DocumentTooLarge,
@@ -131,11 +131,9 @@ def message_admitted(call: Call, ref: ResourceRef) -> bool:
         )
     if message_id is None:
         return True
-    from nexus.services.chat.timeline import message_visible
-
     horizon = call.message_horizon_seq
     assert horizon is not None, "a chat tool must capture its horizon before dispatch"
-    return message_visible(call.db, call.principal, message_id, horizon)
+    return timeline.message_visible(call.db, call.principal, message_id, horizon)
 
 
 def admit(call: Call, uri: str, *, derived_read: bool = False) -> None:
@@ -582,8 +580,8 @@ def _read(
         return "page_range", body, ("media", str(pages[0])), None
     ref = _parse(uri)
     if ref.scheme == "message":
-        page = read_message_page(db, viewer_id=viewer_id, ref=ref, cursor=cursor)
-        if isinstance(page, MessageReadRefusal):
+        page = timeline.read_message_page(db, viewer_id=viewer_id, ref=ref, cursor=cursor)
+        if isinstance(page, timeline.MessageReadRefusal):
             refuse("InvalidCursor" if page.code == "invalid_cursor" else "ResourceUnavailable")
         return "section", page.body, ("message", str(ref.id)), page.next_cursor
     if cursor is not None:

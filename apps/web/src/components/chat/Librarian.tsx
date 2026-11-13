@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { StageAnchor } from "@/components/feedback/Slips";
@@ -18,8 +18,9 @@ import { useLibrarianEntryReads } from "@/lib/panes/indexPaneEntry";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime, usePaneRouter } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey, type PaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { useLatestWorkspace } from "@/lib/workspace/store";
 import type { Visit } from "@/lib/api/serverState";
-import type { Catalog, Timeline } from "@/lib/chat/wire";
+import type { Catalog, Timeline, Turn } from "@/lib/chat/wire";
 import ChatOperationBoundary from "./ChatOperationBoundary";
 import ChatComposer from "./ChatComposer";
 import LibrarianTranscript, { type LibrarianTranscriptHandle } from "./LibrarianTranscript";
@@ -28,6 +29,7 @@ import styles from "./ChatSurface.module.css";
 
 const CATALOG_VISIT = definePaneVisitDataKey<Visit<Catalog>>("Librarian.Catalog");
 const TIMELINE_VISIT: PaneVisitDataKey<Visit<Timeline>> = definePaneVisitDataKey("Librarian.Timeline");
+const NO_TURNS: readonly Turn[] = [];
 
 /** A bounded window onto the account's sole append-only timeline. The composer
  * has no reply endpoint: viewing old messages cannot change where a send lands. */
@@ -35,6 +37,7 @@ export default function Librarian() {
   const { accountId } = useAuthenticatedAccount();
   const runtime = requirePaneRuntime(usePaneRuntime(), "Librarian");
   const router = usePaneRouter();
+  const workspace = useLatestWorkspace();
   const reads = useLibrarianEntryReads();
   const search = useLibrarianSearch();
   const transcript = useRef<LibrarianTranscriptHandle>(null);
@@ -42,6 +45,7 @@ export default function Librarian() {
   const command = useSyncExternalStore(commandOwner.subscribe, commandOwner.getSnapshot, () => IDLE_COMMAND);
   const defect = useSyncExternalStore(commandOwner.subscribe, commandOwner.getDefect, () => null);
   const draft = useChatDraft(runtime.paneId);
+  const { settleAdopted } = draft;
   const memory = useChatSelection();
   const catalog = useServerValue({ ...reads.catalog, visit: CATALOG_VISIT });
   const currentCatalog = catalog.status === "ready" ? catalog.data : null;
@@ -50,7 +54,14 @@ export default function Librarian() {
   const retryAvailable = command.kind === "Idle" && currentCatalog !== null && selection.kind === "Selected" && modelReason === null;
   const history = useServerValue({ ...reads.timeline, visit: TIMELINE_VISIT, enabled: !search.searching });
   const timeline = history.status === "ready" ? history.data : null;
-  const turns = timeline?.items ?? [];
+  const turns = timeline?.items ?? NO_TURNS;
+  const fresh = history.status === "ready" && history.fresh;
+  const adopted = runtime.href === "/librarian" && !fresh ? draft.adopted : NO_TURNS;
+  const recall = runtime.href === "/librarian" && !search.searching && history.status === "ready"
+    ? (adopted.at(-1) ?? turns.at(-1))?.user_message.content ?? null : null;
+  useLayoutEffect(() => {
+    if (runtime.href === "/librarian" && fresh) settleAdopted();
+  }, [runtime.href, fresh, settleAdopted]);
   usePaneReturnReady(search.searching ? search.ready : history.status !== "loading");
   const [autoSend, setAutoSend] = useState<{ id: string; draft: Draft } | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -64,7 +75,7 @@ export default function Librarian() {
     setFocus(delivery.activationId);
   }, [delivery, claim, draft]);
   const accepted = draft.accepted;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!accepted) return;
     if (runtime.href !== "/librarian") router.push("/librarian");
     else history.revalidate();
@@ -74,8 +85,12 @@ export default function Librarian() {
   const resend = useResendFeedback();
   const retryTurn = (runId: string) => {
     if (!retryAvailable || selection.kind !== "Selected") return;
-    void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selection.selection, viewId: runtime.paneId })
-      .then(outcome => { sayRefusal(slips, outcome); if (outcome.kind === "Accepted" && runtime.href !== "/librarian") router.push("/librarian"); })
+    void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selection.selection, viewId: runtime.paneId },
+      receipt => {
+        const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
+        draft.accept(receipt, null, visit?.id === runtime.visitId && new URL(visit.href, "https://nexus.invalid").pathname === "/librarian", runtime.visitId);
+      })
+      .then(outcome => sayRefusal(slips, outcome))
       .catch(error => commandOwner.reportDefect(error));
   };
   const retryCommand = useCallback(() => void commandOwner.retry().then(outcome => sayRefusal(slips, outcome)), [commandOwner, slips]);
@@ -106,12 +121,12 @@ export default function Librarian() {
   const commandFeedback = defect ? <ChatOperationBoundary failure={defect} paneId={runtime.paneId} visitId={runtime.visitId}
     fallback={hold ?? <Fact line={{ fact: "this librarian action stopped unexpectedly." }} verbs={[{ label: "dismiss", commandKey: "dismiss librarian defect", run: commandOwner.clearDefect }]} />} /> : hold;
   return <div className={styles.surface}>
-      {search.searching ? search.content : <LibrarianTranscript key={`${accountId}:${runtime.visitId}:${reads.timeline.key}`} queryKey={reads.timeline.key} ref={transcript} history={history} retryAvailable={retryAvailable} onRetry={retryTurn} />}
+      {search.searching ? search.content : <LibrarianTranscript key={`${accountId}:${runtime.visitId}:${reads.timeline.key}`} queryKey={reads.timeline.key} ref={transcript} history={history} adopted={adopted} retryAvailable={retryAvailable} onRetry={retryTurn} />}
       <div className={styles.composerAnchor}><StageAnchor kind="Pane" paneId={runtime.paneId} /></div>
-      <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
+      <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || adopted.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}
         {!search.searching && history.status === "ready" && history.error ? <Fact line={{ fact: "messages stopped updating." }} verbs={[{ label: "retry", commandKey: "refresh librarian", run: history.refetch }]} /> : null}
-        <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} />
+        <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
       </div>
     </div>;
 }

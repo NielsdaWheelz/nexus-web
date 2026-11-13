@@ -35,14 +35,14 @@ from nexus.schemas.chat import (
     RejectedChatAdmission,
     RejectionCode,
 )
-from nexus.schemas.live_reference import LiveReference
+from nexus.schemas.live_reference import SavedReference
 from nexus.schemas.llm import (
     GenerationSelection,
     GenerationSelectionUnavailable,
     Ineligible,
     InvalidGenerationSelection,
 )
-from nexus.services.chat import deletion, events, reads, selection
+from nexus.services.chat import deletion, events, reads, references, selection
 from nexus.services.generation.catalog import (
     Catalog,
     InvalidSelection,
@@ -54,6 +54,9 @@ from nexus.services.generation.catalog import (
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.generation.policy import chat_tool_plan
+from nexus.services.resource_graph.citations import CitationInput, replace_citations_for_source
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
+from nexus.services.resource_items.items import ref_visible
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools.run import Toolbox
@@ -72,8 +75,15 @@ async def create_chat_run(
     run_id = _run_id(idempotency_key)
     existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
     if existing is not None:
-        return ChatAdmissionReceipt(outcome=existing)
+        return await run_in_threadpool(_receipt, viewer_id, existing)
     row = await _catalog_row(catalog, request.selection)
+
+    def admit() -> list[SavedReference]:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            return references.admit_attachments(db, viewer_id, request.attachments)
+
+    attachments = await run_in_threadpool(admit)
 
     def build(db: Session, resolved: Row | ApiError) -> ChatRun:
         deletion.require_revision(db, viewer_id, request.expected_deletion_revision)
@@ -84,11 +94,10 @@ async def create_chat_run(
                 ApiErrorCode.E_MESSAGE_TOO_LONG,
                 f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
             )
-        return _insert(
-            db, viewer_id, run_id, request.content, request.attachments, resolved, tools, None
-        )
+        return _insert(db, viewer_id, run_id, request.content, attachments, resolved, tools, None)
 
-    return await run_in_threadpool(_settle, viewer_id, run_id, row, build)
+    outcome = await run_in_threadpool(_settle, viewer_id, run_id, row, build)
+    return await run_in_threadpool(_receipt, viewer_id, outcome)
 
 
 async def retry(
@@ -104,7 +113,7 @@ async def retry(
     run_id = _run_id(idempotency_key)
     existing = await run_in_threadpool(_existing_run, viewer_id, run_id)
     if existing is not None:
-        return ChatAdmissionReceipt(outcome=existing)
+        return await run_in_threadpool(_receipt, viewer_id, existing)
     row = await _catalog_row(catalog, selection)
 
     def build(db: Session, resolved: Row | ApiError) -> ChatRun:
@@ -122,13 +131,14 @@ async def retry(
             viewer_id,
             run_id,
             question.content,
-            [LiveReference.model_validate(value) for value in question.attachments],
+            [SavedReference.model_validate(value) for value in question.attachments],
             resolved,
             tools,
             source.id,
         )
 
-    return await run_in_threadpool(_settle, viewer_id, run_id, row, build)
+    outcome = await run_in_threadpool(_settle, viewer_id, run_id, row, build)
+    return await run_in_threadpool(_receipt, viewer_id, outcome)
 
 
 def cancel(*, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
@@ -181,15 +191,19 @@ def _run_id(raw: str | None) -> UUID:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key must be a uuid") from None
 
 
-def _accepted(run: ChatRun) -> AcceptedChatAdmission:
-    return AcceptedChatAdmission(
-        run_id=run.id,
-        user_message_id=run.user_message_id,
-        assistant_message_id=run.assistant_message_id,
-    )
+def _receipt(viewer_id: UUID, outcome: UUID | RejectedChatAdmission) -> ChatAdmissionReceipt:
+    if isinstance(outcome, RejectedChatAdmission):
+        return ChatAdmissionReceipt(outcome=outcome)
+    with get_session_factory()() as db:
+        try:
+            turn = reads.run_response(db, viewer_id=viewer_id, run_id=outcome)
+        except ApiError as error:
+            # justify-defect: admission committed; a failed turn projection cannot refuse it.
+            raise RuntimeError("Accepted chat turn could not be read") from error
+    return ChatAdmissionReceipt(outcome=AcceptedChatAdmission(turn=turn))
 
 
-def _existing_run(viewer_id: UUID, run_id: UUID) -> AcceptedChatAdmission | None:
+def _existing_run(viewer_id: UUID, run_id: UUID) -> UUID | None:
     with get_session_factory()() as db:
         get_repeatable_read_db(db)
         run = db.get(ChatRun, run_id)
@@ -197,7 +211,7 @@ def _existing_run(viewer_id: UUID, run_id: UUID) -> AcceptedChatAdmission | None
             return None
         if run.owner_user_id != viewer_id:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Run id is taken")
-        return _accepted(run)
+        return run.id
 
 
 async def _catalog_row(catalog: Catalog, selected: GenerationSelection) -> Row | ApiError:
@@ -232,10 +246,10 @@ def _settle(
     run_id: UUID,
     row: Row | ApiError,
     build: Callable[[Session, Row | ApiError], ChatRun],
-) -> ChatAdmissionReceipt:
+) -> UUID | RejectedChatAdmission:
     with get_session_factory()() as db:
 
-        def attempt() -> ChatAdmissionReceipt:
+        def attempt() -> UUID:
             db.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                 {"key": f"chat_admission:{run_id}"},
@@ -250,17 +264,15 @@ def _settle(
                     if integrity_constraint_name(error) != "chat_runs_pkey":
                         raise
                     raise TransactionRestart("chat admission committed during lock wait") from error
-            return ChatAdmissionReceipt(outcome=_accepted(run))
+            return run.id
 
         try:
             return retry_serializable(db, "chat_admission", attempt)
         except ApiError as error:
             if error.code.value not in _REJECTABLE:
                 raise
-            return ChatAdmissionReceipt(
-                outcome=RejectedChatAdmission(
-                    reason=ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
-                )
+            return RejectedChatAdmission(
+                reason=ChatAdmissionRejection(code=cast(RejectionCode, error.code.value))
             )
 
 
@@ -269,7 +281,7 @@ def _insert(
     viewer_id: UUID,
     run_id: UUID,
     content: str,
-    attachments: list[LiveReference],
+    attachments: list[SavedReference],
     row: Row,
     tools: Toolbox,
     retry_of_run_id: UUID | None,
@@ -320,6 +332,12 @@ def _insert(
     )
     db.add_all([user, assistant])
     db.flush()
+    citations = []
+    for index, reference in enumerate(attachments):
+        ref = require_ref(reference.resource_ref)
+        if ref_visible(db, viewer_id=viewer_id, ref=ref):
+            citations.append(CitationInput(ref, index + 1, None))
+    replace_citations_for_source(db, source=ResourceRef("message", user.id), citations=citations)
     run = ChatRun(
         id=run_id,
         owner_user_id=viewer_id,

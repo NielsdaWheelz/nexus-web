@@ -60,8 +60,9 @@ filtered before both wire projection and admission lookup. credentials and
 readiness never restore retired models. Nexus neither reads Codex cache files nor
 maintains a second model/reasoning allowlist. A model exposes every reasoning
 value the source catalog reports. the catalog keeps typed readiness for all
-pairs; the picker offers only selectable pairs and retains an unavailable
-current identity without substitution.
+pairs; one generation picker groups model variants under provider labels and
+retains an unavailable current identity without substitution. provider readiness
+names its reason in the section heading and makes its rows unavailable.
 
 route readiness is independent. before a Codex catalog has loaded, its known
 route carries explicit unreadiness and no model rows; configured API providers
@@ -82,8 +83,8 @@ owner cancellation publishes no failed-host observation; waiter cancellation or
 expiry cannot change the owner's work or cache. deadline expiry is
 `504 E_GENERATION_TIMEOUT`; a completed native failure keeps existing unavailable
 readiness and any retained rows. only the completed owner publishes a source result.
-the picker exposes retry for native unavailability without changing the chosen
-model. retry observes the existing 10-second failed-refresh interval; it does
+the picker's footer exposes retry for native unavailability outside its model
+listbox, without changing the chosen model. retry observes the existing 10-second failed-refresh interval; it does
 not force another native attempt. successful facts remain cached for 60 seconds.
 
 each reasoning row carries required `mode: string | null`, `effort: string`
@@ -108,16 +109,18 @@ the old combined reasoning-row label is removed from the wire.
 
 the browser uses these projected labels and default markers. provider/model changes
 are complete when facts permit; `DefaultUnavailable` retains an unresolved target
-and allows explicit effort choice. recovery completes only that same unresolved
-intent. exact selections, account memory and frozen requests never follow later
+and keeps the panel open on an explicit effort button group. recovery completes
+only that same unresolved intent. exact selections, account memory and frozen requests never follow later
 defaults. discovery is event-driven and quiet over retained usable data; cold-load
 failure keeps retry. one advertised effort is static only when it is the selected
-identity; other unavailable identities retain explicit recovery choices.
+identity, with no effort region or dial. a selected member of a multi-effort
+range uses a native range; other unavailable identities retain explicit recovery
+buttons. effort edits commit immediately and keep the panel open.
 
 new saved reasoning presentation uses the same mode/effort labels. history reads
 its saved presentation verbatim, including older descriptive labels. the combined
-label bound is 256 characters. controls and selection memory use unreleased wire
-17. catalog publication adds no further wire change or database migration;
+label bound is 256 characters. controls and selection memory use the generated
+product wire. catalog publication requires no database migration;
 provider, kernel and native host contracts remain compatible through their exact
 dependency pins.
 

@@ -19,8 +19,8 @@ separate instruction. current owners: [chat](modules/chat.md),
   explicit browse/search remains; no new ingestion connector.
 - one optional, manually edited reading brief in account settings. no automatic
   orientation, inferred profile, brief-writing tool or memory tree.
-- chat stores messages and live source references. source edits and disappearance
-  are accepted; exact historical source reconstruction is not a requirement.
+- chat stores messages and saved source quotes. words survive source edits and
+  disappearance; opening uses current access and unique exact-word placement.
 - retain existing reading, saving, playback, source acquisition, authored writing,
   generation, jobs, cancellation, receipts and resource visibility owners.
   connection discovery retains relationship ownership; curation consumes graph
@@ -77,7 +77,7 @@ manual brief + committed intent + existing resources/feed entries
 existing time/progress selection -> immediate quick reads
 
 selection / palette / composer -> durable account fifo -> existing chat worker
-  -> brief + earlier settled turns + current request + live references
+  -> brief + earlier settled turns without quotes + current request + saved attachments
   -> existing generation/tools -> persisted answer and operational receipts
 ```
 
@@ -109,10 +109,10 @@ sequence/version values use the existing decimal-string int64 wire type.
 | --- | --- |
 | `users` | add nullable `reading_brief text` and `reading_brief_version bigint` |
 | `librarian_state` | rename/extend the existing `chat_deletion_revisions` row: `user_id` primary key, `next_seq bigint`, `deletion_revision bigint`. this permanent per-account admission/deletion row is not a selectable conversation |
-| `messages` | retain id, role, literal content, status and timestamps; replace conversation ownership with `owner_user_id`; account-unique `seq`; add ordered `attachments: LiveReference[]`; remove parent/branch/fork and selection-snapshot fields |
+| `messages` | retain id, role, literal content, status and timestamps; replace conversation ownership with `owner_user_id`; account-unique `seq`; add ordered `attachments: SavedReference[]`; remove parent/branch/fork and selection-snapshot fields |
 | `chat_runs` | retain pair ids, generation selection/spec, job/event/cancel/receipt ownership; status is `queued`, `running`, `complete`, `error` or `cancelled`; add nullable weak `retry_of_run_id`; remove conversation/context-version/frozen-prompt fields |
 | `llm_calls` | nullable `native_execution: {profile_key, thread_handle, settled}`; bind a fresh native identity before submission and require confirmed finality before closure; retain no prompt or provider history |
-| retrievals/citations | existing `message_retrievals` owns answer/tool identity, retrieval ordinal, nullable citation ordinal and live target; replace duplicated captured/result payloads with that target. local citation edges are projections, not a second evidence owner |
+| retrievals/citations | existing `message_retrievals` owns answer/tool identity, retrieval ordinal, nullable citation ordinal and saved target; replace duplicated captured/result payloads with that target. local citation edges are projections, not a second evidence owner |
 | `suggestion_feeds` | add only `browse` to existing `suggestions` / `daily` modes; retain one account/mode/destination owner and current job pointer; add nullable `last_admitted_at` for the automatic build floor |
 | `suggestion_shortlists` | replace `target_refs` with ordered `items: [{ref, rationale}]`; retain revision/time and daily edition metadata; latest successful publication only |
 
@@ -121,13 +121,18 @@ resource-field selection. `locator` is null or an existing structural target:
 web/epub/transcript fragment plus codepoint offsets, pdf page/quads, time range,
 or note/message codepoint offsets. note/message identity comes from `resource_ref`.
 extract shared coordinate-only primitives where needed; do not duplicate a second
-reader-target grammar. no quote text, prefix/suffix, content hash, body version,
-recorded title or implicit passage-anchor creation. existing highlights remain
-references to actual highlight resources. invalid current ranges are unavailable;
-there is no nearest-text repair. syntactically invalid targets are rejected.
+reader-target grammar. `SavedReference` extends it with nullable `{exact, prefix, suffix, excerpt}`.
+selection admission proves the browser capture and freezes those words; a quote
+requires a locator. existing highlights remain live references to actual
+highlight resources, while whole resources and cited messages have no quote.
+no implicit passage anchor is created. a changed text place retains its words
+and reports `source changed since quoted`. opening resolves a unique quote/context
+match in currently readable source slices; ambiguous or missing words leave the
+location unavailable. syntactically invalid targets are rejected.
 
 retrieval/citation targets are the closed union
-`{kind: resource, reference: LiveReference}` / `{kind: url, url: http(s)}`.
+`{kind: resource, reference: SavedReference}` / `{kind: url, url: http(s)}`.
+trust rows and stream events project coordinate-only `LiveReference` targets.
 one message-owned citation-ordinal sequence spans both. project local-resource
 citation edges only, with no copied evidence; web citations open their url and
 display url/domain without saved title/snippet or a claim of current availability.
@@ -142,8 +147,8 @@ url targets during migration; remove only genuinely orphaned external snapshots.
 | endpoint | final contract |
 | --- | --- |
 | `GET /librarian/messages` | bounded turn windows: mutually exclusive `before_seq`, `after_seq`, `around_message_id`; omitted means latest. `limit` defaults to 25 turns, maximum 50. returns chronological pairs, current execution/capabilities and nullable before/after cursors. an unavailable anchor is 404, never silently latest. |
-| `POST /librarian/attachments/resolve` | strict 1–16 live references; ordered current rich presentations in one authenticated repeatable-read snapshot, private/no-store; no writes. |
-| `POST /chat-runs` | existing uuid `Idempotency-Key`; `{content, selection, attachments, expected_deletion_revision}`. at most 16 attachments; existing message/input bounds. accepted receipt names run and both messages; no conversation/destination fields. |
+| `POST /librarian/attachments/resolve` | strict 1–16 reference or selection attachments; proven ordered presentations in one authenticated repeatable-read snapshot, private/no-store; no writes. |
+| `POST /chat-runs` | existing uuid `Idempotency-Key`; `{content, selection, attachments, expected_deletion_revision}`. at most 16 attachments; existing message/input bounds. accepted receipt carries the current turn, read after admission commits; no conversation/destination fields. |
 | `GET /chat-runs/{id}` and existing events stream | retain ordinary pair/status/stream recovery; remove conversation/tree payloads. |
 | `POST /chat-runs/{id}/retry` | fresh uuid key; `{selection, expected_deletion_revision}`. only owned failed/cancelled runs accepted; append a new pair with original question/references and `retry_of_run_id`. |
 | existing `POST /chat-runs/{id}/cancel` | idempotent stop intent; supports waiting and active turns. |
@@ -221,15 +226,20 @@ of the same run uuid acknowledges that run; it never generates twice. after a tu
 is deleted, the retained account deletion fence rejects a stale absent-run resend,
 preventing resurrection. retry admission and deletion share the account lock.
 
-source text exists transiently in model/tool input. remove chat-owned persisted
-copies from reader snapshots, frozen run prompts, retrieval evidence, read-tool
-arguments/results, external chat snapshots and chat citation snapshots. persist
-only tool identity/status/error, target refs, created-effect refs and undo state;
-intentional authored output belongs to its canonical resource. retain actual user
-and assistant message text and reference coordinates. source owners may still retain their own documents,
-highlights and native citation evidence. preserve native/oracle evidence contracts
-while removing the chat-specific branches named above.
-old answers may discuss words their live links no longer contain: accepted.
+source text in tool input is transient; actual tool arguments remain with their
+call. persist only tool identity/status/error, target refs, created-effect refs and
+undo state beyond those arguments. intentional authored output belongs to its
+canonical resource. retain actual user and assistant text and reference quotes.
+attachments freeze at admission, selected retrieval evidence freezes at retrieval
+under a 2,000-codepoint/64-kib excerpt bound, and settlement removes uncited quotes.
+quotes belong only to their message attachments or cited retrievals and die with
+the turn. citation edges carry no copied evidence; user attachments project the
+same source edges as answer citations. native/oracle evidence keeps its owner.
+
+current attached quotes enter model context as saved words while the viewer can
+still read their source, even after their place moves. earlier turns omit quotes.
+timeline reads derive no source words; only sql availability comparisons inspect
+current text. source deletion preserves the quote without granting navigation.
 
 ## editorial selection
 
@@ -377,7 +387,7 @@ lab-only repair.
 | a1 | selection, palette and composer append to one timeline; selection without a question opens an attached draft without sending invented text; old-message links open bounded windows; no destination/branch/create/index controls or old routes remain. |
 | a2 | queue two sends during an active turn, reload and open a second pane; fifo and exactly one active generation hold. cancel a middle waiter without releasing its successor; cancel/fail/interrupt the head and preserve committed partial text plus known failure. next head starts only after settlement. |
 | a3 | lost admission response retries the same uuid without duplication; failed-turn retry appends and preserves old text/receipts; successful retry is rejected. `delete turn` names its pair/action scope; delete then replay its old send: no resurrection. |
-| a4 | edit/delete a referenced source before execution and afterward; current content or unavailable is shown. invalid locators never guess. inspect storage to prove chat-owned source copies are absent while message literals survive. |
+| a4 | edit/delete a referenced source before execution and afterward; saved quotes survive with truthful current availability. only a unique readable text match relocates on open. inspect storage to prove quotes belong only to attachments and cited retrievals and disappear with their turn. |
 | a5 | librarian retrieves an unattached authorized resource and earlier message; excluded resources remain unavailable. later queued input never enters an earlier run. editorial tools cannot browse externally, write, or access shared memory. existing owner-only jarvis saves retain exact submission retry with the new stable timeline association. |
 | a6 | brief save/clear, text bounds, equal retry and stale-version conflict are correct; draft survives failure. foreground answers and curation read it; neither can write it. an in-flight curation result using an obsolete brief cannot publish. |
 | a7 | one small inspectable corpus proves each mode’s distinct eligibility, intent from multiple recent user messages, no recommendation echo, duration/news windows and source diversity. actual model output meets the designer’s evidence/rationale rubric. |
@@ -398,7 +408,7 @@ issue files. run no unrelated capacity campaign or permanent regression suite.
 
 - existing corpus only tests curation, not new-source discovery; no orientation
   means retrieval can miss forgotten subjects.
-- live references sacrifice historical reconstruction; settings-only brief
+- saved reference quotes copy evidence per occurrence; settings-only brief
   sacrifices offline document editing.
 - fifo trades steering immediacy for simple ordering. failure retry is a fresh
   attempt, not rollback; old actions may already have completed.

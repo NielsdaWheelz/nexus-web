@@ -23,7 +23,7 @@ name is gone: `Year in Reading` (`resolvePaneRouteModel`), `invalid recent snaps
 (`lib/recent/model.ts`) and `recent_open` (`lib/native/client.ts`) are absent. the
 closure's own components name eight signs through `lib/ui/icons.tsx`
 (`components/feedback/Feedback.tsx:3`, `components/libraries/LibraryChooser.tsx:4`,
-`components/libraries/DestinationChooser.tsx:4`, `components/ui/ChoicePicker.tsx:4`,
+`components/libraries/DestinationChooser.tsx:4`, `components/chat/GenerationPicker.tsx`,
 `components/ui/PickerSurface.tsx:12`, `components/ui/MobileSheet.tsx:5`). drawings
 counted by `createLucideIcon` name in `apps/extension/dist/assets/popup-*.js`: 38 at
 main `02090f957` before the glyph lexicon (js 430629 bytes, gzip 131811); 34 with it

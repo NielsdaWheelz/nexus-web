@@ -20,7 +20,7 @@ from nexus.schemas.imports import (
     RepairSourceOffer,
     RetrySourceOffer,
 )
-from nexus.schemas.live_reference import LiveLocator, LiveReference
+from nexus.schemas.live_reference import LiveLocator, SavedReference
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.reader_excerpts import ExcerptView
@@ -60,10 +60,10 @@ class CitationSourceTargetKey(_Out):
 
 
 class LiveReferenceSourceTargetKey(_Out):
-    """Raw structural coordinates in a live resource; nothing was captured with them."""
+    """A source and place, with saved words when this reference quotes a passage."""
 
     kind: Literal["live_reference"] = "live_reference"
-    reference: LiveReference
+    reference: SavedReference
 
 
 class XPostSourceTargetKey(_Out):
