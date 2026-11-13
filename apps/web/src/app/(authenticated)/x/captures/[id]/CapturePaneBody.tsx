@@ -204,8 +204,7 @@ function CaptureReader({ id }: { readonly id: string }) {
     submit(input) {
       const current = reader.getState().document;
       if (current.status !== "ready" || input.identity !== current.doc.identity) return false;
-      const quote = captureReaderQuote({ doc: current.doc, scope: { kind: "x_capture", capture_id: id }, anchor: input.anchor,
-        capture: input.capture, annotation: input.annotation });
+      const quote = captureReaderQuote({ scope: { kind: "x_capture" }, capture: input.capture, annotation: input.annotation });
       if (!quote) { say({ fact: "couldn’t capture this passage." }); return false; }
       const question = convertReaderQuestion(input.question);
       if (question.kind === "Unsupported") { say({ fact: "images and embeds can’t be sent from here." }); return false; }

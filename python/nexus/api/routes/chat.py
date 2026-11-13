@@ -94,7 +94,7 @@ def resolve_librarian_attachments(
     db: RepeatableReadDbSession,
 ) -> Data[list[AttachmentOut]]:
     response.headers["Cache-Control"] = "private, no-store"
-    return Data(data=references.read_attachments(db, viewer.user_id, body.references))
+    return Data(data=references.read_attachments(db, viewer.user_id, body.attachments))
 
 
 @router.get("/chat-runs/{run_id}")

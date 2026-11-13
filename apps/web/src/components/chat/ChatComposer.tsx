@@ -42,7 +42,7 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
     const submitted = draft;
     refuse(null);
     void owner.execute({ kind: "Send", runId: createRandomId(), viewId: runtime.paneId,
-      request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.reference] : [] } }, receipt => {
+      request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.attachment] : [] } }, receipt => {
       entry.accept(receipt, submitted, true, runtime.visitId); memory.enter();
     }).then(outcome => { if (outcome.kind === "Failed") refuse(refusalOf(outcome)); }).catch(error => owner.reportDefect(error));
     return true;

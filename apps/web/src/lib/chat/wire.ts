@@ -10,7 +10,6 @@ import { MODEL_UNAVAILABLE } from "./selection";
 export type Message = Schema<"MessageOut">;
 export type Timeline = Schema<"TimelineOut">;
 export type Turn = Schema<"ChatRunResponse">;
-export type LiveReference = RunCreateRequest["attachments"][number];
 export type RunRead = ApiJson<"/chat-runs/{run_id}", "get">["data"];
 /** Create and repeat answer the same receipt. */
 export type Receipt = ApiJson<"/chat-runs", "post">["data"];
@@ -37,7 +36,7 @@ export type ChatFailure =
 /** Reads have no write outcome. A handled sign-in or defect follows the same boundary contract. */
 export function readFailureOf(error: unknown): { kind: "Handled" } | { kind: "Defect"; error: unknown } | { kind: "Failed"; error: ApiError } {
   if (handleUnauthenticatedApiError(error)) return { kind: "Handled" };
-  if (!isApiError(error) || isSameSystemApiDefect(error)) return { kind: "Defect", error };
+  if (!isApiError(error) || isSameSystemApiDefect(error) || error.code === "E_INVALID_REQUEST") return { kind: "Defect", error };
   return { kind: "Failed", error };
 }
 
@@ -49,7 +48,12 @@ export function failureOf(error: unknown): ChatFailure {
     ? { kind: "Unknown", error: failure.error } : { kind: "Refused", error: failure.error };
 }
 
-const REASONS: Readonly<Partial<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE", string>>> = {
+const REASONS: Readonly<Partial<Record<RejectionCode | "E_GENERATION_RUNTIME_UNAVAILABLE" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_TOO_LARGE" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_PARTIAL_TABLE", string>>> = {
+  E_READER_SELECTION_STALE: "the source changed since you selected this. select it again.",
+  E_READER_SELECTION_NOT_FOUND: "that source is no longer available.",
+  E_READER_SELECTION_TOO_LARGE: "this selection is too long to quote.",
+  E_READER_SELECTION_GEOMETRY_ONLY: "select text to quote.",
+  E_READER_SELECTION_PARTIAL_TABLE: "select the whole table to quote it.",
   E_CHAT_CREATION_STALE: "this send can no longer be retried. review your question and send again.",
   E_MESSAGE_TOO_LONG: "this message is over 20,000 characters.",
   E_INVALID_GENERATION_SELECTION: MODEL_UNAVAILABLE,
