@@ -356,6 +356,17 @@ class Media(Base):
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class EmailIngestReceipt(Base):
+    """Owner/message identity survives removal and physical content teardown."""
+
+    __tablename__ = "email_ingest_receipts"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    owner_user_id: Mapped[UUID]
+    message_key: Mapped[str]
+    media_id: Mapped[UUID | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
 class MediaPart(Base):
     """one independently readable identity pinned to a root publication and exact cuts."""
 

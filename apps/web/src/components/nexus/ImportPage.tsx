@@ -10,6 +10,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 import * as Icon from "@/lib/ui/icons";
 import { Failed, Field } from "@/components/feedback/Fact";
+import { Announcement } from "@/components/feedback/Announcement";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { Ruling } from "@/components/feedback/Ruling";
 import { useShell } from "@/components/feedback/stage";
 import DestinationChooser, { DestinationTrigger, setDestination } from "@/components/libraries/DestinationChooser";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
@@ -19,7 +22,11 @@ import collection from "@/components/ui/Collection.module.css";
 import Input from "@/components/ui/Input";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import PickerSurface from "@/components/ui/PickerSurface";
-import type { ApiError } from "@/lib/api/client";
+import Textarea from "@/components/ui/Textarea";
+import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { apiFetch, type ApiError } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { extractLinks } from "@/lib/extractLinks";
 import { fetchImportPage, type ImportItem } from "@/lib/imports/api";
@@ -41,6 +48,7 @@ import { revealCollectionItem } from "@/lib/ui/collection";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
+import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import ImportLine, { lineName, type ButtonVerb } from "./ImportLine";
 import type { NexusController } from "./useNexusController";
@@ -50,6 +58,7 @@ import styles from "./ImportPage.module.css";
 const GRID_ID = "import-options";
 const HELP_ID = "import-help";
 const FIELD_ID = "import-field-line";
+const EMAIL_ID = "import-email-details";
 const cellId = (key: string) => `import-row-${encodeURIComponent(key)}`;
 const lineKey = (line: IntakeLine) => `Line:${line.id}`;
 const AllImports = getPaneRouteIcon("/imports");
@@ -60,12 +69,16 @@ type Selectable =
   /** `fall` is its place in a batch admitted while the page shows; null if it was here already. */
   | { readonly kind: "Line"; readonly key: string; readonly line: IntakeLine; readonly fall: number | null }
   | { readonly kind: "Choose"; readonly key: string }
+  | { readonly kind: "Email"; readonly key: string }
   | { readonly kind: "Shelf"; readonly key: string; readonly item: ImportItem }
   | { readonly kind: "All"; readonly key: string };
 type Row = Selectable
   | { readonly kind: "Colophon"; readonly key: string; readonly text: string }
   | { readonly kind: "Heading"; readonly key: string; readonly text: string }
-  | { readonly kind: "ShelfFailed"; readonly key: string; readonly error: ApiError };
+  | { readonly kind: "ShelfFailed"; readonly key: string; readonly error: ApiError }
+  | { readonly kind: "EmailDetails"; readonly key: string; readonly address: string }
+  | { readonly kind: "EmailLoading"; readonly key: string }
+  | { readonly kind: "EmailFailed"; readonly key: string; readonly error: ApiError };
 
 export default function ImportPage({ controller, page, mobile, scrollRef: importBody }: {
   readonly controller: NexusController;
@@ -80,16 +93,27 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   const coarse = useTouchCapable();
   const { summary, observation, revision, retainObserver } = useImports();
   const { signIn } = useShell();
+  const { say, fail } = useOutcome();
+  const { accountId } = useAuthenticatedAccount();
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
   const againRef = useRef<HTMLInputElement>(null);
   const intoRef = useRef<HTMLButtonElement>(null);
+  const emailRef = useRef<HTMLButtonElement>(null);
   useActionFocusRecovery(scrollRef, () => inputRef.current);
   /** The expired line whose file is being chosen again. */
   const again = useRef<string | null>(null);
   const composing = useRef(false);
   const [choosing, setChoosing] = useState(false);
+  const emailProfile = usePaneFreeServerValue({ key: "/me", stale: "",
+    load: async signal => (await apiFetch<ApiJson<"/me", "get">>("/api/me", { signal })).data });
+  const address = emailProfile.status === "ready" ? emailProfile.data.email_ingest_address : null;
+  const emailScope = address === null ? null : `${accountId}:${address}`;
+  const [emailOpen, setEmailOpen] = useState<string | null>(null);
+  const emailExpanded = emailScope !== null && emailOpen === emailScope;
+  useEffect(() => setEmailOpen(null), [emailScope]);
+  const copied = useCopyFeedback(address);
   const { fieldLine, setFieldLine } = intake;
   const [focused, setFocused] = useState(false);
   // `moved`: an arrow handed enter to the row since the field's last edit, even if it clamped
@@ -122,6 +146,12 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
     if (text !== null) rows.push({ kind: "Colophon", key: `Colophon:${batch[0]!.batch}`, text });
   }
   rows.push({ kind: "Choose", key: "Choose" });
+  if (address !== null) {
+    rows.push({ kind: "Email", key: "Email" });
+    if (emailExpanded) rows.push({ kind: "EmailDetails", key: "EmailDetails", address });
+  }
+  if (emailProfile.status === "loading") rows.push({ kind: "EmailLoading", key: "EmailLoading" });
+  else if (emailProfile.error !== null) rows.push({ kind: "EmailFailed", key: "EmailFailed", error: emailProfile.error });
   if (shelfShown && shelf.status === "failed") rows.push({ kind: "ShelfFailed", key: "ShelfFailed", error: shelf.error });
   if (shelfShown && shelf.status === "ready" && shelf.data.items.length > 0) {
     rows.push({ kind: "Heading", key: "Recent", text: "recent" });
@@ -129,7 +159,8 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   }
   rows.push({ kind: "All", key: "All" });
 
-  const selectable = rows.filter((row): row is Selectable => row.kind !== "Colophon" && row.kind !== "Heading" && row.kind !== "ShelfFailed");
+  const selectable = rows.filter((row): row is Selectable => row.kind !== "Colophon" && row.kind !== "Heading"
+    && row.kind !== "ShelfFailed" && row.kind !== "EmailDetails" && row.kind !== "EmailLoading" && row.kind !== "EmailFailed");
   const keys = selectable.map(row => row.key);
   // enter's target: the field while it holds text and the selection is unmoved since
   const fieldTargeted = intake.field.trim() !== "" && !selection.moved;
@@ -146,6 +177,17 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   function select(key: string) {
     intake.disarmExcept(intake.lines.find(line => lineKey(line) === key)?.id ?? null);
     setSelection({ key, moved: true });
+  }
+  function closeEmail() {
+    setEmailOpen(null);
+    select("Email");
+  }
+  async function copyAddress(address: string) {
+    try { await copied.copy(address); }
+    catch (error) {
+      if (error instanceof ClipboardWriteUnavailableError) say({ fact: "couldn’t copy the address.", reason: "select it to copy it." });
+      else fail(error, "couldn’t copy the address.");
+    }
   }
   function edit(text: string) {
     intake.setField(text);
@@ -209,6 +251,9 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
       case "Line": return runLine(row.line, viewOf(row.line).verb, disposition);
       // a picker opens only inside its gesture
       case "Choose": return filesRef.current?.click();
+      case "Email":
+        select("Email");
+        return setEmailOpen(emailExpanded ? null : emailScope);
       case "Shelf": return open(shelfTarget(row.item), disposition);
       case "All": return open({ href: "/imports", labelHint: "imports" }, disposition);
     }
@@ -237,6 +282,7 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
 
   return (
     <section className={styles.page} data-import-page="" data-mobile={mobile || undefined} style={readerSurfaceStyle(profile)}>
+      {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
       {mobile
         ? <header className={`${switchboard.header} ${styles.header}`}>{back}<h2 tabIndex={-1} data-switchboard-heading>import</h2></header>
         : <h2 className="sr-only" tabIndex={-1} data-switchboard-heading>import</h2>}
@@ -314,6 +360,23 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
             switch (row.kind) {
               case "Colophon": return <div key={row.key} role="row" className={styles.colophon}><div role="gridcell">{row.text}</div></div>;
               case "Heading": return <div key={row.key} role="row" className={styles.heading}><div role="gridcell"><h3>{row.text}</h3></div></div>;
+              case "EmailLoading": return <div key={row.key} role="row" className={styles.emailPanel}><div role="gridcell"><Ruling /></div></div>;
+              case "EmailFailed": return <div key={row.key} role="row" className={styles.failed}><div role="gridcell">
+                <Failed error={row.error} noun="email import details" retry={{ run: () => void emailProfile.refetch(),
+                  busy: emailProfile.status === "failed" ? emailProfile.retrying : emailProfile.status === "ready" && emailProfile.refreshing }} />
+              </div></div>;
+              case "EmailDetails": return <div key={row.key} role="row" className={styles.emailPanel}><div role="gridcell">
+                <PickerSurface inline active onClose={closeEmail} title="email import" panelId={EMAIL_ID}
+                  anchor={() => mobile ? emailRef.current : inputRef.current} initialFocus={panel => panel}>
+                  <div className={`${collection.contentViewport} ${styles.emailBody}`}>
+                    <p>forward a newsletter here. email always arrives in all.</p>
+                    <Textarea bare readOnly aria-label="email import address" value={row.address}
+                      autoGrow={{ minRows: 1, maxRows: 16 }} className={styles.emailAddress} />
+                    <Button onClick={() => void copyAddress(row.address)}>{copied.copied ? "copied" : "copy address"}</Button>
+                    <p className={collection.detail}>imports the message body. attachments aren’t imported as files.</p>
+                  </div>
+                </PickerSurface>
+              </div></div>;
               case "ShelfFailed": return <div key={row.key} role="row" className={styles.failed}><div role="gridcell">
                 <Failed error={row.error} noun="recent imports" retry={{ run: () => void shelf.refetch() }} />
               </div></div>;
@@ -345,6 +408,9 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
                     renderTrigger={trigger => <OverflowMenuButton {...trigger} className={styles.menu} />} />}
                 </ImportLine>);
               }
+              case "Email": return cell("email import", <Button ref={emailRef} tabIndex={tabIndex}
+                className={styles.emailTrigger} aria-expanded={emailExpanded} aria-controls={EMAIL_ID}
+                onClick={() => run(row, "Follow")}>email import</Button>);
               case "Choose": return cell("choose a file…", <><Icon.Upload size={20} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>choose a file…</span></>);
               case "Shelf": {
                 const readable = row.item.can_read || row.item.can_play;

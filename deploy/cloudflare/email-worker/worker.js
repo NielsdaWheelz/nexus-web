@@ -1,91 +1,101 @@
-/**
- * Nexus Post Room — Cloudflare Email Worker.
- *
- * Receives raw MIME messages via Cloudflare Email Routing, enforces a 2 MB
- * size cap (bounces larger messages), HMAC-SHA256-signs the raw body, and
- * POSTs to the Nexus /ingest/email endpoint. A 4xx bounces the message; a 5xx
- * or a network failure throws, so the sender retries.
- *
- * Required Worker secrets (set via `wrangler secret put`):
- *   EMAIL_INGEST_HMAC_SECRET  — shared HMAC secret (must match backend config)
- *   EMAIL_INGEST_API_URL      — full URL of the /ingest/email endpoint
- *                               e.g. "https://api.example.com/ingest/email"
+/** Email import's SMTP adapter. Only declared permanent refusals call setReject.
+ * Throwing preserves failure eligibility; actual transport deferral requires live qualification.
+ * Secrets: EMAIL_INGEST_HMAC_SECRET and EMAIL_INGEST_API_URL.
  */
+import { WIRE_REVISION } from "../../../apps/web/src/lib/api/wire.gen.ts";
 
-const MAX_BYTES = 2 * 1024 * 1024; // 2 MB — must match EMAIL_INGEST_MAX_BYTES
+const MAX_BYTES = 2 * 1024 * 1024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default {
-  /**
-   * @param {ForwardableEmailMessage} message
-   * @param {Env} env
-   * @param {ExecutionContext} ctx
-   */
-  async email(message, env, ctx) {
-    const rawStream = message.raw;
-    const reader = rawStream.getReader();
+  async email(message, env) {
+    const recipient = message.to.trim().toLowerCase();
+    const parts = recipient.split("@");
+    if (
+      /[^\x21-\x7e]/.test(recipient) ||
+      parts.length !== 2 ||
+      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(parts[0]) ||
+      parts[1].length > 253 ||
+      recipient.length > 254 ||
+      parts[1].split(".").length < 2 ||
+      !parts[1].split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+    ) {
+      throw new Error("email import recipient is invalid");
+    }
+    if (!env.EMAIL_INGEST_HMAC_SECRET?.trim()) {
+      throw new Error("email import secret is not configured");
+    }
+
+    const reader = message.raw.getReader();
     const chunks = [];
     let totalBytes = 0;
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       totalBytes += value.byteLength;
       if (totalBytes > MAX_BYTES) {
-        // Bounce with a permanent failure so the sender is notified.
-        message.setReject("Message exceeds the 2 MB size limit for Nexus Post Room.");
+        await reader.cancel();
+        message.setReject("email exceeds the 2 mib limit.");
         return;
       }
       chunks.push(value);
     }
-
-    // Assemble raw bytes.
     const rawBytes = new Uint8Array(totalBytes);
     let offset = 0;
     for (const chunk of chunks) {
       rawBytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-
-    // HMAC-SHA256(raw body, secret).
-    const secret = env.EMAIL_INGEST_HMAC_SECRET;
-    const keyMaterial = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
+    const encoder = new TextEncoder();
+    const prefix = encoder.encode(`nexus-email\n${WIRE_REVISION}\n${recipient}\n`);
+    const signedBytes = new Uint8Array(prefix.length + rawBytes.length);
+    signedBytes.set(prefix);
+    signedBytes.set(rawBytes, prefix.length);
+    const key = await crypto.subtle.importKey(
+      "raw", encoder.encode(env.EMAIL_INGEST_HMAC_SECRET),
+      { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
     );
-    const signatureBuffer = await crypto.subtle.sign("HMAC", keyMaterial, rawBytes);
-    const signature = Array.from(new Uint8Array(signatureBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
-    const recipient = message.to;
-    const apiUrl = env.EMAIL_INGEST_API_URL;
-
-    const response = await fetch(apiUrl, {
+    const signature = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, signedBytes)))
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const response = await fetch(env.EMAIL_INGEST_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "message/rfc822",
+        "X-Nexus-Wire": String(WIRE_REVISION),
         "X-Nexus-Email-Signature": signature,
         "X-Nexus-Email-Recipient": recipient,
       },
       body: rawBytes,
     });
-
-    if (response.status >= 500) {
-      // Temporary (storage or database down, nothing was created): throw so the
-      // message is deferred and the sending server retries it later.
-      throw new Error(`Nexus Post Room is unavailable (HTTP ${response.status}).`);
+    const requestId = response.headers.get("x-request-id") ?? "";
+    const safeId = requestId.match(/^[A-Za-z0-9._:-]{1,128}/)?.[0] === requestId ? requestId : "unknown";
+    let body;
+    try {
+      body = await response.json();
+    } catch {
+      throw new Error(`email import returned unreadable json: status=${response.status} code=unknown request_id=${safeId}`);
     }
-    if (!response.ok) {
-      // Log and bounce so the sender learns it failed.
-      const body = await response.text().catch(() => "(no body)");
-      console.error(
-        `Post Room ingest failed: status=${response.status} body=${body}`,
-      );
-      message.setReject(`Nexus Post Room rejected the message (HTTP ${response.status}).`);
+    const data = body?.data;
+    if (
+      response.status === 200 &&
+      body !== null && typeof body === "object" && Object.keys(body).length === 1 &&
+      data !== null && typeof data === "object" && Object.keys(data).length === 2 &&
+      ((data.outcome === "suppressed" && data.media_id === null) ||
+        ((data.outcome === "accepted" || data.outcome === "duplicate") &&
+          typeof data.media_id === "string" && data.media_id.length === 36 && UUID.test(data.media_id)))
+    ) {
+      return;
     }
-    // 200 / 2xx: silently accept (the message was ingested or was a duplicate).
+    const code = body?.error?.code;
+    if (response.status === 400 && code === "E_INVALID_REQUEST") {
+      message.setReject("couldn’t read this email.");
+      return;
+    }
+    if (response.status === 413 && code === "E_SOURCE_TOO_LARGE") {
+      message.setReject("email exceeds the 2 mib limit.");
+      return;
+    }
+    const safeCode = typeof code === "string" && code.match(/^E_[A-Z0-9_]{1,64}/)?.[0] === code ? code : "unknown";
+    throw new Error(`email import failed: status=${response.status} code=${safeCode} request_id=${safeId}`);
   },
 };

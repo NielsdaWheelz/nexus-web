@@ -34,7 +34,7 @@ key shapes (`storage/paths.py` builds media/upload keys;
 
 | key | owner row |
 | --- | --- |
-| `media/{media_id}/source/{attempt_id}.{html,original-pdf,original-epub}` | the attempt's `source_payload.storage_path` (a Post Room body), or `media_file` (a file fetched from a url) |
+| `media/{media_id}/source/{attempt_id}.{html,original-pdf,original-epub}` | the attempt's `source_payload.storage_path` (an email body), or `media_file` (a file fetched from a url) |
 | `media/{media_id}/candidates/{candidate_id}/original.{pdf,epub,json}` | `media_file`, or for an article packet the attempt's `source_payload.storage_path` |
 | `media/{media_id}/source/{attempt_id}/assets/{asset_key}` | `epub_resources` |
 | `media/x-captures/{capture_id}/{object_uuid}` | `x_post_capture_assets`; immutable archived x image bytes |

@@ -160,6 +160,7 @@ class ApiErrorCode(str, Enum):
     E_LINK_TARGET_STALE = ("E_LINK_TARGET_STALE", 409)  # passage candidate row no longer exists
 
     # Ingestion errors
+    E_EMAIL_INGEST_UNAVAILABLE = ("E_EMAIL_INGEST_UNAVAILABLE", 503)
     E_INGEST_FAILED = ("E_INGEST_FAILED", 502)
     E_INGEST_TIMEOUT = ("E_INGEST_TIMEOUT", 504)
     E_SOURCE_ACCESS_DENIED = ("E_SOURCE_ACCESS_DENIED", 422)

@@ -243,6 +243,8 @@ first. enabled secondary actions remain usable when the primary is unavailable.
 
 ## the import page
 
+email discovery belongs here, outside account settings. a mount-scoped `/me` read uses `usePaneFreeServerValue`: pending shows a local ruling, null omits the row, initial failure owns retry, and retained data remains usable on refresh failure. the owner’s address adds an `email import` button after file choice. its inline `PickerSurface` is a separate nonselectable grid row with a scrolling body, selectable wrapping address, ordinary copy feedback and manual recovery. opening focuses the named region; closing returns to the desktop combobox or phone trigger. the address/account scopes the disclosure, while draft, destination and intake keep their existing owner. email always files into all, independently of the link/file destination.
+
 the import page is one nexus page through `NexusPages`, inside the shared desktop
 frame or phone sheet. its back arrow occupies the desktop query's leading
 gutter, keeping the field and line pointers on the root query's edge. on a phone

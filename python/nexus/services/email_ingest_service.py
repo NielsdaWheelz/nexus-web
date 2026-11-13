@@ -1,72 +1,114 @@
-"""Post Room: one emailed message becomes one web article in the owner's default library.
+"""One private email receipt admits one body into its owner's All library.
 
-Identity is the normalized Message-ID (else a digest of the first 4 KiB); the media's
-``(provider, provider_id) = ("email", id)`` is unique, so a redelivery is a no-op that
-re-applies the sender credit. The readable html is written to storage first, at a
-path named by ids minted here; then media, attempt, library entry and job commit in
-one transaction (I11). A failed write answers 5xx and creates nothing; an object a
-lost race or a failed commit leaves behind is the storage sweep's.
+Receipt identity outlives content: removal nulls its media pointer and redelivery
+stays suppressed. Storage is written once before the serializable publication of
+receipt, media, attempt, holding and job; the ordinary sweep owns unused objects.
 """
 
 from __future__ import annotations
 
 import email
+import email.errors
 import email.message
 import email.policy
 import hashlib
 import hmac
 import html as html_lib
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parseaddr, parsedate_to_datetime
-from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Media, MediaKind, ProcessingStatus
-from nexus.db.retries import integrity_constraint_name, retry_serializable
+from nexus.config import Settings
+from nexus.db.models import EmailIngestReceipt, Media, MediaKind, ProcessingStatus
+from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.ids import new_uuid7
-from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
-from nexus.services import library_entries
+from nexus.schemas.media_sources import (
+    EmailAcceptance,
+    EmailAccepted,
+    EmailProvenance,
+    EmailSourcePayload,
+    EmailSuppressed,
+)
+from nexus.services import library_entries, users
 from nexus.services import source_attempts as sa
 from nexus.services import source_types as st
-from nexus.services.contributor_taxonomy import (
-    NOT_OBSERVED,
-    ContributorObservationBatch,
-    RawCreditEntry,
-    RawIdentityClaim,
-    build_observation,
-    clean_contributor_display,
-)
-from nexus.services.contributor_writes import MediaTarget
-from nexus.services.contributors import replace_observed_role_slices_batch
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.storage.client import get_storage_client
 from nexus.storage.errors import StorageError
 from nexus.storage.paths import build_source_artifact_storage_path
 
-# MIME walk safety caps: no newsletter legitimately exceeds these.
+EMAIL_INGEST_MAX_BYTES = 2 * 1024 * 1024
 _MAX_MIME_PARTS = 50
 _MAX_MIME_DEPTH = 10
 
 
 @dataclass(frozen=True, slots=True)
-class EmailAcceptance:
-    media_id: UUID
-    outcome: Literal["accepted", "duplicate"]
+class EmailIngestConfig:
+    secret: str
+    owner_user_id: UUID
+    address: str
 
 
-def verify_email_signature(raw_body: bytes, signature_header: str | None, secret: str) -> bool:
-    """Constant-time HMAC-SHA256 of the raw body; a blank secret never verifies."""
-    if not secret or not signature_header:
+def canonical_email_recipient(raw: str) -> str | None:
+    """The narrow receiving mailbox grammar, separate from MIME sender addresses."""
+    address = raw.strip().lower()
+    if len(address) > 254 or address.count("@") != 1:
+        return None
+    slug, domain = address.split("@")
+    labels = domain.split(".")
+    if (
+        re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", slug) is None
+        or len(domain) > 253
+        or len(labels) < 2
+        or any(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None for label in labels
+        )
+    ):
+        return None
+    return address
+
+
+def resolve_email_ingest_config(settings: Settings) -> EmailIngestConfig | None:
+    """Partial/invalid optional configuration disables email without disabling nexus."""
+    secret = settings.email_ingest_hmac_secret
+    slug, domain = settings.email_ingest_address_slug, settings.email_ingest_domain
+    owner = settings.email_ingest_owner_user_id
+    if not (secret and secret.strip() and slug and domain and owner):
+        return None
+    address = canonical_email_recipient(f"{slug.strip()}@{domain.strip()}")
+    if address is None:
+        return None
+    try:
+        owner_user_id = UUID(owner.strip())
+    except ValueError:
+        return None
+    return EmailIngestConfig(secret=secret, owner_user_id=owner_user_id, address=address)
+
+
+def verify_email_signature(
+    raw_body: bytes,
+    signature_header: str | None,
+    secret: str,
+    *,
+    recipient: str,
+    wire_revision: str,
+) -> bool:
+    """Authenticate the wire revision, canonical full recipient and exact MIME bytes."""
+    if not secret.strip() or not signature_header:
         return False
-    expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header.strip().lower())
+    signature = signature_header.strip().lower()
+    if re.fullmatch(r"[0-9a-f]{64}", signature) is None:
+        return False
+    signed = f"nexus-email\n{wire_revision}\n{recipient}\n".encode() + raw_body
+    expected = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def normalize_message_id(raw: str | None) -> str | None:
@@ -83,49 +125,61 @@ def normalize_message_id(raw: str | None) -> str | None:
 def accept_email_message(
     *, db: Session, raw_body: bytes, owner_user_id: UUID, request_id: str | None
 ) -> EmailAcceptance:
-    """Accept one MIME message. Retry rule: its Message-ID maps to one media."""
+    """Admit once per owner/message identity; a receipt never re-files its content."""
     try:
         message = email.message_from_bytes(raw_body, policy=email.policy.default)
-    except Exception as exc:
+    except (email.errors.MessageError, ValueError, RecursionError) as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "MIME message could not be parsed."
         ) from exc
-    message_id = normalize_message_id(_header(message, "Message-ID")) or (
-        f"synthesized-{hashlib.sha256(raw_body[:4096]).hexdigest()}"
+    assert isinstance(message, email.message.EmailMessage)  # policy.default's message factory
+    message_id = normalize_message_id(_header(message, "Message-ID"))
+    identity = (
+        b"message-id\0" + message_id.encode("utf-8")
+        if message_id is not None
+        else b"raw-mime\0" + raw_body
     )
-    sender = _sender(message)
-    observation = _sender_observation(*sender) if sender is not None else NOT_OBSERVED
-    if (existing := _media_for(db, message_id)) is not None:
-        return _credit(existing, observation, "duplicate")
-    if sender is None:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Email has no valid From header.")
-
-    db.rollback()  # no transaction spans the object-store write
-    media_id, attempt_id = new_uuid7(), new_uuid7()
+    message_key = hashlib.sha256(identity).hexdigest()
+    if (existing := _receipt_for(db, owner_user_id, message_key)) is not None:
+        return existing
+    sender_name, sender_address = _sender(message)
+    body = _readable_html(message).encode("utf-8")
+    provenance = EmailProvenance(
+        sender_name=sender_name,
+        sender_address=sender_address,
+        sent_at=_sent_at(_header(message, "Date")),
+    )
+    db.rollback()  # no database transaction spans storage
+    media_id, attempt_id, receipt_id = new_uuid7(), new_uuid7(), new_uuid7()
     path = build_source_artifact_storage_path(media_id, attempt_id, "html")
     try:
-        get_storage_client().put_object(
-            path, _readable_html(message).encode("utf-8"), "text/html; charset=utf-8"
-        )
+        get_storage_client().put_object(path, body, "text/html; charset=utf-8")
     except StorageError as exc:
-        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Post Room storage is unavailable.") from exc
-    now = datetime.now(UTC)
+        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Email storage is unavailable.") from exc
 
-    def publish() -> None:
+    def publish() -> EmailAcceptance:
+        users.lock_viewer(db, owner_user_id)
+        if (existing := _receipt_for(db, owner_user_id, message_key)) is not None:
+            return existing
         media = Media(
             id=media_id,
             kind=MediaKind.web_article.value,
             title=(_header(message, "Subject") or "").strip()[:255] or "Untitled",
             provider="email",
-            provider_id=message_id,
+            provider_id=None,
             processing_status=ProcessingStatus.pending,
             created_by_user_id=owner_user_id,
-            created_at=now,
-            updated_at=now,
-            edition_published_date=_publication_date(_header(message, "Date")),
         )
         db.add(media)
         db.flush()
+        db.add(
+            EmailIngestReceipt(
+                id=receipt_id,
+                owner_user_id=owner_user_id,
+                message_key=message_key,
+                media_id=media_id,
+            )
+        )
         projection.refresh(db, "media", [media_id])
         attempt = sa.create_attempt(
             db,
@@ -136,41 +190,53 @@ def accept_email_message(
             requested_url=None,
             canonical_source_url=None,
             provider="email",
-            provider_target_ref=message_id,
-            payload={"storage_path": path},
+            provider_target_ref=None,
+            payload=EmailSourcePayload(storage_path=path, provenance=provenance).model_dump(
+                mode="json"
+            ),
         )
         library_entries.ensure_media_in_default_library(db, owner_user_id, media_id)
         sa.enqueue_attempt(db, attempt, actor_id=owner_user_id, request_id=request_id)
         db.flush()
-        projection.refresh_viewer_contributors(db, list(db.scalars(text("SELECT id FROM users"))))
         record_input_change(db, owners=(f"media:{media_id}",))
+        return EmailAccepted(media_id=media_id, outcome="accepted")
 
-    try:
-        retry_serializable(db, "email.accept", publish)
-    except IntegrityError as exc:
-        # a concurrent delivery of this Message-ID committed first: the index decides
-        if integrity_constraint_name(exc) != "uix_media_email_provider_id":
-            raise
-        if (raced := _media_for(db, message_id)) is None:
-            raise
-        return _credit(raced, observation, "duplicate")
-    return _credit(media_id, observation, "accepted")
+    return retry_serializable(db, "email.accept", publish)
 
 
-def _credit(
-    media_id: UUID,
-    observation: ContributorObservationBatch,
-    outcome: Literal["accepted", "duplicate"],
-) -> EmailAcceptance:
-    """The sender credit, after commit; re-applying it is a no-op, so redeliveries converge."""
-    replace_observed_role_slices_batch(((MediaTarget(media_id), observation, "email"),))
-    return EmailAcceptance(media_id=media_id, outcome=outcome)
-
-
-def _media_for(db: Session, message_id: str) -> UUID | None:
-    return db.scalar(
-        select(Media.id).where(Media.provider == "email", Media.provider_id == message_id)
+def suppress_email_receipt(db: Session, *, owner_user_id: UUID, media_id: UUID) -> None:
+    """Personal removal participant; caller has passed guards and holds viewer/media locks."""
+    db.execute(
+        update(EmailIngestReceipt)
+        .where(
+            EmailIngestReceipt.owner_user_id == owner_user_id,
+            EmailIngestReceipt.media_id == media_id,
+        )
+        .values(media_id=None)
     )
+
+
+def detach_email_receipts(db: Session, media_id: UUID) -> None:
+    """Content teardown participant; caller holds the media lock and owns commit."""
+    db.execute(
+        update(EmailIngestReceipt)
+        .where(EmailIngestReceipt.media_id == media_id)
+        .values(media_id=None)
+    )
+
+
+def _receipt_for(db: Session, owner_user_id: UUID, message_key: str) -> EmailAcceptance | None:
+    receipt = db.scalars(
+        select(EmailIngestReceipt).where(
+            EmailIngestReceipt.owner_user_id == owner_user_id,
+            EmailIngestReceipt.message_key == message_key,
+        )
+    ).one_or_none()
+    if receipt is None:
+        return None
+    if receipt.media_id is None:
+        return EmailSuppressed(outcome="suppressed", media_id=None)
+    return EmailAccepted(outcome="duplicate", media_id=receipt.media_id)
 
 
 def _header(message: email.message.Message, name: str) -> str | None:
@@ -179,79 +245,49 @@ def _header(message: email.message.Message, name: str) -> str | None:
     return str(value) if value is not None else None
 
 
-def _sender(message: email.message.Message) -> tuple[str, str] | None:
-    """``(display name, normalized address)`` from From:; never the address as a name."""
+def _sender(message: email.message.Message) -> tuple[str | None, str]:
     display_name, address = parseaddr(_header(message, "From") or "")
-    address = address.strip().lower()
-    if "@" not in address:
-        return None
-    local_part = address.split("@")[0]
-    candidate = display_name.strip()
-    if not candidate or "@" in candidate:
-        candidate = local_part
-    return clean_contributor_display(candidate) or local_part, address
+    local, separator, domain = address.strip().rpartition("@")
+    if not (local and separator and domain):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Email has no valid From header.")
+    return display_name.strip() or None, f"{local}@{domain.lower()}"
 
 
-def _sender_observation(name: str, address: str) -> ContributorObservationBatch:
-    """The sender keyed on the normalized address, never on display text."""
-    batch, _truncated = build_observation(
-        {
-            "author": [
-                RawCreditEntry(
-                    credited_name=name,
-                    identity_claims=(RawIdentityClaim("email_address", address),),
-                )
-            ]
-        }
-    )
-    return batch
-
-
-def _publication_date(value: str | None) -> PublicationDate | None:
+def _sent_at(value: str | None) -> datetime | None:
     if value is None:
         return None
     try:
         parsed = parsedate_to_datetime(value)
-    # justify-ignore-error: a malformed external MIME date is an absent observation.
-    except (TypeError, ValueError, IndexError):
+        if parsed.tzinfo is None:
+            if not value.rstrip().endswith("-0000"):
+                return None
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    # justify-ignore-error: malformed or unrepresentable external dates are absent observations.
+    except (TypeError, ValueError, IndexError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        if not value.rstrip().endswith("-0000"):
-            return None
-        parsed = parsed.replace(tzinfo=UTC)
-    return normalize_source_publication_date(parsed.isoformat())
 
 
-def _readable_html(message: email.message.Message) -> str:
-    """The first ``text/html`` part, else the ``text/plain`` part in ``<pre>``, else ""."""
-    html_part, text_part = _walk(message, depth=0, budget=[_MAX_MIME_PARTS])
-    if html_part is not None:
-        return html_part
-    return f"<pre>{html_lib.escape(text_part)}</pre>" if text_part is not None else ""
-
-
-def _walk(
-    message: email.message.Message, *, depth: int, budget: list[int]
-) -> tuple[str | None, str | None]:
-    """A depth- and count-capped walk for the best html and plain-text parts."""
-    if depth > _MAX_MIME_DEPTH or budget[0] <= 0:
-        return None, None
-    budget[0] -= 1
-    if not message.is_multipart():
-        kind = message.get_content_type()
-        if kind == "text/html":
-            return _decoded(message), None
-        return None, _decoded(message) if kind == "text/plain" else None
-    html_part: str | None = None
-    text_part: str | None = None
-    for part in message.get_payload():
-        if not isinstance(part, email.message.Message):
+def _readable_html(message: email.message.EmailMessage) -> str:
+    """Bound the entire tree before selecting an inline MIME body, never an attachment."""
+    parts: list[tuple[email.message.MIMEPart, int]] = [(message, 0)]
+    count = 0
+    while parts:
+        part, depth = parts.pop()
+        count += 1
+        if count > _MAX_MIME_PARTS or depth > _MAX_MIME_DEPTH:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Email MIME structure is too large."
+            )
+        parts.extend((child, depth + 1) for child in part.iter_parts())
+    for kind in ("html", "plain"):
+        part = message.get_body((kind,))
+        if part is None:
             continue
-        nested_html, nested_text = _walk(part, depth=depth + 1, budget=budget)
-        html_part, text_part = html_part or nested_html, text_part or nested_text
-        if html_part is not None:
-            break
-    return html_part, text_part
+        body = _decoded(part)
+        if body is not None and body.strip():
+            return body if kind == "html" else f"<pre>{html_lib.escape(body)}</pre>"
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Email has no supported inline body.")
 
 
 def _decoded(message: email.message.Message) -> str | None:

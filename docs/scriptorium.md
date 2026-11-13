@@ -185,10 +185,9 @@ Honesty as ornament; the ledger data is already there.
   `playback_queue_items`; see `lectern-player-lifecycle-hard-cutover.md`). The
   Chapbook — mobile reframed as the queue + reader + pulse device instead of a
   shrunken twelve-pane workspace it can't render anyway — remains undelivered.
-- **The Post Room** — a private ingest email address. Newsletters are the
-  largest missing mouth for a serious reading tool; senders resolve through
-  the contributor identity system, which is already built to exactly this
-  depth (aliases, merges, external IDs) and finally earns it.
+- **email import** — one private address inside import. newsletter bodies enter
+  all; sender and sent date remain private transmission facts rather than
+  inferred contributor identities. activation requires real delivery qualification.
 
 ## VIII. The desk must be cleared
 

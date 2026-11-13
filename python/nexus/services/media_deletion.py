@@ -58,6 +58,7 @@ from nexus.schemas import feed as wire
 from nexus.schemas.media import MediaRemovalPreviewOut
 from nexus.services import (
     contributors,
+    email_ingest_service,
     libraries,
     library_entries,
     media_discoveries,
@@ -438,6 +439,7 @@ def _remove(
         raise ConflictError(
             ApiErrorCode.E_RESOURCE_CONFLICT, "Media was acquired again; review removal again"
         )
+    email_ingest_service.suppress_email_receipt(db, owner_user_id=viewer_id, media_id=media_id)
     users.advance_removal_revision(db, viewer_id)
 
     default_id = db.scalar(
@@ -674,6 +676,7 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
         x_thread=st.X_AUTHOR_THREAD,
         succeeded=st.SUCCEEDED,
     )
+    email_ingest_service.detach_email_receipts(db, media_id)
     _run(db, "DELETE FROM media WHERE id = :m", m=media_id)
     return paths
 

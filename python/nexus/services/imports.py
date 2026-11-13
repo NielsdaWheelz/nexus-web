@@ -8,6 +8,7 @@ view are their owners' (`media_facts`); in-flight progress is ingest's.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import cast
@@ -43,7 +44,7 @@ from nexus.schemas.imports import (
     RetryUploadOffer,
     WaitingReason,
 )
-from nexus.schemas.media_sources import SourceProgress
+from nexus.schemas.media_sources import EmailSourcePayload, SourceProgress
 from nexus.schemas.source_issues import SOURCE_ISSUES
 from nexus.services.collection_keyset import (
     KeysetValueKind,
@@ -58,6 +59,7 @@ from nexus.services.metadata_operations import metadata_operations_sql
 from nexus.services.source_publication import load_source_progress
 from nexus.services.source_types import (
     COUNTED_PROGRESS_SOURCE_TYPES,
+    EMAIL_MESSAGE,
     LATEST_ORDER_SQL,
     PODCAST_EPISODE_TRANSCRIPT,
 )
@@ -563,9 +565,31 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
         original_source = OriginalSource(
             source_url=requested_url, source_label=f"{parsed.hostname}{parsed.path}"
         )
+    email_source = None
+    if row["media_id"] is not None:
+        original_attempt = (
+            db.execute(
+                text("""SELECT source_type, created_by_user_id, source_payload
+                FROM media_source_attempts WHERE media_id = :media_id
+                ORDER BY attempt_no LIMIT 1"""),
+                {"media_id": row["media_id"]},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            original_attempt is not None
+            and original_attempt["source_type"] == EMAIL_MESSAGE
+            and original_attempt["created_by_user_id"] == viewer_id
+        ):
+            # justify-defect: email admission owns this stored closed JSON contract.
+            email_source = EmailSourcePayload.model_validate_json(
+                json.dumps(original_attempt["source_payload"])
+            ).provenance
     return ImportDetail(
         pending_captures=[PendingCapture.model_validate(dict(item)) for item in pending],
         original_source=original_source,
+        email_source=email_source,
         item=_item(row, hydrated, None),
         source_issues=SOURCE_ISSUES.validate_python(row["source_issues"] or []),
         related_imports=[

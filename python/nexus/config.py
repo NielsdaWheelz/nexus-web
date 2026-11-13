@@ -200,12 +200,11 @@ class Settings(BaseSettings):
     feed_refresh_due_schedule_seconds: int = Field(900, ge=1)
     feed_refresh_due_limit: int = Field(100, ge=1)
 
-    # Post Room: unless secret, slug, domain and owner are all set, /ingest/email answers 503.
+    # Email import is available only when all four values form a valid configuration.
     email_ingest_hmac_secret: str | None = None
     email_ingest_address_slug: str | None = None
     email_ingest_domain: str | None = None
     email_ingest_owner_user_id: str | None = None
-    email_ingest_max_bytes: int = Field(2 * _MIB, gt=0)
 
     @field_validator("supabase_audiences", "generation_api_providers", mode="before")
     @classmethod

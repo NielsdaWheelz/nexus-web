@@ -1120,10 +1120,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Post Email Ingest
-         * @description Configuration, size, signature, recipient and owner, all before any MIME parse.
-         */
+        /** Post Email Ingest */
         post: operations["post_email_ingest_ingest_email_post"];
         delete?: never;
         options?: never;
@@ -1873,8 +1870,8 @@ export interface paths {
          * @description Get current user information.
          *
          *     Requires authentication. Returns the authenticated user's ID,
-         *     default library ID, email, display name, and the Post Room ingest address
-         *     to the account that owns the Post Room.
+         *     default library ID, email, display name, and the email import address
+         *     to its configured owner.
          */
         get: operations["get_me_me_get"];
         put?: never;
@@ -5077,6 +5074,11 @@ export interface components {
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
         };
+        /** Data[Annotated[Union[EmailAccepted, EmailSuppressed], FieldInfo(annotation=NoneType, required=True, discriminator='outcome')]] */
+        Data_Annotated_Union_EmailAccepted__EmailSuppressed___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____: {
+            /** Data */
+            data: components["schemas"]["EmailAccepted"] | components["schemas"]["EmailSuppressed"];
+        };
         /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderCaptureDocumentOut, ReaderPartDocumentOut, ReaderTranscriptDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTextDocumentOut__ReaderCaptureDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -5803,6 +5805,41 @@ export interface components {
          * @enum {string}
          */
         DurableExecutionPhase: "Queued" | "Running" | "Recovering" | "Suspended";
+        /** EmailAccepted */
+        EmailAccepted: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            outcome: "accepted" | "duplicate";
+        };
+        /**
+         * EmailProvenance
+         * @description Unverified transmission facts from the outer message, never bibliography.
+         */
+        EmailProvenance: {
+            /** Sender Address */
+            sender_address: string;
+            /** Sender Name */
+            sender_name: string | null;
+            /** Sent At */
+            sent_at: string | null;
+        };
+        /** EmailSuppressed */
+        EmailSuppressed: {
+            /** Media Id */
+            media_id: null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            outcome: "suppressed";
+        };
         /** EpisodeConsumptionEntry */
         EpisodeConsumptionEntry: {
             /**
@@ -7691,6 +7728,7 @@ export interface components {
         };
         /** ImportDetail */
         ImportDetail: {
+            email_source: components["schemas"]["EmailProvenance"] | null;
             item: components["schemas"]["ImportItem"];
             original_source: components["schemas"]["OriginalSource"] | null;
             /** Pending Captures */
@@ -17275,7 +17313,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Data_Annotated_Union_EmailAccepted__EmailSuppressed___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____"];
                 };
             };
             /** @description Validation Error */

@@ -4,7 +4,6 @@ Returns information about the authenticated viewer including profile fields.
 """
 
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -28,6 +27,7 @@ from nexus.services import reader_profile as reader_profile_service
 from nexus.services import users as users_service
 from nexus.services import workspace_presentations as workspace_presentations_service
 from nexus.services import workspace_sessions as workspace_sessions_service
+from nexus.services.email_ingest_service import resolve_email_ingest_config
 
 router = APIRouter(tags=["user"])
 
@@ -35,13 +35,9 @@ router = APIRouter(tags=["user"])
 def _profile(db: Session, viewer: Viewer, settings: Settings) -> UserProfileOut:
     library_id = libraries_service.default_library_id(db, viewer.user_id)
     profile = users_service.get_user_profile(db, viewer.user_id, library_id, viewer.email)
-    slug, domain = settings.email_ingest_address_slug, settings.email_ingest_domain
-    try:  # read as the ingest route reads it, so the address shows where the mail is filed
-        owner = UUID((settings.email_ingest_owner_user_id or "").strip())
-    except ValueError:
-        owner = None
-    if slug and domain and owner == viewer.user_id:
-        profile.email_ingest_address = f"{slug}@{domain}"
+    config = resolve_email_ingest_config(settings)
+    if config is not None and config.owner_user_id == viewer.user_id:
+        profile.email_ingest_address = config.address
     return profile
 
 
@@ -54,8 +50,8 @@ def get_me(
     """Get current user information.
 
     Requires authentication. Returns the authenticated user's ID,
-    default library ID, email, display name, and the Post Room ingest address
-    to the account that owns the Post Room.
+    default library ID, email, display name, and the email import address
+    to its configured owner.
     """
     return Data(data=_profile(db, viewer, settings))
 

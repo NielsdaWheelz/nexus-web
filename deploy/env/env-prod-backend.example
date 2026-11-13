@@ -58,11 +58,10 @@ XAI_GENERATION_API_KEY=<xai-generation-api-key>
 
 # BRAVE_SEARCH_API_KEY=
 
-# Post Room: private email ingest address (Cloudflare Email Worker).
+# Private email import address (Cloudflare Email Worker).
 # Set all four once DNS MX + Email Routing + worker are deployed; until then
 # /ingest/email answers 503.
 # EMAIL_INGEST_HMAC_SECRET=<generate-with: python -c "import secrets; print(secrets.token_hex(32))">
 # EMAIL_INGEST_ADDRESS_SLUG=<local-part of the ingest address, e.g. "letters-abc123">
 # EMAIL_INGEST_DOMAIN=<mail domain configured in Cloudflare Email Routing, e.g. "mail.example.com">
 # EMAIL_INGEST_OWNER_USER_ID=<prod-user-uuid>
-# EMAIL_INGEST_MAX_BYTES=2097152  # raw-MIME cap; endpoint re-check + worker bounce. Default 2 MB.

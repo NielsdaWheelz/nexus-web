@@ -171,3 +171,16 @@
 .page[data-mobile] .line { min-height: 64px; }
 .page[data-mobile] .row { min-height: 48px; }
 .page[data-mobile] :is(.row, .line)[data-active] { background: transparent; }
+
+.emailTrigger {
+  justify-content: flex-start;
+  inline-size: 100%;
+  padding-inline-start: var(--space-6);
+  text-align: start;
+}
+
+.emailPanel { min-width: 0; padding: var(--space-1) var(--space-2) var(--space-2) calc(var(--text-edge) - var(--space-2)); }
+.emailBody { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); font-size: var(--text-sm); }
+.emailBody p { margin: 0; }
+.emailBody > button { align-self: flex-start; }
+.emailAddress { flex: none; inline-size: 100%; padding: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
