@@ -107,7 +107,7 @@ function Detail({ detail }: { readonly detail: ImportDetail }) {
       if (slot === null || slot.classification === "Complete") return null;
       const restriction = recoveryLine(slot);
       return <section key={key} className={styles.section}>
-        <h3>{key}{item.dismissed.includes(key) ? <span className={styles.dismissed}>dismissed</span> : null}</h3>
+        <h3>{key}{item.dismissed.includes(key) ? <span className={styles.dismissed}> dismissed</span> : null}</h3>
         <Fact line={{ fact: obligationFact(item, key, at) }} />
         {restriction === null ? null : <p>{restriction}</p>}
         {slot.recovery?.kind === "RetryUpload" && item.original_filename !== null ? <p>choose the original file: {item.original_filename}</p> : null}
@@ -181,7 +181,7 @@ function MetadataSection({ item, standing }: { readonly item: ImportItem; readon
     }
   } else if (operation !== null) fact = operation.status === "completed" && operation.outcome.purpose === "bibliography" ? null : `${metadataOperationSummary(operation, at)}.`;
   return <section className={styles.section}>
-    <h3>{metadataOperationName(purpose)}{item.dismissed.includes("metadata") ? <span className={styles.dismissed}>dismissed</span> : null}</h3>
+    <h3>{metadataOperationName(purpose)}{item.dismissed.includes("metadata") ? <span className={styles.dismissed}> dismissed</span> : null}</h3>
     {fact === null ? null : standing ? <Fact line={{ fact }} /> : <p>{fact}</p>}
     <MetadataResearchResult operation={operation} />
     {earlier > 0 ? <p>{earlier} earlier metadata {earlier === 1 ? "run remains" : "runs remain"} unfinished</p> : null}
