@@ -556,6 +556,9 @@ bucket, and it resolves that SHA's CI artifact through `gh`.
 Once GitHub expires the artifact ninety days after the release, `--check`
 stops working for it.
 
+production checks must track the exact disposable records they create and remove
+them through the owning application commands after recording their results.
+
 ## Failure and recovery
 
 every step is idempotent: images
@@ -658,18 +661,36 @@ before treating the rehearsal as complete. Do not substitute this disposable
 database for production, and do not start predecessor code against a migrated
 database.
 
+## application maintenance
+
+run application-service maintenance in a separate container with explicit memory
+and process limits, the deployed image and its captured configuration. check host
+headroom and remove that exact container when finished. never import application
+services with `docker exec` inside a serving api or worker container: the extra
+process shares its memory limit and can cause the serving process to be killed.
+bind the `maintenance` database role in standalone service scripts.
+
+include the compose-owned settings required by the command; the application env
+file alone does not supply them. the database-only commands below supply
+`NEXUS_CODEX_CONTROL_ENDPOINT` for settings validation.
+confirm `/etc/nexus/current.env` still names the deployed configuration before
+using these examples. if a newer publication is staged, use the deployed config's
+immutable path for both `NEXUS_CONFIG_FILE` and `--env-file`.
+
 ## Oracle corpus seed
 
 The release records nothing about the Oracle. After a release that changes
 `python/nexus/services/oracle/corpus.json`, or to heal failed passage anchors,
-run the seed once inside the running background worker, with the production
-owner's user id:
+run the seed once in a one-off `migration` container, with the production owner's
+user id:
 
 ```bash
-ssh nexus@nexus-prod 'sudo docker exec "$(sudo docker ps --quiet \
-  --filter label=com.docker.compose.project=nexus \
-  --filter label=com.docker.compose.service=worker-background \
-  --filter label=com.docker.compose.oneoff=False)" \
+ssh nexus@nexus-prod 'sudo env API_IMAGE=<deployed api digest> \
+  WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
+  docker compose --project-name nexus --env-file /etc/nexus/current.env \
+  --file /etc/nexus/docker-compose.yml --profile release \
+  run --rm --no-deps --no-TTY \
+  -e NEXUS_CODEX_CONTROL_ENDPOINT=unix:///tmp/codex-daemon-10001/control.sock migration \
   python -m nexus.services.oracle.corpus seed --owner-user <uuid>'
 ```
 
@@ -689,7 +710,9 @@ ssh nexus@nexus-prod 'sudo env API_IMAGE=<deployed api digest> \
   WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
   docker compose --project-name nexus --env-file /etc/nexus/current.env \
   --file /etc/nexus/docker-compose.yml --profile release \
-  run --rm --no-deps --no-TTY migration nexus sync-gutenberg-catalog'
+  run --rm --no-deps --no-TTY \
+  -e NEXUS_CODEX_CONTROL_ENDPOINT=unix:///tmp/codex-daemon-10001/control.sock migration \
+  nexus sync-gutenberg-catalog'
 ```
 
 It downloads the feed, reconciles the mirror in one transaction, and prints its
