@@ -90,6 +90,7 @@ function createCommands(accountId: string) {
     const attempt = pending;
     if (attempt === null || !active()) return { kind: "Handled" };
     const { command, controller } = attempt;
+    let accepted: AcceptedReceipt;
     set({ kind: "Busy", command, phase: attempt.body === null && command.kind !== "DeleteTurn" ? "Preparing" : "Sending", attempt: attempt.attempt, standing: attempt.uncertain ? { kind: "Unknown", refused: null } : null });
     try {
       if (command.kind !== "DeleteTurn" && attempt.body === null) {
@@ -125,11 +126,10 @@ function createCommands(accountId: string) {
         settle(); return failed(answer, code);
       }
       attempt.uncertain = true;
-      if (receipt.outcome.run_id !== command.runId) throw new Error("admission answered another run identity");
-      const accepted: AcceptedReceipt = { ...receipt, outcome: receipt.outcome };
+      if (receipt.outcome.turn.run_id !== command.runId) throw new Error("admission answered another run identity");
+      accepted = { ...receipt, outcome: receipt.outcome };
       attempt.uncertain = false;
-      try { attempt.accepted?.(accepted); } finally { settle(); publishChange("Chats", "ChatSelection"); }
-      return { kind: "Accepted", receipt: accepted };
+      settle(); publishChange("Chats", "ChatSelection");
     } catch (error) {
       if (!active() || pending !== attempt) return { kind: "Handled" };
       const failure = failureOf(error);
@@ -147,6 +147,8 @@ function createCommands(accountId: string) {
       if (failure.kind === "Defect") { reportDefect(error); return { kind: "Handled" }; }
       return failed(refusal(refusedFact(command), failure.error));
     }
+    attempt.accepted?.(accepted);
+    return { kind: "Accepted", receipt: accepted };
   }
   const run = () => flight ?? (flight = send().finally(() => { flight = null; if (pending === null) set(IDLE_COMMAND); }));
   return {

@@ -3419,25 +3419,11 @@ export interface components {
         /** AcceptedChatAdmission */
         AcceptedChatAdmission: {
             /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Accepted";
-            /**
-             * Run Id
-             * Format: uuid
-             */
-            run_id: string;
-            /**
-             * User Message Id
-             * Format: uuid
-             */
-            user_message_id: string;
+            turn: components["schemas"]["ChatRunResponse"];
         };
         /** ActiveExclusionOut */
         ActiveExclusionOut: {

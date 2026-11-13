@@ -13,6 +13,7 @@ import type { Catalog } from "@/lib/chat/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useLatestWorkspace } from "@/lib/workspace/store";
 import * as Icon from "@/lib/ui/icons";
 import GenerationPicker from "./GenerationPicker";
 import { DraftReferenceFigure } from "./ReferenceFigure";
@@ -26,6 +27,7 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ChatComposer");
   const active = usePaneIsActive();
+  const workspace = useLatestWorkspace();
   const { draft, setText, setSelection, setQuote, getCaret, setCaret, entry, refusal, refuse } = useChatDraft(runtime.paneId);
   const memory = useChatSelection();
   const catalog = catalogRead.status === "ready" ? catalogRead.data : null;
@@ -43,7 +45,9 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
     refuse(null);
     void owner.execute({ kind: "Send", runId: createRandomId(), viewId: runtime.paneId,
       request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.reference] : [] } }, receipt => {
-      entry.accept(receipt, submitted, true, runtime.visitId); memory.enter();
+      const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
+      const currentVisit = visit?.id === runtime.visitId && new URL(visit.href, "https://nexus.invalid").pathname === "/librarian";
+      entry.accept(receipt, submitted, currentVisit, runtime.visitId); memory.enter();
     }).then(outcome => { if (outcome.kind === "Failed") refuse(refusalOf(outcome)); }).catch(error => owner.reportDefect(error));
     return true;
   };

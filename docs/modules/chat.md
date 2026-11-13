@@ -45,6 +45,9 @@ own existing data contracts.
 - `POST /chat-runs`: uuid `Idempotency-Key`, content, exact selection, at most sixteen
   attachments and observed deletion revision. an owned existing run acknowledges
   any resend before catalog resolution; an absent stale-fence send is rejected.
+  acceptance carries the current turn, read through the ordinary turn projection
+  in a fresh repeatable-read session after admission commits. a failed projection
+  is a defect, never a refusal of an already committed question.
 - `GET /librarian/messages`: latest window or one exclusive before/after cursor or
   message anchor, default twenty-five turns and maximum fifty. chronological whole
   pairs; absent anchor is 404. sequence values are decimal strings.
@@ -105,7 +108,7 @@ brief is manual; chat has no brief-writing tool or automatic orientation documen
 ## product ownership
 
 `components/chat/Librarian.tsx` owns mode, timeline reading and chrome.
-`LibrarianTranscript` owns accepted saved turns, scroll and source arrival;
+`LibrarianTranscript` owns the displayed turn list, scroll and source arrival;
 `LibrarianSearch` uses shared lexical message search and pane visit restoration.
 first query pushes a search visit, edits replace it, and opening a result pushes
 its exchange. back restores the query, result prefix, selection and scroll.
@@ -114,8 +117,13 @@ accepted sends push latest while normal history retains the prior search/exchang
 search and catalog readiness are independent. `ChatComposer`
 owns editable input and one chosen model. `lib/chat/drafts.ts` retains pane input;
 `commands.ts` retains one account admission's uuid, exact body, deletion fence
-and uncertain outcome. acceptance clears only the submitted draft object and
-immediately frees admission while the server continues generation. source
+and uncertain outcome. acceptance publishes the chat change before adopting its
+turn and clears only the submitted draft object in the same write. the pane
+retains adopted turns until a ready, fresh latest window takes over. acceptance
+navigates from search or an older window before paint. a held finished turn
+outranks a pending copy; terminal reads upgrade the same keyed list. admission
+is freed while the server continues generation. a retry adopts its turn without
+consuming or clearing a refused composer draft. source
 handoffs and the palette focus or submit through that same composer.
 
 `IndexPaneEntry` starts the librarian's timeline and catalog reads while its lazy
