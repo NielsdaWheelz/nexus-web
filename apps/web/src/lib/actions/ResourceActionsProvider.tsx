@@ -149,7 +149,7 @@ const REMOTE_ACTIONS: ReadonlySet<string> = new Set<ActionId>([
   "SubscribeFeed", "UnsubscribeFeed", "FeedLibraries", "AddEpisodeToAll", "RemoveFeedEntry", "RemoveFeedItems",
   "RefreshFeed", "Chat", "Share", "DownloadOriginal",
   "RetrySource", "RepairSource", "RepairSearch", "RefreshSource", "RetryUpload", "RetryMetadata",
-  "LibrarySettings", "PodcastSettings", "RemoveUpload",
+  "LibrarySettings", "PodcastSettings", "RemoveUpload", "Dismiss",
   "RemoveMedia", "DeleteLibrary", "DeleteTurn", "RetryTurn",
 ]);
 export function resourceActionRequiresRemote(id: string, tracked = true): boolean {
@@ -160,7 +160,7 @@ interface Runtime {
   readonly ctx: ActionContext;
   /** Runs a verb and reports its failure through `outcome`, the invoker's, so a row carries the
    * invoking pane's address. */
-  readonly run: (command: ActionCommand, outcome: Outcome) => void;
+  readonly run: (command: ActionCommand, outcome: Outcome) => Promise<void> | void;
   readonly busy: BusyKeys;
   readonly defect: { error: unknown } | null;
   readonly overlayPresentation: ReactNode;
@@ -176,7 +176,7 @@ interface BusyKeys {
 const RuntimeContext = createContext<Runtime | null>(null);
 
 /** The runtime as its caller sees it: `run` speaks where the caller renders. */
-export function useActionRuntime(): Omit<Runtime, "run"> & { readonly run: (command: ActionCommand) => void } {
+export function useActionRuntime(): Omit<Runtime, "run"> & { readonly run: (command: ActionCommand) => Promise<void> | void } {
   const runtime = useContext(RuntimeContext);
   if (!runtime) throw new Error("ResourceActionsProvider is missing");
   const outcome = useOutcome();
@@ -420,7 +420,7 @@ export default function ResourceActionsProvider({
       const report = (raise: () => Retract) => {
         if (!signal.aborted && attempts.get(key) === attempt) attempt.retract = raise();
       };
-      void (async () => {
+      return (async () => {
         try {
           await command.execute(() => {
             if (!command.rawWrite || signal.aborted || attempts.get(key) !== attempt) return;

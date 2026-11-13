@@ -46,6 +46,8 @@ export const ACTION_CATALOG = {
   StopDaily: {label:"stop repeating daily",icon:null,group:"Organize"},
   HabitHistory: {label:"habit history",icon:null,group:"Navigate"},
   Open: { label: "Open", icon: null, group: "Navigate" },
+  ImportDetails: { label: "Import details", icon: null, group: "Navigate" },
+  Dismiss: { label: "Dismiss", icon: null, group: "Manage" },
   OpenInNewPane: {
     label: "Open in new pane",
     icon: null,

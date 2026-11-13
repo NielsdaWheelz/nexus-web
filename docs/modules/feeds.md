@@ -143,7 +143,6 @@ source-kind choices and destinations that remain writable. unavailable destinati
 require an explicit choice. confirmation uses fresh authority/removal facts and new
 batch/child ids; accepted children remain untouched. retry preserves original bytes.
 
-`/feed-opml-imports` supplies all active/attention batches plus bounded recent
-terminal summaries to the existing imports surface. disclosure reads child details;
-the existing imports observation clock owns refresh. export includes active
+`/feed-opml-imports` supplies active/attention batches plus bounded recent terminal summaries; imports draws batches only while unsettled, as register rows whose companion holds the child record.
+the imports revision and digest own refresh. export includes active
 subscriptions only and retains the source owner's retrieval-url privacy gate.

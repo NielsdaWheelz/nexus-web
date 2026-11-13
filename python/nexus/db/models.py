@@ -320,6 +320,17 @@ class MediaUploadSessionDestination(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class ImportDismissal(Base):
+    """A reader has seen this media's import failures through one instant."""
+
+    __tablename__ = "import_dismissals"
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
+    user_id: Mapped[UUID]
+    media_id: Mapped[UUID]
+    through: Mapped[datetime]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
 class Media(Base):
     """A readable item (article, book, podcast, video, etc.)."""
 

@@ -342,6 +342,7 @@ containing width; control targets remain owned by their controls.
 adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
+`ResourceListHead` supplies nonsticky presentation list items with an `h3` and optional verbs; collection heads forbid windowed geometry.
 the armed `Collection` row is `--surface-2` plus a 2px leading inset
 `--accent` bar, app-wide. forced colours replace that shadow with a `Highlight`
 outline. arming has no transition. literal `ResourceContent` matches underline

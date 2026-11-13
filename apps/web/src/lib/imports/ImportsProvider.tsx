@@ -3,7 +3,7 @@
 /**
  * The Imports summary observer (docs/modules/imports.md). Wakes and polls read
  * the observation clock; manual refresh and mutations also advance the strict
- * collection revision. Collections coalesce clock advances through revalidate.
+ * collection revision. Consumers reread only when that revision or the digest moves.
  * The visible shell shares one summary. Presented busy consumers accelerate it;
  * mounting a retained pane alone grants no observation demand.
  */
@@ -33,7 +33,9 @@ import { useObservationDemand } from "@/lib/api/useObservationDemand";
 
 interface ImportsContextValue {
   readonly summary: ServerValue<ImportSummary>;
-  /** The `observed_at` of the newest successful summary read ("" before one). */
+  /** Null until the first successful summary admits dependent reads. */
+  readonly digest: string | null;
+  /** Intake's source/readiness owner retries failed truth reads on this clock. */
   readonly observation: string;
   /** Manual refresh/mutation invalidation, independent of the observation clock. */
   readonly revision: string;
@@ -101,6 +103,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
 
   const value = {
     summary,
+    digest: ready?.data.digest ?? null,
     observation: ready?.data.observed_at ?? "",
     revision: String(revision),
     refresh,

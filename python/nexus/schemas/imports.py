@@ -15,16 +15,17 @@ from datetime import UTC, datetime
 from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.import_history import HistoryEntry, ImportFailureCode, SafeFailureCode, Stage
+from nexus.schemas.import_history import HistoryEntry, SafeFailureCode, Stage
 from nexus.schemas.media_sources import EmailProvenance, SourceProgress
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.source_issues import SourceIssue
 
-ImportView = Literal["NeedsAttention", "InProgress", "History", "Recent"]
+ImportView = Literal["Register", "Recent"]
 Classification = Literal["Active", "NeedsAttention", "Complete"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff", "AwaitingUploadConfirmation"]
 SourceRecoveryInput = Literal["StoredSource", "RefetchSource"]
@@ -84,29 +85,34 @@ class ImportObligations(_Wire):
     metadata: MetadataEnrichmentView | None
 
 
+class ImportDismissal(_Wire):
+    through: datetime
+
+
 class ImportItem(_Wire):
     ref: str
     media_id: UUID | None
     title: str
     original_filename: str | None
     media_kind: MediaKind
-    source_label: str | None
+    summary: MediaSummaryOut | None
+    pointer: str | None
+    arrived_at: datetime | None
+    dismissal: ImportDismissal | None
+    dismissed: list[Literal["source", "search", "metadata"]]
     can_read: bool
     can_play: bool
     text_search_ready: bool
     classification: Classification
     primary: Literal["source", "search", "metadata"] | None
-    """The obligation that speaks for the import (under a stage or reason filter, the one
-    that matched); null exactly when the import is Complete."""
+    """The raised, else active obligation that speaks; null exactly when Complete."""
     accepted_at: datetime
     updated_at: datetime
-    matched_event: HistoryEntry | None
     obligations: ImportObligations
     source_issue_count: int
 
 
 class ImportPage(_Wire):
-    matched_count: int
     items: list[ImportItem]
     next_cursor: str | None
 
@@ -115,8 +121,8 @@ class ImportSummary(_Wire):
     observed_at: datetime
     needs_attention_count: int
     active_count: int
-    unfinished_work_count: int
     work_in_flight: bool
+    digest: str
 
 
 class RelatedImport(_Wire):
@@ -151,56 +157,54 @@ class HistoryPage(_Wire):
     next_cursor: str | None
 
 
-def _instant(value: datetime | None, name: str) -> datetime | None:
+def _instant(value: object, name: str) -> datetime | None:
     if value is None:
         return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if not isinstance(value, datetime):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"{name} must carry an offset")
     if value.utcoffset() is None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"{name} must carry an offset")
     return value.astimezone(UTC)
 
 
 class ImportListQuery(_Wire):
-    """`GET /imports`, normalized once. A view refuses a filter it cannot correlate:
-    attention and progress match a current obligation, History one recorded event, and
-    Recent, the viewer's own imports newest first, neither."""
+    """One register window or the viewer's own recent acquisitions."""
 
     view: ImportView
-    q: str | None = None
-    media_kind: MediaKind | None = None
-    stage: Stage | None = None
-    failure_code: ImportFailureCode | None = None
-    state: Classification | None = None
-    had_failures: bool | None = None
-    matched_from: datetime | None = Field(default=None, alias="from")
-    before: datetime | None = None
+    arrived_from: datetime | None = Field(default=None, alias="from")
     cursor: str | None = None
     limit: int = Field(default=50, ge=1, le=100)
 
+    @field_validator("arrived_from", mode="before")
+    @classmethod
+    def _parse_from(cls, value: object) -> datetime | None:
+        return _instant(value, "from")
+
     @model_validator(mode="after")
     def _normalize(self) -> Self:
-        self.q = (self.q or "").strip() or None
-        self.matched_from = _instant(self.matched_from, "from")
-        self.before = _instant(self.before, "before")
-        if self.view == "History":
-            contradicted = self.failure_code is not None and self.had_failures is False
-            refused = ["failure_code with had_failures=false"] if contradicted else []
-        else:
-            uncorrelated = {
-                "before": self.before,
-                "from": self.matched_from,
-                "had_failures": self.had_failures,
-                "state": self.state,
-                "failure_code": None if self.view == "NeedsAttention" else self.failure_code,
-                "stage": self.stage if self.view == "Recent" else None,
-            }
-            refused = [name for name, value in uncorrelated.items() if value is not None]
-        if refused:
+        if (self.view == "Register") != (self.arrived_from is not None):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
-                f"{self.view} imports cannot be filtered by {', '.join(refused)}",
+                "Register requires from; Recent refuses it",
             )
         return self
 
     def normalized(self) -> dict[str, object]:
-        """The filter identity a list cursor is bound to."""
+        """The window identity a list cursor is bound to."""
         return self.model_dump(mode="json", exclude={"cursor", "limit"})
+
+
+class ImportDismissalInput(_Wire):
+    ref: str
+    through: AwareDatetime
+
+    @field_validator("through", mode="before")
+    @classmethod
+    def _parse_through(cls, value: object) -> datetime | None:
+        return _instant(value, "through")
+
+
+class DismissImportsRequest(_Wire):
+    dismissals: list[ImportDismissalInput] = Field(min_length=1, max_length=100)

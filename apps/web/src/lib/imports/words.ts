@@ -10,4 +10,13 @@ export const IMPORT_WORDS = {
   timedOut: "upload timed out",
   stopped: "upload stopped",
   notChecked: "couldn’t check the file",
+  waitingUpload: "waiting for the upload",
+  inLine: "in line",
+  importing: "importing…",
+  checkingFile: "checking the file…",
+  unreadable: "couldn’t read this",
+  transcription: "transcribing…",
+  searchPreparing: "readable · preparing search…",
+  searchStopped: "search isn’t ready",
+  relatedStopped: "related matches aren’t ready",
 } as const;
