@@ -1,0 +1,64 @@
+/* Search keeps its own scroll and row geometry; the pane supplies its resolved measure. */
+.scrollport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+}
+.rows { min-inline-size: 0; }
+
+.searchResults {
+  width: 100%;
+  max-width: var(--librarian-column);
+  margin-inline: auto;
+  padding: var(--librarian-gutter);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  --control-font-size: var(--text-2xs);
+  --control-icon-size: var(--text-sm);
+}
+
+.searchResult {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.searchResult[data-active="true"] {
+  background: var(--surface-2);
+}
+
+.searchResult[aria-disabled="true"] {
+  color: var(--ink-muted);
+}
+
+.searchExcerpt {
+  color: var(--ink-machine);
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  font-weight: var(--weight-regular);
+  line-height: var(--reader-line-height, var(--leading-normal));
+  letter-spacing: normal;
+}
+.searchExcerpt[data-speaker="user"] {
+  color: var(--ink);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+}
+.searchResult[aria-disabled="true"] .searchExcerpt { color: inherit; }
+
+.searchMetadata {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+}

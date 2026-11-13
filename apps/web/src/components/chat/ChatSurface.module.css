@@ -1,11 +1,7 @@
-/* The librarian transcript and trust surfaces. */
+/* The librarian's one resolved reading measure and its transcript apparatus. */
+@property --librarian-measure { syntax: "<length>"; inherits: true; initial-value: 700px; }
 
 .surface {
-  --librarian-column: var(--content-max-width);
-  --librarian-gutter: var(--space-3);
-  --question-font: var(--weight-regular) var(--text-md) / var(--leading-normal) var(--font-sans);
-  --question-tracking: normal;
-  --question-measure: 66ch;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -13,10 +9,18 @@
   min-width: 0;
   min-height: 0;
   background: var(--surface-canvas);
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  --librarian-measure: min(var(--reader-column-width-ch, 66ch), 72ch);
+  --librarian-gutter: var(--space-4);
+  --librarian-column: calc(var(--librarian-measure) + 2 * var(--librarian-gutter));
+  --question-font: var(--weight-medium) max(var(--text-lg), calc(var(--reader-font-size-px, var(--text-md)) * 1.125)) / 1.4 var(--font-sans);
+  --question-tracking: -0.011em;
+  --question-measure: var(--librarian-measure);
 }
+.surface > * { font-family: var(--font-sans); font-size: var(--body-font-size); }
 
-/* Positioned so message offsetTop is measured within the scrolled content;
-   the pin (useChatScroll) owns anchoring, so native anchoring is off. */
+/* Message offsetTop is measured here. Every ancestor below this port stays unpositioned. */
 .scrollport {
   position: relative;
   flex: 1;
@@ -26,174 +30,135 @@
   overflow-anchor: none;
   scrollbar-gutter: stable;
 }
-
 .transcript {
   display: flex;
   flex-direction: column;
-  /* The scroll owner measures natural content height to size its spacer. */
+  width: 100%;
   max-width: var(--librarian-column);
   margin: 0 auto;
   padding: var(--librarian-gutter);
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
   font-weight: var(--weight-regular);
   line-height: var(--leading-normal);
   letter-spacing: normal;
 }
+.leaf { min-inline-size: 0; }
+.leaf + .leaf { margin-block-start: var(--space-12); }
+.message { min-inline-size: 0; }
+.message[data-role="user"] { margin-block-end: var(--space-4); }
+.question, .longQuestion {
+  margin: 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.question {
+  max-inline-size: var(--question-measure);
+  font: var(--question-font);
+  letter-spacing: var(--question-tracking);
+  text-wrap: balance;
+}
+.longQuestion {
+  font-family: var(--font-sans);
+  font-size: var(--reader-font-size-px, var(--text-md));
+  font-weight: var(--weight-regular);
+  line-height: 1.5;
+}
+.answer { min-inline-size: 0; overflow-wrap: anywhere; }
 
-.absent {
-  max-width: var(--content-max-width);
-  margin: 0 auto;
-  padding: var(--space-3) var(--space-3) 0;
+.day, .retry, .receipts, .foot, .paging, .absent, .latest, .attachmentReveal {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  --control-font-size: var(--text-2xs);
+  --control-icon-size: var(--text-sm);
+  --control-min-size: var(--size-md);
+}
+.day { display: flex; align-items: center; gap: var(--space-3); margin-block-end: var(--space-3); }
+.dayTime { flex: none; }
+.dayLine { position: relative; flex: 1; border-block-start: var(--stroke-hairline) solid var(--edge-subtle); }
+.retry { margin: 0 0 var(--space-2); }
+.inlineReferences { display: grid; gap: var(--space-3); margin-block-start: var(--space-3); }
+.attachment { min-inline-size: 0; }
+.attachmentReveal { margin-block-start: var(--space-2); }
+
+.receipts { display: grid; gap: var(--space-1); margin-block-start: var(--space-3); }
+.receipt { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: var(--space-2); }
+.receiptKicker, .receiptOutcome { color: inherit; }
+.receiptBody { min-inline-size: 0; overflow-wrap: anywhere; }
+.receiptTarget { color: var(--ink); }
+.receiptTarget[data-undone] { text-decoration: line-through; }
+.receiptEnd { display: flex; align-items: center; min-inline-size: calc(6ch + 2 * var(--space-2)); min-block-size: var(--control-min-size); }
+
+.foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-block-size: var(--control-min-size); margin-block-start: var(--space-2); }
+.footLeft { display: flex; align-items: center; min-inline-size: 0; gap: var(--space-1); }
+.footRight, .quiet { display: flex; align-items: center; flex: none; gap: var(--space-1); }
+.referenceButton { flex: none; white-space: nowrap; }
+.trailDisclosure { min-inline-size: 0; max-inline-size: 100%; text-align: start; }
+.signature, .liveAct { display: block; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.signatureTime { font-variant-numeric: tabular-nums; }
+.live { display: flex; align-items: center; gap: var(--space-1); min-inline-size: 0; }
+.dot { flex: none; inline-size: 5px; block-size: 5px; border-radius: var(--radius-full); background: var(--accent); }
+.dot[data-running] { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+.quiet { transition: opacity var(--duration-fast) var(--ease-glide); }
+@media (hover: hover) and (pointer: fine) {
+  .quiet { opacity: 0; }
+  .leaf:hover .quiet, .leaf:focus-within .quiet, .quiet:has([aria-expanded="true"]) { opacity: 1; }
 }
 
-.spacer {
-  flex: 0 0 auto;
-  pointer-events: none;
-}
-
+.paging { align-self: flex-start; }
+.absent { margin-block: var(--space-3); }
+.empty { margin: 0; }
+.spacer { flex: 0 0 auto; pointer-events: none; }
 .latest {
   position: sticky;
   bottom: var(--space-3);
   display: flex;
-  /* This floating control must not change the transcript's scroll range. */
   height: 0;
   align-items: flex-end;
   justify-content: flex-end;
   padding: 0 var(--space-4);
   pointer-events: none;
 }
-
 .latest > button { pointer-events: auto; }
-
-/* The composer's stage anchor: a line at its top edge, so a slip stands above the composer. */
-.composerAnchor {
-  position: relative;
-  flex: none;
-  height: 0;
-}
-
-.composerSlot {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 100%;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  background: color-mix(in srgb, var(--surface-canvas) 96%, transparent);
-}
-
+.composerAnchor { position: relative; flex: none; height: 0; }
+.composerSlot { flex: 0 1 auto; min-height: 0; max-height: 100%; overflow-y: auto; scrollbar-gutter: stable; background: color-mix(in srgb, var(--surface-canvas) 96%, transparent); }
 .composerSlot[data-has-messages] { max-height: 50%; }
 
-.message {
-  position: relative;
-  min-width: 0;
-  margin-bottom: var(--space-5);
+:global([data-theme="elvish"]) .dayLine {
+  border-block-start-color: color-mix(in srgb, var(--edge-subtle) calc((1 - var(--ornament)) * 100%), transparent);
+}
+:global([data-theme="elvish"]) .dayLine::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: -6px;
+  block-size: 12px;
+  background: var(--gilt-b);
+  mask: var(--elvish-vine) repeat-x center / 240px 12px;
+  opacity: calc(.5 * var(--ornament));
+  pointer-events: none;
+}
+@container primaryPane (max-width: 479px) { .leaf + .leaf { margin-block-start: var(--space-10); } }
+@media (any-pointer: coarse), (max-width: 768px) {
+  .receipts, .foot, .attachmentReveal, .paging, .latest { --control-min-size: var(--size-xl); }
+}
+@media (max-width: 768px) { .surface { padding-bottom: var(--mobile-content-bottom-clearance); } }
+@media (prefers-reduced-motion: reduce) { .dot[data-running] { animation: none; } }
+@media (forced-colors: active) {
+  .quiet { opacity: 1; }
+  .dayLine { border-block-start-color: CanvasText; }
+  :global([data-theme="elvish"]) .dayLine { border-block-start-color: CanvasText; }
+  .dot { background: CanvasText; }
 }
 
-.message[data-role="user"] { margin-bottom: var(--space-3); }
-
-.userPrompt {
-  display: grid;
-  gap: var(--space-2);
-  width: fit-content;
-  max-width: 100%;
-  margin-inline-start: auto;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-xl);
-  background: var(--surface-2);
-}
-
-.userBody,
-.answer {
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.userBody {
-  max-inline-size: var(--question-measure);
-  font: var(--question-font);
-  letter-spacing: var(--question-tracking);
-  display: block;
-  white-space: pre-wrap;
-}
-
-.answer { max-inline-size: 66ch; }
-
-.searchResults {
-  max-width: var(--content-max-width);
-  margin-inline: auto;
-  padding: var(--space-3);
-}
-
-.searchResult {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
-  color: var(--ink);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.searchResult[data-active="true"] {
-  background: var(--surface-2);
-}
-
-.searchResult[aria-disabled="true"] {
-  color: var(--ink-muted);
-}
-
-.searchExcerpt {
-  font-size: var(--text-md);
-  line-height: var(--leading-normal);
-}
-
-.searchMetadata {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
-/* Write trail: type-forward small-caps rows. */
-.write {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding-block: var(--space-1);
-  border-top: var(--stroke-hairline) solid var(--edge-subtle);
-  font-size: var(--text-xs);
-}
-
-.write em {
-  font-style: normal;
-  color: var(--accent);
-}
-
-.kicker {
-  color: var(--ink-faint);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--tracking-wider);
-  text-transform: uppercase;
-}
-
-@container primaryPane (min-width: 480px) {
-  .surface { --librarian-gutter: var(--space-4); }
-}
-
-@media (max-width: 768px) {
-  .surface {
-    padding-bottom: var(--mobile-content-bottom-clearance);
-  }
-}
-
-.inlineReferences { display: grid; gap: var(--space-3); margin-bottom: var(--space-3); }
 .references { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; overflow: auto; }
 .referenceModes { flex: none; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--edge-subtle); }
 .referenceList { flex: 1 0 var(--size-xl); min-height: var(--size-xl); overflow: auto; overflow-anchor: none; padding: var(--space-2) var(--space-3) var(--space-8); }
 .referenceRoot, .referenceStack { position: relative; width: 100%; }
 .referenceOccurrence { width: 100%; min-width: 0; padding-bottom: var(--space-3); }
 .referenceOccurrence[data-reference-corresponding], .inlineReferences [data-reference-corresponding] { outline: 1px solid var(--edge-subtle); outline-offset: var(--space-1); }
-.answer [data-reference-corresponding] { background: var(--surface-2); outline: 1px solid var(--accent); }
 .referenceContext { display: grid; gap: var(--space-1); margin-bottom: var(--space-2); color: var(--ink-muted); font-size: var(--text-xs); }
 .referenceEmpty { color: var(--ink-muted); }
 .showMessage { margin-top: var(--space-1); font-size: var(--text-xs); }

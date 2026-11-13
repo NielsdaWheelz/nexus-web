@@ -4,6 +4,8 @@ import { memo, useId, useLayoutEffect, useRef, useState, type RefObject } from "
 import * as Icon from "@/lib/ui/icons";
 import { RetrievalReference } from "./LiveReference";
 import ResourceLink from "@/components/resources/ResourceLink";
+import Button from "@/components/ui/Button";
+import MachineText from "@/components/ui/MachineText";
 import type { MessageAction } from "@/lib/chat/runTail";
 import type { Message } from "@/lib/chat/wire";
 import { truncateText } from "@/lib/display/format";
@@ -33,7 +35,7 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
     }
   });
   if (open && !inspected) setInspected(true);
-  return <section ref={panel} id={id} hidden={!open} aria-label="message details" aria-live="off"
+  return <section ref={panel} id={id} className={styles.panel} hidden={!open} aria-label="message details" aria-live="off"
     onFocusCapture={(event) => {
       focused.current = {
         element: event.target,
@@ -43,16 +45,15 @@ const MessageDetails = memo(function MessageDetails({ id, message, actions, open
     onBlurCapture={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget) && event.target.isConnected) focused.current = null;
     }}>
-    {inspected ? <div className={styles.details}>
-      <p className={styles.identity}>{[shown.route_label, shown.model_label, shown.reasoning_label].join(" · ")}</p>
-      {actions.length ? <div>
+    {inspected ? <MachineText className={styles.details} origin={{ label: shown.route_label }}>
+      {actions.length ? <>
         <h3 className={styles.heading}>actions</h3>
         <ol className={styles.list} role="list" aria-label="actions">
           {actions.map((action) => <Action key={`${message.id}:${action.tool_call_index}`}
             action={action} undone={action.id !== null && undone.has(action.id)} onInspect={onInspect} />)}
         </ol>
-      </div> : null}
-    </div> : null}
+      </> : null}
+    </MachineText> : null}
   </section>;
 });
 export default MessageDetails;
@@ -70,28 +71,28 @@ function Action({ action, undone, onInspect }: {
   const state = undone || action.reverted_at !== null ? "undone"
     : action.status === "error" ? "didn’t work" : action.status === "complete" ? null : action.status;
   const label = [activity.verb, activity.subject === null ? null : truncateText(activity.subject, 80)].filter(Boolean).join(" · ");
-  return <li data-message-action={action.tool_call_index}>
+  return <li className={styles.action} data-message-action={action.tool_call_index}>
     <div className={styles.actionLine}>
       <span className={styles.operation}>{activity.verb}{activity.subject !== null ? <> · {activity.target?.kind === "resource"
         ? <ResourceLink item={activity.target.item} label={activity.subject} />
         : activity.target?.kind === "external"
           ? <a className={styles.link} href={activity.target.href}>{activity.subject}</a>
-          : <span>{activity.subject}</span>}</> : null}</span>
+          : activity.subject}</> : null}</span>
       {state ? <span className={styles.state}>{state}</span> : null}
       {activity.outcome ? <span className={styles.outcome}>· {activity.outcome}</span> : null}
-      {expandable ? <button type="button" className={styles.disclosure} data-action-disclosure="true"
+      {expandable ? <Button iconOnly icon={<Icon.Disclose open={open} />} data-action-disclosure="true"
         aria-label={`details for ${label}`} aria-expanded={open} aria-controls={id}
         onClick={(event) => {
           onInspect(event.currentTarget);
           if (open && content.current?.contains(document.activeElement)) event.currentTarget.focus({ preventScroll: true });
           setOpen(!open);
-        }}><Icon.Disclose open={open} size={14} aria-hidden="true" /></button> : null}
+        }} /> : null}
     </div>
-    <div ref={content} id={id} hidden={!open || !expandable}>
+    <div ref={content} className={styles.actionPanel} id={id} hidden={!open || !expandable}>
       <div className={styles.actionContent}>
         {activity.detail ? <p className={styles.parameters}>{activity.detail}</p> : null}
         {action.retrievals.length ? <ul className={styles.list} role="list" aria-label={`results for ${label}`}>
-          {action.retrievals.map((result) => <li key={result.id}><RetrievalReference retrieval={result} /></li>)}
+          {action.retrievals.map((result) => <li className={styles.result} key={result.id}><RetrievalReference retrieval={result} /></li>)}
         </ul> : null}
       </div>
     </div>

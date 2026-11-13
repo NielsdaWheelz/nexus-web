@@ -135,9 +135,12 @@ every ornament is a pseudo-element whose opacity is multiplied by `--ornament`
 its subtree with `calc(.5 * var(--ornament-root))`, never from `--ornament`
 itself (a cycle). forced colours, `prefers-contrast: more` and print set the
 dimmer and the grain to 0; tables, code and fields are Bare by construction.
-ornaments stay in pane headers, resource rows, empty surfaces and the account
-bookplate's rule. its solar-only eärendil star is the fourth ornament site. feedback
-uses the same restrained anatomy in every room.
+ornaments stay in pane headers, resource rows, empty surfaces, the account
+bookplate's rule, and the librarian's day rules and answer onset. the account's
+solar-only eärendil star ends its rule. the day vine replaces its hairline with
+the dimmer; the gutter leaf marks only a prose onset, never code or a table.
+the two librarian sites do not use the moon. feedback uses the same restrained
+anatomy in every room.
 
 - **the moon slot law.** `--moon` (0.15 new to 1 full, set once per mount by
   `SolarEffects`) may enter only an opacity, a drop-shadow blur radius or the
@@ -166,7 +169,8 @@ feedback reserves no idle slot. a fact has one home, determined by its kind:
 selection, autosave, synchronization, successful refresh and refresh failure over
 shown data are silent. failed reads heal through their read owner; a deliberate
 press alone retries a write. copy keeps `useCopyFeedback`'s 1.2-second check and
-one `copied` announcement. long jobs keep their domain surfaces.
+one `copied` announcement. copy from a menu announces without a visible check.
+long jobs keep their domain surfaces.
 
 account name, calendar city and reading brief acknowledge an accepted explicit
 save with ink settling from accent to ink over `--duration-deliberate`. each

@@ -1,15 +1,21 @@
 .citation {
   display: inline;
-  padding: 0;
+  padding: .4em 0;
   border: 0;
   background: none;
-  color: inherit;
+  color: var(--citation-ink, var(--accent));
   cursor: pointer;
-  font-family: inherit;
-  font-size: 0.75em;
+  font-family: var(--font-sans);
+  font-size: .68em;
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums lining-nums;
+  line-height: 0;
   vertical-align: super;
   text-decoration: none;
   user-select: none;
 }
 
-.citation:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
+.citation:focus-visible,
+.citation:has(:focus-visible) { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
+
+@media (forced-colors: active) { .citation { color: LinkText; } }
