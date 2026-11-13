@@ -29,7 +29,7 @@ export default function OpmlImportRecord({ id }: { readonly id: string }) {
   const batch = detail.data;
   const unresolved = batch.items.filter(item => item.state === "failed" || item.state === "cancelled");
   const needsCancellation = batch.state !== "cancelled";
-  return <section className={styles.progress}>
+  return <section className={`${styles.progress} ${styles.record}`}>
     <h2>subscription import</h2>
     <OpmlImportActions batch={batch} />
     <p className={styles.note}>cancelling keeps accepted subscriptions and items. their initial history continues in source details.</p>

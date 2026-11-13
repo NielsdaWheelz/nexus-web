@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, type AnimationEventHandler } from "react";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import type { ImportItem } from "@/lib/imports/api";
@@ -10,11 +10,12 @@ import { useImportActions } from "./ImportActions";
 import styles from "./Imports.module.css";
 
 /** An unsettled import keeps the collection's ordinary title, controls and focus contract. */
-export default function ImportWorkRow({ item, selected, onSelect, className }: {
+export default function ImportWorkRow({ item, selected, onSelect, className, onAnimationEnd }: {
   readonly item: ImportItem;
   readonly selected: boolean;
   readonly onSelect: (ref: string, trigger: HTMLElement | null) => void;
   readonly className?: string;
+  readonly onAnimationEnd?: AnimationEventHandler<HTMLElement>;
 }) {
   const display = useRenderEnvironment();
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -25,7 +26,7 @@ export default function ImportWorkRow({ item, selected, onSelect, className }: {
   const progress = item.obligations.source?.progress;
   const counted = progress?.kind === "Counted" ? progress : null;
   return <ResourceRow selected={selected}
-    rootProps={{ className, "data-collection-row-id": item.ref, "aria-current": selected ? "true" : undefined }}
+    rootProps={{ className, onAnimationEnd, "data-collection-row-id": item.ref, "aria-current": selected ? "true" : undefined }}
     primary={readable && item.media_id !== null ? { kind: "link", href: `/media/${item.media_id}`, label: title, paneLabelHint: item.title }
       : { kind: "button", label: title, onActivate: trigger => onSelect(item.ref, trigger) }}
     title={<ResourceIndexTitle type={{ scheme: "media", mediaKind: item.media_kind }} hasArtwork={false}>

@@ -1,5 +1,6 @@
 "use client";
 
+import type { AnimationEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import ResourceRow from "@/components/ui/ResourceRow";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
@@ -27,6 +28,7 @@ export function OpmlImportActions({ batch }: {
   const { ctx } = useActionRuntime();
   const subject = `opml:${batch.id}`;
   const pending = ctx.feeds.pending(subject);
+  if (!batch.can_cancel && !batch.can_retry) return null;
   const change = (action: "cancel" | "retry") => void ctx.feeds.submit({ subject, title: "subscription import", command: {
     kind: "OpmlChange", importId: batch.id, action, body: { expected_attempt_version: batch.attempt_version },
   } });
@@ -36,16 +38,17 @@ export function OpmlImportActions({ batch }: {
   </span>;
 }
 
-export default function OpmlBatchRow({ batch, selected, onSelect, className }: {
+export default function OpmlBatchRow({ batch, selected, onSelect, className, onAnimationEnd }: {
   readonly batch: Schema<"OpmlImportSummaryOut">;
   readonly selected: boolean;
   readonly onSelect: (ref: string, trigger: HTMLButtonElement) => void;
   readonly className?: string;
+  readonly onAnimationEnd?: AnimationEventHandler<HTMLElement>;
 }) {
   const ref = `opml:${batch.id}`;
   const attention = batch.state === "needs_attention";
   return <ResourceRow selected={selected}
-    rootProps={{ className, "data-collection-row-id": ref, "aria-current": selected ? "true" : undefined }}
+    rootProps={{ className, onAnimationEnd, "data-collection-row-id": ref, "aria-current": selected ? "true" : undefined }}
     primary={{ kind: "button", label: "subscription import", onActivate: trigger => onSelect(ref, trigger) }}
     title={<ResourceIndexTitle type={{ scheme: "feed", mediaKind: null }} hasArtwork={false}>subscription import</ResourceIndexTitle>}
     content={{ kind: "Index", metadata: <span className={styles.batchLine} data-tone={attention ? "Warning" : "Neutral"}>

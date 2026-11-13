@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type AnimationEventHandler } from "react";
 import { Failed } from "@/components/feedback/Fact";
-import CollectionView from "@/components/collections/CollectionView";
+import CollectionView, { type CollectionViewRowRenderProps } from "@/components/collections/CollectionView";
 import CollectionRow from "@/components/collections/CollectionRow";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import OpmlBatchRow, { useOpmlBatches } from "@/components/feeds/OpmlBatchRow";
@@ -94,11 +94,7 @@ export default function Register({ selected, onSelect }: {
     } else rows.push({ id, kind: item === null ? "feed" : "media", presentation: "Index", title: { text: item?.title ?? "subscription import" },
       primary: { kind: "static" }, contributors: [], publicationDate: null, context: null, activity: null, exceptionalStatus: null, resourceRef: null, selected: selected === id });
   }
-  const previous = useRef<Map<string, { group: string; readable: boolean }> | null>(null);
-  useLayoutEffect(() => {
-    if (list.status === "ready") previous.current = new Map([...entries].map(([id, entry]) => [id,
-      { group: groups.get(id)!, readable: "ref" in entry && (entry.can_read || entry.can_play) }]));
-  });
+  const established = useRef(false);
   const firstInGroup = new Set<string>();
   const heads = new Set<string>();
   for (const row of rows) {
@@ -148,6 +144,9 @@ export default function Register({ selected, onSelect }: {
     : list.status === "failed" && list.failure !== null ? <Failed error={list.failure.error} noun="imports" retry={{ run: list.retry, busy: list.running !== null }} />
       : entries.size === 0 ? batchError : null;
   const loading = digest === null && summary.status !== "failed" || list.status === "loading" || batches.status === "loading";
+  useLayoutEffect(() => {
+    if (failure === null && !loading) established.current = true;
+  });
   usePaneReturnReady(failure !== null || !loading);
   const count = (group: "attention" | "active") => (summary.status === "ready" ? group === "attention" ? summary.data.needs_attention_count : summary.data.active_count : 0)
     + unsettledBatches.filter(batch => (batch.state === "needs_attention") === (group === "attention")).length;
@@ -171,23 +170,47 @@ export default function Register({ selected, onSelect }: {
           {dismissible.length < 2 ? null : <Button aria-disabled={dismissing || undefined} aria-busy={dismissing || undefined} onClick={() => void dismissAll()}>{attentionLoaded ? "dismiss all" : `dismiss ${dismissible.length}`}</Button>}
         </span>}</>;
     }}
-    renderRow={props => {
-      const entry = entries.get(props.row.id)!;
-      const before = previous.current?.get(props.row.id);
-      const fall = previous.current !== null && before?.group !== groups.get(props.row.id);
-      const ink = "ref" in entry && before?.readable === false && (entry.can_read || entry.can_play);
-      const className = `${fall ? styles.fall : ""} ${ink ? styles.ink : ""}`;
-      return "ref" in entry ? entry.classification === "Complete"
-        ? <CollectionRow {...props} className={className} occurrenceActions={[importDetailsAction(entry, onSelect)]} />
-        : <ImportWorkRow item={entry} selected={props.row.selected} onSelect={onSelect} className={className} />
-        : <OpmlBatchRow batch={entry} selected={props.row.selected} onSelect={onSelect} className={className} />;
-    }}
+    renderRow={props => <RegisterRow {...props} entry={entries.get(props.row.id)!} group={groups.get(props.row.id)!}
+      animate={established.current} onSelect={onSelect} />}
     footer={<>{feedback.notice}
+      {list.status === "ready" && pendingMore.current && list.failure?.op === "Refetch" ? <Failed error={list.failure.error} noun="updated imports"
+        retry={{ run: list.retry, busy: list.running !== null }} /> : null}
       {list.status !== "ready" ? null : !list.complete ? <Button aria-busy={list.running !== null || undefined}
         onFocus={() => { moreHeld.current = true; }} onBlur={event => { if (event.currentTarget.isConnected) moreHeld.current = false; }}
-        onClick={() => { if (list.running !== null || !list.fresh) pendingMore.current = true; else list.more(); }}>load more</Button>
+        onClick={() => {
+          if (list.running !== null) pendingMore.current = true;
+          else if (list.failure?.op === "More") { pendingMore.current = false; list.retry(); }
+          else if (list.failure !== null) { pendingMore.current = true; list.retry(); }
+          else if (!list.fresh) pendingMore.current = true;
+          else list.more();
+        }}>load more</Button>
         : <><p className={styles.colophon}>thirty days of arrivals. earlier ones are in all. {all.status === "ready" ? <a ref={colophon} href={`/libraries/${all.data}`}>open all</a> : null}</p>
           {all.status === "failed" ? <Failed error={all.error} noun="all" retry={{ run: all.refetch, busy: all.retrying }} /> : null}</>}
     </>}
   /></>;
+}
+
+/** A row's transition outlives reads and a change from pointer to library presentation. */
+function RegisterRow({ entry, group, animate, onSelect, ...props }: CollectionViewRowRenderProps & {
+  readonly entry: ImportItem | Schema<"OpmlImportSummaryOut">;
+  readonly group: string;
+  readonly animate: boolean;
+  readonly onSelect: (ref: string, trigger: HTMLElement | null) => void;
+}) {
+  const readable = "ref" in entry && (entry.can_read || entry.can_play);
+  const [motion, setMotion] = useState({ group, readable, fall: animate, ink: false });
+  if (motion.group !== group || motion.readable !== readable) setMotion({ group, readable,
+    fall: motion.fall || animate && motion.group !== group,
+    ink: motion.ink || !motion.readable && readable });
+  const onAnimationEnd: AnimationEventHandler<HTMLElement> = event => {
+    if (event.target === event.currentTarget) setMotion(previous => ({ ...previous, fall: false }));
+    else if (event.target instanceof Element && event.target.hasAttribute("data-row-title") &&
+      event.target.closest("[data-collection-row-id]") === event.currentTarget)
+      setMotion(previous => ({ ...previous, ink: false }));
+  };
+  const className = `${motion.fall ? styles.fall : ""} ${motion.ink ? styles.ink : ""}`;
+  return "ref" in entry ? entry.classification === "Complete"
+    ? <CollectionRow {...props} className={className} onAnimationEnd={onAnimationEnd} occurrenceActions={[importDetailsAction(entry, onSelect)]} />
+    : <ImportWorkRow item={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} />
+    : <OpmlBatchRow batch={entry} selected={props.row.selected} onSelect={onSelect} className={className} onAnimationEnd={onAnimationEnd} />;
 }

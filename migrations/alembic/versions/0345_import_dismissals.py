@@ -6,8 +6,8 @@ Data effects: none; create an empty table. No existing obligation is dismissed.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0344"
-down_revision = "0343"
+revision = "0345"
+down_revision = "0344"
 branch_labels = None
 depends_on = None
 
@@ -30,4 +30,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("0344 is a hard cut; restore the verified backup and paired release")
+    raise RuntimeError("0345 is a hard cut; restore the verified backup and paired release")
