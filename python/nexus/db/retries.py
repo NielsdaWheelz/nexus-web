@@ -8,8 +8,9 @@ outside the operation. Every Exception rolls the owned attempt back; a BaseExcep
 (a cancellation) is left to the session's close. Serialization failures, deadlocks,
 TransactionRestart and named first-sight races retry. Lock timeout raises
 DatabaseBusyError without another attempt. The api edge maps unclaimed busy attempts
-and exhausted transaction retries to 409; confirmation and auth bootstrap claim them
-as 503 before that fallback. Workers keep their existing transient queue retry.
+and exhausted transaction retries to 409; confirmation, auth bootstrap and email
+ingress claim them as 503 before that fallback. Workers keep their existing
+transient queue retry.
 """
 
 from collections.abc import Callable
@@ -24,6 +25,7 @@ from sqlalchemy.orm import Session
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_chat_selections_user",
+        "uq_email_ingest_receipts_owner_message",
         "uq_contributors_handle",
         "uq_contributor_aliases_owner_normalized",
         "uq_contributor_external_ids_authority_key",

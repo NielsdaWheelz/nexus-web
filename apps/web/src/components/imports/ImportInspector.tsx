@@ -163,7 +163,7 @@ export default function ImportInspector({
   if (detail.status === "failed") {
     return <Failed error={detail.error} noun="import details" retry={{ run: () => { void detail.refetch().catch(() => {}); }, busy: detail.retrying }} />;
   }
-  const { item, source_issues: issues, related_imports: related, pending_captures: captures, original_source: original } = detail.data;
+  const { item, source_issues: issues, related_imports: related, pending_captures: captures, original_source: original, email_source: email } = detail.data;
   const mediaId = item.media_id;
   const metadata = item.obligations.metadata;
   const operation = metadata?.operation ?? null;
@@ -193,6 +193,11 @@ export default function ImportInspector({
           </p>
         ) : null}
       </header>
+      {email !== null ? <section className={styles.inspectorSection}>
+        <h3>received by email</h3>
+        <p>{email.sender_name === null ? `from ${email.sender_address}` : `from ${email.sender_name} <${email.sender_address}>`}</p>
+        {email.sent_at !== null ? <p>sent <Moment value={email.sent_at} /></p> : null}
+      </section> : null}
       {original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
       {captures.length > 0 ? <section className={styles.inspectorSection}>
         <h3>pending captures</h3>

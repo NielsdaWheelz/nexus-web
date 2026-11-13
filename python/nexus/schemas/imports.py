@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.import_history import HistoryEntry, ImportFailureCode, SafeFailureCode, Stage
-from nexus.schemas.media_sources import SourceProgress
+from nexus.schemas.media_sources import EmailProvenance, SourceProgress
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.source_issues import SourceIssue
 
@@ -143,6 +143,7 @@ class ImportDetail(_Wire):
     related_imports: list[RelatedImport]
     pending_captures: list[PendingCapture]
     original_source: OriginalSource | None
+    email_source: EmailProvenance | None
 
 
 class HistoryPage(_Wire):

@@ -13,7 +13,7 @@ done:
   `coordinator/final1c07/env-preparation.json`, `env-published-readback.json`).
 - fluid compute: every production web deploy since then carries
   `maxDuration = 300`, which vercel accepts only with fluid compute.
-- email ingest stays unconfigured; [post room](production-post-room-unconfigured.md)
+- email ingest stays unconfigured; [email import](release-email-import.md)
   owns it.
 - order: queues were settled, then the controller ran, then the paired apk 0.3.2
   and a temporary extension went in (`coordinator/finalfdd0a3e/canonical-release/admission.json`,

@@ -19,6 +19,34 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EmailProvenance(_Strict):
+    """Unverified transmission facts from the outer message, never bibliography."""
+
+    model_config = ConfigDict(strict=True)
+    sender_name: str | None
+    sender_address: str
+    sent_at: datetime | None
+
+
+class EmailSourcePayload(_Strict):
+    model_config = ConfigDict(strict=True)
+    storage_path: str
+    provenance: EmailProvenance
+
+
+class EmailAccepted(_Strict):
+    outcome: Literal["accepted", "duplicate"]
+    media_id: UUID
+
+
+class EmailSuppressed(_Strict):
+    outcome: Literal["suppressed"]
+    media_id: None
+
+
+EmailAcceptance = Annotated[EmailAccepted | EmailSuppressed, Field(discriminator="outcome")]
+
+
 class SourceStageProgress(_Strict):
     kind: Literal["Stage"] = "Stage"
     stage: Literal["Validate", "Extract", "Finalize"]

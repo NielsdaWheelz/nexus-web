@@ -155,7 +155,7 @@ layer being exposed: a modal that was topmost, or a transient that opted in
 destination). a modal chooses its return target after the close commit has exposed
 its trigger, and only while focus is still lost. the last modal's restore runs again after its history traversal
 if focus fell to the body. an inert-uncover retry retires when another control
-claims focus, even if that control later detaches. a menu returns focus before its chosen command runs,
+claims focus, even if that control later detaches. transient back/escape dismissal returns after the commit, so react’s precommit selection restoration cannot undo it; a newer interaction, covered parent or live return veto retires that return. a menu returns focus before its chosen command runs,
 so whatever the command opens names the trigger, not the vanishing item, as its
 opener. a prepared menu's transient yields to its own mobile sheet without returning
 focus in between. a menu that skips returning focus passes its stable trigger through

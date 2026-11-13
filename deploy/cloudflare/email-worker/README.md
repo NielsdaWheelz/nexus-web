@@ -1,101 +1,48 @@
-# Nexus Post Room — Cloudflare Email Worker
+# email import worker
 
-This worker bridges Cloudflare Email Routing to the Nexus `/ingest/email`
-endpoint. It is the sole SMTP/Email-Routing interface; the API endpoint is
-tested independently via curl + `.eml` fixtures (zero worker dependency).
+this adapter sends cloudflare email routing events to `POST /ingest/email`.
+`nexus-post-room` remains the existing deployed resource identity; the product
+calls this email import. receiving-address activation is a separate
+[release gate](../../../docs/issues/release-email-import.md).
 
-## Prerequisites
+## contract
 
-- A Cloudflare account with Email Routing enabled on your domain.
-- The Nexus backend deployed and reachable at a public HTTPS URL.
-- `wrangler` CLI installed: `npm install -g wrangler`.
+both ends bound raw mime at 2 mib. the worker canonicalizes the full receiving
+mailbox, sends `X-Nexus-Wire`, and signs these exact bytes with hmac-sha256:
 
-## Setup
-
-### 1. DNS — add MX record
-
-In your Cloudflare DNS dashboard, add an MX record pointing to Cloudflare's
-mail infrastructure (Cloudflare Email Routing handles this automatically when
-you enable Email Routing for the domain).
-
-### 2. Cloudflare Email Routing
-
-1. In the Cloudflare dashboard, go to **Email → Email Routing**.
-2. Enable routing for your domain.
-3. Under **Custom Addresses**, add a routing rule:
-   - **Email address:** `<EMAIL_INGEST_ADDRESS_SLUG>@<EMAIL_INGEST_DOMAIN>`
-   - **Action:** Send to Worker → `nexus-post-room`.
-
-### 3. Provision secrets
-
-Generate a random HMAC secret (32 hex bytes):
-
-```sh
-python -c "import secrets; print(secrets.token_hex(32))"
+```text
+UTF8("nexus-email\n" + WIRE_REVISION + "\n" + canonical_recipient + "\n") || raw_mime
 ```
 
-Set it both here and in the backend env (`EMAIL_INGEST_HMAC_SECRET`):
+`X-Nexus-Email-Signature` carries lowercase hex;
+`X-Nexus-Email-Recipient` carries the canonical full mailbox. the revision imports
+from the generated web wire module, never from a separately configured value.
 
-```sh
-wrangler secret put EMAIL_INGEST_HMAC_SECRET
-# paste the secret when prompted
+only a validated 200 acceptance/duplicate/suppression envelope acknowledges.
+only `400 E_INVALID_REQUEST` and `413 E_SOURCE_TOO_LARGE` permanently reject;
+worker-side size overflow rejects with the same fixed copy. all other responses,
+unreadable replies and transport failures throw. thrown exceptions do not prove
+smtp deferral: qualify real temporary failure and recovery before activation.
+see the provider's [handler contract](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/).
+diagnostics contain status, code and request id, never message content.
 
-wrangler secret put EMAIL_INGEST_API_URL
-# paste: https://api.example.com/ingest/email
-```
+## paired release
 
-### 4. Backend env
+follow [deployment.md](../../../deployment.md) for configuration publication and
+the ordinary backend release. this component runbook authorizes no deployment.
+the backend needs valid `EMAIL_INGEST_HMAC_SECRET`, `EMAIL_INGEST_ADDRESS_SLUG`,
+`EMAIL_INGEST_DOMAIN` and `EMAIL_INGEST_OWNER_USER_ID`; partial configuration
+hides the address and makes admission unavailable. the worker needs the same
+secret plus `EMAIL_INGEST_API_URL`, the full https ingress endpoint.
 
-In `deploy/env/env-prod-backend` (from `.example`):
+from this directory, provision secrets with `wrangler secret put` and verify the
+bundle with `wrangler deploy --dry-run --outdir <private-output-directory>`.
+`wrangler deploy` publishes the worker. provision the domain's email routing rule
+for the exact mailbox only as the release gate permits.
 
-```env
-EMAIL_INGEST_HMAC_SECRET=<same secret as above>
-EMAIL_INGEST_ADDRESS_SLUG=<local-part, e.g. letters-abc123>
-EMAIL_INGEST_DOMAIN=<mail.example.com>
-EMAIL_INGEST_OWNER_USER_ID=<prod-user-uuid>
-```
-
-Production config is release-bearing. Follow the ordered
-[config publication protocol](../../../deployment.md#explicit-config-publication); there is
-no standalone push from this component runbook.
-
-### 5. Deploy the worker
-
-```sh
-cd deploy/cloudflare/email-worker
-wrangler deploy
-```
-
-### 6. Smoke test
-
-Forward one newsletter to `<slug>@<domain>` and confirm it appears in your
-default library as a `web_article` within normal ingest latency (~30 s).
-
-## Rotation
-
-To rotate the ingest address (slug):
-
-1. Update `EMAIL_INGEST_ADDRESS_SLUG` in the backend env and redeploy.
-2. Update the Cloudflare Email Routing rule to the new address.
-3. The old slug is immediately invalid; no grace period.
-
-The HMAC secret rotation follows the same pattern: update both the worker
-secret (`wrangler secret put`) and the backend env, then redeploy both.
-
-## Security
-
-- **HMAC** — the raw body is HMAC-SHA256-signed with a shared secret before
-  POST. The endpoint verifies this before any MIME parsing (constant-time
-  compare). A leaked endpoint URL without the secret cannot ingest mail.
-- **Slug** — the recipient slug is a rotatable capability secret. A leaked
-  slug lets anyone send mail to the address, but not to forge the HMAC. The
-  blast radius is bounded: every message is size-capped (2 MB), Message-ID
-  deduped, and junk shows up as a deletable failed media.
-- **Size cap** — messages > 2 MB are bounced at the worker AND re-checked at
-  the endpoint (never trust the transport).
-
-## HMAC algorithm
-
-`HMAC-SHA256(raw_mime_bytes, EMAIL_INGEST_HMAC_SECRET)` — hex-encoded,
-transmitted in `X-Nexus-Email-Signature`. The endpoint verifies with
-`hmac.compare_digest`.
+every wire bump requires worker and backend builds from matching source;
+a deployed worker does not acquire later generated revisions automatically.
+coordinate secret/address rotation the same way, with no legacy grace path.
+prove one real arrival, duplicate suppression, and temporary-failure recovery
+before exposing the address. no latency or delivery guarantee follows from a
+successful api-only check.

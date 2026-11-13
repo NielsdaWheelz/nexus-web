@@ -1,13 +1,10 @@
 "use client";
-import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { useId, useState, type ComponentProps, type FormEvent } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
-import { Announcement } from "@/components/feedback/Announcement";
 import { Failed, Field } from "@/components/feedback/Fact";
 import type { Line } from "@/components/feedback/stage";
-import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
 import Button from "@/components/ui/Button";
 import { buttonClassName } from "@/components/ui/control";
 import Input from "@/components/ui/Input";
@@ -20,7 +17,6 @@ import { useServerValue, type Visit } from "@/lib/api/serverState";
 import type { ApiJson } from "@/lib/api/wire";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
@@ -174,7 +170,6 @@ export default function SettingsAccountPaneBody() {
         ? saved.profile
         : account.data;
 
-  const copied = useCopyFeedback(profile?.email_ingest_address);
   // Feedback retains the submitted value; PATCH /me still has no version fence.
   const patch = async (
     body: { display_name: string | null } | { calendar_time_zone: string },
@@ -215,19 +210,9 @@ export default function SettingsAccountPaneBody() {
       return failed(error, title);
     }
   };
-  const copy = async (address: string) => {
-    try {
-      await copied.copy(address);
-    } catch (error) {
-      // The address stands as selectable text beside its copy control.
-      if (error instanceof ClipboardWriteUnavailableError) say({ fact: "couldn’t copy the address.", reason: "select it to copy it." });
-      else fail(error, "couldn’t copy the address.");
-    }
-  };
 
   return (
     <PaneSurface>
-      {copied.occurrence ? <Announcement text="copied" level="Polite" occurrence={copied.occurrence} /> : null}
       {account.status === "failed" ? <Failed error={account.error} noun="account settings" retry={{ run: account.refetch, busy: account.retrying }} /> : null}
       <ProfileForm
         title="Email"
@@ -275,27 +260,6 @@ export default function SettingsAccountPaneBody() {
           )
         }
       />
-      <PaneSection title="Post Room">
-        {profile === null ? null : profile.email_ingest_address ? (
-          <>
-            <p className={styles.current}>
-              <code>{profile.email_ingest_address}</code>
-            </p>
-            <Button
-              icon={copied.copied ? <Icon.Check /> : <Icon.Copy />}
-              onClick={() => void copy(profile.email_ingest_address ?? "")}
-            >
-              Copy address
-            </Button>
-            <p className={styles.current}>
-              Forward newsletters here. Rotating the address is an env change +
-              redeploy.
-            </p>
-          </>
-        ) : (
-          <p className={styles.current}>The Post Room is not configured.</p>
-        )}
-      </PaneSection>
       <ReadingBrief profile={profile} onSaved={profile => { setSaved({profile, over: account.status === "ready" ? account.generation : -1}); void account.refetch(); }} reload={() => void account.refetch()} />
       <AssistantWrites
         key={`${generationId ?? "all"}:${toolCallId ?? "none"}`}

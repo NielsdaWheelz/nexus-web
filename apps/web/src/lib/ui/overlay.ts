@@ -640,9 +640,15 @@ export function useOverlay(
       layers.splice(layers.indexOf(layer), 1);
       if (exposed && wanted && !current.skipReturnFocus?.()) {
         // A modal's close can expose a sibling trigger later in this commit.
-        // Menus return synchronously, before their chosen command takes focus.
         if (modal) queueMicrotask(() => { if (unfocused()) restoreFocus(layer); });
-        else restoreFocus(layer);
+        else if (layer.reason === "back" || layer.reason === "escape") {
+          // React restores the precommit selection after unmount cleanup. Dismissals
+          // return afterward; a newly admitted owner or navigating close still wins.
+          const generation = interactionGeneration;
+          queueMicrotask(() => {
+            if (interactionGeneration === generation && topmost(layer) && !layer.options.current.skipReturnFocus?.()) restoreFocus(layer);
+          });
+        } else restoreFocus(layer); // menus return before their chosen command takes focus.
         // The last modal's close traverses history; restore once it lands.
         if (modal && topModal() === null) {
           settlements.push(() => restoreFocus(layer));

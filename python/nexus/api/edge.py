@@ -6,8 +6,9 @@ request it
 - adopts a well-formed inbound ``X-Request-ID`` (the bff's) or mints one, binds it to the
   log context and stamps it on the response (I3);
 - refuses, before routing, a client built for another wire: ``X-Nexus-Wire`` missing or
-  other than ``WIRE_REVISION`` answers 426 ``E_WIRE_MISMATCH`` (I10). ``PUBLIC_PATHS``
-  (operational, schema, the email webhook) carry no client build and are exempt;
+  other than ``WIRE_REVISION`` answers 426 ``E_WIRE_MISMATCH`` (I10). operational
+  and schema ``PUBLIC_PATHS`` are exempt; the email webhook is public to session auth
+  but carries the worker build and requires its wire;
 - returns 503 ``E_DATABASE_BUSY`` for exhausted physical checkout capacity and 409
   ``E_RESOURCE_CONFLICT`` for an owned database busy transaction;
 - renders an exception nothing claimed before the response started as the 500
@@ -78,7 +79,9 @@ class EdgeMiddleware:
 
         wire = headers.get("x-nexus-wire")
         try:
-            if scope["path"] not in PUBLIC_PATHS and wire != str(WIRE_REVISION):
+            if (scope["path"] not in PUBLIC_PATHS or scope["path"] == "/ingest/email") and (
+                wire != str(WIRE_REVISION)
+            ):
                 logger.info("http.wire_mismatch", client_wire=(wire or "")[:16])
                 refusal = _envelope(
                     ApiErrorCode.E_WIRE_MISMATCH, "This client was built for another API"
