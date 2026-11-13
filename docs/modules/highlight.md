@@ -92,11 +92,13 @@ the host supplies a required read-only profile: the workspace projects its live
 reader settings; the downloaded shelf supplies the same profile as its source.
 quotation rendering neither edits settings nor fetches a substitute profile.
 
-librarian display uses the same source owner with explicit per-selection format
-limits: unsupported structure, absent native representation, incomplete tables
-and structure outside admitted scope may show exact plain words. full original
-range admission precedes preview truncation. canonical disagreement and helper
-failures never become plain-text success; authored capture remains strict.
+librarian selections use the same strict capture proof before admission. the
+reference carries the proven frozen excerpt; timeline reads never reconstruct it.
+incomplete tables are refused with `E_READER_SELECTION_PARTIAL_TABLE`. attaching
+an existing highlight retains its live identity, colour, annotation and deletion.
+chat citations carry independent quotes, without creating highlights or authored
+passage objects. retrieval evidence over its structured bound becomes explicitly
+truncated plain words at write time.
 namespace-aware source cloning retains literal `xml:lang`.
 
 server capture scans source provenance before materializing an excerpt. the

@@ -2,8 +2,9 @@
 
 ## purpose
 
-one account-owned transcript, with immutable user/assistant pairs, live source
-references and explicit operational receipts. `/librarian` is its sole destination.
+one account-owned transcript, with immutable user/assistant pairs, source
+references carrying saved quotes and explicit operational receipts. `/librarian`
+is its sole destination.
 opening an earlier message changes the visible window, never the append destination.
 
 ## owners
@@ -13,9 +14,9 @@ opening an earlier message changes the visible window, never the append destinat
 | `schemas/chat.py`, `api/routes/chat.py` | typed turn, timeline and command boundaries |
 | `chat/admit.py`, `chat/deletion.py` | client run uuid, exact generation choice, account sequence and deletion fence |
 | `chat/timeline.py` | bounded pair windows, terminal-turn deletion, individual message read and run horizon |
-| `chat/context.py`, `chat/references.py` | execution-time brief, mandatory live attachments and bounded settled history |
-| `services/live_references.py` | current structural coordinates, bounded source text, private annotation authority |
-| `chat/retrievals.py`, `chat/citations.py` | transient model evidence, persisted live targets, message-owned citation ordinals |
+| `chat/context.py`, `chat/references.py` | execution-time brief, mandatory saved attachments and bounded settled history |
+| `services/live_references.py` | current structural coordinates, quote availability, private annotation authority |
+| `chat/retrievals.py`, `chat/citations.py` | bounded saved evidence, resource targets, message-owned citation ordinals |
 | `chat/events.py`, `chat/worker.py` | fifo head admission, durable frames, sole terminal fold and generation |
 | `chat/reads.py`, `chat/selection.py` | current projections, action receipts and last admitted generation selection |
 
@@ -25,19 +26,27 @@ opening an earlier message changes the visible window, never the append destinat
 allocates consecutive message positions; `deletion_revision` prevents an uncertain
 send from recreating a deleted turn. it is not a selectable conversation.
 
-`messages` owns literal authored text and live attachments. `chat_runs` owns the
-pair, frozen generation choice, queue status, cancellation and optional weak
-`retry_of_run_id`. context is assembled when execution starts. no frozen prompt or
-source snapshot belongs to chat.
+`messages` owns literal authored text and ordered saved references. a reference
+contains source identity, a nullable place and a nullable frozen quote. unsaved
+selections are proven against the reading before admission; whole resources and
+messages carry no quote. an existing highlight remains a live highlight reference.
+`chat_runs` owns the pair, frozen generation choice, queue status, cancellation
+and optional weak
+`retry_of_run_id`. context is assembled when execution starts. no frozen
+run prompt belongs to chat. quotes belong to their turn, never the authored store.
 
 only the earliest unsettled run has a `chat_run` job. the terminal writer and fresh
 admission both recompute that head under the account mutex. cancelling a waiting
 turn cannot release its successor past an earlier active turn. lock order is
 generation when required, account state, run, job. no transaction spans generation.
 
-`message_retrievals` owns resource references or urls and citation ordinals. local
-citation edges project that state without copied evidence. web citations retain
-only their url. source-owned documents, highlights and native citations keep their
+`message_retrievals` owns saved resource references or urls and citation ordinals.
+selected evidence freezes when retrieved; terminal settlement removes every
+uncited quote. citation quotes are bounded to 2,000 codepoints and 64 kib of
+structured excerpt, with larger evidence reduced to truncated plain words. local
+citation edges project references without copying quotes. user attachments write
+the same edges after current visibility is checked. web citations retain only
+their url. deleting the turn removes its messages, retrievals and citation edges. source-owned documents, highlights and native citations keep their
 own existing data contracts.
 
 ## command and read contracts
@@ -48,15 +57,15 @@ own existing data contracts.
 - `GET /librarian/messages`: latest window or one exclusive before/after cursor or
   message anchor, default twenty-five turns and maximum fifty. chronological whole
   pairs; absent anchor is 404. sequence values are decimal strings.
-- `POST /librarian/attachments/resolve`: 1–16 live references, ordered current
-  presentations in one authenticated repeatable-read snapshot; private/no-store.
+- `POST /librarian/attachments/resolve`: 1–16 reference or selection attachments, proven and presented
+  in order in one authenticated repeatable-read snapshot; private/no-store.
   this read writes and adopts nothing.
 - `GET /chat-runs/{id}` and existing event stream: current pair, execution, actions
   and resumable durable frames. waiting rows truthfully project `Queued` without a job.
 - `POST /chat-runs/{id}/cancel`: durable stop intent. only known settled execution
   permits terminal recovery; a timeout is not proof that a provider stopped.
 - `POST /chat-runs/{id}/retry`: a fresh uuid appends a new attempt of a failed or
-  cancelled turn, with its original user text and live refs. successful answers
+  cancelled turn, with its original user text and saved refs. successful answers
   cannot be regenerated. completed actions are not rolled back.
 - `DELETE /chat-runs/{id}`: terminal pair only; absent is success, active is conflict.
   later retries and independent action/undo receipts survive.
@@ -68,13 +77,13 @@ input order and multiplicity. attachment availability distinguishes source,
 field and locator; response-local reuse never crosses viewers or snapshots.
 attachments reuse hydrated item authority and add the annotation owner's private
 field check. source navigation composes those same proofs. only attachments and
-published citations receive exact excerpts, owned annotations and source
-bibliography. uncited retrievals and streams retain their slim shape.
-full original intervals are admitted before a 601-codepoint display read; compact
-projection publishes at most 600 with omission metadata. availability-only checks
-validate bounds without constructing source text; prompt reads enforce byte limits.
-whole-fragment attachments require the evidence owner's complete-passage
-admission; fragment identity visibility alone never authorizes its body.
+published citations carry saved quotes, owned annotations and source bibliography.
+uncited retrievals and streams expose coordinate-only targets. presentation never
+derives words or starts the authored helper. text availability compares the saved
+exact against the current substring inside sql; no source text is materialised.
+source and annotation enrichment remain current. whole-fragment context requires
+the evidence owner's complete-passage admission; fragment identity visibility
+alone never authorizes its body.
 stream pages keep their own snapshot: text pages hydrate nothing, start frames
 exclude later results, and result frames hydrate only that page's retrievals.
 
@@ -85,10 +94,21 @@ failed/cancelled answers are explicitly incomplete and retain completed-action
 receipts. mandatory request/brief/attachments that cannot fit settle
 `context_too_large`; they are never silently truncated.
 
-live offsets can refer to different words after editing. missing sources and invalid
-ranges are unavailable; no quote matching repairs them. pdf geometry remains a
-visual coordinate; any coarse page text supplied as context is labelled explicitly.
-chat never claims exact selected words merely because it can read that page.
+saved words survive source edits, republication, deletion and access loss. a text
+place that no longer begins with them says `source changed since quoted`. opening
+checks current access, then resolves a unique exact-word match in the readable
+source when its original place fails. ambiguity or absence preserves whole-source
+navigation and reports location unavailable; it writes nothing. pdf and time
+places retain their existing checks. captured pdf words come from the reader.
+
+current attached quotes enter model context as saved exact words while the source
+is readable, even when their place moved. earlier turns serialize references
+without quotes and budget that actual serialization. oversized mandatory context
+settles `context_too_large`; source access loss never grants model access to saved
+words. new whole-reference inputs require current resource and private-field authority;
+selection inputs additionally prove their captured words. both checks run before
+the account lock and serializable admission. saved quotes retain their original
+words across retries and availability changes.
 
 source text in tool input is transient. persisted tool receipts retain identity,
 status/error, refs, created-effect refs and undo state. intentional authored outputs
@@ -157,11 +177,17 @@ maps source spans to a containing rendered passage or code line. a hidden link
 destination marks its paragraph; source-only definitions may mark the message.
 this is passage emphasis, not a claim that source and rendered glyphs coincide.
 
-`ReferenceFigure` renders supplied live presentations without reading. inline
+`ReferenceFigure` projects a saved quote through the shared excerpt kernel in
+compact capture scope without reading its source. pdf and time places appear
+below their words. a missing source retains the quote and per-kind unavailable
+status, with no navigation. whole resources and live highlights use their current
+presentation. inline
 markers and figures share source activation; annotation fields open their owning
 highlight. unavailable citations retain their ordinal. exact selection words never
 substitute a leading preview; invalid coordinates retain source navigation.
 drafts use the same projection after their committed authored prefix uploads.
+preview admission writes nothing. selection refusals retain the draft, explain
+the reason and offer remove quote; transport failures also offer retry.
 
 `LibrarianReferences` publishes the shell's `librarian-references` companion.
 fresh visits start closed; publication never opens it. the first column view is

@@ -1,7 +1,6 @@
-"""Transient retrieved content and the sole live-target receipt writer.
+"""Transient retrieval evidence and bounded saved references.
 
-Search/read results keep their current text only while composing model input.
-Only resource references, coordinates or URLs cross the persistence boundary.
+Selected spans carry their evidence until settlement keeps only cited quotes.
 Citation numbering and publication belong to ``citations``.
 """
 
@@ -17,10 +16,15 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.schemas.live_reference import (
-    LiveReference,
-    ResourceRetrievalTarget,
-    RetrievalTarget,
+    SavedReference,
+    SavedResourceTarget,
+    SavedRetrievalTarget,
     UrlRetrievalTarget,
+)
+from nexus.schemas.reader import (
+    EpubTextOffsetsTargetOut,
+    TranscriptTextOffsetsTargetOut,
+    WebTextOffsetsTargetOut,
 )
 from nexus.schemas.resource_evidence import (
     CapturedEvidence,
@@ -29,13 +33,14 @@ from nexus.schemas.resource_evidence import (
     ResourceField,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services.reader_excerpts import quote_parts
+from nexus.services.reader_excerpts import plain_excerpt, quote_parts
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import admit_evidence, capture_evidence
 from nexus.services.search.candidates import SearchResultMediaOut, SearchResultOut
 from nexus.services.search.project import build_source_label
 from nexus.services.search.service import get_search_result
+from nexus.services.text_quote import normalize_for_match
 
 STRICT_LOCATOR = frozenset(
     {
@@ -88,7 +93,7 @@ def compact(value: Mapping[str, Any]) -> dict[str, Any]:
 
 @dataclass(slots=True)
 class RetrievalCitation:
-    """Transient model evidence; only its live target may be persisted."""
+    """Transient model evidence; persistence bounds the selected target quote."""
 
     captured_evidence: CapturedEvidence | None
     result_type: str
@@ -108,24 +113,24 @@ class RetrievalCitation:
     contributors: list[dict[str, Any]] = field(default_factory=list)
     payload: dict[str, Any] = field(default_factory=dict)
     selected: bool = False
-    reference: LiveReference | None = None
+    reference: SavedReference | None = None
 
     @property
-    def target(self) -> RetrievalTarget:
+    def target(self) -> SavedRetrievalTarget:
         from nexus.services.live_references import from_evidence
 
         if self.reference is not None:
-            return ResourceRetrievalTarget(reference=self.reference)
+            return SavedResourceTarget(reference=self.reference)
         if self.result_type == "web_result":
             return UrlRetrievalTarget(url=self.deep_link)
         if (
             self.captured_evidence is not None
             and self.captured_evidence.target.owner_ref is not None
         ):
-            return ResourceRetrievalTarget(reference=from_evidence(self.captured_evidence))
+            return SavedResourceTarget(reference=from_evidence(self.captured_evidence))
         uri = self.citation_target or f"{self.context_ref['type']}:{self.context_ref['id']}"
-        return ResourceRetrievalTarget(
-            reference=LiveReference(resource_ref=uri, field=None, locator=None)
+        return SavedResourceTarget(
+            reference=SavedReference(resource_ref=uri, field=None, locator=None, quote=None)
         )
 
     def result_ref_json(self) -> dict[str, Any]:
@@ -354,17 +359,76 @@ def insert_retrieval(
 ) -> UUID:
     """One row per (call, ordinal) of an answer (no call: attached context).
 
-    This weak target retains no source. Candidate ordinals and cited edges belong
-    to ``citations`` and are never written here.
+    Selected spans retain bounded evidence, never later source derivation.
+    Candidate ordinals and cited edges belong to ``citations``.
     """
 
+    target = citation.target
+    if isinstance(target, SavedResourceTarget):
+        reference = target.reference
+        quote = reference.quote if selected else None
+        if quote is not None and citation.reference is None and reference.locator is not None:
+            locator = reference.locator
+            parameters: dict[str, object] = {}
+            if isinstance(
+                locator,
+                (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut),
+            ):
+                parameters = {
+                    "id": locator.fragment_id,
+                    "start": locator.start_offset,
+                    "size": locator.end_offset - locator.start_offset,
+                }
+                body_sql = "SELECT substring(canonical_text FROM :start+1 FOR :size) FROM fragments WHERE id=:id AND :start+:size<=char_length(canonical_text)"
+            elif locator.kind == "TextOffsets":
+                ref = assert_resource_ref(reference.resource_ref)
+                table, column = (
+                    ("highlights", "annotation_body_text")
+                    if reference.field == "annotation"
+                    else ("note_blocks", "body_text")
+                )
+                parameters = {
+                    "id": ref.id,
+                    "start": locator.start_offset,
+                    "size": locator.end_offset - locator.start_offset,
+                }
+                body_sql = f"SELECT substring({column} FROM :start+1 FOR :size) FROM {table} WHERE id=:id AND :start+:size<=char_length({column})"
+            else:
+                body_sql = ""
+            if body_sql:
+                literal = db.scalar(text(body_sql), parameters)
+                if (
+                    literal is None
+                    or normalize_for_match(literal).text != normalize_for_match(quote.exact).text
+                ):
+                    reference = reference.model_copy(update={"locator": None})
+                    quote = None
+                elif literal != quote.exact:
+                    quote = quote.model_copy(
+                        update={
+                            "exact": literal,
+                            "excerpt": plain_excerpt(literal, quote.prefix, quote.suffix),
+                        }
+                    )
+        if quote is not None and (
+            len(quote.exact) > 2000 or len(quote.excerpt.model_dump_json().encode()) > 64 * 1024
+        ):
+            exact = quote.exact[:2000]
+            quote = quote.model_copy(
+                update={
+                    "exact": exact,
+                    "suffix": None if len(quote.exact) > 2000 else quote.suffix,
+                    "excerpt": plain_excerpt(exact).model_copy(update={"truncated_after": True}),
+                }
+            )
+        target = SavedResourceTarget(reference=reference.model_copy(update={"quote": quote}))
     return db.execute(
         _INSERT,
         {
             "assistant_message_id": assistant_message_id,
             "tool_call_id": tool_call_id,
             "ordinal": ordinal,
-            "target": citation.target.model_dump(mode="json"),
+            "target": target.model_dump(mode="json"),
             "selected": selected,
         },
     ).scalar_one()

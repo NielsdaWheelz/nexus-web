@@ -2,8 +2,8 @@
 
 import type { ComponentPropsWithRef, ReactNode } from "react";
 import { parseBody } from "@nexus/authored/body";
-import { selectedExcerpt } from "@nexus/authored/excerpt";
-import { Failed } from "@/components/feedback/Fact";
+import { excerptView, selectedExcerpt } from "@nexus/authored/excerpt";
+import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import { MediaTitle } from "@/components/media/MediaIdentity";
 import NoteBodyPreview from "@/components/notes/NoteBodyPreview";
@@ -17,7 +17,7 @@ import { apiFetch } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { ReaderQuote } from "@/lib/chat/readerIntent";
-import type { LiveReference } from "@/lib/chat/wire";
+import { refusal } from "@/lib/chat/wire";
 import { formatClock } from "@/lib/formatClock";
 import { useWritingRuntime } from "@/lib/notes/hooks";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -26,7 +26,7 @@ import { itemMediaKind, resourceType } from "@/lib/resources/type";
 import { cx } from "@/lib/ui/cx";
 import * as Icon from "@/lib/ui/icons";
 import { suppressSelectionActivation } from "@/lib/ui/targetActivation";
-import { unavailableReferenceLabel, useLiveReferenceLink } from "./LiveReference";
+import { referenceStatus, useLiveReferenceLink } from "./LiveReference";
 import styles from "./ReferenceFigure.module.css";
 
 type ResolvedReference = Schema<"AttachmentOut"> | Schema<"ChatCitationOut">;
@@ -50,10 +50,15 @@ export default function ReferenceFigure({ value, className, tabIndex = -1, onCli
   </figure>;
 }
 
-function ResourceReferenceContent({ value, reference }: { value: ResolvedReference; reference: LiveReference }) {
+function ResourceReferenceContent({ value, reference }: { value: ResolvedReference; reference: Schema<"AttachmentOut">["reference"] }) {
   const { item } = value;
-  const link = useLiveReferenceLink({ reference, item, locationAvailable: value.location_available });
-  if (item === null || item.missing) return <div data-resource-primary className={styles.status}>{unavailableReferenceLabel(reference)}</div>;
+  const link = useLiveReferenceLink({ reference, item });
+  const status = referenceStatus({ reference, item, locationAvailable: value.location_available });
+  const quote = reference.quote ? <ReaderExcerpt excerpt={excerptView(reference.quote.excerpt, "compact", { kind: "capture" })} color={null} /> : null;
+  if (item === null || item.missing) return <>
+    {quote ? <div data-resource-primary className={styles.primary}>{quote}</div> : null}
+    <div data-resource-primary={quote ? undefined : true} className={styles.status}>{status}</div>
+  </>;
   const body = item.preview.body;
   const metadata = resourceMetadata({ item });
   const summary = body.kind === "media" ? body.media_summary : value.source;
@@ -62,14 +67,14 @@ function ResourceReferenceContent({ value, reference }: { value: ResolvedReferen
   const bibliography = value.source ? [...metadata.bibliography.filter(part => part.key === "attribution"), ...mediaBibliographyMetadata(value.source)] : metadata.bibliography;
   const locator = reference.locator;
   const invalidLocator = locator !== null && !value.location_available;
-  const annotationPrimary = reference.field === "annotation" && value.excerpt === null && !invalidLocator;
+  const annotationPrimary = reference.field === "annotation" && quote === null && !invalidLocator;
   const coarseLocation = locator?.kind === "PdfPage" ? `page ${locator.page_number}`
-    : locator?.kind === "PdfPageGeometry" ? `selected region · page ${locator.page_number}`
+    : locator?.kind === "PdfPageGeometry" ? `${quote ? "" : "selected region · "}page ${locator.page_number}`
       : locator?.kind === "TimeRange" ? `${formatClock(locator.start_ms / 1000)}–${formatClock(locator.end_ms / 1000)}` : null;
-  const identityPrimary = invalidLocator || coarseLocation !== null || (!value.excerpt && !annotationPrimary && (body.kind === "media" || body.kind === "named"));
+  const identityPrimary = quote === null && (invalidLocator || coarseLocation !== null || (!annotationPrimary && (body.kind === "media" || body.kind === "named")));
   let primary: ReactNode;
-  if (invalidLocator || coarseLocation !== null) primary = title;
-  else if (value.excerpt !== null) primary = <ReaderExcerpt excerpt={selectedExcerpt(value.excerpt)} color={null} full />;
+  if (quote !== null) primary = quote;
+  else if (invalidLocator || coarseLocation !== null) primary = title;
   else if (annotationPrimary) {
     // justify-defect: readable whole-annotation projections always carry their body.
     if (value.annotation === null) throw new Error("readable annotation reference has no annotation");
@@ -79,8 +84,6 @@ function ResourceReferenceContent({ value, reference }: { value: ResolvedReferen
   const parts = metadata.parts.filter(part => part.key !== "source" && (coarseLocation === null || part.key !== "location"));
   const attribution = [...bibliography, ...parts];
   const parsed = parseResourceRef(item.ref);
-  const status = invalidLocator || item.activation.unavailable_reason === "location_unavailable" ? "selected passage unavailable"
-    : item.activation.unavailable_reason === "source_unavailable" ? "source unavailable" : null;
   return <>
     <div className={styles.primary} data-resource-primary>
       {link && !annotationPrimary ? <a {...link} data-reference-control="source" draggable={false}>{primary}</a> : primary}
@@ -106,22 +109,29 @@ export function DraftReferenceFigure({ quote, onRemove }: { quote: ReaderQuote; 
   const writing = useWritingRuntime();
   const stale = useChangeStamp("Metadata", "Notes", "NoteBodies", "Chats");
   const read = usePaneFreeServerValue({
-    key: `draft-reference:${quote.id}:${JSON.stringify(quote.reference)}`,
+    key: `draft-reference:${quote.id}`,
     stale,
     load: async signal => {
       await writing.whenUploaded(await writing.committedPrefix(), signal);
       const response = await apiFetch<ApiJson<"/librarian/attachments/resolve", "post">>("/api/librarian/attachments/resolve", {
-        method: "POST", body: JSON.stringify({ references: [quote.reference] }), signal,
+        method: "POST", body: JSON.stringify({ attachments: [quote.attachment] }), signal,
       });
       // justify-defect: ordered resolution returns one result per submitted reference.
       if (response.data.length !== 1) throw new Error("draft reference resolution returned the wrong count");
       return response.data[0]!;
     },
   });
+  let content: ReactNode = <Ruling />;
+  if (read.status === "ready") content = <ReferenceFigure value={read.data} />;
+  else if (read.status === "failed") {
+    if (read.error.code === "E_INVALID_REQUEST") throw read.error;
+    const failed = refusal("couldn’t load this quote.", read.error);
+    content = failed.error === null ? <Fact line={failed.line} />
+      : <Failed error={read.error} noun="this quote" retry={{ run: read.refetch, busy: read.retrying }} />;
+  }
   return <div className={styles.draft} data-type-role="margin" role="group" aria-label="attached quote">
     <div className={styles.draftContent}>
-      {read.status === "ready" ? <ReferenceFigure value={read.data} /> : read.status === "failed"
-        ? <Failed error={read.error} noun="this quote" retry={{ run: read.refetch, busy: read.retrying }} /> : <Ruling />}
+      {content}
     </div>
     <Button iconOnly icon={<Icon.Dismiss />} aria-label="remove quote" onClick={onRemove} />
   </div>;

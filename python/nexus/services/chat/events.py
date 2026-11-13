@@ -133,6 +133,14 @@ def finalize(
         ),
         {"content": content, "status": status, "id": run.assistant_message_id},
     )
+    db.execute(
+        text("""UPDATE message_retrievals
+            SET target=jsonb_set(target,'{reference,quote}','null'::jsonb)
+            WHERE assistant_message_id=:id AND citation_ordinal IS NULL
+              AND target->>'kind'='resource'
+              AND target #> '{reference,quote}' <> 'null'::jsonb"""),
+        {"id": run.assistant_message_id},
+    )
     # A call a stop or a dead attempt cut short never reported its result.
     db.execute(
         text(

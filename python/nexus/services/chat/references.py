@@ -1,8 +1,4 @@
-"""Resolve live attachments using current source authority and structural coordinates.
-
-No source words or publication identities are saved here. A syntactically valid
-reference may be unavailable now; offsets never search for replacement words.
-"""
+"""Admit selected words once; project saved references with current source authority."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -11,33 +7,22 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.chat import AttachmentOut
-from nexus.schemas.live_reference import LiveReference
-from nexus.schemas.reader import (
-    EpubTextOffsetsTargetOut,
-    TranscriptTextOffsetsTargetOut,
-    WebTextOffsetsTargetOut,
-)
-from nexus.schemas.reader_excerpts import FrozenExcerpt
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.chat import AttachmentIn, AttachmentOut, ReferenceAttachmentIn
+from nexus.schemas.live_reference import SavedReference
 from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.highlights import read_highlight_annotations
 from nexus.services.live_references import (
     field_visible,
-    reference_texts,
     reference_visible,
     resolve_location,
 )
 from nexus.services.media import media_summaries
-from nexus.services.reader_excerpts import plain_excerpt, project_excerpts
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_graph.resolve import PromptBodyTooLarge, resolve_prompt
+from nexus.services.resource_items.evidence import capture_reader_selection
 from nexus.services.resource_items.items import resource_items_out
-from nexus.services.source_excerpt import (
-    SourceExcerptFormatLimit,
-    SourceExcerptRequest,
-    source_display_excerpts,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,13 +30,13 @@ class CurrentReference:
     label: str
     body: str
     source_available: bool
-    location_available: bool
+    content_available: bool
 
 
 def attachments_by_reference(
     db: Session,
     viewer_id: UUID,
-    references: list[LiveReference],
+    references: list[SavedReference],
     *,
     items: Mapping[str, ResourceItemOut],
 ) -> dict[str, AttachmentOut]:
@@ -76,8 +61,7 @@ def attachments_by_reference(
             reference=reference,
             item=item if visible[field] else None,
             location_available=visible[field]
-            and resolve_location(db, reference, viewer_id=viewer_id, byte_limit=None)[0],
-            excerpt=None,
+            and resolve_location(db, reference, viewer_id=viewer_id),
             annotation=None,
             source=None,
         )
@@ -87,84 +71,8 @@ def attachments_by_reference(
 def present_attachments(
     db: Session, viewer_id: UUID, attachments: Mapping[str, AttachmentOut]
 ) -> dict[str, AttachmentOut]:
-    """Enrich only actual figures, sharing admitted identity and exact text work."""
+    """Enrich figures with current annotations and source identity, never source words."""
     readable = {key: value for key, value in attachments.items() if value.item is not None}
-    selected = {
-        key: value.reference
-        for key, value in readable.items()
-        if value.location_available
-        and value.reference.locator is not None
-        and value.reference.locator.kind
-        in (
-            "WebTextOffsets",
-            "EpubTextOffsets",
-            "TranscriptTextOffsets",
-            "TextOffsets",
-        )
-    }
-    words = reference_texts(db, list(selected.values()))
-    structured = {
-        key: reference
-        for key, reference in selected.items()
-        if isinstance(
-            reference.locator,
-            (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut),
-        )
-        and (require_ref(reference.resource_ref).scheme == "media" or words[key].x_capture)
-    }
-    requests = []
-    for key, reference in structured.items():
-        locator = reference.locator
-        assert isinstance(
-            locator,
-            (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut),
-        )
-        requests.append(
-            SourceExcerptRequest(
-                reading_id=locator.fragment_id
-                if words[key].x_capture
-                else require_ref(reference.resource_ref).id,
-                fragment_id=locator.fragment_id,
-                start=locator.start_offset,
-                end=min(locator.end_offset, locator.start_offset + 601),
-            )
-        )
-    frozen: dict[str, FrozenExcerpt] = {}
-    for key, outcome in zip(structured, source_display_excerpts(db, requests), strict=True):
-        frozen[key] = (
-            plain_excerpt(words[key].text)
-            if isinstance(outcome, SourceExcerptFormatLimit)
-            else outcome
-        )
-    for key in selected:
-        if key not in frozen:
-            frozen[key] = plain_excerpt(words[key].text)
-    excerpts = {
-        key: projection.view
-        for key, projection in zip(
-            frozen,
-            project_excerpts(
-                [
-                    {
-                        "source_ref": selected[key].resource_ref,
-                        "capture": {
-                            "kind": "passage",
-                            "value": {
-                                "quote_exact": words[key].text,
-                                "publication": None,
-                                "locator": None,
-                                "excerpt": excerpt.model_dump(mode="json"),
-                            },
-                        },
-                        "mode": "compact",
-                        "scope": {"kind": "capture"},
-                    }
-                    for key, excerpt in frozen.items()
-                ]
-            ),
-            strict=True,
-        )
-    }
     annotation_ids = {
         key: require_ref(value.reference.resource_ref).id
         for key, value in readable.items()
@@ -189,7 +97,6 @@ def present_attachments(
     return {
         key: value.model_copy(
             update={
-                "excerpt": excerpts.get(key),
                 "annotation": annotations.get(annotation_ids[key])
                 if key in annotation_ids
                 else None,
@@ -200,10 +107,48 @@ def present_attachments(
     }
 
 
+def admit_attachments(
+    db: Session, viewer_id: UUID, attachments: list[AttachmentIn]
+) -> list[SavedReference]:
+    """Prove reader captures before admission locks; whole references carry no words."""
+    from nexus.services.live_references import from_evidence
+
+    admitted = []
+    for attachment in attachments:
+        if isinstance(attachment, ReferenceAttachmentIn):
+            if not reference_visible(db, viewer_id=viewer_id, reference=attachment.reference):
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source not found")
+            admitted.append(SavedReference(**attachment.reference.model_dump(), quote=None))
+            continue
+        capture = attachment.capture
+        if (
+            len(capture.quote_exact) > 20_000
+            or len(capture.prefix or "") > 1_000
+            or len(capture.suffix or "") > 1_000
+            or len(capture.model_dump_json().encode()) > 512 * 1024
+        ):
+            raise InvalidRequestError(
+                ApiErrorCode.E_READER_SELECTION_TOO_LARGE, "Selection exceeds quote bounds"
+            )
+        admitted.append(
+            from_evidence(
+                capture_reader_selection(
+                    db,
+                    viewer_id=viewer_id,
+                    reading_ref=require_ref(attachment.reading_ref),
+                    source_ref=require_ref(attachment.source_ref),
+                    capture=capture,
+                )
+            )
+        )
+    return admitted
+
+
 def read_attachments(
-    db: Session, viewer_id: UUID, references: list[LiveReference]
+    db: Session, viewer_id: UUID, attachments: list[AttachmentIn]
 ) -> list[AttachmentOut]:
-    """One snapshot and resource batch, preserving caller order and multiplicity."""
+    """Admit and present a draft in one read snapshot; nothing is written."""
+    references = admit_attachments(db, viewer_id, attachments)
     refs = {reference.resource_ref: require_ref(reference.resource_ref) for reference in references}
     items = {
         item.ref: item
@@ -216,7 +161,7 @@ def read_attachments(
 
 
 def resolve(
-    db: Session, *, viewer_id: UUID, reference: LiveReference, byte_limit: int, horizon_seq: int
+    db: Session, *, viewer_id: UUID, reference: SavedReference, byte_limit: int, horizon_seq: int
 ) -> CurrentReference:
     from nexus.services.chat.timeline import message_visible
 
@@ -233,11 +178,12 @@ def resolve(
         return CurrentReference("source unavailable", "", False, False)
     if reference.locator is not None or reference.field == "annotation":
         item = resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0]
+        if reference.quote is not None:
+            if len(reference.quote.exact.encode()) > byte_limit:
+                raise PromptBodyTooLarge(ref.uri)
+            return CurrentReference(item.label, reference.quote.exact, True, True)
         if reference.locator is not None:
-            available, body = resolve_location(
-                db, reference, viewer_id=viewer_id, byte_limit=byte_limit
-            )
-            return CurrentReference(item.label, body or "", True, available)
+            return CurrentReference(item.label, "", True, False)
         size = db.scalar(
             text("SELECT octet_length(annotation_body_text) FROM highlights WHERE id=:id"),
             {"id": ref.id},

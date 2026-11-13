@@ -526,24 +526,7 @@ def _source_windows(
 
 
 def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[FrozenExcerpt]:
-    """Authored captures require faithful structure for every requested selection."""
-    outcomes = source_display_excerpts(db, requests)
-    excerpts = []
-    for outcome in outcomes:
-        if isinstance(outcome, SourceExcerptFormatLimit):
-            raise outcome
-        excerpts.append(outcome)
-    return excerpts
-
-
-def source_display_excerpts(
-    db: Session, requests: list[SourceExcerptRequest]
-) -> list[FrozenExcerpt | SourceExcerptFormatLimit]:
-    """Batch proof and conversion with named per-selection native format limits.
-
-    Invalid authority, canonical disagreement and helper defects still fail the
-    request. A recognised shape limit neither retries nor discards sibling work.
-    """
+    """Prove every requested selection's faithful structure, or refuse the capture."""
     from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
     from nexus.services.resource_items.locations import source_identities
 
@@ -613,7 +596,7 @@ def source_display_excerpts(
         groups.setdefault(
             (request.reading_id, request.fragment_id, base, len(canonical)), []
         ).append(index)
-    outcomes: dict[int, FrozenExcerpt | SourceExcerptFormatLimit] = {}
+    outcomes: dict[int, FrozenExcerpt] = {}
     windows: dict[int, tuple[str, str, int, bool, bool]] = {}
     for indices in groups.values():
         html, canonical, base = contexts[indices[0]]
@@ -624,16 +607,12 @@ def source_display_excerpts(
         )
         for index, value in zip(indices, values, strict=True):
             if isinstance(value, SourceExcerptFormatLimit):
-                outcomes[index] = value
-                continue
+                raise value
             candidate, projected, offset, before, after = value
             windows[index] = (candidate, projected, base + offset, before, after)
     trees = {}
     for index, (html, _, _, _, _) in windows.items():
-        try:
-            trees[index] = _tree(html)
-        except SourceExcerptFormatLimit as limit:
-            outcomes[index] = limit
+        trees[index] = _tree(html)
     selected = list(trees)
     mappings = helper.call_items(
         "excerpt_source_selections",
@@ -666,11 +645,9 @@ def source_display_excerpts(
             for interval in mapping["unsupported_intervals"]
         ]
         if mapping["selection"] is None:
-            outcomes[index] = SourceExcerptFormatLimit("no_native_text")
-            continue
+            raise SourceExcerptFormatLimit("no_native_text")
         if any(left < request.end and right > request.start for left, right in intervals):
-            outcomes[index] = SourceExcerptFormatLimit("unsupported_structure")
-            continue
+            raise SourceExcerptFormatLimit("unsupported_structure")
         body["selection"] = mapping["selection"]
         first_path, last_path = (
             tuple(body["selection"]["start"]["path"]),
@@ -682,8 +659,7 @@ def source_display_excerpts(
             or first_path < path < last_path
             for path in incomplete_paths
         ):
-            outcomes[index] = SourceExcerptFormatLimit("incomplete_table")
-            continue
+            raise SourceExcerptFormatLimit("incomplete_table")
         admitted_bounds = request.bounds or (0, len(row.canonical_text))
         if request.reading_id in scopes:
             scope = scopes[request.reading_id]
@@ -741,14 +717,12 @@ def source_display_excerpts(
     )
     for index, value, intervals in zip(captured_indices, admitted, unsupported, strict=True):
         if value is None:
-            outcomes[index] = SourceExcerptFormatLimit("scope_boundary")
-            continue
+            raise SourceExcerptFormatLimit("scope_boundary")
         extent = value.source_extent
         assert extent is not None, "captured source excerpt lost its extent"
         if any(
             left < extent.end_offset and right > extent.start_offset for left, right in intervals
         ):
-            outcomes[index] = SourceExcerptFormatLimit("unsupported_structure")
-        else:
-            outcomes[index] = value
+            raise SourceExcerptFormatLimit("unsupported_structure")
+        outcomes[index] = value
     return [outcomes[index] for index in range(len(requests))]

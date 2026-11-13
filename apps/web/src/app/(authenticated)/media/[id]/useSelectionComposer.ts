@@ -422,8 +422,7 @@ export function useSelectionComposer(input: {
     // The render snapshot is the row the user saw; a later lookup cannot authorize it.
     const annotation = entry.highlightId ? copyAnnotation : null;
     if (entry.highlightId && annotation?.id !== entry.highlightId) return null;
-    return captureReaderQuote({ doc: shown.doc, scope: {kind: "media", media_id: mediaId},
-      anchor: entry.passage.anchor, capture: entry.capture, annotation });
+    return captureReaderQuote({ scope: {kind: "media", media_id: mediaId}, capture: entry.capture, annotation });
   };
   const transferringChat = useRef(false);
   const sendChat = () => {
