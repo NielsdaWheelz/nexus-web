@@ -135,7 +135,7 @@ unpublished upload without recovery `remove`, else offered dismissal `dismiss`.
 row shortcuts require raised attention. media menus lead with Import details,
 the speaking recovery and Dismiss, followed by ordinary work actions. retry all
 walks loaded source/search recoveries sequentially despite refusals; dismiss all
-sends one bounded request. partial attention prefixes show counted verbs.
+sends batches of at most 100, with one invalidation. partial attention prefixes show counted verbs.
 
 the companion surface remains `import-detail`, with identity; one standing Fact
 per unsettled slot and covered markers; pending captures and discard; related
@@ -155,7 +155,7 @@ retain their own labels. `lineView` shares phrases through `words.ts`.
 - **I1** summary, page and detail use one classification cte; separate reads can observe different moments.
 - **I2** only Register and Recent exist; Register requires its arrival bound and Recent refuses one.
 - **I3** every shown source/search code is catalogued; unknown queue codes read as a handler failure, without aborting queue transitions.
-- **I4** history records only its owners' committed facts, never dismissal or settled/deleted attempts.
+- **I4** owner transactions alone append history through `import_history`; queue hooks skip settled source attempts and deleted media, and dismissal appends nothing.
 - **I5** arrival is the reader's first successful direct acquisition; only raised failures affect attention and primary.
 - **I6** selection persists without opening; explicit activation opens the same companion surface for import or opml refs.
 - **I7** commands share existing per-resource busy ownership; upload uncertainty retains its live owner.
