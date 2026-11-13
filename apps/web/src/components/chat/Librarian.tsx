@@ -57,6 +57,8 @@ export default function Librarian() {
   const turns = timeline?.items ?? NO_TURNS;
   const fresh = history.status === "ready" && history.fresh;
   const adopted = runtime.href === "/librarian" && !fresh ? draft.adopted : NO_TURNS;
+  const recall = runtime.href === "/librarian" && !search.searching && history.status === "ready"
+    ? (adopted.at(-1) ?? turns.at(-1))?.user_message.content ?? null : null;
   useLayoutEffect(() => {
     if (runtime.href === "/librarian" && fresh) settleAdopted();
   }, [runtime.href, fresh, settleAdopted]);
@@ -124,7 +126,7 @@ export default function Librarian() {
       <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || adopted.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}
         {!search.searching && history.status === "ready" && history.error ? <Fact line={{ fact: "messages stopped updating." }} verbs={[{ label: "retry", commandKey: "refresh librarian", run: history.refetch }]} /> : null}
-        <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} />
+        <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} recall={recall} />
       </div>
     </div>;
 }

@@ -5,7 +5,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { formatShortcut, outlineShortcuts, PANE_STRIP_SHORTCUTS, SHORTCUTS } from "@/lib/shortcuts";
+import { formatShortcut, librarianLineShortcuts, outlineShortcuts, PANE_STRIP_SHORTCUTS, SHORTCUTS } from "@/lib/shortcuts";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 export default function KeybindingsPaneBody() {
@@ -40,6 +40,15 @@ export default function KeybindingsPaneBody() {
           rows={PANE_STRIP_SHORTCUTS.map(item => presentSettingsRow({ ...item, presentation: "Details" }))}
           status="ready"
           ariaLabel="Pane strip shortcuts"
+          surface={false}
+        />
+      </PaneSection>
+      <PaneSection title="Librarian line" description="These keys apply while writing a question. Recall is available on the latest window with search closed.">
+        <CollectionView
+          returnScope="Settings.Keybindings.LibrarianLine"
+          rows={librarianLineShortcuts(platform).map(item => presentSettingsRow({ ...item, presentation: "Details" }))}
+          status="ready"
+          ariaLabel="Librarian line shortcuts"
           surface={false}
         />
       </PaneSection>

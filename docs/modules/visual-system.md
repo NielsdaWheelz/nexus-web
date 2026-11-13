@@ -116,9 +116,8 @@ a removal draws what survives it:
 running anything again draws `Again`; replaying audio draws `Play`, because
 pressing it plays. disclosure is `Disclose`; a select or picker draws `Choose`,
 which does not turn. tucking collapses a notice in place, so its control draws
-`Disclose` with its open state. declared exceptions: the library chooser's indeterminate
-cell draws `Remove`'s minus; `EffortPicker`'s gauge stays raw svg until playback
-draws `Effort`.
+`Disclose` with its open state. declared exception: the library chooser's
+indeterminate cell draws `Remove`'s minus. generation effort uses `Icon.Effort`.
 
 every glyph keeps a 1.5px line (`--icon-stroke`) in screen pixels at any size:
 `globals.css` sets the stroke width on `.lucide` and `vector-effect:
@@ -386,20 +385,18 @@ feedback handoff debt.
 
 ## choice controls
 
-`ChoicePicker` renders one controlled exclusive choice: the current value and a
-chevron, with the category in its accessible name. its plain list has separate
-active and selected states, a selected checkmark and visible unavailable reasons.
-labels wrap rather than truncate; the bounded list scrolls vertically. status
-and refresh content sits outside the listbox. it has no search field or visible
-category heading. command menus and library membership retain their own content
-and semantics; [overlays](overlays.md#surfaces) owns the responsive picker shell.
+choice lists use `Collection`'s separate active and selected states, selected
+checkmark and visible unavailable reasons. labels wrap; bounded lists scroll
+vertically. status and refresh content sits outside listboxes. command menus and
+library membership retain their own semantics;
+[overlays](overlays.md#surfaces) owns the responsive picker shell. chat's single
+generation control, provider sections and effort region belong to
+[chat](chat.md#generation-selection).
 
 choice triggers, segments and facets have a 32px minimum height; triggers, option
 rows, segments and facets have at least 44px with any coarse pointer. text can
 increase those heights. engagement uses existing colour and motion tokens; reduced motion
-removes transitions. chat's three-control composition, native effort gauge/range
-and whole-control wrapping belong to [chat](chat.md#generation-selection), not
-this primitive.
+removes transitions.
 
 an exclusive choice shown as its options is a native radio group, `RadioGroup`:
 one fieldset named by its legend, radios sharing one `useId` name, and an
@@ -453,7 +450,9 @@ framework, reader and navbar roots; it owns no routing, operations or focus.
 ordinary prose links and specialized widgets retain their own semantics.
 
 quiet is the default. `emphasis="strong"` marks a principal commitment;
-`tone="danger"` marks destruction independently. `size="comfortable"` has a 44px
+quiet-only `tone="accent"` marks a writing instrument's commitment with semibold
+accent ink and an accent-muted hover ground. `tone="danger"` marks destruction
+independently. disabled paint wins over both tones. `size="comfortable"` has a 44px
 minimum; compact controls use their host minimum or 32px. any coarse pointer
 enforces at least 44px in both axes, except for controls inside authored outline
 rows, which follow the row geometry below. the existing dense outline exception
