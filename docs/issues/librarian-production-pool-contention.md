@@ -12,9 +12,14 @@ the full timeline response is 225,238 decoded bytes. its owner remains the
 complete response snapshot in `services/chat/reads.py`, `references.py` and
 `resource_items/`; remembered-selection readiness also waits for its current
 account read. current evidence does not apportion the remaining time among
-database work, excerpt projection, transfer and recall contention. the broader
-[authored hydration issue](unsynced-resource-reads-exhaust-the-pool.md) has its own
-owner; [request lifetime](api-sync-work-outlives-request-cancellation.md) is separate.
+database work, excerpt projection, transfer and recall contention. concurrent
+`/authored/scope-inputs` took 11.6 seconds in one observed request; total request
+time does not prove checkout duration. `services/authored/scope.py` recomputes
+the full revision and sorts records before skipping cursor rows in python;
+response size does not bound that database work. attribute this shared-pool
+overlap before changing admission or capacity. the existing
+[remote-row fanout issue](unsynced-resource-reads-exhaust-the-pool.md) and
+[request lifetime](api-sync-work-outlives-request-cancellation.md) are separate.
 
 this residual cost remains a follow-up after deployed-client qualification.
 resolve by attributing it on representative fresh reads, then demonstrating a
