@@ -30,7 +30,7 @@ export default function ZonePicker({ current, device, anchor, onPick, onClose }:
     const at = new Date();
     return listZones(device === null ? [current] : [current, device]).map(zone => {
       const clock = zoneClock(zone.id, at, displayLocale);
-      return { ...zone, clock, search: `${zone.city} ${zone.region} ${zone.id} ${clock?.offset ?? ""} ${clock?.offset.replace(/^GMT/, "UTC") ?? ""}`.toLowerCase() };
+      return { ...zone, clock, search: `${zone.city} ${zone.region} ${zone.id} ${clock?.offset ?? ""} ${clock?.offset === "GMT" ? "UTC+0" : clock?.offset.replace(/^GMT/, "UTC") ?? ""}`.toLowerCase() };
     });
   });
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);

@@ -1,5 +1,7 @@
 """The five additive writes the model may make, each through its domain's owner, and undo.
 
+Each domain owns visibility and permissions. Bounded runs also require frozen
+URI membership; foreground chat uses the principal's account authority.
 A write takes the fence and checks the answer's cap before its effect. Its
 ``created_refs`` list exactly the targets it inserted, never one that already
 existed. Named filing uses frozen library/removal guards. Its entry receipt adds
@@ -113,7 +115,7 @@ def _write[T: BaseModel](effect: Callable[[Any, Call], T]) -> Callable[[Any, Cal
     def run(value: Any, call: Call) -> T:
         for key in _URIS:
             uri = getattr(value, key, None)
-            if uri is not None and uri not in call.run.scope:
+            if call.run.chat_run_id is None and uri is not None and uri not in call.run.scope:
                 refuse("ResourceUnavailable")
         users.lock_viewer(call.db, call.principal)
         call.fence()  # held until the call's row completes with the effect

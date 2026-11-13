@@ -109,9 +109,10 @@ canonical call, the transport's refusal (`InvalidJson` -> `InvalidInput`,
    chat run; complete the row; persist live retrieval targets, the `tool_result`
    frame and numbered citations. full source output is transient model input; commit.
 
-Writes (`writes._write`) admit every URI field directly, take the fence (held to
-commit), count the cap, run the domain owner, and map reviewed owner refusals to
-declared errors.
+Writes (`writes._write`) require frozen URI membership for bounded background
+runs. foreground chat uses each domain's current account visibility and
+permissions. both take the fence (held to commit), count the cap, run the domain
+owner, and map reviewed owner refusals to declared errors.
 
 ## canonical reads and native captures
 
