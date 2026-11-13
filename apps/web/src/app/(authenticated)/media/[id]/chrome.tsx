@@ -9,7 +9,7 @@ import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/
 import ReaderNavigation from "@/lib/documentReader/chrome/ReaderNavigation";
 import { MAP_RAIL_WIDTH_PX, MapRail, type RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type { ReaderDestination } from "@/lib/documentReader/location";
-import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
+import { useReaderState, type Reader, type DocumentReaderViewProps } from "@/lib/documentReader/DocumentReader";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import type { FindSession } from "@/lib/find/useFind";
 import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
@@ -19,6 +19,7 @@ import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { launchChatDraft } from "@/lib/chat/readerIntent";
 import { createRandomId } from "@/lib/createRandomId";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -44,7 +45,7 @@ export function useReaderChrome(input: {
   readonly isMobile: boolean;
   readonly paneActive: boolean;
   /** Esc with nothing else to close: drop the active deep-link target. */
-}): void {
+}): { readonly head: DocumentReaderViewProps["head"] } {
   const { media, reader, find, readable, isMobile, paneActive } = input;
   const { ctx } = useActionRuntime();
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
@@ -54,6 +55,7 @@ export function useReaderChrome(input: {
   const kind = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.doc.kind : null));
   const sectioned = useReaderState(reader, (s) => s.document.status === "ready" && s.document.doc.kind === "text" && s.document.doc.sections.length > 0);
   const widthPx = useReaderState(reader, (s) => s.pdf?.widthPx ?? null);
+  const hasPdf = useReaderState(reader, (s) => s.pdf !== null);
   const { id } = media;
   const pdf = media.kind === "pdf";
 
@@ -66,10 +68,12 @@ export function useReaderChrome(input: {
   const summaries = useMediaSummaries([seed]);
   const summary = summaries.resolve(seed);
   const navigation = useMemo(
-    () => readable && (kind === "pdf" || kind === "text" && sectioned)
-      ? { label: kind === "pdf" ? "PDF controls" : "section navigation", content: <ReaderNavigation reader={reader} /> }
+    () => readable && (kind === "pdf" && hasPdf || kind === "text" && sectioned)
+      ? { label: kind === "pdf" ? "PDF controls" : "section navigation", content: isMobile
+          ? <div style={{ display: "contents", ...readerSurfaceStyle(profile) }}><ReaderNavigation reader={reader} /></div>
+          : <ReaderNavigation reader={reader} /> }
       : undefined,
-    [kind, readable, reader, sectioned],
+    [hasPdf, isMobile, kind, profile, readable, reader, sectioned],
   );
   const menuActions = useMemo<MenuOption[]>(() => {
     const theme: MenuOption[] = readable ? [{
@@ -112,14 +116,14 @@ export function useReaderChrome(input: {
           subject: { kind: "Stored" as const, summary },
           knownDescriptor: media.playerDescriptor,
         },
-        navigation,
+        navigation: isMobile ? navigation : undefined,
         query: find.controller !== null || (!input.gone && !documentFailed && readable)
           ? { kind: "Find" as const, session: find }
           : undefined,
         resourceRef: canonicalResourceRef({ scheme: "media", id }),
         menuActions,
       }),
-      [authors, summary, documentFailed, find, id, input.gone, navigation, media, menuActions, readable],
+      [authors, summary, documentFailed, find, id, input.gone, isMobile, navigation, media, menuActions, readable],
     ),
   );
   // a pdf's own width is the pane's minimum; the map rail sits beside the body.
@@ -187,4 +191,5 @@ export function useReaderChrome(input: {
       document.removeEventListener("keydown", keydown);
     };
   }, [ctx, id, media.title, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
+  return { head: isMobile ? undefined : navigation };
 }

@@ -37,6 +37,30 @@ research can support softer tinted backgrounds, but that does not justify
 the additional product and maintenance complexity here. the shipped system
 intentionally stays with two reader themes: light and dark.
 
+## running head
+
+the section row belongs to the page on desktop: it names the reading place,
+steps the structure and gauges the section without adding another deck of pane
+chrome. its title shares the text's face and yields only when the same words
+already stand at the visible section start. opacity preserves the control's
+geometry and accessible name; hover or focus brings its words back. a nav label
+that does not appear on the page keeps its echo, and transcript titles stay
+because cue membership is not an on-page heading.
+
+the status lane shares the text's measure, so departures and return belong to
+the same reading column. stable scrollbar gutters live outside that measure,
+matching the document scrollport rather than shrinking the head's text box.
+on the phone the head stays in the shell's navigation slot: the shell already
+owns retreat and top-surface measurement. the title keeps the reader's face
+while its ground belongs to the room.
+
+up means one step up the structure. halfway through a section it first finds
+that section's start; another press goes to the previous distinct start. this
+makes repeated activation useful while keeping one mounted link and one first
+origin. the folio counts through the whole work; the gauge counts through the
+current section. their end values differ because the reading line can precede
+the last words even when the viewport has reached the end.
+
 ## mobile attention and recovery
 
 mobile chrome follows deliberate intent: tap once to hide controls and again
