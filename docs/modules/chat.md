@@ -105,7 +105,10 @@ current attached quotes enter model context as saved exact words while the sourc
 is readable, even when their place moved. earlier turns serialize references
 without quotes and budget that actual serialization. oversized mandatory context
 settles `context_too_large`; source access loss never grants model access to saved
-words. selection proof runs before the account lock and serializable admission.
+words. new whole-reference inputs require current resource and private-field authority;
+selection inputs additionally prove their captured words. both checks run before
+the account lock and serializable admission. saved quotes retain their original
+words across retries and availability changes.
 
 source text in tool input is transient. persisted tool receipts retain identity,
 status/error, refs, created-effect refs and undo state. intentional authored outputs
