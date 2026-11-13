@@ -59,7 +59,7 @@ export default function Register({ selected, onSelect }: {
   const active = useObservationDemand(usePaneIsPresented());
   const query = new URLSearchParams({ view: "Register", from }).toString();
   const list = useServerList({ key: digest === null ? null : `/imports?${query}`, stale: `${revision}:${digest}`,
-    pageSize: 50, drain: false, active, visit: VISIT, id: (item: ImportItem) => item.ref,
+    pageSize: 50, drain: false, refreshComplete: false, active, visit: VISIT, id: (item: ImportItem) => item.ref,
     fetchPage: (cursor, limit, signal) => fetchImportPage(query, cursor, limit, signal) });
   const batches = useOpmlBatches();
   const all = usePaneFreeServerValue({ key: "imports:all", stale: "",

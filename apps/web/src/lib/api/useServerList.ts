@@ -5,10 +5,11 @@
 //   exposed unless `retainPreviousKey` explicitly holds the last committed
 //   account-owned prefix while its replacement loads.
 // - Rows are deduped by `id`; the first occurrence wins.
-// - `refetch()` rereads the loaded prefix (at least one page; a complete list
-//   to its end, so it stays complete) and commits it at once. It runs after the
-//   read in flight, superseding its success or failure, and calls made meanwhile
-//   share one reread. A change of `stale` under the same key refetches.
+// - `refetch()` rereads the loaded prefix and commits it at once. Complete live
+//   lists reread to their end unless `refreshComplete` is false, which retains
+//   the admitted page count. Catalog snapshots always revalidate to exhaustion.
+//   It runs after the read in flight, superseding its success or failure; calls
+//   made meanwhile share one reread. A change of `stale` under the same key refetches.
 // - Each page commits immediately, then continuation runs sequentially while
 //   `active` and the document is visible; a settled failure waits for `retry()`
 //   or a repair. Failure latches for this mounted read owner; snapshots retain
@@ -116,6 +117,9 @@ interface ListInput<T, M> extends ReadPolicy {
   readonly active: boolean;
   /** Omit for ordinary sequential traversal; false leaves continuation to `more()`. */
   readonly drain?: boolean;
+  /** Complete live snapshots reread to exhaustion; false rereads only their loaded pages.
+   * Catalog snapshots remain whole-corpus reads and revalidate to exhaustion. */
+  readonly refreshComplete?: boolean;
   /** Search replacement keeps the last committed prefix visible while a new key loads. */
   readonly retainPreviousKey?: boolean;
   readonly id: (item: T) => string;
@@ -173,7 +177,7 @@ function useList<T, M>(
   const flight = useRef<AbortController | null>(null);
   const waiters = useRef<Waiter[]>([]);
 
-  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:cursor=${input.cursorRecovery ?? "fresh"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:${input.readPolicy ?? ""}`, stale, () => {
+  const owner = useReadOwner(key, `list:${input.retry ?? "retry3"}:cursor=${input.cursorRecovery ?? "fresh"}:timeout=${input.timeoutMs ?? "none"}:pageSize=${input.pageSize}:refreshComplete=${input.refreshComplete ?? true}:${input.readPolicy ?? ""}`, stale, () => {
     if (latest.current.key === null) return;
     waiters.current.push({ resolve() {}, reject() {} });
     run("Refetch");
@@ -205,7 +209,8 @@ function useList<T, M>(
       // The cursor restart budget encloses transport retries, not each attempt.
       let restarted = false;
       let wantPages = op === "Load" ? 1 : (base?.cursors.length ?? 1) + (op === "More" ? 1 : 0);
-      let toEnd = op !== "Load" && base !== null && base.cursor === null;
+      let toEnd = op !== "Load" && base !== null && base.cursor === null &&
+        (base.source.kind === "catalog" || latest.current.refreshComplete !== false);
       const read = async (signal: AbortSignal) => {
         const loadPage = async (cursor: string | null) => {
           if (!capacity) return fetchPage(cursor, pageSize, signal);
