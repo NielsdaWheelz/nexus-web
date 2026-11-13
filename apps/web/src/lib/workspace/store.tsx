@@ -90,7 +90,8 @@ interface Data {
   columnWidthPx: number;
   recentlyClosedPanes: readonly ClosedPane[];
   pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
-  /** A destination owns focus after its initiating overlay has closed. */
+  /** A destination owns focus after its initiating overlay has closed.
+   * FocusReadingBrief uses its exact delivery as this request; either claim retires both. */
   pendingPaneFocus: WorkspaceSelection | null;
 }
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -273,6 +274,13 @@ function createWorkspaceStore(
     let focus = patch.pendingPaneFocus === undefined ? data.pendingPaneFocus : patch.pendingPaneFocus;
     if (focus && (visitOf.get(focus.paneId) !== focus.visitId || next.active_primary_pane_id !== focus.paneId ||
       (patch.pendingPaneFocus === undefined && foregroundGeneration !== data.foregroundGeneration))) focus = null;
+    if (focus) {
+      const previous = data.pendingPaneEntryDeliveryByPaneId.get(focus.paneId);
+      if (previous?.entry.kind === "FocusReadingBrief" && focus === previous && deliveries.get(focus.paneId) !== previous) focus = null;
+    }
+    for (const [paneId, delivery] of deliveries) {
+      if (delivery.entry.kind === "FocusReadingBrief" && focus !== delivery) deliveries.delete(paneId);
+    }
     set({
       ...patch,
       state: next,
@@ -448,8 +456,10 @@ function createWorkspaceStore(
       const previous = retainedEntry(visit);
       const ownerIds = [...(request.discardOwnerIds ?? []), ...(entry && previous ? [paneEntryWorkOwnerId(previous)] : [])];
       if (!admit(state, ownerIds)) return { kind: "Cancelled" };
+      let focus: WorkspaceSelection = { paneId, visitId: visit.id };
       if (entry) {
         const delivery = { activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry };
+        if (entry.kind === "FocusReadingBrief") focus = delivery;
         if (entry.kind === "ComposeChat" || entry.kind === "ComposePage") {
           const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
           memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
@@ -467,14 +477,19 @@ function createWorkspaceStore(
       const previousForeground = find(data.state.active_primary_pane_id);
       commit(state, {
         pendingPaneEntryDeliveryByPaneId: deliveries,
-        pendingPaneFocus: { paneId, visitId: visit.id },
+        pendingPaneFocus: focus,
       }, entry?.kind === "InspectSource" && entry.purpose === "Open" ? visit.id : null);
       record(state.panes.find(current => current.id === paneId), previousForeground);
       return { kind: plan.kind, paneId };
     },
     claimPaneFocus(expected: WorkspaceSelection): boolean {
       if (data.pendingPaneFocus !== expected) return false;
-      set({ pendingPaneFocus: null });
+      const delivery = data.pendingPaneEntryDeliveryByPaneId.get(expected.paneId);
+      if (delivery?.entry.kind === "FocusReadingBrief" && delivery === expected) {
+        const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
+        deliveries.delete(delivery.paneId);
+        set({ pendingPaneFocus: null, pendingPaneEntryDeliveryByPaneId: deliveries });
+      } else set({ pendingPaneFocus: null });
       return true;
     },
     navigatePane(
@@ -488,10 +503,16 @@ function createWorkspaceStore(
       if (pane.current_visit.href === target) {
         if (!guard.confirmLoss({scopes: [], ownerIds: options.discardOwnerIds ?? []})) return "cancelled";
         const entry = options.entry ?? (resolvePaneRouteModel(target).id === "dailyDate" ? { kind: "RevealDailyDate" as const } : null);
-        if (entry === null) return "unchanged";
+        if (entry === null) {
+          const previous = data.pendingPaneEntryDeliveryByPaneId.get(paneId);
+          if (previous?.entry.kind === "FocusReadingBrief") commands.claimPaneFocus(previous);
+          return "unchanged";
+        }
         const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
-        deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: pane.current_visit.id, entry});
-        commit(data.state, {pendingPaneEntryDeliveryByPaneId: deliveries});
+        const delivery = {activationId: crypto.randomUUID(), paneId, visitId: pane.current_visit.id, entry};
+        deliveries.set(paneId, delivery);
+        commit(data.state, {pendingPaneEntryDeliveryByPaneId: deliveries,
+          ...(entry.kind === "FocusReadingBrief" ? {pendingPaneFocus: delivery} : {})});
         return "committed";
       }
       const visit = options.replace
@@ -507,10 +528,12 @@ function createWorkspaceStore(
       const arrival = sourceTargetFromHref(target, true);
       const entry: WorkspacePaneEntry | null = options.entry ?? (resolvePaneRouteModel(target).id === "dailyDate" ? {kind: "RevealDailyDate"}
         : arrival ? {kind: "InspectSource", target: arrival, purpose: "Open"} : null);
-      if (entry) deliveries.set(paneId, {activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry});
+      const delivery = entry === null ? null : {activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry};
+      if (delivery) deliveries.set(paneId, delivery);
       else deliveries.delete(paneId);
       const previousForeground = find(data.state.active_primary_pane_id);
-      commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries }, arrival ? visit.id : null,
+      commit(state, { pendingPaneEntryDeliveryByPaneId: deliveries,
+        ...(delivery?.entry.kind === "FocusReadingBrief" ? {pendingPaneFocus: delivery} : {}) }, arrival ? visit.id : null,
         materializing ? { visitId: visit.id, previousRoute: previousRoute.routeKey, routeKey: resolvePaneRouteModel(target).routeKey } : null);
       if (options.activate !== false || materializing && state.active_primary_pane_id === paneId) record(find(paneId), previousForeground);
       else if (options.replace) {
@@ -656,6 +679,9 @@ function createWorkspaceStore(
       const deliveries = data.pendingPaneEntryDeliveryByPaneId;
       const pending = deliveries.get(delivery.paneId);
       if (pending?.activationId !== delivery.activationId) return false;
+      if (pending.entry.kind === "FocusReadingBrief" &&
+        (data.pendingPaneFocus !== pending || data.state.active_primary_pane_id !== pending.paneId ||
+          find(pending.paneId)?.current_visit.id !== pending.visitId)) return false;
       const next = new Map(deliveries);
       next.delete(delivery.paneId);
       const pane = find(delivery.paneId);
@@ -663,7 +689,8 @@ function createWorkspaceStore(
         memento.write(delivery.visitId, routeKeyOf(pane), PENDING_ENTRY, null);
         memento.forgetWorkOwner(paneEntryWorkOwnerId(delivery));
       }
-      set({ pendingPaneEntryDeliveryByPaneId: next });
+      set({ pendingPaneEntryDeliveryByPaneId: next,
+        ...(pending.entry.kind === "FocusReadingBrief" ? {pendingPaneFocus: null} : {}) });
       return true;
     },
   };

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
@@ -8,6 +7,7 @@ import { StageAnchor } from "@/components/feedback/Slips";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useServerValue } from "@/lib/api/serverState";
+import { assertNever } from "@/lib/assertNever";
 import { commandKey, getLibrarianCommands, IDLE_COMMAND, sayRefusal, unsureFact } from "@/lib/chat/commands";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { unavailability } from "@/lib/chat/selection";
@@ -81,7 +81,17 @@ export default function Librarian() {
   const retryCommand = useCallback(() => void commandOwner.retry().then(outcome => sayRefusal(slips, outcome)), [commandOwner, slips]);
   const recovery = command.kind !== "Idle" && command.standing?.kind === "Unknown"
     ? resend({ line: { fact: unsureFact(command.command), reason: "retry sends the same request." }, resend: { label: "retry", commandKey: commandKey(command.command), busy: command.kind === "Busy", run: retryCommand } }) : null;
-  usePaneChrome({ query: search.query, refresh: { kind: "Refreshable", sourceKey: search.searching ? "librarian-search" : "librarian",
+  usePaneChrome({ menuActions: [{
+    kind: "command", id: "ReadingBrief.Edit", label: "Edit reading brief…", icon: null, restoreFocusOnClose: false,
+    onSelect: ({ openIntent }) => {
+      const entry = { kind: "FocusReadingBrief" } as const;
+      switch (openIntent) {
+        case "default": router.push("/settings/account", { entry }); return;
+        case "new_pane": runtime.activateTarget({ target: { href: "/settings/account" }, disposition: { kind: "Fork" }, entry }); return;
+        default: assertNever(openIntent);
+      }
+    },
+  }], query: search.query, refresh: { kind: "Refreshable", sourceKey: search.searching ? "librarian-search" : "librarian",
     execute: async () => {
       try {
         if (search.searching) await search.refresh();
@@ -101,7 +111,6 @@ export default function Librarian() {
       <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}
         {!search.searching && history.status === "ready" && history.error ? <Fact line={{ fact: "messages stopped updating." }} verbs={[{ label: "retry", commandKey: "refresh librarian", run: history.refetch }]} /> : null}
-        <div className={styles.lanes}><Link href="/settings/account">edit reading brief</Link></div>
         <ChatComposer selection={selection} reason={modelReason} autoSend={autoSend} catalog={catalog} command={command} owner={commandOwner} focusKey={focus} />
       </div>
     </div>;

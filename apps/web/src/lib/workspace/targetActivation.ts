@@ -22,6 +22,7 @@ export type WorkspaceTargetDisposition =
  * The consuming pane claims an entry before acting and owns every outcome.
  */
 export type WorkspacePaneEntry =
+  | { readonly kind: "FocusReadingBrief" }
   | { readonly kind: "FocusLibrarian"; readonly send: boolean }
   | { readonly kind: "FocusLibrarianSearch"; readonly text: string; readonly start: number; readonly end: number; readonly direction: "forward" | "backward" | "none" }
   | { readonly kind: "ComposeChat"; readonly text: string }

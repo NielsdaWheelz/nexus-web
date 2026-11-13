@@ -152,7 +152,10 @@ the existing source-arrival owner. unavailable sources say `source unavailable`;
 invalid coordinates say `selected passage unavailable` and may open the source.
 there are no recorded titles, quote copies, review fences or destination pickers.
 
-content is lowercase except canonical titles and literal messages. the empty
+chat prose is lowercase except canonical titles and literal messages. the empty
 transcript invites reading and inquiry without inventing a user biography. the
-manual settings brief links from the composer; examples state pursuits and
-exclusions, never model-written standing instructions.
+canonical destination is `Librarian`. its pane overflow exposes `Edit reading brief…`
+in every mounted mode, including pending reads. the command opens the existing
+account-settings field through the [workspace entry contract](workspace.md);
+the composer has no brief control. examples state pursuits and exclusions, never
+model-written standing instructions.
