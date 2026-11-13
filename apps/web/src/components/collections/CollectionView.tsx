@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import PaneSurface from "@/components/ui/PaneSurface";
-import ResourceList from "@/components/ui/ResourceList";
+import ResourceList, { ResourceListHead } from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
 import { Ruling } from "@/components/feedback/Ruling";
 import type { CollectionRowView, OrderPresentation } from "@/lib/collections/types";
@@ -48,6 +48,7 @@ export default function CollectionView({
   footer,
   rowControls,
   renderRow,
+  headBefore,
   rowActionsAvailable = true,
   order,
   collectionBusy,
@@ -66,6 +67,7 @@ export default function CollectionView({
   readonly footer?: ReactNode;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
   readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
+  readonly headBefore?: (row: CollectionRowView) => ReactNode;
   readonly rowActionsAvailable?: boolean;
   readonly order?: OrderPresentation;
   readonly collectionBusy?: boolean;
@@ -74,6 +76,7 @@ export default function CollectionView({
   /** The caller guarantees canonical two-line Index rows, including custom renderers. */
   readonly geometry?: IndexGeometry | null;
 }) {
+  if (headBefore !== undefined && geometry !== null) throw new Error("List heads require mounted rows");
   const returnScopeRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const ownedFocusRef = useRef<{
@@ -197,8 +200,10 @@ export default function CollectionView({
       <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
         {(window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots).map(slot => {
           const row = rows[slot.index];
+          const head = row ? headBefore?.(row) : null;
           return row ? <Fragment key={row.id}>
             {slot.gapBeforePx > 0 ? <li role="presentation" aria-hidden="true" style={{ height: slot.gapBeforePx, flexShrink: 0 }} /> : null}
+            {head != null ? <ResourceListHead>{head}</ResourceListHead> : null}
             {renderCollectionRow(row, undefined, slot.index)}
           </Fragment> : null;
         })}

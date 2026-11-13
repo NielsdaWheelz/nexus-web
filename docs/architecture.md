@@ -1750,8 +1750,10 @@ message tools. a total order derives the cursor's null-safe predicate and
 unchanged sort identities once; movement across the cursor can omit/repeat a
 row until refresh. each admitted page publishes immediately and automatic
 traversal follows that surface's existing activity policy; scroll admits no
-work. same-query refresh retains its prefix, continuation failure offers retry,
-and one invalid cursor may restart its logical operation. authored outline
+work. same-query refresh retains its prefix; complete walks normally stay complete.
+the imports register instead preserves its admitted page bound, requiring load more
+for further pages. continuation failure offers retry, and one invalid cursor may
+restart its logical operation. authored outline
 branches alone use explicit `usePagePrefix` expansion.
 
 complete and paged reads share one foreground wait/outcome narrator. preparation,

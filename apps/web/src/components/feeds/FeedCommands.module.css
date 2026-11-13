@@ -29,3 +29,19 @@
   min-width: 0;
   gap: var(--space-2);
 }
+
+.batchLine[data-tone="Warning"] {
+  color: var(--warning-ink);
+}
+
+.record {
+  padding: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.record h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}

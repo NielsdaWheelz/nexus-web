@@ -26,6 +26,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_chat_selections_user",
         "uq_email_ingest_receipts_owner_message",
+        "uq_import_dismissals_user_media",
         "uq_contributors_handle",
         "uq_contributor_aliases_owner_normalized",
         "uq_contributor_external_ids_authority_key",

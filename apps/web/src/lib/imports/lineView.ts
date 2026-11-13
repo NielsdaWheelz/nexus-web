@@ -124,8 +124,8 @@ function acceptedView(line: IntakeLine, stage: Extract<LineStage, { kind: "Accep
   const truth = stage.truth;
   switch (truth.kind) {
     case "Sent": return { one, two: "sent", tone: "Neutral", verb: open };
-    case "Queued": return { one, two: stage.created ? "in line" : "already importing…", tone: "Neutral", verb: open };
-    case "Processing": return { one, two: stage.created ? "importing…" : "already importing…", tone: "Neutral", verb: open };
+    case "Queued": return { one, two: stage.created ? IMPORT_WORDS.inLine : "already importing…", tone: "Neutral", verb: open };
+    case "Processing": return { one, two: stage.created ? IMPORT_WORDS.importing : "already importing…", tone: "Neutral", verb: open };
     case "Readable": {
       const { title, contributors, media_kind } = truth.summary;
       const credits = contributors.slice(0, 3).map(credit => credit.credited_name).join(", ")
@@ -138,7 +138,7 @@ function acceptedView(line: IntakeLine, stage: Extract<LineStage, { kind: "Accep
       if (truth.code === "E_SOURCE_ACCESS_DENIED" && line.source.kind === "Link")
         return { one, two: FAILURE_COPY.E_SOURCE_ACCESS_DENIED.reason, tone: "Danger",
           verb: { kind: "OpenOriginal", label: "open original", href: line.source.url } };
-      return { one, two: truth.reason === null ? "couldn’t read this" : `couldn’t read this · ${truth.reason}`, tone: "Danger",
+      return { one, two: truth.reason === null ? IMPORT_WORDS.unreadable : `${IMPORT_WORDS.unreadable} · ${truth.reason}`, tone: "Danger",
         verb: { kind: "SeeWhy", label: "see why",
           target: { href: `/imports?${encodeImportsUrl({ selected: stage.importRef })}`, secondaryActivation: { surfaceId: "import-detail" } } } };
     case "Removed": return { one, two: "removed since", tone: "Neutral", verb: null };
@@ -154,7 +154,7 @@ export function lineView(line: IntakeLine): LineView {
   switch (stage.kind) {
     case "Waiting": return running("waiting…", "Remove");
     case "Sending": return running("sending…", null);
-    case "Verifying": return running("checking the file…", null);
+    case "Verifying": return running(IMPORT_WORDS.checkingFile, null);
     case "Uploading": {
       const fraction = line.source.kind === "File" && line.source.sizeBytes !== null && line.source.sizeBytes > 0 ? stage.sentBytes / line.source.sizeBytes : 0;
       const percent = Math.floor(fraction * 100);

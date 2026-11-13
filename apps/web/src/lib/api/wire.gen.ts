@@ -1060,6 +1060,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/imports/dismissals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Import Dismissals */
+        put: operations["put_import_dismissals_imports_dismissals_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/imports/summary": {
         parameters: {
             query?: never;
@@ -5593,6 +5610,11 @@ export interface components {
         };
         /** @enum {string} */
         DiscoveryKind: "documents" | "notes" | "highlights" | "messages" | "people" | "libraries" | "readings" | "saved_passages";
+        /** DismissImportsRequest */
+        DismissImportsRequest: {
+            /** Dismissals */
+            dismissals: components["schemas"]["ImportDismissalInput"][];
+        };
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
             /**
@@ -7720,6 +7742,24 @@ export interface components {
             /** Source Issues */
             source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"] | components["schemas"]["TooManyNotes"])[];
         };
+        /** ImportDismissal */
+        ImportDismissal: {
+            /**
+             * Through
+             * Format: date-time
+             */
+            through: string;
+        };
+        /** ImportDismissalInput */
+        ImportDismissalInput: {
+            /** Ref */
+            ref: string;
+            /**
+             * Through
+             * Format: date-time
+             */
+            through: string;
+        };
         ImportFailureCode: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_CAPTURE_TOO_LARGE" | "E_EMBEDDING_PROVIDER_UNAVAILABLE" | "E_EMBEDDING_NOT_CONFIGURED" | "E_FORBIDDEN" | "E_FEED_PRIVATE_SOURCE" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PART_SOURCE_PINNED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_GONE" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_POSITION_UNMAPPABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_ARTICLE_BODY_UNAVAILABLE" | "E_X_ARTICLE_IDENTITY_CHANGED" | "E_X_IDENTITY_CONFLICT" | "E_X_SOURCE_CONFLICT" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | components["schemas"]["MetadataFailureCode"];
         /** ImportItem */
         ImportItem: {
@@ -7728,6 +7768,8 @@ export interface components {
              * Format: date-time
              */
             accepted_at: string;
+            /** Arrived At */
+            arrived_at: string | null;
             /** Can Play */
             can_play: boolean;
             /** Can Read */
@@ -7737,21 +7779,24 @@ export interface components {
              * @enum {string}
              */
             classification: "Active" | "NeedsAttention" | "Complete";
-            matched_event: components["schemas"]["HistoryEntry"] | null;
+            dismissal: components["schemas"]["ImportDismissal"] | null;
+            /** Dismissed */
+            dismissed: ("source" | "search" | "metadata")[];
             /** Media Id */
             media_id: string | null;
             media_kind: components["schemas"]["MediaKind"];
             obligations: components["schemas"]["ImportObligations"];
             /** Original Filename */
             original_filename: string | null;
+            /** Pointer */
+            pointer: string | null;
             /** Primary */
             primary: ("source" | "search" | "metadata") | null;
             /** Ref */
             ref: string;
             /** Source Issue Count */
             source_issue_count: number;
-            /** Source Label */
-            source_label: string | null;
+            summary: components["schemas"]["MediaSummaryOut"] | null;
             /** Text Search Ready */
             text_search_ready: boolean;
             /** Title */
@@ -7804,8 +7849,6 @@ export interface components {
         ImportPage: {
             /** Items */
             items: components["schemas"]["ImportItem"][];
-            /** Matched Count */
-            matched_count: number;
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -7813,6 +7856,8 @@ export interface components {
         ImportSummary: {
             /** Active Count */
             active_count: number;
+            /** Digest */
+            digest: string;
             /** Needs Attention Count */
             needs_attention_count: number;
             /**
@@ -7820,8 +7865,6 @@ export interface components {
              * Format: date-time
              */
             observed_at: string;
-            /** Unfinished Work Count */
-            unfinished_work_count: number;
             /** Work In Flight */
             work_in_flight: boolean;
         };
@@ -17225,15 +17268,8 @@ export interface operations {
     list_imports_imports_get: {
         parameters: {
             query: {
-                view: "NeedsAttention" | "InProgress" | "History" | "Recent";
-                q?: string | null;
-                media_kind?: components["schemas"]["MediaKind"] | null;
-                stage?: ("Upload" | "Validate" | "Extract" | "Finalize" | "SourceProcessing" | "Index" | "Metadata") | null;
-                failure_code?: components["schemas"]["ImportFailureCode"] | null;
-                state?: ("Active" | "NeedsAttention" | "Complete") | null;
-                had_failures?: boolean | null;
+                view: "Register" | "Recent";
                 from?: string | null;
-                before?: string | null;
                 cursor?: string | null;
                 limit?: number;
             };
@@ -17251,6 +17287,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Data_ImportPage_"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_import_dismissals_imports_dismissals_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DismissImportsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

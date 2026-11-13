@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useRef, type AnimationEventHandler, type ComponentProps, type ReactNode } from "react";
 import ResourceActions from "@/components/resources/ResourceActions";
 import { ResourceIndexTitle } from "@/components/resources/ResourceType";
 import FeedMenu from "@/components/feeds/FeedMenu";
@@ -43,7 +43,7 @@ function renderContext(context: CollectionContext): ReactNode {
 export default function CollectionRow({
   row, as = "li", primaryControl, occurrenceActions, actionFocus: suppliedActionFocus, afterRemoval,
   compactPrimaryControl = false, rowActionsAvailable = true, attention: suppliedAttention,
-  listPosition, containingPodcastId = null,
+  listPosition, containingPodcastId = null, className, onAnimationEnd,
 }: {
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
@@ -56,6 +56,8 @@ export default function CollectionRow({
   readonly attention?: string;
   readonly listPosition?: { readonly index: number; readonly count: number };
   readonly containingPodcastId?: string | null;
+  readonly className?: string;
+  readonly onAnimationEnd?: AnimationEventHandler<HTMLElement>;
 }) {
   const parsed = row.resourceRef === null ? null : parseResourceRef(row.resourceRef);
   // justify-defect: a nonnull collection ref identifies the displayed canonical resource.
@@ -132,7 +134,7 @@ export default function CollectionRow({
   }
   return <ResourceRow
     as={as} primary={primary} selected={row.selected}
-    rootProps={{ "aria-current": row.selected ? "true" : undefined,
+    rootProps={{ className, onAnimationEnd, "aria-current": row.selected ? "true" : undefined,
       "aria-posinset": listPosition ? listPosition.index + 1 : undefined,
       "aria-setsize": listPosition?.count,
       "data-collection-row-id": row.id, "data-collection-item-kind": row.kind }}
