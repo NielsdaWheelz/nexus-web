@@ -4,7 +4,7 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-librarian leaves against `46add3375`: +189 net authored runtime lines
+librarian leaves against `79feb68ab`: +189 net authored runtime lines
 (723 added, 534 deleted, with renames detected): chat +196, shared numeral and
 browser-zone presentation -11, resource excerpts +3, oracle +1. one resolved
 reader measure serves transcript, search and the existing writing line; each
@@ -334,6 +334,15 @@ region grows. docs and disposable cases are excluded.
 direction, keep features (owner, 2026-10-13). every area is rewritten once, fresh, from a spec of its observable behaviour, and stops at its honest floor: no behaviour cut for a budget, no lines moved out of a slice to fit a cap. the 1/5 target is dropped; the reading kernel alone projects ~81k. earlier rewrites (player #534, reader #535, offline #502, dossiers #514, oracle #531, synapse #525, find #509, launcher #410) change only where a sweep crosses them. code that a feature or release session adds to an area after its rewrite is regrowth: it joins the queue as a re-slice, cut against the newest merged behaviour.
 
 ## counting
+
+account and librarian settings against `79feb68ab` add 629 authored runtime
+lines (1,620 added, 991 deleted). the bookplate, field commands and successful
+write record replace `ProfileForm`, the identities pane, the old account brief
+and ledger modules, and collection flat actions. the existing binding owner
+now retains acknowledged calendar and reader settings; an unavailable calendar
+day stays explicit across its consumers. foreground resource writes defer to
+their domain authority instead of an empty background scope. generated wire,
+docs and disposable verification are excluded; earlier area totals retain their stated bases.
 
 search reliability against exact main `e2192e593`: +1,332 net authored runtime
 lines (2,360 added, 1,028 deleted): `python/nexus` 2,244 added, 980 deleted,
@@ -1042,7 +1051,7 @@ the owner PRs no row named, #670 to #702, are attributed at their merges with th
 | reader python: html substrate, web article structure | 1,697 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | ingest follow-ups +74 · contained works +74 · browser recovery · x captures: literal excerpts and capture-asset sanitizing · frozen excerpts · chat send/mobile composition +76 · one-click add: atomic browser body/title/authors · feeds: explicit body extent and publisher publication facts | read-path functions with 13b |
 | lectern | 1,443 | reauthored #534 #596, re-sliced (cleanup/libraries-ordering-reslice) | unsaved work -1 · media controls -42 · libraries retention +1 · playback queue +9 · offline catalog +27 · resource menu parity · quiet suggestions +8 · offline episodes +25 · feedback activity · podcast catalogue +0 · queue index -4 · pane query overflow -1 · feedback homes -39 · playback bar -7 · finite observation -2 · feeds: daily selection reuses ordinary rows and retained visits | keep |
 | android playback | 1,259 | reauthored #534 | #538 +102 · #630 +84 · playback settings -5 · player redesign +36 · playback queue +834 · offline episodes +116 · restore admission +2 · queue index +69 · recent: background media-session acceptance · playback migration preimage +32 · playback bar +5 | android slice (late) |
-| settings | 1,209 | reauthored #592 | resource insertion +1 · native control cutover · bounded indexes +2 · fork gesture +0 · mobile editor · reader view menu -48 · menu actions +3 · feedback homes -61 · chat send/mobile composition +2 · librarian: manual versioned reading brief with explicit save · composer: four librarian line keys | keep |
+| settings | 1,209 | reauthored #592 | resource insertion +1 · native control cutover · bounded indexes +2 · fork gesture +0 · mobile editor · reader view menu -48 · menu actions +3 · feedback homes -61 · chat send/mobile composition +2 · account settings: bookplate, ways in, calendar and shared session command; librarian settings: versioned reading brief and successful-write ledger; legacy identities pane and generic profile form removed · composer: four librarian line keys | keep |
 | reader python: pdf | 904 | re-sliced: write path (cleanup/reader-python-ingest-reslice); read path kept for 13b | — | read-path functions with 13b |
 | public share links (/s) | 1,799 | reauthored #409 #598 | x threads +209 · #670 +81 · contained works +435 · x captures: grant-specific selected capture and asset manifests · feedback homes +10 | keep |
 | atlas | 1,056 | reauthored #531 #597 | shift-open +2 · python auth +2 · libraries retention +0 · feedback homes -5 | keep |
@@ -1086,6 +1095,7 @@ out of campaign: leaving supabase ([issue](issues/leave-supabase-auth.md)).
 
 ## decision log
 
+- 2026-11-12 · account and librarian settings split: registry-owned destinations, measured panes, local field commands and shared write vocabulary. calendar validity stays server-owned; email confirmation state lasts for the visit.
 - 2026-11-02 · owner: dialog slips stand on the backdrop outside the panel. when a full-screen or constrained modal has no room there, they may cover scrollable content but must clear fixed action controls. appearance reserves no space and does not resize the panel.
 - 2026-11-02 · owner: installed-app POST reads wait for the session check like other POSTs; the account's can't-sync condition remains visible during saves; a database-busy write has an unknown outcome because the server may already have committed.
 - 2026-10-18 · owner: the repair gate opens: R5 (credentials) leaves it, R4 counts as closed for the purge (its operator returns from git if ever needed), R7's rollback window closes (production is past 0292; a backup restore is the only rollback). the cloudflare r2 retention check before the archive drop stays.

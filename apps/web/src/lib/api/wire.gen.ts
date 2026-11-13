@@ -3628,13 +3628,6 @@ export interface components {
             created_at: string;
             /** Created Refs */
             created_refs: components["schemas"]["CreatedRefOut"][];
-            /** Error Type */
-            error_type: string | null;
-            /**
-             * Generation Id
-             * Format: uuid
-             */
-            generation_id: string;
             /**
              * Id
              * Format: uuid
@@ -3642,8 +3635,6 @@ export interface components {
             id: string;
             /** Reverted At */
             reverted_at: string | null;
-            /** Tool Id */
-            tool_id: string;
             /** Undo Allowed */
             undo_allowed: boolean;
         };
@@ -14434,6 +14425,11 @@ export interface components {
             /** Calendar Time Zone */
             calendar_time_zone: string;
             chat_deletion_revision: components["schemas"]["OrderRevision"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /**
              * Default Library Id
              * Format: uuid

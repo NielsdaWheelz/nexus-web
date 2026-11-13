@@ -14,9 +14,9 @@ import Input from "@/components/ui/Input";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
-import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { presentNote } from "@/lib/collections/presenters/note";
-import { dailyDateFor } from "@/lib/notes/api";
+import { useAccountToday } from "@/lib/notes/accountDay";
+import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import { useAuthoredPages } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
@@ -32,7 +32,7 @@ const UNIT = { singular: "page", plural: "pages" };
 
 export default function NotesPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
-  const { calendarTimeZone } = useAuthenticatedAccount();
+  const today = useAccountToday();
   const read = useAuthoredPages({ kind: "pages", cursor: null, limit: 100 });
   const complete = read.data !== null && read.data.next_cursor === null;
   const rows = useMemo(() => (read.data?.rows ?? []).flatMap(({ resource }) => resource.kind === "page"
@@ -65,8 +65,8 @@ export default function NotesPaneBody() {
   const titleInput = useRef<HTMLInputElement>(null);
   const setTitle = title.set;
   useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
-  const todayHref = `/daily/${dailyDateFor({ kind: "Today" }, calendarTimeZone)}`;
-  const openToday = (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: { href: todayHref } });
+  const todayHref = today === null ? null : `/daily/${today}`;
+  const openToday = (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: todayHref === null ? null : { href: todayHref } });
   const submit = (fork: boolean) => {
     const request: WorkspaceTargetActivationRequest = {
       originPaneId: runtime.paneId, target: { href: "/pages/new" },
@@ -100,7 +100,8 @@ export default function NotesPaneBody() {
         <Input ref={titleInput} value={title.value} onChange={event => title.set(event.currentTarget.value)} onInput={event => title.set(event.currentTarget.value)} placeholder="New page" aria-label="New page title" style={{ flex: 1 }} />
         <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Icon.Add aria-hidden="true" />} />
       </form>
-      <ButtonLink href={todayHref} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
+      {todayHref === null ? <AccountCalendarUnavailable /> : null}
+      <ButtonLink {...(todayHref === null ? { href: null, "aria-disabled": true } as const : { href: todayHref })} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
     </>}
   />;
 }

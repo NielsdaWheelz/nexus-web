@@ -1,23 +1,20 @@
-# browser reader settings revert after reload
+# offline reader settings reopening needs qualification
 
-the browser's durable account binding retains its original reader profile after
-acknowledged settings edits. after reload, the api can report the dark reader
-theme while the actual reader frame retains `data-theme="light"`.
+the account-settings change fixes the stale durable browser profile: the shared
+device-settings refresh copies acknowledged settings through the binding owner,
+and the reader awaits that copy. chromium’s public reader-theme save/reload
+journey passes. reopening offline has not been observed; that remaining proof
+must not be inferred from an online reload.
 
-reproduction: change reader settings through the normal settings pane; observe
-`PATCH /api/me/reader-profile` and a matching subsequent get; reload a media page.
-observed during reader-map qualification in firefox, 2026-10-28.
+impact: normal reload durability is repaired, but the earlier offline-reopening
+acceptance remains unqualified on the supported offline host.
 
-evidence: `apps/web/src/lib/authored/BrowserWorkspace.tsx:34-47` reads the saved
-binding and fetches a profile only when absent;
-`apps/web/src/lib/authored/binding.ts:30-33` writes an initial binding only;
-`apps/web/src/lib/native/settingsRefresh.tsx:13` returns immediately for browsers
-after settings saves.
+evidence: `apps/web/src/lib/native/settingsRefresh.tsx` now orders reads and a
+settings-only binding transaction under the shared browser lock;
+`apps/web/src/lib/reader/ReaderContext.tsx` awaits refresh before marking clean.
+account-settings chromium qualification observed the selected reader theme after
+reload without mutating local storage.
 
-reproduced 2026-11-01 at `61562d112`, lab run `20261101-201845-11fd92a91143`: a font size
-slider save returned 200 and the server read 20, while the indexeddb binding stayed 16 and the
-reloaded paragraph rendered 16px. a fresh firefox profile bound 20 from the server.
-
-resolved when acknowledged reader settings survive browser reload and offline
-reopening through the existing durable binding owner, without direct storage
-mutation or an independent profile writer.
+resolved when a supported offline-host journey changes reader settings through
+the product, closes and reopens its actual browser while offline, and observes
+the same profile. no direct storage mutation or independent profile writer.

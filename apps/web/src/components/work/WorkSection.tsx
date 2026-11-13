@@ -2,6 +2,7 @@
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ResourceProjection } from "@nexus/authored/types";
+import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import WorkCheckbox from "@/components/notes/WorkCheckbox";
@@ -26,7 +27,7 @@ import styles from "./dailyWork.module.css";
 
 export default function WorkSection({history}:{history:OutlineHistory}) {
   const today = useAccountToday();
-  const read = useAuthoredPages({kind:"work_pending", local_date:today, cursor:null, limit:100});
+  const read = useAuthoredPages(today === null ? null : {kind:"work_pending", local_date:today, cursor:null, limit:100});
   const {value:open,set:setOpen} = useResourceDraft("Work.Open",()=>true);
   const [adding, setAdding] = useState(false);
   const [held, setHeld] = useState<ReadonlyMap<string, ResourceProjection>>(() => new Map());
@@ -48,13 +49,14 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     const left=BigInt(a.work.captured.lamport), right=BigInt(b.work.captured.lamport);
     return left < right ? -1 : left > right ? 1 : a.work.captured.replica_id.localeCompare(b.work.captured.replica_id) || a.ref.localeCompare(b.ref);
   });
-  return <PaneRefreshAnchor identity="work" value={layout} ready={read.data !== null}><section className={styles.work} aria-label="work" data-pane-return-scope="work">
+  return <PaneRefreshAnchor identity="work" value={layout} ready={today === null || read.data !== null}><section className={styles.work} aria-label="work" data-pane-return-scope="work">
     <div className={styles.header} data-collection-row-id="header">
       <Button aria-expanded={open} aria-controls={contentId} onClick={() => setOpen(value => !value)}>work</Button>
       <ButtonLink href="/habits">habits</ButtonLink>
-      <Button ref={add} onClick={() => {setOpen(true); setAdding(true);}}>add task</Button>
+      <Button ref={add} disabled={today === null} onClick={() => {setOpen(true); setAdding(true);}}>add task</Button>
     </div>
     <div id={contentId} hidden={!open}>
+      {today === null ? <AccountCalendarUnavailable /> : null}
       <AuthoredReadFailure {...read} noun="unfinished work" />
         {adding ? <TaskCapture history={history} onClose={() => {setAdding(false); add.current?.focus({preventScroll:true});}} /> : null}
         <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null}>
@@ -79,7 +81,7 @@ function TaskCapture({history,onClose}:{history:OutlineHistory;onClose():void}) 
   const submit = () => {
     const submitted = draft.read();
     const text = submitted.text;
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busy || today === null) return;
     setBusy(true);
     const accepted = () => {
       setBusy(false);
@@ -95,13 +97,13 @@ function TaskCapture({history,onClose}:{history:OutlineHistory;onClose():void}) 
   if (failure) throw failure.error;
   return <form className={styles.capture} data-collection-row-id="capture" onSubmit={event => {event.preventDefault(); submit();}}>
     <Input autoFocus aria-label="task" placeholder="task" value={draft.value.text} onChange={event => draft.set({text:event.target.value})} />
-    <Button type="submit" disabled={!draft.value.text.trim() || busy} aria-busy={busy}>add</Button>
+    <Button type="submit" disabled={!draft.value.text.trim() || busy || today === null} aria-busy={busy}>add</Button>
     <Button disabled={busy} onClick={() => {if (guard.confirmLoss({scopes:[],ownerIds:[draft.owner]})) {draft.set({text:""}); onClose();}}}>cancel</Button>
   </form>;
 }
 
 function WorkRow({resource:initial,retained,today,history,hold,returnFocus}:{
-  resource:ResourceProjection;retained:boolean;today:string;history:OutlineHistory;
+  resource:ResourceProjection;retained:boolean;today:string|null;history:OutlineHistory;
   hold(resource:ResourceProjection,keep:boolean):void;returnFocus():HTMLElement|null;
 }) {
   const read = useAuthoredQuery(retained ? {kind:"resource",ref:initial.ref} : null);

@@ -1,5 +1,6 @@
 "use client";
 
+import {ACCOUNT_DAY_UNAVAILABLE} from "@/lib/notes/accountDay";
 import {useState} from "react";
 import type {ResourceProjection} from "@nexus/authored/types";
 import {WorkConversionError, WorkUnavailableError} from "@nexus/authored/types";
@@ -12,7 +13,7 @@ import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import styles from "./WorkCheckbox.module.css";
 
 export default function WorkCheckbox({resource,today,history,onCompleted}: {
-  resource:ResourceProjection; today:string; history:OutlineHistory; onCompleted?:()=>void;
+  resource:ResourceProjection; today:string|null; history:OutlineHistory; onCompleted?:()=>void;
 }) {
   const [busy,setBusy] = useState(false), [defect,setDefect] = useState<{error:unknown}|null>(null);
   const {say} = useOutcome();
@@ -21,14 +22,15 @@ export default function WorkCheckbox({resource,today,history,onCompleted}: {
   const work = resource.work;
   if (resource.kind !== "note" || !work?.designation.enabled) return null;
   const habit = work.designation.kind === "habit";
-  const checked = habit ? work.habit_dates.includes(today) : work.task_completed_on !== null;
+  const checked = habit ? today !== null && work.habit_dates.includes(today) : work.task_completed_on !== null;
   const action = habit ? checked ? "clear today's check" : "mark done today" : checked ? "reopen" : "complete";
-  return <input type="checkbox" className={styles.checkbox} checked={checked} aria-disabled={busy}
-    aria-label={`${action}: ${localResourceLabel(resource)}`} data-row-focusable="true"
+  return <input type="checkbox" className={styles.checkbox} checked={checked} disabled={today === null} aria-disabled={busy || today === null}
+    ref={input => {if (input) input.indeterminate = habit && today === null;}}
+    aria-label={today === null ? `${ACCOUNT_DAY_UNAVAILABLE} ${localResourceLabel(resource)}` : `${action}: ${localResourceLabel(resource)}`} data-row-focusable="true"
     onPointerDown={event => {if (event.button === 0) event.preventDefault(); event.stopPropagation();}}
     onKeyDown={event => {workHistoryKey(history,event.nativeEvent,platform); event.stopPropagation();}} onClick={event => {
       event.stopPropagation();
-      if (busy) {event.preventDefault(); return;}
+      if (busy || today === null) {event.preventDefault(); return;}
       const target = event.currentTarget, keyboard = event.detail === 0;
       const owned = document.activeElement === target;
       setBusy(true);

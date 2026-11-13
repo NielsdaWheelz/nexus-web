@@ -91,13 +91,12 @@ export default function CollectionRow({
     : row.activity !== null ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
   const sections: readonly ContextActionSection[] = [
     { id: "Occurrence", actions: rowActionsAvailable ? (occurrenceActions ?? []) : [] },
-    { id: "View", actions: rowActionsAvailable && !row.resourceRef ? (row.flatActions ?? []) : [] },
   ];
   const menuAvailable = rowActionsAvailable && Boolean(row.resourceRef || podcast !== null || sections.some((section) => section.actions.length > 0));
   const menuLabel = `more actions for ${row.title.text}${attention ? `: ${attention}` : ""}`;
   const more = rowActionsAvailable && media?.subject.kind === "External" ? <ExternalMediaMenu
     subject={media.subject} subjectKey={`collection:${row.id}`}
-    viewActions={row.resourceRef ? [] : row.flatActions ?? []} triggerRef={moreRef} returnFocus={returnFocus}
+    triggerRef={moreRef} returnFocus={returnFocus}
   /> : rowActionsAvailable && podcast !== null && row.resourceRef === null ? <FeedMenu
     subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
     actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}

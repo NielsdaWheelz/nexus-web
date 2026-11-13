@@ -653,6 +653,8 @@ const shown = (value: string, formatted: string | null) => formatted ?? value;
 export function registerDay(at: string, now: Date, timeZone: string): string {
   const day = formatLocalDateInTimeZone(new Date(at), timeZone);
   const today = formatLocalDateInTimeZone(now, timeZone);
+  // justify-defect: imports uses the render environment's fixed supported display zone.
+  if (day === null || today === null) throw new Error("display time zone is unavailable");
   if (day === today) return "today";
   if (day === shiftLocalDate(today, -1)) return "yesterday";
   const parts = new Intl.DateTimeFormat("en", { timeZone, weekday: "long", day: "numeric", month: "long", year: "numeric" }).formatToParts(new Date(at));

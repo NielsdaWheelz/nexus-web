@@ -115,6 +115,20 @@ and unlink conservatively retain uncertainty. deliberate email retry can send
 another confirmation; wake and read repair never send one. work guards protect
 departure, and newer profile saves wait for the retained submission to settle.
 
+`/settings/account` owns the bookplate, email, linked identities, calendar and
+session row. `/me` supplies the account's required `created_at`. hosted oauth
+link mode returns here; the installed connect target remains
+`/account/identities`. an email confirmation request stays on its email row in
+a riskless visit draft, hidden once the mirrored address matches; reload drops
+that observation. there is no provider pending-email read or success slip.
+
+accepted calendar and reader edits await the existing device-settings refresh.
+on browsers, one cross-tab settings lock orders the authoritative reads and
+durable binding copy. the binding owner updates account and reader settings in
+one transaction, preserves the current workspace, and rejects a retired or
+replaced account lifetime. a failed local copy owns a refresh-only retry; it
+never resends an accepted edit.
+
 remote token expiry pauses synchronization and never retires the confirmed local
 account or committed authored database. browser confirmed binding metadata lives
 in account-scoped indexeddb; android `DeviceSession` remains local account authority.
@@ -122,10 +136,13 @@ a same-account sign-in resumes transport. `X-Nexus-Account` asserts that local
 binding at the bff and authenticated authored api; it never selects an account.
 wrong/missing assertions fail before an authored transaction.
 
-explicit sign-out drains committed pending writing or requires deliberate discard.
-cancel leaves data intact. retirement marks the account before purge and closes
+the account menu and account settings session row call the same
+`useSignOut().request` owner; busy state disables both controls. explicit sign-out
+drains committed pending writing or requires deliberate discard. cancel leaves
+data intact. retirement marks the account before purge and closes
 owners in every browser tab; failed cleanup resumes under that retirement marker
-rather than republishing late callbacks. native sign-out revokes the presented
+rather than republishing late callbacks. completed browser retirement replaces
+the current location with `/login`. native sign-out revokes the presented
 bearer best effort and answers 204 without cookie effects; durable local cleanup
 and credential clearing belong to native.
 a bridge timeout leaves sign-out uncertain. a typed incomplete cleanup states

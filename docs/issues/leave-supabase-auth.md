@@ -23,7 +23,7 @@ web (the boundary #558 drew: nothing outside `lib/supabase` imports `@supabase/*
   `sb-<ref>-auth-token`, read network-free by `src/middleware.ts`,
   `lib/auth/session.ts`, `lib/api/server.ts` and `app/share/page.tsx`.
 - callers: `app/auth/{callback,confirm/[purpose],handoff,native/google,oauth,password/{recovery,sign-in,update},session/resolve,signout}/route.ts`,
-  `app/(authenticated)/settings/{account,identities}/`, `lib/api/proxy.ts`,
+  `app/(authenticated)/settings/account/`, `lib/api/proxy.ts`,
   `app/extension/connect/start/route.ts`.
 - `apps/web/src/lib/env.ts:134-153`: `NEXT_PUBLIC_SUPABASE_URL` and
   `NEXT_PUBLIC_SUPABASE_ANON_KEY` are required, and `SUPABASE_ISSUER` and

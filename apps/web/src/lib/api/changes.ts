@@ -15,6 +15,7 @@ import { useSyncExternalStore } from "react";
 //   Podcasts     show identity, library subscription rules, imports, sync or playback defaults
 //   PodcastEpisodes transcript admission or episode observation uncertainty
 //   Chats        the librarian timeline
+//   AssistantWrites the librarian's accepted writes and reversions
 //   Notes        the viewer's pages, page titles and outline structure
 //   NoteBodies   the text of the viewer's notes
 export type ChangeTopic =
@@ -26,6 +27,7 @@ export type ChangeTopic =
   | "PodcastEpisodes"
   | "Feeds"
   | "Chats"
+  | "AssistantWrites"
   | "ChatSelection"
   | "Notes"
   | "NoteBodies";
@@ -39,6 +41,7 @@ const counts: Record<ChangeTopic, number> = {
   Feeds: 0,
   PodcastEpisodes: 0,
   Chats: 0,
+  AssistantWrites: 0,
   ChatSelection: 0,
   Notes: 0,
   NoteBodies: 0,

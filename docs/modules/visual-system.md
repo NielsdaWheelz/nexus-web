@@ -135,10 +135,12 @@ every ornament is a pseudo-element whose opacity is multiplied by `--ornament`
 its subtree with `calc(.5 * var(--ornament-root))`, never from `--ornament`
 itself (a cycle). forced colours, `prefers-contrast: more` and print set the
 dimmer and the grain to 0; tables, code and fields are Bare by construction.
-ornaments stay in pane headers, resource rows, empty surfaces and the librarian's
-day rules and answer onset. its day vine replaces the hairline with the dimmer;
-its gutter leaf marks only a prose onset, never code or a table. these two sites
-do not use the moon. feedback uses the same restrained anatomy in every room.
+ornaments stay in pane headers, resource rows, empty surfaces, the account
+bookplate's rule, and the librarian's day rules and answer onset. the account's
+solar-only eärendil star ends its rule. the day vine replaces its hairline with
+the dimmer; the gutter leaf marks only a prose onset, never code or a table.
+the two librarian sites do not use the moon. feedback uses the same restrained
+anatomy in every room.
 
 - **the moon slot law.** `--moon` (0.15 new to 1 full, set once per mount by
   `SolarEffects`) may enter only an opacity, a drop-shadow blur radius or the
@@ -169,6 +171,22 @@ shown data are silent. failed reads heal through their read owner; a deliberate
 press alone retries a write. copy keeps `useCopyFeedback`'s 1.2-second check and
 one `copied` announcement. copy from a menu announces without a visible check.
 long jobs keep their domain surfaces.
+
+account name, calendar city and reading brief acknowledge an accepted explicit
+save with ink settling from accent to ink over `--duration-deliberate`. each
+module owns one keyframe, starts it with a data attribute and clears it on
+`animationend`; no layout animates. the account and librarian settings bodies
+use lowercase app copy while preserving names, addresses, cities and source
+titles. destination names retain their registry spelling.
+
+`PaneSurface measured` centres one 36rem column. only account and librarian
+settings opt in; their sibling settings panes retain their existing layout.
+email's read and edit boxes share a 36px minimum. a wrapping address remains
+fully visible; entering edit snapshots that taller read height for the input.
+
+date formatters return null when the browser cannot format the requested
+zone. account settings omits those dates and shows the calendar city alone;
+the write record retains server order without inventing day heads or times.
 
 control busy is immediate in `aria-busy`, delayed 200ms in paint, then ramps for
 200ms. settlement unmounts the spinner; a new subject remounts its control.

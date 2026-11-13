@@ -103,8 +103,8 @@ export default function Librarian() {
     onSelect: ({ openIntent }) => {
       const entry = { kind: "FocusReadingBrief" } as const;
       switch (openIntent) {
-        case "default": router.push("/settings/account", { entry }); return;
-        case "new_pane": runtime.activateTarget({ target: { href: "/settings/account" }, disposition: { kind: "Fork" }, entry }); return;
+        case "default": router.push("/settings/librarian", { entry }); return;
+        case "new_pane": runtime.activateTarget({ target: { href: "/settings/librarian" }, disposition: { kind: "Fork" }, entry }); return;
         default: assertNever(openIntent);
       }
     },

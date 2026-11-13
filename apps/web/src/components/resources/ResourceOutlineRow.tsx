@@ -367,7 +367,7 @@ function Occurrence({presentation, occurrenceKey, incoming, connection, onChange
   if (made) commands.push({kind: "link", id: "Resource.Creation", label: "View creation", icon: null,
     href: made.message_id
       ? `/librarian?message=${made.message_id}`
-      : `/settings/account?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#assistant-writes`});
+      : `/settings/librarian?generation_id=${made.generation_id}&tool_call_id=${made.tool_call_id}#writes`});
   const bullet = (context: Partial<ActionMenuContextAnchorProps>) => href ? <a
     {...context} data-outline-bullet="true" className={cx(styles.control, styles.bullet)} href={href}
     aria-label={`open ${identity}: ${label}`} data-workspace-rich-target="true" data-row-focusable="true"

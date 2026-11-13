@@ -4,7 +4,9 @@ import {createContext, useContext, useEffect, useState, type ReactNode} from "re
 import {useAuthenticatedAccount} from "@/lib/account/authenticatedAccount";
 import {formatLocalDateInTimeZone} from "@/lib/localDate";
 
-const AccountDay = createContext<string | null>(null);
+export const ACCOUNT_DAY_UNAVAILABLE = "this browser cannot read your calendar time zone.";
+
+const AccountDay = createContext<{ today: string | null } | null>(null);
 
 /** One account calendar clock; timers change presentation, never authored state. */
 export function AccountDayProvider({children}: {children: ReactNode}) {
@@ -17,6 +19,7 @@ export function AccountDayProvider({children}: {children: ReactNode}) {
       clearTimeout(timer);
       const now = Date.now(), date = formatLocalDateInTimeZone(new Date(now),calendarTimeZone);
       setCurrent(previous => previous.zone === calendarTimeZone && previous.date === date ? previous : {zone:calendarTimeZone,date});
+      if (date === null) return;
       // Find the next civil-day boundary, including 23/25-hour days, to one second.
       let left = now, right = now + 27 * 60 * 60 * 1000;
       while (right - left > 1000) {
@@ -30,11 +33,11 @@ export function AccountDayProvider({children}: {children: ReactNode}) {
     update(); window.addEventListener("focus", update); document.addEventListener("visibilitychange",visible);
     return () => {clearTimeout(timer); window.removeEventListener("focus",update); document.removeEventListener("visibilitychange",visible);};
   }, [calendarTimeZone]);
-  return <AccountDay value={today}>{children}</AccountDay>;
+  return <AccountDay value={{ today }}>{children}</AccountDay>;
 }
 
-export function useAccountToday(): string {
-  const today = useContext(AccountDay);
-  if (today === null) throw new Error("account day owner is missing");
-  return today;
+export function useAccountToday(): string | null {
+  const calendar = useContext(AccountDay);
+  if (calendar === null) throw new Error("account day owner is missing");
+  return calendar.today;
 }

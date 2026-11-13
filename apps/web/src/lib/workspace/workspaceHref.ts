@@ -31,8 +31,8 @@ export function normalizeWorkspaceHref(href: string): string | null {
 }
 
 /** Bare `/daily` is entry-only: today's page in the account zone, never stored. */
-export function resolveTodayHref(href: string, timeZone: string): string {
-  return parseWorkspaceHref(href)?.pathname === "/daily"
-    ? `/daily/${formatLocalDateInTimeZone(new Date(), timeZone)}`
-    : href;
+export function resolveTodayHref(href: string, timeZone: string): string | null {
+  if (parseWorkspaceHref(href)?.pathname !== "/daily") return href;
+  const date = formatLocalDateInTimeZone(new Date(), timeZone);
+  return date === null ? null : `/daily/${date}`;
 }

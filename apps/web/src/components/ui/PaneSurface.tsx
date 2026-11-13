@@ -23,6 +23,7 @@ export default function PaneSurface({
   footer,
   children,
   className,
+  measured,
 }: {
   brief?: ReactNode;
   toolbar?: ReactNode;
@@ -31,9 +32,10 @@ export default function PaneSurface({
   footer?: ReactNode;
   children?: ReactNode;
   className?: string;
+  measured?: boolean;
 }) {
   return (
-    <div className={cx(styles.surface, className)}>
+    <div className={cx(styles.surface, measured && styles.measured, className)}>
       {renders(brief) ? <div className={styles.brief}>{brief}</div> : null}
       {renders(toolbar) ? <div className={styles.stack}>{toolbar}</div> : null}
       {renders(state) ? <div className={styles.stack}>{state}</div> : null}

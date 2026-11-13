@@ -407,8 +407,9 @@ override.
 `PaneShell` owns the refresh descriptor, mobile top-edge pull gesture, progress,
 and announcement; both activation paths invoke the same fenced operation. The
 pane owner resolves only after its canonical first page is installed. Only the
-eight explicitly supported finite standard-scroll panes publish it (authors,
-librarian, lectern, libraries, library, notes, podcasts, podcast). refresh never
+explicitly supported finite panes publish it (authors,
+librarian, librarian settings, lectern, libraries, library, notes, podcasts,
+podcast). refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
@@ -940,7 +941,7 @@ otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
 
-`FocusReadingBrief` opens the existing account-settings field without carrying
+`FocusReadingBrief` opens the reading brief at `/settings/librarian` without carrying
 text or a return url. the librarian's ordinary edit command pushes settings in
 its originating pane, even when another settings pane exists; explicit new-pane
 gestures use `Fork`. back restores the source visit and its retained draft and

@@ -7,7 +7,6 @@ import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { Schema } from "@/lib/api/wire";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
@@ -74,15 +73,9 @@ interface CollectionRowBase {
    * The displayed resource's canonical identity and contextual More menu subject.
    * Presenters guarantee both identities coincide; `kind` is collection behavior,
    * not resource type (a `note` collection item can display a `page:` resource).
-   * `null` means a non-resource row, which may contribute only `flatActions`.
+   * `null` means a non-resource row.
    */
   readonly resourceRef: CanonicalResourceRef | null;
-  /**
-   * Non-resource actions appended after row occurrence commands. These apply
-   * only when `resourceRef` is `null`; a resource row's canonical suffix is
-   * supplied by the resource-action runtime.
-   */
-  readonly flatActions?: readonly ActionDescriptor[];
   readonly selected: boolean;
   readonly resourceActions?: ResourceActionSubject;
   readonly podcastMetadata?: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;

@@ -35,13 +35,19 @@ const WINDOW = definePaneVisitDataKey<string>("Imports.From");
 
 /** Find the first instant of the civil day, including zones whose midnight moves. */
 function registerFrom(now: Date, timeZone: string): string {
-  const day = shiftLocalDate(formatLocalDateInTimeZone(now, timeZone), -30);
+  const today = formatLocalDateInTimeZone(now, timeZone);
+  // justify-defect: imports uses the render environment's fixed supported display zone.
+  if (today === null) throw new Error("display time zone is unavailable");
+  const day = shiftLocalDate(today, -30);
   const midnight = Date.parse(`${day}T00:00:00Z`);
   let before = midnight - 24 * 60 * 60 * 1000;
   let after = midnight + 24 * 60 * 60 * 1000;
   while (after - before > 1) {
     const middle = Math.floor((before + after) / 2);
-    if (formatLocalDateInTimeZone(new Date(middle), timeZone) < day) before = middle;
+    const date = formatLocalDateInTimeZone(new Date(middle), timeZone);
+    // justify-defect: the same supported display zone owns each boundary comparison.
+    if (date === null) throw new Error("display time zone is unavailable");
+    if (date < day) before = middle;
     else after = middle;
   }
   return new Date(after).toISOString();
@@ -85,6 +91,8 @@ export default function Register({ selected, onSelect }: {
     const group = !("ref" in entry) ? entry.state === "needs_attention" ? "attention" : "active"
       : entry.classification === "NeedsAttention" ? "attention" : entry.classification === "Active" ? "active"
         : formatLocalDateInTimeZone(new Date(entry.arrived_at!), display.displayTimeZone);
+    // justify-defect: imports uses the render environment's fixed supported display zone.
+    if (group === null) throw new Error("display time zone is unavailable");
     groups.set(id, group);
     if (item?.classification === "Complete") {
       const resolved = summaries.resolve(item.summary!);

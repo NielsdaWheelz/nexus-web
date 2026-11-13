@@ -69,7 +69,7 @@ def get_user_profile(
     """
     row = db.execute(
         text(
-            "SELECT u.display_name,u.calendar_time_zone,u.reading_brief,u.reading_brief_version, "
+            "SELECT u.display_name,u.calendar_time_zone,u.created_at,u.reading_brief,u.reading_brief_version, "
             "d.deletion_revision AS chat_deletion_revision "
             "FROM users u JOIN librarian_state d ON d.user_id=u.id WHERE u.id=:uid"
         ),
@@ -85,6 +85,7 @@ def get_user_profile(
         email=email,
         display_name=row.display_name,
         calendar_time_zone=row.calendar_time_zone,
+        created_at=row.created_at,
         chat_deletion_revision=str(row.chat_deletion_revision),
         reading_brief=row.reading_brief,
         reading_brief_version=str(row.reading_brief_version),

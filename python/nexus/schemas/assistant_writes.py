@@ -81,11 +81,8 @@ class CreatedRefOut(BaseModel):
 
 class AssistantWriteOut(_Out):
     id: UUID
-    generation_id: UUID
-    tool_id: str
     created_at: datetime
     created_refs: list[CreatedRefOut]
-    error_type: str | None  # None: the write succeeded
     reverted_at: datetime | None
     undo_allowed: bool
 

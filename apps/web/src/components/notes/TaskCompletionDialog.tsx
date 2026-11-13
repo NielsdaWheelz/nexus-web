@@ -14,6 +14,7 @@ import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
 import {Ruling} from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "./AuthoredReadFailure";
+import AccountCalendarUnavailable from "./AccountCalendarUnavailable";
 
 export default function TaskCompletionDialog({noteRef,history,onClose,returnFocusTo,returnFocusFallback}: {
   noteRef:string; history:OutlineHistory; onClose():void; returnFocusTo:ReturnFocusTarget; returnFocusFallback:ReturnFocusTarget;
@@ -29,14 +30,14 @@ export default function TaskCompletionDialog({noteRef,history,onClose,returnFocu
 
 function CompletionForm({resource,history,onClose}: {resource:ResourceProjection;history:OutlineHistory;onClose():void}) {
   const today = useAccountToday(), id = useId();
-  const [date,setDate] = useState(resource.work?.task_completed_on ?? today);
+  const [date,setDate] = useState(resource.work?.task_completed_on ?? today ?? "");
   const [busy,setBusy] = useState(false), [defect,setDefect] = useState<{error:unknown}|null>(null);
   const mounted = useRef(true);
   useEffect(() => {mounted.current = true; return () => {mounted.current = false;};}, []);
-  const valid = isLocalDate(date) && date <= today;
+  const valid = today !== null && isLocalDate(date) && date <= today;
   if (defect) throw defect.error;
   return <form onSubmit={event => {
-    event.preventDefault(); if (!valid || busy) return;
+    event.preventDefault(); if (!valid || busy || today === null) return;
     setBusy(true);
     void workCommand(history,{kind:"set_task_completion",ref:resource.ref,local_date:date,today}).then(() => {
       if (mounted.current) onClose();
@@ -44,8 +45,8 @@ function CompletionForm({resource,history,onClose}: {resource:ResourceProjection
   }}>
     <p>{localResourceLabel(resource)}</p>
     <label htmlFor={id}>completed on</label>
-    <Input id={id} type="date" required max={today} value={date} disabled={busy} onChange={event => setDate(event.target.value)} aria-invalid={!valid}/>
-    {!valid ? <p>choose today or an earlier date.</p> : null}
+    <Input id={id} type="date" required max={today ?? undefined} value={date} disabled={busy || today === null} onChange={event => setDate(event.target.value)} aria-invalid={!valid}/>
+    {today === null ? <AccountCalendarUnavailable /> : !valid ? <p>choose today or an earlier date.</p> : null}
     <Button type="submit" disabled={!valid || busy}>save</Button>{" "}<Button type="button" onClick={onClose}>cancel</Button>
   </form>;
 }

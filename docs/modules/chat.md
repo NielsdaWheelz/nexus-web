@@ -255,9 +255,14 @@ chat prose is lowercase except canonical titles and literal messages. the empty
 transcript invites reading and inquiry without inventing a user biography. the
 canonical destination is `Librarian`. its pane overflow exposes `Edit reading brief…`
 in every mounted mode, including pending reads. the command opens the existing
-account-settings field through the [workspace entry contract](workspace.md);
+reading brief at `/settings/librarian` through the
+[workspace entry contract](workspace.md);
 the composer has no brief control. examples state pursuits and exclusions, never
 model-written standing instructions.
+
+the write trail and librarian settings share their kickers and undo wording
+through `lib/assistantWrites.ts`. undo publishes `AssistantWrites` so mounted
+ledgers reread the record.
 
 ## generation selection
 

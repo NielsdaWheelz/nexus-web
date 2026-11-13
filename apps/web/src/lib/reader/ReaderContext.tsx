@@ -91,7 +91,8 @@ export function ReaderProvider({
         { method: "PATCH", body: JSON.stringify(patch), keepalive: true },
       );
       if (!live.current) return;
-      void refreshSettings();
+      await refreshSettings();
+      if (!live.current) return;
       // Fields changed while this request flew stay as the user set them.
       setProfile({ ...saved.data, ...unsent.current });
       sending.current = false;

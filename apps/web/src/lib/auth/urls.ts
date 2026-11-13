@@ -118,7 +118,7 @@ export const callbackPath = (
   );
 
 // sign-in returns to `target`. link mode adds an identity to the live session
-// and always returns to /settings/identities, so it carries no target.
+// and returns to /settings/account (the installed page when account-bound), so it carries no target.
 export const oauthPath = (
   provider: OAuthProvider,
   target: ReturnTarget | "link",

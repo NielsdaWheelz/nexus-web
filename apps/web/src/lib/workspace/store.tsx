@@ -12,6 +12,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { useOutcome } from "@/components/feedback/Feedback";
+import { ACCOUNT_DAY_UNAVAILABLE } from "@/lib/notes/accountDay";
+import { getDestination } from "@/lib/navigation/destinations";
 import { hello } from "@/lib/native/client";
 import { installedApp } from "@/lib/native/admission";
 import { useHostPolicy } from "@/lib/host/policy";
@@ -175,6 +178,7 @@ function createWorkspaceStore(
   recordUse: (value: RecentValue) => Promise<RecentEntry | null>,
   rekey: (from: RecentValue, to: RecentValue, pending: Promise<RecentEntry | null> | null) => void,
   recordInitialUse: (value: RecentValue | null) => Promise<RecentEntry | null>,
+  calendarUnavailable: () => void,
 ) {
   const listeners = new Set<() => void>();
   let mounted = false;
@@ -422,6 +426,7 @@ function createWorkspaceStore(
       input: WorkspaceTargetActivationRequest,
     ): WorkspaceTargetActivationResult {
       const href = resolveTodayHref(input.target.href, timeZone());
+      if (href === null) { calendarUnavailable(); return { kind: "Cancelled" }; }
       const request = { ...input, target: { ...input.target, href } };
       const plan = planWorkspaceTarget(data.state, request);
       let paneId = plan.paneId;
@@ -500,7 +505,9 @@ function createWorkspaceStore(
       href: string,
       options: { replace?: boolean; activate?: boolean; labelHint?: string; discardOwnerIds?: readonly string[]; entry?: WorkspacePaneEntry } = {},
     ): WorkspaceNavigationResult {
-      const target = normalizeWorkspaceHref(resolveTodayHref(href, timeZone()));
+      const resolved = resolveTodayHref(href, timeZone());
+      if (resolved === null) { calendarUnavailable(); return "cancelled"; }
+      const target = normalizeWorkspaceHref(resolved);
       const pane = find(paneId);
       if (!target || !pane) return "unchanged";
       if (pane.current_visit.href === target) {
@@ -829,6 +836,7 @@ export function WorkspaceStoreProvider(props: {
   children: ReactNode;
 }) {
   const guard = useWorkGuard();
+  const { say } = useOutcome();
   const recent = useRecent();
   const recentRef = useRef(recent);
   recentRef.current = recent;
@@ -844,7 +852,10 @@ export function WorkspaceStoreProvider(props: {
         if (source) recentRef.current.reconcile({ target: source.target, expected_used_revision: source.used_revision, replacement: to });
       };
       if (pending) void pending.then(apply); else apply(entry ?? null);
-    }, recent.useInitial),
+    }, recent.useInitial, () => {
+      const account = getDestination("account");
+      say({ fact: ACCOUNT_DAY_UNAVAILABLE }, [{ label: account.label, href: account.href }]);
+    }),
   );
   useLayoutEffect(() => { zone.current = calendarTimeZone; }, [calendarTimeZone]);
   useLayoutEffect(

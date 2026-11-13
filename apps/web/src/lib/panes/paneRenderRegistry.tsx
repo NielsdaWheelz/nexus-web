@@ -47,10 +47,8 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
     import(
       "@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody"
     ),
-  settingsIdentities: () =>
-    import(
-      "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody"
-    ),
+  settingsLibrarian: () =>
+    import("@/app/(authenticated)/settings/librarian/SettingsLibrarianPaneBody"),
   settingsKeybindings: () =>
     import("@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody"),
   atlas: () => import("@/app/(authenticated)/atlas/GrandAtlasPaneBody"),

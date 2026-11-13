@@ -16,6 +16,7 @@ import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetai
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
 import { usePaneChrome, usePaneLayout } from "@/lib/panes/paneChrome";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
+import { getDestination } from "@/lib/navigation/destinations";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
@@ -27,7 +28,7 @@ import type { MenuOption } from "@/lib/ui/actionDescriptor";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 
-const ReaderSettingsIcon = getPaneRouteIcon("/settings/reader");
+const ReaderSettingsIcon = getPaneRouteIcon(getDestination("reader").href);
 const FOCUS_CYCLE = { off: "distraction_free", distraction_free: "paragraph", paragraph: "sentence", sentence: "off" } as const;
 
 export function useReaderChrome(input: {
@@ -90,9 +91,9 @@ export function useReaderChrome(input: {
       {
         kind: "link",
         id: "ViewAction.Reader.Settings",
-        label: "Reader settings",
+        label: getDestination("reader").label,
         icon: <ReaderSettingsIcon />,
-        href: "/settings/reader",
+        href: getDestination("reader").href,
       },
     ];
   }, [editable, profile.theme, readable, setTheme]);

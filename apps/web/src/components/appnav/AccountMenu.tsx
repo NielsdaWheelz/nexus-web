@@ -37,6 +37,13 @@ import accountStyles from "./AccountMenu.module.css";
 
 const SignOutContext = createContext<{ request: () => void; busy: boolean } | null>(null);
 
+export function useSignOut(): { request(): void; busy: boolean } {
+  const signOut = useContext(SignOutContext);
+  // justify-defect: the authenticated shell mounts the one sign-out owner above every caller.
+  if (signOut === null) throw new Error("useSignOut must be used within a SignOutProvider");
+  return signOut;
+}
+
 /** The person declined discarding device-only writing; nothing was retired. */
 class SignOutDeclined extends Error {}
 const NOT_SIGNED_OUT = { fact: "couldn’t sign out.", reason: "you’re still signed in." };
@@ -133,7 +140,7 @@ export default function AccountMenu(props: {
   const updateVerb = useTransportVerbs()("Update")?.[0] ?? null;
   const workspace = useWorkspaceStore();
   const { signIn, busy: signingIn } = useAuthoredSignIn();
-  const signOut = useContext(SignOutContext);
+  const signOut = useSignOut();
   const guard = useWorkGuard();
   const { summary } = useImports();
   const status = useAuthoredStatus();
@@ -154,14 +161,11 @@ export default function AccountMenu(props: {
   // `syncDetail` gives `syncing` no detail but a running preparation's clause.
   const preparation = status === "syncing" ? detail : null;
   const live = accountRows(condition, commitFailed, preparation, {
-    signIn: { busy: signingIn || (signOut?.busy ?? false), run: signIn },
+    signIn: { busy: signingIn || signOut.busy, run: signIn },
     update: updateVerb,
     restart: () => { if (guard.confirmDocumentExit()) window.location.reload(); },
   });
   const [latched, setLatched] = useState<readonly ActionDescriptor[] | null>(null);
-  // justify-defect: the authenticated shell mounts the one sign-out owner above every menu.
-  if (!signOut) throw new Error("AccountMenu must be used within a SignOutProvider");
-
   const link = (item: NavItem, current: boolean): ActionDescriptor => ({
     kind: "custom",
     id: item.id,

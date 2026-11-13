@@ -84,7 +84,12 @@ work sits above the measured journal feed. each day's completed section includes
 one live reference per note, even when its source writing is also present. no query
 manufactures a page, relationship or daily occurrence note.
 
-today uses one account timezone clock. new completions permit today or any past
+today uses one account timezone clock. a server-valid zone absent from the
+browser's tzdata has no computable day: `useAccountToday()` returns null, its
+midnight timer stops, and commands requiring today disable or refuse with a
+link to Account. settings remains reachable to change the zone. recorded dates,
+ordinary note editing and ledger undo stay readable and usable; no other zone
+or day substitutes for the account's. new completions permit today or any past
 civil date, including dates before creation. existing dates never rebucket. task
 reopening clears its date; retrospective clearing addresses its displayed date;
 habit checks remain independent. blank means no record. no deadline, eligibility,

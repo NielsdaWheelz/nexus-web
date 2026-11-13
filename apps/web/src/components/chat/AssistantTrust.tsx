@@ -5,20 +5,12 @@ import Button from "@/components/ui/Button";
 import { useEffect, useId } from "react";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { isRefusal, outcomeUnknown } from "@/lib/api/client";
-import { undoAssistantWrite, UNDO_REFUSED } from "@/lib/assistantWrites";
+import { undoAssistantWrite, writeKicker, UNDO_LABEL, UNDONE, UNDO_TOO_OLD, UNDO_REFUSED, UNDO_UNKNOWN } from "@/lib/assistantWrites";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import { admissionReason, UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
+import { admissionReason } from "@/lib/api/failure";
 import type { MessageAction } from "@/lib/chat/runTail";
 import styles from "./ChatSurface.module.css";
-
-const KICKERS: Record<string, string> = {
-  entry: "filed to",
-  highlight: "highlighted",
-  edge: "connected",
-  note_block: "noted in",
-  queue: "queued",
-};
 
 /** Saved authorship authorizes undo. Its exact target belongs to the visit through dispatch and
  * uncertainty; acceptance or an observed reversion settles it. Undo is idempotent. */
@@ -71,7 +63,7 @@ export default function AssistantTrust({ messageId, actions, undone, onUndone }:
       if (current?.id === id && current.busy) draft.set({ ...current, busy: false });
     }
   };
-  const recovery = unknown ? resendFeedback({ line: { fact: "not sure that was undone.", reason: UNKNOWN_OUTCOME_REASON }, resend: { ...retry(unknown.id), run: () => { const current = draft.read(); if (current?.id === unknown.id && current.attempt > 0) void undo(unknown.id); } } }) : null;
+  const recovery = unknown ? resendFeedback({ line: UNDO_UNKNOWN, resend: { ...retry(unknown.id), run: () => { const current = draft.read(); if (current?.id === unknown.id && current.attempt > 0) void undo(unknown.id); } } }) : null;
   const primary = recovery?.verbs?.[0];
   const replay = primary && "commandKey" in primary && primary.commandKey === `undo ${unknown?.id}` ? primary : null;
   const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
@@ -83,7 +75,7 @@ export default function AssistantTrust({ messageId, actions, undone, onUndone }:
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
       const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
-      const kicker = ref?.field === "annotation" ? "annotated" : ref ? KICKERS[ref.kind] : tool.activity.verb;
+      const kicker = ref ? writeKicker(ref) : tool.activity.verb;
       const target = ref?.label ?? tool.activity.subject;
       const reverted = tool.reverted_at !== null || (tool.id !== null && undone.has(tool.id));
       return <div key={tool.tool_call_index} className={styles.receipt} role="listitem">
@@ -92,12 +84,12 @@ export default function AssistantTrust({ messageId, actions, undone, onUndone }:
           {target ? <span className={styles.receiptTarget} data-undone={reverted || undefined}>{target}</span> : null}
           {tool.activity.outcome ? <span className={styles.receiptOutcome}>{target ? " · " : ""}{tool.activity.outcome}</span> : null}
         </span>
-        <span className={styles.receiptEnd}>{reverted ? <span className={styles.receiptKicker}>undone</span>
+        <span className={styles.receiptEnd}>{reverted ? <span className={styles.receiptKicker}>{UNDONE}</span>
           : tool.undo_allowed && tool.id !== null ? <Button
             disabled={busy || (pending !== null && tool.id !== pending.id) || (unknown?.id === tool.id && waits)} aria-busy={busy || (unknown?.id === tool.id && replay?.busy)}
             aria-describedby={pending !== null && tool.id !== pending.id ? otherId : unknown?.id === tool.id && waits ? waitsId : undefined}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
-            aria-label={`undo: ${kicker}${target ? ` ${target}` : ""}`}>undo</Button> : historicalFiling ? <span className={styles.receiptKicker}>older filings can’t be undone.</span> : null}</span>
+            aria-label={`${UNDO_LABEL}: ${kicker}${target ? ` ${target}` : ""}`}>{UNDO_LABEL}</Button> : historicalFiling ? <span className={styles.receiptKicker}>{UNDO_TOO_OLD}</span> : null}</span>
       </div>;
     })}
   </div>;

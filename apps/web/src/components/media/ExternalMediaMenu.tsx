@@ -7,10 +7,9 @@ import type { MediaSubject } from "@/lib/media/mediaSummary";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 /** External commands retain sealed identity and the account's acquisition owner. */
-export default function ExternalMediaMenu({ subject, subjectKey, viewActions, triggerRef, returnFocus }: {
+export default function ExternalMediaMenu({ subject, subjectKey, triggerRef, returnFocus }: {
   subject: Extract<MediaSubject, { kind: "External" }>;
   subjectKey: string;
-  viewActions: readonly ActionDescriptor[];
   triggerRef: RefObject<HTMLButtonElement | null>;
   returnFocus: () => HTMLElement | null;
 }) {
@@ -30,7 +29,7 @@ export default function ExternalMediaMenu({ subject, subjectKey, viewActions, tr
   }));
   return <ContextualActionMenu navigation={null}
     title={subject.title} subjectKey={subjectKey}
-    sections={[{ id: "View", actions: [...commands, ...viewActions] }]}
+    sections={[{ id: "View", actions: commands }]}
     triggerRef={setTrigger}
     triggerAttributes={{ "data-row-actions-control": "" }}
   />;
