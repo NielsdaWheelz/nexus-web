@@ -1,13 +1,13 @@
 # release the imports register
 
 wire 23 rides the existing unreleased bump. the production release pointer read
-on 2026-11-12 names `c828088a2e97a16d70aec94dc4d7ab90eedd3414`, whose
+on 2026-11-13 names `c828088a2e97a16d70aec94dc4d7ab90eedd3414`, whose
 `python/nexus/api/edge.py` declares wire 21. recheck the released source before
 merge; bump once only if wire 23 has since shipped.
 
 migration 0345 creates the empty `import_dismissals` table with non-cascading
 user/media references and one row per reader and media. it converts no data.
-reassign its number after the actual canonical head at merge.
+it follows reference quotes 0344; recheck the canonical head at merge.
 
 the owner deploys and signs. use the normal stopped-writer backup, migration,
 backend and matching web activation sequence. pair the apk and signed firefox

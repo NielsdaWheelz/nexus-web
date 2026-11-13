@@ -91,7 +91,7 @@ a failed summary waits for a wake or explicit retry.
 every imports read except summary waits for the first digest. revision advances
 on manual refresh, in-tab imports invalidation and entry changes. list, details,
 record, shelf and batches reread only when revision or digest moves, retaining
-accepted data beside refresh failure. the intake's source truth continues to use
+accepted data after refresh failure. the intake's source truth continues to use
 the observation clock under its separate contract below.
 
 the digest hashes ordered jsonb arrays, including nulls, over all unsettled
@@ -114,7 +114,9 @@ never opens details; explicit activation does. imports publishes an Import prima
 action and refresh capability, with no navigation, query, views or toolbar.
 
 Register uses `useServerList`, 50 rows per page, `drain: false`. rereads replace
-the loaded prefix. all loaded rows mount; heads prohibit windowing. attention and
+the loaded prefix. load more queues behind a reread; if that read fails, its
+requested continuation shows retry, and a later load-more press retries the prefix
+before continuing. passive same-query refresh failures stay quiet. all loaded rows mount; heads prohibit windowing. attention and
 importing heads use summary counts plus their batches. batches precede their
 group; active batches wait until the loaded prefix has passed attention. finished
 batches leave. day heads use the display zone. final colophon hands earlier
@@ -192,7 +194,7 @@ commands keep their existing owners and retry rules.
 
 `lib/imports/commands.tsx` owns upload and capture-removal commands for one
 imports visit. list rows and the companion use that same owner. pending and
-uncertain commands retain their own controls across filtering, selection and
+uncertain commands retain their own controls across row movement, selection and
 inspector closure; those presentation changes prove no outcome. the common
 work guard protects their in-flight and uncertain lifetime. removal and discard
 name the same session deletion, so acceptance settles that one intent.
