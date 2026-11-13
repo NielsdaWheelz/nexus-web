@@ -2034,7 +2034,7 @@ def resolve_source_target(
                     location=UnavailableSourceLocationOut(reason="location_unavailable"),
                 )
         case LiveReferenceSourceTargetKey():
-            from nexus.services.live_references import reference_visible, resolve_location
+            from nexus.services.live_references import field_visible, resolve_location
 
             reference = target.reference
             ref = require_ref(reference.resource_ref)
@@ -2044,9 +2044,9 @@ def resolve_source_target(
                 and ref.id != reading_media_id
             ):
                 return _UNAVAILABLE_SOURCE
-            # One owner decides this for chat, tools and navigation: resource authority,
-            # and for an annotation its author's still-present private field.
-            if not reference_visible(db, viewer_id=viewer_id, reference=reference):
+            # Hydration proves resource authority, including scoped passages. The
+            # annotation's private field remains a separate live-reference check.
+            if not field_visible(db, viewer_id=viewer_id, reference=reference):
                 return _UNAVAILABLE_SOURCE
             item = resource_item_out(
                 db, viewer_id=viewer_id, ref=ref, reading_media_id=reading_media_id

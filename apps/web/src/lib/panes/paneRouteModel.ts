@@ -2,7 +2,7 @@
 // and one resolver that derives every identity (routeKey, resource, mount key).
 // Isomorphic: the server bootstrap and the client resolve alike.
 import * as Icon from "@/lib/ui/icons";
-import type { DestinationId } from "@/lib/navigation/destinations";
+import { getDestination, type DestinationId } from "@/lib/navigation/destinations";
 import type { Schema } from "@/lib/api/wire";
 import { isContributorHandle } from "@/lib/contributors/credits";
 import { isLocalDate } from "@/lib/localDate";
@@ -30,7 +30,7 @@ const ROUTES = {
   browsePreview: ["browse/preview", "Preview", Icon.Browse],
   media: ["media/:id", "Source", resourceIconForScheme("media")],
   xCapture: ["x/captures/:id", "Post", Icon.WebText],
-  librarian: ["librarian", "librarian", Icon.Chat],
+  librarian: ["librarian", getDestination("librarian").label, Icon.Chat],
   podcasts: ["podcasts", "Podcasts", Icon.Podcast],
   feeds: ["feeds", "Feeds", Icon.Feed],
   feedDetail: ["feeds/:feedId", "Feed", resourceIconForScheme("feed")],

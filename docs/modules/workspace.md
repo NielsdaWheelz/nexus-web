@@ -932,9 +932,24 @@ unmount cannot lose it; the destination owns resolution, positioning and paint.
 ready but unable to serve a command (the subject is gone), it claims and
 says so through shared feedback; it owns every outcome. a newer entry supersedes
 the pane's previous delivery; a commit that changes its visit drops that delivery.
-nothing expires otherwise. source arrivals also cancel
+focus-only brief entry cancellation is defined below; other entries do not expire
+otherwise. source arrivals also cancel
 on source replacement. focus requires an active destination and no intervening
 user interaction; a background arrival can paint without taking focus.
+
+`FocusReadingBrief` opens the existing account-settings field without carrying
+text or a return url. the librarian's ordinary edit command pushes settings in
+its originating pane, even when another settings pane exists; explicit new-pane
+gestures use `Fork`. back restores the source visit and its retained draft and
+position. save stays in settings. ordinary settings entry, history travel and
+reload create no brief-focus intent.
+
+the brief entry shares the destination's pending focus request. claiming consumes
+both atomically; canceled focus, departure, deactivation, replacement or a new
+generic activation retires the entry. the host yields its chrome focus until the
+enabled field claims. after shell scrollport registration, the field requests
+anchor reveal without deferred focus, then focuses synchronously with
+`preventScroll`. it neither selects all text nor owns a second focus lifetime.
 
 `ComposeChat {text}` and `ComposePage {title}` are transient authored entries.
 their hrefs are query-free `/librarian` and `/pages/new`; authored seeds

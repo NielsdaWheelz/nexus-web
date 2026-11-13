@@ -44,7 +44,7 @@ const REGISTRY = {
     keywords: ["audio", "feeds", "episodes"],
   },
   librarian: {
-    label: "librarian",
+    label: "Librarian",
     href: "/librarian",
     keywords: ["reading", "messages", "ask"],
   },

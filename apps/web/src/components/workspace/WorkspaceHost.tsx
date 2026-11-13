@@ -136,6 +136,7 @@ export default function WorkspaceHost() {
     const workspace = latestWorkspace();
     const delivery = workspace.pendingPaneEntryDeliveryByPaneId.get(requestedFocus.paneId);
     const entry = delivery?.visitId === requestedFocus.visitId ? delivery.entry.kind : null;
+    if (entry === "FocusReadingBrief") return;
     if (entry === "EditPageTitle" || entry === "EditNoteBody" || entry === "AppendNote" || entry === "FocusNote") {
       workspace.claimPaneFocus(requestedFocus);
       return;

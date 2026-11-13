@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-librarian companion against `a36bf6d9a`: +1,153 net authored runtime lines
-(1,531 added, 378 deleted, with renames detected): chat web +631, backend +372,
+librarian companion against `b9dfeabd3`: +1,149 net authored runtime lines
+(1,528 added, 379 deleted, with renames detected): chat web +631, backend +368,
 reader/shared margin +108, workspace +5, shared web +37. one geometry owner serves reader and chat;
 one accepted turn window supplies text, references and source arrival. shared
 live projections supply draft and sent figures, with viewer-bound interval

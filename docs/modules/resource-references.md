@@ -411,6 +411,12 @@ publishers compute the projection once with canonical text and remove it with th
 fragments. navigation elements and their identities are independent of this table
 projection.
 
+reading-owner preference is root, then smallest eligible piece, then uuid. only
+pieces require extent ranking and explicit apparatus-membership reads; a root's
+authority already admits its own apparatus. unchanged stored
+captures rely on canonical write validation. interval/selection clipping and
+incomplete-table obligations still pass through the shared excerpt owner.
+
 the current [server materialization gap](../issues/passage-materialization-drops-captured-context.md)
 drops captured context between those owners; browser authored linking preserves it.
 current citation reopening already

@@ -22,7 +22,12 @@ from nexus.schemas.reader_excerpts import FrozenExcerpt
 from nexus.schemas.resource_evidence import ResourceField
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.highlights import read_highlight_annotations
-from nexus.services.live_references import reference_texts, reference_visible, resolve_location
+from nexus.services.live_references import (
+    field_visible,
+    reference_texts,
+    reference_visible,
+    resolve_location,
+)
 from nexus.services.media import media_summaries
 from nexus.services.reader_excerpts import plain_excerpt, project_excerpts
 from nexus.services.resource_graph.refs import require_ref
@@ -52,7 +57,8 @@ def attachments_by_reference(
 ) -> dict[str, AttachmentOut]:
     """Index full-reference JSON from this viewer/snapshot's hydrated item batch.
 
-    Callers reconstruct occurrence order; field visibility is shared across locators.
+    Nonmissing items prove resource authority; field privacy is shared across locators.
+    Callers reconstruct occurrence order.
     """
     visible: dict[tuple[str, ResourceField], bool] = {}
     result: dict[str, AttachmentOut] = {}
@@ -63,7 +69,7 @@ def attachments_by_reference(
         item = items[reference.resource_ref]
         field = (reference.resource_ref, reference.field)
         if field not in visible:
-            visible[field] = not item.missing and reference_visible(
+            visible[field] = not item.missing and field_visible(
                 db, viewer_id=viewer_id, reference=reference
             )
         result[key] = AttachmentOut(

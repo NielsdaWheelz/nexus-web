@@ -32,14 +32,19 @@ def reference_visible(db: Session, *, viewer_id: UUID, reference: LiveReference)
     from nexus.services.resource_items.items import ref_visible
 
     ref = require_ref(reference.resource_ref)
-    if not ref_visible(db, viewer_id=viewer_id, ref=ref):
-        return False
+    return ref_visible(db, viewer_id=viewer_id, ref=ref) and field_visible(
+        db, viewer_id=viewer_id, reference=reference
+    )
+
+
+def field_visible(db: Session, *, viewer_id: UUID, reference: LiveReference) -> bool:
+    """Private field authority; callers must also authorize the resource itself."""
     return reference.field is None or bool(
         db.scalar(
             text(
                 "SELECT EXISTS (SELECT 1 FROM highlights WHERE id=:id AND user_id=:viewer AND authored_visible AND annotation_body_pm_json IS NOT NULL)"
             ),
-            {"id": ref.id, "viewer": viewer_id},
+            {"id": require_ref(reference.resource_ref).id, "viewer": viewer_id},
         )
     )
 
@@ -136,7 +141,8 @@ def resolve_location(
             return False, None
         if byte_limit is None:
             return True, None
-        sql = "SELECT substring(canonical_text FROM :start+1 FOR :end-:start) AS body FROM fragments WHERE id=:fragment AND :end<=char_length(canonical_text)"
+        body_sql = "substring(canonical_text FROM :start+1 FOR :end-:start)"
+        rows_sql = "FROM fragments WHERE id=:fragment AND :end<=char_length(canonical_text)"
     elif locator.kind == "TextOffsets":
         parameters |= {"start": locator.start_offset, "end": locator.end_offset}
         if reference.field == "annotation":
@@ -145,16 +151,8 @@ def resolve_location(
             table, column = "note_blocks", "body_text"
         else:
             table, column = "messages", "content"
-        if byte_limit is None:
-            return bool(
-                db.scalar(
-                    text(
-                        f"SELECT EXISTS (SELECT 1 FROM {table} WHERE id=:id AND :end<=char_length({column}))"
-                    ),
-                    parameters,
-                )
-            ), None
-        sql = f"SELECT substring({column} FROM :start+1 FOR :end-:start) AS body FROM {table} WHERE id=:id AND :end<=char_length({column})"
+        body_sql = f"substring({column} FROM :start+1 FOR :end-:start)"
+        rows_sql = f"FROM {table} WHERE id=:id AND :end<=char_length({column})"
     elif isinstance(locator, (PdfPageTarget, PdfPageGeometryTargetOut)):
         if ref.scheme != "media":
             return False, None
@@ -183,8 +181,9 @@ def resolve_location(
             label = (
                 "current page containing the selected region; exact region text is unavailable:\n"
             )
-        sql = """SELECT substring(m.plain_text FROM p.start_offset+1 FOR p.end_offset-p.start_offset) AS body
-            FROM pdf_page_text_spans p JOIN media m ON m.id=p.media_id WHERE p.media_id=:id AND p.page_number=:page"""
+        body_sql = "substring(m.plain_text FROM p.start_offset+1 FOR p.end_offset-p.start_offset)"
+        rows_sql = """FROM pdf_page_text_spans p JOIN media m ON m.id=p.media_id
+            WHERE p.media_id=:id AND p.page_number=:page AND m.plain_text IS NOT NULL"""
     else:
         assert locator.kind == "TimeRange"
         if ref.scheme != "media":
@@ -201,14 +200,16 @@ def resolve_location(
             parameters,
         ):
             return False, None
-        sql = """SELECT string_agg(canonical_text,E'\\n' ORDER BY idx) AS body FROM fragments
+        body_sql = "string_agg(canonical_text,E'\\n' ORDER BY idx)"
+        rows_sql = """FROM fragments
             WHERE media_id=:id AND t_end_ms>:start AND t_start_ms<:end"""
         label = "current transcript overlapping the selected time range:\n"
+    if byte_limit is None:
+        return bool(db.scalar(text(f"SELECT EXISTS (SELECT 1 {rows_sql})"), parameters)), None
+    sql = f"SELECT {body_sql} AS body {rows_sql}"
     size = db.scalar(text(f"SELECT octet_length(body) FROM ({sql}) selected"), parameters)
     if size is None:
         return False, None
-    if byte_limit is None:
-        return True, None
     if size + len(label.encode()) > byte_limit:
         raise PromptBodyTooLarge(ref.uri)
     body = db.scalar(text(sql), parameters)

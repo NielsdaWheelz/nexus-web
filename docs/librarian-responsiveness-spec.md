@@ -1,7 +1,7 @@
 # librarian responsiveness
 
-status: implemented and locally verified, 2026-11-12. deployed-client
-qualification remains pending. the existing
+status: implemented, released and checked on desktop firefox and physical android,
+2026-11-12. temporary cases are deleted; final static verification passed. the existing
 [librarian contract](librarian-spec.md) remains authoritative except where refined here.
 
 **scope and decisions.** fix messages, details, model/send readiness and the shared
@@ -208,6 +208,7 @@ helpers and private diagnostics. no new harness, permanent suite or product test
   persistent multi-second waits require repair. propose any further wire/cache/
   rendering change only with evidence of the remaining cause.
 
-remaining: [deployed-client qualification](issues/librarian-deployed-client-qualification.md)
-and the broader [measurements](issues/read-latency-unmeasured.md).
+[fresh projection cost](issues/librarian-production-pool-contention.md) and broader
+[measurements](issues/read-latency-unmeasured.md) remain separate follow-ups;
+deployed observations do not establish a universal 400 ms result.
 [workspace startup](issues/workspace-entry-remote-facts-latency.md) remains separate.

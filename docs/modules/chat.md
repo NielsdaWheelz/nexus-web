@@ -66,10 +66,13 @@ snapshot. runs, messages, tools and retrievals feed both message projection and
 trust trails. resource hydration deduplicates full references and reconstructs
 input order and multiplicity. attachment availability distinguishes source,
 field and locator; response-local reuse never crosses viewers or snapshots.
-only attachments and published citations receive exact excerpts, owned annotations
-and source bibliography. uncited retrievals and streams retain their slim shape.
+attachments reuse hydrated item authority and add the annotation owner's private
+field check. source navigation composes those same proofs. only attachments and
+published citations receive exact excerpts, owned annotations and source
+bibliography. uncited retrievals and streams retain their slim shape.
 full original intervals are admitted before a 601-codepoint display read; compact
-projection publishes at most 600 with omission metadata.
+projection publishes at most 600 with omission metadata. availability-only checks
+validate bounds without constructing source text; prompt reads enforce byte limits.
 whole-fragment attachments require the evidence owner's complete-passage
 admission; fragment identity visibility alone never authorizes its body.
 stream pages keep their own snapshot: text pages hydrate nothing, start frames
@@ -178,7 +181,10 @@ explicit inspection outranks top/bottom follow, then released reading continuity
 controls and hidden descriptions contribute no reading text. child content commits
 and source geometry changes notify after scroll corrections.
 
-content is lowercase except canonical titles and literal messages. the empty
+chat prose is lowercase except canonical titles and literal messages. the empty
 transcript invites reading and inquiry without inventing a user biography. the
-manual settings brief links from the composer; examples state pursuits and
-exclusions, never model-written standing instructions.
+canonical destination is `Librarian`. its pane overflow exposes `Edit reading brief…`
+in every mounted mode, including pending reads. the command opens the existing
+account-settings field through the [workspace entry contract](workspace.md);
+the composer has no brief control. examples state pursuits and exclusions, never
+model-written standing instructions.
