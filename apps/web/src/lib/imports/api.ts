@@ -18,19 +18,16 @@ export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
 type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
 export type HistoryEntry = Schema<"HistoryEntry">;
 export type ImportStage = ImportObligation["stage"];
-export type Classification = ImportItem["classification"];
 export type ImportFailureCode = NonNullable<HistoryEntry["failure_code"]>;
 export type SafeFailureCode = NonNullable<ImportObligation["failure_code"]>;
-export type RecoveryOffer = NonNullable<ImportObligation["recovery"]>;
 /** A recovery of a media's own work (not a re-upload). */
 export type MediaRecoveryOffer = Exclude<
-  RecoveryOffer,
-  { kind: "RetryUpload" | "BrowserCapture" }
+  NonNullable<ImportObligation["recovery"]>,
+  { kind: "RetryUpload" }
 >;
 export type RecoveryRestriction = NonNullable<
   ImportObligation["unavailable_reason"]
 >;
-export type UploadVerificationCode = Schema<"Rejected">["code"];
 
 /**
  * The closed set of outcomes the upload-session endpoints declare. Each
@@ -41,7 +38,7 @@ export type UploadSessionOutcome =
   /** Verification rejected the stored bytes; terminal for this session. */
   | {
       readonly kind: "VerificationRejected";
-      readonly code: UploadVerificationCode;
+      readonly code: Schema<"Rejected">["code"];
     }
   | {
       readonly kind:

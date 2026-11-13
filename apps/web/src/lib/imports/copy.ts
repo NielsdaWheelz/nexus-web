@@ -33,7 +33,7 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { formatLocalDateInTimeZone, shiftLocalDate } from "@/lib/localDate";
 
 /** What one recorded failure code means to a reader; offers come from the server. */
-export interface FailureCopy {
+interface FailureCopy {
   /** The ordinary row/history label, without a terminal period. */
   readonly reason: string;
   /** The complete feedback fact. */
@@ -319,11 +319,6 @@ export const FAILURE_COPY: Readonly<Record<SafeFailureCode, FailureCopy>> = {
     explanation: null,
   },
 };
-
-// justify-type-assertion: the keys of a Record exhaustive over SafeFailureCode.
-export const SAFE_FAILURE_CODES = Object.keys(
-  FAILURE_COPY,
-) as SafeFailureCode[];
 
 export function isSafeFailureCode(raw: string): raw is SafeFailureCode {
   return Object.hasOwn(FAILURE_COPY, raw);
@@ -720,8 +715,7 @@ const OUTCOME_REASON = {
   FileMismatch: "that file doesn’t match this upload.",
 } satisfies Readonly<Record<Exclude<UploadSessionOutcome["kind"], "VerificationRejected" | "IntentMalformed" | "Superseded">, string | undefined>>;
 
-export type UploadCommand = "RetryUpload" | "RemoveUpload";
-export const UPLOAD_COMMAND_FACT: Readonly<Record<UploadCommand, string>> = {
+export const UPLOAD_COMMAND_FACT: Readonly<Record<"RetryUpload" | "RemoveUpload", string>> = {
   RetryUpload: "couldn’t retry the upload.",
   RemoveUpload: "couldn’t remove this import.",
 };
