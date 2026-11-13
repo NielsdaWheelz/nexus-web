@@ -309,13 +309,14 @@ direction, keep features (owner, 2026-10-13). every area is rewritten once, fres
 
 ## counting
 
-account and librarian settings against `8d1b19770` add 622 authored runtime
-lines (1,611 added, 989 deleted). the bookplate, field commands and successful
+account and librarian settings against `5a48b345f` add 624 authored runtime
+lines (1,614 added, 990 deleted). the bookplate, field commands and successful
 write record replace `ProfileForm`, the identities pane, the old account brief
 and ledger modules, and collection flat actions. the existing binding owner
 now retains acknowledged calendar and reader settings; an unavailable calendar
-day stays explicit across its consumers. generated wire, docs and disposable
-verification are excluded; earlier area totals retain their stated bases.
+day stays explicit across its consumers. foreground resource writes defer to
+their domain authority instead of an empty background scope. generated wire,
+docs and disposable verification are excluded; earlier area totals retain their stated bases.
 
 search reliability against exact main `e2192e593`: +1,332 net authored runtime
 lines (2,360 added, 1,028 deleted): `python/nexus` 2,244 added, 980 deleted,

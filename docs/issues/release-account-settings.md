@@ -2,8 +2,9 @@
 
 the slim assistant-write ledger item rides unshipped wire 23 with
 [librarian companion](release-librarian-companion.md) and
-[reference quotes](release-reference-quotes.md). implementation is based on
-`8d1b19770`; the newest android tag is `android-v0.3.13`. this change adds no
+[reference quotes](release-reference-quotes.md) and
+[composer receipt](release-composer.md). implementation is based on
+`5a48b345f`; the newest android tag is `android-v0.3.13`. this change adds no
 migration; the paired release retains reference quotes’ migration preconditions.
 before merge, verify wire 23 remains unshipped. if it has shipped, bump once
 and pair api, web, apk, extension and the active email worker through the
