@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.chat import AttachmentIn, AttachmentOut, ReferenceAttachmentIn
 from nexus.schemas.live_reference import SavedReference
 from nexus.schemas.resource_evidence import ResourceField
@@ -116,6 +116,8 @@ def admit_attachments(
     admitted = []
     for attachment in attachments:
         if isinstance(attachment, ReferenceAttachmentIn):
+            if not reference_visible(db, viewer_id=viewer_id, reference=attachment.reference):
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Source not found")
             admitted.append(SavedReference(**attachment.reference.model_dump(), quote=None))
             continue
         capture = attachment.capture
