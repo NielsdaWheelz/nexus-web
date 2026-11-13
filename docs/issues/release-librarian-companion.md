@@ -1,14 +1,10 @@
 # librarian companion cutover
 
-librarian follow-up `c828088a2e97` deployed wire 21/schema 0341 on
-2026-11-13 utc. the pending paired cutover uses wire 23: required
-rich-reference output fields, attachment resolution and
-workspace companion vocabulary ship together. no schema migration, legacy
-reader or mixed-wire path is introduced.
+api, web, android 0.3.15 and firefox 1.1.3 are paired at
+`263d295ebeda5849cd8114725f0a1dbaf5cead41`, wire 23/schema 0345.
+installed observations have the owner's [release-scoped deferral](release-installed-clients-263d295eb.md).
 
-pair api, web, android and extension assets through the canonical release
-owner, retaining authored replicas and pending writing. qualify source
-follow/back and a published citation in installed clients. preserve the
+qualify source follow/back and a published citation in installed clients. preserve the
 [existing release configuration boundary](release-librarian-config.md).
 
-resolved when paired deployment and installed acceptance are recorded in the pr.
+resolved when installed acceptance is recorded in the pr.
