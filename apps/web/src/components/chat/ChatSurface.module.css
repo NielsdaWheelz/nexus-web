@@ -185,3 +185,15 @@
     padding-bottom: var(--mobile-content-bottom-clearance);
   }
 }
+
+.inlineReferences { display: grid; gap: var(--space-3); margin-bottom: var(--space-3); }
+.references { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; overflow: auto; }
+.referenceModes { flex: none; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--edge-subtle); }
+.referenceList { flex: 1 0 var(--size-xl); min-height: var(--size-xl); overflow: auto; overflow-anchor: none; padding: var(--space-2) var(--space-3) var(--space-8); }
+.referenceRoot, .referenceStack { position: relative; width: 100%; }
+.referenceOccurrence { width: 100%; min-width: 0; padding-bottom: var(--space-3); }
+.referenceOccurrence[data-reference-corresponding], .inlineReferences [data-reference-corresponding] { outline: 1px solid var(--edge-subtle); outline-offset: var(--space-1); }
+.answer [data-reference-corresponding] { background: var(--surface-2); outline: 1px solid var(--accent); }
+.referenceContext { display: grid; gap: var(--space-1); margin-bottom: var(--space-2); color: var(--ink-muted); font-size: var(--text-xs); }
+.referenceEmpty { color: var(--ink-muted); }
+.showMessage { margin-top: var(--space-1); font-size: var(--text-xs); }

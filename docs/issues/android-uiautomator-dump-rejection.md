@@ -22,6 +22,15 @@ for input. these observations do not establish the earlier failure's code,
 the cause of exit 137, or that abnormal retirement is harmless.
 
 impact: a native input check can stop before exercising product behavior.
+
+run `20261112-185348-5c6baa510880`, based on `a36bf6d9a`, hit the same
+command-rejection stage before attachment. its temporary wrapper again retained
+only the error string and removed the owned xml; exact exit/signal/timeout and
+file validity cannot be recovered. owned-pid logcat shows no application fatal
+exception; a requested java dump completed into tombstoned. neither observation
+identifies the rejected dumper's cause. package, mappings and emulator cleanup
+completed without reported errors.
+
 validate the fresh owned hierarchy independently of command completion: the
 api34 reference dumper catches write errors, so even exit zero and completion text do not
 prove a complete file. keep abnormal command status distinct from validated

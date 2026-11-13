@@ -63,6 +63,7 @@ import {
 } from "@/lib/workspace/workspaceHref";
 
 const PENDING_ENTRY = "Workspace.ComposeEntry";
+const COMPANION_VISIT = "Workspace.Companion";
 export type WorkspaceNavigationResult = "committed" | "unchanged" | "cancelled";
 export interface PaneHistoryOptions {
   disposition: WorkspaceTargetDisposition;
@@ -248,10 +249,12 @@ function createWorkspaceStore(
     if (next === data.state && Object.keys(patch).length === 0) return;
     for (const pane of data.state.panes) {
       const current = next.panes.find(value => value.id === pane.id);
+      const departed = current && (current.current_visit.id !== pane.current_visit.id || routeKeyOf(current) !== routeKeyOf(pane));
       if ((pane.id === data.state.active_primary_pane_id && next.active_primary_pane_id !== pane.id) ||
-        (current && (current.current_visit.id !== pane.current_visit.id || routeKeyOf(current) !== routeKeyOf(pane)))) {
+        departed) {
         memento.capture(pane.id);
       }
+      if (departed) memento.write(pane.current_visit.id, routeKeyOf(pane), COMPANION_VISIT, { secondary: pane.secondary });
     }
     if (materializedPage) memento.rekeyVisit(materializedPage.visitId, materializedPage.previousRoute, materializedPage.routeKey);
     const visitOf = new Map(next.panes.map((p) => [p.id, p.current_visit.id]));
@@ -703,7 +706,14 @@ function createWorkspaceStore(
     const history = back
       ? { back: b.slice(0, -1), forward: [pane.current_visit, ...f] }
       : { back: [...b, pane.current_visit], forward: f.slice(1) };
-    const next = trimHistory(moved(data.state, paneId, visit, true, history));
+    const route = resolvePaneRouteModel(visit.href);
+    // justify-type-assertion: only this store writes this private visit-data key.
+    const remembered = memento.read(visit.id, route.routeKey, COMPANION_VISIT) as { secondary: WorkspaceSecondaryPane | null } | null;
+    const movedState = moved(data.state, paneId, visit, true, history);
+    const next = trimHistory(remembered === null ? movedState : updatePane(movedState, paneId, current => ({
+      ...current,
+      secondary: remembered.secondary && route.groups.includes(remembered.secondary.group_id) ? remembered.secondary : null,
+    })));
     if (!admit(next, options.discardOwnerIds)) return "cancelled";
     const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
     const target = sourceTargetFromHref(visit.href, true);

@@ -15,7 +15,7 @@ import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import * as Icon from "@/lib/ui/icons";
 import GenerationPicker from "./GenerationPicker";
-import { DraftReference } from "./LiveReference";
+import { DraftReferenceFigure } from "./ReferenceFigure";
 import styles from "./ChatComposer.module.css";
 
 /** Admission, not generation, gates send. Later questions remain editable and
@@ -54,7 +54,7 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
     if (submit()) sentEntry.current = autoSend.id;
   });
   return <div className={styles.composer}>
-    {draft.quote ? <DraftReference reference={draft.quote.reference} onRemove={() => setQuote(null)} /> : null}
+    {draft.quote ? <DraftReferenceFigure quote={draft.quote} onRemove={() => { setQuote(null); textarea.current?.focus({ preventScroll: true }); }} /> : null}
     <Textarea autoGrow={{ minRows: 1, maxRows: 6 }} ref={textarea} className={styles.input} value={draft.text} aria-label="ask librarian" placeholder="ask librarian…"
       onChange={event => { setText(event.target.value); if (draft.selection.kind === "Uninitialized" && selection.kind === "Selected") setSelection(selection); }}
       onSelect={event => { const field = event.currentTarget; setCaret({ start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection }); }}

@@ -35,6 +35,7 @@ SURFACE_GROUP = {
     "resource-members": "resource-inspector",
     "resource-connections": "resource-inspector",
     "import-detail": "imports-inspector",
+    "librarian-references": "librarian-inspector",
 }
 
 
@@ -75,12 +76,13 @@ class PaneHistory(_Model):
 
 class WorkspaceSecondaryPane(_Model):
     id: Id
-    group_id: Literal["resource-inspector", "imports-inspector"]
+    group_id: Literal["resource-inspector", "imports-inspector", "librarian-inspector"]
     active_surface_id: Literal[
         "resource-contents",
         "resource-members",
         "resource-connections",
         "import-detail",
+        "librarian-references",
     ]
     width_px: float = Field(gt=0)
     visibility: Literal["visible", "collapsed"]

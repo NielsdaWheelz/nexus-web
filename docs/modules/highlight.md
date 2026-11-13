@@ -92,6 +92,13 @@ the host supplies a required read-only profile: the workspace projects its live
 reader settings; the downloaded shelf supplies the same profile as its source.
 quotation rendering neither edits settings nor fetches a substitute profile.
 
+librarian display uses the same source owner with explicit per-selection format
+limits: unsupported structure, absent native representation, incomplete tables
+and structure outside admitted scope may show exact plain words. full original
+range admission precedes preview truncation. canonical disagreement and helper
+failures never become plain-text success; authored capture remains strict.
+namespace-aware source cloning retains literal `xml:lang`.
+
 server capture scans source provenance before materializing an excerpt. the
 existing canonicalizer locates original text contributors; the shared literal
 policy chooses context boundaries from source events. only the bounded candidate

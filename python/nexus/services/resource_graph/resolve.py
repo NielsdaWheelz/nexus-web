@@ -74,19 +74,38 @@ def resolve_prompt(
     """Authorize, measure stored bodies, then hydrate at most one bounded resource.
 
     Label-only resources never load their readable body merely to name the source.
+    Fragment bodies require the evidence owner's complete-passage disclosure proof.
     Prompt rendering still checks its actual escaped bytes and token estimate.
     """
     if not ref_visible(db, viewer_id=viewer_id, ref=ref):
         return ResolvedResource(ref.uri, "(resource unavailable)", "", missing=True)
     if ref.scheme == "media":
         return _media(db, [ref.id], viewer_id, include_summary=False)[0]
-    if identity_only and ref.scheme == "fragment":
+    if ref.scheme == "fragment":
         sql, build = _LOADERS["fragment"]
         row = db.execute(text(sql), {"ids": [ref.id], "identity_only": True}).one()
         item = build(ref, row)
-        return ResolvedResource(
-            item.uri, item.label, "", fetch_hint=item.fetch_hint, title=item.title
+        if identity_only:
+            return ResolvedResource(
+                item.uri, item.label, "", fetch_hint=item.fetch_hint, title=item.title
+            )
+        from nexus.services.resource_items.evidence import (
+            PromptEvidenceTooLarge,
+            capture_prompt_evidence,
         )
+
+        try:
+            evidence = capture_prompt_evidence(
+                db, viewer_id=viewer_id, ref=ref, byte_limit=byte_limit
+            )
+        except NotFoundError:
+            # justify-ignore-error: this resolver represents unreadable bodies as missing.
+            return ResolvedResource(ref.uri, "(resource unavailable)", "", missing=True)
+        except PromptEvidenceTooLarge as error:
+            raise PromptBodyTooLarge(ref.uri) from error
+        # justify-defect: fragment evidence always carries its current canonical body.
+        assert evidence.quote is not None
+        return _read(ref, item.label, evidence.quote.exact, item.title)
     if ref.scheme in ("podcast", "feed"):
         title = db.scalar(text("SELECT title FROM feeds WHERE id=:id"), {"id": ref.id})
         assert title is not None
@@ -95,7 +114,6 @@ def resolve_prompt(
         "evidence_span": "SELECT octet_length(span_text) FROM evidence_spans WHERE id=:id",
         "content_chunk": "SELECT octet_length(chunk_text) FROM content_chunks WHERE id=:id",
         "note_block": "SELECT octet_length(body_text)+octet_length(body_pm_json::text) FROM note_blocks WHERE id=:id",
-        "fragment": "SELECT octet_length(canonical_text) FROM fragments WHERE id=:id",
         "message": "SELECT octet_length(content) FROM messages WHERE id=:id",
         "highlight": "SELECT octet_length(h.exact)+octet_length(h.prefix)+octet_length(h.suffix)+COALESCE(octet_length(h.annotation_body_text),0)+COALESCE(octet_length(h.annotation_body_pm_json::text),0)+COALESCE(octet_length((r.state #> '{selection,value}')::text),0) FROM highlights h LEFT JOIN authored_resources r ON r.account_id=h.user_id AND r.ref='highlight:' || h.id::text WHERE h.id=:id",
         "page": f"SELECT octet_length({page_title_sql('p')}) FROM pages p WHERE id=:id",

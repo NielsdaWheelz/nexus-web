@@ -97,6 +97,8 @@ export interface Reader {
   readonly navigation: ReaderNavigationPort | null;
   getState(): ReaderState;
   subscribe(listener: () => void): () => void;
+  /** Current paired viewport/placement, delivered after the measuring commit and before paint. */
+  subscribeGeometry(listener: () => void): () => void;
   measurePassage(passage: Passage): PassageGeometry | null;
   /** Marks hit in the mounted text publication; empty for other or unavailable surfaces. */
   textMarksAt(x: number, y: number, target: EventTarget | null): readonly Mark[];
@@ -199,6 +201,18 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     find: null,
   };
   const listeners = new Set<() => void>();
+  const geometryListeners = new Set<() => void>();
+  let geometryQueued = false;
+  const publishGeometry = () => {
+    if (geometryQueued || geometryListeners.size === 0) return;
+    geometryQueued = true;
+    // Surfaces also measure during layout effects. End that commit before a consumer
+    // places its rows, without adding another animation frame behind the source.
+    queueMicrotask(() => {
+      geometryQueued = false;
+      for (const listener of geometryListeners) listener();
+    });
+  };
   let surface: SurfaceHandle | null = null;
   let loading: AbortController | null = null;
   let restore: {
@@ -404,6 +418,10 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    subscribeGeometry(listener) {
+      geometryListeners.add(listener);
+      return () => geometryListeners.delete(listener);
+    },
     measurePassage(passage) {
       return passage.identity === ready()?.doc.identity &&
         surface?.identity === passage.identity
@@ -500,6 +518,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
         ...(pdf ? { pdf } : {}),
         ...(structure ? { document: { ...doc, structure } } : {}),
       });
+      publishGeometry();
       if (!reading || mode !== "Reading" || !state.restored || !sync || doc.refreshing) return;
       // Reading on makes a new spot; the lost one is no longer news.
       if (state.savedSpotUnavailable) set({ savedSpotUnavailable: false });

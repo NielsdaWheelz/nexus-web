@@ -52,7 +52,7 @@ function Link({
   if (citations && typeof ordinal === "string") {
     const citation = citations.byIndex.get(ordinal);
     if (!citation) return <>{children}</>;
-    if ("target" in citation) return <RetrievalReference retrieval={citation} label={`[${citation.ordinal}]`} />;
+    if ("target" in citation) return <span data-citation-id={citation.id}><RetrievalReference retrieval={citation} label={`[${citation.ordinal}]`} /></span>;
     return (
       <ReaderCitation
         {...citation}

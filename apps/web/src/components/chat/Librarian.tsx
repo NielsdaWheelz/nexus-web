@@ -96,7 +96,7 @@ export default function Librarian() {
   const commandFeedback = defect ? <ChatOperationBoundary failure={defect} paneId={runtime.paneId} visitId={runtime.visitId}
     fallback={hold ?? <Fact line={{ fact: "this librarian action stopped unexpectedly." }} verbs={[{ label: "dismiss", commandKey: "dismiss librarian defect", run: commandOwner.clearDefect }]} />} /> : hold;
   return <div className={styles.surface}>
-      {search.searching ? search.content : <LibrarianTranscript ref={transcript} history={history} retryAvailable={retryAvailable} onRetry={retryTurn} />}
+      {search.searching ? search.content : <LibrarianTranscript key={`${accountId}:${runtime.visitId}:${reads.timeline.key}`} queryKey={reads.timeline.key} ref={transcript} history={history} retryAvailable={retryAvailable} onRetry={retryTurn} />}
       <div className={styles.composerAnchor}><StageAnchor kind="Pane" paneId={runtime.paneId} /></div>
       <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}

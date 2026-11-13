@@ -5,11 +5,11 @@ import re
 import tempfile
 import unicodedata
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from lxml.etree import Comment, Element
-from lxml.html import HtmlElement, fragment_fromstring
+from lxml.etree import Comment
+from lxml.html import Element, HtmlElement, fragment_fromstring
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,22 @@ class SourceExcerptRequest:
     start: int
     end: int
     bounds: tuple[int, int] | None = None
+
+
+class SourceExcerptFormatLimit(InvalidRequestError):
+    """Exact canonical words exist, but this native shape has no faithful rich view."""
+
+    def __init__(
+        self,
+        reason: Literal[
+            "unsupported_structure", "no_native_text", "incomplete_table", "scope_boundary"
+        ],
+    ) -> None:
+        super().__init__(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "This passage contains text that can’t be captured faithfully yet.",
+        )
+        self.reason = reason
 
 
 def _html_integer(value: str | None, default: int) -> int:
@@ -127,7 +143,10 @@ def _tree(html: str) -> tuple[dict[str, Any], set[tuple[int, ...]], set[tuple[in
         if tag in ("br", "hr"):
             return [{"kind": tag}]
         inherited_lang = (
-            node.get("lang") or node.get("{http://www.w3.org/XML/1998/namespace}lang") or lang
+            node.get("lang")
+            or node.get("xml:lang")
+            or node.get("{http://www.w3.org/XML/1998/namespace}lang")
+            or lang
         )
         resolved = direction(node, flow)
         content = children(node, inherited_lang, resolved)
@@ -178,10 +197,7 @@ def _tree(html: str) -> tuple[dict[str, Any], set[tuple[int, ...]], set[tuple[in
             and not (child["kind"] == "text" and not child["text"].strip("\t\n\f\r "))
             for child in content
         ):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "This passage contains text that can’t be captured faithfully yet.",
-            )
+            raise SourceExcerptFormatLimit("unsupported_structure")
         if tag == "table" and node.get("data-nexus-incomplete-table") == "true":
             incomplete.add(id(value))
         if tag == "ol":
@@ -237,7 +253,7 @@ def _tree(html: str) -> tuple[dict[str, Any], set[tuple[int, ...]], set[tuple[in
 
 def _source_windows(
     html: str, canonical: str, intervals: list[tuple[int, int]]
-) -> list[tuple[str, str, int, bool, bool]]:
+) -> list[tuple[str, str, int, bool, bool] | SourceExcerptFormatLimit]:
     """Scan native source, then materialize only the shared owner's literal window."""
     root = fragment_fromstring(html, create_parent=True)
     target = NativeCanonicalTarget()
@@ -410,21 +426,25 @@ def _source_windows(
                 "Source structure disagrees with its canonical publication",
             )
         native = projection.bounds(intervals)
-        if any(first == 0xFFFFFFFF or end <= first for first, end in native):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Selection has no native source text"
-            )
-        converted = convert_points([point for pair in native for point in pair], True)
+        output: dict[int, tuple[str, str, int, bool, bool] | SourceExcerptFormatLimit] = {}
+        supported = []
+        for index, (first, end) in enumerate(native):
+            if first == 0xFFFFFFFF or end <= first:
+                output[index] = SourceExcerptFormatLimit("no_native_text")
+            else:
+                supported.append(index)
+        converted = convert_points([point for index in supported for point in native[index]], True)
         selections = []
-        for first, end in native:
+        selected = []
+        for index in supported:
+            first, end = native[index]
             native_start, native_end = converted[first], converted[end]
             if any(lo < native_end and hi > native_start for lo, hi in unsupported_intervals):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "This passage contains text that can’t be captured faithfully yet.",
-                )
+                output[index] = SourceExcerptFormatLimit("unsupported_structure")
+                continue
+            selected.append(index)
             selections.append((native_start, native_end))
-        windows = helper.source_windows(events, selections)
+        windows = helper.source_windows(events, selections) if selections else []
     converted_windows = convert_points(
         [window[side] for window in windows for side in ("start", "end")], False
     )
@@ -480,8 +500,8 @@ def _source_windows(
                 clone.append(retained)
         return clone
 
-    output = []
-    for (start, end), window, base in zip(intervals, windows, bases, strict=True):
+    for index, window, base in zip(selected, windows, bases, strict=True):
+        start, end = intervals[index]
         left, right = window["start"], window["end"]
         bounded = copy(root, "ltr")
         if bounded is None:
@@ -495,14 +515,35 @@ def _source_windows(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Source window changed its canonical publication correspondence",
             )
-        output.append(
-            (candidate, projected, base, window["truncated_before"], window["truncated_after"])
+        output[index] = (
+            candidate,
+            projected,
+            base,
+            window["truncated_before"],
+            window["truncated_after"],
         )
-    return output
+    return [output[index] for index in range(len(intervals))]
 
 
 def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[FrozenExcerpt]:
-    """Batch source conversion, canonical proof, reading scope and bounded capture."""
+    """Authored captures require faithful structure for every requested selection."""
+    outcomes = source_display_excerpts(db, requests)
+    excerpts = []
+    for outcome in outcomes:
+        if isinstance(outcome, SourceExcerptFormatLimit):
+            raise outcome
+        excerpts.append(outcome)
+    return excerpts
+
+
+def source_display_excerpts(
+    db: Session, requests: list[SourceExcerptRequest]
+) -> list[FrozenExcerpt | SourceExcerptFormatLimit]:
+    """Batch proof and conversion with named per-selection native format limits.
+
+    Invalid authority, canonical disagreement and helper defects still fail the
+    request. A recognised shape limit neither retries nor discards sibling work.
+    """
     from nexus.services.media_text_scope import read_media_text_scope, read_scope_fragment
     from nexus.services.resource_items.locations import source_identities
 
@@ -535,6 +576,11 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
     contexts = []
     for request in requests:
         row = fragments[request.fragment_id]
+        lower, upper = request.bounds or (0, len(row.canonical_text))
+        if not 0 <= lower <= request.start < request.end <= upper <= len(row.canonical_text):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Selection is outside its source"
+            )
         if request.reading_id in scopes:
             scope = scopes[request.reading_id]
             if row.media_id != scope.source_media_id or not scope.contains(
@@ -567,6 +613,7 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
         groups.setdefault(
             (request.reading_id, request.fragment_id, base, len(canonical)), []
         ).append(index)
+    outcomes: dict[int, FrozenExcerpt | SourceExcerptFormatLimit] = {}
     windows: dict[int, tuple[str, str, int, bool, bool]] = {}
     for indices in groups.values():
         html, canonical, base = contexts[indices[0]]
@@ -575,34 +622,39 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
             canonical,
             [(requests[index].start - base, requests[index].end - base) for index in indices],
         )
-        for index, (candidate, projected, offset, before, after) in zip(
-            indices, values, strict=True
-        ):
+        for index, value in zip(indices, values, strict=True):
+            if isinstance(value, SourceExcerptFormatLimit):
+                outcomes[index] = value
+                continue
+            candidate, projected, offset, before, after = value
             windows[index] = (candidate, projected, base + offset, before, after)
-    contexts = [
-        (windows[index][0], windows[index][1], windows[index][2]) for index in range(len(requests))
-    ]
-    trees = [_tree(html) for html, _, _ in contexts]
+    trees = {}
+    for index, (html, _, _, _, _) in windows.items():
+        try:
+            trees[index] = _tree(html)
+        except SourceExcerptFormatLimit as limit:
+            outcomes[index] = limit
+    selected = list(trees)
     mappings = helper.call_items(
         "excerpt_source_selections",
         [
             {
-                "body": body,
-                "start_offset": request.start - base,
-                "end_offset": request.end - base,
-                "unsupported_paths": sorted(unsupported_paths),
+                "body": trees[index][0],
+                "start_offset": requests[index].start - windows[index][2],
+                "end_offset": requests[index].end - windows[index][2],
+                "unsupported_paths": sorted(trees[index][1]),
             }
-            for request, (body, unsupported_paths, _), (_, _, base) in zip(
-                requests, trees, contexts, strict=True
-            )
+            for index in selected
         ],
     )
     full = []
     unsupported = []
     bounds = []
-    for request, (body, _unsupported_paths, incomplete_paths), mapping, (_, canonical, base) in zip(
-        requests, trees, mappings, contexts, strict=True
-    ):
+    captured_indices = []
+    for index, mapping in zip(selected, mappings, strict=True):
+        request = requests[index]
+        body, _, incomplete_paths = trees[index]
+        _, canonical, base, _, _ = windows[index]
         row = fragments[request.fragment_id]
         if mapping["emitted"] != canonical:
             raise InvalidRequestError(
@@ -613,13 +665,12 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
             (interval["start_offset"] + base, interval["end_offset"] + base)
             for interval in mapping["unsupported_intervals"]
         ]
-        if mapping["selection"] is None or any(
-            left < request.end and right > request.start for left, right in intervals
-        ):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "This passage contains text that can’t be captured faithfully yet.",
-            )
+        if mapping["selection"] is None:
+            outcomes[index] = SourceExcerptFormatLimit("no_native_text")
+            continue
+        if any(left < request.end and right > request.start for left, right in intervals):
+            outcomes[index] = SourceExcerptFormatLimit("unsupported_structure")
+            continue
         body["selection"] = mapping["selection"]
         first_path, last_path = (
             tuple(body["selection"]["start"]["path"]),
@@ -631,10 +682,8 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
             or first_path < path < last_path
             for path in incomplete_paths
         ):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "This passage contains text that can’t be captured faithfully yet.",
-            )
+            outcomes[index] = SourceExcerptFormatLimit("incomplete_table")
+            continue
         admitted_bounds = request.bounds or (0, len(row.canonical_text))
         if request.reading_id in scopes:
             scope = scopes[request.reading_id]
@@ -676,8 +725,9 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
         )
         unsupported.append(intervals)
         bounds.append(admitted_bounds)
+        captured_indices.append(index)
     bounded = helper.call_items("capture_excerpts", full)
-    for index, value in enumerate(bounded):
+    for index, value in zip(captured_indices, bounded, strict=True):
         value["truncated_before"] = value["truncated_before"] or windows[index][3]
         value["truncated_after"] = value["truncated_after"] or windows[index][4]
     admitted = scope_excerpts(
@@ -689,19 +739,16 @@ def source_excerpts(db: Session, requests: list[SourceExcerptRequest]) -> list[F
             for value, bound in zip(bounded, bounds, strict=True)
         ]
     )
-    if any(value is None for value in admitted):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "This passage contains text that can’t be captured faithfully yet.",
-        )
-    captured = [value for value in admitted if value is not None]
-    for value, intervals in zip(captured, unsupported, strict=True):
+    for index, value, intervals in zip(captured_indices, admitted, unsupported, strict=True):
+        if value is None:
+            outcomes[index] = SourceExcerptFormatLimit("scope_boundary")
+            continue
         extent = value.source_extent
-        if extent is None or any(
+        assert extent is not None, "captured source excerpt lost its extent"
+        if any(
             left < extent.end_offset and right > extent.start_offset for left, right in intervals
         ):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "This passage contains text that can’t be captured faithfully yet.",
-            )
-    return captured
+            outcomes[index] = SourceExcerptFormatLimit("unsupported_structure")
+        else:
+            outcomes[index] = value
+    return [outcomes[index] for index in range(len(requests))]

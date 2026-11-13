@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Line } from "@/components/feedback/stage";
 import { Announcement } from "@/components/feedback/Announcement";
 import { useCopyFeedback } from "@/components/ui/useCopyFeedback";
@@ -21,7 +21,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import AssistantTrust from "./AssistantTrust";
 import MessageDetails from "./MessageDetails";
-import LiveReference from "./LiveReference";
+import ReferenceFigure from "./ReferenceFigure";
 import styles from "./ChatSurface.module.css";
 import inspection from "./messageInspection.module.css";
 
@@ -36,12 +36,11 @@ const FAILURE_REASON = {
 
 /** Tailing paints one pending turn. A terminal read alone adopts its final text,
  * citations, trust trail and capabilities; stream loss never implies failure. */
-export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryAvailable }: { onRetry(): void; retryAvailable: boolean; turn: Turn; passage: { messageId: string; start: number; end: number } | null; refresh(): void; onInspect(trigger: HTMLElement): void }) {
-  const [saved, setSaved] = useState(turn);
+export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, retryAvailable, inlineAttachments, onReadTurn, onRevealReferences, onContentLayout }: { onContentLayout(): void; inlineAttachments: boolean; onReadTurn(turn: Turn): void; onRevealReferences(messageId: string, trigger: HTMLElement, keyboard: boolean): void; onRetry(): void; retryAvailable: boolean; turn: Turn; passage: { messageId: string; start: number; end: number } | null; refresh(): void; onInspect(trigger: HTMLElement): void }) {
+  const saved = turn;
   const [live, setLive] = useState<Live | null>(null);
   const [reconnect, setReconnect] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  useEffect(() => setSaved(previous => previous.assistant_message.status !== "pending" && turn.assistant_message.status === "pending" ? previous : turn), [turn]);
   const message = saved.assistant_message;
   const pending = message.status === "pending";
   useEffect(() => {
@@ -52,7 +51,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
       end: () => {
         void readTurn(saved.run_id).then(current => {
           if (!active) return;
-          setSaved(current);
+          onReadTurn(current);
           if (current.assistant_message.status !== "pending") refresh();
           else setLive(previous => previous && ({ ...previous, link: { kind: "Lost" } }));
         }).catch(error => {
@@ -63,7 +62,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
         });
       } });
     return () => { active = false; close(); };
-  }, [saved.run_id, pending, reconnect, refresh]);
+  }, [saved.run_id, pending, reconnect, refresh, onReadTurn]);
   const check = useCallback(() => setReconnect(value => value + 1), []);
   useFailedReadRepair(live?.link.kind === "Failed" || live?.link.kind === "Lost", false, check);
   const actions = useMemo(() => messageActions(message, live), [message, live]);
@@ -85,6 +84,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
   const phase = live?.execution?.phase ?? saved.execution?.phase;
   const status = !pending ? null : phase === "Suspended" ? "this turn needs a repair." : stopped ? "stopping this turn." : phase === "Queued" ? "queued" : phase === "Recovering" ? "recovering this turn." : "answering";
   const text = pending ? live?.text || message.content : message.content;
+  useLayoutEffect(onContentLayout, [text, message, onContentLayout]);
   const run = message.trust_trail?.run;
   const reason = run?.failure ? FAILURE_REASON[run.failure.code] : null;
   const failedLine: Line = { fact: text.trim() ? "this answer is incomplete." : message.status === "cancelled" ? "cancelled." : "couldn’t answer.",
@@ -92,15 +92,22 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
   if (defect) throw defect.error;
   return <>
     <div className={styles.message} data-message-id={saved.user_message.id} data-role="user" role="group" aria-label="your message">
+      {inlineAttachments && saved.user_message.attachments.length > 0 ? <div className={styles.inlineReferences} data-type-role="margin">
+        {saved.user_message.attachments.map((value, index) => <div key={index} data-reference-key={`${saved.user_message.id}:attachment:${index}`}>
+          <ReferenceFigure value={value} />
+        </div>)}
+      </div> : null}
       <div className={styles.userPrompt}>
         {saved.retry_of_run_id ? <p>retry of an earlier question</p> : null}
-        {saved.user_message.attachments.map((attachment, index) => <div key={index}><LiveReference reference={attachment.reference} item={attachment.item} locationAvailable={attachment.location_available} /></div>)}
         <span className={styles.userBody} data-message-content="true">{passage?.messageId === saved.user_message.id
           ? <>{saved.user_message.content.slice(0, passage.start)}<mark className={inspection.literal} data-message-passage="true"
               data-message-source-start={passage.start} data-message-source-end={passage.end}>{saved.user_message.content.slice(passage.start, passage.end)}</mark>{saved.user_message.content.slice(passage.end)}</>
           : saved.user_message.content}</span>
       </div>
-      <MessageMenu messageId={saved.user_message.id} content={saved.user_message.content} />
+      <div role="group" aria-label="your message actions">
+        {saved.user_message.attachments.length > 0 ? <Button aria-label={`references · ${saved.user_message.attachments.length} for your message`} onClick={event => onRevealReferences(saved.user_message.id, event.currentTarget, event.detail === 0)}>references · {saved.user_message.attachments.length}</Button> : null}
+        <MessageMenu messageId={saved.user_message.id} content={saved.user_message.content} />
+      </div>
     </div>
     <div className={styles.message} data-message-id={message.id} data-role="assistant" role="group" aria-label="librarian answer">
       {text ? <div className={styles.answer} data-message-content="true"><MarkdownMessage presentation="chat" content={text} citations={message.citations}
@@ -111,6 +118,7 @@ export default function ChatTurn({ turn, passage, refresh, onInspect, onRetry, r
       {live?.link.kind === "Failed" ? <Failed error={live.link.error} noun="live updates" retry={{ run: check, busy: false }} /> : live?.link.kind === "Lost" ? <Fact line={{ fact: "live updates stopped." }} verbs={[{ label: "check", commandKey: `check ${saved.run_id}`, run: check }]} /> : null}
       <AssistantTrust messageId={message.id} actions={actions} undone={undone} onUndone={markUndone} />
       <div role="group" aria-label="answer actions">
+        {message.citations.length > 0 ? <Button aria-label={`references · ${message.citations.length} for this answer`} onClick={event => onRevealReferences(message.id, event.currentTarget, event.detail === 0)}>references · {message.citations.length}</Button> : null}
         {saved.can_retry ? <Button disabled={!retryAvailable} onClick={onRetry}>retry answer</Button> : null}
         {saved.can_cancel ? <Button disabled={stopping || !!stopped} onClick={() => void stop()}>cancel</Button> : null}
         <Button ref={trigger} aria-expanded={details} aria-controls={detailsId} onClick={event => { onInspect(event.currentTarget); setDetails(!details); }}>{details ? "show less" : "show more"}</Button>

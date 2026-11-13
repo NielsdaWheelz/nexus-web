@@ -30,7 +30,7 @@ const Entries = createContext<{ read: ReadDescriptor<Result<typeof libraryEntrie
 const Feeds = createContext<{ read: ReadDescriptor<Result<typeof listFeeds>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const FeedEntries = createContext<{ read: ReadDescriptor<Result<typeof listFeedEntries>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Author = createContext<{ detail: ReadDescriptor<Result<typeof getContributor>>; works: ReadDescriptor<Result<typeof listContributorWorks>> } | null>(null);
-const Librarian = createContext<{ timeline: ReadDescriptor<Timeline>; catalog: ReadDescriptor<Catalog> } | null>(null);
+const Librarian = createContext<{ timeline: ReadDescriptor<Timeline> & { key: string }; catalog: ReadDescriptor<Catalog> } | null>(null);
 function requireRead<T>(value: T | null): T {
   // justify-defect: selected pane bodies always render below their route entry.
   if (value === null) throw new Error("index pane without its route read descriptor");

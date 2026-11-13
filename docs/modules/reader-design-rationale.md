@@ -260,13 +260,14 @@ same-generation conflict keeps both choices and asks the user. see
 
 ### reader-to-chat quote selection
 
-quote-to-chat captures source evidence without creating a highlight. send carries
-`reader_selection = {selection, revision}`; the server validates the observed
-reading and freezes evidence on the message. choosing an existing highlight also
-includes its current annotation through ordinary context. later highlight edits
-or deletion do not rewrite that passage or accepted generation intent; current
-source access still governs disclosure to new runs. new-chat send is atomic, so
-a failed first send leaves no conversation behind.
+quote-to-chat transfers live source identity and structural coordinates without
+creating a highlight. both draft and sent figures use the current authorized
+presentation; accepted message words stay immutable. existing highlights retain
+their own captured passage, while their private annotations remain live.
+reader and librarian share margin packing and visual primitives, but keep their
+own source geometry and content authority. exact plain words are preferable to
+invented formatting when a named source-format limit prevents faithful structure;
+a parser defect is still a defect.
 
 ## verification strategy
 

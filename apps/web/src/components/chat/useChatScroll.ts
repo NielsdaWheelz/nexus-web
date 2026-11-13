@@ -12,6 +12,8 @@ import {
   type TouchEvent,
   type WheelEvent,
 } from "react";
+import { buildDomTextCursor, type DomTextCursor } from "@/lib/canonicalText/domTextCursor";
+import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
 import type { SourceArrivalContext } from "@/lib/reader/sourceArrival";
 import type { MarkdownPassage } from "@/lib/chat/markdownPassages";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
@@ -28,6 +30,7 @@ type PinMode = "top" | "bottom" | "released";
 export interface ChatReadingPosition {
   readonly scrollTop: number;
   readonly pinMode: PinMode;
+  readonly point: { messageId: string; offset: number; prefix: string; offsetPx: number; messageOffsetPx: number } | null;
 }
 export interface ChatScrollHandle {
   inspectMessage(id: string, move: boolean, passage: MarkdownPassage | null): HTMLElement | null;
@@ -36,6 +39,9 @@ export interface ChatScrollHandle {
   captureReadingPosition(): ChatReadingPosition | null;
   restoreReadingPosition(position: ChatReadingPosition): void;
   getTranscriptElement(): HTMLDivElement | null;
+  subscribeGeometry(listener: () => void): () => void;
+  releaseFollowing(): void;
+  inspectReference(messageId: string, citationId: string | null): HTMLElement | null;
 }
 
 function createScrollOwner(
@@ -54,6 +60,81 @@ function createScrollOwner(
   let scrollGesture: number | null = null;
   let laidOut = false;
   let sawEmptyReady = false;
+  let readingPoint: ChatReadingPosition["point"] = null;
+  const geometryListeners = new Set<() => void>();
+  let notificationPending = false;
+  const notifyGeometry = () => {
+    if (notificationPending || geometryListeners.size === 0) return;
+    notificationPending = true;
+    // Source corrections finish before consumers measure. A microtask runs after
+    // React's commit and before paint, including resize and native scroll delivery.
+    queueMicrotask(() => { notificationPending = false; for (const listener of geometryListeners) listener(); });
+  };
+  const cursorOf = (body: HTMLElement) => buildDomTextCursor(body, element => element.matches(".sr-only, [data-pane-find-exclude], button, [role='button']"));
+  const rectAt = (cursor: DomTextCursor, offset: number): DOMRect | null => {
+    const spans = resolveDomTextRanges(cursor, offset, offset + 1);
+    if (!spans) return null;
+    const range = document.createRange();
+    for (const span of spans) {
+      range.setStart(span.startContainer, span.startOffset); range.setEnd(span.endContainer, span.endOffset);
+      const rect = range.getClientRects()[0];
+      if (rect) return rect;
+    }
+    return null;
+  };
+  const capturePoint = () => {
+    const port = scrollport.current;
+    if (!port) return;
+    const top = port.getBoundingClientRect().top;
+    const eye = top + inset();
+    readingPoint = null;
+    for (const root of transcript.current?.querySelectorAll<HTMLElement>("[data-message-id]") ?? []) {
+      const body = root.querySelector<HTMLElement>("[data-message-content]");
+      if (!body || body.getBoundingClientRect().bottom <= eye) continue;
+      const cursor = cursorOf(body);
+      // Table cells are not vertically ordered in canonical DOM order. Find
+      // the visible text run first; only offsets within that run share its line flow.
+      const probe = document.createRange();
+      let run: (typeof cursor.nodes)[number] | null = null;
+      let distance = Infinity;
+      for (const candidate of cursor.nodes) {
+        probe.selectNodeContents(candidate.node);
+        for (const box of probe.getClientRects()) {
+          if (box.bottom <= eye || box.right <= port.getBoundingClientRect().left || box.left >= port.getBoundingClientRect().right) continue;
+          const next = Math.max(0, box.top - eye);
+          if (next < distance) { run = candidate; distance = next; }
+        }
+        if (distance === 0) break;
+      }
+      if (!run) continue;
+      let lo = run.start, hi = run.end;
+      while (lo < hi) {
+        const middle = (lo + hi) >>> 1;
+        let at = middle, rect = rectAt(cursor, at);
+        while (!rect && ++at < run.end) rect = rectAt(cursor, at);
+        if (rect && rect.bottom > eye) hi = middle; else lo = middle + 1;
+      }
+      let rect = rectAt(cursor, lo);
+      while (!rect && ++lo < run.end) rect = rectAt(cursor, lo);
+      if (!rect) continue;
+      readingPoint = { messageId: root.dataset.messageId!, offset: lo,
+        prefix: Array.from(cursor.emitted).slice(0, lo + 1).join(""), offsetPx: rect.top - top,
+        messageOffsetPx: root.getBoundingClientRect().top - top };
+      return;
+    }
+  };
+  const holdReadingPoint = () => {
+    const port = scrollport.current, point = readingPoint;
+    if (!port || !point) return;
+    const root = message(point.messageId);
+    const body = root?.querySelector<HTMLElement>("[data-message-content]");
+    if (!root || !body) { readingPoint = null; return; }
+    const cursor = cursorOf(body);
+    const rect = Array.from(cursor.emitted).slice(0, point.offset + 1).join("") === point.prefix
+      ? rectAt(cursor, point.offset) : null;
+    const drift = (rect ? rect.top - point.offsetPx : root.getBoundingClientRect().top - point.messageOffsetPx) - port.getBoundingClientRect().top;
+    if (Math.abs(drift) > .5) jump(port.scrollTop + drift, false);
+  };
 
   const message = (id: string | null) =>
     id
@@ -113,6 +194,7 @@ function createScrollOwner(
     const anchor = message(anchorId);
     if (!port) return;
     if (holdInspection()) return;
+    if (mode === "released") { holdReadingPoint(); return; }
     if (mode === "top" && anchor) {
       const top = clamp(port, anchor.offsetTop - inset());
       if (!overflows(top)) {
@@ -158,7 +240,7 @@ function createScrollOwner(
     if (scrollGesture === null) return;
     // Native anchoring is disabled; geometry alone can only clamp the prior top.
     const expected = clamp(port, scrollGesture);
-    if (port.scrollTop !== expected) releaseInspection();
+    if (port.scrollTop !== expected) { releaseInspection(); capturePoint(); }
     else scrollGesture = expected;
   };
   const consumeFocusScroll = (port: HTMLElement) => {
@@ -195,6 +277,7 @@ function createScrollOwner(
       releaseInspection();
       const port = scrollport.current;
       if (move && port) jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
+      capturePoint(); notifyGeometry();
       return target;
     },
     inspectDisclosure(trigger) {
@@ -205,14 +288,30 @@ function createScrollOwner(
     },
     captureReadingPosition: () => {
       const port = scrollport.current;
-      return port && { scrollTop: port.scrollTop, pinMode: mode };
+      return port && { scrollTop: port.scrollTop, pinMode: mode, point: readingPoint };
     },
     restoreReadingPosition(position) {
       releaseInspection();
       mode = position.pinMode;
-      jump(position.scrollTop, false);
+      readingPoint = position.point;
+      if (mode === "released" && readingPoint) holdReadingPoint();
+      else jump(position.scrollTop, false);
+      capturePoint(); notifyGeometry();
     },
     getTranscriptElement: () => transcript.current,
+    subscribeGeometry(listener) { geometryListeners.add(listener); return () => { geometryListeners.delete(listener); }; },
+    releaseFollowing() { onAttention(); releaseInspection(); capturePoint(); },
+    inspectReference(id, citationId) {
+      const root = message(id);
+      const target = citationId === null ? root?.querySelector<HTMLElement>("[data-message-content]")
+        : root?.querySelector<HTMLElement>(`[data-citation-id="${CSS.escape(citationId)}"]`);
+      const port = scrollport.current;
+      if (!target || !port) return null;
+      onAttention(); releaseInspection();
+      jump(port.scrollTop + target.getBoundingClientRect().top - port.getBoundingClientRect().top - inset(), false);
+      capturePoint(); notifyGeometry();
+      return target;
+    },
 
   };
 
@@ -242,15 +341,15 @@ function createScrollOwner(
       previousUserId = userId;
       previousLeafId = leafId;
       measure();
-      report();
+      capturePoint(); report(); notifyGeometry();
     },
     // A terminal replacement can move the footer without changing total height.
-    afterLayout: holdInspection,
+    afterLayout() { measure(); hold(); capturePoint(); report(); notifyGeometry(); },
     observe() {
       const observer = new ResizeObserver(() => {
         measure();
         hold();
-        report();
+        capturePoint(); report(); notifyGeometry();
       });
       if (scrollport.current) observer.observe(scrollport.current);
       if (transcript.current) observer.observe(transcript.current);
@@ -273,7 +372,7 @@ function createScrollOwner(
       if (!port) return;
       consumeUserScroll(port);
       consumeFocusScroll(port);
-      setLatestBelow(overflows(port.scrollTop));
+      capturePoint(); setLatestBelow(overflows(port.scrollTop)); notifyGeometry();
     },
     onFocus(event: FocusEvent<HTMLElement>) {
       const port = scrollport.current;

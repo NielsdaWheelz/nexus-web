@@ -786,6 +786,17 @@ visit data without requiring a react render. initial layout, including failed
 detail reads, restores the same visible anchor until user input or an explicit
 arrival wins. publication replacement retires browsing geometry; a missing
 anchor starts the list naturally. writing and outline folds keep their owners.
+`lib/margin/useMarginLayout` owns height/baseline measurement, two-pass admission,
+nonoverlap, focus/overlay holds and sidebar-scroll folding; `stackMargin` owns its
+4px gap and movement cap. source adapters supply ordered occurrence keys and first
+line geometry. explicit reveal first scrolls the margin, then lifts an occurrence
+above its scroll origin without moving the source or changing mode; later source
+motion continues from that actual placement. reader retains evidence membership,
+windowing and editor lifetime; librarian supplies chat occurrences.
+runtime `subscribeGeometry` delivers paired
+viewport/placement after corrections and the committing effect, before paint.
+there is no global window-scroll workaround or independent consumer source clock.
+
 a margin needs a visible text, so the view radio exists only in a column companion
 over a source that is not absent. there a segmented `RadioGroup` with a hidden
 legend shows `margin` and `all`, named natively `margin beside the text` and
@@ -887,8 +898,9 @@ generation alias.
   [consumption-activity.md](consumption-activity.md).
 - **quote to chat.** raw passages and saved-highlight references transfer into
   the destination's retained draft. asking creates no highlight; accepted quotes
-  belong to their user message as `{evidence, highlight_ref}`. saved annotations
-  remain ordinary live context. current source-access admission gates disclosure. [chat](chat.md#browser) owns transfer, preparation,
+  belong to their user message as live references and coordinates. saved annotations
+  remain private live context; no source words are copied into chat storage.
+  current source-access admission gates disclosure. [chat](chat.md) owns transfer, preparation,
   admission, continuation defaults and recovery.
 - **offline copies.** a reading copy zips the same `GET /media/{id}/reader`
   document; the shelf maps it with `readerDocument()` and renders the same

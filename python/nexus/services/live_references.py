@@ -5,12 +5,15 @@ without selectors, historical copies or nearest-text repair. A None byte limit
 checks availability only; bounded reads measure bytes before returning text.
 """
 
+import json
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.live_reference import LiveReference, PdfPageTarget
+from nexus.auth.permissions import requested_media_ids_cte_sql
+from nexus.schemas.live_reference import LiveReference, PdfPageTarget, TextOffsetsTarget
 from nexus.schemas.reader import (
     EpubTextOffsetsTargetOut,
     PdfPageGeometryTargetOut,
@@ -21,6 +24,7 @@ from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTar
 from nexus.services.media_text_scope import text_scope_rows_sql
 from nexus.services.resource_graph.refs import require_ref
 from nexus.services.resource_graph.resolve import PromptBodyTooLarge
+from nexus.services.x_source import readable_x_capture_ids_sql
 
 
 def reference_visible(db: Session, *, viewer_id: UUID, reference: LiveReference) -> bool:
@@ -88,14 +92,14 @@ def from_evidence(evidence: CapturedEvidence) -> LiveReference:
 
 
 def resolve_location(
-    db: Session, reference: LiveReference, *, byte_limit: int | None
+    db: Session, reference: LiveReference, *, viewer_id: UUID, byte_limit: int | None
 ) -> tuple[bool, str | None]:
     """Current coordinates only. None byte limit checks availability without loading text."""
     locator = reference.locator
     if locator is None:
         return True, None
     ref = require_ref(reference.resource_ref)
-    parameters: dict[str, object] = {"id": ref.id}
+    parameters: dict[str, object] = {"id": ref.id, "viewer_id": viewer_id}
     label = ""
     if isinstance(
         locator, (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut)
@@ -105,17 +109,33 @@ def resolve_location(
             "start": locator.start_offset,
             "end": locator.end_offset,
         }
-        if ref.scheme == "media":
-            scopes = text_scope_rows_sql("SELECT CAST(:id AS uuid) AS media_id")
-            admitted = db.scalar(
-                text(f"""SELECT EXISTS (SELECT 1 FROM ({scopes}) s
-                WHERE s.fragment_id=:fragment AND :start>=s.start_offset AND :end<=s.end_offset)"""),
-                parameters,
-            )
-        else:
-            admitted = ref.scheme == "fragment" and ref.id == locator.fragment_id
+        if ref.scheme not in ("media", "fragment") or (
+            ref.scheme == "fragment" and ref.id != locator.fragment_id
+        ):
+            return False, None
+        scopes = text_scope_rows_sql(
+            "SELECT CAST(:id AS uuid) AS media_id"
+            if ref.scheme == "media"
+            else requested_media_ids_cte_sql()
+        )
+        scoped = f"""EXISTS (SELECT 1 FROM ({scopes}) s
+            WHERE s.fragment_id=f.id AND :start>=s.start_offset AND :end<=s.end_offset)"""
+        capture_authorized = f"f.x_post_capture_id IN ({readable_x_capture_ids_sql()})"
+        authority = (
+            f"{scoped} AND (f.x_post_capture_id IS NULL OR {capture_authorized})"
+            if ref.scheme == "media"
+            else f"((f.x_post_capture_id IS NULL AND {scoped}) OR {capture_authorized})"
+        )
+        admitted = db.scalar(
+            text(f"""SELECT EXISTS (SELECT 1 FROM fragments f
+                WHERE f.id=:fragment AND :end<=char_length(f.canonical_text)
+                  AND {authority})"""),
+            parameters,
+        )
         if not admitted:
             return False, None
+        if byte_limit is None:
+            return True, None
         sql = "SELECT substring(canonical_text FROM :start+1 FOR :end-:start) AS body FROM fragments WHERE id=:fragment AND :end<=char_length(canonical_text)"
     elif locator.kind == "TextOffsets":
         parameters |= {"start": locator.start_offset, "end": locator.end_offset}
@@ -125,6 +145,15 @@ def resolve_location(
             table, column = "note_blocks", "body_text"
         else:
             table, column = "messages", "content"
+        if byte_limit is None:
+            return bool(
+                db.scalar(
+                    text(
+                        f"SELECT EXISTS (SELECT 1 FROM {table} WHERE id=:id AND :end<=char_length({column}))"
+                    ),
+                    parameters,
+                )
+            ), None
         sql = f"SELECT substring({column} FROM :start+1 FOR :end-:start) AS body FROM {table} WHERE id=:id AND :end<=char_length({column})"
     elif isinstance(locator, (PdfPageTarget, PdfPageGeometryTargetOut)):
         if ref.scheme != "media":
@@ -184,3 +213,79 @@ def resolve_location(
         raise PromptBodyTooLarge(ref.uri)
     body = db.scalar(text(sql), parameters)
     return True, label + body
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceText:
+    text: str
+    x_capture: bool
+
+
+def reference_texts(db: Session, references: list[LiveReference]) -> dict[str, ReferenceText]:
+    """Bounded exact display slices after this snapshot's full-range admission.
+
+    The extra codepoint lets the shared excerpt projection report selected-text
+    omission. Ordinary fragments do not acquire an inferred reading identity.
+    """
+    if not references:
+        return {}
+    ranges = []
+    for position, reference in enumerate(references):
+        ref = require_ref(reference.resource_ref)
+        locator = reference.locator
+        assert isinstance(
+            locator,
+            (
+                WebTextOffsetsTargetOut,
+                EpubTextOffsetsTargetOut,
+                TranscriptTextOffsetsTargetOut,
+                TextOffsetsTarget,
+            ),
+        )
+        ranges.append(
+            {
+                "position": position,
+                "scheme": ref.scheme,
+                "id": str(ref.id),
+                "fragment": str(locator.fragment_id)
+                if isinstance(
+                    locator,
+                    (
+                        WebTextOffsetsTargetOut,
+                        EpubTextOffsetsTargetOut,
+                        TranscriptTextOffsetsTargetOut,
+                    ),
+                )
+                else None,
+                "start_offset": locator.start_offset,
+                "end_offset": locator.end_offset,
+            }
+        )
+    rows = db.execute(
+        text("""WITH requested AS (
+            SELECT * FROM jsonb_to_recordset(CAST(:ranges AS jsonb))
+                AS r(position integer,scheme text,id uuid,fragment uuid,start_offset integer,end_offset integer)
+        )
+        SELECT r.position,substring(f.canonical_text FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)) AS body,
+               f.x_post_capture_id IS NOT NULL AS x_capture
+        FROM requested r JOIN fragments f ON f.id=r.fragment
+        WHERE r.end_offset<=char_length(f.canonical_text)
+        UNION ALL
+        SELECT r.position,substring(n.body_text FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)),false
+        FROM requested r JOIN note_blocks n ON r.scheme='note_block' AND n.id=r.id
+        WHERE r.fragment IS NULL AND r.end_offset<=char_length(n.body_text)
+        UNION ALL
+        SELECT r.position,substring(m.content FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)),false
+        FROM requested r JOIN messages m ON r.scheme='message' AND m.id=r.id
+        WHERE r.fragment IS NULL AND r.end_offset<=char_length(m.content)
+        UNION ALL
+        SELECT r.position,substring(h.annotation_body_text FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)),false
+        FROM requested r JOIN highlights h ON r.scheme='highlight' AND h.id=r.id
+        WHERE r.fragment IS NULL AND r.end_offset<=char_length(h.annotation_body_text)"""),
+        {"ranges": json.dumps(ranges)},
+    ).all()
+    assert len(rows) == len(references), "admitted reference text changed within its snapshot"
+    return {
+        references[row.position].model_dump_json(): ReferenceText(row.body, row.x_capture)
+        for row in rows
+    }

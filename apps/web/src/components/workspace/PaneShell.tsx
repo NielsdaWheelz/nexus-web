@@ -29,7 +29,7 @@ import Companion, {
   createCompanionController,
   type CompanionController,
 } from "@/components/workspace/Companion";
-import type { CompanionPresentation } from "@/components/workspace/companionPresentation";
+import { CompanionPresentationContext, type CompanionPresentation } from "@/components/workspace/companionPresentation";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import { useCatalogState } from "@/lib/catalog/provider";
 import { installedApp } from "@/lib/native/admission";
@@ -153,7 +153,9 @@ export default function PaneShell(props: PaneShellProps) {
     <PaneRuntimeProvider pane={pane} isActive={isActive} isVisible={props.isVisible} isPresented={props.isPresented} host={controller}>
 
         <PaneChromeContext value={chrome}>
-          <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
+          <CompanionPresentationContext value={presentation}>
+            <PaneView {...props} chrome={chrome} state={state} controller={controller} presentation={presentation} companionMaxWidthPx={companionMaxWidthPx} />
+          </CompanionPresentationContext>
         </PaneChromeContext>
 
     </PaneRuntimeProvider>

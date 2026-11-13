@@ -194,9 +194,20 @@ historical outline items likewise retain supplied evidence before considering lo
 authorship; ordinary authored rows keep their authoritative local reads.
 
 librarian attachments and citations carry current resource references with nullable
-structural coordinates. their renderer reads the resource's current identity,
-not captured evidence. invalid coordinates remain unavailable; source opening is
-still allowed. selections create no highlight, passage anchor or annotation.
+structural coordinates. `chat/references.py` projects their current identity,
+exact excerpt, private annotation and readable source bibliography in one snapshot.
+`ReferenceFigure` reads nothing; `LiveReference` shares its activation. whole
+highlights retain their saved passage and separate annotation; annotation-field
+references show that field, not the source quotation. ordinary fragment selections
+use authorized canonical plain text because no reading identity was selected.
+`live_references.resolve_location` requires the viewer: the entire original range
+must fit one readable interval, including words beyond the preview cap. disconnected
+pieces cannot combine authority. x captures retain their capture-owner boundary.
+`source_display_excerpts` returns named format-limit outcomes per request; those
+alone permit exact plain presentation. canonical disagreement, scope errors and
+helper failures remain failures. authored captures keep their strict contract.
+invalid coordinates remain unavailable; source opening is still allowed.
+selections create no highlight, passage anchor or annotation.
 chat url citations retain only the url. source-owned native and oracle quotations
 keep the captured-evidence contract above.
 

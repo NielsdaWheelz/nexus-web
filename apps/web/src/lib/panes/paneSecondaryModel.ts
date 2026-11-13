@@ -9,6 +9,7 @@ export const SECONDARY_SURFACES = {
     title: "Connections",
   },
   "import-detail": { groupId: "imports-inspector", title: "Import details" },
+  "librarian-references": { groupId: "librarian-inspector", title: "References" },
 } as const;
 
 export type WorkspaceSecondarySurfaceId = keyof typeof SECONDARY_SURFACES;
@@ -35,7 +36,7 @@ export function getSecondaryGroupForSurface(
 export const COMPANION_MIN_WIDTH_PX = 280;
 export const COMPANION_MAX_WIDTH_PX = 720;
 
-/** One width law for both groups: sized once, kept per pane; null is the default. */
+/** One width law for every group: sized once, kept per pane; null is the default. */
 export function companionWidthPx(storedPx: number | null): number {
   return Math.min(
     COMPANION_MAX_WIDTH_PX,

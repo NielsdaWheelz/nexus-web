@@ -2068,7 +2068,7 @@ def resolve_source_target(
                     source_activation=activation, location=WholeSourceLocationOut()
                 )
             # Current bounds only: an invalid range is unavailable, never repaired.
-            if not resolve_location(db, reference, byte_limit=None)[0]:
+            if not resolve_location(db, reference, viewer_id=viewer_id, byte_limit=None)[0]:
                 return SourceTargetOut(
                     source_activation=activation,
                     location=UnavailableSourceLocationOut(reason="location_unavailable"),
