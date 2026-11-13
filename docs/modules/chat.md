@@ -125,6 +125,35 @@ and individually cancellable. a selection without a question opens an
 attached empty composer. corrections are follow-ups. the settings-owned reading
 brief is manual; chat has no brief-writing tool or automatic orientation document.
 
+each turn is one unpositioned article containing the labelled question and answer
+groups. the question is its literal `h2`; more than 280 utf-16 units or a blank
+line uses a body-size paragraph with an `sr-only` heading. attachments follow the
+question. the first loaded turn of each device-zone day starts with an absolute
+date rule, inside the user group and before any retry line. reading-text hooks
+exclude dates, retry lines, apparatus and controls. message ancestry stays
+unpositioned so the scroll owner measures message offsets in its scrollport.
+
+the surface resolves the reader profile's measure once, capped at 72ch;
+transcript, search and composer share that centred measure and side padding.
+answers use the reader's face, size and leading in machine ink. answer markdown
+headings start at `h3`. search excerpts retain stored words and match emphasis,
+using the question's body hand or the answer's prose hand according to speaker.
+
+`components/chat/MarkdownMessage` owns answer prose, citation adjacency and the
+pending caret. settled markers share `ReaderCitation.module.css`'s sans accent
+numeral; only immediately adjacent markers get a comma. pending brackets remain
+literal until the terminal read. active fine-pointer panes preview the marker's
+`ReferenceFigure` unless their figures are presented in an open companion column.
+touch follows the source; reference controls open the companion. preview and menu
+portal events never enter the transcript's dom-owned handlers.
+
+visible write receipts precede one foot per turn. its disclosure names the
+current phase or last running act, then the question's device-zone time and the
+model and effort recorded at dispatch. only phase changes enter the live log;
+the changing act is hidden from announcements. the foot keeps its block size at
+settlement. its trail is one lazily constructed `MachineText` block, including
+while pending. undo retains the receipt row and strikes its reverted target.
+
 ## product ownership
 
 `components/chat/Librarian.tsx` owns mode, timeline reading and chrome.
@@ -173,7 +202,12 @@ per-turn cancel leaves send available. retries append using the current composer
 model and effort; outside the librarian, retry opens the turn for this explicit
 choice. retry never consumes the composer draft. successful answers expose
 no regeneration. deletion names its question/answer pair and says completed
-actions remain. ordinary message resource actions remain available.
+actions remain. the answer owns the turn's one resource menu: immediate `copy
+question`, then prepared open, open in new pane, ask librarian and delete turn.
+the question has no separate resource menu. copy answer keeps its checked icon;
+menu copy only announces `copied`. unavailable copying offers selection of the
+exact question or answer reading text. mouse users reveal the quiet copy/menu group by hover,
+focus or an open menu; coarse pointers and forced colours keep it visible.
 
 the search toolbar covers retained nonempty terminal text across account history,
 including incomplete answers. metadata identifies speaker, admission time and
@@ -248,8 +282,10 @@ labels and dispatch freshness still update immediately.
 
 the composer is the transcript's open entry: rule, optional passage figure, bare
 one-to-eight-line textarea, facts, then generation control and `send`. the surface
-owns the shared column, gutter and question type/measure tokens. both transcript
-and composer reserve scrollbar space. the rule alone marks line focus, using
+exports `--librarian-column` and `--librarian-gutter` for transcript, search and
+composer; `--question-font`, `--question-tracking` and `--question-measure` give
+the question and writing line one hand. all three scroll owners reserve scrollbar
+space. the rule alone marks line focus, using
 the room's ring; motion and forced-colour preferences remain visible.
 phone layouts own a 44px control minimum through the shared size hook, including
 native webviews that report a fine pointer alongside touch input.

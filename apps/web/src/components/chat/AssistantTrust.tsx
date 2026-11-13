@@ -76,28 +76,28 @@ export default function AssistantTrust({ messageId, actions, undone, onUndone }:
   const replay = primary && "commandKey" in primary && primary.commandKey === `undo ${unknown?.id}` ? primary : null;
   const waits = recovery !== null && (replay === null || replay.busy || replay.disabledReason !== undefined);
   const waitReason = replay?.disabledReason ?? admissionReason() ?? recovery?.line.reason;
-  return <div role="list" aria-label="assistant actions">
+  return <div className={styles.receipts} role="list" aria-label="assistant actions">
     {unknown && recovery ? <Hold id={`undo:${unknown.id}`} attempt={unknown.attempt} {...recovery} /> : null}
     {waits ? <span id={waitsId} className="sr-only" aria-live="off">{waitReason}</span> : null}
     {pending ? <span id={otherId} className="sr-only" aria-live="off">another undo isn’t finished.</span> : null}
     {writes.map((tool) => {
       const ref = tool.created_refs[0];
       const historicalFiling = tool.created_refs.some(ref => ref.kind === "entry" && ref.order_revision === null);
-      const kicker = ref?.field === "annotation" ? "Annotated" : ref ? KICKERS[ref.kind] : tool.activity.verb;
+      const kicker = ref?.field === "annotation" ? "annotated" : ref ? KICKERS[ref.kind] : tool.activity.verb;
       const target = ref?.label ?? tool.activity.subject;
       const reverted = tool.reverted_at !== null || (tool.id !== null && undone.has(tool.id));
-      return <div key={tool.tool_call_index} className={styles.write} role="listitem">
-        <span className={styles.kicker}>{kicker}</span>
-        {target || tool.activity.outcome ? <span>
-          {target ? <em>{target}</em> : null}
-          {tool.activity.outcome ? <span>{target ? " · " : ""}{tool.activity.outcome}</span> : null}
-        </span> : null}
-        {reverted ? <span className={styles.kicker}>undone</span>
+      return <div key={tool.tool_call_index} className={styles.receipt} role="listitem">
+        <span className={styles.receiptKicker}>{kicker}</span>
+        <span className={styles.receiptBody}>
+          {target ? <span className={styles.receiptTarget} data-undone={reverted || undefined}>{target}</span> : null}
+          {tool.activity.outcome ? <span className={styles.receiptOutcome}>{target ? " · " : ""}{tool.activity.outcome}</span> : null}
+        </span>
+        <span className={styles.receiptEnd}>{reverted ? <span className={styles.receiptKicker}>undone</span>
           : tool.undo_allowed && tool.id !== null ? <Button
             disabled={busy || (pending !== null && tool.id !== pending.id) || (unknown?.id === tool.id && waits)} aria-busy={busy || (unknown?.id === tool.id && replay?.busy)}
             aria-describedby={pending !== null && tool.id !== pending.id ? otherId : unknown?.id === tool.id && waits ? waitsId : undefined}
             onClick={() => { if (tool.id !== null) void undo(tool.id); }}
-            aria-label={`Undo: ${kicker}${target ? ` ${target}` : ""}`}>Undo</Button> : historicalFiling ? <span className={styles.kicker}>older filings can’t be undone.</span> : null}
+            aria-label={`undo: ${kicker}${target ? ` ${target}` : ""}`}>undo</Button> : historicalFiling ? <span className={styles.receiptKicker}>older filings can’t be undone.</span> : null}</span>
       </div>;
     })}
   </div>;

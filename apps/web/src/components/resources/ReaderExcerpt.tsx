@@ -48,7 +48,10 @@ export default function ReaderExcerpt({ excerpt, color, full = false }: { excerp
       }
       children.push(<tbody key={first}>{rows}</tbody>); index--;
     }
-    const tag = node.kind === "a" || node.kind === "xref" ? "span" : ["section", "article", "header", "footer", "nav", "aside", "main"].includes(node.kind) ? "div" : node.kind;
+    const tag = node.kind === "a" || node.kind === "xref" ? "span"
+      : ["section", "article", "header", "footer", "nav", "aside", "main"].includes(node.kind) ? "div"
+        : node.kind === "h1" ? "h3" : node.kind === "h2" ? "h4" : node.kind === "h3" ? "h5"
+          : ["h4", "h5", "h6"].includes(node.kind) ? "h6" : node.kind;
     const attributes = { key, lang: node.lang ?? undefined, dir: node.dir ?? undefined,
       ...(node.kind === "ol" ? { start: node.start, reversed: node.reversed } : {}),
       ...(node.kind === "li" ? { value: node.value ?? undefined } : {}),

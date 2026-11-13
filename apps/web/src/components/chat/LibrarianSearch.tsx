@@ -28,7 +28,7 @@ import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { definePaneVisitDataKey, usePaneReturnScrollport, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import styles from "./ChatSurface.module.css";
+import styles from "./LibrarianSearch.module.css";
 
 type Row = ApiJson<"/search", "get">["results"][number];
 const RESULTS = definePaneVisitDataKey<ListSnapshot<Row>>("Librarian.SearchResults");
@@ -177,7 +177,7 @@ function LibrarianSearchResults({ query, eligible, list, current, navigation, an
           run: list.failure.error.code === "E_INVALID_CURSOR" ? () => { void list.refetch(); } : list.retry }]} />
         : !list.current ? <Ruling />
         : rows.length === 0 ? <Fact line={{ fact: `no messages match “${query}”` }} /> : null}
-      <div {...navigation.listProps} aria-busy={eligible && !list.current || undefined}>
+      <div {...navigation.listProps} className={styles.rows} aria-busy={eligible && !list.current || undefined}>
         {rows.map(row => <MessageResult key={row.item.ref} row={row} current={current}
           option={navigation.optionProps(row.item.ref)} timeZone={timeZone} />)}
       </div>
@@ -205,7 +205,7 @@ function MessageResult({ row, current, option, timeZone }: {
   return <a {...option} href={current ? row.item.activation.href ?? undefined : undefined}
     className={styles.searchResult} tabIndex={-1} aria-disabled={!current || option["aria-disabled"]}
     data-workspace-rich-target="true" data-collection-row-id={row.item.ref} data-row-focusable="">
-    <span className={styles.searchExcerpt}><ExcerptText excerpt={row.match?.excerpt ?? body.excerpt} match={row.match} /></span>
+    <span className={styles.searchExcerpt} data-speaker={message.role}><ExcerptText excerpt={row.match?.excerpt ?? body.excerpt} match={row.match} /></span>
     <span className={styles.searchMetadata}>{message.role === "user" ? "you" : "librarian"}
       {stamp ? <> · <time dateTime={message.created_at} aria-label={stamp.full}>{stamp.label}</time></> : null}
       {message.status !== "complete" ? " · incomplete" : null}

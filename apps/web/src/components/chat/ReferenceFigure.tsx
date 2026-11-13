@@ -40,7 +40,7 @@ export default function ReferenceFigure({ value, className, tabIndex = -1, onCli
     if (event.target instanceof Element && event.target.closest("a[href]")) suppressSelectionActivation(event);
     onClickCapture?.(event);
   }}>
-    {"ordinal" in value ? <div className={styles.ordinal} aria-label={`reference ${value.ordinal}`}>[{value.ordinal}]</div> : null}
+    {"ordinal" in value ? <div className={styles.ordinal} aria-label={`reference ${value.ordinal}`}>{value.ordinal}</div> : null}
     {target.kind === "url" ? <>
       <a className={styles.primary} href={target.url} data-reference-control="source" onClick={suppressSelectionActivation}>
         <span data-resource-primary>{target.url}</span>

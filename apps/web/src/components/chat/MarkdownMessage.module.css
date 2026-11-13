@@ -1,0 +1,201 @@
+/* The librarian's answer follows the reader profile; controls keep their own hand. */
+.prose {
+  position: relative;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  color: var(--ink-machine);
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  font-weight: var(--weight-regular);
+  line-height: var(--reader-line-height, var(--leading-normal));
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+}
+
+.prose :is(p, ul, ol, blockquote),
+.prose :is(.codeBlock, .tableScroll) { margin: 0 0 .8em; }
+.prose :is(ul, ol) { padding-inline-start: var(--space-6); }
+.prose li { margin-block-end: var(--space-1); }
+.prose li :is(ul, ol) { margin-block: var(--space-1); }
+.prose li > p:has(+ ul, + ol) { margin-block-end: var(--space-1); }
+.prose > :first-child { margin-block-start: 0; }
+.prose > :last-child,
+.prose > :has(+ .caret:last-child),
+.prose li > :last-child,
+.prose li > :has(+ .caret:last-child) { margin-block-end: 0; }
+/* Empty text blocks keep their writing line after the caret leaves. */
+.prose :is(p, h3, h4, h5, h6, li, blockquote) { min-block-size: 1lh; }
+.prose:has(> hr[data-message-terminal-rule]),
+.prose :is(blockquote, li):has(> hr[data-message-terminal-rule]) { padding-block-end: 1lh; }
+
+.prose blockquote {
+  padding-inline-start: var(--space-4);
+  border-inline-start: var(--stroke-hairline) solid var(--edge-strong);
+  color: var(--ink);
+}
+
+.prose :is(h3, h4, h5, h6) {
+  margin: 1.2em 0 .4em;
+  color: inherit;
+  font-size: 1em;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+.prose :is(h3, h4) { font-size: 1.125em; }
+.prose strong { font-weight: var(--weight-semibold); }
+.prose hr {
+  inline-size: 3rem;
+  margin: 1.2em 0;
+  border: 0;
+  border-block-start: var(--stroke-hairline) solid var(--edge-strong);
+}
+.prose a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--edge-strong);
+  text-underline-offset: var(--space-1);
+  transition: text-decoration-color var(--duration-fast) var(--ease-glide);
+}
+.prose a:hover { text-decoration-color: var(--accent); }
+
+.tableScroll { min-inline-size: 0; max-inline-size: 100%; overflow-x: auto; }
+.tableScroll table {
+  inline-size: max-content;
+  min-inline-size: 100%;
+  border-collapse: collapse;
+  border-block: var(--stroke-hairline) solid var(--edge-strong);
+  font: inherit;
+}
+.tableScroll thead { border-block-end: var(--stroke-hairline) solid var(--edge-strong); }
+/* A cell's block size is a minimum; empty rows retain a reading line and its padding. */
+.tableScroll :is(th, td) {
+  block-size: calc(1lh + 2 * var(--space-2));
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  vertical-align: top;
+}
+.tableScroll th { font-weight: var(--weight-semibold); }
+
+.citation a { padding-block: .4em; color: inherit; text-decoration: none; }
+.citation[data-citation-adjacent]::before { content: "," / ""; }
+.citation[data-reference-corresponding],
+.citation[data-preview-open] { background: var(--surface-2); outline: var(--stroke-hairline) solid var(--accent); }
+.previewReference { min-inline-size: 0; }
+.previewFigure[data-reference-corresponding] { outline: var(--stroke-hairline) solid var(--edge-subtle); outline-offset: var(--space-1); }
+
+.caret { display: inline-block; inline-size: 0; line-height: 0; user-select: none; }
+.caret::after {
+  content: "";
+  display: inline-block;
+  inline-size: 2px;
+  block-size: 1em;
+  background: var(--accent);
+  vertical-align: -.125em;
+  animation: caret 1s step-end infinite;
+}
+.caretBlock { position: relative; display: block; block-size: 0; line-height: inherit; }
+.caretBlock::after { position: absolute; inset-inline-start: 0; inset-block-start: calc((1lh - 1em) / 2); }
+@keyframes caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .caret::after { animation: none; } }
+@media (forced-colors: active) { .caret::after { background: CanvasText; } }
+
+.inlineCode {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.codeBlock {
+  min-inline-size: 0;
+  max-width: 100%;
+  margin: 0 0 var(--space-4);
+  overflow: hidden;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.codeLanguage,
+.copy {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.codeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-3);
+  background: var(--surface-1);
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.codeContent {
+  min-inline-size: 0;
+  overflow-x: auto;
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+
+.codePre {
+  margin: 0;
+  min-block-size: 1lh;
+  font: inherit;
+}
+
+/* Over the theme's .hljs: the block draws the ground. */
+.codeContent code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  background: transparent;
+  font: inherit;
+}
+
+.codeContent [data-message-code-passage] {
+  display: inline-block;
+  min-inline-size: 100%;
+}
+
+
+.preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+:global([data-theme="elvish"]) .prose:not(:has(> .codeBlock:first-child, > .tableScroll:first-child))::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(-1 * var(--space-4));
+  inset-block-start: calc((1lh - 10px) / 2);
+  inline-size: 10px;
+  block-size: 10px;
+  background: var(--accent);
+  mask: var(--elvish-leaf) center / contain no-repeat;
+  opacity: calc(.85 * var(--ornament));
+  pointer-events: none;
+}

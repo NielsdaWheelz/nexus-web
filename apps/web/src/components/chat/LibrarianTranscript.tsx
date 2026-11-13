@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type WheelEvent } from "react";
+import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type SyntheticEvent, type WheelEvent } from "react";
 import { flushSync } from "react-dom";
 import { Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -11,6 +11,7 @@ import { codepointLength, codepointToUtf16 } from "@/lib/canonicalText/codepoint
 import type { Timeline, Turn } from "@/lib/chat/wire";
 import { requirePaneRuntime, usePaneRuntime, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { useSourceArrival, useArrivalFailure } from "@/lib/reader/sourceArrival";
+import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import * as Icon from "@/lib/ui/icons";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import ChatTurn from "./ChatTurn";
@@ -22,12 +23,17 @@ const READING_POSITION = definePaneVisitDataKey<{ queryKey: string; position: Ch
 
 export interface LibrarianTranscriptHandle { onComposerWheel(event: WheelEvent<HTMLElement>): void }
 
+/** React portals retain ancestry; only this scrollport's DOM can affect its reading place. */
+function containsTarget(event: SyntheticEvent<HTMLElement>): boolean {
+  return event.target instanceof Node && event.currentTarget.contains(event.target);
+}
+
 /** The timeline's mounted scroll owner; search mounts a separate result surface. */
-export default function LibrarianTranscript({ history, adopted, queryKey, retryAvailable, onRetry, ref }: {
+export default function LibrarianTranscript({ history, adopted, queryKey, retryBlocked, onRetry, ref }: {
   queryKey: string;
   history: ServerValue<Timeline>;
   adopted: readonly Turn[];
-  retryAvailable: boolean;
+  retryBlocked: string | null;
   onRetry(runId: string): void;
   ref: Ref<LibrarianTranscriptHandle>;
 }) {
@@ -36,6 +42,7 @@ export default function LibrarianTranscript({ history, adopted, queryKey, retryA
   const scope = `${accountId}:${runtime.visitId}:${queryKey}`;
   const params = usePaneSearchParams();
   const router = usePaneRouter();
+  const timeZone = useHydratedBrowserTimeZone();
   const messageId = params.get("message");
   const before = params.get("before_seq");
   const after = params.get("after_seq");
@@ -95,15 +102,47 @@ export default function LibrarianTranscript({ history, adopted, queryKey, retryA
   } });
   arrivalRef.current = arrival;
   useArrivalFailure(arrival.failure);
-  return <div {...references.interactions} ref={scrollport} className={styles.scrollport} role="region" tabIndex={0} aria-label="librarian conversation"
-    onScroll={() => { scroll.onScroll(); saveReadingPosition({ queryKey, position: scroll.handle.captureReadingPosition() }); }} onFocus={scroll.onFocus}
-    onWheel={scroll.onUserScroll} onTouchMove={scroll.onUserScroll} onKeyDown={scroll.onKeyDown} onPointerDown={scroll.onPointerDown} onClick={scroll.onClick}>
+  const leaves = [];
+  if (timeZone !== null) {
+    const dayFormat = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    const fullFormat = new Intl.DateTimeFormat("en-GB", { timeZone, dateStyle: "full", timeStyle: "long" });
+    const timeFormat = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    let previousDay: string | null = null;
+    let previousYear: string | null = null;
+    for (const turn of turns) {
+      const date = new Date(turn.user_message.created_at);
+      const parts = dayFormat.formatToParts(date);
+      // Intl supplies each Gregorian date part requested by this formatter.
+      const year = parts.find(part => part.type === "year")!.value;
+      const words = ["weekday", "day", "month"].map(type => parts.find(part => part.type === type)!.value).join(" ").toLowerCase();
+      const key = `${year} ${words}`;
+      const day = key === previousDay ? null : { label: `${words}${previousYear === null || year !== previousYear ? ` ${year}` : ""}`, full: fullFormat.format(date) };
+      previousDay = key;
+      previousYear = year;
+      leaves.push(<ChatTurn key={turn.run_id} turn={turn} passage={passage} day={day} time={timeFormat.format(date)}
+        refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure} onRetry={() => onRetry(turn.run_id)}
+        retryBlocked={retryBlocked} inlineAttachments={references.inlineAttachments} onReadTurn={onReadTurn}
+        onContentLayout={scroll.afterLayout} onRevealReferences={references.reveal} />);
+    }
+  }
+  return <div ref={scrollport} className={styles.scrollport} role="region" tabIndex={0} aria-label="librarian conversation"
+    onFocusCapture={event => { if (containsTarget(event)) references.interactions.onFocusCapture(event); }}
+    onPointerDownCapture={event => { if (containsTarget(event)) references.interactions.onPointerDownCapture(); }}
+    onMouseOver={event => { if (containsTarget(event)) references.interactions.onMouseOver(event); }}
+    onMouseLeave={event => { if (containsTarget(event)) references.interactions.onMouseLeave(); }}
+    onScroll={event => { if (containsTarget(event)) { scroll.onScroll(); saveReadingPosition({ queryKey, position: scroll.handle.captureReadingPosition() }); } }}
+    onFocus={event => { if (containsTarget(event)) scroll.onFocus(event); }}
+    onWheel={event => { if (containsTarget(event)) scroll.onUserScroll(event); }}
+    onTouchMove={event => { if (containsTarget(event)) scroll.onUserScroll(event); }}
+    onKeyDown={event => { if (containsTarget(event)) scroll.onKeyDown(event); }}
+    onPointerDown={event => { if (containsTarget(event)) scroll.onPointerDown(event); }}
+    onClick={event => { if (containsTarget(event)) scroll.onClick(event); }}>
     {history.status === "loading" ? <Ruling /> : history.status === "failed" ? <Failed error={history.error} noun="messages" retry={{ run: history.refetch, busy: history.retrying }} /> : null}
     <div ref={transcript} className={styles.transcript} role="log" aria-label="librarian messages">
-      {history.status === "ready" && history.data.before_seq ? <Button onClick={() => router.replace(`/librarian?before_seq=${history.data.before_seq}`)}>earlier messages</Button> : null}
-      {history.status === "ready" && turns.length === 0 ? <div className={styles.absent}><p>read, think, and make connections with your librarian.</p></div> : null}
-      {turns.map(turn => <ChatTurn key={turn.run_id} turn={turn} passage={passage} refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure} onRetry={() => onRetry(turn.run_id)} retryAvailable={retryAvailable} inlineAttachments={references.inlineAttachments} onReadTurn={onReadTurn} onContentLayout={scroll.afterLayout} onRevealReferences={references.reveal} />)}
-      {history.status === "ready" && history.data.after_seq ? <Button onClick={() => router.replace(`/librarian?after_seq=${history.data.after_seq}`)}>later messages</Button> : null}
+      {history.status === "ready" && history.data.before_seq ? <Button className={styles.paging} onClick={() => router.replace(`/librarian?before_seq=${history.data.before_seq}`)}>earlier messages</Button> : null}
+      {history.status === "ready" && turns.length === 0 ? <div className={styles.absent}><p className={styles.empty}>read, think, and make connections with your librarian.</p></div> : null}
+      {leaves}
+      {history.status === "ready" && history.data.after_seq ? <Button className={styles.paging} onClick={() => router.replace(`/librarian?after_seq=${history.data.after_seq}`)}>later messages</Button> : null}
       <div className={styles.spacer} aria-hidden="true" style={{ height: scroll.spacer }} />
     </div>
     {scroll.latestBelow || messageId || before || after ? <div className={styles.latest}><Button icon={<Icon.Down />} onClick={() => messageId || before || after ? router.push("/librarian") : scroll.toLatest()}>latest</Button></div> : null}
