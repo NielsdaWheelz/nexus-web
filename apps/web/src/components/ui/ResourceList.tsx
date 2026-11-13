@@ -1,6 +1,11 @@
 import type { ReactNode, Ref } from "react";
 import styles from "./ResourceList.module.css";
 
+/** Nonsticky headings share the list's measure without becoming selectable rows. */
+export function ResourceListHead({ children }: { readonly children: ReactNode }) {
+  return <li role="presentation" className={styles.head}>{children}</li>;
+}
+
 /** An editorial index: rows butt together, separated by their own hairlines. */
 export default function ResourceList({
   ariaLabel,

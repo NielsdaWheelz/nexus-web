@@ -13,10 +13,6 @@ import { pageQuery, type ListPage } from "@/lib/api/useServerList";
 export type ImportSummary = ApiJson<"/imports/summary", "get">["data"];
 type ImportPage = ApiJson<"/imports", "get">["data"];
 export type ImportItem = Schema<"ImportItem">;
-/** The count from the latest page observation, not a traversal-wide total. */
-export interface ImportPageMetadata {
-  readonly matched_count: number;
-}
 export type ImportObligation = Schema<"ImportObligation">;
 export type ImportDetail = ApiJson<"/imports/{ref}", "get">["data"];
 type HistoryPage = ApiJson<"/imports/{ref}/history", "get">["data"];
@@ -34,7 +30,6 @@ export type MediaRecoveryOffer = Exclude<
 export type RecoveryRestriction = NonNullable<
   ImportObligation["unavailable_reason"]
 >;
-export type ImportsView = "NeedsAttention" | "InProgress" | "History";
 export type UploadVerificationCode = Schema<"Rejected">["code"];
 
 /**
@@ -108,15 +103,28 @@ export function fetchImportSummary(
   return read("/api/imports/summary", signal);
 }
 
-/** One server page of `query`, already narrowed to what its view correlates. */
+/** One server page of the register window or recent acquisitions. */
 export async function fetchImportPage(
   query: string,
   cursor: string | null,
   limit: number,
   signal: AbortSignal,
-): Promise<ListPage<ImportItem, ImportPageMetadata>> {
+): Promise<ListPage<ImportItem>> {
   const page = await read<ImportPage>(`/api/imports?${pageQuery(query, cursor, limit)}`, signal);
-  return { items: page.items, next_cursor: page.next_cursor, metadata: { matched_count: page.matched_count } };
+  return { items: page.items, next_cursor: page.next_cursor };
+}
+
+/** Preserve each observed server instant verbatim; one invalidation after the write. */
+export async function dismissImports(items: readonly { ref: string; through: string }[]): Promise<void> {
+  try {
+    for (let start = 0; start < items.length; start += 100) {
+      await apiFetch("/api/imports/dismissals", {
+        method: "PUT", body: JSON.stringify({ dismissals: items.slice(start, start + 100) }),
+      });
+    }
+  } finally {
+    publishImportsInvalidation();
+  }
 }
 
 export function fetchImportDetail(

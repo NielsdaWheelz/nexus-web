@@ -57,7 +57,7 @@ export default function MetadataResearchActions({
   const heldBack = admissionTransport(useRemoteAdmission());
   const ref = `media:${mediaId}`;
   const { operation, retry } = view;
-  const remedyNeeded = retry.status === "blocked" && retry.reason === "source_context_missing";
+  const remedyNeeded = pending === null && retry.status === "blocked" && retry.reason === "source_context_missing";
   const remedies = useResourceActions(remedyNeeded ? ref : null);
   const { prepare, state } = remedies;
   const remedyRequest = useRef<AbortController | null>(null);

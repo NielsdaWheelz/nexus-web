@@ -159,6 +159,7 @@ type State = {
 };
 
 type Host = {
+  importsReady(): boolean;
   open(target: WorkspaceTarget, disposition: "Follow" | "Fork"): void;
   settled(lines: readonly IntakeLine[]): void;
 };
@@ -540,6 +541,7 @@ function createIntake(guard: WorkGuard, creation: ReturnType<typeof createDestin
   /** A failed or dead run: readable still if a copy can be read or played, else its reason.
    * Null when the detail read failed: the line waits for the next pass. */
   async function failedTruth(importRef: string, summary: Schema<"MediaSummaryOut">, signal: AbortSignal): Promise<Truth | null> {
+    if (!host?.importsReady()) return null;
     try {
       const { item } = await requestWithDeadline({ signal, timeoutMs: ANSWER_MS, request: signal => fetchImportDetail(importRef, signal) });
       if (item.can_read || item.can_play) return { kind: "Readable", summary };
@@ -892,15 +894,15 @@ export function ImportIntakeHost({ openPage, children }: { openPage: () => void;
   if (state.defect !== null) throw state.defect.error;
   const destinations = useDestinationCreation("import-intake", intake.creation);
   const creation: ImportCreation = { ...destinations, admit: ({ name, scope }) => destinations.admit({ name, scope, onCreated: intake.created() }) };
-  const { observation, retainObserver } = useImports();
+  const { digest, observation, retainObserver } = useImports();
   const outcome = useOutcome();
   const workspace = useLatestWorkspace();
   // justify-polling: an accepted line's truth (where it landed, whether it reads, why it
-  // failed) has no push plane, so each Imports clock advance, every 5 s while it is retained,
-  // rereads only the accepted, unsettled lines. Retention ends when the last one settles.
+  // failed) has no push plane. The summary clock retries failed truth reads even when its
+  // projection digest is unchanged. Retention ends when the last line settles.
   const waiting = state.unsettled > state.running;
   useEffect(() => waiting ? retainObserver() : undefined, [waiting, retainObserver]);
-  useEffect(() => intake.observe(), [intake, observation]);
+  useEffect(() => { if (digest !== null) intake.observe(); }, [intake, digest, observation]);
 
   function activate(target: WorkspaceTarget, intent: OpenIntent | "Follow" | "Fork") {
     const current = workspace();
@@ -922,9 +924,10 @@ export function ImportIntakeHost({ openPage, children }: { openPage: () => void;
       case "See": case "Arm": case "ChooseAgain": case "SignIn": return [see];
     }
   }
-  const latest = useRef({ outcome, verbsOf, activate });
-  useLayoutEffect(() => { latest.current = { outcome, verbsOf, activate }; });
+  const latest = useRef({ outcome, verbsOf, activate, digest });
+  useLayoutEffect(() => { latest.current = { outcome, verbsOf, activate, digest }; });
   useLayoutEffect(() => intake.attach({
+    importsReady: () => latest.current.digest !== null,
     open(target, disposition) {
       if (latest.current.activate(target, disposition).kind !== "Cancelled") return;
       latest.current.outcome.say({ fact: `didn’t open · ${truncateText(target.labelHint ?? target.href, 120)}` },

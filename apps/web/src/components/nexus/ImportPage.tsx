@@ -30,13 +30,12 @@ import type { ApiJson } from "@/lib/api/wire";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
 import { extractLinks } from "@/lib/extractLinks";
 import { fetchImportPage, type ImportItem } from "@/lib/imports/api";
-import { attentionPhrase, FAILURE_COPY, reasonLine } from "@/lib/imports/copy";
+import { attentionPhrase, importLine } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { ADMIT_LIMIT, useImportCreation, useImportIntake, type IntakeLine } from "@/lib/imports/intake";
 import { colophon, linkPointer, lineView, pointer, type LineVerb } from "@/lib/imports/lineView";
 import { encodeImportsUrl } from "@/lib/imports/query";
 import { mediaKindLabel } from "@/lib/media/kind";
-import { metadataOperationName } from "@/lib/media/mediaMetadataCopy";
 import type { NexusPage } from "@/lib/nexus/model";
 import { flattenedPaste } from "@/lib/nexus/query";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
@@ -89,9 +88,10 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   const intake = useImportIntake();
   const creation = useImportCreation();
   const { profile } = useReaderContext();
-  const { displayTimeZone } = useRenderEnvironment();
+  const display = useRenderEnvironment();
+  const { displayTimeZone } = display;
   const coarse = useTouchCapable();
-  const { summary, observation, revision, retainObserver } = useImports();
+  const { summary, digest, revision, retainObserver } = useImports();
   const { signIn } = useShell();
   const { say, fail } = useOutcome();
   const { accountId } = useAuthenticatedAccount();
@@ -124,11 +124,10 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   });
   const [present] = useState(() => new Set(intake.lines.map(line => line.id)));
 
-  // justify-polling: the shelf has no timer of its own. it rereads Recent on each Imports
-  // observation while it shows, retaining the observer so that clock keeps its 5 s beat.
+  // justify-polling: the shelf shares Imports' observer and rereads only changed facts.
   const shelfShown = intake.lines.length === 0;
   useEffect(() => shelfShown ? retainObserver() : undefined, [shelfShown, retainObserver]);
-  const shelf = usePaneFreeServerValue({ key: shelfShown ? "import-shelf" : null, stale: `${revision}:${observation}`,
+  const shelf = usePaneFreeServerValue({ key: shelfShown && digest !== null ? "import-shelf" : null, stale: `${revision}:${digest}`,
     load: signal => fetchImportPage("view=Recent", null, 5, signal) });
 
   const { links } = extractLinks(intake.field, "UrlsOrSoleDomain");
@@ -152,7 +151,8 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
   }
   if (emailProfile.status === "loading") rows.push({ kind: "EmailLoading", key: "EmailLoading" });
   else if (emailProfile.error !== null) rows.push({ kind: "EmailFailed", key: "EmailFailed", error: emailProfile.error });
-  if (shelfShown && shelf.status === "failed") rows.push({ kind: "ShelfFailed", key: "ShelfFailed", error: shelf.error });
+  const shelfFailure = digest === null ? summary : shelf;
+  if (shelfShown && shelfFailure.status === "failed") rows.push({ kind: "ShelfFailed", key: "ShelfFailed", error: shelfFailure.error });
   if (shelfShown && shelf.status === "ready" && shelf.data.items.length > 0) {
     rows.push({ kind: "Heading", key: "Recent", text: "recent" });
     for (const item of shelf.data.items) rows.push({ kind: "Shelf", key: `Shelf:${item.ref}`, item });
@@ -378,7 +378,8 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
                 </PickerSurface>
               </div></div>;
               case "ShelfFailed": return <div key={row.key} role="row" className={styles.failed}><div role="gridcell">
-                <Failed error={row.error} noun="recent imports" retry={{ run: () => void shelf.refetch() }} />
+                <Failed error={row.error} noun="recent imports" retry={{ run: () => void shelfFailure.refetch(),
+                  busy: shelfFailure.status === "failed" && shelfFailure.retrying }} />
               </div></div>;
             }
             const selected = row.key === active;
@@ -414,11 +415,12 @@ export default function ImportPage({ controller, page, mobile, scrollRef: import
               case "Choose": return cell("choose a file…", <><Icon.Upload size={20} aria-hidden="true" className={styles.glyph} /><span className={styles.label}>choose a file…</span></>);
               case "Shelf": {
                 const readable = row.item.can_read || row.item.can_play;
-                const one = readable ? row.item.title : row.item.source_label ?? row.item.original_filename ?? row.item.title;
-                const two = shelfLine(row.item);
+                const one = readable ? row.item.title : row.item.pointer ?? row.item.title;
+                const line = importLine(row.item, display);
+                const two = line?.text ?? mediaKindLabel(row.item.media_kind);
                 return cell(`${one}, ${two.replaceAll(" · ", ", ")}`, <div className={styles.lineText}>
                   <div className={styles.one}><span className={readable ? styles.title : styles.pointer}>{one}</span></div>
-                  <div className={styles.two}>{two}</div>
+                  <div className={styles.two} data-tone={line?.tone}>{two}</div>
                 </div>);
               }
               case "All": return cell(attention > 0 ? `all imports, ${attentionPhrase(attention)}` : "all imports", <>
@@ -455,33 +457,4 @@ function shelfTarget(item: ImportItem): WorkspaceTarget {
   return item.media_id !== null && (item.can_read || item.can_play)
     ? { href: `/media/${item.media_id}`, labelHint: item.title }
     : { href: `/imports?${encodeImportsUrl({ selected: item.ref })}`, secondaryActivation: { surfaceId: "import-detail" } };
-}
-
-/** A shelf row's line two: its kind once it reads, else what is true of the obligation that
- * speaks. Only a source failure says `couldn’t read this`; search and metadata get fixed words. */
-function shelfLine(item: ImportItem): string {
-  const kind = mediaKindLabel(item.media_kind);
-  const readable = item.can_read || item.can_play;
-  switch (item.classification) {
-    case "Complete": return kind;
-    case "Active": return readable ? kind : "importing…";
-    case "NeedsAttention": switch (item.primary) {
-      case "search": return `${kind} · search indexing stopped`;
-      case "metadata": {
-        const operation = item.obligations.metadata?.operation ?? null;
-        return operation === null ? `${kind} · metadata update needs attention`
-          : `${kind} · ${metadataOperationName(operation.purpose)} ${operation.status === "held" ? "needs a repair" : "stopped"}`;
-      }
-      case "source": case null: {
-        const source = item.obligations.source;
-        const code = source?.failure_code ?? null;
-        // the upload stage's only attention state is an expired window
-        if (source?.stage === "Upload") return "upload timed out";
-        if (item.media_id === null) return code === null ? "couldn’t read this" : FAILURE_COPY[code].reason;
-        if (readable) return code === null ? `${kind} · needs attention` : `${kind} · ${FAILURE_COPY[code].reason}`;
-        const reason = reasonLine(item);
-        return reason === null ? "couldn’t read this" : `couldn’t read this · ${reason}`;
-      }
-    }
-  }
 }

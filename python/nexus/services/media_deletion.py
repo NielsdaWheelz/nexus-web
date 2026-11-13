@@ -637,6 +637,7 @@ def _hard_delete(db: Session, media_id: UUID) -> list[str]:
     _run(db, "DELETE FROM viewer_media_discoveries WHERE media_id=:m", m=media_id)
     consumption_state.delete_media_consumption_state_in_txn(db, media_id=media_id)
     _run(db, "DELETE FROM user_media_deletions WHERE media_id = :m", m=media_id)
+    _run(db, "DELETE FROM import_dismissals WHERE media_id = :m", m=media_id)
     contributors.cleanup_credits_for_deleted_target(db, target=MediaTarget(media_id))
     media_upload_sessions.delete_published_media_support_in_current_transaction(
         db, media_id=media_id

@@ -25,13 +25,13 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.import_history import (
     SAFE_FAILURE_CODES,
     STAGES,
-    HistoryEntry,
     assume_safe_failure_code,
 )
 from nexus.schemas.import_refs import ParsedImportRef, format_import_ref
 from nexus.schemas.imports import (
     HistoryPage,
     ImportDetail,
+    ImportDismissal,
     ImportItem,
     ImportListQuery,
     ImportObligation,
@@ -53,7 +53,8 @@ from nexus.services.collection_keyset import (
     encode_keyset_cursor,
     keyset_page,
 )
-from nexus.services.import_history import events_of_import_sql, history_entries, read_history_page
+from nexus.services.feeds import opml
+from nexus.services.import_history import read_history_page
 from nexus.services.media import MediaFacts, media_facts
 from nexus.services.metadata_operations import metadata_operations_sql
 from nexus.services.source_publication import load_source_progress
@@ -69,17 +70,9 @@ from nexus.services.upload_session_state import (
 )
 
 _PLANS = {
-    "NeedsAttention": [
-        SortKey("stage_rank", "asc", KeysetValueKind.Int),
-        SortKey("view_failed_at", "asc", KeysetValueKind.DateTime),
-        SortKey("ref_key", "asc", KeysetValueKind.Text),
-    ],
-    "InProgress": [
-        SortKey("accepted_at", "desc", KeysetValueKind.DateTime),
-        SortKey("ref_key", "asc", KeysetValueKind.Text),
-    ],
-    "History": [
-        SortKey("matched_at", "desc", KeysetValueKind.DateTime),
+    "Register": [
+        SortKey("class_rank", "asc", KeysetValueKind.Int),
+        SortKey("register_at", "desc", KeysetValueKind.DateTime),
         SortKey("ref_key", "asc", KeysetValueKind.Text),
     ],
     "Recent": [
@@ -92,19 +85,6 @@ _EVENT_PLAN = [
     SortKey("id", "desc", KeysetValueKind.Text),
 ]
 _LIVE = "('pending', 'failed', 'running')"
-
-
-def _rank(stage: str) -> str:
-    """A stage's pipeline position: the one order an import's obligations speak in."""
-    return f"array_position(ARRAY{list(STAGES)!r}::text[], {stage})"
-
-
-def _url_host(url: str) -> str:
-    """The host a url import is labelled and searched by."""
-    return (
-        f"lower(substring({url} from"
-        " '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/?#@]*@)?(\\[[^\\]]*\\]|[^/?#:]+)'))"
-    )
 
 
 def _queue_code(column: str) -> str:
@@ -121,13 +101,14 @@ WITH visible_media AS (
     SELECT operations.* FROM ({metadata_operations_sql()}) operations
     JOIN visible_media vm ON vm.media_id = operations.media_id
 ), media_work AS (
-    SELECT m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url, m.canonical_source_url,
+    SELECT m.id AS media_id, m.kind AS media_kind, m.title, m.requested_url,
         m.processing_status::text AS processing_status, m.updated_at AS media_updated_at,
         rp.source_issues, COALESCE(jsonb_array_length(rp.source_issues), 0) AS source_issue_count,
         msa.id AS attempt_id, msa.status AS attempt_status, msa.error_code AS attempt_error_code,
         (msa.id IS NOT NULL OR metadata_latest.job_id IS NOT NULL) AS has_import_lineage,
         msa.created_at AS attempt_created_at, msa.finished_at AS attempt_finished_at,
-        msa.updated_at AS attempt_updated_at,
+        msa.updated_at AS attempt_updated_at, msa.progress_updated_at,
+        acquisition.arrived_at,
         CASE WHEN msa.source_type = ANY(CAST(:counted_source_types AS text[]))
             THEN COALESCE(msa.processing_stage, 'Validate') ELSE 'SourceProcessing' END
             AS source_stage,
@@ -146,11 +127,13 @@ WITH visible_media AS (
         index_job.error_code AS index_job_error_code,
         metadata_latest.needs_attention AS metadata_needs_attention,
         metadata_latest.failure_code AS metadata_failure_code,
-        COALESCE(metadata_latest.completed_at, metadata_latest.updated_at) AS metadata_attention_at,
+        metadata_latest.job_id AS metadata_job_id,
+        metadata_latest.status AS metadata_job_status,
+        metadata_latest.available_at AS metadata_job_available_at,
+        COALESCE(metadata_latest.completed_at, metadata_latest.updated_at) AS metadata_failed_at,
         metadata_summary.first_created_at AS metadata_accepted_at,
         metadata_summary.unfinished_count AS metadata_unfinished_count,
         metadata_summary.updated_at AS metadata_updated_at,
-        live_jobs.unfinished_count AS unfinished_job_count,
         live_jobs.active_count AS active_job_count,
         live_jobs.updated_at AS live_jobs_updated_at,
         capacity.job_id AS capacity_job_id
@@ -161,6 +144,12 @@ WITH visible_media AS (
         SELECT * FROM media_source_attempts WHERE media_id = m.id
         ORDER BY {LATEST_ORDER_SQL} LIMIT 1
     ) msa ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT min(COALESCE(finished_at, created_at)) AS arrived_at
+        FROM media_source_attempts
+        WHERE media_id = m.id AND created_by_user_id = :viewer_id
+          AND status = 'succeeded' AND source_type <> :transcript_source_type
+    ) acquisition ON TRUE
     LEFT JOIN background_jobs source_job ON source_job.id = msa.job_id
     LEFT JOIN content_index_states cis ON cis.owner_kind = 'media' AND cis.owner_id = m.id
     LEFT JOIN LATERAL (
@@ -180,8 +169,7 @@ WITH visible_media AS (
         FROM metadata_jobs WHERE media_id = m.id
     ) metadata_summary ON TRUE
     LEFT JOIN LATERAL (
-        SELECT count(*) AS unfinished_count,
-            count(*) FILTER (WHERE status IN {_LIVE}) AS active_count,
+        SELECT count(*) FILTER (WHERE status IN {_LIVE}) AS active_count,
             max(updated_at) AS updated_at
         FROM background_jobs
         WHERE kind IN ('ingest_media_source', 'media_content_reindex_job', 'enrich_metadata')
@@ -243,16 +231,13 @@ WITH visible_media AS (
         pending.derived_state AS pending_state, w.requested_url,
         (SELECT original.source_type FROM media_source_attempts original WHERE original.media_id = w.media_id
             ORDER BY original.attempt_no LIMIT 1) = 'generic_web_url' AS is_ordinary_url,
-        CASE WHEN w.title = left(w.requested_url, 255) AND EXISTS (
-            SELECT 1 FROM upload_sessions capture WHERE capture.target_media_id IS NOT NULL
-                AND capture.target_media_id = w.media_id::text
-        ) THEN split_part(split_part(regexp_replace(w.requested_url,
-            '^[A-Za-z][A-Za-z0-9+.-]*://', ''), '?', 1), '#', 1)
-        ELSE COALESCE(w.title, r.filename) END AS title, r.filename AS original_filename,
+        COALESCE(w.title, r.filename) AS title, r.filename AS original_filename,
+        COALESCE(r.capture_url, w.requested_url) AS pointer_url,
+        r.session_updated_at, w.arrived_at, w.media_updated_at,
+        w.attempt_id, w.attempt_status, w.progress_updated_at,
+        w.metadata_job_id, w.metadata_job_status, w.metadata_job_available_at,
+        dismissal.through AS dismissed_through,
         COALESCE(w.media_kind, r.upload_kind) AS media_kind,
-        CASE WHEN r.session_id IS NULL THEN {_url_host("COALESCE(w.canonical_source_url, w.requested_url)")}
-            WHEN r.origin_kind = 'BrowserCapture' THEN {_url_host("r.capture_url")}
-            END AS source_host,
         CASE WHEN pending.session_id IS NOT NULL THEN
                 CASE WHEN pending.derived_state = 'AwaitingBytes' THEN 'Active' ELSE 'NeedsAttention' END
             WHEN w.media_id IS NOT NULL THEN w.source_classification
@@ -286,7 +271,7 @@ WITH visible_media AS (
         COALESCE(w.text_search_ready, FALSE) AS text_search_ready,
         w.search_classification, {_queue_code("w.index_job_error_code")} AS search_failure_code,
         COALESCE(w.index_job_finished_at, w.index_job_updated_at) AS search_failed_at,
-        w.metadata_classification, w.metadata_failure_code, w.metadata_attention_at,
+        w.metadata_classification, w.metadata_failure_code, w.metadata_failed_at,
         GREATEST(pending.session_updated_at, r.session_updated_at, w.media_updated_at, w.attempt_updated_at,
             w.source_job_updated_at, w.index_updated_at, w.index_job_updated_at,
             w.metadata_updated_at, w.live_jobs_updated_at) AS updated_at,
@@ -294,6 +279,8 @@ WITH visible_media AS (
         w.source_job_id, w.source_job_status, w.source_job_available_at, w.index_job_id,
         w.index_job_status, w.index_job_available_at, w.capacity_job_id, now() AS database_now
     FROM import_refs r LEFT JOIN import_media w ON w.media_id = r.media_id
+    LEFT JOIN import_dismissals dismissal
+        ON dismissal.user_id = :viewer_id AND dismissal.media_id = r.media_id
     LEFT JOIN LATERAL (
         SELECT * FROM targeted_sessions s WHERE s.target_media_id = r.media_id::text
         ORDER BY s.session_created_at DESC, s.session_id DESC LIMIT 1
@@ -311,15 +298,19 @@ WITH visible_media AS (
     FROM import_work WHERE search_classification IN ('Active', 'NeedsAttention')
     UNION ALL
     SELECT ref_key, 'metadata', metadata_classification, 'Metadata', metadata_failure_code,
-        metadata_attention_at, accepted_at, TRUE, FALSE
+        metadata_failed_at, accepted_at, TRUE, FALSE
     FROM import_work WHERE metadata_classification IN ('Active', 'NeedsAttention')
+), raised AS (
+    SELECT o.* FROM obligations o JOIN import_work i ON i.ref_key = o.ref_key
+    WHERE o.classification = 'NeedsAttention'
+      AND (i.dismissed_through IS NULL OR o.failed_at > i.dismissed_through)
 ), imports AS (
-    SELECT i.*, speaking.key AS primary_key, speaking.stage AS primary_stage,
-        speaking.failed_at AS primary_failed_at
+    SELECT i.*, speaking.key AS primary_key,
+        raised_newest.failed_at AS raised_failed_at
     FROM (
         SELECT import_work.*, CASE
-            WHEN 'NeedsAttention' IN (source_classification, search_classification,
-                metadata_classification) THEN 'NeedsAttention'
+            WHEN EXISTS (SELECT 1 FROM raised o WHERE o.ref_key = import_work.ref_key)
+                THEN 'NeedsAttention'
             WHEN 'Active' IN (source_classification, search_classification,
                 metadata_classification) THEN 'Active'
             ELSE 'Complete' END AS classification
@@ -328,11 +319,14 @@ WITH visible_media AS (
     LEFT JOIN LATERAL (
         SELECT * FROM obligations o
         WHERE o.ref_key = i.ref_key AND o.classification = i.classification
-        ORDER BY {_rank("o.stage")}, COALESCE(o.failed_at, o.accepted_at), o.key LIMIT 1
+          AND (o.classification = 'Active' OR EXISTS (
+              SELECT 1 FROM raised r WHERE r.ref_key = o.ref_key AND r.key = o.key))
+        ORDER BY array_position(ARRAY{list(STAGES)!r}::text[], o.stage), COALESCE(o.failed_at, o.accepted_at), o.key LIMIT 1
     ) speaking ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT max(failed_at) AS failed_at FROM raised WHERE ref_key = i.ref_key
+    ) raised_newest ON TRUE
 )"""
-
-_EVENTS = events_of_import_sql(session_id_expr="i.session_id", media_id_expr="i.media_id")
 
 
 def _params(viewer_id: UUID) -> dict[str, object]:
@@ -341,96 +335,41 @@ def _params(viewer_id: UUID) -> dict[str, object]:
         "counted_source_types": sorted(COUNTED_PROGRESS_SOURCE_TYPES),
         "safe_failure_codes": sorted(SAFE_FAILURE_CODES),
         "attention_states": list(UPLOAD_SESSION_ATTENTION_STATES),
+        "transcript_source_type": PODCAST_EPISODE_TRANSCRIPT,
     }
 
 
 def _view_sql(query: ImportListQuery, params: dict[str, object]) -> str:
-    """The view's rows (`filtered`), each naming the obligation or the event it matched: a
-    current view matches one obligation of the import's classification, History its newest
-    matching event (and whether a newer event follows it), Recent every own import under
-    its primary obligation, complete ones included."""
-    where: list[str] = []
-    if query.q is not None:
-        escaped = query.q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        params["q"] = f"%{escaped}%"
-        where.append(
-            "(i.title ILIKE :q ESCAPE '\\' OR i.original_filename ILIKE :q ESCAPE '\\'"
-            " OR i.source_host ILIKE :q ESCAPE '\\')"
+    if query.view == "Register":
+        params["arrived_from"] = query.arrived_from
+        return """, filtered AS (
+            SELECT i.*, CASE i.classification
+                WHEN 'NeedsAttention' THEN 0 WHEN 'Active' THEN 1 ELSE 2 END AS class_rank,
+                CASE i.classification WHEN 'NeedsAttention' THEN i.raised_failed_at
+                    WHEN 'Active' THEN i.accepted_at ELSE i.arrived_at END AS register_at
+            FROM imports i WHERE i.classification <> 'Complete' OR i.arrived_at >= :arrived_from
+        )"""
+    # Recent keeps the viewer's own acquisitions, including superseded imports,
+    # in their existing acceptance order, independently of arrival or classification.
+    return """, filtered AS (
+        SELECT i.* FROM imports i WHERE i.session_id IS NOT NULL OR EXISTS (
+            SELECT 1 FROM media_source_attempts a
+            WHERE a.media_id = i.media_id AND a.created_by_user_id = :viewer_id
+              AND a.source_type <> :transcript_source_type
+        ) OR EXISTS (
+            SELECT 1 FROM media_source_supersessions s
+            WHERE s.media_id = i.media_id AND s.created_by_user_id = :viewer_id
         )
-    if query.media_kind is not None:
-        params["media_kind"] = query.media_kind
-        where.append("i.media_kind = :media_kind")
-    params |= {
-        "stage": query.stage,
-        "failure_code": query.failure_code,
-        "matched_from": query.matched_from,
-        "before": query.before,
-    }
-    if query.view == "History":
-        matched = [
-            "(CAST(:stage AS text) IS NULL OR e.stage = :stage)",
-            "(CAST(:failure_code AS text) IS NULL"
-            " OR e.is_failure AND e.failure_code = :failure_code)",
-            "(CAST(:matched_from AS timestamptz) IS NULL OR e.occurred_at >= :matched_from)",
-            "(CAST(:before AS timestamptz) IS NULL OR e.occurred_at < :before)",
-        ]
-        if query.had_failures:
-            matched.append("e.is_failure")
-        if query.had_failures is False:
-            where.append(f"NOT EXISTS (SELECT 1 FROM ({_EVENTS}) failed WHERE failed.is_failure)")
-        if query.state is not None:
-            params["state"] = query.state
-            where.append("i.classification = :state")
-        join = f"""JOIN LATERAL (
-            SELECT e.event_table AS matched_table, e.id AS matched_id,
-                e.storage_id AS matched_storage_id, e.occurred_at AS matched_at,
-                e.stage AS matched_stage, e.failure_code AS matched_failure_code,
-                e.payload AS matched_payload,
-                EXISTS (SELECT 1 FROM ({_EVENTS}) newer
-                    WHERE (newer.occurred_at, newer.id) > (e.occurred_at, e.id))
-                    AS matched_precedes_newest
-            FROM ({_EVENTS}) e WHERE {" AND ".join(matched)}
-            ORDER BY e.occurred_at DESC, e.id DESC LIMIT 1
-        ) m ON TRUE"""
-        selection = (
-            "i.primary_key AS view_key, i.primary_failed_at AS view_failed_at,"
-            f" {_rank('i.primary_stage')} AS stage_rank, m.*"
-        )
-    elif query.view == "Recent":
-        # own is what the viewer acquired: an upload ref is always the viewer's session, a
-        # media ref needs the viewer's source attempt, live or superseded onto it. shared
-        # media, metadata-only rows and transcript requests are not imports of theirs. no
-        # obligation join: a complete import has no current obligation.
-        params["transcript_source_type"] = PODCAST_EPISODE_TRANSCRIPT
-        where.append(
-            "(i.session_id IS NOT NULL OR EXISTS (SELECT 1 FROM media_source_attempts a"
-            " WHERE a.media_id = i.media_id AND a.created_by_user_id = :viewer_id"
-            " AND a.source_type <> :transcript_source_type) OR EXISTS (SELECT 1"
-            " FROM media_source_supersessions s WHERE s.media_id = i.media_id"
-            " AND s.created_by_user_id = :viewer_id))"
-        )
-        join = ""
-        selection = "i.primary_key AS view_key"
-    else:
-        params["classification"] = query.view if query.view == "NeedsAttention" else "Active"
-        where.append("i.classification = :classification")
-        join = f"""JOIN LATERAL (
-            SELECT * FROM obligations o
-            WHERE o.ref_key = i.ref_key AND o.classification = i.classification
-              AND (CAST(:stage AS text) IS NULL OR o.stage = :stage)
-              AND (CAST(:failure_code AS text) IS NULL OR o.failure_code = :failure_code)
-            ORDER BY {_rank("o.stage")}, COALESCE(o.failed_at, o.accepted_at), o.key LIMIT 1
-        ) o ON TRUE"""
-        selection = (
-            f"o.key AS view_key, o.failed_at AS view_failed_at, {_rank('o.stage')} AS stage_rank"
-        )
-    return f""", filtered AS (
-        SELECT i.*, {selection} FROM imports i {join} WHERE {" AND ".join(where) or "TRUE"}
     )"""
 
 
 def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
-    """Global counts, independent of any filter; `observed_at` is the observation token."""
+    """Counts and one digest over the register's facts, without job lease churn."""
+    batches = [
+        batch.model_dump(mode="json")
+        for batch in opml.list_imports(db, viewer_id)
+        if batch.state in ("pending", "running", "needs_attention")
+    ]
     row = (
         db.execute(
             text(f"""{_CTE}
@@ -438,18 +377,36 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
                 count(*) FILTER (WHERE classification = 'NeedsAttention')::integer
                     AS needs_attention_count,
                 count(*) FILTER (WHERE classification = 'Active')::integer AS active_count,
-                ((SELECT COALESCE(sum(unfinished_job_count), 0) FROM import_media)
-                    + (SELECT count(*) FROM obligations
-                       WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
-                    + (SELECT count(*) FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))::integer
-                    AS unfinished_work_count,
                 (EXISTS (SELECT 1 FROM import_media WHERE active_job_count > 0)
                     OR EXISTS (SELECT 1 FROM obligations
                        WHERE classification = 'Active' AND NOT has_live_job AND NOT is_capture_slot)
                     OR EXISTS (SELECT 1 FROM targeted_sessions WHERE derived_state = 'AwaitingBytes'))
-                    AS work_in_flight
+                    AS work_in_flight,
+                md5(COALESCE((SELECT string_agg(jsonb_build_array(
+                    ref_key, classification, primary_key,
+                    source_classification, source_stage, source_failure_code,
+                    search_classification, 'Index', search_failure_code,
+                    metadata_classification, 'Metadata', metadata_failure_code,
+                    attempt_id, attempt_status, progress_updated_at,
+                    source_job_id, source_job_status, source_job_available_at,
+                    index_job_id, index_job_status, index_job_available_at,
+                    metadata_job_id, metadata_job_status, metadata_job_available_at,
+                    arrived_at, text_search_ready, source_issue_count,
+                    dismissed_through, raised_failed_at, media_updated_at,
+                    session_id, session_updated_at,
+                    (SELECT jsonb_agg(jsonb_build_array(s.session_id, s.derived_state,
+                        s.session_updated_at, s.verification_error_code, s.upload_url_expires_at)
+                        ORDER BY s.session_id)
+                     FROM targeted_sessions s WHERE s.target_media_id = imports.media_id::text)
+                )::text, '' ORDER BY ref_key) FROM imports
+                    WHERE classification <> 'Complete' OR arrived_at >= now() - interval '32 days'), '')
+                || COALESCE((SELECT string_agg(jsonb_build_array(
+                    batch->'id', batch->'state', batch->'attempt_version',
+                    batch->'admitted_count', batch->'remaining_count', batch->'failed_count'
+                )::text, '' ORDER BY batch->>'id')
+                FROM jsonb_array_elements(CAST(:batches AS jsonb)) batch), '')) AS digest
             FROM imports"""),
-            _params(viewer_id),
+            {**_params(viewer_id), "batches": json.dumps(batches)},
         )
         .mappings()
         .one()
@@ -458,9 +415,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
 
 
 def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) -> ImportPage:
-    """One page of the view; the count covers the whole filtered set, except Recent's, a
-    shelf that counts its page and spares a second pass over the set. The cursor is bound
-    to this viewer, view and filter set."""
+    """One keyset page, bound to its viewer, view and arrival window."""
     params = _params(viewer_id)
     filtered = _CTE + _view_sql(query, params)
     rows, next_cursor = keyset_page(
@@ -475,35 +430,9 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
             f" ORDER BY {order} LIMIT :limit"
         ),
     )
-    if query.view == "Recent":
-        matched_count = len(rows)
-    else:
-        matched_count = db.execute(
-            text(f"{filtered} SELECT count(*)::integer FROM filtered"), params
-        ).scalar_one()
-    # A History row carries its match only when a newer event follows it (I19).
-    narrated = [row for row in rows if row.get("matched_precedes_newest")]
-    entries = history_entries(
-        db,
-        viewer_id=viewer_id,
-        rows=[
-            {
-                "event_table": row["matched_table"],
-                "id": row["matched_id"],
-                "storage_id": row["matched_storage_id"],
-                "occurred_at": row["matched_at"],
-                "stage": row["matched_stage"],
-                "failure_code": row["matched_failure_code"],
-                "payload": row["matched_payload"],
-            }
-            for row in narrated
-        ],
-    )
-    matched = {row["ref_key"]: entry for row, entry in zip(narrated, entries, strict=True)}
     media = _hydrate(db, viewer_id, rows)
     return ImportPage(
-        matched_count=matched_count,
-        items=[_item(row, media, matched.get(row["ref_key"])) for row in rows],
+        items=[_item(row, media) for row in rows],
         next_cursor=next_cursor,
     )
 
@@ -511,7 +440,7 @@ def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) ->
 def _import_row(db: Session, viewer_id: UUID, ref: ParsedImportRef) -> RowMapping:
     row = (
         db.execute(
-            text(f"{_CTE} SELECT *, primary_key AS view_key FROM imports WHERE ref_key = :ref"),
+            text(f"{_CTE} SELECT * FROM imports WHERE ref_key = :ref"),
             {**_params(viewer_id), "ref": format_import_ref(ref)},
         )
         .mappings()
@@ -528,7 +457,7 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
     related = (
         db.execute(
             text(f"""{_CTE}
-            SELECT imports.*, primary_key AS view_key, related.relation
+            SELECT imports.*, related.relation
             FROM imports JOIN (
                 SELECT DISTINCT article_media_id AS media_id, 'article' AS relation
                 FROM x_article_inspections WHERE thread_media_id = :media_id
@@ -590,11 +519,10 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
         pending_captures=[PendingCapture.model_validate(dict(item)) for item in pending],
         original_source=original_source,
         email_source=email_source,
-        item=_item(row, hydrated, None),
+        item=_item(row, hydrated),
         source_issues=SOURCE_ISSUES.validate_python(row["source_issues"] or []),
         related_imports=[
-            RelatedImport(relation=item["relation"], item=_item(item, hydrated, None))
-            for item in related
+            RelatedImport(relation=item["relation"], item=_item(item, hydrated)) for item in related
         ],
     )
 
@@ -719,8 +647,8 @@ def _obligation(
     active = classification == "Active"
     code = row[f"{key}_failure_code"] if classification == "NeedsAttention" else None
     if key == "source" and row["pending_state"] is not None:
-        offer = facts.source_offer if facts is not None and not active else None
-        restriction = facts.source_restriction if facts is not None and not active else None
+        offer = None
+        restriction = None
         waiting = "AwaitingUploadConfirmation" if active else None
         status = "Queued" if active else None
     elif facts is None:
@@ -752,24 +680,40 @@ def _obligation(
 def _item(
     row: RowMapping,
     media: dict[UUID, tuple[MediaFacts, SourceProgress | None]],
-    matched: HistoryEntry | None,
 ) -> ImportItem:
     facts, progress = media.get(row["media_id"], (None, None))
+    # justify-defect: a visible linked media always has the owner's summary in this snapshot.
+    assert row["media_id"] is None or facts is not None
+    pointer = row["original_filename"]
+    if row["pointer_url"] is not None:
+        parsed = urlsplit(row["pointer_url"])
+        pointer = f"{parsed.hostname}{parsed.path}"
     return ImportItem(
         ref=row["ref_key"],
         media_id=row["media_id"],
         title=row["title"],
         original_filename=row["original_filename"],
         media_kind=MediaKind(row["media_kind"]),
-        source_label=row["source_host"],
+        summary=None if facts is None else facts.summary,
+        pointer=pointer,
+        arrived_at=row["arrived_at"],
+        dismissal=None
+        if row["media_id"] is None or row["raised_failed_at"] is None
+        else ImportDismissal(through=row["raised_failed_at"]),
+        dismissed=[
+            key
+            for key in ("source", "search", "metadata")
+            if row[f"{key}_classification"] == "NeedsAttention"
+            and row["dismissed_through"] is not None
+            and row[f"{key}_failed_at"] <= row["dismissed_through"]
+        ],
         can_read=facts is not None and facts.can_read,
         can_play=facts is not None and facts.can_play,
         text_search_ready=row["text_search_ready"],
         classification=row["classification"],
-        primary=row["view_key"],
+        primary=row["primary_key"],
         accepted_at=row["accepted_at"],
         updated_at=row["updated_at"],
-        matched_event=matched,
         obligations=ImportObligations(
             source=_obligation(row, "source", facts, progress),
             search=_obligation(row, "search", facts, progress),

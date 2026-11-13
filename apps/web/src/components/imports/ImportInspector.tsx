@@ -1,475 +1,250 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
+import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import MetadataResearchActions from "@/components/media/MetadataResearchActions";
 import MetadataResearchResult from "@/components/media/MetadataResearchResult";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Button from "@/components/ui/Button";
-import { useImportCommands } from "@/lib/imports/commands";
 import { useBusyActionIds } from "@/lib/actions/ResourceActionsProvider";
-import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
-import Pill from "@/components/ui/Pill";
-import { type ApiError } from "@/lib/api/client";
-import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
-import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import type { ApiError } from "@/lib/api/client";
 import { usePaneFreeServerValue } from "@/lib/api/serverState";
+import { useObservationDemand } from "@/lib/api/useObservationDemand";
+import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
+import type { Schema } from "@/lib/api/wire";
 import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
-import {
-  fetchImportDetail,
-  fetchImportHistory,
-  type HistoryEntry,
-  type ImportItem,
-} from "@/lib/imports/api";
-import {
-  KIND_LABEL,
-  MATCHED_ANNOUNCEMENT,
-  MATCHED_LABEL,
-  UNAVAILABLE_LINE,
-  UPLOAD_REJECTED_LABEL,
-  consequenceLine,
-  eventLine,
-  importFailureCopy,
-  matchLine,
-  momentText,
-  obligationStatusLine,
-  recoveryLine,
-  relatedSourceOutcomeLine,
-  sourceFailureLine,
-  speaking,
-  stageLabel,
-} from "@/lib/imports/copy";
+import { fetchImportDetail, fetchImportHistory, type HistoryEntry, type ImportDetail, type ImportItem } from "@/lib/imports/api";
+import { useImportCommands } from "@/lib/imports/commands";
+import { eventLine, importFailureCopy, importLine, momentText, recoveryLine, registerDay, relatedSourceOutcomeLine, speaking, stageLabel, UNAVAILABLE_LINE, UPLOAD_REJECTED_LABEL } from "@/lib/imports/copy";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import { encodeImportsUrl } from "@/lib/imports/query";
-import {
-  METADATA_FAILURE_COPY,
-  earlierMetadataRuns,
-  metadataOperationName,
-  metadataOperationSummary,
-  metadataRetryBlockedCopy,
-} from "@/lib/media/mediaMetadataCopy";
-import type { MetadataOperation } from "@/lib/media/mediaMetadataOperations";
-import { requirePaneRuntime, usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { METADATA_FAILURE_COPY, earlierMetadataRuns, metadataOperationName, metadataOperationSummary, metadataRetryBlockedCopy } from "@/lib/media/mediaMetadataCopy";
+import { requirePaneRuntime, usePaneIsActive, usePaneIsPresented, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
-import { ImportObligationActions, ImportOpenAction } from "./ImportActions";
-import styles from "./Imports.module.css";
+import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
+import { assertNever } from "@/lib/assertNever";
+import { ImportCommandControl, ImportObligationActions, useDismissAction } from "./ImportActions";
+import styles from "./ImportInspector.module.css";
 
-const HISTORY = definePaneVisitDataKey<ListSnapshot<HistoryEntry>>("Imports.History");
-const HISTORY_UNIT = { singular: "event", plural: "events" };
+const RECORD = definePaneVisitDataKey<ListSnapshot<HistoryEntry>>("Imports.Record");
+const gone = (error: ApiError | null) => error?.code === "E_IMPORT_NOT_FOUND" || error?.code === "E_INVALID_REQUEST";
 
-/** The server no longer has this import, or never had one by that ref. */
-const gone = (error: ApiError | null) =>
-  error?.code === "E_IMPORT_NOT_FOUND" || error?.code === "E_INVALID_REQUEST";
-
-function Field({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  );
+function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+  return <div><dt>{label}</dt><dd>{children}</dd></div>;
 }
 
 function Moment({ value }: { readonly value: string }) {
   const display = useRenderEnvironment();
-  return <time dateTime={value}>{momentText(value, display)}</time>;
+  return <time dateTime={value}>{momentText(value, display).toLowerCase()}</time>;
 }
 
-/** One metadata operation's identifiers and times, in its section and in History. */
-function OperationDetails({
-  operation,
-}: {
-  readonly operation: MetadataOperation;
-}) {
-  const finished =
-    operation.status === "completed"
-      ? operation.outcome.completed_at
-      : operation.status === "failed"
-        ? operation.completed_at
-        : null;
-  return (
-    <details className={styles.diagnostics}>
-      <summary>operation details</summary>
-      <dl>
-        <Field label="Job">
-          <code>{operation.job_id}</code>
-        </Field>
-        {operation.generation_id !== null ? (
-          <Field label="Generation">
-            <code>{operation.generation_id}</code>
-          </Field>
-        ) : null}
-        <Field label="Requested">
-          <Moment value={operation.created_at} />
-        </Field>
-        {operation.started_at !== null ? (
-          <Field label="Started">
-            <Moment value={operation.started_at} />
-          </Field>
-        ) : null}
-        {finished !== null ? (
-          <Field label="Finished">
-            <Moment value={finished} />
-          </Field>
-        ) : null}
-        {operation.status === "waiting" && operation.until !== null ? (
-          <Field label="Next retry">
-            <Moment value={operation.until} />
-          </Field>
-        ) : null}
-        {operation.status === "held" ? <Field label="Held"><Moment value={operation.held_at} /></Field> : null}
-      </dl>
-    </details>
-  );
-}
-
-/**
- * The inspected import in the order a reader needs it: what it means for them,
- * what a recovery reuses and repeats, the attempts actually recorded, and the
- * identifiers underneath. It rereads on every observation; its History reads
- * only while open.
- */
-export default function ImportInspector({
-  importRef,
-  matched,
-}: {
-  readonly importRef: string;
-  /** The event the open view matched it on; only the listed row knows. */
-  readonly matched: ImportItem["matched_event"];
-}) {
-  const display = useRenderEnvironment();
-  const runtime = requirePaneRuntime(usePaneRuntime(), "ImportInspector");
-  const { observation } = useImports();
-  const detail = usePaneFreeServerValue({
-    key: `/imports/${encodeURIComponent(importRef)}`,
-    stale: observation,
-    load: (signal) => fetchImportDetail(importRef, signal),
-  });
-  // A direct match admits the initial history; later observations never reopen it.
-  const [historyOpen, setHistoryOpen] = useState(matched !== null);
-  const historySummary = useRef<HTMLElement>(null);
+/** Its surface's lifetime mounts both detail and record; the digest alone wakes them. */
+export default function ImportInspector({ importRef }: { readonly importRef: string }) {
+  const { summary, digest, revision } = useImports();
+  const observing = useObservationDemand(usePaneIsPresented());
+  const detail = usePaneFreeServerValue({ key: digest === null ? null : `/imports/${encodeURIComponent(importRef)}`,
+    stale: `${revision}:${digest}`, enabled: observing, load: signal => fetchImportDetail(importRef, signal) });
   const active = usePaneIsActive();
+  if (digest === null && summary.status === "failed") return <Failed error={summary.error} noun="imports" retry={{ run: summary.refetch, busy: summary.retrying }} />;
   if (detail.status === "loading") return <Ruling />;
   if (gone(detail.error)) return <Fact line={{ fact: UNAVAILABLE_LINE }} speak={active} />;
-  if (detail.status === "failed") {
-    return <Failed error={detail.error} noun="import details" retry={{ run: () => { void detail.refetch().catch(() => {}); }, busy: detail.retrying }} />;
-  }
-  const { item, source_issues: issues, related_imports: related, pending_captures: captures, original_source: original, email_source: email } = detail.data;
-  const mediaId = item.media_id;
-  const metadata = item.obligations.metadata;
-  const operation = metadata?.operation ?? null;
-  const earlierRuns = metadata === null ? 0 : earlierMetadataRuns(metadata);
-  const at = (value: string) => momentText(value, display);
-  const primary = speaking(item);
-  return (
-    <div className={styles.inspector}>
-      <header className={styles.inspectorHeading}>
-        <h2>{item.title}</h2>
-        <p>{consequenceLine(item, at)}</p>
-        <p className={styles.provenance}>
-          <span>{KIND_LABEL[item.media_kind]}</span>
-          {item.source_label !== null ? <span>{item.source_label}</span> : null}
-          {item.original_filename !== null ? (
-            <span>original file: {item.original_filename}</span>
-          ) : null}
-        </p>
-        {mediaId !== null && (item.can_read || item.can_play) ? (
-          <div className={styles.inspectorActions}>
-            <ImportOpenAction item={item} />
-          </div>
-        ) : null}
-        {matched !== null ? (
-          <p className={styles.rowMatched}>
-            {matchLine(matched, display, new Date())}
-          </p>
-        ) : null}
-      </header>
-      {email !== null ? <section className={styles.inspectorSection}>
-        <h3>received by email</h3>
-        <p>{email.sender_name === null ? `from ${email.sender_address}` : `from ${email.sender_name} <${email.sender_address}>`}</p>
-        {email.sent_at !== null ? <p>sent <Moment value={email.sent_at} /></p> : null}
-      </section> : null}
-      {original !== null ? <p><ButtonLink href={original.source_url} target="_blank" rel="noopener noreferrer">original source</ButtonLink></p> : null}
-      {captures.length > 0 ? <section className={styles.inspectorSection}>
-        <h3>pending captures</h3>
-        {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} />)}
-      </section> : null}
-      {related.map((relatedImport) => {
-        const { relation, item: sibling } = relatedImport;
-        const sourceOutcome = relatedSourceOutcomeLine(item, relatedImport);
-        const target: WorkspaceTarget = {
-          href: `/imports?${encodeImportsUrl({ selected: sibling.ref })}`,
-          secondaryActivation: { surfaceId: "import-detail" },
-        };
-        return (
-          <section key={sibling.ref} className={styles.inspectorSection}>
-            <h3>related {relation}</h3>
-            <p>{sibling.title}</p>
-            {sourceOutcome !== null ? <p>{sourceOutcome}</p> : null}
-            <p>{consequenceLine(sibling, at)}</p>
-            <div className={styles.inspectorActions}>
-              <ImportOpenAction item={sibling} />
-              <ButtonLink href={target.href} data-workspace-rich-target="true"
-                onClick={event => activateTargetLink({ event, runtime, target })}
-                onKeyDown={event => activateTargetLink({ event, runtime, target })}>
-                view {relation} import
-              </ButtonLink>
-            </div>
-          </section>
-        );
-      })}
-      {issues.length > 0 ? (
-        <section className={styles.inspectorSection}>
-          <h3>Source quality</h3>
-          <SourceIssuesNotice issues={issues} />
-        </section>
-      ) : null}
-      {(["source", "search"] as const).map((key) => {
-        const slot = item.obligations[key];
-        if (slot === null) return null;
-        const detailLine = [
-          slot.classification === "NeedsAttention" && slot.failure_code !== null
-            ? [`${importFailureCopy(slot.failure_code).reason}.`, importFailureCopy(slot.failure_code).explanation].filter(part => part !== null).join(" ") : null,
-          recoveryLine(slot),
-          slot.recovery?.kind === "RetryUpload" && item.original_filename !== null
-            ? `choose the original file: ${item.original_filename}` : null,
-        ].filter(Boolean).join(" ");
-        const title = (key === "source" ? sourceFailureLine(item) : null)
-          ?? obligationStatusLine(slot, mediaId === null && key === "source", at, key === "search" ? item : null);
-        return (
-          <section key={key} className={styles.inspectorSection}>
-            <h3>{key === "source" ? "Source" : "Search"}</h3>
-            <p>{title}</p>
-            {detailLine ? <p>{detailLine}</p> : null}
-            <div className={styles.inspectorActions}>
-              <ImportObligationActions item={item} obligation={key} />
-            </div>
-          </section>
-        );
-      })}
-      {metadata === null || mediaId === null ? null : (
-        <section className={styles.inspectorSection}>
-          <h3>
-            {metadataOperationName(
-              operation?.purpose ?? metadata.retry.purpose,
-            )}
-          </h3>
-          <p>{operation === null
-            ? `no recorded ${metadataOperationName(metadata.retry.purpose)}`
-            : metadataOperationSummary(operation, at)}</p>
-          {operation?.status === "failed" || operation?.status === "held" ? <p>{METADATA_FAILURE_COPY[operation.code]}</p> : null}
-          <MetadataResearchResult operation={operation} />
-          {earlierRuns > 0 ? (
-            <p>
-              {earlierRuns} earlier metadata{" "}
-              {earlierRuns === 1 ? "run remains" : "runs remain"} unfinished
-            </p>
-          ) : null}
-          {metadata.unfinished_operation !== null &&
-          metadata.unfinished_operation.job_id !== operation?.job_id ? (
-            <p>
-              {metadataOperationSummary(metadata.unfinished_operation, at)} ·{" "}
-              <Moment value={metadata.unfinished_operation.created_at} />
-            </p>
-          ) : null}
-          {metadata.retry.status === "blocked" &&
-          !(metadata.retry.reason === "active" &&
-            metadata.unfinished_operation !== null) ? (
-            <p>{metadataRetryBlockedCopy(metadata.retry)}</p>
-          ) : null}
-          <div className={styles.inspectorActions}>
-            <MetadataResearchActions mediaId={mediaId} title={item.title} view={metadata} />
-          </div>
-          {operation === null ? null : (
-            <OperationDetails operation={operation} />
-          )}
-        </section>
-      )}
-      <details
-        className={styles.history}
-        open={historyOpen}
-        onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
-      >
-        <summary ref={historySummary}>History</summary>
-        {historyOpen ? (
-          <Attempts importRef={importRef} matched={matched} />
-        ) : null}
-      </details>
-      <details className={styles.diagnostics}>
-        <summary>Diagnostics</summary>
-        <dl>
-          <Field label="Import">
-            <code>{item.ref}</code>
-          </Field>
-          <Field label="Kind">{KIND_LABEL[item.media_kind]}</Field>
-          {primary === null ? null : (
-            <Field label="Stage">{stageLabel(primary.stage)}</Field>
-          )}
-          {primary?.code == null ? null : (
-            <Field label="Code">
-              <code>{primary.code}</code>
-            </Field>
-          )}
-          <Field label="Accepted">
-            <Moment value={item.accepted_at} />
-          </Field>
-          <Field label="Updated">
-            <Moment value={item.updated_at} />
-          </Field>
-        </dl>
-      </details>
-    </div>
-  );
+  if (detail.status === "failed") return <Failed error={detail.error} noun="import details" retry={{ run: detail.refetch, busy: detail.retrying }} />;
+  return <>
+    {detail.error === null ? null : <Failed error={detail.error} noun="updated import details" retry={{ run: detail.refetch, busy: detail.refreshing }} />}
+    <Detail key={importRef} detail={detail.data} />
+  </>;
 }
 
+/** A standing fact elaborates the cause and retry policy rather than repeating its row. */
+function obligationFact(item: ImportItem, key: "source" | "search", at: (value: string) => string): string {
+  const slot = item.obligations[key]!;
+  switch (slot.classification) {
+    case "NeedsAttention": return slot.failure_code === null
+      ? key === "source" ? "this source couldn’t be read. no automatic retry." : "search preparation stopped. no automatic retry."
+      : `${importFailureCopy(slot.failure_code).reason}. no automatic retry.`;
+    case "Complete": throw new Error("Settled obligation has no standing fact");
+    case "Active": break;
+    default: return assertNever(slot.classification);
+  }
+  if (key === "search") return "nexus is preparing search for the saved text.";
+  if (slot.waiting_reason === "AwaitingUploadConfirmation") return "nexus is waiting for the original file.";
+  if (slot.next_retry_at !== null) return `nexus will try again at ${at(slot.next_retry_at)}.`;
+  if (slot.status === "Queued") return item.can_read ? "nexus hasn’t started the refresh." : "nexus hasn’t started reading this source.";
+  if (item.media_kind === "podcast_episode") return "nexus is preparing a transcript.";
+  if (slot.progress?.kind === "Counted") return `reading ${slot.progress.unit.toLowerCase()} ${slot.progress.completed} of ${slot.progress.total}.`;
+  const stage = slot.progress?.stage ?? slot.stage;
+  switch (stage) {
+    case "Validate": return "nexus is checking the file’s contents.";
+    case "Finalize": return "nexus is preparing a readable copy.";
+    case "Upload": case "Extract": case "SourceProcessing": return item.can_read ? "nexus is updating the saved source." : "nexus is reading the source.";
+    case "Index": case "Metadata": throw new Error("Source obligation has another owner's stage");
+    default: return assertNever(stage);
+  }
+}
 
-function PendingCapture({ capture }: {
-  capture: import("@/lib/api/wire").Schema<"PendingCapture">;
-}) {
-  const commands = useImportCommands();
-  const busy = useBusyActionIds(`upload:${capture.session_id}`).has("RemoveUpload");
-  const label = capture.state === "AwaitingBytes" ? "waiting for the upload."
-    : capture.state === "CapabilityExpired" ? "upload expired."
-    : capture.failure_code === null ? UPLOAD_REJECTED_LABEL : importFailureCopy(capture.failure_code).reason;
-  return <div>
-    <p>{label} · <Moment value={capture.accepted_at} /></p>
-    <Button aria-busy={busy || undefined} onClick={() => commands.discardCapture(capture.session_id)}>discard capture</Button>
+function Detail({ detail }: { readonly detail: ImportDetail }) {
+  const display = useRenderEnvironment();
+  const runtime = requirePaneRuntime(usePaneRuntime(), "ImportInspector");
+  const { item, source_issues: issues, related_imports: related, pending_captures: captures, original_source: original, email_source: email } = detail;
+  const dismiss = useDismissAction(item);
+  const metadata = item.obligations.metadata;
+  const operation = metadata?.operation ?? null;
+  const metadataUnsettled = metadata !== null && (metadata.unfinished_count > 0 || operation?.status === "failed" || operation?.status === "held");
+  const at = (value: string) => new Intl.DateTimeFormat(display.displayLocale, { timeZone: display.displayTimeZone, timeStyle: "short" }).format(new Date(value)).toLowerCase();
+  const primary = speaking(item);
+  const title = item.can_read || item.can_play ? item.title : item.pointer ?? item.title;
+  return <div className={styles.inspector}>
+    <header className={styles.identity}>
+      <h2>{title}</h2>
+      {item.arrived_at === null ? null : <p>arrived {registerDay(item.arrived_at, new Date(), display.displayTimeZone)} at {at(item.arrived_at)}.</p>}
+    </header>
+    {(["source", "search"] as const).map(key => {
+      const slot = item.obligations[key];
+      if (slot === null || slot.classification === "Complete") return null;
+      const restriction = recoveryLine(slot);
+      return <section key={key} className={styles.section}>
+        <h3>{key}{item.dismissed.includes(key) ? <span className={styles.dismissed}>dismissed</span> : null}</h3>
+        <Fact line={{ fact: obligationFact(item, key, at) }} />
+        {restriction === null ? null : <p>{restriction}</p>}
+        {slot.recovery?.kind === "RetryUpload" && item.original_filename !== null ? <p>choose the original file: {item.original_filename}</p> : null}
+        <div className={styles.actions}>
+          <ImportObligationActions item={item} obligation={key} />
+          {dismiss === null ? null : <ImportCommandControl action={dismiss} label="dismiss" />}
+        </div>
+      </section>;
+    })}
+    {metadataUnsettled ? <MetadataSection item={item} standing /> : null}
+    {captures.length === 0 ? null : <section className={styles.section}><h3>pending captures</h3>
+      {captures.map(capture => <PendingCapture key={capture.session_id} capture={capture} />)}
+    </section>}
+    {related.map(relation => {
+      const sibling = relation.item;
+      const line = importLine(sibling, display);
+      const outcome = relatedSourceOutcomeLine(item, relation);
+      const target: WorkspaceTarget = { href: `/imports?${encodeImportsUrl({ selected: sibling.ref })}`, secondaryActivation: { surfaceId: "import-detail" } };
+      return <section key={sibling.ref} className={styles.section}>
+        <h3>related {relation.relation}</h3><p>{sibling.can_read || sibling.can_play ? sibling.title : sibling.pointer ?? sibling.title}</p>
+        {outcome === null ? null : <p>{outcome}</p>}
+        {line === null ? null : <p>{line.text}</p>}
+        <ButtonLink href={target.href} data-workspace-rich-target="true"
+          onClick={event => activateTargetLink({ event, runtime, target })} onKeyDown={event => activateTargetLink({ event, runtime, target })}>view {relation.relation} import</ButtonLink>
+      </section>;
+    })}
+    {issues.length === 0 ? null : <section className={styles.section}><h3>source quality</h3><SourceIssuesNotice issues={issues} /></section>}
+    {metadataUnsettled ? null : <MetadataSection item={item} standing={false} />}
+    <section className={styles.section}><h3>record</h3><Record importRef={item.ref} /></section>
+    <section className={styles.section}><h3>particulars</h3>
+      {email === null ? null : <div className={styles.email}><h4>received by email</h4>
+        <p>{email.sender_name === null ? `from ${email.sender_address}` : `from ${email.sender_name} <${email.sender_address}>`}</p>
+        {email.sent_at === null ? null : <p>sent <Moment value={email.sent_at} /></p>}
+      </div>}
+      <dl className={styles.particulars}>
+        {original === null ? item.pointer === null || item.pointer === item.original_filename ? null : <Field label="source"><code>{item.pointer}</code></Field>
+          : <Field label="source"><a href={original.source_url} target="_blank" rel="noopener noreferrer"><code>{original.source_label}</code></a></Field>}
+        {item.original_filename === null ? null : <Field label="file"><code>{item.original_filename}</code></Field>}
+        <Field label="ref"><code>{item.ref}</code></Field>
+        {primary === null ? null : <Field label="stage"><code>{stageLabel(primary.stage)}</code></Field>}
+        {primary?.code == null ? null : <Field label="code"><code>{primary.code}</code></Field>}
+        <Field label="accepted"><Moment value={item.accepted_at} /></Field>
+        <Field label="updated"><Moment value={item.updated_at} /></Field>
+      </dl>
+    </section>
   </div>;
 }
 
-/**
- * Recorded events as the attempts they belong to (upload generation, source
- * attempt, index revision, metadata operation), newest attempt first, each
- * newest event first.
- */
+function MetadataSection({ item, standing }: { readonly item: ImportItem; readonly standing: boolean }) {
+  const display = useRenderEnvironment();
+  const dismiss = useDismissAction(item);
+  const metadata = item.obligations.metadata;
+  if (metadata === null || item.media_id === null) return null;
+  const operation = metadata.operation;
+  const unfinished = metadata.unfinished_operation;
+  const purpose = operation?.purpose ?? metadata.retry.purpose;
+  const failed = operation?.status === "failed" || operation?.status === "held";
+  const earlier = earlierMetadataRuns(metadata);
+  const at = (value: string) => momentText(value, display).toLowerCase();
+  let fact: string | null = `no recorded ${metadataOperationName(purpose)}.`;
+  if (failed) fact = `${METADATA_FAILURE_COPY[operation.code]}. no automatic retry.`;
+  else if (standing) {
+    if (unfinished === null) throw new Error("Unsettled metadata has no operation");
+    switch (unfinished.status) {
+      case "held": fact = `${METADATA_FAILURE_COPY[unfinished.code]}. no automatic retry.`; break;
+      case "waiting": fact = unfinished.until === null ? "nexus is waiting to try this research again." : `nexus will try again at ${at(unfinished.until)}.`; break;
+      case "queued": fact = purpose === "title" ? "nexus hasn’t started finding a title." : "nexus hasn’t started researching this work’s bibliography."; break;
+      case "running": fact = purpose === "title" ? "nexus is finding a title for the saved source." : "nexus is researching this work’s bibliography."; break;
+      case "recovering": fact = `nexus is recovering the interrupted ${metadataOperationName(purpose)}.`; break;
+      default: assertNever(unfinished);
+    }
+  } else if (operation !== null) fact = operation.status === "completed" && operation.outcome.purpose === "bibliography" ? null : `${metadataOperationSummary(operation, at)}.`;
+  return <section className={styles.section}>
+    <h3>{metadataOperationName(purpose)}{item.dismissed.includes("metadata") ? <span className={styles.dismissed}>dismissed</span> : null}</h3>
+    {fact === null ? null : standing ? <Fact line={{ fact }} /> : <p>{fact}</p>}
+    <MetadataResearchResult operation={operation} />
+    {earlier > 0 ? <p>{earlier} earlier metadata {earlier === 1 ? "run remains" : "runs remain"} unfinished</p> : null}
+    {unfinished !== null && unfinished.job_id !== operation?.job_id ? <p>{metadataOperationSummary(unfinished, at)} · <Moment value={unfinished.created_at} /></p> : null}
+    {metadata.retry.status === "blocked" && !(metadata.retry.reason === "active" && unfinished !== null) ? <p>{metadataRetryBlockedCopy(metadata.retry)}</p> : null}
+    <div className={styles.actions}><MetadataResearchActions mediaId={item.media_id} title={item.title} view={metadata} />
+      {!standing || dismiss === null ? null : <ImportCommandControl action={dismiss} label="dismiss" />}
+    </div>
+  </section>;
+}
+
+function PendingCapture({ capture }: { readonly capture: Schema<"PendingCapture"> }) {
+  const commands = useImportCommands();
+  const busy = useBusyActionIds(`upload:${capture.session_id}`).has("RemoveUpload");
+  let label: string;
+  switch (capture.state) {
+    case "AwaitingBytes": label = "waiting for the upload."; break;
+    case "CapabilityExpired": label = "upload timed out."; break;
+    case "VerificationFailed": label = capture.failure_code === null ? UPLOAD_REJECTED_LABEL : importFailureCopy(capture.failure_code).reason; break;
+    default: return assertNever(capture.state);
+  }
+  return <div><p>{label} · <Moment value={capture.accepted_at} /></p>
+    <Button aria-disabled={busy || undefined} aria-busy={busy || undefined} onClick={() => { if (!busy) commands.discardCapture(capture.session_id); }}>discard capture</Button>
+  </div>;
+}
+
+/** Attempt membership and event order come from the retained narration, never current jobs. */
 function attempts(entries: readonly HistoryEntry[]) {
   const groups = new Map<string, { label: string; entries: HistoryEntry[] }>();
   for (const entry of entries) {
     const facts = entry.facts;
-    const [id, label] =
-      facts.kind === "MetadataOperation"
-        ? [
-            `Metadata:${facts.operation.job_id}`,
-            metadataOperationName(facts.operation.purpose),
-          ]
-        : "generation" in facts
-          ? [`Upload:${facts.generation}`, `Upload attempt ${facts.generation}`]
-          : "source_attempt_id" in facts
-            ? [`Source:${facts.source_attempt_id}`, "Source attempt"]
-            : [
-                `Index:${facts.revision}`,
-                `Search index revision ${facts.revision}`,
-              ];
+    const [id, label] = facts.kind === "MetadataOperation" ? [`Metadata:${facts.operation.job_id}`, metadataOperationName(facts.operation.purpose)]
+      : "generation" in facts ? [`Upload:${facts.generation}`, `upload attempt ${facts.generation}`]
+        : "source_attempt_id" in facts ? [`Source:${facts.source_attempt_id}`, "source attempt"]
+          : [`Index:${facts.revision}`, `search index revision ${facts.revision}`];
     const group = groups.get(id) ?? { label, entries: [] };
     groups.set(id, group);
     group.entries.push(entry);
-    if ("attempt_no" in facts)
-      group.label = `Source attempt ${facts.attempt_no}`;
+    if ("attempt_no" in facts) group.label = `source attempt ${facts.attempt_no}`;
   }
   return [...groups];
 }
 
-/** Recorded events, retained across failed reads; a match can lie beyond the prefix. */
-function Attempts({
-  importRef,
-  matched,
-}: {
-  readonly importRef: string;
-  readonly matched: ImportItem["matched_event"];
-}) {
-  const { observation, revision } = useImports();
-  const history = useServerList<HistoryEntry>({
-    key: `/imports/${importRef}/history`,
-    stale: revision,
-    pageSize: 50,
-    active: usePaneIsActive(),
-    visit: HISTORY,
-    id: (entry) => entry.id,
-    fetchPage: (cursor, limit, signal) => fetchImportHistory(importRef, cursor, limit, signal),
-  });
-  const { revalidate } = history;
-  // A reopened visit can predate clocks observed while its disclosure was shut.
-  const observed = useRef({ value: observation, restored: history.current });
-  useEffect(() => {
-    const previous = observed.current;
-    observed.current = { value: observation, restored: false };
-    if (observation !== "" && (previous.restored || previous.value !== observation)) revalidate();
-  }, [observation, revalidate]);
+function Record({ importRef }: { readonly importRef: string }) {
+  const { digest, revision } = useImports();
+  const active = useObservationDemand(usePaneIsPresented());
+  const history = useServerList({ key: digest === null ? null : `/imports/${importRef}/history`, stale: `${revision}:${digest}`,
+    pageSize: 50, active, visit: RECORD, id: (entry: HistoryEntry) => entry.id,
+    fetchPage: (cursor, limit, signal) => fetchImportHistory(importRef, cursor, limit, signal) });
   const error = history.failure?.error ?? null;
-  const entries = history.items;
-  const feedback = useCollectionReadFeedback({ list: history, unit: HISTORY_UNIT, waiting: false, outcome: null });
-  const outside =
-    matched !== null && !entries.some((entry) => entry.id === matched.id);
-  const event = (entry: HistoryEntry) => (
-    <HistoryEvent
-      key={entry.id}
-      entry={entry}
-      matched={entry.id === matched?.id}
-    />
-  );
-  let content: ReactNode;
-  if (history.status === "loading") {
-    content = <Ruling />;
-  } else if (gone(error)) {
-    content = <Fact line={{ fact: UNAVAILABLE_LINE }} />;
-  } else if (history.status === "failed") {
-    content = <Failed error={error} noun="events" retry={{ run: history.retry, busy: history.running !== null }} />;
-  } else {
-    content = <>
-      {outside ? (
-        <section className={styles.attempt}>
-          <h3 className={styles.attemptTitle}>Matched event</h3>
-          <ol className={styles.attemptEvents}>{event(matched)}</ol>
-        </section>
-      ) : null}
-      {history.complete && entries.length === 0 && !outside ? (
-        <Fact line={{ fact: "no events recorded." }} />
-      ) : null}
-      {attempts(entries).map(([id, group]) => (
-        <section key={id} className={styles.attempt}>
-          <h3 className={styles.attemptTitle}>{group.label}</h3>
-          <ol className={styles.attemptEvents}>{group.entries.map(event)}</ol>
-        </section>
-      ))}
-    </>;
-  }
+  const feedback = useCollectionReadFeedback({ list: history, unit: { singular: "event", plural: "events" }, waiting: false, outcome: null });
+  if (history.status === "loading") return <Ruling />;
+  if (gone(error)) return <Fact line={{ fact: UNAVAILABLE_LINE }} />;
+  if (history.status === "failed") return <Failed error={error} noun="record" retry={{ run: history.retry, busy: history.running !== null }} />;
   return <>
-    {content}
-    {gone(error) ? null : feedback.notice}
-    {feedback.announcement}
+    {history.failure?.op === "Refetch" ? <Failed error={history.failure.error} noun="updated record" retry={{ run: history.retry, busy: history.running !== null }} /> : null}
+    {history.complete && history.items.length === 0 ? <Fact line={{ fact: "no events recorded." }} /> : null}
+    {attempts(history.items).map(([id, group]) => <section key={id} className={styles.attempt}>
+      <h4>{group.label}</h4><ol className={styles.events}>{group.entries.map(entry => <li key={entry.id}>
+        <span>{eventLine(entry)}</span><Moment value={entry.occurred_at} />
+        <MetadataResearchResult operation={entry.facts.kind === "MetadataOperation" ? entry.facts.operation : null} />
+      </li>)}</ol>
+    </section>)}
+    {feedback.notice}{feedback.announcement}
   </>;
-}
-
-function HistoryEvent({
-  entry,
-  matched,
-}: {
-  readonly entry: HistoryEntry;
-  readonly matched: boolean;
-}) {
-  const operation =
-    entry.facts.kind === "MetadataOperation" ? entry.facts.operation : null;
-  return (
-    <li aria-current={matched ? "true" : undefined}>
-      <span>{eventLine(entry)}</span>
-      {matched ? (
-        <Pill tone="info" size="sm">
-          <span aria-hidden="true">{MATCHED_LABEL}</span>
-          <span className="sr-only">{MATCHED_ANNOUNCEMENT}</span>
-        </Pill>
-      ) : null}
-      <Moment value={entry.occurred_at} />
-      <MetadataResearchResult operation={operation} />
-      {operation === null ? null : <OperationDetails operation={operation} />}
-    </li>
-  );
 }
