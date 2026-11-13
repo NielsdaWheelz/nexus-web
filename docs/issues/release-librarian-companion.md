@@ -1,8 +1,8 @@
 # librarian companion cutover
 
-librarian follow-up `c828088a2e97` deployed wire 22/schema 0342 on
-2026-11-13 utc. this is the first subsequent breaking client change and bumps
-wire to 23: required rich-reference output fields, attachment resolution and
+librarian follow-up `c828088a2e97` deployed wire 21/schema 0341 on
+2026-11-13 utc. the pending paired cutover uses wire 23: required
+rich-reference output fields, attachment resolution and
 workspace companion vocabulary ship together. no schema migration, legacy
 reader or mixed-wire path is introduced.
 

@@ -13,12 +13,14 @@ verified backup, migrate once and verify the exact head before paired startup.
 there is no downgrade or old-wire reader; recovery restores the paired release and
 its verified backup.
 
-with new code deployed and writers still stopped, run
-`python -m nexus.services.chat.convert_reference_quotes` in the deployed api image's
-separate 512-mib compose `migration` one-off. use the captured deployed config,
-explicit database-only `NEXUS_CODEX_CONTROL_ENDPOINT` and maintenance role described
-in [application maintenance](../../deployment.md#application-maintenance).
-never import application services in a serving api or worker container.
+the canonical release controller runs
+`python -m nexus.services.chat.convert_reference_quotes` twice after exact-head
+migration and before startup, in the candidate api image's separate 512-mib
+compose `migration` one-off. it uses the captured config, explicit database-only
+`NEXUS_CODEX_CONTROL_ENDPOINT` and maintenance role described in
+[application maintenance](../../deployment.md#application-maintenance), and
+refuses startup if the second pass changes rows. never import application
+services in a serving api or worker container.
 
 conversion uses each row owner's current reading and annotation authority. it
 freezes readable text ranges as plain quotes with bounded context, drops
@@ -31,7 +33,7 @@ source republication remains blocked while saved text parts pin it. quote
 qualification uses admitted part redefinition and republication of unpinned
 sources; no source-generation or part-lifetime rule changes.
 
-after verified production conversion, remove
+after verified production conversion, remove the controller's conversion step and
 `python/nexus/services/chat/convert_reference_quotes.py` in the next change. qualify a real
 selection, published citation, source republication, unavailable source, reader
 connections and turn deletion in the paired installed clients.
