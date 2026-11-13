@@ -1,21 +1,17 @@
-# failed web import titles expose url query values
+# source admission retains url queries in placeholder titles
 
-ordinary web admission uses the submitted url as placeholder title, including
-query values that can contain signed access parameters. a failed import retains
-that title and exposes it in normal title presentation. source-derived; no live
+ordinary web admission persists the submitted url as its placeholder title,
+including query values that may contain access parameters. consumers using that
+stored title can expose them. this is source evidence, without a live denied-url
 reproduction.
 
-evidence: `python/nexus/services/media_source_ingest.py:161` sets
-`title=url[:255]`; `_new_media` persists it. imports projects
-`w.title` at `python/nexus/services/imports.py:236`. the extension's existing
-`TargetView.host` in `apps/web/src/extension/capture.ts` deliberately avoids
-displaying signed queries.
+evidence: `python/nexus/services/media_source_ingest.py` sets `title=url[:255]`
+and `_new_media` persists it. the imports register and details now present the
+safe hostname/path pointer instead; admission and other title consumers remain.
 
-browser recovery's new summaries use safe host/path labels for placeholders.
-the broader fix belongs to source admission and existing placeholder conversion,
-preserving authored titles and full urls as navigation/request data. do not
-strip query values from source identity.
+fix at source admission and existing placeholder conversion. preserve authored
+titles and the complete url as source identity and navigation/request data.
 
-resolved when importing a denied url containing a test access parameter retains
-its exact request url while titles, picker labels and error copy omit that value;
-existing placeholder rows are handled without rewriting authored titles.
+resolved when a denied url containing a test access parameter retains its exact
+request url while titles, picker labels and error copy omit that value, including
+existing placeholders without rewriting authored titles.
