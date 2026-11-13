@@ -148,7 +148,7 @@ url targets during migration; remove only genuinely orphaned external snapshots.
 | --- | --- |
 | `GET /librarian/messages` | bounded turn windows: mutually exclusive `before_seq`, `after_seq`, `around_message_id`; omitted means latest. `limit` defaults to 25 turns, maximum 50. returns chronological pairs, current execution/capabilities and nullable before/after cursors. an unavailable anchor is 404, never silently latest. |
 | `POST /librarian/attachments/resolve` | strict 1–16 reference or selection attachments; proven ordered presentations in one authenticated repeatable-read snapshot, private/no-store; no writes. |
-| `POST /chat-runs` | existing uuid `Idempotency-Key`; `{content, selection, attachments, expected_deletion_revision}`. at most 16 attachments; existing message/input bounds. accepted receipt names run and both messages; no conversation/destination fields. |
+| `POST /chat-runs` | existing uuid `Idempotency-Key`; `{content, selection, attachments, expected_deletion_revision}`. at most 16 attachments; existing message/input bounds. accepted receipt carries the current turn, read after admission commits; no conversation/destination fields. |
 | `GET /chat-runs/{id}` and existing events stream | retain ordinary pair/status/stream recovery; remove conversation/tree payloads. |
 | `POST /chat-runs/{id}/retry` | fresh uuid key; `{selection, expected_deletion_revision}`. only owned failed/cancelled runs accepted; append a new pair with original question/references and `retry_of_run_id`. |
 | existing `POST /chat-runs/{id}/cancel` | idempotent stop intent; supports waiting and active turns. |

@@ -141,9 +141,7 @@ class ChatAdmissionRejection(Wire):
 
 class AcceptedChatAdmission(Wire):
     kind: Literal["Accepted"] = "Accepted"
-    run_id: UUID
-    user_message_id: UUID
-    assistant_message_id: UUID
+    turn: ChatRunResponse
 
 
 class RejectedChatAdmission(Wire):

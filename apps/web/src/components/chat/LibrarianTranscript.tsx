@@ -23,9 +23,10 @@ const READING_POSITION = definePaneVisitDataKey<{ queryKey: string; position: Ch
 export interface LibrarianTranscriptHandle { onComposerWheel(event: WheelEvent<HTMLElement>): void }
 
 /** The timeline's mounted scroll owner; search mounts a separate result surface. */
-export default function LibrarianTranscript({ history, queryKey, retryAvailable, onRetry, ref }: {
+export default function LibrarianTranscript({ history, adopted, queryKey, retryAvailable, onRetry, ref }: {
   queryKey: string;
   history: ServerValue<Timeline>;
+  adopted: readonly Turn[];
   retryAvailable: boolean;
   onRetry(runId: string): void;
   ref: Ref<LibrarianTranscriptHandle>;
@@ -41,10 +42,13 @@ export default function LibrarianTranscript({ history, queryKey, retryAvailable,
   const scrollport = useRef<HTMLDivElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const incoming = history.status === "ready" ? history.data.items : null;
-  const [accepted, setAccepted] = useState<{ incoming: readonly Turn[] | null; turns: readonly Turn[] }>({ incoming, turns: incoming ?? [] });
-  if (incoming !== accepted.incoming) {
+  const fresh = history.status === "ready" && history.fresh;
+  const [accepted, setAccepted] = useState<{ incoming: readonly Turn[] | null; adopted: readonly Turn[]; fresh: boolean; turns: readonly Turn[] }>({ incoming: null, adopted: [], fresh: false, turns: [] });
+  if (incoming !== accepted.incoming || adopted !== accepted.adopted || fresh !== accepted.fresh) {
     const previous = new Map(accepted.turns.map(turn => [turn.run_id, turn]));
-    setAccepted({ incoming, turns: (incoming ?? []).map(turn => {
+    const ids = new Set(incoming?.map(turn => turn.run_id));
+    const turns = [...(incoming ?? []), ...(fresh ? [] : adopted.filter(turn => !ids.has(turn.run_id)))];
+    setAccepted({ incoming, adopted, fresh, turns: turns.map(turn => {
       const saved = previous.get(turn.run_id);
       return saved && saved.assistant_message.status !== "pending" && turn.assistant_message.status === "pending" ? saved : turn;
     }) });
