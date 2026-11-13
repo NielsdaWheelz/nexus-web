@@ -908,7 +908,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const bounds = verbs.bounds;
   const boundsPrompt: Line | null = !bounds ? null : bounds.issue ?? (bounds.phase === "Submitting" ? null : { fact: bounds.scope.kind === "quote"
     ? "select text matching the original quote." : bounds.scope.kind === "page" ? "select the new passage on this page." : "select the new passage in this section." });
-  useReaderChrome({
+  const { head } = useReaderChrome({
     media,
     // a refresh that finds the item gone retires its inspector; any other refresh failure says nothing.
     gone: record.error?.code === "E_MEDIA_NOT_FOUND",
@@ -976,6 +976,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         mediaId={id}
         transcriptReaderKey={snapshot?.transcript_reader_key ?? null}
         reader={reader}
+        head={head}
         profile={profile}
         isMobile={isMobile}
         showCaptureTitle={false}

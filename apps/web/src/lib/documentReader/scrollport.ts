@@ -75,12 +75,16 @@ export function useScrollport(
       readerFrame.toggleAttribute("data-reader-overlay", overlay);
       const style = getComputedStyle(port);
       const chrome = Number.parseFloat(style.getPropertyValue("--reader-occlusion-bottom")) || 0;
+      const portBounds = port.getBoundingClientRect();
+      const frameBounds = readerFrame.getBoundingClientRect();
       feedback.style.bottom = overlay ? `${chrome}px` : "";
+      feedback.style.left = overlay ? `${portBounds.left + port.clientLeft - frameBounds.left}px` : "";
+      feedback.style.right = overlay ? `${frameBounds.right - portBounds.left - port.clientLeft - port.clientWidth}px` : "";
       const bounds = feedback.getBoundingClientRect();
       const height = overlay ? bounds.height : 0;
       const previous = Number.parseFloat(port.style.getPropertyValue("--reader-feedback-height")) || 0;
       port.style.setProperty("--reader-feedback-height", `${height}px`);
-      port.style.setProperty("--reader-feedback-occlusion-bottom", `${height > 0 ? Math.max(0, port.getBoundingClientRect().bottom - bounds.top) : 0}px`);
+      port.style.setProperty("--reader-feedback-occlusion-bottom", `${height > 0 ? Math.max(0, portBounds.bottom - bounds.top) : 0}px`);
       if (row) row.style.setProperty("--reader-feedback-occlusion-bottom", `${height > 0 ? Math.max(0, row.getBoundingClientRect().bottom - bounds.top - chrome) : 0}px`);
       return height !== previous;
     };
@@ -291,6 +295,8 @@ export function useScrollport(
       feedbackObserver.disconnect();
       readerFrame.removeAttribute("data-reader-overlay");
       feedback.style.removeProperty("bottom");
+      feedback.style.removeProperty("left");
+      feedback.style.removeProperty("right");
       port.style.removeProperty("--reader-feedback-height");
       port.style.removeProperty("--reader-feedback-occlusion-bottom");
       row?.style.removeProperty("--reader-feedback-occlusion-bottom");

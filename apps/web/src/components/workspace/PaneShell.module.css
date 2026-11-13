@@ -90,7 +90,7 @@
 .controlRow {
   flex: 0 0 auto;
   min-inline-size: 0;
-  padding-block: var(--space-1);
+  padding-block: var(--pane-control-row-padding-block);
   padding-inline: var(--space-4);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
   background: var(--surface-2);
