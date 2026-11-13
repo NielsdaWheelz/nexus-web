@@ -113,8 +113,9 @@ media or opml segment. the next write drops other parameters. restored selection
 never opens details; explicit activation does. imports publishes an Import primary
 action and refresh capability, with no navigation, query, views or toolbar.
 
-Register uses `useServerList`, 50 rows per page, `drain: false`. rereads replace
-the loaded prefix. load more queues behind a reread; if that read fails, its
+Register uses `useServerList`, 50 rows per page, `drain: false` and
+`refreshComplete: false`. rereads replace only the admitted pages, including when the
+previous result was complete. load more queues behind a reread; if that read fails, its
 requested continuation shows retry, and a later load-more press retries the prefix
 before continuing. passive same-query refresh failures stay quiet. all loaded rows mount; heads prohibit windowing. attention and
 importing heads use summary counts plus their batches. batches precede their
@@ -160,7 +161,7 @@ retain their own labels. `lineView` shares phrases through `words.ts`.
 - **I6** selection persists without opening; explicit activation opens the same companion surface for import or opml refs.
 - **I7** commands share existing per-resource busy ownership; upload uncertainty retains its live owner.
 - **I8** reads wait for digest and react to revision/digest changes, not clock-only summaries; the record mounts while details are open.
-- **I9** page refresh atomically replaces the loaded prefix; an action during reread queues load more, and a failed refresh keeps accepted rows.
+- **I9** refresh atomically replaces only admitted pages, even after exhaustion; a click during reread queues load more, and failure keeps accepted rows.
 - **I10** CollectionView preserves surviving row focus, else chooses the next row; final load-more focus goes to the colophon link.
 
 ## feedback and uncertain admission
