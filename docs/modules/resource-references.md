@@ -424,20 +424,20 @@ uses captured evidence independently of a temporary index span's survival;
 [reindex preservation](../issues/reindex-invalidates-saved-evidence-targets.md)
 still needs separate qualification for generated graph facts and actual consumers.
 
-`POST /resource-items/source-targets/resolve` accepts one key: current `resource`,
-saved `reader_quote` message, `citation` edge, saved `retrieval` id, or `x_post`
-revision with a required reading media. `x_post` resolves a revision alias to that
-media's selected primary capture; incidental context is not a primary. historical
-keys resolve their frozen facts; none reconstruct history from today's target.
-authorization is checked on both the occurrence and its current source in one
-repeatable-read snapshot.
+`POST /resource-items/source-targets/resolve` accepts a current `resource`,
+`live_reference`, `citation` edge or `x_post` revision. `x_post` requires a reading
+media and resolves a revision alias to its selected primary capture; incidental
+context is not a primary. live references validate current authority and structural
+coordinates. citations use retained evidence when present; an uncaptured message
+citation opens its current target. authorization is checked on the occurrence and
+its current source in one repeatable-read snapshot.
 
 the answer is a state, never an error, for a resource key the viewer may open but
 cannot locate: an invisible ref is `unavailable{source_unavailable}`; a publication
 that moves during the read is `unavailable{location_unavailable}` with the source's
-activation. 404 is only for a quote, citation or retrieval key naming nothing the
-viewer can read; a malformed `resource_ref` is 400. a citation key reads for whoever
-can read what cites it, not only the edge's owner.
+activation. a citation key naming nothing the viewer can read returns 404; a
+malformed `resource_ref` is 400. a citation key reads for whoever can read what
+cites it, not only the edge's owner.
 
 a frozen location opens only while its stored locator proves the same normalized
 words in bounded current slices. pdf geometry also requires the captured
@@ -504,7 +504,7 @@ outline insertion line share these bindings; suggestions stay bounded and inline
 editor transactions, authored snapshots, undo and context review remain with
 the existing journal and outline owners.
 
-reader draft quotations use `ResourceQuotation.renderSourceControl` for a command
-that carries their full source destination in memory. sent quotations and citations
-use the same passive evidence body with their native source links. a frozen passage
-never implies a separately frozen highlight annotation.
+chat draft and sent references use `ReferenceFigure` with their current authorised
+presentation and shared source activation. `ResourceQuotation` remains the passive
+renderer for supplied captured evidence. both reuse `ReaderExcerpt`; a captured
+passage never implies a separately captured highlight annotation.

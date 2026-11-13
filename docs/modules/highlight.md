@@ -177,10 +177,10 @@ because `ActionMenu` kills a menu whose anchor moved. keyboard departure unmount
 once. nothing is announced, and undo ends there. other occurrences follow the
 projection. a blank row placed in its open source shows neither `annotate`
 nor a linked-items field: its menu opens the annotation in place, and its branch opens
-at its first link. related resources remain separate. copy-passage and
-frozen message quotations contain only source words. a question draft has separate
-ownership; submission neither copies nor empties the saved annotation. authorized
-context assembly can read annotation explicitly.
+at its first link. related resources remain separate. copy-passage contains only
+source words. chat figures project current references and show an owned annotation
+separately. a question draft has separate ownership; submission neither copies nor
+empties the saved annotation. authorized context assembly can read it explicitly.
 
 `/highlights/:id` reads the local authored capture, annotation and relationships,
 independently of source availability. `#annotation` reveals the annotation;
