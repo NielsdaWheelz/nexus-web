@@ -12,10 +12,17 @@ export function formatDisplayDate(
 ): string | null {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat(context.displayLocale, {
-    timeZone: context.displayTimeZone,
-    ...options,
-  }).format(date);
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat(context.displayLocale, {
+      timeZone: context.displayTimeZone,
+      ...options,
+    });
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+  return formatter.format(date);
 }
 
 export function formatDisplayNumber(

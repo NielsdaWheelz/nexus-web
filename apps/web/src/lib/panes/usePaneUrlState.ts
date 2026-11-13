@@ -28,9 +28,7 @@ export function usePaneUrlState<T>(
   const search = params.toString();
   const state = useMemo(
     () => codec.decode(new URLSearchParams(search)),
-    // Identity is stable on the raw search string; the codec is treated as fixed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [search],
+    [codec, search],
   );
   const setState = useCallback(
     (next: T) => {

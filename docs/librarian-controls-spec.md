@@ -7,7 +7,7 @@ changes before implementation.
 ## outcome and scope
 
 remove persistent brief editing from the conversation. expose it through the
-existing pane overflow and land on the existing account-settings field. preserve
+existing pane overflow and land on the reading brief in librarian settings. preserve
 the source visit and unfinished question.
 
 - canonical destination: `Librarian`, projected from the destination registry.
@@ -20,7 +20,7 @@ the source visit and unfinished question.
 - retain one account-wide brief, one editor, explicit save and existing
   unsaved-work protection. save stays in settings; it never sends a question.
 
-non-goals: account-page redesign, a modal editor, new shortcuts, automatic brief
+non-goals: a modal editor, new shortcuts, automatic brief
 writing, autosave, model/recommendation changes, global copy cleanup, new
 dependencies, backend changes, durable draft recovery or performance campaigns.
 
@@ -34,7 +34,7 @@ origin-pane behavior:
 
 | input | result |
 | --- | --- |
-| normal click / enter | push `/settings/account` in the originating pane with `FocusReadingBrief`; preserve the previous visit |
+| normal click / enter | push `/settings/librarian` in the originating pane with `FocusReadingBrief`; preserve the previous visit |
 | existing explicit new-pane gesture | fork through the workspace planner with the same destination and entry |
 | save | existing versioned save; remain in settings |
 | back | ordinary history restores the source visit, draft, reference, model, caret and transcript/search position |
@@ -52,7 +52,7 @@ one client-only union arm in `lib/workspace/targetActivation.ts`:
 | { readonly kind: "FocusReadingBrief" }
 ```
 
-the href remains `/settings/account`. use existing delivery
+the href remains `/settings/librarian`. use existing delivery
 `activationId/paneId/visitId`; carry no brief text, selector string or return url.
 the intent is transient, never persisted into workspace storage or history.
 
@@ -99,14 +99,16 @@ at final qualification; a separate reviewer challenges the decisions.
 
 - exact new copy: `Librarian` and `Edit reading brief…`. change the canonical
   destination label; do not capitalize ordinary prose or authored messages.
-- retain the field label, save/refusal copy and help:
+- the section title `reading brief` labels its field; verbs are `save` and
+  `revert`. retain the refusal copy and help:
   `what you want to learn, pursue, or avoid. the librarian uses this when answering and choosing reading.`
 - good content names the action and object, names both uses and
   promises neither instant reranking nor effects only on newly submitted turns.
   chat reads the brief at execution; queued questions can see a later saved edit.
 - use existing controls, spacing, focus treatment and touch targets. escape from
   the menu restores its trigger. field arrival must stay visible with the phone
-  keyboard; no replacement decoration or success ceremony.
+  keyboard. an accepted explicit save settles the saved text from accent to ink
+  over `--duration-deliberate`, as specified by account settings.
 
 ## exclusive work packages
 
@@ -118,7 +120,7 @@ shared files have one writer.
 | owner | files and responsibility | dependency |
 | --- | --- | --- |
 | a: workspace integration | `lib/workspace/targetActivation.ts`, `lib/workspace/store.tsx`, `components/workspace/WorkspaceHost.tsx`: entry, atomic focus lifetime, cancellation and host handoff | d1, contract review |
-| b: account editor | `app/(authenticated)/settings/account/ReadingBrief.tsx`; `app/(authenticated)/settings/account/SettingsAccountPaneBody.tsx` only if anchor/readiness wiring requires it: field arrival; preserve existing save/draft owner | a |
+| b: librarian editor | `app/(authenticated)/settings/librarian/ReadingBrief.tsx`; `app/(authenticated)/settings/librarian/SettingsLibrarianPaneBody.tsx` only if anchor/readiness wiring requires it: field arrival; preserve existing save/draft owner | a |
 | c: librarian/content | `components/chat/Librarian.tsx`, `components/chat/ChatSurface.module.css`, `lib/navigation/destinations.ts`, `lib/panes/paneRouteModel.ts`: menu, removal and canonical label shared by navigation and route title; `docs/modules/chat.md`, `docs/modules/workspace.md`, `docs/librarian-spec.md`: replace superseded composer-link contract | a; designer approval |
 | d: qualification | ignored `apps/web/.nexus-lab/cases/` only: temporary journeys, private observations and cleanup | red before a–c; green after |
 

@@ -51,6 +51,28 @@ export async function saveBrowserWorkspace(accountId: string, workspace: Workspa
   }); } finally { db.close(); }
 }
 
+/** update confirmed settings without overwriting a concurrently saved workspace. */
+export async function saveBrowserSettings(settings: Pick<BrowserBinding, "account" | "reader_profile">, expectedLifetime: string): Promise<void> {
+  const db = await database();
+  try { await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("binding", "readwrite", { durability: "strict" });
+    const store = tx.objectStore("binding");
+    const current = store.get("current");
+    const retiring = store.get("retiring");
+    const signedOut = store.get("signed_out");
+    const lifetime = store.get("lifetime");
+    lifetime.onsuccess = () => {
+      // justify-type-assertion: binding.ts alone writes this account-scoped record.
+      const binding = current.result as BrowserBinding | undefined;
+      if (retiring.result != null || signedOut.result === true || lifetime.result !== expectedLifetime || binding?.account.account_id !== settings.account.account_id) { tx.abort(); return; }
+      store.put({ ...binding, account: settings.account, reader_profile: settings.reader_profile }, "current");
+    };
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error ?? new Error("browser account changed before settings refresh"));
+    tx.onerror = () => reject(tx.error);
+  }); } finally { db.close(); }
+}
+
 export async function markBrowserRetiring(accountId: string): Promise<void> {
   const binding = await readBrowserBinding();
   if (binding?.account.account_id !== accountId) throw new Error("browser account changed before sign out");

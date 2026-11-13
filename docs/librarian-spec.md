@@ -17,7 +17,7 @@ separate instruction. current owners: [chat](modules/chat.md),
   time/progress selection through the existing shared primitives.
 - curation uses existing available resources and feed entries only. existing
   explicit browse/search remains; no new ingestion connector.
-- one optional, manually edited reading brief in account settings. no automatic
+- one optional, manually edited reading brief in librarian settings. no automatic
   orientation, inferred profile, brief-writing tool or memory tree.
 - chat stores messages and saved source quotes. words survive source edits and
   disappearance; opening uses current access and unique exact-word placement.
@@ -41,7 +41,7 @@ deferred: [orientation](issues/librarian-orientation.md) and
 | contextual selection | lectern/library suggestions display ten with a twenty-item curated pool; daily displays at most five. current visit order survives new publications; empty is valid. quick reads remains a direct, model-independent list of at most five. | existing sections, eligibility, publication/view protocol and pane mementos |
 | librarian | one transcript, model picker, always-available send, per-turn cancel, visible `queued` state. `ask librarian` with a question sends; without one it opens the same librarian with a live reference and focused empty composer, never invented user text. palette cmd+enter sends there. opening old messages never changes the append destination. | `ChatSurface`, composer, markdown/answer/footer, `runTail`, draft/receipt owners |
 | references | explicit attachments and published citations have live read-only figures. a closed-by-default companion aligns them to their referring messages; margin/all, source-follow/back and reading place retain their owners. unavailable numbered citations remain identifiable; invalid locators retain source navigation. | `LibrarianReferences`, `ReferenceFigure`, shared margin and source authority; [chat](modules/chat.md) |
-| reading brief | one multiline settings field, explicit save; `Edit reading brief…` in the `Librarian` pane overflow opens and focuses it. no composer control. blank clears it. help: `what you want to learn, pursue, or avoid. the librarian uses this when answering and choosing reading.` | account settings form, draft/feedback owner, `/me`; workspace entry contract |
+| reading brief | one multiline field at `/settings/librarian`, section-labelled `reading brief`, explicit `save` / `revert`; `Edit reading brief…` in the `Librarian` pane overflow opens and focuses it. no composer control. blank clears it. an accepted save settles accent ink to ordinary ink. help: `what you want to learn, pursue, or avoid. the librarian uses this when answering and choosing reading.` | librarian settings editor, draft/feedback owner, `/me`; workspace entry contract |
 
 the content designer owns examples and editorial acceptance for each row above.
 reuse existing typography, spacing, actions and accessible names; no new card system.

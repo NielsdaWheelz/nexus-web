@@ -2,7 +2,8 @@
 
 A write's created targets live on its one row. The author of a target is the
 successful write whose ``created_refs`` name it; the history is the principal's
-finished writes; undo reverts the targets and stamps the row in one transaction.
+successful writes with created targets; undo reverts the targets and stamps the
+row in one transaction.
 Each outlives the turn (its link is set null) and the target itself.
 Undo replays the whole database attempt under the central serializable commit
 owner; a reverted receipt is already complete and changes nothing.
@@ -137,7 +138,7 @@ def edge_provenance(
 def history(
     db: Session, *, viewer_id: UUID, generation_id: UUID | None, before: UUID | None
 ) -> AssistantWritePage:
-    """The viewer's finished write attempts, newest first, 30 a page, keyed by (time, id)."""
+    """Successful writes with created targets, newest first, 30 a page, keyed by (time, id)."""
 
     after = None
     if before is not None:
@@ -151,9 +152,9 @@ def history(
             raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Unknown history cursor")
     rows = db.execute(
         text(
-            "SELECT id, generation_id, tool_id, created_at, created_refs, result, reverted_at"
+            "SELECT id, created_at, created_refs, result, reverted_at"
             " FROM tool_calls WHERE principal_user_id = :viewer AND tool_id = ANY(:writes)"
-            " AND result IS NOT NULL"
+            " AND result ->> 'type' = 'Success' AND jsonb_array_length(created_refs) > 0"
             " AND (CAST(:generation AS uuid) IS NULL OR generation_id = :generation)"
             " AND (CAST(:at AS timestamptz) IS NULL OR (created_at, id) < (:at, :after))"
             " ORDER BY created_at DESC, id DESC LIMIT 31"
@@ -169,11 +170,8 @@ def history(
     items = [
         AssistantWriteOut(
             id=row.id,
-            generation_id=row.generation_id,
-            tool_id=row.tool_id,
             created_at=row.created_at,
             created_refs=[CreatedRefOut.model_validate(ref) for ref in row.created_refs],
-            error_type=row.result["error"]["type"] if row.result["type"] == "Failure" else None,
             reverted_at=row.reverted_at,
             undo_allowed=undo_eligible(
                 db,
@@ -225,7 +223,7 @@ def _undo_eligible(db: Session, viewer_id: UUID, ref: dict[str, Any]) -> bool:
 def undo(db: Session, *, viewer_id: UUID, tool_call_id: UUID) -> None:
     """Revert one successful write's targets and stamp its row, atomically. Idempotent.
 
-    Historical undo belongs to the chat card and account settings.
+    Historical undo belongs to the chat trail, connections and librarian settings.
     """
 
     def attempt() -> None:

@@ -10,7 +10,7 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
 `assistant_writes`, `memory`), `api/routes/assistant_writes.py`,
 `schemas/assistant_writes.py`; web `lib/assistantWrites.ts`, the chat card
 (`components/chat/AssistantTrust.tsx`), the connections menu and settings
-"Assistant writes" (`app/(authenticated)/settings/account/AssistantWrites.tsx`).
+"writes" (`app/(authenticated)/settings/librarian/Writes.tsx`).
 
 ## Concepts
 
@@ -134,21 +134,27 @@ disclosure; annotations and owner presentation bodies are separate reads.
 
 ## Account history and undo
 
-`GET /assistant-writes?generation_id=&before=` lists the viewer's finished write
-attempts (result present), newest first, 30 a page, keyed by `(created_at, id)`;
-an unknown cursor is 400 `E_INVALID_CURSOR`. the account surface uses the shared
+`GET /assistant-writes?generation_id=&before=` lists successful writes with at
+least one created ref, newest first, 30 a page, keyed by `(created_at, id)`.
+each item contains only id, created_at, created_refs, reverted_at and
+undo_allowed. failed and no-op attempts remain in their conversation. an
+unknown cursor is 400 `E_INVALID_CURSOR`. librarian settings uses the shared
 collection owner with that fixed 30-row page size (`before`, no `limit`),
 publishing and draining pages while its pane is active and the document visible.
 a deep link focuses its row once on arrival; absence is established only after
-source exhaustion. undo and manual refresh strictly invalidate the collection.
+source exhaustion. undo publishes `AssistantWrites`; the pane's shell refresh
+awaits the collection's refetch. a new write appears on the next read, without
+an arrival signal. rows group by account-calendar day and remain after undo,
+with their targets struck through. `lib/assistantWrites.ts` owns the shared
+chat-trail and ledger kickers and undo vocabulary.
 `POST /assistant-writes/{id}/undo`
 answers 204; 404 `E_NOT_FOUND` when the row is not the viewer's write; 409
 `E_RESOURCE_CONFLICT` for a failed write or one that created nothing; domain 409s
 pass through.
 
 one account-wide undo route serves every surface. receipts outlive turn deletion
-(`assistant_message_id ON DELETE SET NULL`); "view creation" then opens settings
-at `?generation_id=&tool_call_id=`.
+(`assistant_message_id ON DELETE SET NULL`); "view creation" then opens
+`/settings/librarian?generation_id=&tool_call_id=#writes`.
 
 ## Shared memory
 

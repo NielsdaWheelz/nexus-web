@@ -48,11 +48,12 @@ const VALID: Record<FilterKey, (value: string) => boolean> = {
   device: (value) => value.length > 0 && value.length <= 200,
 };
 
-export const browserToday = () =>
-  formatLocalDateInTimeZone(
-    new Date(),
-    Intl.DateTimeFormat().resolvedOptions().timeZone,
-  );
+export const browserToday = (): string => {
+  const date = formatLocalDateInTimeZone(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // justify-defect: the browser must format the zone its own formatter returned.
+  if (date === null) throw new Error("browser cannot format its own time zone");
+  return date;
+};
 
 /** Invalid values read as absent. The year view keeps only its year. */
 export function readStatsView(params: URLSearchParams): StatsView {
@@ -127,6 +128,8 @@ export function shiftAnchor(
 /** The Stats query of a view: its range in `timeZone`, bucket grain and filters. */
 export function statsQuery(view: StatsView, timeZone: string): URLSearchParams {
   const today = formatLocalDateInTimeZone(new Date(), timeZone);
+  // justify-defect: Stats receives the browser’s own hydrated time zone.
+  if (today === null) throw new Error("browser cannot format its own time zone");
   const period = view.view === "year" ? "year" : view.period;
   const query = new URLSearchParams({
     time_zone: timeZone,

@@ -33,7 +33,7 @@ const INITIAL_FACTS_TIMEOUT_MS = 5_000;
 export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironment: RenderEnvironment }) {
   const [signedOut, setSignedOut] = useState(false);
   const [binding, setBinding] = useState<(BrowserBinding & { lifetime: string; presentations: InitialPresentations }) | null>(null);
-  const [locationFailure, setLocationFailure] = useState<"TooLong" | null>(null);
+  const [locationFailure, setLocationFailure] = useState<"TooLong" | "CalendarUnavailable" | null>(null);
   const [retiring, setRetiring] = useState(false);
   const [retirementPending, setRetirementPending] = useState<BrowserRetirementPending | null>(null);
   const [failure, setFailure] = useState<Error | null>(null);
@@ -48,7 +48,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
       controller.abort();
       if (live) { setBinding(null); setRetiring(true); setRetirementPending(null); setFailure(null); }
       await finishBrowserRetirement(retiredReceipt.current, phase => { if (live) setRetirementPending(phase); });
-      if (live) { setRetiring(false); setSignedOut(true); }
+      if (live) { setRetiring(false); setSignedOut(true); window.location.replace("/login"); }
     };
     void (async () => {
       if (await readBrowserRetiring() !== null) { await finishRetirement(); return; }
@@ -92,7 +92,7 @@ export default function BrowserWorkspace({ renderEnvironment }: { renderEnvironm
         presentations = { status: "failure", error };
       }
       if (handlingRetirement) return;
-      if (live) { setBinding({ ...saved, lifetime, workspace, presentations }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : null); setFailure(null); }
+      if (live) { setBinding({ ...saved, lifetime, workspace, presentations }); setLocationFailure(tooLong && url.searchParams.has("loc") ? "TooLong" : canonical !== null && href === null ? "CalendarUnavailable" : null); setFailure(null); }
     })().catch(async error => {
       if (!live || handlingRetirement) return;
       let ended = false;

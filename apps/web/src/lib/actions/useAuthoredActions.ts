@@ -23,7 +23,7 @@ import { useActionRuntime, useBusyActionIds } from "./ResourceActionsProvider";
 import { settleDeletedResourcePanes } from "./settleDeletedResource";
 import {useInvokingWorkHistory, workCommand, type WorkIntent} from "@/lib/notes/work";
 import {usePaneWorkHistory} from "@/lib/panes/paneChrome";
-import {useAccountToday} from "@/lib/notes/accountDay";
+import {useAccountToday, ACCOUNT_DAY_UNAVAILABLE} from "@/lib/notes/accountDay";
 import {WorkConversionError, WorkUnavailableError} from "@nexus/authored/types";
 
 /** Server verbs an owned authored resource's local verbs replace; menus drop the remote copies. */
@@ -113,7 +113,8 @@ export function useAuthoredActions(ref: string | null): {
         const work = resource.work, designation = work?.designation ?? null;
         const recorded = work !== null && (work.task_completed_on !== null || work.habit_dates.length > 0);
         const conversion = "use a new note to change work type while completion history exists.";
-        const change = (id: ActionId, intent: WorkIntent, blocked?: string) => command(id, async () => {
+        const change = (id: ActionId, intent: WorkIntent | null, blocked?: string) => command(id, async () => {
+          if (intent === null) throw new ResourceActionFailure({fact:ACCOUNT_DAY_UNAVAILABLE});
           try {
             if (history) await workCommand(history,intent);
             else {try {await writing.run(intent);} catch (error) {if (error instanceof LocalCommitError) await error.completion; else throw error;}}
@@ -122,17 +123,21 @@ export function useAuthoredActions(ref: string | null): {
             if (error instanceof WorkUnavailableError) throw new ResourceActionFailure({fact:error.message});
             throw error;
           }
-        }, {tracked:true,confirmation:null,blocked:pending ?? blocked});
+        }, {tracked:true,confirmation:null,blocked:pending ?? (intent === null ? ACCOUNT_DAY_UNAVAILABLE : blocked)});
         const actions: ActionDescriptor[] = [];
         if (designation?.kind === "task") {
           actions.push({...change(designation.enabled ? "StopTask" : "ResumeTask",{kind:"set_work_designation",ref:owned,designation:{kind:"task",enabled:!designation.enabled}}),
             description:designation.enabled ? "completion date is kept" : undefined});
-          actions.push(change(work!.task_completed_on === null ? "CompleteTask" : "ReopenTask",{kind:"set_task_completion",ref:owned,local_date:work!.task_completed_on === null ? today : null,today}));
+          actions.push(change(work!.task_completed_on === null ? "CompleteTask" : "ReopenTask",today === null ? null : {kind:"set_task_completion",ref:owned,local_date:work!.task_completed_on === null ? today : null,today}));
         } else actions.push(change("MakeTask",{kind:"set_work_designation",ref:owned,designation:{kind:"task",enabled:true}},recorded ? conversion : undefined));
         actions.push(change(designation?.kind === "habit" && designation.enabled ? "StopDaily" : "RepeatDaily",{kind:"set_work_designation",ref:owned,
           designation:{kind:"habit",enabled:!(designation?.kind === "habit" && designation.enabled)}},designation?.kind === "task" && recorded ? conversion : undefined));
         if (history && work?.task_completed_on) actions.push(command("TaskCompletionDate",() => ctx.overlays.open({kind:"TaskCompletion",ref:owned,history}),{tracked:false,confirmation:null}));
-        if (history && (designation?.kind === "habit" || work?.habit_dates.length)) actions.push(command("HabitHistory",() => ctx.overlays.open({kind:"HabitHistory",ref:owned,local_date:today,history}),{tracked:false,confirmation:null}));
+        if (history && work !== null && (designation?.kind === "habit" || work.habit_dates.length)) actions.push(command("HabitHistory",() => {
+          const date = today ?? work.habit_dates.at(-1);
+          if (date === undefined) throw new ResourceActionFailure({fact:ACCOUNT_DAY_UNAVAILABLE});
+          ctx.overlays.open({kind:"HabitHistory",ref:owned,local_date:date,history});
+        },{tracked:false,confirmation:null,blocked:today === null && !work.habit_dates.length ? ACCOUNT_DAY_UNAVAILABLE : undefined}));
         return [edit("EditNoteBody", { kind: "EditNoteBody", noteBlockId: id }),...actions,remove("DeleteNote")];
       }
       case "page": return [edit("EditPageTitle", { kind: "EditPageTitle", pageId: id }), remove("DeletePage")];

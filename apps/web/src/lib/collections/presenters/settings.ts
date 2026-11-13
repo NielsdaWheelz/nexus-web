@@ -1,7 +1,6 @@
-/** One settings row: a link to a section, or a static row with its own commands. */
+/** One settings row: a link to a section or a static fact. */
 
 import type { CollectionRowView } from "@/lib/collections/types";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export interface SettingsPresenterItem {
   presentation: "Index" | "Details";
@@ -10,7 +9,6 @@ export interface SettingsPresenterItem {
   description?: string;
   meta?: string;
   href?: string;
-  actions?: readonly ActionDescriptor[];
 }
 
 export function presentSettingsRow(
@@ -30,9 +28,7 @@ export function presentSettingsRow(
     context: context ? { kind: "Text", text: context } : null,
     activity: null,
     exceptionalStatus: null,
-    // not a resource: an explicit flat menu, no action snapshot
     resourceRef: null,
-    flatActions: item.actions,
     selected: false,
   };
 }

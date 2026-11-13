@@ -21,6 +21,8 @@ import { lineView, linkPointer } from "@/lib/imports/lineView";
 import { formatLocalDateInTimeZone, isLocalDate } from "@/lib/localDate";
 import { dailyId, linkId } from "@nexus/authored/identity";
 import { isVisible } from "@nexus/authored/merge";
+import { ACCOUNT_DAY_UNAVAILABLE } from "@/lib/notes/accountDay";
+import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import { captureToday } from "@/lib/notes/api";
 import { getWritingRuntime, isAuthoredStorageFailure, LocalCommitError } from "@/lib/notes/runtime";
 import { AuthoredProvider } from "@/lib/authored/provider";
@@ -238,6 +240,7 @@ function PlainShare({ text, share, account }: { text: string; share: Share; acco
   const trimmed = text.trim();
   const accountId = account.user_id, timeZone = account.calendar_time_zone;
   const captureNoteId = account.capture?.noteId ?? null, captureDate = account.capture?.localDate ?? null;
+  const calendarAvailable = captureDate !== null || formatLocalDateInTimeZone(new Date(), timeZone) !== null;
   const [started, setStarted] = useState(share.kind === "Activity");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<CaptureResult | null>(null);
@@ -259,6 +262,11 @@ function PlainShare({ text, share, account }: { text: string; share: Share; acco
     const runtime = getWritingRuntime(accountId);
     if (note.current === null || note.current.accountId !== accountId) {
       const localDate = captureDate ?? formatLocalDateInTimeZone(new Date(), timeZone);
+      if (localDate === null) {
+        setSaving(false);
+        setResult({ok:false,local_commit:false,fact:ACCOUNT_DAY_UNAVAILABLE});
+        return;
+      }
       const noteId = captureNoteId ?? crypto.randomUUID();
       const inspect = async (): Promise<boolean | null> => {
         const store = await runtime.store;
@@ -319,15 +327,15 @@ function PlainShare({ text, share, account }: { text: string; share: Share; acco
     <p className={styles.body}>{trimmed}</p>
     <div className={styles.actions}>
       {!started ? <>
-        <Button onClick={() => { setSaving(true); setStarted(true); }}>add to today</Button>
+        <Button disabled={!calendarAvailable} onClick={() => { setSaving(true); setStarted(true); }}>add to today</Button>
         <a className={styles.action} href={APP_AUTHENTICATED_HOME_HREF}>cancel</a>
       </> : <>
-        {result !== null && !result.ok ? <Button aria-busy={saving || undefined} disabled={saving}
+        {result !== null && !result.ok ? <Button aria-busy={saving || undefined} disabled={saving || !calendarAvailable}
           onClick={() => { setSaving(true); setAttempt(value => value + 1); }}>retry</Button> : null}
         {result?.ok ? <a className={styles.action} href={openPath(share, result.path)}>open</a> : null}
         <a className={styles.action} href={donePath(share)}>done</a>
       </>}
     </div>
-    {result?.ok ? <Fact line={{ fact: result.status }} /> : result !== null && !result.local_commit ? <Fact line={{ fact: result.fact }} speak /> : null}
+    {!calendarAvailable ? <AccountCalendarUnavailable /> : result?.ok ? <Fact line={{ fact: result.status }} /> : result !== null && !result.local_commit ? <Fact line={{ fact: result.fact }} speak /> : null}
   </>;
 }

@@ -1,5 +1,8 @@
 "use client";
 
+import { ACCOUNT_DAY_UNAVAILABLE } from "@/lib/notes/accountDay";
+import { getDestination } from "@/lib/navigation/destinations";
+import { assertNever } from "@/lib/assertNever";
 import { NavigationIdentity } from "@/lib/host/policy";
 import {
   useCallback,
@@ -72,7 +75,7 @@ export default function AuthenticatedShell(props: {
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   initialPresentations?: InitialPresentations;
-  locationLinkFailure: "TooLong" | null;
+  locationLinkFailure: "TooLong" | "CalendarUnavailable" | null;
 }) {
   // The workspace signs in through the account's one sign-in owner, which ignores a press while
   // a sign-in runs and tells its result. That owner sits beneath the feedback provider, so the
@@ -92,7 +95,7 @@ export default function AuthenticatedShell(props: {
             <AuthoredProvider accountId={props.account.accountId}>
               <RecentProvider accountId={props.account.accountId} browserLifetime={props.browserLifetime ?? null}>
                 <UnauthenticatedApiBoundary>
-                <DeviceSettingsProvider>
+                <DeviceSettingsProvider browserLifetime={props.browserLifetime ?? null}>
                   <MediaAdmissionsProvider accountId={props.account.accountId}>
                   <ImportIntakeProvider accountId={props.account.accountId}>
                     <ActivityCapture />
@@ -119,7 +122,7 @@ function Workspace(props: {
   accountId: string;
   initialState: WorkspaceState;
   initialPresentations?: InitialPresentations;
-  locationLinkFailure: "TooLong" | null;
+  locationLinkFailure: "TooLong" | "CalendarUnavailable" | null;
   bindSignIn: (signIn: (() => void) | null, busy: boolean) => void;
 }) {
   const { accountId, bindSignIn } = props;
@@ -246,13 +249,21 @@ function ChatWorkOwners() {
 }
 
 /** A link the workspace could not open is a discrete outcome: the workspace opened without it. */
-function WorkspaceEntryNotice({ locationLinkFailure }: { locationLinkFailure: "TooLong" | null }) {
+function WorkspaceEntryNotice({ locationLinkFailure }: { locationLinkFailure: "TooLong" | "CalendarUnavailable" | null }) {
   const { say } = useOutcome();
   const reported = useRef(false);
   useEffect(() => {
     if (locationLinkFailure === null || reported.current) return;
     reported.current = true;
-    say({ fact: "this link is too long to open." });
+    switch (locationLinkFailure) {
+      case "TooLong": say({ fact: "this link is too long to open." }); return;
+      case "CalendarUnavailable": {
+        const account = getDestination("account");
+        say({ fact: ACCOUNT_DAY_UNAVAILABLE }, [{ label: account.label, href: account.href }]);
+        return;
+      }
+      default: assertNever(locationLinkFailure);
+    }
   }, [say, locationLinkFailure]);
   return null;
 }

@@ -43,8 +43,8 @@ async function capture(runtime: WritingRuntime, localDate: string, noteId: strin
   return page.ref.slice("page:".length);
 }
 export type DailyLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };
-export function dailyDateFor(locator: DailyLocator, calendarTimeZone: string): string {
+export function dailyDateFor(locator: DailyLocator, calendarTimeZone: string): string | null {
   const date = locator.kind === "Today" ? formatLocalDateInTimeZone(new Date(), calendarTimeZone) : locator.value;
-  if (!isLocalDate(date)) throw new TypeError("A daily page date is YYYY-MM-DD");
+  if (date !== null && !isLocalDate(date)) throw new TypeError("A daily page date is YYYY-MM-DD");
   return date;
 }

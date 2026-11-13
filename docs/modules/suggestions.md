@@ -66,7 +66,7 @@ model or mechanical fallback. all tool reads still enforce current visibility.
 input contains the manual reading brief, surface constraints, bounded intent and
 canonical target projections. retrieved material and prior messages are evidence,
 not instructions that can expand authority. the brief has no inferred biography
-and only the user edits it in account settings. a changed save advances selection
+and only the user edits it in librarian settings. a changed save advances selection
 input revision; the publication fence compares its captured brief version.
 
 output is exactly `{items:[{ref,rationale}]}`: unique offered refs, at most twenty

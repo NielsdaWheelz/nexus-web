@@ -46,6 +46,14 @@ settings, a separator, and danger-last sign out. imports retains its canonical
 the mobile nexus account projection renders that same component and order;
 mobile attention remains inside nexus, without a closed-launcher badge.
 
+settings lists Account, Librarian settings, Appearance, Reader settings and
+Keyboard shortcuts in that order. the registry owns every destination name;
+the index, pane titles, reader menu and nexus read it. account keywords include
+google and time zone; librarian settings includes brief and undo. linked
+identities lives in account; `/settings/identities` is unsupported, with no
+redirect. account's session row is the second home of the shared guarded
+sign-out command.
+
 `AccountMenu` owns its decorative person-in-circle mark and passive attention
 dot. the desktop rail retains its expanded label. the mobile sheet places the
 same account menu behind its farthest `account` row; the root has no header.

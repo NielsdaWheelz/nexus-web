@@ -51,7 +51,12 @@ export default function ImportsPaneBody() {
     "ImportsPaneBody",
   );
   const today = useCallback(
-    () => formatLocalDateInTimeZone(new Date(), displayTimeZone),
+    () => {
+      const date = formatLocalDateInTimeZone(new Date(), displayTimeZone);
+      // justify-defect: the render environment owns its fixed supported display zone.
+      if (date === null) throw new Error("display time zone is unavailable");
+      return date;
+    },
     [displayTimeZone],
   );
 

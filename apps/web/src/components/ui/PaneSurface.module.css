@@ -11,6 +11,11 @@
   min-width: 0;
 }
 
+.measured {
+  max-inline-size: 36rem;
+  margin-inline: auto;
+}
+
 /* The standfirst: a measured serif lede under the chrome title. */
 .brief {
   max-width: 60ch;

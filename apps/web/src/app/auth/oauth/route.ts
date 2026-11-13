@@ -22,13 +22,13 @@ export const runtime = "nodejs";
 
 // the provider redirect, started on the server: sign-in (a browser, or the
 // android custom tab with flow=handoff&hc) or link mode, which adds an
-// identity to the live session and always returns to /settings/identities.
+// identity to the live session and returns to account settings or the installed account page.
 export async function GET(request: Request): Promise<NextResponse> {
   const params = new URL(request.url).searchParams;
   const provider = params.get("provider");
   const mode = params.get("mode") === "link" ? "link" : "signin";
   const expected = params.get("expected_account_id");
-  const target = parseReturnTarget(mode === "link" ? expectedAccountPath(expected ? "/account/identities" : "/settings/identities", expected) : params.get("next"));
+  const target = parseReturnTarget(mode === "link" ? expectedAccountPath(expected ? "/account/identities" : "/settings/account", expected) : params.get("next"));
   const handoff = parseHandoffContext(params.get("flow"), params.get("hc"));
   const failed = (effect?: Effect) =>
     finish(redirectTo(loginPath(target, "oauth_start_failed", handoff)), effect);

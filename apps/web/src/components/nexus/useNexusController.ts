@@ -49,6 +49,8 @@ import { canonicalHref, latchedHref, normalizeQuery } from "@/lib/nexus/rank";
 import { arrivalRows, blankRows, choiceRows, continuations, learnedHref, nexusGroups, OPEN_CAP, playbackRow, syncRows } from "@/lib/nexus/rows";
 import { useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
+import { ACCOUNT_DAY_UNAVAILABLE } from "@/lib/notes/accountDay";
+import { getDestination } from "@/lib/navigation/destinations";
 import { captureToday, dailyDateFor } from "@/lib/notes/api";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
@@ -525,23 +527,25 @@ export function useNexusController() {
         finishNavigation(null);
         return null;
     }
-    const text = target.kind === "OpenDailyPage" && target.entry.kind === "AppendNote" ? target.entry.initialText.trim() : "";
-    if (target.kind === "OpenDailyPage" && text) {
-      if (!guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
+    let materialized: Dispatchable;
+    if (target.kind === "OpenDailyPage") {
       const localDate = dailyDateFor(target.date, calendarTimeZone);
-      // Keep the root origin and query for a guarded return.
-      capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, origin: origin ?? rootOrigin(row), activation, submit: { kind: "Running", unconfirmed: false, failures: 0 } });
-      setOpen(true);
-      return null;
-    }
-    const materialized: Dispatchable =
-      target.kind === "OpenDailyPage"
-        ? {
-            kind: "OpenDailyPage",
-            date: { kind: "LocalDate", value: dailyDateFor(target.date, calendarTimeZone) },
-            entry: target.entry.kind === "View" ? target.entry : { kind: "AppendNote" },
-          }
-        : target;
+      if (localDate === null) {
+        const account = getDestination("account");
+        say({ fact: ACCOUNT_DAY_UNAVAILABLE }, [{ label: account.label, href: account.href }]);
+        return { kind: "Cancelled" };
+      }
+      const text = target.entry.kind === "AppendNote" ? target.entry.initialText.trim() : "";
+      if (text) {
+        if (!guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
+        // Keep the root origin and query for a guarded return.
+        capture({ kind: "CaptureToday", text, noteId: crypto.randomUUID(), localDate, origin: origin ?? rootOrigin(row), activation, submit: { kind: "Running", unconfirmed: false, failures: 0 } });
+        setOpen(true);
+        return null;
+      }
+      materialized = { kind: "OpenDailyPage", date: { kind: "LocalDate", value: localDate },
+        entry: target.entry.kind === "View" ? target.entry : { kind: "AppendNote" } };
+    } else materialized = target;
     const result = dispatch(materialized, activation, sourceOwnerIds(target));
     if (!result || result.kind === "Cancelled") return result;
     finishNavigation(null);
@@ -935,7 +939,10 @@ export function useNexusController() {
       const target = row.action.target;
       if (target.kind === "InternalHref") return target.href;
       if (target.kind === "Resource") return target.activation.kind === "route" ? target.activation.href : null;
-      if (target.kind === "OpenDailyPage") return `/daily/${dailyDateFor(target.date, calendarTimeZone)}`;
+      if (target.kind === "OpenDailyPage") {
+        const date = dailyDateFor(target.date, calendarTimeZone);
+        return date === null ? null : `/daily/${date}`;
+      }
       return null;
     },
     submit,

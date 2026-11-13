@@ -90,7 +90,17 @@ const REGISTRY = {
   settings: {
     label: "Settings",
     href: "/settings",
-    keywords: ["preferences", "account"],
+    keywords: ["preferences"],
+  },
+  account: {
+    label: "Account",
+    href: "/settings/account",
+    keywords: ["email", "password", "name", "google", "github", "oauth", "time zone", "calendar", "sign out"],
+  },
+  librarianSettings: {
+    label: "Librarian settings",
+    href: "/settings/librarian",
+    keywords: ["reading brief", "brief", "writes", "undo"],
   },
   appearance: {
     label: "Appearance",
@@ -98,17 +108,12 @@ const REGISTRY = {
     keywords: ["theme", "light", "dark"],
   },
   reader: {
-    label: "Reader Settings",
+    label: "Reader settings",
     href: "/settings/reader",
     keywords: ["typography", "font", "theme"],
   },
-  identities: {
-    label: "Linked Identities",
-    href: "/settings/identities",
-    keywords: ["google", "github", "oauth"],
-  },
   keybindings: {
-    label: "Keyboard Shortcuts",
+    label: "Keyboard shortcuts",
     href: "/settings/keybindings",
     keywords: ["keybindings", "hotkeys", "shortcuts"],
   },

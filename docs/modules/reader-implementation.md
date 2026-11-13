@@ -281,6 +281,10 @@ the workspace bootstrap reads it as a required read; `ReaderProvider`
 change and offers retry). `READER_PROFILE_DEFAULTS` in
 `services/reader_profile.py` is the one default.
 
+after server acceptance, the provider awaits the device-settings refresh before
+marking clean or sending the next edit. browser reload durability shares the
+account binding owner and refresh-only recovery described in [auth](auth.md).
+
 the provider alone decides whether a change is accepted. it publishes `editable`
 (remote admission is `Ready`); controls disable from it and never read admission
 themselves. a change without admission, such as a focus-mode chord, is refused:

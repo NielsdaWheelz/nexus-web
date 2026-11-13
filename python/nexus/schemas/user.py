@@ -3,6 +3,7 @@
 Contains request and response models for user endpoints.
 """
 
+from datetime import datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -30,6 +31,7 @@ class UserProfileOut(BaseModel):
     email: str | None
     display_name: str | None
     calendar_time_zone: str
+    created_at: datetime
     chat_deletion_revision: OrderRevision
     reading_brief: str | None
     reading_brief_version: OrderRevision

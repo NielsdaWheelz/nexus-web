@@ -135,7 +135,8 @@ every ornament is a pseudo-element whose opacity is multiplied by `--ornament`
 its subtree with `calc(.5 * var(--ornament-root))`, never from `--ornament`
 itself (a cycle). forced colours, `prefers-contrast: more` and print set the
 dimmer and the grain to 0; tables, code and fields are Bare by construction.
-ornaments stay in pane headers, resource rows and empty surfaces. feedback
+ornaments stay in pane headers, resource rows, empty surfaces and the account
+bookplate's rule. its solar-only eärendil star is the fourth ornament site. feedback
 uses the same restrained anatomy in every room.
 
 - **the moon slot law.** `--moon` (0.15 new to 1 full, set once per mount by
@@ -166,6 +167,22 @@ selection, autosave, synchronization, successful refresh and refresh failure ove
 shown data are silent. failed reads heal through their read owner; a deliberate
 press alone retries a write. copy keeps `useCopyFeedback`'s 1.2-second check and
 one `copied` announcement. long jobs keep their domain surfaces.
+
+account name, calendar city and reading brief acknowledge an accepted explicit
+save with ink settling from accent to ink over `--duration-deliberate`. each
+module owns one keyframe, starts it with a data attribute and clears it on
+`animationend`; no layout animates. the account and librarian settings bodies
+use lowercase app copy while preserving names, addresses, cities and source
+titles. destination names retain their registry spelling.
+
+`PaneSurface measured` centres one 36rem column. only account and librarian
+settings opt in; their sibling settings panes retain their existing layout.
+email's read and edit boxes share a 36px minimum. a wrapping address remains
+fully visible; entering edit snapshots that taller read height for the input.
+
+date formatters return null when the browser cannot format the requested
+zone. account settings omits those dates and shows the calendar city alone;
+the write record retains server order without inventing day heads or times.
 
 control busy is immediate in `aria-busy`, delayed 200ms in paint, then ramps for
 200ms. settlement unmounts the spinner; a new subject remounts its control.
