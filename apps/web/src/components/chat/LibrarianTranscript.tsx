@@ -1,6 +1,6 @@
 "use client";
 
-import { useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type WheelEvent } from "react";
+import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type WheelEvent } from "react";
 import { flushSync } from "react-dom";
 import { Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -8,27 +8,31 @@ import Button from "@/components/ui/Button";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { ServerValue } from "@/lib/api/serverState";
 import { codepointLength, codepointToUtf16 } from "@/lib/canonicalText/codepoints";
-import type { Timeline } from "@/lib/chat/wire";
-import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import type { Timeline, Turn } from "@/lib/chat/wire";
+import { requirePaneRuntime, usePaneRuntime, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { useSourceArrival, useArrivalFailure } from "@/lib/reader/sourceArrival";
 import * as Icon from "@/lib/ui/icons";
 import { definePaneVisitDataKey, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import ChatTurn from "./ChatTurn";
+import { useLibrarianReferences } from "./LibrarianReferences";
 import { inspectChatMessage, useChatScroll, type ChatReadingPosition } from "./useChatScroll";
 import styles from "./ChatSurface.module.css";
 
-const READING_POSITION = definePaneVisitDataKey<ChatReadingPosition>("Librarian.ReadingPosition");
+const READING_POSITION = definePaneVisitDataKey<{ queryKey: string; position: ChatReadingPosition | null }>("Librarian.ReadingPosition");
 
 export interface LibrarianTranscriptHandle { onComposerWheel(event: WheelEvent<HTMLElement>): void }
 
 /** The timeline's mounted scroll owner; search mounts a separate result surface. */
-export default function LibrarianTranscript({ history, retryAvailable, onRetry, ref }: {
+export default function LibrarianTranscript({ history, queryKey, retryAvailable, onRetry, ref }: {
+  queryKey: string;
   history: ServerValue<Timeline>;
   retryAvailable: boolean;
   onRetry(runId: string): void;
   ref: Ref<LibrarianTranscriptHandle>;
 }) {
   const { accountId } = useAuthenticatedAccount();
+  const runtime = requirePaneRuntime(usePaneRuntime(), "librarian transcript");
+  const scope = `${accountId}:${runtime.visitId}:${queryKey}`;
   const params = usePaneSearchParams();
   const router = usePaneRouter();
   const messageId = params.get("message");
@@ -36,13 +40,27 @@ export default function LibrarianTranscript({ history, retryAvailable, onRetry, 
   const after = params.get("after_seq");
   const scrollport = useRef<HTMLDivElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
-  const turns = history.status === "ready" ? history.data.items : [];
+  const incoming = history.status === "ready" ? history.data.items : null;
+  const [accepted, setAccepted] = useState<{ incoming: readonly Turn[] | null; turns: readonly Turn[] }>({ incoming, turns: incoming ?? [] });
+  if (incoming !== accepted.incoming) {
+    const previous = new Map(accepted.turns.map(turn => [turn.run_id, turn]));
+    setAccepted({ incoming, turns: (incoming ?? []).map(turn => {
+      const saved = previous.get(turn.run_id);
+      return saved && saved.assistant_message.status !== "pending" && turn.assistant_message.status === "pending" ? saved : turn;
+    }) });
+  }
+  const turns = accepted.turns;
+  const onReadTurn = useCallback((current: Turn) => setAccepted(previous => ({ ...previous,
+    turns: previous.turns.map(turn => turn.run_id === current.run_id && !(turn.assistant_message.status !== "pending" && current.assistant_message.status === "pending") ? current : turn),
+  })), []);
   const last = turns.at(-1);
   const arrivalRef = useRef<ReturnType<typeof useSourceArrival> | null>(null);
   const scroll = useChatScroll(scrollport, transcript, last?.user_message.id ?? null, last?.assistant_message.id ?? null, history.status === "ready",
     () => arrivalRef.current?.supersede({ preserveSignal: null, retireFailure: false }));
   useImperativeHandle(ref, () => ({ onComposerWheel: scroll.onComposerWheel }), [scroll.onComposerWheel]);
-  const readingPosition = usePaneVisitData(READING_POSITION, () => history.status === "ready" ? scroll.handle.captureReadingPosition() : null);
+  const references = useLibrarianReferences({ scope, queryKey, turns, ready: history.status === "ready", port: scrollport, transcript, scroll: scroll.handle });
+  const retainedPosition = usePaneVisitData(READING_POSITION, () => history.status === "ready" ? { queryKey, position: scroll.handle.captureReadingPosition() } : null);
+  const readingPosition = retainedPosition?.queryKey === queryKey ? retainedPosition.position : null;
   const saveReadingPosition = usePaneVisitDataWriter(READING_POSITION);
   const restoredPosition = useRef<ChatReadingPosition | null>(null);
   useLayoutEffect(() => {
@@ -73,14 +91,14 @@ export default function LibrarianTranscript({ history, retryAvailable, onRetry, 
   } });
   arrivalRef.current = arrival;
   useArrivalFailure(arrival.failure);
-  return <div ref={scrollport} className={styles.scrollport} role="region" tabIndex={0} aria-label="librarian conversation"
-    onScroll={() => { scroll.onScroll(); saveReadingPosition(scroll.handle.captureReadingPosition()); }} onFocus={scroll.onFocus}
+  return <div {...references.interactions} ref={scrollport} className={styles.scrollport} role="region" tabIndex={0} aria-label="librarian conversation"
+    onScroll={() => { scroll.onScroll(); saveReadingPosition({ queryKey, position: scroll.handle.captureReadingPosition() }); }} onFocus={scroll.onFocus}
     onWheel={scroll.onUserScroll} onTouchMove={scroll.onUserScroll} onKeyDown={scroll.onKeyDown} onPointerDown={scroll.onPointerDown} onClick={scroll.onClick}>
     {history.status === "loading" ? <Ruling /> : history.status === "failed" ? <Failed error={history.error} noun="messages" retry={{ run: history.refetch, busy: history.retrying }} /> : null}
     <div ref={transcript} className={styles.transcript} role="log" aria-label="librarian messages">
       {history.status === "ready" && history.data.before_seq ? <Button onClick={() => router.replace(`/librarian?before_seq=${history.data.before_seq}`)}>earlier messages</Button> : null}
       {history.status === "ready" && turns.length === 0 ? <div className={styles.absent}><p>read, think, and make connections with your librarian.</p></div> : null}
-      {turns.map(turn => <ChatTurn key={turn.run_id} turn={turn} passage={passage} refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure} onRetry={() => onRetry(turn.run_id)} retryAvailable={retryAvailable} />)}
+      {turns.map(turn => <ChatTurn key={turn.run_id} turn={turn} passage={passage} refresh={history.revalidate} onInspect={scroll.handle.inspectDisclosure} onRetry={() => onRetry(turn.run_id)} retryAvailable={retryAvailable} inlineAttachments={references.inlineAttachments} onReadTurn={onReadTurn} onContentLayout={scroll.afterLayout} onRevealReferences={references.reveal} />)}
       {history.status === "ready" && history.data.after_seq ? <Button onClick={() => router.replace(`/librarian?after_seq=${history.data.after_seq}`)}>later messages</Button> : null}
       <div className={styles.spacer} aria-hidden="true" style={{ height: scroll.spacer }} />
     </div>

@@ -44,7 +44,7 @@ import {itemMediaKind, resourceType, resourceTypeName} from "@/lib/resources/typ
 import {classifyOutlineOccurrence, enterOutlineOccurrence} from "@/lib/resources/outlineProjection";
 import {assumeCanonicalResourceRef} from "@/lib/sharing/targets";
 import type {ActionDescriptor} from "@/lib/ui/actionDescriptor";
-import {workspaceTargetActivationIntent, type TargetActivationEvent} from "@/lib/ui/targetActivation";
+import {suppressSelectionActivation, type TargetActivationEvent} from "@/lib/ui/targetActivation";
 import {cx} from "@/lib/ui/cx";
 import RemoteConnections, {useRemoteConnections} from "@/components/connections/RemoteConnections";
 import ContextualActionMenu, {type ContextActionSection} from "./ContextualActionMenu";
@@ -155,11 +155,7 @@ function PrimaryLink({href, label, quote = false, children}: {href: string | nul
   return <a className={cx(styles.primaryLink, quote && styles.quote)} href={href} draggable={quote ? false : undefined}
     aria-label={`open ${label}`} data-workspace-rich-target="true"
     onClick={event => {
-      const intent = workspaceTargetActivationIntent(event);
-      // Plain Enter arrives as a click with no pointer; only a pointer's plain click can end a drag.
-      if (quote && intent.kind === "Open" && intent.intent === "default" && event.nativeEvent instanceof PointerEvent &&
-        event.nativeEvent.pointerType !== "" && window.getSelection()?.isCollapsed === false) event.preventDefault();
-      else activate(event);
+      if (!quote || !suppressSelectionActivation(event)) activate(event);
     }}
     onKeyDown={activate}>{children}</a>;
 }

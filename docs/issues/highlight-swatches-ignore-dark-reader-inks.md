@@ -1,20 +1,17 @@
-# highlight swatches ignore dark reader inks
+# independent reader theme can disagree with surrounding highlight inks
 
-problem: a dark reader paints highlights with its own literals
-(`apps/web/src/lib/documentReader/documentReader.module.css:285-299`), while every
-other highlight colour reads `--highlight-*`, which `globals.css:120-124` defines
-once and equal to the light literals (`documentReader.module.css:270-284`).
-readers: picker swatches (`app/(authenticated)/media/[id]/HighlightColourPicker.tsx:35,64`),
-map rail ticks (`lib/documentReader/chrome/chrome.module.css:74`) and exact
-passages (`components/resources/ResourceContent.module.css:28-40`).
+problem: reader highlights use the reader’s independent theme; picker swatches,
+map ticks and adjacent excerpts inherit the surrounding room. choosing a dark
+reader in a light room, or the reverse, can therefore produce different inks.
 
-impact: in a dark reader the swatch, tick and passage colours differ from the
-marks on the page. found by code reading; not rendered.
+impact: a swatch or margin passage need not match the mark on the page.
+`lib/documentReader/documentReader.module.css` owns reader literals;
+`app/globals.css` owns room tokens. librarian figures now use the correct inks
+for their room; the remaining mismatch concerns independent reader themes.
 
-proposed fix: one source per reader theme for highlight inks, consumed by the
-`::highlight` literals and every reader-adjacent surface. `::highlight` cannot
-read `var()` on chromium and android webview ≤ 113 (`docs/modules/visual-system.md:36-37`),
-so the literals stay; the tokens must match them per theme.
+fix: apply matching reader-theme tokens to reader-owned adjacent surfaces.
+retain required literal `::highlight` colours where browser support requires them;
+do not change librarian’s room inheritance.
 
-resolved when, in a dark reader, each swatch, rail tick and passage matches its
-painted mark.
+resolved when picker swatches, map ticks and excerpts match page highlights in
+both mismatched reader/room combinations. verify all highlight colours.

@@ -7,7 +7,8 @@
 // a settled refusal that reading input must preserve. Highlights and saved passages
 // resolve their account-owned captures on the device, never the server. A ready
 // note admits its own whole-resource arrival locally; other sources keep their
-// existing resolution authority.
+// existing resolution authority. a fresh mobile arrival clears covering UI;
+// returning to a visit preserves its restored companion layout.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
 import type { PassageState } from "@nexus/authored/types";
@@ -150,7 +151,7 @@ export function useSourceArrival(input: {
       phase: "Pending", sourceIdentity: null };
     write(next);
     if (!runtime.claimPaneEntryDelivery(delivery)) return;
-    if (mobile && !(next.target.kind === "reader_destination" && next.target.destination.target.kind === "evidence_item")) runtime.closeSecondaryPane({ restoreFocus: false });
+    if (mobile && next.purpose === "Open" && !(next.target.kind === "reader_destination" && next.target.destination.target.kind === "evidence_item")) runtime.closeSecondaryPane({ restoreFocus: false });
     operation.current?.abort();
     operation.current = null;
     freshFocus.current = next.activationId;

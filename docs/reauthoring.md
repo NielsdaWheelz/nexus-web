@@ -4,6 +4,17 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+librarian companion against `b9dfeabd3`: +1,149 net authored runtime lines
+(1,528 added, 379 deleted, with renames detected): chat web +631, backend +368,
+reader/shared margin +108, workspace +5, shared web +37. one geometry owner serves reader and chat;
+one accepted turn window supplies text, references and source arrival. shared
+live projections supply draft and sent figures, with viewer-bound interval
+admission. deleted bare quote markup, local saved-turn copies, duplicate margin
+placement and the global scroll workaround. generated wire, documentation and
+disposable cases are excluded; no migration. contracts live in
+[chat](modules/chat.md), [references](modules/resource-references.md),
+[reader](modules/reader-implementation.md) and [workspace](modules/workspace.md).
+
 librarian history search against `f73c5fedb`: +542 net authored runtime lines
 (688 added, 146 deleted): chat web +436, markdown renderer +18, pane/shared
 interaction +30, prose consumers/source targets +23, search/resource api +35.

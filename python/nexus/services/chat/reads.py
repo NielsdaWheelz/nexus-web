@@ -146,6 +146,22 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
         for item in resource_items_out(db, viewer_id=viewer_id, refs=list(refs.values()))
     }
     attachments = references.attachments_by_reference(db, viewer_id, live, items=items)
+    figure_keys = {
+        reference.model_dump_json()
+        for values in message_references.values()
+        for reference in values
+    }
+    figure_keys.update(
+        target.reference.model_dump_json()
+        for row in retrieval_rows
+        if row.citation_ordinal is not None
+        and isinstance(target := targets[row.id], ResourceRetrievalTarget)
+    )
+    attachments.update(
+        references.present_attachments(
+            db, viewer_id, {key: value for key, value in attachments.items() if key in figure_keys}
+        )
+    )
     retrieved = _retrieved(
         [row for row in retrieval_rows if row.tool_call_id is not None], targets, attachments
     )
@@ -197,6 +213,11 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
     ):
         target = targets[row.id]
         item, available = _target_item(target, attachments)
+        attached = (
+            attachments[target.reference.model_dump_json()]
+            if isinstance(target, ResourceRetrievalTarget)
+            else None
+        )
         citations[row.assistant_message_id].append(
             ChatCitationOut(
                 id=row.id,
@@ -204,6 +225,9 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
                 target=target,
                 item=item,
                 location_available=available,
+                excerpt=attached.excerpt if attached is not None else None,
+                annotation=attached.annotation if attached is not None else None,
+                source=attached.source if attached is not None else None,
             )
         )
     outs = {

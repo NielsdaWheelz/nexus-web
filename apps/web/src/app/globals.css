@@ -108,11 +108,15 @@
   --resize-handle-width: 8px;
   --content-max-width: 700px;
 
-  --highlight-yellow: rgba(255, 235, 59, 0.4);
-  --highlight-green: rgba(76, 175, 80, 0.35);
-  --highlight-blue: rgba(33, 150, 243, 0.35);
-  --highlight-pink: rgba(233, 30, 99, 0.35);
-  --highlight-purple: rgba(156, 39, 176, 0.35);
+}
+
+/* A host beside a text uses margin type; a full-screen companion keeps page type. */
+[data-type-role="margin"] {
+  --content-font-size: var(--text-sm);
+  --content-meta-font-size: var(--text-xs);
+  --content-line-height: var(--leading-snug);
+  --excerpt-scale: .875;
+  --excerpt-max-size: var(--text-md);
 }
 
 /* Native controls follow the room; the document rule outranks vendor :root defaults. */
@@ -130,6 +134,12 @@ html:root[data-theme="light"],
 :root,
 [data-theme="dark"] {
   --font-serif: ui-serif, Charter, Georgia, "Times New Roman", Times, serif;
+
+  --highlight-yellow: rgba(249, 226, 175, 0.4);
+  --highlight-green: rgba(166, 227, 161, 0.35);
+  --highlight-blue: rgba(137, 180, 250, 0.35);
+  --highlight-pink: rgba(243, 139, 168, 0.35);
+  --highlight-purple: rgba(203, 166, 247, 0.35);
 
   --pane-section-title-font:
     normal 600 var(--text-lg) / var(--leading-snug) var(--font-sans);
@@ -183,6 +193,11 @@ html:root[data-theme="light"],
 
 /* The Study. */
 [data-theme="light"] {
+  --highlight-yellow: rgba(255, 235, 59, 0.4);
+  --highlight-green: rgba(76, 175, 80, 0.35);
+  --highlight-blue: rgba(33, 150, 243, 0.35);
+  --highlight-pink: rgba(233, 30, 99, 0.35);
+  --highlight-purple: rgba(156, 39, 176, 0.35);
   --pane-section-title-font:
     normal 500 var(--text-2xl) / var(--leading-tight) var(--font-eb-garamond),
     Charter, Georgia, "Times New Roman", serif;
@@ -232,6 +247,11 @@ html:root[data-theme="light"],
 
 /* The Solar: green twilight, aged brass (not the brand gold), moon-metal. */
 [data-theme="elvish"] {
+  --highlight-yellow: rgba(249, 226, 175, 0.4);
+  --highlight-green: rgba(166, 227, 161, 0.35);
+  --highlight-blue: rgba(137, 180, 250, 0.35);
+  --highlight-pink: rgba(243, 139, 168, 0.35);
+  --highlight-purple: rgba(203, 166, 247, 0.35);
   /* green-black: the canopy */
   --overlay-scrim: rgb(5 15 10 / 0.45);
   --surface-canvas: #15201b;

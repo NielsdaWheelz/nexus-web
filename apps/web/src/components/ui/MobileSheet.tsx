@@ -18,7 +18,8 @@ const HEADER_CONTROLS = "a, button, input, select, textarea, summary, [role=butt
  * above the body; either replaces the generated title and x. custom headers
  * receive requestDismiss for their own exits. only the handle and noninteractive
  * header space can drag; portals keep their own gestures. moved or cancelled
- * gestures cannot click; reduced motion removes travel, not dismissal.
+ * gestures cannot click; reduced motion removes travel, not dismissal. content
+ * determines height unless fillHeight asks for the sheet's available extent.
  */
 export default function MobileSheet({
   active,
@@ -26,6 +27,7 @@ export default function MobileSheet({
   scrim = "default",
   panelId,
   heightLimit,
+  fillHeight = false,
   flushBottom = false,
   children,
   handleLabel,
@@ -42,6 +44,8 @@ export default function MobileSheet({
   readonly panelId?: string;
   /** Fit natural content within the unobscured viewport, without a preferred cap. */
   readonly heightLimit?: "available";
+  /** Fill the sheet's allowed height; its existing viewport and height limits still apply. */
+  readonly fillHeight?: boolean;
   /** A bottom field supplies its own touch padding and sits against the safe-area edge. */
   readonly flushBottom?: boolean;
   readonly children: ReactNode;
@@ -82,7 +86,7 @@ export default function MobileSheet({
       scope={panelId}
       backdropClassName={[scrim === "soft" ? styles.softBackdrop : styles.backdrop, heightLimit === "available" && styles.available].filter(Boolean).join(" ")}
       backdropStyle={{ top: visualViewportTopPx, bottom: keyboardBottomInsetPx }}
-      className={[styles.panel, heightLimit === "available" && styles.available, flushBottom && styles.flushBottom].filter(Boolean).join(" ")}
+      className={[styles.panel, heightLimit === "available" && styles.available, fillHeight && styles.fillHeight, flushBottom && styles.flushBottom].filter(Boolean).join(" ")}
     >
       {(requestDismiss) => (
         <>

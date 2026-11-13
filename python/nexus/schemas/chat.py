@@ -12,8 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from nexus.jobs.queue import DurableExecutionPhase
 from nexus.schemas.assistant_writes import CreatedRefOut, MachineAuthorshipOut
 from nexus.schemas.collection_order import OrderRevision
+from nexus.schemas.highlights import HighlightAnnotationOut
 from nexus.schemas.live_reference import LiveReference, RetrievalTarget
 from nexus.schemas.llm import GenerationSelection, RunSelectionOut
+from nexus.schemas.media_summary import MediaSummaryOut
+from nexus.schemas.reader_excerpts import ExcerptView
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.tools.contract import ERROR_TYPES
 
@@ -30,18 +33,28 @@ class Out(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
-class AttachmentOut(Out):
-    reference: LiveReference
+class ReferencePresentationOut(Out):
     item: ResourceItemOut | None
     location_available: bool
+    excerpt: ExcerptView | None
+    annotation: HighlightAnnotationOut | None
+    source: MediaSummaryOut | None
 
 
-class ChatCitationOut(Out):
+class AttachmentOut(ReferencePresentationOut):
+    reference: LiveReference
+
+
+class ChatCitationOut(ReferencePresentationOut):
     id: UUID
     ordinal: int = Field(ge=1)
     target: RetrievalTarget
-    item: ResourceItemOut | None
-    location_available: bool
+
+
+class ResolveLibrarianAttachmentsRequest(Wire):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    references: list[LiveReference] = Field(min_length=1, max_length=16)
 
 
 class ChatFailureOut(Out):

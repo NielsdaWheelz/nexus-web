@@ -21,7 +21,7 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import { TabList } from "@/components/ui/Tabs";
 import compact from "@/components/ui/CompactChrome.module.css";
-import { CompanionPresentationContext, type CompanionPresentation } from "@/components/workspace/companionPresentation";
+import type { CompanionPresentation } from "@/components/workspace/companionPresentation";
 import ResizeHandle from "@/components/workspace/ResizeHandle";
 import type { FindController } from "@/lib/find/useFind";
 import {
@@ -60,6 +60,7 @@ const ICONS: Record<TabId, Icon.Glyph> = {
   "resource-members": Icon.Members,
   "resource-connections": Icon.Link,
   "import-detail": Icon.Upload,
+  "librarian-references": Icon.SourceReference,
   "find-results": Icon.Search,
 };
 const title = (id: TabId) =>
@@ -602,6 +603,7 @@ export default function Companion(props: {
           ariaLabel={activeId ? title(activeId) : "Inspector"}
           renderHeader={({ requestDismiss }) => header(requestDismiss)}
           scrim="soft"
+          fillHeight
           initialFocus={initialFocus}
           returnFocusTo={returnFocusTo}
           returnFocusFallback={returnFocusFallback}
@@ -630,14 +632,12 @@ export default function Companion(props: {
         </MobileFullScreenTask>
       ) : null}
       {host && open && activeId !== null ? createPortal(
-        <CompanionPresentationContext value={presentation}>
-          <OverlayContext value={portalParent}>
-            <div className={styles.contents} data-presentation={presentation} onKeyDown={columnKeyDown}>
-              {presentation === "Column" ? header(close) : null}
-              {panels}
-            </div>
-          </OverlayContext>
-        </CompanionPresentationContext>,
+        <OverlayContext value={portalParent}>
+          <div className={styles.contents} data-presentation={presentation} data-type-role={presentation === "FullScreen" ? undefined : "margin"} onKeyDown={columnKeyDown}>
+            {presentation === "Column" ? header(close) : null}
+            {panels}
+          </div>
+        </OverlayContext>,
         host,
       ) : null}
     </>

@@ -37,6 +37,16 @@ export type TargetActivation =
   | { readonly kind: "Consume" }
   | { readonly kind: "Unowned" };
 
+/** A pointer's plain click can end text selection; keyboard and modified links keep their intent. */
+export function suppressSelectionActivation(event: TargetActivationEvent): boolean {
+  const intent = workspaceTargetActivationIntent(event);
+  const nativeEvent = "nativeEvent" in event ? event.nativeEvent : event;
+  if (intent.kind !== "Open" || intent.intent !== "default" || !(nativeEvent instanceof PointerEvent) ||
+    nativeEvent.pointerType === "" || window.getSelection()?.isCollapsed !== false) return false;
+  event.preventDefault();
+  return true;
+}
+
 /** Plain Enter keeps its native click; shifted Enter is handled before that click. */
 export function workspaceTargetActivationIntent(
   event: TargetActivationEvent,

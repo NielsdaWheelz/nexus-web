@@ -84,7 +84,7 @@ export default function EvidenceRow({ entry, actions, active, presence, placed, 
   const { verbs } = actions;
   const highlightId = entry.kind === "highlight" ? entry.annotation.id
     : entry.kind === "remote" && entry.root.content.kind === "Highlight" ? entry.root.content.highlight_id : null;
-  const rootProps = { hidden: presence === "hidden", style: { ...style, ...rowWindow.reserve(entry.key) }, className, "data-active": active || openRequest !== null, "data-group": entry.key, "data-window-key": entry.key,
+  const rootProps = { hidden: presence === "hidden", style: { ...style, ...rowWindow.reserve(entry.key) }, className, "data-active": active || openRequest !== null, "data-group": entry.key, "data-margin-key": entry.key, "data-window-key": entry.key,
     "aria-posinset": position ?? undefined, "aria-setsize": count,
     // a row passing under a still pointer is no hover.
     onMouseEnter: () => { if (highlightId && !rowWindow.moving()) verbs.hover(highlightId); },

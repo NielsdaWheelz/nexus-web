@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 22;
+export const WIRE_REVISION = 23;
 
 export interface paths {
     "/assistant-writes": {
@@ -1279,6 +1279,23 @@ export interface paths {
         put?: never;
         /** Reconcile Lectern Suggestions */
         post: operations["reconcile_lectern_suggestions_lectern_suggestions_view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/librarian/attachments/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Librarian Attachments */
+        post: operations["resolve_librarian_attachments_librarian_attachments_resolve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3666,10 +3683,14 @@ export interface components {
         };
         /** AttachmentOut */
         AttachmentOut: {
+            annotation: components["schemas"]["HighlightAnnotationOut"] | null;
+            /** Excerpt */
+            excerpt: (components["schemas"]["ExcerptContentView"] | components["schemas"]["ExcerptTableSummary"]) | null;
             item: components["schemas"]["ResourceItemOut"] | null;
             /** Location Available */
             location_available: boolean;
             reference: components["schemas"]["LiveReference-Output"];
+            source: components["schemas"]["MediaSummaryOut"] | null;
         };
         /** AudienceAvailableOut */
         AudienceAvailableOut: {
@@ -4093,6 +4114,9 @@ export interface components {
         };
         /** ChatCitationOut */
         ChatCitationOut: {
+            annotation: components["schemas"]["HighlightAnnotationOut"] | null;
+            /** Excerpt */
+            excerpt: (components["schemas"]["ExcerptContentView"] | components["schemas"]["ExcerptTableSummary"]) | null;
             /**
              * Id
              * Format: uuid
@@ -4103,6 +4127,7 @@ export interface components {
             location_available: boolean;
             /** Ordinal */
             ordinal: number;
+            source: components["schemas"]["MediaSummaryOut"] | null;
             /** Target */
             target: components["schemas"]["ResourceRetrievalTarget"] | components["schemas"]["UrlRetrievalTarget"];
         };
@@ -5543,6 +5568,11 @@ export interface components {
         /** Data[XPostSaveStateOut] */
         Data_XPostSaveStateOut_: {
             data: components["schemas"]["XPostSaveStateOut"];
+        };
+        /** Data[list[AttachmentOut]] */
+        Data_list_AttachmentOut__: {
+            /** Data */
+            data: components["schemas"]["AttachmentOut"][];
         };
         /** Data[list[OracleConcordanceOut]] */
         Data_list_OracleConcordanceOut__: {
@@ -7520,6 +7550,15 @@ export interface components {
              * @enum {string}
              */
             type: "highlight_annotation_offsets";
+        };
+        /** HighlightAnnotationOut */
+        HighlightAnnotationOut: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
         };
         /** HighlightPatch */
         "HighlightPatch-Input": {
@@ -12396,6 +12435,11 @@ export interface components {
              */
             kind: "RepairSource";
         };
+        /** ResolveLibrarianAttachmentsRequest */
+        ResolveLibrarianAttachmentsRequest: {
+            /** References */
+            references: components["schemas"]["LiveReference-Input"][];
+        };
         /** ResolveMediaObservationsIn */
         ResolveMediaObservationsIn: {
             /** Media Ids */
@@ -14681,12 +14725,12 @@ export interface components {
              * Active Surface Id
              * @enum {string}
              */
-            active_surface_id: "resource-contents" | "resource-members" | "resource-connections" | "import-detail";
+            active_surface_id: "resource-contents" | "resource-members" | "resource-connections" | "import-detail" | "librarian-references";
             /**
              * Group Id
              * @enum {string}
              */
-            group_id: "resource-inspector" | "imports-inspector";
+            group_id: "resource-inspector" | "imports-inspector" | "librarian-inspector";
             /** Id */
             id: string;
             /**
@@ -17514,6 +17558,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_SuggestionViewOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_librarian_attachments_librarian_attachments_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveLibrarianAttachmentsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_list_AttachmentOut__"];
                 };
             };
             /** @description Validation Error */

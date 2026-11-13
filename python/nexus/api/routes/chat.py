@@ -11,15 +11,17 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession, get_session_factory
 from nexus.responses import Data
 from nexus.schemas.chat import (
+    AttachmentOut,
     ChatAdmissionReceipt,
     ChatRunCreateRequest,
     ChatRunResponse,
     ChatRunRetryRequest,
+    ResolveLibrarianAttachmentsRequest,
     TimelineOut,
 )
 from nexus.schemas.chat_selection import ChatSelectionOut
 from nexus.schemas.collection_order import OrderRevision
-from nexus.services.chat import admit, reads, selection, timeline
+from nexus.services.chat import admit, reads, references, selection, timeline
 from nexus.services.generation.catalog import Catalog
 from nexus.services.tools.run import Toolbox
 
@@ -82,6 +84,17 @@ async def create_chat_run(
             tools=tools,
         )
     )
+
+
+@router.post("/librarian/attachments/resolve")
+def resolve_librarian_attachments(
+    body: ResolveLibrarianAttachmentsRequest,
+    response: Response,
+    viewer: ViewerDep,
+    db: RepeatableReadDbSession,
+) -> Data[list[AttachmentOut]]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return Data(data=references.read_attachments(db, viewer.user_id, body.references))
 
 
 @router.get("/chat-runs/{run_id}")

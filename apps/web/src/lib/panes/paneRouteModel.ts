@@ -192,13 +192,15 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
     queryNavigation: IN_PLACE.has(id) ? "in-place" : null,
     width: returnKind === "Reader" ? READER_WIDTH : STANDARD_WIDTH,
     // Resource panes (but the oracle reading) offer the Resource Inspector;
-    // imports offers its own.
+    // imports and librarian offer their own.
     groups:
       id === "imports"
         ? ["imports-inspector"]
-        : RESOURCE[id] && id !== "oracleReading"
-          ? ["resource-inspector"]
-          : [],
+        : id === "librarian"
+          ? ["librarian-inspector"]
+          : RESOURCE[id] && id !== "oracleReading"
+            ? ["resource-inspector"]
+            : [],
     shareByRoute: !RESOURCE[id] && !UNSHARED.has(id) && pattern[0] !== "settings",
   };
   return { id, pattern, traits };

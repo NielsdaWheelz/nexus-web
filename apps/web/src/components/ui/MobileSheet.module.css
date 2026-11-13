@@ -51,6 +51,10 @@
   padding-bottom: max(var(--space-2), calc(var(--viewport-safe-bottom) - var(--keyboard-inset)));
 }
 
+.panel.fillHeight {
+  height: 100%;
+}
+
 /* A bottom field owns its padding; only the remaining safe area belongs to the sheet. */
 .panel.flushBottom {
   padding-bottom: max(0px, calc(var(--viewport-safe-bottom) - var(--keyboard-inset)));

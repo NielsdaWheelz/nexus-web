@@ -243,9 +243,10 @@ realigning its neighbours.
 a reveal scrolls the port to its target. the next text movement folds that offset
 into the base without a jump, then the normal three-times cap returns the stack
 toward its passages. dense stacks and revealed rows can remain off their passages
-until text moves. popups portal outside the transformed scope. a capture-phase
-scroll listener schedules measurement in the text's frame until the
-[reader publication delay](../issues/reader-publishes-scroll-a-frame-late.md) is fixed.
+until text moves. popups portal outside the transformed scope. the reader's
+`subscribeGeometry` publishes paired viewport and placement after source
+corrections and the measuring commit, before paint; `lib/margin/useMarginLayout`
+measures directly from that notification without a global scroll listener.
 
 ## relationships
 

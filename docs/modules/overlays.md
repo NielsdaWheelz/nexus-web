@@ -288,6 +288,8 @@ leave one usable result row, the body becomes the sole scrollport and the list
 stops scrolling independently. the sheet header/close remains reachable.
 
 **MobileSheet**: an independently scrolling body beneath a fixed header.
+`fillHeight` fills its existing allowed extent; omission keeps intrinsic height.
+the companion opts in because its content owns an independent scrollport.
 `handleLabel` supplies an accessible native tap/drag dismissal handle;
 `renderHeader` supplies custom content and receives guarded `requestDismiss`.
 both compose the handle above custom content. either replaces the generated

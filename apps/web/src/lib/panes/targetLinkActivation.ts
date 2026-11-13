@@ -5,6 +5,7 @@
 // clicks, other buttons, _blank, downloads, fragments, browser-owned paths)
 // stays the browser's.
 import {
+  suppressSelectionActivation,
   workspaceTargetActivationIntent,
   type TargetActivationEvent,
 } from "@/lib/ui/targetActivation";
@@ -77,6 +78,7 @@ export function activateTargetAnchor(input: {
   anchor: HTMLAnchorElement;
 }): TargetLinkActivationResult {
   const { anchor } = input;
+  if (suppressSelectionActivation(input.event)) return "consumed";
   if (
     anchor.hasAttribute("data-workspace-rich-target") ||
     anchor.getAttribute("aria-disabled") === "true" ||

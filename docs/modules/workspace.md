@@ -785,8 +785,16 @@ unpublished (reader contents before its read lands) the companion shows the
 default without rewriting the tab, so a later publication brings it back. Only
 the Inspector toggle, a tab, ✕/Esc and explicit requests (a target's
 `secondaryActivation`, the media `g` keys, the imports selection) open, retarget
-or close it. One width law serves both groups: `companionWidthPx` clamps
+or close it. one width law serves all groups: `companionWidthPx` clamps
 `round(stored ?? 360)` to 280–720, in the store's writes and at render.
+
+accepted departure captures `{secondary}` under the private session visit key
+`Workspace.Companion`. back/forward atomically restores the compatible captured
+value, including null. forks do not copy it; normal visit pruning retires it.
+only the current `pane.secondary` is durable across reload. librarian publishes
+`librarian-references` in `librarian-inspector` and starts closed. shell-owned
+presentation context includes the primary body and its companion portal, so the
+body can choose inline or column figures without duplicating breakpoint rules.
 
 Find's results are this pane's transient tab, never persisted
 (`results: {expanded, widthPx}` in the pane store): FindBar's Results shows
@@ -798,7 +806,7 @@ their width is the durable record's when one exists. a covering result preview h
 the results live on. A pane whose body publishes no Companion shows its results with a solo title and no tablist.
 
 The region id is `paneSecondaryRegionId(paneId)` (`pane-<id>-companion`) for
-both groups; the Inspector's disclosure names it only while it is open.
+all groups; the Inspector's disclosure names it only while it is open.
 A command opening the desktop column (the record turning visible or changing
 group, Find's results expanding) scrolls it into the canvas so its ✕ is
 reachable; a restore, a late publication or a breakpoint round trip never moves
@@ -967,7 +975,9 @@ named/history forks copy only shell scroll/eye-line (without keyboard focus) and
 `Reader.InspectionView` from the exact visit/route key. authored data, drafts and
 pending commands retain their owners. generic href forks carry a fresh target.
 `InspectSource.purpose` is required: `Open` invalidates old arrival presentation;
-`RestoreVisit` waits for destination validation of its copied view. a valid view
+on mobile it dismisses a covering companion except for evidence-item arrivals.
+`RestoreVisit` retains the restored companion and waits for destination validation
+of its copied view. a valid view
 wins even over an obsolete locator; absent/obsolete views inspect the canonical
 href; failed restoration refuses visibly. admission precedes capture/copy/delivery
 and one focused commit. refusal changes no workspace state or presentation.

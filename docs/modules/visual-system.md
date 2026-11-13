@@ -279,11 +279,13 @@ native intrinsic value width; the whole control wraps before its label stacks.
 `Stacked` forms keep their layout.
 
 content in a companion beside a text is a third type role. a `Column` or `Sheet`
-companion sets `--content-font-size` 13px, `--content-meta-font-size` 12px and
+companion and inline librarian figure host apply `[data-type-role="margin"]`
+from `globals.css`, setting `--content-font-size` 13px, `--content-meta-font-size` 12px and
 `--content-line-height` `--leading-snug` on its contents, and `--excerpt-scale`
 `.875` and `--excerpt-max-size` `--text-md` for quotes ([highlight](highlight.md)). a `FullScreen`
 companion replaces the text, so it is a page and sets none. resource outline rows,
-ordinary note bodies and page titles read the tokens with their own sizes as fallback. notes
+ordinary note bodies and page titles read the tokens with their own sizes as fallback. passive figures set no room or density. librarian figures inherit the surrounding
+room; dark rooms use the reader's dark highlight inks, light rooms retain their inks. notes
 outside a companion use one 14px/1.5 type; chrome and targets never read these tokens.
 
 `PaneQueryToolbar` groups controls by pane width. its boxed input always reserves

@@ -27,11 +27,9 @@ in [its own issue](codex-auth-refresh-not-qualified.md).
 delete this rollout record once the active local compositions are accounted for
 and any required dedicated enrollment is complete.
 
-2026-11-12 librarian qualification: `./scripts/lab-codex status` on macbook
-reports the shared host running but `shared codex control capability missing`.
-the retained local state has the older `transport-token`, not `control-token`.
-ordinary attachment cannot repair this running installation. drain and qualify
-the existing stopped-host upgrade procedure; do not copy account credentials.
-the separately enrolled `nexus-native-recovery-account` volume has no container
-references and remains available to the owned-live lab workflow. resolve this
-local blocker when the shared host's normal status and attachment both succeed.
+2026-11-12: the macbook shared host’s missing control capability is repaired.
+after owner authorization and a verified drain, the stopped-host upgrade
+retained its account and initialized the absent host state through its owner.
+normal status and live-lab attachment now succeed. this closes that local
+blocker; the remaining checkout inventory above and token-refresh qualification
+retain their separate scope.

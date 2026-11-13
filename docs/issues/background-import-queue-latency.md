@@ -51,3 +51,13 @@ publisher exception. backlog is supported; the exact unmet database predicate wa
 not captured. the unchanged nine cases passed in fresh standalone runtime
 `20261027-110209-f8f1d8870fdb` with their existing deadlines and oracles. this
 isolates the setup problem; it supplies no queue-policy or latency fix.
+
+companion lab `20261112-181457-9b33ebd33ccd` exhausted the unchanged 50-second
+section-preparation wait. its exact `media_content_reindex_job` remained pending
+with attempts 0 while a startup `suggestion_shortlist_refresh` ran for roughly
+50 seconds with a renewing lease; a second startup refresh was pending. the
+captured database activity had no blockers. the private
+`authority-section-timeout.private.json` records matching source generation,
+section keys, job states and wait events. no companion assertion ran. this proves
+startup queue contention in this run, without establishing a new latency bound
+or changing queue policy.
