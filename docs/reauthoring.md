@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-composer against `858cb192e`: -155 net authored runtime lines
-(586 added, 741 deleted): chat web +71, backend +2, shared controls -245,
+composer against `858cb192e`: -152 net authored runtime lines
+(589 added, 741 deleted): chat web +74, backend +2, shared controls -245,
 settings/shortcuts/public copy +17. the turn receipt and pane draft owner make
 acceptance visible before a timeline read; one generation panel replaces three
 pickers. shared context tokens align the writing line and transcript. deleted

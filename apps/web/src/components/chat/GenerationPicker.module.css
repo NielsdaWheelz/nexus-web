@@ -21,6 +21,9 @@
   transition: background var(--duration-fast) var(--ease-glide), color var(--duration-fast) var(--ease-glide);
 }
 
+/* Recall can replace a child during a press; the native button owns its target. */
+.trigger > * { pointer-events: none; }
+
 .trigger:hover,
 .trigger[aria-expanded="true"] { color: var(--ink); background: var(--surface-2); }
 
