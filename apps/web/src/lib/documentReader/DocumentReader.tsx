@@ -100,10 +100,11 @@ export interface Inspection {
 }
 export type SelectionCandidate =
   | { readonly kind: "Captured"; readonly anchor: DraftAnchor; readonly quote: string; readonly excerpt: ExcerptBody | null; readonly excerpt_start: number | null; readonly excerpt_end: number | null }
-  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" };
+  | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "CrossPage" | "UnsupportedExcerpt" | "PartialTable" };
 /** Why a selection can't become a highlight here: one line per rejection, for every reader host. */
 export function rejectedSelectionFact(reason: Extract<SelectionCandidate, { kind: "Rejected" }>["reason"], doc: ReaderDocument | null): string {
   switch (reason) {
+    case "PartialTable": return "select the whole table to quote it.";
     case "UnsupportedExcerpt": return "nexus can’t capture some text in this passage.";
     case "CrossPage": return "highlights can’t cross pages.";
     case "CrossUnit": return doc?.kind === "text" && doc.units.some(unit => unit.xPost !== null) ? "highlights can’t cross posts." : "highlights can’t cross sections.";

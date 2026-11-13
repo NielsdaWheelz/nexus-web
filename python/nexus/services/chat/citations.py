@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.schemas.live_reference import ResourceRetrievalTarget, RetrievalTarget
+from nexus.schemas.live_reference import SavedResourceTarget, SavedRetrievalTarget
 from nexus.services.chat.markdown_citations import Marker, parse_markers
 from nexus.services.chat.retrievals import RetrievalCitation, insert_retrieval
 from nexus.services.resource_graph.citations import (
@@ -157,7 +157,7 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
     content = "".join(chunks) + markdown[cursor:]
     if parse_markers(content) != tuple(expected):
         return Degraded(unpublished(markdown), "renumbered markers change markdown syntax")
-    targets = TypeAdapter(RetrievalTarget)
+    targets = TypeAdapter(SavedRetrievalTarget)
     local: list[CitationInput] = []
     local_ids: list[UUID] = []
     for n, ordinal in final.items():
@@ -167,7 +167,7 @@ def publish(db: Session, run: ChatRun, markdown: str) -> Published | Degraded:
             {"ordinal": ordinal, "id": row.id},
         )
         target = targets.validate_python(row.target)
-        if isinstance(target, ResourceRetrievalTarget):
+        if isinstance(target, SavedResourceTarget):
             ref = require_ref(target.reference.resource_ref)
             if ref_visible(db, viewer_id=run.owner_user_id, ref=ref):
                 local.append(CitationInput(ref, ordinal, None))

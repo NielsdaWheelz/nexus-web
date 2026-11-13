@@ -193,21 +193,20 @@ draft attachment controls and citation preview lifetimes remain with their calle
 historical outline items likewise retain supplied evidence before considering local
 authorship; ordinary authored rows keep their authoritative local reads.
 
-librarian attachments and citations carry current resource references with nullable
-structural coordinates. `chat/references.py` projects their current identity,
-exact excerpt, private annotation and readable source bibliography in one snapshot.
-`ReferenceFigure` reads nothing; `LiveReference` shares its activation. whole
-highlights retain their saved passage and separate annotation; annotation-field
-references show that field, not the source quotation. ordinary fragment selections
-use authorized canonical plain text because no reading identity was selected.
+librarian attachments and citations carry saved resource references: identity,
+nullable place and nullable frozen quote. `chat/references.py` projects current
+identity, private annotation and readable source bibliography in one snapshot,
+without deriving words. `ReferenceFigure` projects the saved excerpt through the
+shared kernel; `LiveReference` shares its activation. whole highlights retain
+live passage, colour and annotation. annotation-field quotes retain their own
+words rather than substituting the source quotation.
+
 `live_references.resolve_location` requires the viewer: the entire original range
-must fit one readable interval, including words beyond the preview cap. disconnected
+must fit one readable interval, including words beyond the quote cap. disconnected
 pieces cannot combine authority. x captures retain their capture-owner boundary.
-`source_display_excerpts` returns named format-limit outcomes per request; those
-alone permit exact plain presentation. canonical disagreement, scope errors and
-helper failures remain failures. authored captures keep their strict contract.
-invalid coordinates remain unavailable; source opening is still allowed.
-selections create no highlight, passage anchor or annotation.
+text availability compares the saved exact within that interval in sql. source
+opening may resolve one unique exact-word match as described under historical
+targets and arrival. selections create no highlight, passage anchor or annotation.
 chat url citations retain only the url. source-owned native and oracle quotations
 keep the captured-evidence contract above.
 
@@ -392,12 +391,19 @@ location resolution may prove where captured words land now; it never rewrites
 the historical words or treats stale offsets as present authority. genuine
 ambiguity stays explicit, even when that refuses an otherwise useful action.
 
-chat admission stores live resource references and structural locators. selecting
-an existing highlight references that highlight; unsaved selections retain only
-coordinates in their current canonical owner. there is no copied excerpt,
-publication or source-context membership. each read resolves current access and
-bounds; an invalid locator is unavailable. message offsets reveal a transient
-exact passage from the current literal message at its timeline location.
+chat admission proves an unsaved selection and saves its exact words, context and
+frozen excerpt beside the reading's structural locator. an x capture is owned by
+its fragment. each attachment and cited retrieval owns its own quote, which dies
+with its turn; no authored passage is created. highlights remain live references
+with current colour and annotation. whole-resource and cited-message references
+have no quote, and a cited message always names the whole message.
+
+timeline presentation never derives words. saved text places compare their
+current start substring against the saved exact in sql. failure retains the quote
+and says `source changed since quoted`; missing sources retain words and the
+per-kind unavailable status, without navigation. uncited retrievals expose only
+identity and coordinates. current attached words enter model context while source
+access remains; earlier turns omit their quotes.
 
 body and required-note authority are separate intervals belonging to one reading.
 outside a piece's body, only a genuine in-body reference admits its direct matching
@@ -428,7 +434,10 @@ still needs separate qualification for generated graph facts and actual consumer
 `live_reference`, `citation` edge or `x_post` revision. `x_post` requires a reading
 media and resolves a revision alias to its selected primary capture; incidental
 context is not a primary. live references validate current authority and structural
-coordinates. citations use retained evidence when present; an uncaptured message
+coordinates. saved text quotes whose place fails use the passage selector over
+viewer-readable source slices; one unique exact-word match opens the current
+place, while ambiguity or absence preserves source activation and reports the
+location unavailable. opening never rewrites the saved reference. citations use retained evidence when present; an uncaptured message
 citation opens its current target. authorization is checked on the occurrence and
 its current source in one repeatable-read snapshot.
 
@@ -443,7 +452,8 @@ a frozen location opens only while its stored locator proves the same normalized
 words in bounded current slices. pdf geometry also requires the captured
 publication; timed locations require exact unit bounds and words. failed proof
 leaves the location unavailable while preserving permitted whole-source access;
-opening frozen evidence never scans a whole source to requote it. ordinary current
+opening native frozen evidence never scans a whole source to requote it. saved
+chat quotes separately allow the unique-match relocation described above. ordinary current
 resource discovery retains `locations.current_passages` and its existing relocation
 rules. capture refuses a publication that changes under it (409).
 
@@ -504,7 +514,7 @@ outline insertion line share these bindings; suggestions stay bounded and inline
 editor transactions, authored snapshots, undo and context review remain with
 the existing journal and outline owners.
 
-chat draft and sent references use `ReferenceFigure` with their current authorised
-presentation and shared source activation. `ResourceQuotation` remains the passive
+chat draft and sent references use `ReferenceFigure` with their saved quote and
+current authorised presentation and shared source activation. `ResourceQuotation` remains the passive
 renderer for supplied captured evidence. both reuse `ReaderExcerpt`; a captured
 passage never implies a separately captured highlight annotation.

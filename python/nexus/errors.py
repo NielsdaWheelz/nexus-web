@@ -111,6 +111,7 @@ class ApiErrorCode(str, Enum):
     E_READER_SELECTION_GEOMETRY_ONLY = ("E_READER_SELECTION_GEOMETRY_ONLY", 400)  # blank exact
     E_READER_SELECTION_TOO_LARGE = ("E_READER_SELECTION_TOO_LARGE", 400)  # bounded field over limit
     E_READER_SELECTION_STALE = ("E_READER_SELECTION_STALE", 409)  # revision precondition failed
+    E_READER_SELECTION_PARTIAL_TABLE = ("E_READER_SELECTION_PARTIAL_TABLE", 400)
 
     # Consumption/Lectern errors
     E_MEDIA_DELETING = ("E_MEDIA_DELETING", 409)  # target media has a teardown intent

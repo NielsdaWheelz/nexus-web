@@ -38,7 +38,13 @@ from nexus.schemas.chat import (
     TrustRunOut,
     TrustToolCallOut,
 )
-from nexus.schemas.live_reference import LiveReference, ResourceRetrievalTarget, RetrievalTarget
+from nexus.schemas.live_reference import (
+    LiveReference,
+    ResourceRetrievalTarget,
+    SavedReference,
+    SavedResourceTarget,
+    SavedRetrievalTarget,
+)
 from nexus.schemas.resource_items import ResourceItemOut
 from nexus.services.chat import events, references
 from nexus.services.generation.contract import GenerationSpec
@@ -126,15 +132,13 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
         )
     )
     message_references = {
-        message.id: [LiveReference.model_validate(raw) for raw in message.attachments]
+        message.id: [SavedReference.model_validate(raw) for raw in message.attachments]
         for message in messages
     }
     targets = _targets(retrieval_rows)
     live = [reference for values in message_references.values() for reference in values]
     live.extend(
-        target.reference
-        for target in targets.values()
-        if isinstance(target, ResourceRetrievalTarget)
+        target.reference for target in targets.values() if isinstance(target, SavedResourceTarget)
     )
     refs = {
         reference.resource_ref: assert_resource_ref(reference.resource_ref) for reference in live
@@ -155,7 +159,7 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
         target.reference.model_dump_json()
         for row in retrieval_rows
         if row.citation_ordinal is not None
-        and isinstance(target := targets[row.id], ResourceRetrievalTarget)
+        and isinstance(target := targets[row.id], SavedResourceTarget)
     )
     attachments.update(
         references.present_attachments(
@@ -215,7 +219,7 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
         item, available = _target_item(target, attachments)
         attached = (
             attachments[target.reference.model_dump_json()]
-            if isinstance(target, ResourceRetrievalTarget)
+            if isinstance(target, SavedResourceTarget)
             else None
         )
         citations[row.assistant_message_id].append(
@@ -225,7 +229,6 @@ def turns(db: Session, viewer_id: UUID, runs: list[ChatRun]) -> list[ChatRunResp
                 target=target,
                 item=item,
                 location_available=available,
-                excerpt=attached.excerpt if attached is not None else None,
                 annotation=attached.annotation if attached is not None else None,
                 source=attached.source if attached is not None else None,
             )
@@ -295,15 +298,15 @@ def _executions(db: Session, runs: list[ChatRun]) -> dict[UUID, Execution]:
     return out
 
 
-def _targets(rows: Sequence[MessageRetrieval]) -> dict[UUID, RetrievalTarget]:
-    decoder = TypeAdapter(RetrievalTarget)
+def _targets(rows: Sequence[MessageRetrieval]) -> dict[UUID, SavedRetrievalTarget]:
+    decoder = TypeAdapter(SavedRetrievalTarget)
     return {row.id: decoder.validate_python(row.target) for row in rows}
 
 
 def _target_item(
-    target: RetrievalTarget, attachments: Mapping[str, AttachmentOut]
+    target: SavedRetrievalTarget, attachments: Mapping[str, AttachmentOut]
 ) -> tuple[ResourceItemOut | None, bool]:
-    if isinstance(target, ResourceRetrievalTarget):
+    if isinstance(target, SavedResourceTarget):
         attached = attachments[target.reference.model_dump_json()]
         return attached.item, attached.location_available
     return None, True
@@ -311,7 +314,7 @@ def _target_item(
 
 def _retrieved(
     rows: Sequence[MessageRetrieval],
-    targets: Mapping[UUID, RetrievalTarget],
+    targets: Mapping[UUID, SavedRetrievalTarget],
     attachments: Mapping[str, AttachmentOut],
 ) -> dict[UUID, list[TrustRetrievalOut]]:
     out: dict[UUID, list[TrustRetrievalOut]] = defaultdict(list)
@@ -319,7 +322,18 @@ def _retrieved(
         target = targets[row.id]
         item, available = _target_item(target, attachments)
         out[cast(UUID, row.tool_call_id)].append(
-            TrustRetrievalOut(id=row.id, target=target, item=item, location_available=available)
+            TrustRetrievalOut(
+                id=row.id,
+                target=ResourceRetrievalTarget(
+                    reference=LiveReference.model_validate(
+                        target.reference.model_dump(exclude={"quote"})
+                    )
+                )
+                if isinstance(target, SavedResourceTarget)
+                else target,
+                item=item,
+                location_available=available,
+            )
         )
     return out
 
@@ -391,9 +405,7 @@ def read_events(
     )
     targets = _targets(retrieval_rows)
     live = [
-        target.reference
-        for target in targets.values()
-        if isinstance(target, ResourceRetrievalTarget)
+        target.reference for target in targets.values() if isinstance(target, SavedResourceTarget)
     ]
     refs = {
         reference.resource_ref: assert_resource_ref(reference.resource_ref) for reference in live

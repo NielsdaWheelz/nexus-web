@@ -1,4 +1,4 @@
-"""Live source identity and structural coordinates; never copied source content."""
+"""Source identity and coordinates; saved references carry their quoted words."""
 
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -14,6 +14,7 @@ from nexus.schemas.reader import (
     TranscriptTextOffsetsTargetOut,
     WebTextOffsetsTargetOut,
 )
+from nexus.schemas.reader_excerpts import FrozenExcerpt
 from nexus.schemas.resource_evidence import ResourceField, validate_resource_field
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
@@ -73,6 +74,32 @@ class ResourceRetrievalTarget(BaseModel):
     reference: LiveReference
 
 
+class ReferenceQuote(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    exact: str = Field(min_length=1, pattern=r"\S")
+    prefix: str | None
+    suffix: str | None
+    excerpt: FrozenExcerpt
+
+
+class SavedReference(LiveReference):
+    quote: ReferenceQuote | None
+
+    @model_validator(mode="after")
+    def validate_quote(self) -> "SavedReference":
+        if self.quote is not None and self.locator is None:
+            raise ValueError("a quote requires a locator")
+        return self
+
+
+class SavedResourceTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["resource"] = "resource"
+    reference: SavedReference
+
+
 class UrlRetrievalTarget(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -94,4 +121,8 @@ class UrlRetrievalTarget(BaseModel):
 
 RetrievalTarget = Annotated[
     ResourceRetrievalTarget | UrlRetrievalTarget, Field(discriminator="kind")
+]
+
+SavedRetrievalTarget = Annotated[
+    SavedResourceTarget | UrlRetrievalTarget, Field(discriminator="kind")
 ]

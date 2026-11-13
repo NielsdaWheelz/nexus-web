@@ -35,14 +35,14 @@ from nexus.schemas.chat import (
     RejectedChatAdmission,
     RejectionCode,
 )
-from nexus.schemas.live_reference import LiveReference
+from nexus.schemas.live_reference import SavedReference
 from nexus.schemas.llm import (
     GenerationSelection,
     GenerationSelectionUnavailable,
     Ineligible,
     InvalidGenerationSelection,
 )
-from nexus.services.chat import deletion, events, reads, selection
+from nexus.services.chat import deletion, events, reads, references, selection
 from nexus.services.generation.catalog import (
     Catalog,
     InvalidSelection,
@@ -54,6 +54,9 @@ from nexus.services.generation.catalog import (
 from nexus.services.generation.contract import GenerationSpec
 from nexus.services.generation.ledger import lock_generation_owner
 from nexus.services.generation.policy import chat_tool_plan
+from nexus.services.resource_graph.citations import CitationInput, replace_citations_for_source
+from nexus.services.resource_graph.refs import ResourceRef, require_ref
+from nexus.services.resource_items.items import ref_visible
 from nexus.services.search import projection
 from nexus.services.suggestion_changes import record_input_change
 from nexus.services.tools.run import Toolbox
@@ -75,6 +78,13 @@ async def create_chat_run(
         return await run_in_threadpool(_receipt, viewer_id, existing)
     row = await _catalog_row(catalog, request.selection)
 
+    def admit() -> list[SavedReference]:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            return references.admit_attachments(db, viewer_id, request.attachments)
+
+    attachments = await run_in_threadpool(admit)
+
     def build(db: Session, resolved: Row | ApiError) -> ChatRun:
         deletion.require_revision(db, viewer_id, request.expected_deletion_revision)
         if isinstance(resolved, ApiError):
@@ -84,9 +94,7 @@ async def create_chat_run(
                 ApiErrorCode.E_MESSAGE_TOO_LONG,
                 f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
             )
-        return _insert(
-            db, viewer_id, run_id, request.content, request.attachments, resolved, tools, None
-        )
+        return _insert(db, viewer_id, run_id, request.content, attachments, resolved, tools, None)
 
     outcome = await run_in_threadpool(_settle, viewer_id, run_id, row, build)
     return await run_in_threadpool(_receipt, viewer_id, outcome)
@@ -123,7 +131,7 @@ async def retry(
             viewer_id,
             run_id,
             question.content,
-            [LiveReference.model_validate(value) for value in question.attachments],
+            [SavedReference.model_validate(value) for value in question.attachments],
             resolved,
             tools,
             source.id,
@@ -273,7 +281,7 @@ def _insert(
     viewer_id: UUID,
     run_id: UUID,
     content: str,
-    attachments: list[LiveReference],
+    attachments: list[SavedReference],
     row: Row,
     tools: Toolbox,
     retry_of_run_id: UUID | None,
@@ -324,6 +332,12 @@ def _insert(
     )
     db.add_all([user, assistant])
     db.flush()
+    citations = []
+    for index, reference in enumerate(attachments):
+        ref = require_ref(reference.resource_ref)
+        if ref_visible(db, viewer_id=viewer_id, ref=ref):
+            citations.append(CitationInput(ref, index + 1, None))
+    replace_citations_for_source(db, source=ResourceRef("message", user.id), citations=citations)
     run = ChatRun(
         id=run_id,
         owner_user_id=viewer_id,

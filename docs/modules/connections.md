@@ -13,7 +13,8 @@ bidirectional, cursor-paged adjacency. branch projection hides only facts alread
 traversed on that path; distinct ancestor facts retain their evidence and actions.
 reader roots use exact media adjacency; membership facts do not enter the
 outline's traversal history. librarian attachments belong to individual messages
-and do not create a separate graph membership or admission scope.
+and write citation edges to visible sources. these facts create no authored
+membership or model admission scope.
 
 keyboard and the touch accessory own structural insertion and rearrangement.
 external resource/file admission keeps its existing owner. source text is primary,
@@ -59,8 +60,9 @@ refs with native highlights and source references, retaining distinct citations
 by edge id even when they share a target. citation roots retain historical items;
 other grouped roots retain their existing native-content precedence. incidental
 quoted context does not become the containing reading's source membership.
-message links open the message in the single librarian timeline. attached live
-references remain on their message. source evidence lanes and finite foreground authored
+message links open the message in the single librarian timeline. saved
+references remain on their message. source connections show quoted questions as
+`you` and cited answers as `librarian`; deleting a turn removes both facts. source evidence lanes and finite foreground authored
 catch-up refresh other profiles. capture map versions sum distinct fragment lanes,
 so changing a nonmaximum lane changes the token.
 current resource presentation is hydrated in batches; primary annotations carry

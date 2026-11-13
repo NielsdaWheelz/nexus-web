@@ -3,7 +3,9 @@ import { validateExcerpt, type ExcerptBody, type ExcerptNode, type ExcerptPoint 
 import { isCanonicalTextSkipped } from "@/lib/canonicalText/domTextCursor";
 
 const BRANCHES = new Set("p div span section article header footer nav aside main h1 h2 h3 h4 h5 h6 strong em b i u s cite sup sub code pre blockquote a xref ul ol li dl dt dd figure figcaption table thead tbody tfoot tr td th".split(" "));
-export class UnsupportedExcerpt extends Error {}
+export class UnsupportedExcerpt extends Error {
+  constructor(readonly reason: "UnsupportedExcerpt" | "PartialTable" = "UnsupportedExcerpt") { super(reason); }
+}
 
 /** Smallest containing block, promoted through list/table structural ancestry. */
 export function excerptSourceRoot(root: Element, range: Range): Element {
@@ -58,7 +60,7 @@ export function captureNativeExcerpt(root: Element, range: Range, includeRoot = 
   function element(el: Element, path: number[]): ExcerptNode | null {
     const kind = el.tagName.toLowerCase();
     const selected = range.intersectsNode(el);
-    if (kind === "table" && selected && el.getAttribute("data-nexus-incomplete-table") === "true") throw new UnsupportedExcerpt();
+    if (kind === "table" && selected && el.getAttribute("data-nexus-incomplete-table") === "true") throw new UnsupportedExcerpt("PartialTable");
     if (kind === "figure" && el.getAttribute("data-nexus-document-embed-kind") === "x_post") return { kind: "figure", lang: null, dir: null, children: [{ kind: "media_gap", media_kind: "embed", flow: "block" }] };
     if (isCanonicalTextSkipped(el) || el.hasAttribute("data-document-embed-ui") || el.hasAttribute("data-reader-unit")) {
       return null;
