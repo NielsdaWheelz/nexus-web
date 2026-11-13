@@ -28,3 +28,9 @@ rich selection draft/send, saved words after republication and stale-selection
 refusal in the owned webview. this adds a reproduction and a qualified
 runner; it does not identify bun as the cause or close the transport defect.
 all recorded owned package/mapping/emulator teardown completed.
+
+librarian leaves at `d964629d5` reproduced the timeout after owned-page
+readiness in `20261113-004253-56356fb761b3`. the same temporary driver and
+canonical helpers under node 22.23.2 passed native sign-in and leaves l1/l3/l5
+in `20261113-010603-36b8a3c64043`. all owned resources were retired. this adds
+another reproduction and qualified runner without establishing the cause.

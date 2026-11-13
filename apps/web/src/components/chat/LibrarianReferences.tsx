@@ -3,7 +3,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent, type RefObject } from "react";
 import Button from "@/components/ui/Button";
 import RadioGroup from "@/components/ui/RadioGroup";
-import { MarkdownPreview, TextPreview } from "@/components/ui/MarkdownMessage";
+import { MarkdownPreview, TextPreview } from "./MarkdownMessage";
 import { useCompanionPresentation } from "@/components/workspace/companionPresentation";
 import type { Schema } from "@/lib/api/wire";
 import type { Message, Turn } from "@/lib/chat/wire";

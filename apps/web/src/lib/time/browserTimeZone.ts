@@ -1,34 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
-function resolveBrowserTimeZone(): string {
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!timeZone) return "UTC";
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone });
-    return timeZone;
-  } catch {
-    return "UTC";
-  }
+function subscribe(changed: () => void) {
+  window.addEventListener("focus", changed);
+  window.addEventListener("pageshow", changed);
+  return () => {
+    window.removeEventListener("focus", changed);
+    window.removeEventListener("pageshow", changed);
+  };
 }
 
-/** Hydration-safe owner for timezone-sensitive reads. ``null`` means the
- * browser has not resolved its IANA zone yet; callers must not issue a
- * timezone-sensitive request in that state. */
+/** The device's zone in the first client render; null on the server and during hydration. */
 export function useHydratedBrowserTimeZone(): string | null {
-  const [timeZone, setTimeZone] = useState<string | null>(null);
-
-  useEffect(() => {
-    const refresh = () => setTimeZone(resolveBrowserTimeZone());
-    refresh();
-    window.addEventListener("focus", refresh);
-    window.addEventListener("pageshow", refresh);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("pageshow", refresh);
-    };
-  }, []);
-
-  return timeZone;
+  return useSyncExternalStore(subscribe, () => Intl.DateTimeFormat().resolvedOptions().timeZone, () => null);
 }

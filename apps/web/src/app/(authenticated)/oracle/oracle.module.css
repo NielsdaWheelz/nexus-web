@@ -1,6 +1,7 @@
 /* The oracle's manuscript register: tokens are the [data-theme="oracle"] scope. */
 
 .surface {
+  --citation-ink: var(--oracle-gold);
   background: var(--oracle-bg);
   color: var(--oracle-fg);
   min-height: 100%;

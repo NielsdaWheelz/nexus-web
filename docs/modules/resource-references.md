@@ -518,3 +518,15 @@ chat draft and sent references use `ReferenceFigure` with their saved quote and
 current authorised presentation and shared source activation. `ResourceQuotation` remains the passive
 renderer for supplied captured evidence. both reuse `ReaderExcerpt`; a captured
 passage never implies a separately captured highlight annotation.
+
+`ReaderExcerpt` projects saved heading levels beneath the pane and leaf headings
+(`h1` becomes `h3`, capped at `h6`). its existing quote typography keeps the same
+words and drawing; quoted headings do not add a pane `h1` or a leaf `h2`.
+
+native `ReaderCitation` and librarian markers share one numeral drawing in
+`ReaderCitation.module.css`: sans, .68em, weight 500, tabular lining figures and
+zero leading, in `--citation-ink` or the room's accent. the oracle supplies its
+gold ink. native citation preview and activation contracts remain with
+`ReaderCitation`; librarian markers preview their saved `ReferenceFigure` and
+retain live-reference activation and unavailable reasons. figure ordinals are
+bare accent numerals. stored excerpts retain their literal brackets.

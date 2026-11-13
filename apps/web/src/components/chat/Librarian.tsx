@@ -8,7 +8,7 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useServerValue } from "@/lib/api/serverState";
 import { assertNever } from "@/lib/assertNever";
-import { commandKey, getLibrarianCommands, IDLE_COMMAND, sayRefusal, unsureFact } from "@/lib/chat/commands";
+import { commandKey, getLibrarianCommands, IDLE_COMMAND, pendingReason, sayRefusal, unsureFact } from "@/lib/chat/commands";
 import { useChatSelection } from "@/lib/chat/selectionMemory";
 import { unavailability } from "@/lib/chat/selection";
 import { createRandomId } from "@/lib/createRandomId";
@@ -16,6 +16,8 @@ import { isAbortError } from "@/lib/errors";
 import { useChatDraft, type Draft } from "@/lib/chat/drafts";
 import { useLibrarianEntryReads } from "@/lib/panes/indexPaneEntry";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
+import { readerSurfaceStyle } from "@/lib/reader/typography";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneRuntime, usePaneRouter } from "@/lib/panes/paneRuntime";
 import { definePaneVisitDataKey, type PaneVisitDataKey, usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
@@ -51,7 +53,7 @@ export default function Librarian() {
   const currentCatalog = catalog.status === "ready" ? catalog.data : null;
   const selection = draft.draft.selection.kind === "Uninitialized" ? memory.fresh(currentCatalog) ?? draft.draft.selection : draft.draft.selection;
   const modelReason = currentCatalog && selection.kind !== "Uninitialized" ? unavailability(currentCatalog, selection) : null;
-  const retryAvailable = command.kind === "Idle" && currentCatalog !== null && selection.kind === "Selected" && modelReason === null;
+  const retryBlocked = pendingReason(command) ?? (currentCatalog === null ? "models haven’t loaded." : selection.kind === "Uninitialized" ? "choose a model." : modelReason);
   const history = useServerValue({ ...reads.timeline, visit: TIMELINE_VISIT, enabled: !search.searching });
   const timeline = history.status === "ready" ? history.data : null;
   const turns = timeline?.items ?? NO_TURNS;
@@ -84,7 +86,7 @@ export default function Librarian() {
   const slips = useOutcome();
   const resend = useResendFeedback();
   const retryTurn = (runId: string) => {
-    if (!retryAvailable || selection.kind !== "Selected") return;
+    if (retryBlocked !== null || selection.kind !== "Selected") return;
     void commandOwner.execute({ kind: "RetryTurn", sourceRunId: runId, runId: createRandomId(), selection: selection.selection, viewId: runtime.paneId },
       receipt => {
         const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
@@ -120,8 +122,8 @@ export default function Librarian() {
   const hold = recovery && command.kind !== "Idle" ? <Hold id={commandKey(command.command)} attempt={command.attempt} {...recovery} /> : null;
   const commandFeedback = defect ? <ChatOperationBoundary failure={defect} paneId={runtime.paneId} visitId={runtime.visitId}
     fallback={hold ?? <Fact line={{ fact: "this librarian action stopped unexpectedly." }} verbs={[{ label: "dismiss", commandKey: "dismiss librarian defect", run: commandOwner.clearDefect }]} />} /> : hold;
-  return <div className={styles.surface}>
-      {search.searching ? search.content : <LibrarianTranscript key={`${accountId}:${runtime.visitId}:${reads.timeline.key}`} queryKey={reads.timeline.key} ref={transcript} history={history} adopted={adopted} retryAvailable={retryAvailable} onRetry={retryTurn} />}
+  return <div className={styles.surface} style={readerSurfaceStyle(useReaderProfile())}>
+      {search.searching ? search.content : <LibrarianTranscript key={`${accountId}:${runtime.visitId}:${reads.timeline.key}`} queryKey={reads.timeline.key} ref={transcript} history={history} adopted={adopted} retryBlocked={retryBlocked} onRetry={retryTurn} />}
       <div className={styles.composerAnchor}><StageAnchor kind="Pane" paneId={runtime.paneId} /></div>
       <div className={styles.composerSlot} data-has-messages={search.searching || turns.length > 0 || adopted.length > 0 || undefined} onWheel={event => transcript.current?.onComposerWheel(event)}>
         {commandFeedback}

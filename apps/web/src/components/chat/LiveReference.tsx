@@ -1,6 +1,6 @@
 "use client";
 
-import type { MouseEvent } from "react";
+import type { ComponentProps, MouseEvent } from "react";
 import type { Schema } from "@/lib/api/wire";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
@@ -8,6 +8,7 @@ import { parseResourceRef, resourceTypeLabel } from "@/lib/resourceGraph/resourc
 import { suppressSelectionActivation, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 
 type Reference = Schema<"ReferenceAttachmentIn">["reference"] | Schema<"AttachmentOut">["reference"];
+type Trigger = Pick<ComponentProps<"a">, "onPointerEnter" | "onPointerLeave" | "onPointerDown" | "onFocus" | "onBlur" | "onKeyDown" | "aria-label" | "aria-haspopup">;
 
 /** Inline markers and resolved figures share source-follow/fork intent. */
 export function useLiveReferenceLink({ reference, item }: {
@@ -48,19 +49,22 @@ export function referenceStatus({ reference, item, locationAvailable }: {
 }
 
 /** Labels hydrate from the current resource; unavailable citations retain their marker. */
-export default function LiveReference({ reference, item, locationAvailable = true, label }: {
-  reference: Reference; item: Schema<"ResourceItemOut"> | null; locationAvailable?: boolean; label?: string;
+export default function LiveReference({ reference, item, locationAvailable = true, label, trigger }: {
+  reference: Reference; item: Schema<"ResourceItemOut"> | null; locationAvailable?: boolean; label?: string; trigger?: Trigger;
 }) {
   const link = useLiveReferenceLink({ reference, item });
   const unavailable = referenceStatus({ reference, item, locationAvailable });
   if (!item || item.missing) {
     return <span>{label ? <>{label}<span className="sr-only"> · {unavailable}</span></> : unavailable}</span>;
   }
-  return <span>{link ? <a {...link}>{label ?? item.label}</a> : <span>{label ?? item.label}</span>}
+  return <span>{link ? <a {...link} {...trigger} onKeyDown={event => {
+    trigger?.onKeyDown?.(event);
+    if (!event.defaultPrevented) link.onKeyDown(event);
+  }}>{label ?? item.label}</a> : <span>{label ?? item.label}</span>}
     {unavailable ? <span className={label ? "sr-only" : undefined}> · {unavailable}</span> : null}</span>;
 }
 
-export function RetrievalReference({ retrieval, label }: { retrieval: Schema<"TrustRetrievalOut"> | Schema<"ChatCitationOut">; label?: string }) {
-  return retrieval.target.kind === "url" ? <a href={retrieval.target.url} onClick={suppressSelectionActivation}>{label ?? new URL(retrieval.target.url).hostname}</a>
-    : <LiveReference reference={retrieval.target.reference} item={retrieval.item} locationAvailable={retrieval.location_available} label={label} />;
+export function RetrievalReference({ retrieval, label, trigger }: { retrieval: Schema<"TrustRetrievalOut"> | Schema<"ChatCitationOut">; label?: string; trigger?: Trigger }) {
+  return retrieval.target.kind === "url" ? <a href={retrieval.target.url} {...trigger} onClick={suppressSelectionActivation}>{label ?? new URL(retrieval.target.url).hostname}</a>
+    : <LiveReference reference={retrieval.target.reference} item={retrieval.item} locationAvailable={retrieval.location_available} label={label} trigger={trigger} />;
 }

@@ -11,11 +11,18 @@
   user-select: text;
 }
 
-.ordinal,
 .attribution,
 .status {
   color: var(--ink-muted);
   font-size: var(--content-meta-font-size, var(--text-sm));
+}
+
+.ordinal {
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: var(--content-meta-font-size, var(--text-sm));
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .primary,
