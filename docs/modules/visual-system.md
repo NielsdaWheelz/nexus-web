@@ -247,6 +247,9 @@ other lines polite.
 appearance takes no focus. a withdrawing verb restores only focus it owns.
 a changed command keeps the former control disabled while pointer or keyboard
 focus holds it. its replacement appears in that position only after both leave.
+the running head's up link is the explicit exception: its command stays one step
+up the structure, so a second press goes from the current section's start to the
+previous section without waiting for the pointer to leave.
 `mod+.` reaches the first slip control; escape closes or tucks and returns focus.
 coarse-pointer downward swipe dismisses plain rows and tucks held rows when
 the frame fits. an overflowing frame uses native scrolling; its visible close
@@ -270,7 +273,10 @@ only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
 primitive declares. pane query/navigation controls share declared density
 tokens owned by `CompactChrome.module.css`, applied to pane control rows,
-companion headers, workspace strips and connections controls. targets grow with
+companion headers, workspace strips, connections controls and the page's running
+head. `--pane-control-row-padding-block` pads pane control rows; the page head
+sets it to zero. the head consumes it to place the section gauge on the host
+row's bottom edge. targets grow with
 content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
 13px; coarse text-entry/native-select values use 16px. the two type roles are
 independent. non-pane field defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and

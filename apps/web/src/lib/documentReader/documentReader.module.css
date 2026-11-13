@@ -47,6 +47,7 @@
 
 /* ===== Status strip ===== */
 
+.head,
 .feedback,
 .end {
   --ink: var(--reader-text);
@@ -62,6 +63,34 @@
 
 .feedback {
   padding-inline: var(--space-3);
+}
+
+.head,
+.lane {
+  flex: none;
+  min-inline-size: 0;
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+
+.head {
+  --running-head-rule: var(--reader-border);
+  background: var(--reader-bg);
+}
+
+.frame > .head {
+  --pane-control-row-padding-block: 0px;
+}
+
+.column,
+.measure {
+  padding-inline: var(--space-4);
+}
+
+.lane .statusStack {
+  padding-inline: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
 }
 
 .status {
@@ -95,6 +124,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior-y: contain;
   padding-top: var(--reader-content-inset-top, 0px);
   padding-bottom: calc(var(--reader-content-inset-bottom, 0px) + var(--reader-feedback-height, 0px));
@@ -161,11 +191,15 @@
     display: block;
   }
 
+  .head,
+  .lane,
   .scrollport,
   .pdfScrollport {
     scrollbar-width: none;
   }
 
+  .head::-webkit-scrollbar,
+  .lane::-webkit-scrollbar,
   .scrollport::-webkit-scrollbar,
   .pdfScrollport::-webkit-scrollbar {
     display: none;
@@ -178,12 +212,16 @@
   }
 }
 
-.column {
+.column,
+.frame[data-reader-kind="text"] .measure {
   max-width: var(--reader-column-width-ch, 65ch);
-  margin: 0 auto;
-  padding: var(--space-4);
+  margin-inline: auto;
   font-family: var(--reader-font-family, var(--font-serif));
   font-size: var(--reader-font-size-px, var(--text-md));
+}
+
+.column {
+  padding-block: var(--space-4);
   line-height: var(--reader-line-height, var(--leading-normal));
 }
 
@@ -438,6 +476,9 @@
 
 .frame[data-reader-overlay] .statusStack {
   position: absolute;
+  max-width: inherit;
+  margin-inline: auto;
+  padding-inline: var(--space-4);
   z-index: 2;
   inset-inline: 0;
   background: var(--reader-bg);

@@ -429,8 +429,8 @@ active-pane breakpoint change; visit retirement ends disclosure and transient
 results. hidden find occupies no space or tab stops. reader reflow owns passage
 continuity when the row changes height.
 
-pane control rows and companion/strip headers consume the shared compact density
-recipe. controls own their appearance; the shell owns layout and available space.
+pane control rows, the reader's page running head and companion/strip headers
+consume the shared compact density recipe. controls own their appearance; the shell owns layout and available space.
 companion tabs use the controlled `TabList` while retaining their guarded focus,
 column/sheet/full-screen relocation, stable panel ids and active-body lifetime. active-tab
 reveal observes the live header and selected tab across relocation and text zoom. pane chips
@@ -627,11 +627,14 @@ commands; touch only activates the inspector. its lifecycle and passive overlay
 contract live in [overlays](overlays.md).
 
 `ContextualActionMenu` projects every remaining command through the existing
-`ActionMenu` in desktop and mobile chrome. `ReaderNavigation` presents canonical
-section navigation for structured text and page entry/navigation/zoom for pdf.
-page entry commits on enter, validates an integer in range, and discards its
-draft on blur/escape. no-section documents omit section controls. navigation
-and queries wrap to pane width and share the declared control density.
+`ActionMenu` in desktop and mobile chrome. hosted `ReaderNavigation` presents a
+running head inside the desktop reader frame, and in `PaneChrome.navigation` on
+the phone, where it retreats with shell controls. it shows canonical section
+navigation for structured text, or page entry/navigation/zoom for a ready pdf.
+without a sectioned document or pdf page state the host publishes nothing.
+the running head keeps one row at every width; queries keep their own wrapping
+contract. [reader implementation](reader-implementation.md) owns its controls,
+measure, inspection semantics and responsive disclosure.
 
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
 outlines start at `h2`, and imported reader headings are projected beneath the
