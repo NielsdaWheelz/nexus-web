@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Field } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -10,7 +10,9 @@ import { apiFetch, isApiError, outcomeUnknown } from "@/lib/api/client";
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import { publishChange } from "@/lib/api/changes";
 import type { ApiJson } from "@/lib/api/wire";
+import { usePaneEntryDelivery } from "@/lib/panes/paneRuntime";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
+import { usePaneRevealAnchor } from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
 type Profile = ApiJson<"/me", "get">["data"];
@@ -25,6 +27,15 @@ export default function ReadingBrief({ profile, onSaved, reload }: {
   const { fail } = useOutcome();
   const resendFeedback = useResendFeedback();
   const fieldId = useId();
+  const field = useRef<HTMLTextAreaElement>(null);
+  const { delivery, claim } = usePaneEntryDelivery();
+  const reveal = usePaneRevealAnchor();
+  useEffect(() => {
+    const input = field.current;
+    if (profile === null || !input || delivery?.entry.kind !== "FocusReadingBrief" || !claim(delivery)) return;
+    reveal("account-settings", "reading-brief", false);
+    input.focus({ preventScroll: true });
+  }, [profile, delivery, claim, reveal]);
   const draft = useResourceDraft<{ text: string | null; command: Command | null; refusal: string | null }>(
     "Settings.ReadingBrief", () => ({ text: null, command: null, refusal: null }),
     value => ({ changed: value.text !== null && value.text !== (profile?.reading_brief ?? ""), unconfirmed: value.command !== null, stopsBrowserWork: false }),
@@ -63,11 +74,11 @@ export default function ReadingBrief({ profile, onSaved, reload }: {
     line: { fact: "not sure the reading brief saved.", reason: UNKNOWN_OUTCOME_REASON },
     resend: { label: "retry", commandKey: "save reading brief", busy: command.busy, run: () => void save() },
   }) : null;
-  return <PaneSection title="reading brief">
+  return <PaneSection title="reading brief" data-pane-return-scope="account-settings" data-collection-row-id="reading-brief">
     <form className={styles.form} onSubmit={event => { event.preventDefault(); if (command === null) void save(); }}>
       {held && command ? <Hold id={`${draft.owner}:save`} attempt={command.attempt} {...held} /> : null}
       <label className={styles.field}><span className={styles.label}>reading brief</span>
-        <Textarea value={value} disabled={profile === null} aria-describedby={fieldId}
+        <Textarea ref={field} value={value} disabled={profile === null} aria-describedby={fieldId}
           onChange={event => draft.set(value => ({ ...value, text: event.target.value, refusal: null }))} />
       </label>
       <p id={fieldId} className={styles.current}>what you want to learn, pursue, or avoid. the librarian uses this when answering and choosing reading.</p>
