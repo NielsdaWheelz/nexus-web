@@ -4,6 +4,8 @@ the owner approved publication and release on 2026-11-12. the canonical
 publisher installed the candidate postgres pin with only `POSTGRES_IMAGE`
 changed. the coordinated release completed, recreated postgres under its
 stopped-writer and backup checks, and passed public identity and health checks.
+the separately approved follow-up publication and release of `c828088a2e97`
+completed on 2026-11-13 utc with the same postgres-only configuration boundary.
 
 the default private inputs also differ from the published configuration in
 `FEED_REFRESH_DUE_LIMIT`, `FEED_REFRESH_DUE_SCHEDULE_SECONDS`,

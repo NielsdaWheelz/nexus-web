@@ -19,6 +19,8 @@ its release branch produced no run. advancing that existing branch to new source
 `9b435d881` did produce eligible first-attempt run `43318699213`, which was
 deployed successfully. this establishes a working branch-update path, not the
 cause of the missing branch-creation events.
+the follow-up update to `c828088a2e97` also published a deployable first-attempt
+artifact (run `43334892237`) and completed release.
 
 resolved when the exact supported release-branch push procedure produces an
 eligible first-attempt artifact, or the runbook narrows its publication promise

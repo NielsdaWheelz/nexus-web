@@ -21,5 +21,11 @@ is a source finding, not attribution for this event. the old activity fallback
 was removed in `c11f07e49`; that does not establish this incident's cause or repair.
 do not reset stored workspace state or discard writing merely to hide the trigger.
 
+on 2026-11-13 at 00:41 utc, the connected sm-s906w running the verified
+0.3.14 apk showed the same workspace boundary after the librarian release's
+planned service outage. ordinary reload restored its librarian and both panes.
+the initiating exception was not retained; this does not establish that the
+outage caused it. private screenshots retain the before/after observation.
+
 resolved when the initiating cause is established and the same entry/reader
 journey succeeds after the owning repair, without losing existing writing.
