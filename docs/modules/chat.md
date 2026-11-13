@@ -100,8 +100,8 @@ the sole timeline association and the tool-call uuid as exact submission identit
 
 ## presentation
 
-one transcript keeps its model picker and always-available send; queued turns are
-visible and individually cancellable. a selection without a question opens an
+one transcript keeps its generation control and send; queued turns are visible
+and individually cancellable. a selection without a question opens an
 attached empty composer. corrections are follow-ups. the settings-owned reading
 brief is manual; chat has no brief-writing tool or automatic orientation document.
 
@@ -115,7 +115,7 @@ its exchange. back restores the query, result prefix, selection and scroll.
 clearing returns to the originating timeline, or latest for direct search entry.
 accepted sends push latest while normal history retains the prior search/exchange.
 search and catalog readiness are independent. `ChatComposer`
-owns editable input and one chosen model. `lib/chat/drafts.ts` retains pane input;
+owns editable input and one exact model/effort choice. `lib/chat/drafts.ts` retains pane input;
 `commands.ts` retains one account admission's uuid, exact body, deletion fence
 and uncertain outcome. acceptance publishes the chat change before adopting its
 turn and clears only the submitted draft object in the same write. the pane
@@ -125,6 +125,8 @@ outranks a pending copy; terminal reads upgrade the same keyed list. admission
 is freed while the server continues generation. a retry adopts its turn without
 consuming or clearing a refused composer draft. source
 handoffs and the palette focus or submit through that same composer.
+acceptance after leaving its visit still consumes the matched draft, but retains
+no adopted turn or navigation obligation for that departed visit.
 
 `IndexPaneEntry` starts the librarian's timeline and catalog reads while its lazy
 code loads; a search visit starts only the catalog read. the body claims those
@@ -196,3 +198,34 @@ in every mounted mode, including pending reads. the command opens the existing
 account-settings field through the [workspace entry contract](workspace.md);
 the composer has no brief control. examples state pursuits and exclusions, never
 model-written standing instructions.
+
+## generation selection
+
+`GenerationPicker` owns one model-and-effort trigger and one responsive panel.
+model variants stand in catalog order under their provider labels. unavailable
+saved identities remain explicit unavailable rows; nothing substitutes a runnable
+choice. native-route retry stays outside the listbox. navigation changes only
+the active row; selection commits the exact model and its declared default.
+without a default the panel stays open for explicit effort choice.
+
+the effort region uses the selectable ordered efforts: a range for a selected
+member of a multi-effort range, buttons to repair an unresolved or unavailable
+effort, or its reason when none is selectable. a sole advertised selected effort
+needs no region or dial. effort commits retain panel focus. a model commit that
+closes the panel focuses the line, or the trigger after a touch open. escape
+returns to the trigger; an outside press keeps the focus it placed.
+
+## writing line
+
+the composer is the transcript's open entry: rule, optional passage figure, bare
+one-to-eight-line textarea, facts, then generation control and `send`. the surface
+owns the shared column, gutter and question type/measure tokens. both transcript
+and composer reserve scrollbar space. the rule alone marks line focus, using
+the room's ring; motion and forced-colour preferences remain visible.
+
+enter sends in a wide viewport and breaks the line on phone widths; shift-enter
+always breaks it and mod-enter sends at every width. composition and repeated
+keys never send. unmodified up in an empty line recalls only the newest literal
+question when the latest window is ready and search is closed. recall changes
+only line text. send is disabled exactly while the existing admission/selection/text
+predicate disallows it; a refusal leaves the draft and uses send as retry.

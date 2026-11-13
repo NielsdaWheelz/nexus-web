@@ -1,15 +1,17 @@
 /* The librarian transcript and trust surfaces. */
 
 .surface {
+  --librarian-column: var(--content-max-width);
+  --librarian-gutter: var(--space-3);
+  --question-font: var(--weight-regular) var(--text-md) / var(--leading-normal) var(--font-sans);
+  --question-tracking: normal;
+  --question-measure: 66ch;
   flex: 1;
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
   min-height: 0;
-}
-
-.surface {
   background: var(--surface-canvas);
 }
 
@@ -22,15 +24,16 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   overflow-anchor: none;
+  scrollbar-gutter: stable;
 }
 
 .transcript {
   display: flex;
   flex-direction: column;
   /* The scroll owner measures natural content height to size its spacer. */
-  max-width: var(--content-max-width);
+  max-width: var(--librarian-column);
   margin: 0 auto;
-  padding: var(--space-3);
+  padding: var(--librarian-gutter);
   font-family: var(--font-sans);
   font-size: var(--text-md);
   font-weight: var(--weight-regular);
@@ -75,6 +78,7 @@
   min-height: 0;
   max-height: 100%;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   background: color-mix(in srgb, var(--surface-canvas) 96%, transparent);
 }
 
@@ -101,15 +105,19 @@
 
 .userBody,
 .answer {
-  max-inline-size: 66ch;
   color: var(--ink);
   overflow-wrap: anywhere;
 }
 
 .userBody {
+  max-inline-size: var(--question-measure);
+  font: var(--question-font);
+  letter-spacing: var(--question-tracking);
   display: block;
   white-space: pre-wrap;
 }
+
+.answer { max-inline-size: 66ch; }
 
 .searchResults {
   max-width: var(--content-max-width);
@@ -169,7 +177,7 @@
 }
 
 @container primaryPane (min-width: 480px) {
-  .transcript { padding: var(--space-4); }
+  .surface { --librarian-gutter: var(--space-4); }
 }
 
 @media (max-width: 768px) {

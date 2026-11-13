@@ -116,14 +116,6 @@ export function isSelectable(catalog: Catalog, selection: Selection, route: Rout
   return lookup(catalog, selection, route).choice?.chat_state.kind === "Selectable";
 }
 
-export function chooseRoute(catalog: Catalog, route: Route, current: SelectionEditor): SelectionEditor {
-  const previous = editorRoute(current);
-  if (current.kind === "Selected" && previous && routeKey(previous) === routeKey(route)) return current;
-  const row = catalogRoute(catalog, route);
-  if (!row) return current;
-  return chooseModel(catalog, route, row.default_model.model_key, row.default_model.mode, current);
-}
-
 export function chooseModel(
   catalog: Catalog,
   route: Route,

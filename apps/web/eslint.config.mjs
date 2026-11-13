@@ -71,7 +71,6 @@ export default [
     files: [
       "src/components/ui/ActionMenu.tsx",
       "src/components/ui/PickerSurface.tsx",
-      "src/components/ui/ChoicePicker.tsx",
       "src/components/ui/HoverPreview.tsx",
     ],
     rules: {
