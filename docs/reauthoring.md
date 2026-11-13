@@ -5,7 +5,7 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 ## goal
 
 imports register against `5a48b345f`: -1,287 net authored runtime lines
-(1,222 added, 2,509 deleted): imports -1,334, shared visual primitives +27,
+(1,221 added, 2,508 deleted): imports -1,334, shared visual primitives +27,
 resource actions +2, web transport +5, database substrate +12 and media deletion
 +1. one arrival
 register replaces filtered views and matched-event projection; per-reader
