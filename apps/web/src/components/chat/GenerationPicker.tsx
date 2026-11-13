@@ -30,6 +30,7 @@ import type { Catalog } from "@/lib/chat/wire";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import * as Icon from "@/lib/ui/icons";
 import { wasOverlayInvokedByTouch } from "@/lib/ui/overlay";
+import { usePointerGesture } from "@/lib/ui/pointerGesture";
 import collection from "@/components/ui/Collection.module.css";
 import styles from "./GenerationPicker.module.css";
 
@@ -50,6 +51,8 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
   returnFocus(): void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pressSize, setPressSize] = useState<{ width: number; height: number } | null>(null);
+  usePointerGesture({ enabled: true, onComplete: () => setPressSize(null) });
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -175,8 +178,15 @@ export default function GenerationPicker({ catalogRead, value, onChange, waiting
   };
   return <>
     <button ref={trigger} type="button" className={styles.trigger}
+      style={pressSize ? { minInlineSize: pressSize.width, minBlockSize: pressSize.height } : undefined}
       aria-label={cold ? "model" : `model and effort: ${current?.label ?? "model unavailable"}, ${effortLabel}`}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} aria-busy={busy || undefined}
+      onPointerDown={event => {
+        if (event.button !== 0 || !event.isPrimary) return;
+        // A focus-triggered recall may shorten the label before this press clicks.
+        const { width, height } = event.currentTarget.getBoundingClientRect();
+        setPressSize({ width, height });
+      }}
       onClick={event => { event.stopPropagation(); if (open) setOpen(false); else show(); }}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;

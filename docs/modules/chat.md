@@ -214,6 +214,9 @@ effort, or its reason when none is selectable. a sole advertised selected effort
 needs no region or dial. effort commits retain panel focus. a model commit that
 closes the panel focuses the line, or the trigger after a touch open. escape
 returns to the trigger; an outside press keeps the focus it placed.
+the existing pointer-gesture owner holds the trigger's measured minimum size
+through activation, so focus-triggered recall cannot shrink its pressed target.
+labels and dispatch freshness still update immediately.
 
 ## writing line
 
@@ -222,6 +225,8 @@ one-to-eight-line textarea, facts, then generation control and `send`. the surfa
 owns the shared column, gutter and question type/measure tokens. both transcript
 and composer reserve scrollbar space. the rule alone marks line focus, using
 the room's ring; motion and forced-colour preferences remain visible.
+phone layouts own a 44px control minimum through the shared size hook, including
+native webviews that report a fine pointer alongside touch input.
 
 enter sends in a wide viewport and breaks the line on phone widths; shift-enter
 always breaks it and mod-enter sends at every width. composition and repeated

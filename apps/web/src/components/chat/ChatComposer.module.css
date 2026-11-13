@@ -55,6 +55,10 @@
 
 .hint { margin-inline-start: var(--space-2); color: var(--ink-faint); font-family: var(--font-mono); font-size: var(--text-xs); }
 
+@media (max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .composer { --control-min-size: var(--size-xl); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rule::after { transition: none; }
 }
