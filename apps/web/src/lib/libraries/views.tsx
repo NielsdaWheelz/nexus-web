@@ -61,9 +61,9 @@ export const ENTRY_TYPES: Options = [
 
 /** Unfiled is a view of All only. */
 export const projections = (isAll: boolean): Options => [
-  { value: "", label: "All items" },
-  ...(isAll ? [{ value: "unfiled", label: "Unfiled" }] : []),
-  { value: "in_progress", label: "In Progress" },
+  { value: "", label: "all items" },
+  ...(isAll ? [{ value: "unfiled", label: "unfiled" }] : []),
+  { value: "in_progress", label: "in progress" },
 ];
 
 /** An unknown current value (a hand-written url) is offered as itself, its label
@@ -95,13 +95,13 @@ export function emptyEntries({
   const projection = params.get("projection");
   const unfinished = params.get("completion") === "unfinished";
   const verb = (label: string, changes: ViewChanges): Verbs => [{ label, commandKey: `library-view:${label}`, run: () => change(changes) }];
-  const clear = verb("clear filters", { entry_type: null, projection: null, completion: null });
+  const clear = verb("clear filters", { entry_type: null, completion: null });
   if (type !== null) {
     const plural = TYPE_PLURALS[type];
     return { line: { fact: plural === undefined ? "nothing of this type here." : `no ${plural} in this view.` }, verbs: clear };
   }
   if (projection === "in_progress") return { line: { fact: "nothing in progress." }, verbs: verb("show all items", { projection: null }) };
-  if (projection === "unfiled") return { line: { fact: unfinished ? "no unfinished unfiled items." : "no unfiled items." }, verbs: clear };
+  if (projection === "unfiled") return { line: { fact: unfinished ? "no unfinished unfiled items." : "no unfiled items." }, verbs: verb("show all items", { projection: null }) };
   if (unfinished) return { line: { fact: "no unfinished items." }, verbs: verb("show finished", { completion: null }) };
   return { line: { fact: isAll ? "nothing saved yet." : "nothing in this library yet." } };
 }

@@ -104,6 +104,13 @@ export type PaneHeaderEditor = { readonly feedback: ReactNode } & (
     }
 );
 
+export interface PaneViews {
+  readonly label: string;
+  readonly value: string;
+  readonly items: readonly { readonly value: string; readonly label: string }[];
+  readonly onSelect: (value: string) => void;
+}
+
 export interface PaneChrome {
   /** Source menus borrow their actual mounted writing history. */
   readonly workHistory?: OutlineHistory;
@@ -114,6 +121,7 @@ export interface PaneChrome {
   readonly editor?: PaneHeaderEditor;
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
+  readonly views?: PaneViews;
   readonly primaryAction?: PanePrimaryAction;
   readonly resourceActions?: ResourceActionSubject;
   readonly podcastMetadata?: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;

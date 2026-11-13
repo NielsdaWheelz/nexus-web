@@ -31,7 +31,6 @@ import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { viewHref } from "@/lib/collections/view";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import RadioGroup from "@/components/ui/RadioGroup";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneSection from "@/components/ui/PaneSection";
@@ -98,7 +97,7 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
   const singular = kind === "podcast" ? "episode" : "article";
   const scheme = kind === "podcast" ? "podcast" : "feed";
   const href = `/${kind === "podcast" ? "podcasts" : "feeds"}/${feedId}`;
-  const STATES: readonly { value: EntryState; label: string }[] = [{ value: "all", label: `All ${noun}` }, { value: "unread", label: kind === "podcast" ? "Unplayed" : "Unread" }, { value: "in_progress", label: "In progress" }, { value: "finished", label: kind === "podcast" ? "Played" : "Finished" }];
+  const STATES: readonly { value: EntryState; label: string }[] = [{ value: "all", label: `all ${noun}` }, { value: "unread", label: kind === "podcast" ? "unplayed" : "unread" }, { value: "in_progress", label: "in progress" }, { value: "finished", label: kind === "podcast" ? "played" : "finished" }];
   const SORTS = [{ value: "newest", label: "Newest published" }, { value: "oldest", label: "Oldest published" }, ...(kind === "podcast" ? [{ value: "duration_asc", label: "Shortest duration" }, { value: "duration_desc", label: "Longest duration" }] : [])];
   const speak = useActiveRegion();
   const router = usePaneRouter();
@@ -268,23 +267,15 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
   );
   const { inputRef, focusInput } = usePaneQueryInput();
   const queryStatusId = useId();
-  const playbackChoices = STATES.some((choice) => choice.value === state) ? STATES : [...STATES, { value: state, label: state }];
   const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
-  const chips = state === "all" ? [] : [{ id: "state", label: `${kind === "podcast" ? "Playback" : "Reading"}: ${playbackChoices.find((choice) => choice.value === state)?.label}` }];
-  const canReset = sort !== "newest" || chips.length > 0;
+  const canReset = sort !== "newest" || state !== "all";
   const queryControls = {
     kind: "Controls" as const,
     focusInput,
     content: <PaneQueryToolbar
       inputRef={inputRef}
       input={{ label: `Filter ${noun}`, placeholder: `Filter ${noun}`, value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
-      options={{
-        label: "Filters", activeCount: chips.length,
-        onClear: () => replaceView({ state: null }),
-        content: <RadioGroup label={kind === "podcast" ? "Playback" : "Reading"} value={state} choices={playbackChoices} onChange={(value) => replaceView({ state: value === "all" ? null : value })} />,
-      }}
       sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
-      chips={{ items: chips, onRemove: () => replaceView({ state: null }) }}
       status={{
         placement: "Inline",
         id: queryStatusId,
@@ -330,6 +321,10 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
   });
   usePaneChrome({
     displayTitle: podcast?.title,
+    views: {
+      label: kind === "podcast" ? "episode view" : "article view", value: state, items: STATES,
+      onSelect: value => replaceView({ state: value === "all" ? null : value }),
+    },
     menuActions: bulkActions,
     resourceActions: !live || !remoteReady() || podcast === undefined ? undefined : { kind: "Feed", subject: {
       target: { kind: "Canonical", feed_id: feedId }, feedKind: kind, title: podcast.title,

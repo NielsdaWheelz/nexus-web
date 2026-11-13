@@ -6,44 +6,40 @@ primary panes are workspace-owned route containers. the desktop strip owns
 switching and pane management; the store owns order, visibility and selection.
 pane names the workspace object, its strip chip and its management. `tabs` is
 the palette's established heading for its pane list; elsewhere tab means a browser
-tab, an aria tab/tablist (inspector tabs, `ui/Tabs`) or the tab key.
+tab, an aria tab/tablist (inspector or pane views, `ui/Tabs`) or the tab key.
 
 ## Desktop Pane Strip
 
-`WorkspacePaneStrip` renders one toolbar in workspace order, including minimized
-panes. each chip has a title and three stable control slots: visibility, layout,
-close. active, in-view, focused and minimized are separate facts. there is no chip
-menu. [visual system](visual-system.md#workspace-strip) owns target geometry.
+`WorkspacePaneStrip` is one toolbar over all panes, including minimized ones.
+its root owns the held pointer and key guard; its scroller owns chip reveal,
+drag collision, autoscroll and the lit mark. each chip has a title and held close
+slot; minimize and layout follow the chips and act on the active pane.
+[visual system](visual-system.md#workspace-strip) owns their paint and geometry.
 
-plain left/right wrap focus through every title and control; home/end reach the
-ends. one roving stop records pane id and slot. ordinary title activation selects
-and unminimizes that exact pane, then enters its content within the current
-viewing mode. shift-click or shift-enter forks its current visit into a fresh pane
-immediately after it, preserving the clicked pane even when inactive or minimized.
-there is no touch-duplication control.
-tab exits the toolbar. delete/backspace close once per press, and shift+m toggles
-maximize once per press for the focused pane. repeated or composing enter/space
-cannot dispatch management again or activate a changing slot.
-global mod+shift+left/right retain the separate sequential traversal contract.
-there are no global shift-letter commands.
+left/right wrap through title, close, each next chip, minimize and layout;
+home/end reach the first title and last end control. tab leaves the one roving
+stop. title activation restores/selects the exact pane and enters its content;
+shift-click or shift-enter forks its current visit immediately after it.
+middle-press closes without selecting or starting a drag; its mousedown is
+prevented before the sensor and its command runs on auxclick.
 
-`lib/workspace/paneControls.ts` projects ordered slots, commands, icons, accessible
-names, help and disabled reasons from live workspace state, the resolved title and
-desktop mode. the strip renders shared
-`Button` controls and dispatch through their command owners. keys and refs use
-stable slots; a glyph change retains the focused node.
+on a chip title or close, delete/backspace close once per press, shift+m toggles
+maximize, and shift+h minimizes once per press while retaining focus. a minimized
+chip ignores minimize; last-visible refusal speaks its reason. end controls keep
+native plain enter/space and roving keys, without chip commands. modified,
+repeated or composing activation cannot fall through to a native management
+click. global adjacent-pane shortcuts remain separate.
 
-ordinary desktop panes offer minimize/maximize/close. minimized panes offer
-restore-canvas/maximize/close. the active maximized pane offers
-minimize/restore-canvas/close. restore-canvas selects and unminimizes its target
-and exits maximize; title activation preserves that mode. last stored-visible
-minimize is focusable, inert and explains `keep at least one pane visible`.
-[workspace](workspace.md#layout-modes) owns mode, geometry and lifetime.
-
-management focuses its invoking button before dispatch and retains it, unless a
-companion sheet takes modal focus. accepted close focuses the next surviving
-title, else the previous or replacement; refused close retains the initiator.
-focused chips reveal only inside the strip, never under a held pointer.
+`activePaneControls({state, title, desktopMaximized})` projects minimize and
+layout commands, signs, names, help and disabled reasons. last-visible minimize
+stays reachable with `aria-disabled` and explains `keep at least one pane visible`.
+shared `Button` owns target and disabled behavior; the end group's capture owns
+attempted-refusal speech before button blocking. each command contributes a new
+occurrence to the shared `Announcement`, so equal consecutive sentences remain
+new speech events. end identities survive active
+changes, preserving focus. accepted close focuses the next surviving title,
+else the previous/replacement; refused close retains its initiator. focused chips
+reveal only inside the strip, never under a held pointer.
 
 reorder uses the existing dnd-kit mouse and touch sensors from the title alone:
 8 px mouse activation, or 250 ms touch hold with 8 px tolerance. unactivated
@@ -74,6 +70,34 @@ it preserves pane objects, activation, visits and histories, returns false for
 missing/self/unchanged moves, and commits one changed array. a changed move
 announces its position. the strip offers drag; nexus supplies the equivalent
 keyboard and click/tap placement operation over that same complete pane order.
+
+## pane views and sections
+
+bodies publish `PaneChrome.views` as `{label, value, items, onSelect}`. the shell
+renders one controlled word row under identity, above navigation/query, and
+labels the existing body `tabpanel` with the current tab. an unknown value
+selects nothing; the body then takes the view's label. when a published value
+changes while focus is in that row, the shell focuses the current tab.
+view presses replace the url and preserve pane history/body ownership.
+mobile rows register with the shared control surface; the hide gesture remains
+owned by the active reader.
+
+stats publishes stats/year with its existing period resets; search publishes
+resources/passages. library publishes known all-items/unfiled/in-progress
+projections (unfiled belongs only to all). filters no longer include the view:
+clear filters preserves it, reset clears it, and an empty unfiled view offers
+show all items. loaded libraries keep query and views reachable alongside invalid
+criteria. a cold invalid entry view reads only library identity through the normal
+server/catalog owner; accepted identity stays mounted while a corrected aggregate
+loads. ordinary valid views keep the single atomic library/entries/feeds read. show/feed views publish their known state choices; their otherwise-empty
+filters control and state chip are absent; reset clears the state.
+
+settings sections come from the route model's one section table: account first,
+then the existing section order. the shell renders `TabLinks`, so ordinary
+presses follow and shift presses fork through normal anchor capture. a sectioned
+route cannot publish views. `/settings` has no route or index pane; the settings
+destination opens `/settings/account` under the settings sign. module titles and
+form values retain their own vocabulary.
 
 ## history
 

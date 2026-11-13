@@ -13,6 +13,7 @@ import * as Icon from "@/lib/ui/icons";
 // if its read fails they leave for its `Failed`.
 
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
+import { usePaneChrome } from "@/lib/panes/paneChrome";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import AppliedFilters from "@/components/ui/AppliedFilters";
@@ -709,20 +710,6 @@ function Controls(props: {
   });
   return (
     <div className={styles.controls}>
-      <div className={styles.viewGroup} role="group" aria-label="Stats view">
-        <Button
-          aria-pressed={view.view === "stats"}
-          onClick={() => update({ view: "stats", period: "day" })}
-        >
-          Stats
-        </Button>
-        <Button
-          aria-pressed={view.view === "year"}
-          onClick={() => update({ view: "year", period: "year" })}
-        >
-          Year
-        </Button>
-      </div>
       {yearView ? (
         <label>
           Year
@@ -828,7 +815,8 @@ export default function StatsPaneBody() {
   const timeZone = useHydratedBrowserTimeZone();
   const isActive = usePaneIsActive();
   const router = usePaneRouter();
-  const view = readStatsView(usePaneSearchParams());
+  const params = usePaneSearchParams();
+  const view = readStatsView(params);
   const refresh = useRefreshStamp(isActive, 0);
   const consumption = useChangeStamp("Consumption");
   const { ctx } = useActionRuntime();
@@ -848,6 +836,14 @@ export default function StatsPaneBody() {
   };
   const update = (next: Partial<StatsView>) =>
     router.replace(statsViewHref({ ...view, ...next }));
+  usePaneChrome({ views: {
+    label: "stats view", value: params.get("view") ?? "stats",
+    items: [{ value: "stats", label: "stats" }, { value: "year", label: "year" }],
+    onSelect: value => {
+      if (value !== "stats" && value !== "year") throw new Error("unknown stats view");
+      update({ view: value, period: value === "year" ? "year" : "day" });
+    },
+  } });
 
   const query = timeZone ? statsQuery(view, timeZone).toString() : null;
   // Progress saves move Consumption every few seconds: follow them only while visible here.

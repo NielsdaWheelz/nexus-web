@@ -10,7 +10,8 @@
 // styles, form controls and hidden subtrees; handler, style and data-*
 // attributes and srcdoc; urls in schemes that never leave the browser.
 
-import { extractArticle, extractXArticle } from "@nexus-ingest/article_extraction";
+import { extractArticle } from "@nexus-ingest/article_extraction";
+import { extractXArticle } from "@nexus-ingest/x_article";
 import {
   ARTICLE_CONTENT_MAX_BYTES,
   ARTICLE_SOURCE_MAX_BYTES,

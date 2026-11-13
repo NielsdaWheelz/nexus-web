@@ -2,14 +2,14 @@
 // mirrored by python (schemas/workspace_session.py SURFACE_GROUP): every
 // surface, its group and its title. Isomorphic; no React.
 export const SECONDARY_SURFACES = {
-  "resource-contents": { groupId: "resource-inspector", title: "Contents" },
-  "resource-members": { groupId: "resource-inspector", title: "Members" },
+  "resource-contents": { groupId: "resource-inspector", title: "contents" },
+  "resource-members": { groupId: "resource-inspector", title: "members" },
   "resource-connections": {
     groupId: "resource-inspector",
-    title: "Connections",
+    title: "connections",
   },
-  "import-detail": { groupId: "imports-inspector", title: "Import details" },
-  "librarian-references": { groupId: "librarian-inspector", title: "References" },
+  "import-detail": { groupId: "imports-inspector", title: "import details" },
+  "librarian-references": { groupId: "librarian-inspector", title: "references" },
 } as const;
 
 export type WorkspaceSecondarySurfaceId = keyof typeof SECONDARY_SURFACES;

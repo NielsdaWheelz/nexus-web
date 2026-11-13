@@ -22,6 +22,7 @@ import FindBar from "@/components/find/FindBar";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { StageAnchor } from "@/components/feedback/Slips";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
+import { TabList, TabLinks } from "@/components/ui/Tabs";
 import compact from "@/components/ui/CompactChrome.module.css";
 import Companion, {
   companionAction,
@@ -199,6 +200,9 @@ function PaneView({
     else router.forward(options);
   };
   const body = state.chrome;
+  const views = body?.views;
+  if (views && route.sections.length) throw new Error("a sectioned route cannot publish pane views");
+  const currentView = views?.items.findIndex(item => item.value === views.value) ?? -1;
   const primary = body?.primaryAction;
   const principal = primary?.kind === "link" && !primary.onActivate
     ? { ...primary, onActivate: (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: primary.href === null ? null : { href: primary.href } }) }
@@ -258,6 +262,12 @@ function PaneView({
   const focusFrame = useRef(0);
   const source = paneSourceKey(runtime);
   const bodyId = `${paneId}-body`;
+  const viewRowRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const row = viewRowRef.current;
+    if (row?.contains(document.activeElement))
+      row.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+  }, [views?.value]);
 
   // The shell owns disclosure; the find session survives source readiness changes.
   const query = body?.query;
@@ -412,7 +422,7 @@ function PaneView({
 
   // The whole control stack retreats with the mobile bar; visible Find holds it.
   const hasVisibleControls = Boolean(
-    body?.navigation || query?.kind === "Controls" || findVisible,
+    views || route.sections.length || body?.navigation || query?.kind === "Controls" || findVisible,
   );
   useMobileChromeSurface(chromeRef, isActive && isMobile && hasVisibleControls);
   useMobileChromeHold(isActive && isMobile && findVisible);
@@ -529,6 +539,15 @@ function PaneView({
               ref={chromeRef}
               className={styles.chrome}
             >
+              {views || route.sections.length ? (
+                <div ref={viewRowRef} className={`${styles.controlRow} ${styles.viewRow} ${compact.compact}`}>
+                  {views ? <TabList value={views.value} items={views.items.map((item, index) => ({
+                    ...item, id: `${paneId}-view-${index}`, panelId: bodyId,
+                  }))} onSelect={views.onSelect} aria-label={views.label} /> : <TabLinks
+                    current={route.id} items={route.sections.map(section => ({ ...section, value: section.id }))}
+                    aria-label="settings sections" />}
+                </div>
+              ) : null}
               {body?.navigation ? (
                 <div
                   className={`${styles.controlRow} ${compact.compact}`}
@@ -570,6 +589,9 @@ function PaneView({
           <div
             ref={scrollportRef}
             id={bodyId}
+            role={views ? "tabpanel" : undefined}
+            aria-labelledby={views && currentView >= 0 ? `${paneId}-view-${currentView}` : undefined}
+            aria-label={views && currentView < 0 ? views.label : undefined}
             className={styles.body}
             data-body-mode={route.bodyMode}
             data-pane-content="true"

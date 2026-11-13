@@ -110,7 +110,7 @@
   outline-offset: calc(-1 * var(--focus-ring-width));
 }
 
-.row[aria-current="true"] { color: var(--accent); background: var(--surface-2); }
+.row:is([aria-current="true"], [aria-current="page"]) { color: var(--accent); background: var(--surface-2); }
 
 .row[data-tone="danger"] { color: var(--danger); }
 .row[data-tone="accent"] { color: var(--accent); }
@@ -120,7 +120,7 @@
   cursor: default;
 }
 
-.row[aria-disabled="true"][aria-current="true"] { background: transparent; }
+.row[aria-disabled="true"]:is([aria-current="true"], [aria-current="page"]) { background: transparent; }
 
 .content {
   display: flex;

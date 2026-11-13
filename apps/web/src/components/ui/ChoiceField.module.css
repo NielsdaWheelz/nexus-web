@@ -71,22 +71,6 @@
   overflow-wrap: anywhere;
 }
 
-.segments {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: var(--space-1);
-}
-
-.segment {
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.segment > span {
-  min-inline-size: 0;
-}
-
 /* Every press reaches the native input, which covers its label; the label paints its focus. */
 .coveringInput {
   position: absolute;
@@ -98,12 +82,31 @@
   cursor: inherit;
 }
 
-/* the element outweighs `selection.target`, whose order is not ours. */
 label.facet {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-inline-size: 32px;
+  min-block-size: 32px;
+  padding-block: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
+  cursor: pointer;
   gap: var(--space-1);
   padding-inline: var(--space-1);
   color: var(--ink);
 }
+
+label.facet:hover { background: var(--surface-hover); }
+label.facet:has(> input:focus-visible) { outline: var(--focus-ring-width) solid var(--ring); outline-offset: calc(-1 * var(--focus-ring-offset)); }
+label.facet:has(> input:disabled) { color: var(--ink-muted); background: transparent; cursor: not-allowed; }
 
 /* keeps hover on the input beneath it */
 .facetIcon {
@@ -129,11 +132,14 @@ label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon::after {
 
 @media (any-pointer: coarse) {
   .choice { min-block-size: max(var(--size-xl), 2.75rem); }
+  label.facet { min-inline-size: 44px; min-block-size: 44px; }
 }
 
 @media (forced-colors: active) {
   .choice:has(input:disabled) { color: GrayText; }
-  label.facet { color: CanvasText; }
-  /* `.surface` opts out of forced colours, so the dim would survive; off keeps only its slash */
+  label.facet, label.facet:hover { forced-color-adjust: none; background: Canvas; color: CanvasText; }
+  label.facet:has(> input:disabled) { color: GrayText; }
+  label.facet:has(> input:focus-visible) { outline-color: CanvasText; }
+  /* Off keeps only its slash in forced colours. */
   label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon { color: inherit; }
 }

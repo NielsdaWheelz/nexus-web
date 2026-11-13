@@ -17,12 +17,15 @@ declare module "@nexus-ingest/article_extraction" {
     publishedTime: string | null | undefined;
   }
   export function extractArticle(document: Document): ExtractedArticle | null;
-  /** The qualified, server-classified X reading view; null is never a fallback. */
-  export function extractXArticle(document: Document, sourceUrl: string):
-    (ExtractedArticle & { sourceRoot: Element }) | null;
 }
 
 declare module "@nexus-ingest/x_article" {
+  import type { ExtractedArticle } from "@nexus-ingest/article_extraction";
+
+  /** The qualified, server-classified X reading view; null is never a fallback. */
+  export function extractXArticle(document: Document, sourceUrl: string):
+    (ExtractedArticle & { sourceRoot: Element }) | null;
+
   /** Full carrier reading page; the server resolves the logical article id. */
   export function qualifyXArticleView(document: Document, sourceUrl: string): {
     owner: Element;

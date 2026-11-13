@@ -288,6 +288,8 @@ function createWorkspaceStore(
     for (const [paneId, delivery] of deliveries) {
       if (delivery.entry.kind === "FocusReadingBrief" && focus !== delivery) deliveries.delete(paneId);
     }
+    const replaceBrowserEntry = next.active_primary_pane_id === data.state.active_primary_pane_id &&
+      visitOf.get(next.active_primary_pane_id) === find(next.active_primary_pane_id)!.current_visit.id;
     set({
       ...patch,
       state: next,
@@ -295,7 +297,7 @@ function createWorkspaceStore(
       pendingPaneEntryDeliveryByPaneId: deliveries,
       pendingPaneFocus: focus,
     });
-    if (mounted) project();
+    if (mounted) project(replaceBrowserEntry);
   }
 
   function find(paneId: string): WorkspacePane | undefined {

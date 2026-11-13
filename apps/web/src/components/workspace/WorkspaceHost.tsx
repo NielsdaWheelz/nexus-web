@@ -56,7 +56,7 @@ const PaneContent = memo(function PaneContent(props: {
 }) {
   const admission = useRemoteAdmission();
   const runtime = requirePaneRuntime(usePaneRuntime(), "PaneContent");
-  const local = props.routeId === "unsupported" || ["downloads", "settings", "settingsAppearance", "settingsReader", "settingsKeybindings",
+  const local = props.routeId === "unsupported" || ["downloads", "settingsAppearance", "settingsReader", "settingsKeybindings",
     "notes", "pageNew", "page", "dailyDate", "habits", "note", "highlight", "search"].includes(props.routeId);
   // Covered bodies own saved-data and coverage states; mounting grants no remote
   // capability. Other cold server panes still require credential admission.
@@ -259,20 +259,36 @@ export default function WorkspaceHost() {
   };
 
   return (
-    <section className={styles.host} aria-label="Workspace host">
+    <section className={styles.host} aria-label="Workspace host"
+      onPointerOver={event => {
+        const host = event.currentTarget;
+        for (const element of host.querySelectorAll("[data-brushed]")) element.removeAttribute("data-brushed");
+        if (isMobile || !(event.target instanceof Element)) return;
+        const chip = event.target.closest<HTMLElement>("[data-strip-pane-id]");
+        if (chip && !chip.hasAttribute("data-active")) {
+          host.querySelector(`[data-pane-id="${CSS.escape(chip.dataset.stripPaneId!)}"]`)?.setAttribute("data-brushed", "");
+          return;
+        }
+        const wrap = event.target.closest("[data-pane-header]")?.closest<HTMLElement>("[data-pane-id]");
+        if (wrap && wrap.dataset.paneId !== activeId)
+          host.querySelector(`[data-strip-pane-id="${CSS.escape(wrap.dataset.paneId!)}"]`)?.setAttribute("data-brushed", "");
+      }}
+      onPointerLeave={event => {
+        for (const element of event.currentTarget.querySelectorAll("[data-brushed]")) element.removeAttribute("data-brushed");
+      }}>
       {/* the only writer of the browser title: inactive panes never race it. */}
       <title>{`${active.label} · Nexus`}</title>
       {isMobile ? null : (
         <WorkspacePaneStrip
           state={state}
           isMaximized={store.desktopMaximized}
+          subscribeSpans={canvas.subscribeSpans}
           items={panes.map(({ pane, label, mediaKind }) => ({
             paneId: pane.id,
             href: pane.current_visit.href,
             label,
             mediaKind,
             isActive: pane.id === activeId,
-            isInView: maximized ? pane.id === activeId : canvas.inViewPaneIds.has(pane.id),
             minimized: pane.visibility === "minimized",
           }))}
           onActivate={(paneId, disposition) => {
@@ -312,6 +328,7 @@ export default function WorkspaceHost() {
                 key={pane.id}
                 className={styles.paneWrap}
                 data-pane-id={pane.id}
+                data-active={pane.id === activeId}
                 data-mobile={isMobile}
                 data-maximized={maximized || undefined}
                 hidden={!isVisible}

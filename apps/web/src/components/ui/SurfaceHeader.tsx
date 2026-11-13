@@ -164,6 +164,7 @@ export default function SurfaceHeader({
       ) : null}
       <div ref={frameRef} className={mobile ? styles.mobileFrame : styles.frame}>
         <header
+          data-pane-header="true"
           ref={ref}
           className={mobile ? styles.mobile : styles.header}
           onMouseDown={event => {

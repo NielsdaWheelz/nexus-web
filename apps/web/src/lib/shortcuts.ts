@@ -42,7 +42,7 @@ export const SHORTCUTS = {
 
 export const NEW_PANE_HINT = "shift-click or shift-enter opens in a new pane";
 
-export const PANE_STRIP_DESCRIPTION = "left/right browse pane titles and controls. home/end reach the first/last control. enter or space activates. shift+enter opens the focused title's page in a new pane. tab leaves the strip. delete closes the focused pane. shift+m maximizes or restores layout.";
+export const PANE_STRIP_DESCRIPTION = "left/right browse pane titles and close controls, then minimize and layout. home/end reach the first title/last control. enter or space activates. shift+enter opens the focused title's page in a new pane. tab leaves the strip. delete or backspace closes the focused pane. shift+m maximizes or restores layout. shift+h minimizes the focused pane. middle-press closes a chip.";
 
 // These keys belong to the focused toolbar control, not the app-wide matcher.
 export const PANE_STRIP_SHORTCUTS = [
@@ -55,7 +55,7 @@ export const PANE_STRIP_SHORTCUTS = [
   {
     id: "PaneStrip.Edge",
     title: "First or last control",
-    description: "Focuses the first title or last close control without activating it.",
+    description: "Focuses the first title or the layout control without activating it.",
     meta: "Home / End",
   },
   {
@@ -81,6 +81,18 @@ export const PANE_STRIP_SHORTCUTS = [
     title: "Maximize or restore layout",
     description: "Maximizes the focused pane, or restores the canvas when that pane is already maximized. Focus stays in the strip.",
     meta: "Shift+M",
+  },
+  {
+    id: "PaneStrip.Minimize",
+    title: "Minimize pane",
+    description: "Minimizes the focused title or close control's pane once per press, keeping focus. The last visible pane stays visible and explains why.",
+    meta: "Shift+H",
+  },
+  {
+    id: "PaneStrip.MiddleClose",
+    title: "Close chip",
+    description: "A middle press closes that pane without selecting it or starting a drag.",
+    meta: "Middle-click",
   },
 ] as const;
 

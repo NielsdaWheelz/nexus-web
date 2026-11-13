@@ -1,7 +1,5 @@
 import { Readability } from '@mozilla/readability';
 
-export { extractXArticle } from './x_article.mjs';
-
 function extractWikisourceArticle(document) {
     const contentRoot = document.querySelector('.mw-parser-output');
     if (!contentRoot) return null;

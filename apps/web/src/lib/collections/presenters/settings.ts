@@ -1,27 +1,19 @@
-/** One settings row: a link to a section or a static fact. */
+/** Static settings details. */
 
 import type { CollectionRowView } from "@/lib/collections/types";
 
-export interface SettingsPresenterItem {
-  presentation: "Index" | "Details";
-  id?: string;
-  title: string;
-  description?: string;
-  meta?: string;
-  href?: string;
-}
-
-export function presentSettingsRow(
-  item: SettingsPresenterItem,
-): CollectionRowView {
+export function presentSettingsRow(item: {
+  readonly id: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly meta?: string;
+}): CollectionRowView {
   const context = [item.description, item.meta].filter(Boolean).join(" · ");
   return {
-    presentation: item.presentation,
-    id: item.id ?? item.href ?? item.title,
+    presentation: "Details",
+    id: item.id,
     kind: "settings_row",
-    primary: item.href
-      ? { kind: "link", href: item.href, paneLabelHint: item.title }
-      : { kind: "static" },
+    primary: { kind: "static" },
     title: { text: item.title },
     contributors: [],
     publicationDate: null,

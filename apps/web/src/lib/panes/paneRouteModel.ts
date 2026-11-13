@@ -46,7 +46,6 @@ const ROUTES = {
   imports: ["imports", "Imports", Icon.Upload],
   stats: ["stats", "Stats", Icon.Stats],
   habits: ["habits", "habits", Icon.Check],
-  settings: ["settings", "Settings", Icon.Settings],
   settingsAccount: ["settings/account", getDestination("account").label, Icon.Account],
   settingsLibrarian: ["settings/librarian", getDestination("librarianSettings").label, Icon.Settings],
   settingsReader: ["settings/reader", getDestination("reader").label, Icon.ReaderSettings],
@@ -58,6 +57,17 @@ const ROUTES = {
 } as const satisfies Record<string, readonly [string, string, Icon.Glyph]>;
 
 export type PaneRouteId = keyof typeof ROUTES;
+const SETTINGS_SECTIONS = {
+  settingsAccount: "account",
+  settingsLibrarian: "librarian",
+  settingsAppearance: "appearance",
+  settingsReader: "reader",
+  settingsKeybindings: "keyboard",
+} as const satisfies Partial<Record<PaneRouteId, string>>;
+const settingsSections = (Object.keys(SETTINGS_SECTIONS) as (keyof typeof SETTINGS_SECTIONS)[]).map(id => ({
+  id, href: `/${ROUTES[id][0]}`, label: SETTINGS_SECTIONS[id],
+}));
+
 type Traits<T> = Partial<Record<PaneRouteId, T>>;
 
 // The resource a route names: [scheme, path param].
@@ -151,6 +161,7 @@ interface PaneRouteTraits {
   queryNavigation: "in-place" | null;
   width: PaneWidthContract;
   groups: readonly WorkspaceSecondaryGroupId[];
+  sections: readonly { readonly id: PaneRouteId; readonly href: string; readonly label: string }[];
   shareByRoute: boolean;
 }
 
@@ -201,6 +212,7 @@ const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
           : RESOURCE[id] && id !== "oracleReading"
             ? ["resource-inspector"]
             : [],
+    sections: section === "settings" ? settingsSections : [],
     shareByRoute: !RESOURCE[id] && !UNSHARED.has(id) && pattern[0] !== "settings",
   };
   return { id, pattern, traits };
@@ -218,6 +230,7 @@ const UNSUPPORTED: PaneRouteTraits = {
   queryNavigation: null,
   width: STANDARD_WIDTH,
   groups: [],
+  sections: [],
   shareByRoute: false,
 };
 

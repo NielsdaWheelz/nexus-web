@@ -1,7 +1,7 @@
 import { useId, type ReactElement, type ReactNode, type Ref } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ChoiceField.module.css";
-import selection from "./Selection.module.css";
+import segments from "./Segments.module.css";
 import Tooltip from "./Tooltip";
 
 /**
@@ -30,13 +30,13 @@ export default function ChoiceField({
   const descriptionId = useId();
   const classes = {
     Inline: { label: styles.choice, input: undefined, icon: undefined },
-    Segment: { label: cx(styles.segment, selection.surface, selection.target, checked && selection.selected), input: styles.coveringInput, icon: undefined },
-    Facet: { label: cx(styles.facet, selection.surface, selection.target), input: styles.coveringInput, icon: styles.facetIcon },
+    Segment: { label: segments.segment, input: styles.coveringInput, icon: undefined },
+    Facet: { label: styles.facet, input: styles.coveringInput, icon: styles.facetIcon },
   }[presentation];
   // a caller's description owns spoken help; the tooltip describes only without one.
   const described = cx(describedBy, description && descriptionId) || undefined;
   return (
-    <label className={classes.label}>
+    <label className={classes.label} data-indicated={presentation === "Segment" && checked || undefined}>
       <Tooltip text={help ?? ""} disabled={help === undefined} triggerRef={ref} renderTrigger={tooltip =>
         <input {...tooltip} className={classes.input} type={type} name={name} value={value}
           checked={checked} disabled={disabled} aria-labelledby={labelId}

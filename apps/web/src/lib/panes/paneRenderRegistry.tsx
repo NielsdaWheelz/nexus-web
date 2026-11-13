@@ -38,7 +38,6 @@ const LOADERS: Record<LazyPaneRouteId, () => Promise<Module>> = {
   imports: () => import("@/app/(authenticated)/imports/ImportsPaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
   habits: () => import("@/app/(authenticated)/habits/HabitsPaneBody"),
-  settings: () => import("@/app/(authenticated)/settings/SettingsPaneBody"),
   settingsAccount: () =>
     import("@/app/(authenticated)/settings/account/SettingsAccountPaneBody"),
   settingsReader: () =>
