@@ -4,6 +4,23 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
+lit rule against `405d045d1`: +74 net authored runtime lines (930 added, 856
+deleted): shared ui +107, workspace +2, stats -5, search +9, libraries +12, feeds
+-5, nexus/navigation +3, settings -53, notes +2, extension +4, ingest -2. one
+indicator geometry owner serves word marks and value thumbs; the shell owns
+published view rows and settings section links. the store projects same-foreground-visit href changes with browser replace.
+generic article extraction no longer re-exports the browser-only x extractor;
+the extension imports its actual owner.
+cold invalid entry views read library identity separately, retaining it while
+a corrected aggregate loads; ordinary valid views keep their atomic read.
+removed the shared selected-fill/underline recipe, chip visibility/layout
+slots and in-view ticks, inspector glyph tabs and solo tab roles, buried view
+controls/chips, the settings index route/loader and its unused presenter arm,
+and the ordinary active-pane top hairline. documentation and disposable cases
+are excluded; wire, schema, dependencies, environment and workspace persistence
+are unchanged. contracts live in [visual system](modules/visual-system.md),
+[panes](modules/panes.md) and [workspace](modules/workspace.md).
+
 librarian leaves against `79feb68ab`: +189 net authored runtime lines
 (723 added, 534 deleted, with renames detected): chat +196, shared numeral and
 browser-zone presentation -11, resource excerpts +3, oracle +1. one resolved

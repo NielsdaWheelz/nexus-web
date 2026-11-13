@@ -23,7 +23,7 @@
 
 .title,
 .editor {
-  color: var(--ink);
+  color: var(--pane-title-ink, var(--ink));
   font-size: var(--title-size);
   font-weight: var(--weight-semibold);
 }

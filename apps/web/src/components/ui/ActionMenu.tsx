@@ -21,7 +21,6 @@ import {
   type MenuOption,
   type MenuSource,
 } from "@/lib/ui/actionDescriptor";
-import { cx } from "@/lib/ui/cx";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import {
   focusableElements,
@@ -43,8 +42,8 @@ import { ControlContents } from "./control";
 import MobileSheet from "./MobileSheet";
 import RadioGroup from "./RadioGroup";
 import styles from "./ActionMenu.module.css";
-import choiceField from "./ChoiceField.module.css";
-import selection from "./Selection.module.css";
+import Segments from "./Segments";
+import segments from "./Segments.module.css";
 import collection from "./Collection.module.css";
 
 const PREPARATION_BUDGET_MS = 5000;
@@ -680,10 +679,10 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
       return <li role="none" key={option.id}>
         <div role="group" aria-label={option.label} data-menu-row={option.id}
           data-action-availability={option.disabled ? "Blocked" : "Available"} className={styles.choiceRow}>
-          <div className={choiceField.segments}>
+          <Segments value={option.value}>
             {option.choices.map((entry) => <button key={entry.value} type="button" role="menuitemradio"
               aria-checked={entry.value === option.value} tabIndex={-1} data-action-id={`${option.id}.${entry.value}`}
-              className={cx(choiceField.segment, selection.surface, selection.target, entry.value === option.value && selection.selected)} aria-disabled={option.disabled || undefined} aria-describedby={reason}
+              className={segments.segment} data-indicated={entry.value === option.value || undefined} aria-disabled={option.disabled || undefined} aria-describedby={reason}
               // Click and Space's native click choose and keep the menu open.
               onClick={(event) => {
                 event.stopPropagation();
@@ -697,7 +696,7 @@ export function ActionMenuInvocation({ source, session, placement = "below", ali
               }}>
               <span>{entry.label}</span>
             </button>)}
-          </div>
+          </Segments>
           {reason ? <span id={reason} className={collection.detail}>{option.disabledReason}</span> : null}
         </div>
       </li>;

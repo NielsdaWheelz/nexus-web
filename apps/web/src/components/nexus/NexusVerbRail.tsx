@@ -8,9 +8,8 @@
 // rail and the menu each own their read, so opening the menu never unsettles the rail's verbs.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import * as Icon from "@/lib/ui/icons";
-import { ControlContents } from "@/components/ui/control";
+import { buttonClassName, ControlContents } from "@/components/ui/control";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
-import selection from "@/components/ui/Selection.module.css";
 import Tooltip from "@/components/ui/Tooltip";
 import { useContextualActions, type ContextualActionsInput } from "@/lib/actions/useContextualActions";
 import type { Rail } from "@/lib/nexus/model";
@@ -142,7 +141,8 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
       "data-action-id": verb.id,
       "data-action-availability": verb.disabled ? "Blocked" : "Available",
       tabIndex: focused ? 0 : -1,
-      className: cx(selection.surface, selection.target, styles.verb, focused && selection.selected),
+      className: cx(buttonClassName({}), styles.verb),
+      "data-armed": focused || undefined,
       "aria-label": verbs.close?.verb === verb ? verbs.close.name : undefined,
       "aria-keyshortcuts": mobile ? undefined : verb.id === "Nexus.Open" ? "Enter" : verb.id === "Nexus.OpenInNewPane" ? "Shift+Enter" : undefined,
       "aria-disabled": verb.disabled || undefined,
@@ -185,7 +185,7 @@ export default function NexusVerbRail({ id, label, verbs, rail, controller, mobi
     {verbs.menu ? <ContextualActionMenu {...verbs.menu} label={MORE} align="end" returnFocusTo={returnFocusTo}
       onOpenChange={open => { if (open) setHeld(new Set(reads.map(verb => verb.id))); else onClose(false); }} renderTrigger={trigger =>
         <button {...trigger} data-action-id={MORE} tabIndex={focus === MORE ? 0 : -1}
-          className={cx(selection.surface, selection.target, styles.verb, focus === MORE && selection.selected)} aria-busy={busy || trigger["aria-busy"]}
+          className={cx(buttonClassName({}), styles.verb)} data-armed={focus === MORE || undefined} aria-busy={busy || trigger["aria-busy"]}
           onFocus={() => { if (focus !== MORE) focusRail(MORE); }}><ControlContents icon={<Icon.More size={16} aria-hidden="true" />} busy={busy || trigger["aria-busy"]}>{MORE}</ControlContents></button>} /> : null}
     {mobile ? null : <span id={`${id}-help`} className="sr-only">type to filter. enter runs the focused option. left or escape returns to the query.</span>}
   </div>;

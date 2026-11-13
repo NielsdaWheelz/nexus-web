@@ -46,9 +46,9 @@ settings, a separator, and danger-last sign out. imports retains its canonical
 the mobile nexus account projection renders that same component and order;
 mobile attention remains inside nexus, without a closed-launcher badge.
 
-settings lists Account, Librarian settings, Appearance, Reader settings and
-Keyboard shortcuts in that order. the registry owns every destination name;
-the index, pane titles, reader menu and nexus read it. account keywords include
+the settings section row lists account, librarian, appearance, reader and
+keyboard in that order. the registry owns destination names for pane titles,
+the reader menu and nexus. account keywords include
 google and time zone; librarian settings includes brief and undo. linked
 identities lives in account; `/settings/identities` is unsupported, with no
 redirect. account's session row is the second home of the shared guarded
@@ -332,7 +332,8 @@ the keyboard layout's `event.key` rather than a physical key position.
   plain arrow keys only move focus; modified keys reach the shortcut owner.
 - the desktop strip has its own fixed keys: left/right/home/end browse titles
   and controls, enter/space activates, delete/backspace closes
-  once per press, and shift-m maximizes or restores the named pane. tab leaves
+  once per press; shift-m maximizes/restores and shift-h minimizes the focused
+  chip's pane. middle-press closes without activation. tab leaves
   its single roving stop. these keys never become global letter bindings.
 
 the note editor's link command is `Mod-Shift-k`; nexus owns `Mod-k` even
@@ -340,8 +341,9 @@ with the caret in a note. firefox on linux/windows can reserve control+shift+k
 for its web console, so that link chord is not guaranteed there; the formatting
 menu remains the keyboard route to the command.
 
-the same table supplies the read-only `/settings/keybindings` reference, linked
-from settings and searchable in nexus. there is no shortcut preference,
+the same table supplies the read-only `/settings/keybindings` reference, reached
+through the settings section links and searchable in nexus. settings opens
+`/settings/account`; `/settings` has no index route. there is no shortcut preference,
 capture, reassignment, provider, or persistence. old browser-local assignments
 are ignored; they need no migration or cleanup code. destinations and quick
 actions remain accessible through nexus and ordinary controls.

@@ -348,8 +348,8 @@ retry replaces only the delayed attempt, signal, deadline and snapshot.
 desktop complete choices use menu semantics; failure and successful-empty use a
 named transient dialog. retry retains the failure surface, owner, focus and history
 while taking a fresh signal and budget. mobile uses a titled `MobileSheet` with
-ordinary buttons/links, a segmented `RadioGroup` with a hidden legend for each
-choice, and modal tab order. touch focuses the panel, keyboard the requested
+ordinary buttons/links, a native `RadioGroup` on the same thumb track with a
+hidden legend for each choice, and modal tab order. touch focuses the panel, keyboard the requested
 command edge; when that edge is a choice, its checked enabled radio.
 `aria-haspopup` matches the displayed role.
 both presentations use natural content height with available-space ceilings;
@@ -404,7 +404,8 @@ a `MenuChoice` is one named exclusive choice: choosing sets its value
 absolutely, and choosing the current value does nothing. a relative toggle is a
 `menuitemcheckbox` command whose pressed state is meaning; it closes. on
 desktop a choice is a `group` row named by its label, one `menuitemradio` per
-option in the [segmented recipe](visual-system.md#choice-controls), the current
+option in the shared content-width `Segments` track and raised thumb
+([visual system](visual-system.md#choice-controls)), the current
 option `aria-checked`, never disabled. each option is an item for Up/Down,
 Home/End and typeahead; Left and Right move among the row's options and wrap,
 and pass through elsewhere. focus never chooses. click and Space (its native

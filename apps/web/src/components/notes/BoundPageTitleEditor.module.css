@@ -3,3 +3,5 @@
   font-size: var(--content-font-size, var(--text-base));
   line-height: var(--content-line-height, var(--leading-normal));
 }
+
+textarea.title { color: inherit; }

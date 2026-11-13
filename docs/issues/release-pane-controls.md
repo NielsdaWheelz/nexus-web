@@ -6,7 +6,7 @@ as observed.
 
 - no supported physical hybrid reporting both `(pointer: fine)` and
   `(any-pointer: coarse)` was available. `Control.module.css` and
-  `Selection.module.css` use the same any-coarse target policy; chromium touch
+  the tab, segment, facet and strip owners use the same any-coarse target policy; chromium touch
   emulation is not evidence of that physical combination. the owned android
   webview reported coarse primary input and a 44px download-policy label.
 - native screen-reader speech and touch exploration were not exercised.

@@ -55,16 +55,8 @@ import type { SecondaryPanePatch } from "@/lib/workspace/store";
 import styles from "./Companion.module.css";
 
 type TabId = WorkspaceSecondarySurfaceId | "find-results";
-const ICONS: Record<TabId, Icon.Glyph> = {
-  "resource-contents": Icon.Contents,
-  "resource-members": Icon.Members,
-  "resource-connections": Icon.Link,
-  "import-detail": Icon.Upload,
-  "librarian-references": Icon.SourceReference,
-  "find-results": Icon.Search,
-};
 const title = (id: TabId) =>
-  id === "find-results" ? "Search results" : SECONDARY_SURFACES[id].title;
+  id === "find-results" ? "search results" : SECONDARY_SURFACES[id].title;
 
 function published(
   companion: PaneCompanion | null,
@@ -478,20 +470,19 @@ export default function Companion(props: {
       tabRefs.current.get(id)?.focus({ preventScroll: true });
     }
   };
-  const tabList = companion && activeId !== null ? (
+  const hasTabs = tabs.length > 1;
+  const tabList = hasTabs && activeId !== null ? (
     <TabList
       value={activeId}
       aria-label="Secondary surfaces"
       className={styles.tabs}
       onSelect={select}
       items={tabs.map(({ id }) => {
-        const Glyph = ICONS[id];
         return {
           value: id,
           id: `${baseId}-${id}-tab`,
           panelId: `${baseId}-${id}-panel`,
           label: title(id),
-          icon: <Glyph size={16} aria-hidden="true" />,
           ref: (element: HTMLButtonElement | null) => {
             if (element) tabRefs.current.set(id, element);
             else tabRefs.current.delete(id);
@@ -529,7 +520,7 @@ export default function Companion(props: {
       </header>
     ) : (
       <header ref={headerRef} className={`${styles.header} ${compact.compact}`}>
-        {tabList ?? <span className={styles.soloTitle}>{activeId && title(activeId).toLowerCase()}</span>}
+        {tabList ?? <span className={styles.soloTitle}>{activeId && title(activeId)}</span>}
         {resourceMenu}
         {closeButton}
       </header>
@@ -564,8 +555,8 @@ export default function Companion(props: {
     <div
       key={id}
       id={`${baseId}-${id}-panel`}
-      role={companion ? "tabpanel" : undefined}
-      aria-labelledby={companion ? `${baseId}-${id}-tab` : undefined}
+      role={hasTabs ? "tabpanel" : undefined}
+      aria-labelledby={hasTabs ? `${baseId}-${id}-tab` : undefined}
       className={styles.body}
       hidden={id !== activeId}
     >

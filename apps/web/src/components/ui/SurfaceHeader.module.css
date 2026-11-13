@@ -10,7 +10,7 @@
   column-gap: var(--space-3);
   min-block-size: var(--pane-chrome-header-height);
   padding-inline: var(--space-4);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
+  border-block-end: var(--stroke-hairline) solid var(--pane-header-rule-ink, var(--edge-subtle));
   background: var(--surface-2);
   cursor: grab;
 }

@@ -292,11 +292,13 @@ it takes neither pointer nor keyboard input and records no reading progress.
 no module styles another module's internal dom. a caller adjusts a primitive
 only through its props, its `className` (a field primitive's rules weigh one
 class, so the caller's class meets them at equal weight) or a context token the
-primitive declares. pane query/navigation controls share declared density
+primitive declares. `PaneHeaderIdentity` reads `--pane-title-ink` (default `--ink`);
+`SurfaceHeader` reads `--pane-header-rule-ink` (default `--edge-subtle`).
+pane query/navigation controls share declared density
 tokens owned by `CompactChrome.module.css`, applied to pane control rows,
 companion headers, workspace strips, connections controls and the page's running
 head. `--pane-control-row-padding-block` pads pane control rows; the page head
-sets it to zero. the head consumes it to place the section gauge on the host
+and pane view/section rows set it to zero. the head consumes it to place the section gauge on the host
 row's bottom edge. targets grow with
 content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
 13px; coarse text-entry/native-select values use 16px. the two type roles are
@@ -407,6 +409,54 @@ feedback handoff debt.
 
 ## choice controls
 
+selection has three drawings. a place among peers uses the lit rule: lowercase
+words on the host's inset hairline, the current word in `--ink` and semibold,
+and one square-ended 2px `--accent` mark covering its stretch of the rule.
+a value among options uses a raised thumb in a sunken track. an independent
+switch retains `Control.module.css`'s pressed tint. the nav rail's place tint is
+the standing exception. the armed list row keeps `Collection`'s paint; an armed
+nexus verb takes an enabled fill, without a mark.
+
+tab words reserve their heavier width at rest. neither tabs nor pane chips have
+a resting fill. hover brings ink and a hairline ghost under the word. only the
+mark and thumb transition between choices; first placement and reduced motion
+are immediate. the solar overlays the mark's accent with its ornament-gated
+brass. forced colours use `Highlight` for the mark, `CanvasText` for the pane
+bracket, and `Highlight`/`HighlightText` for the thumb and chosen word.
+
+`useIndicator(host, key)` owns geometry, not selection or paint. a relative host
+renders one decorative `[data-indicator]` and at most one `[data-indicated]`
+child. the hook measures in host scroll coordinates, watches the host and
+children's sizes and child replacement, and writes `--indicator-start` and
+`--indicator-size`. consumers read both with `0px` defaults; the first measured
+placement precedes `data-indicator-ready` and enables later transitions.
+
+`Tabs.tsx` owns controlled `TabList` and route `TabLinks`. tab items supply
+string labels, ids, panel ids and optional native refs. arrows wrap and home/end
+select endpoints; the host commits selection and guarded focus. choosing the
+current tab does nothing. no matching value leaves no mark/current tab, with
+the first tab reachable. the primitive owns no panel lifetime. route sections
+are anchors with `aria-current="page"`; the pane's anchor owner follows or forks.
+tab-row hosts draw their hairline inside the box, give no block-end padding,
+and keep the mark at block-end. no outside border is clipped by a scroller.
+
+an exclusive choice shown as its options is `RadioGroup`: a native fieldset
+named by its legend, one shared radio name and an optional group description.
+`Inline` keeps native checked marks. `Segmented` and a desktop menu's
+`menuitemradio` row share `Segments`: content-width options in one sunken track
+with a raised `--surface-2`/`--shadow-1` piece. segments own their targets, focus,
+disabled and forced-colour paint; native inputs cover only their own label and
+retain native radio keys. labels may be nodes, including a font in its own face.
+menu activation and keyboard semantics remain with `ActionMenu`.
+
+`ChoiceField` owns native label/input geometry and group layouts. names reference
+label-only spans; descriptions and tooltip help remain separate; refs address
+the input. its `Facet` is a native checkbox with a glyph and short label. checked
+is quiet; unchecked dims and slashes the glyph, leaving the word legible.
+facets own hover fill, target, focus, disabled and forced-colour rules; forced
+colours keep only the unchecked slash. independent switches use control tint.
+all these targets are at least 32px fine and 44px with any coarse pointer.
+
 choice lists use `Collection`'s separate active and selected states, selected
 checkmark and visible unavailable reasons. labels wrap; bounded lists scroll
 vertically. status and refresh content sits outside listboxes. command menus and
@@ -414,49 +464,6 @@ library membership retain their own semantics;
 [overlays](overlays.md#surfaces) owns the responsive picker shell. chat's single
 generation control, provider sections and effort region belong to
 [chat](chat.md#generation-selection).
-
-choice triggers, segments and facets have a 32px minimum height; triggers, option
-rows, segments and facets have at least 44px with any coarse pointer. text can
-increase those heights. engagement uses existing colour and motion tokens; reduced motion
-removes transitions.
-
-an exclusive choice shown as its options is a native radio group, `RadioGroup`:
-one fieldset named by its legend, radios sharing one `useId` name, and an
-optional description after the options that describes the fieldset. it adds no
-role. inside `role=menu` the same choice is `menuitemradio`
-([overlays](overlays.md#surfaces)). `Inline` is the default presentation.
-`Segmented` sets each option as a `ChoiceField` segment in one track of equal
-columns whose labels wrap; its visible legend takes the form-label type, and a
-`Hidden` legend names the group to assistive technology only. a choice label may
-be a node, such as a font named in its own face.
-
-`ChoiceField.module.css` owns native label/input geometry and the public group,
-choices and group-description layouts. names reference label-only spans;
-help and caller descriptions remain separate. refs address the actual inputs.
-inline choices use native checked marks without selected backplates.
-
-`ChoiceField`'s `Facet` presentation is a set member shown as a glyph and a short
-visible label over a covering native checkbox, with the segment's surface and
-target and no selected marker. checked is the rest state and stays quiet;
-unchecked dims the glyph and slashes it from top left to bottom right while the
-label stays legible and unchanged. disabled paint overrides both. forced colours
-keep only the slash. `help` composes a `Tooltip` on the input without replacing
-the native input when help changes.
-
-`Selection.module.css` owns surface, target and selected appearance for native
-segments, menu radios, companion tabs and pane activation. selected is a neutral
-surface with an inset bottom accent marker; hover preserves it. focus remains
-separate. disabled selected values retain a neutral marker. forced colors use
-system colors and preserve marker/focus contrast, including nested pane
-activators. reduced motion removes transitions. segments have no enclosing track
-border. labels wrap; equal columns remain the group layout.
-
-`Tabs.tsx` exports one controlled `TabList`. supplied ids associate native tab
-buttons with host-owned panels; left/right wrap and home/end select endpoints.
-the callback owns selection commitment and guarded focus. tab refs remain native;
-the primitive owns no panels, persistence or lifecycle. workspace pane controls
-retain their toolbar semantics and management/drag behavior. their left in-view
-tick is independent of the bottom active marker.
 
 `Chip` is one native whole-label removal button with a decorative cross. it uses
 shared action appearance and target minima; labels wrap. `AppliedFilters` owns
@@ -596,20 +603,30 @@ shortcut-bearing control through the same geometry contract.
 
 ## workspace strip
 
-the desktop workspace strip keeps readable chips in its own horizontal
-scrollport: the previous 12–15rem chip bounds grow by one 32px control width, or
-44px when any pointer is coarse, preserving title space. each chip has three fixed, quiet slots:
-visibility, layout, close. targets remain 32px within the 40px strip, or 44px
-within 52px when any pointer is coarse. active fill,
-in-view tick and minimized treatment remain distinct. keyboard focus reveals
-only this strip. reduced motion removes displacement transitions; forced colors
-retain selection and focus. controls use shared `Button` paint, tooltips and
-decorative signs: minimize `Remove`, maximize `Maximize`, close `Dismiss`; restore
-draws `Add` on a minimized pane and `Restore` on a maximized one. close is neutral.
-`lib/workspace/paneControls.ts` owns desktop strip control content. the inline
-nexus pane list keeps wrapping mobile titles and independent 48px close targets.
-reorder completion uses one polite position
-announcement; layout management emits no success toast.
+the desktop strip is a 40px toolbar, 52px with any coarse pointer. its scroller
+owns content-sized chips and the shared lit mark; an end group owns minimize
+and layout for the active pane. chips have a 16px sign, the user's verbatim
+title and one held close target. widths grow equally from 6.5rem toward each
+content width, capped at 12.5rem; below the floors only the strip scrolls.
+close retains a 32/44px target, revealed on active, hover or focus-within chips;
+an inactive close takes no pointer events at rest without losing its slot.
+
+one faint bracket under each chip maps its pane wrap's on-screen fraction,
+companion included, with 5px outer ticks. minimized chips have no bracket;
+maximized mode gives only the active chip a full bracket. minimized titles stay
+`--ink-muted` and wear a dashed underline with their sign lowered 2px, so they
+remain distinct from off-screen visible panes without disabled ink. reciprocal
+chip/header brushing projects through dom attributes and declared header tokens,
+without react pointer state. canvas selection dims only inactive pane titles;
+controls retain their ink and pointer-role titles keep their own. only forced
+colours retain the active pane's top hairline.
+
+`activePaneControls` owns active minimize/layout content. minimize uses `Remove`,
+maximize `Maximize`, restore `Restore`, close `Dismiss`. end-control identity
+survives active-pane changes and keeps focus. successful minimize says
+`minimized {title}.` in the strip's polite status; last-visible refusal explains
+`keep at least one pane visible`. reorder announces position once. the nexus
+pane list retains its independent wrapping titles and 48px close targets.
 
 ## the lint
 

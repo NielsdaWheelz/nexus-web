@@ -852,8 +852,8 @@ there is no global window-scroll workaround or independent consumer source clock
 
 a margin needs a visible text, so the view radio exists only in a column companion
 over a source that is not absent. there a segmented `RadioGroup` with a hidden
-legend shows `margin` and `all`, named natively `margin beside the text` and
-`all items`, with no routine help. mobile, the desktop sheet, unreadable media and
+legend shows `margin` and `all` on the shared content-width thumb track, named
+natively `margin beside the text` and `all items`, with no routine help. mobile, the desktop sheet, unreadable media and
 failed documents derive a flat normal-flow list without changing that preference
 on scroll or layout changes. `Tab` is native in the margin, where off-screen
 anchored rows are unreachable by it; all items walks the logical order through

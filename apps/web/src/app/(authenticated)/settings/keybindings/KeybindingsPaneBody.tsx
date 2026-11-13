@@ -19,7 +19,6 @@ export default function KeybindingsPaneBody() {
           returnScope="Settings.Keybindings.Commands"
           rows={Object.entries(SHORTCUTS).map(([id, shortcut]) =>
             presentSettingsRow({
-              presentation: "Details",
               id,
               title: shortcut.label,
               description: shortcut.description,
@@ -37,7 +36,7 @@ export default function KeybindingsPaneBody() {
       >
         <CollectionView
           returnScope="Settings.Keybindings.PaneStrip"
-          rows={PANE_STRIP_SHORTCUTS.map(item => presentSettingsRow({ ...item, presentation: "Details" }))}
+          rows={PANE_STRIP_SHORTCUTS.map(presentSettingsRow)}
           status="ready"
           ariaLabel="Pane strip shortcuts"
           surface={false}
@@ -46,7 +45,7 @@ export default function KeybindingsPaneBody() {
       <PaneSection title="Librarian line" description="These keys apply while writing a question. Recall is available on the latest window with search closed.">
         <CollectionView
           returnScope="Settings.Keybindings.LibrarianLine"
-          rows={librarianLineShortcuts(platform).map(item => presentSettingsRow({ ...item, presentation: "Details" }))}
+          rows={librarianLineShortcuts(platform).map(presentSettingsRow)}
           status="ready"
           ariaLabel="Librarian line shortcuts"
           surface={false}
@@ -55,7 +54,7 @@ export default function KeybindingsPaneBody() {
       <PaneSection title="Outline" description="These keys apply while editing or selecting an item. Touch screens offer six buttons for indentation, movement, undo and redo.">
         <CollectionView
           returnScope="Settings.Keybindings.Outline"
-          rows={outlineShortcuts(platform).map(item => presentSettingsRow({...item, presentation: "Details"}))}
+          rows={outlineShortcuts(platform).map(presentSettingsRow)}
           status="ready"
           ariaLabel="Outline shortcuts"
           surface={false}

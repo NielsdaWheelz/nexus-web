@@ -66,6 +66,7 @@ const VISIT = definePaneVisitDataKey<SearchVisit>("Search.Phase");
 const LEXICAL_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Lexical");
 const HYBRID_VISIT = definePaneVisitDataKey<ListSnapshot<Row, Metadata>>("Search.Hybrid");
 const UNFIXABLE = ["E_INVALID_REQUEST", "E_NOT_FOUND"];
+const VIEWS = [{ value: "resources", label: "resources" }, { value: "passages", label: "passages" }];
 const phaseRank = { lexical: 0, hybrid: 1 };
 /** What the last key showed, rows or none, so the next key can stand them dimmed until it adopts. */
 type Shown = { readonly accountId: string; readonly view: SearchQuery["view"]; readonly rows: readonly Row[] };
@@ -80,7 +81,19 @@ export default function SearchPaneBody() {
 
 function InvalidSearch() {
   const router = usePaneRouter();
-  usePaneChrome({ header: { kind: "Section", meta: { kind: "None" } } });
+  const params = usePaneSearchParams();
+  usePaneChrome({
+    header: { kind: "Section", meta: { kind: "None" } },
+    views: {
+      label: "search view", value: params.get("view") ?? "resources",
+      items: VIEWS,
+      onSelect: value => {
+        const next = new URLSearchParams(params);
+        if (value === "resources") next.delete("view"); else next.set("view", value);
+        router.replace(`/search${next.size ? `?${next}` : ""}`);
+      },
+    },
+  });
   usePaneReturnReady(true);
   return <Fact line={{ fact: "search doesn’t know this link’s view or filters." }} verbs={[{ label: "reset search", commandKey: "reset search", run: () => router.replace("/search") }]} />;
 }
@@ -312,6 +325,14 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
   const show = held && candidate !== null && !rejectedCursor && !prefixFailure ? () => { returning.current = false; adopt(candidate, true); } : null;
   usePaneReturnReady(blank || unsupported || visit.adopted !== null || unfixable !== undefined || (lexicalState === "failed" && hybridState !== "pending"));
   usePaneChrome({
+    views: {
+      label: "search view", value: query.view,
+      items: VIEWS,
+      onSelect: value => {
+        if (value !== "resources" && value !== "passages") throw new Error("unknown search view");
+        commit({ ...query, view: value });
+      },
+    },
     query: { kind: "Controls", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} show={show} /> },
     header: { kind: "Section", meta: count ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" } : { kind: "None" } },
   });

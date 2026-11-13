@@ -80,7 +80,6 @@ import {
   Undo2,
   Upload as UploadDrawing,
   User,
-  Users,
   Video as VideoDrawing,
   X,
   ZoomIn as ZoomInDrawing,
@@ -166,7 +165,6 @@ export const Feed: Glyph = Rss;                       // a feed
 export const SourceReference: Glyph = NotebookTabs;   // a reference in the source
 export const Web: Glyph = Globe;                      // a saved web page
 export const Author: Glyph = User;                    // a person who wrote it
-export const Members: Glyph = Users;                  // people in this library
 export const Account: Glyph = CircleUser;             // you
 
 // Places.

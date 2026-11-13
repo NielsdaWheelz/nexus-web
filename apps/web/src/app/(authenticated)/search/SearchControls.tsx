@@ -16,7 +16,6 @@ import ContributorFilter, {
 import { Fact } from "@/components/feedback/Fact";
 import ChoiceField from "@/components/ui/ChoiceField";
 import choices from "@/components/ui/ChoiceField.module.css";
-import RadioGroup from "@/components/ui/RadioGroup";
 import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
 import {
   MEDIA_FORMAT_LABELS,
@@ -172,17 +171,6 @@ export default function SearchControls(props: {
           if (event.key === "Enter" && !event.repeat && !composing && !event.nativeEvent.isComposing) apply(true);
         },
       }}
-      actions={
-        <RadioGroup
-          label="View"
-          value={query.view}
-          choices={[{ value: "resources", label: "Resources" }, { value: "passages", label: "Passages" }]}
-          onChange={(view) => {
-            if (view !== "resources" && view !== "passages") throw new Error("Unknown search view");
-            write({ ...query, view });
-          }}
-        />
-      }
       options={{
         label: "Filters",
         activeCount: chips.length,

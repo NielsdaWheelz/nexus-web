@@ -157,9 +157,13 @@ a best-effort cloud copy. one request is in flight; a newer state is sent after
 it settles. pagehide and hidden flush the current state. local failure offers
 retry; cloud failure cannot veto the local save.
 
-the address bar names the active pane. the store projects it with next's patched
-`history.replaceState(null, "", href)`, so next's router url follows and a server
-action or refresh cannot revert it. next installs that patch in a passive effect
+the address bar names the active pane. the store projects through next's patched
+history methods, preserving `window.history.state`. an href change in the same
+active pane and visit replaces the browser entry; a changed active pane or visit
+pushes. unchanged hrefs project nothing. this is the projection contract for all
+pane-router and target-activation writers; view rows never write browser history.
+next's router url follows, so a server action or refresh cannot revert it.
+next installs that patch in a passive effect
 that runs after the first commit's layout effects; the first projection then
 writes the entry directly and projects again on the next frame. a location hash
 (cold load, `hashchange`, `popstate`) is folded into the active pane only when
@@ -413,7 +417,7 @@ podcast). refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
-`PaneShell` composes identity, supported navigation and supported query above
+`PaneShell` composes identity, supported views/sections, navigation and query above
 its existing content scrollport (`auto minmax(0, 1fr)`). controls stay stationary;
 readers keep their own document viewport and collection return anchors stay in
 `.routeContent`. canvas dragging begins only in the identity header's
@@ -430,12 +434,13 @@ active-pane breakpoint change; visit retirement ends disclosure and transient
 results. hidden find occupies no space or tab stops. reader reflow owns passage
 continuity when the row changes height.
 
-pane control rows, the reader's page running head and companion/strip headers
-consume the shared compact density recipe. controls own their appearance; the shell owns layout and available space.
-companion tabs use the controlled `TabList` while retaining their guarded focus,
-column/sheet/full-screen relocation, stable panel ids and active-body lifetime. active-tab
-reveal observes the live header and selected tab across relocation and text zoom. pane chips
-retain intrinsic height, title ellipsis, action slots and drag ownership.
+pane control rows, the reader’s page running head and companion/strip headers
+consume the shared compact density recipe. controls own paint; the shell owns layout and available space. published
+`views` and route `sections` share the first control row, which retreats with the
+mobile controls. [panes](panes.md#pane-views-and-sections) owns selection and route
+contracts. controlled companion word tabs retain guarded focus, relocation,
+panel ids and active-body lifetime. active-tab reveal observes the live header
+and selected tab across relocation and text zoom.
 
 `PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
 submit, followed by operation actions, inline options disclosure, native
@@ -521,8 +526,7 @@ query toolbar: idle is silent, complete counts are compact, and partial/failure
 details stay explicit. navigation/retry precede icon-only find options, followed
 by the word `results` (named and tooltipped "Show search results") and icon-only
 close. applied-option chips remain visible. options draws `Filter`;
-the companion's search-results tab draws
-`Search`. results opens its existing companion presentation and never
+the companion's transient tab is the lowercase word `search results`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry transfers focus before its control disappears; companion results remain
 transient. `useFind` owns find movement and cancellation; the shell owns
@@ -745,10 +749,19 @@ links, defects and focus stay with that pane; its More trigger, when present,
 carries `data-pane-chrome-focus`, and every chrome focus path falls back to the
 pane landmark without it.
 
+`usePaneCanvas.subscribeSpans(listener)` immediately supplies the whole readonly
+map of visible pane-wrap fractions, including companions. the existing scheduled
+measure reads all rects before publishing, only in canvas mode; hidden/off-screen
+wraps are absent. changes of at least 0.001 and every mode transition notify.
+the strip writes bracket fractions directly to chip tokens without react state
+per frame; maximized mode clears other brackets and gives the active chip one
+full span. intersection sets independently retain presentation/feedback ownership.
+reciprocal chip/header brushing is dom-only, with no workspace persistence.
+
 ## Companion
 
 A pane's Companion is its one secondary region: the durable Inspector tabs the
-body publishes (`usePaneCompanion`) plus Find's transient "Search results" tab.
+body publishes (`usePaneCompanion`) plus Find's transient `search results` tab.
 `Companion.tsx` renders the committed `Column`, `Sheet` or `FullScreen` presentation and owns
 every companion command (`createCompanionController`, exposed to bodies as the runtime's
 `requestSecondarySurface(id | null)`, `closeSecondaryPane` and
@@ -759,6 +772,12 @@ region id is also their interaction scope. `Companion` owns identity, tabs and
 bodies; its close uses the frame's dismissal request. full-screen identity uses
 the resolved pane title even without a canonical resource ref; only the resource
 menu requires that ref. mobile keeps the direct inspector button at every width.
+
+multiple surfaces use lowercase word tabs, without glyphs, on an inset hairline.
+the column header takes `--pane-chrome-header-height`, aligning its support line
+with the pane header, and centres close; the sheet keeps its height. full screen
+has identity followed by a 48px tab row. one surface is a plain solo title,
+without tablist/tabpanel roles, and full screen omits its second row entirely.
 
 `PaneShell` commits presentation: mobile uses a full-screen task; ordinary desktop uses a
 column; maximized desktop uses a column only when measured content width fits
@@ -807,7 +826,7 @@ them and selects that tab. column result close, closing Find or leaving the sour
 ends results and restores the durable presentation. explicit covering close/back
 ends results and collapses durable visibility, retaining query and remembered tab.
 their width is the durable record's when one exists. a covering result preview hides it while
-the results live on. A pane whose body publishes no Companion shows its results with a solo title and no tablist.
+the results live on. a single published surface, including find alone, uses the solo-title contract.
 
 The region id is `paneSecondaryRegionId(paneId)` (`pane-<id>-companion`) for
 all groups; the Inspector's disclosure names it only while it is open.

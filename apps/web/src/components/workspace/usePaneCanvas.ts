@@ -4,6 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 
+export type PaneSpans = ReadonlyMap<string, readonly [from: number, to: number]>;
+
 const DRAG_THRESHOLD_PX = 4;
 const NO_EDGES = { start: false, end: false };
 const NONE: ReadonlySet<string> = new Set();
@@ -51,7 +53,7 @@ function reachesCanvas(
 
 /**
  * The desktop pane canvas: a vertical wheel over content that cannot scroll,
- * and a drag on a header's empty area, pan it; edge fades and in-view chips
+ * and a drag on a header's empty area, pan it; edge fades and chip spans
  * follow its real extent; activation scrolls a pane into view. Disabled
  * (mobile) it does nothing and reports nothing.
  */
@@ -71,6 +73,14 @@ export function usePaneCanvas(input: {
     mode: "Canvas" | "Maximized";
     widthPx: number;
   } | null>(null);
+  const spans = useRef<PaneSpans>(new Map());
+  const spansMode = useRef(input.mode);
+  const spanListeners = useRef(new Set<(value: PaneSpans) => void>());
+  const subscribeSpans = useCallback((listener: (value: PaneSpans) => void) => {
+    spanListeners.current.add(listener);
+    listener(spans.current);
+    return () => { spanListeners.current.delete(listener); };
+  }, []);
   const inView = useStringIdSet();
   const fullyInView = useStringIdSet();
   const { add, remove } = inView;
@@ -84,7 +94,14 @@ export function usePaneCanvas(input: {
     if (mode === "Canvas") return;
     stopDrag.current?.();
     heldPane.current = null;
-    if (mode === "Disabled") setMeasurement(null);
+    if (mode === "Disabled") {
+      setMeasurement(null);
+      if (spansMode.current !== mode) {
+        spansMode.current = mode;
+        spans.current = new Map();
+        for (const listener of spanListeners.current) listener(spans.current);
+      }
+    }
   }, [mode]);
 
   useEffect(
@@ -205,6 +222,28 @@ export function usePaneCanvas(input: {
         ? parseFloat(shellStyle.borderInlineStartWidth) + parseFloat(shellStyle.borderInlineEndWidth)
         : 0;
       const widthPx = canvas.clientWidth - borderPx;
+      const nextSpans = new Map<string, readonly [number, number]>();
+      if (enabled) {
+        const bounds = canvas.getBoundingClientRect();
+        for (const wrap of canvas.querySelectorAll<HTMLElement>("[data-pane-id]:not([hidden])")) {
+          const box = wrap.getBoundingClientRect();
+          if (box.width <= 0 || box.right <= bounds.left || box.left >= bounds.right) continue;
+          nextSpans.set(wrap.dataset.paneId!, [
+            Math.max(0, (bounds.left - box.left) / box.width),
+            Math.min(1, (bounds.right - box.left) / box.width),
+          ]);
+        }
+      }
+      const changed = spansMode.current !== mode || nextSpans.size !== spans.current.size ||
+        [...nextSpans].some(([id, value]) => {
+          const previous = spans.current.get(id);
+          return !previous || Math.abs(previous[0] - value[0]) >= 0.001 || Math.abs(previous[1] - value[1]) >= 0.001;
+        });
+      if (changed) {
+        spansMode.current = mode;
+        spans.current = nextSpans;
+        for (const listener of spanListeners.current) listener(nextSpans);
+      }
       setMeasurement((current) =>
         current?.mode === mode && current.widthPx === widthPx
           ? current
@@ -361,6 +400,7 @@ export function usePaneCanvas(input: {
 
   return {
     ref,
+    subscribeSpans,
     onWheel,
     onChromeMouseDown,
     scrollPaneIntoView,

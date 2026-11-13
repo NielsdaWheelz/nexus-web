@@ -29,12 +29,12 @@ import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
 import { useCatalogRead, useCatalogState, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { unstamped } from "@/lib/consumption/listening";
-import { catalogEntries } from "@/lib/catalog/selectors";
+import { catalogEntries, catalogLibrary } from "@/lib/catalog/selectors";
 import { LIVE_SOURCE } from "@/lib/catalog/types";
 import { remoteReady } from "@/lib/native/admission";
 import { type LibraryFeedIndex } from "@/lib/feeds/api";
 import { ApiError, isApiError } from "@/lib/api/client";
-import { publishChange } from "@/lib/api/changes";
+import { publishChange, useChangeStamp } from "@/lib/api/changes";
 import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -52,6 +52,7 @@ import { orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   libraryEntriesIndex,
+  getLibrary,
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
@@ -88,6 +89,7 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 
 const ENTRIES = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof libraryEntriesIndex>>>>("Library.Entries");
+const IDENTITY = definePaneVisitDataKey<Visit<Library>>("Library.Identity");
 const UNIT = { singular: "entry", plural: "entries" };
 
 const fields = (entry: LibraryEntry) =>
@@ -135,10 +137,17 @@ function LibraryPane({ id }: { readonly id: string }) {
   const index = list.status === "ready" ? list.data : null;
   const indexItems = useMemo(() => index?.items ?? [], [index]);
   const failure = list.status === "loading" ? null : list.error;
-  const catalogFailure = failure === null ? null : catalogLine(failure);
+  const invalidView = failure?.code === "E_INVALID_REQUEST";
   const busy = indexReading(list);
-  const retry = () => { void list.refetch().catch(() => {}); };
-  const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library } : list;
+  const savedIdentity = useCatalogRead(value => catalogLibrary(value, id));
+  const identity = useServerValue<Library>({
+    key: `/libraries/${id}`, stale: useChangeStamp("Libraries"), visit: IDENTITY,
+    enabled: observing && invalidView && index === null, catalog: savedIdentity,
+    load: signal => getLibrary(id, signal).then(read => read.data),
+  });
+  const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library }
+    : invalidView || list.status === "loading" && identity.status === "ready" ? identity : list;
+  const catalogFailure = detail.status === "loading" || detail.error === null ? null : catalogLine(detail.error);
   const shows: ServerValue<LibraryFeedIndex> = list.status === "ready" ? { ...list, data: list.data.feeds } : list;
   const sourceWork = index !== null && (index.feeds.imports.some(operation => operation.work_in_flight)
     || index.feeds.subscriptions.some(source => source.recurring.work_in_flight || source.recurring.history.work_in_flight
@@ -166,15 +175,13 @@ function LibraryPane({ id }: { readonly id: string }) {
   }, [publication, publicationKey]);
   const missing = detail.status !== "loading" && detail.error?.status === 404;
   const library = !missing && detail.status === "ready" ? detail.data : null;
-  const source = list.status === "ready" ? list.source : LIVE_SOURCE;
+  const source = list.status === "ready" ? list.source : detail.status === "ready" ? detail.source : LIVE_SOURCE;
   const live = source.kind === "live";
   const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
   const suggestions = useSuggestions(suggestionDestination, library !== null && live);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const order = useLibraryOrder(id, raw.status === "ready" && raw.source.kind === "live" && raw.fresh && raw.error === null ? raw.data.data.order_revision : null);
-  const invalidView =
-    failure?.code === "E_INVALID_REQUEST";
-  usePaneReturnReady((list.status === "ready") || list.status === "failed" || missing);
+  usePaneReturnReady((list.status === "ready" || list.status === "failed" || missing) && detail.status !== "loading");
   const scroll = usePaneScrollRetention(indexItems);
   const change = useCallback(
     (changes: ViewChanges) => {
@@ -250,17 +257,16 @@ function LibraryPane({ id }: { readonly id: string }) {
   const projection = params.get("projection") ?? "";
   const hideFinished = params.get("completion") === "unfinished";
   const types = offered(ENTRY_TYPES, type);
-  const views = offered(projections(isAll), projection);
+  const views = projections(isAll);
   const chips = [
     ...(type ? [{ id: "entry_type", label: `Type: ${types.find((option) => option.value === type)!.label}` }] : []),
-    ...(projection ? [{ id: "projection", label: `View: ${views.find((option) => option.value === projection)!.label}` }] : []),
     ...(hideFinished ? [{ id: "completion", label: "Hide finished" }] : []),
   ];
-  const canReset = sort.length > 0 || chips.length > 0;
+  const canReset = sort.length > 0 || projection.length > 0 || chips.length > 0;
   const headerMeta: PaneHeaderMeta = (list.status === "ready")
     ? { kind: "Count", value: shown.length, unit: "entry" }
     : { kind: "Pending" };
-  const clearFilters = { entry_type: null, projection: null, completion: null };
+  const clearFilters = { entry_type: null, completion: null };
   // Recoveries and resets return focus to the permanent query input.
   const recover = (changes: ViewChanges) => {
     inputRef.current?.focus({ preventScroll: true });
@@ -298,7 +304,11 @@ function LibraryPane({ id }: { readonly id: string }) {
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
     primaryAction: importHere,
-    query: invalidView || library === null ? undefined : {
+    views: library === null ? undefined : {
+      label: "library view", value: projection, items: views,
+      onSelect: value => change({ projection: value || null }),
+    },
+    query: library === null ? undefined : {
       kind: "Controls",
       focusInput,
       content: (
@@ -311,7 +321,6 @@ function LibraryPane({ id }: { readonly id: string }) {
             onClear: () => change(clearFilters),
             content: <>
               <RadioGroup label="Type" value={type} choices={types} onChange={(value) => change({ entry_type: value || null })} />
-              <RadioGroup label="View" value={projection} choices={views} onChange={(value) => change({ projection: value || null })} />
               <ChoiceField label="Hide finished" checked={hideFinished} onChange={(checked) => change({ completion: checked ? "unfinished" : null })} />
             </>,
           }}
@@ -326,7 +335,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           actions={orderingStatus ? <span>{orderingStatus}</span> : undefined}
           onReset={canReset ? () => {
             filterRows.clearQuery();
-            change({ sort: null, ...clearFilters });
+            change({ sort: null, projection: null, ...clearFilters });
           } : undefined}
         />
       ),
@@ -359,23 +368,26 @@ function LibraryPane({ id }: { readonly id: string }) {
       <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />
     </>;
   }
-  if (invalidView) {
-    return <>
-      {readFeedback.announcement}
-      {members.held}
-      <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => {
-        filterRows.clearQuery();
-        router.replace(`/libraries/${id}`);
-        requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-      } }]} />
-    </>;
-  }
+  const libraryFailure = detail.status !== "loading" && detail.error !== null
+    ? catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} /> : <Failed error={detail.error} noun="library"
+      retry={{ run: () => { void detail.refetch().catch(() => {}); }, busy: detail.status === "failed" ? detail.retrying : detail.refreshing }} />
+    : null;
   if (library === null) {
     return <>
       {readFeedback.announcement}
       {members.held}
-      {detail.status === "failed" ? catalogFailure !== null ? <Fact line={catalogFailure} speak={speak} />
-        : <Failed error={detail.error} noun="library entries" retry={{ run: retry, busy: detail.retrying }} /> : <Ruling />}
+      {libraryFailure ?? <Ruling />}
+    </>;
+  }
+  if (invalidView) {
+    return <>
+      {readFeedback.announcement}
+      {members.held}
+      {libraryFailure ?? <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => {
+        filterRows.clearQuery();
+        router.replace(`/libraries/${id}`);
+        requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+      } }]} />}
     </>;
   }
 

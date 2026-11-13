@@ -122,3 +122,5 @@
   right: 0;
   background: linear-gradient(to left, var(--surface-canvas), transparent);
 }
+
+.paneWrap[data-brushed]:not([data-active="true"]) { --pane-header-rule-ink: var(--ink-muted); }

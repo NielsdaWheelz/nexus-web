@@ -89,8 +89,9 @@ const REGISTRY = {
   },
   settings: {
     label: "Settings",
-    href: "/settings",
+    href: "/settings/account",
     keywords: ["preferences"],
+    icon: Icon.Settings,
   },
   account: {
     label: "Account",

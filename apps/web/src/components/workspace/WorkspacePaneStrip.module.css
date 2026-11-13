@@ -1,57 +1,61 @@
 .root {
   display: flex;
-  min-width: 0;
-  min-height: max(var(--pane-strip-height), calc(var(--pane-control-size) + var(--space-2)));
-  border-bottom: 1px solid var(--edge-subtle);
+  min-inline-size: 0;
+  block-size: var(--pane-strip-height);
+  box-shadow: inset 0 calc(-1 * var(--stroke-hairline)) var(--edge-subtle);
   background: var(--surface-2);
 }
 
 .switcher {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(6.5rem, max-content);
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+  justify-content: start;
+  column-gap: var(--space-2);
+  min-inline-size: 0;
   flex: 1;
   overflow-x: auto;
   overflow-y: hidden;
   padding-inline: var(--space-2);
+  scrollbar-width: none;
 }
+
+.switcher::-webkit-scrollbar { display: none; }
 
 .chip {
+  position: relative;
   display: flex;
   align-items: stretch;
+  box-sizing: border-box;
   min-block-size: var(--pane-control-size);
-  min-width: calc(12rem + var(--pane-control-size));
-  max-width: calc(15rem + var(--pane-control-size));
-  flex: 0 0 auto;
-  overflow: hidden;
+  min-inline-size: 6.5rem;
+  max-inline-size: 12.5rem;
+  color: var(--ink-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
 }
 
-.chip[data-sorting] {
-  transition: transform var(--duration-fast) var(--ease-snap);
-}
-
-/* The translated source leaves a full-width insertion slot; the inert
-   overlay follows the pointer without scaling or registering another chip. */
-.chip[data-dragging] .activator,
-.chip[data-dragging] .actions {
-  opacity: 0;
-}
-
-.dragOverlay {
-  width: 100%;
-  box-shadow: var(--shadow-2);
-  cursor: grabbing;
-  pointer-events: none;
-}
-
-.dragOverlay:not([data-active]) {
-  background: var(--surface-2);
-}
+.chip[data-active] { color: var(--ink); font-weight: var(--weight-semibold); }
+.chip[data-sorting] { transition: transform var(--duration-fast) var(--ease-snap); }
+.chip[data-dragging] > * { opacity: 0; }
+.root[data-dragging] :global([data-indicator]) { visibility: hidden; }
 
 .activator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: start;
+  gap: var(--space-2);
   flex: 1;
-  min-width: 0;
+  box-sizing: border-box;
+  min-inline-size: 32px;
+  min-block-size: 32px;
+  padding: 0 0 0 var(--space-2);
+  border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -61,100 +65,66 @@
   -webkit-touch-callout: none;
 }
 
-.activator:active {
-  cursor: grabbing;
-}
-
-.icon {
-  flex: 0 0 auto;
-  color: inherit;
-}
-
-.title {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* In-view is a tick, distinct from the active fill and bottom marker. */
-.chip::after {
+.activator:active { cursor: grabbing; }
+.activator:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: calc(-1 * var(--focus-ring-offset)); }
+.icon { flex: 0 0 auto; color: inherit; }
+.title { position: relative; display: grid; flex: 0 1 auto; min-inline-size: 0; }
+.title > span { grid-area: 1 / 1; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reserve { visibility: hidden; font-weight: var(--weight-semibold); }
+.chip:hover { color: var(--ink); }
+.chip:is(:hover, [data-brushed]:not([data-active])) .title::after {
   content: "";
   position: absolute;
-  left: 0;
-  top: 50%;
-  width: 2px;
-  height: 14px;
-  background: color-mix(in srgb, var(--accent) 60%, transparent);
-  border-radius: 0 2px 2px 0;
-  transform: translateY(-50%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--duration-base) var(--ease-bloom);
+  inset-inline: 0;
+  inset-block-end: -2px;
+  block-size: var(--stroke-hairline);
+  background: var(--ink-muted);
 }
 
-.chip[data-in-view]::after {
-  opacity: 1;
-}
+.chip[data-minimized] .title { text-decoration: underline dashed; text-underline-offset: 3px; }
+.chip[data-minimized] .icon { transform: translateY(2px); }
 
-.chip[data-minimized]:not([data-active]) {
-  background: var(--surface-sunken);
-}
-
-.chip[data-minimized] .icon {
-  opacity: 0.5;
-}
-
-.chip[data-dragging],
-.chip[data-dragging]:hover {
-  background: var(--surface-sunken);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.chip[data-dragging]::before {
-  display: none;
-}
-
-.actions {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space-1) / 2);
-  padding-right: calc(var(--space-1) / 2);
-}
-
-.action {
+.close {
   --control-icon-size: 16px;
   --control-radius: var(--radius-sm);
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
   inline-size: var(--pane-control-size);
   min-block-size: var(--pane-control-size);
+  opacity: 0;
+  pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chip[data-sorting],
-  .chip::after {
-    transition: none;
-  }
+.chip:is([data-active], :hover, :focus-within) .close { opacity: 1; pointer-events: auto; }
+.chip[data-bracket-end]::after {
+  position: absolute;
+  inset-inline-start: calc(var(--bracket-from, 0) * 100%);
+  inset-block-end: 0;
+  box-sizing: border-box;
+  inline-size: calc((var(--bracket-to, 0) - var(--bracket-from, 0)) * 100%);
+  block-size: 5px;
+  border: var(--stroke-hairline) solid var(--ink-faint);
+  border-block-start: 0;
+  content: "";
+  pointer-events: none;
 }
+
+.end { display: flex; align-items: center; flex: 0 0 auto; padding-inline: var(--space-2); }
+.dragOverlay { inline-size: 100%; background: var(--surface-2); box-shadow: var(--shadow-2); cursor: grabbing; pointer-events: none; }
+.dragOverlay .close { opacity: 1; }
+
+@media (any-pointer: coarse) {
+  .root { block-size: 52px; }
+  .activator { min-inline-size: 44px; min-block-size: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .chip[data-sorting] { transition: none; } }
 
 @media (forced-colors: active) {
-  .chip[data-minimized]:not([data-active]),
-  .chip[data-dragging],
-  .chip[data-dragging]:hover {
-    background: Canvas;
-    color: CanvasText;
-  }
-
-  .chip[data-in-view]::after {
-    background: Highlight;
-  }
-
-  .chip[data-dragging] {
-    outline: 2px dashed Highlight;
-  }
+  .chip { color: CanvasText; }
+  .activator:focus-visible { outline-color: CanvasText; }
+  .chip[data-bracket-end]::after { forced-color-adjust: none; border-color: CanvasText; }
+  .chip[data-dragging] { outline: 2px dashed Highlight; }
 }
