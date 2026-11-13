@@ -48,7 +48,7 @@ export default function ChatComposer({ catalog: catalogRead, command, owner, foc
     const submitted = draft;
     refuse(null);
     void owner.execute({ kind: "Send", runId: createRandomId(), viewId: runtime.paneId,
-      request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.reference] : [] } }, receipt => {
+      request: { content: submitted.text, selection: selected.selection, attachments: submitted.quote ? [submitted.quote.attachment] : [] } }, receipt => {
       const visit = workspace().state.panes.find(pane => pane.id === runtime.paneId)?.current_visit;
       const currentVisit = visit?.id === runtime.visitId && new URL(visit.href, "https://nexus.invalid").pathname === "/librarian";
       entry.accept(receipt, submitted, currentVisit, runtime.visitId); memory.enter();

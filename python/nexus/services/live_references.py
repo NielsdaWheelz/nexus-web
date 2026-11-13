@@ -1,19 +1,21 @@
-"""Live structural source locations, independent of chat and presentation.
+"""Saved passage words and live source places, independent of chat presentation.
 
-Callers authorize the referenced resource first. Current coordinates resolve
-without selectors, historical copies or nearest-text repair. A None byte limit
-checks availability only; bounded reads measure bytes before returning text.
+Callers prove resource authority. Availability compares bounds and saved words in
+SQL without loading source text; opening owns relocation against current sources.
 """
 
-import json
-from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import requested_media_ids_cte_sql
-from nexus.schemas.live_reference import LiveReference, PdfPageTarget, TextOffsetsTarget
+from nexus.schemas.live_reference import (
+    LiveReference,
+    PdfPageTarget,
+    ReferenceQuote,
+    SavedReference,
+)
 from nexus.schemas.reader import (
     EpubTextOffsetsTargetOut,
     PdfPageGeometryTargetOut,
@@ -21,9 +23,8 @@ from nexus.schemas.reader import (
     WebTextOffsetsTargetOut,
 )
 from nexus.schemas.resource_evidence import CapturedEvidence, CapturedPassageTarget
-from nexus.services.media_text_scope import text_scope_rows_sql
+from nexus.services.media_text_scope import passage_scope_rows_sql
 from nexus.services.resource_graph.refs import require_ref
-from nexus.services.resource_graph.resolve import PromptBodyTooLarge
 from nexus.services.x_source import readable_x_capture_ids_sql
 
 
@@ -49,8 +50,8 @@ def field_visible(db: Session, *, viewer_id: UUID, reference: LiveReference) -> 
     )
 
 
-def from_evidence(evidence: CapturedEvidence) -> LiveReference:
-    """Forget captured words, selectors, hashes and versions at the live-reference boundary."""
+def from_evidence(evidence: CapturedEvidence) -> SavedReference:
+    """Keep passage words beside their place; a message always names the whole message."""
     target = evidence.target
     assert target.owner_ref is not None, "citable evidence requires a source"
     ref = target.owner_ref
@@ -65,16 +66,22 @@ def from_evidence(evidence: CapturedEvidence) -> LiveReference:
                 "start_offset": raw["start_offset"],
                 "end_offset": raw["end_offset"],
             }
+            if kind == "web_text_offsets" and evidence.source.media_kind in (
+                "podcast_episode",
+                "video",
+            ):
+                locator["kind"] = "TranscriptTextOffsets"
+                locator["time_range"] = None
             if kind == "x_capture_offsets":
                 ref = f"fragment:{raw['fragment_id']}"
-        elif kind in ("note_block_offsets", "highlight_annotation_offsets", "message_offsets"):
+        elif kind in ("note_block_offsets", "highlight_annotation_offsets"):
             locator = {
                 "kind": "TextOffsets",
                 "start_offset": raw["start_offset"],
                 "end_offset": raw["end_offset"],
             }
-            if kind == "message_offsets":
-                ref = f"message:{raw['message_id']}"
+        elif kind == "message_offsets":
+            ref = f"message:{raw['message_id']}"
         elif kind in ("transcript_time_range", "audio_time_range", "video_time_range"):
             locator = {
                 "kind": "TimeRange",
@@ -91,21 +98,28 @@ def from_evidence(evidence: CapturedEvidence) -> LiveReference:
             locator = {"kind": "PdfPage", "page_number": raw["page_number"]}
         elif kind != "external_url":
             raise AssertionError(f"unhandled live locator: {kind}")
-    return LiveReference.model_validate(
-        {"resource_ref": ref, "field": target.field, "locator": locator}
+    quote = evidence.quote
+    return SavedReference.model_validate(
+        {
+            "resource_ref": ref,
+            "field": target.field,
+            "locator": locator,
+            "quote": ReferenceQuote(**quote.model_dump(exclude={"color"}))
+            if quote is not None and quote.exact.strip() and locator is not None
+            else None,
+        }
     )
 
 
-def resolve_location(
-    db: Session, reference: LiveReference, *, viewer_id: UUID, byte_limit: int | None
-) -> tuple[bool, str | None]:
-    """Current coordinates only. None byte limit checks availability without loading text."""
+def resolve_location(db: Session, reference: LiveReference, *, viewer_id: UUID) -> bool:
+    """Check current bounds and quoted words in SQL; never materialize source text."""
     locator = reference.locator
     if locator is None:
-        return True, None
+        return True
     ref = require_ref(reference.resource_ref)
     parameters: dict[str, object] = {"id": ref.id, "viewer_id": viewer_id}
-    label = ""
+    quote = reference.quote if isinstance(reference, SavedReference) else None
+    parameters["exact"] = quote.exact if quote is not None else None
     if isinstance(
         locator, (WebTextOffsetsTargetOut, EpubTextOffsetsTargetOut, TranscriptTextOffsetsTargetOut)
     ):
@@ -117,8 +131,8 @@ def resolve_location(
         if ref.scheme not in ("media", "fragment") or (
             ref.scheme == "fragment" and ref.id != locator.fragment_id
         ):
-            return False, None
-        scopes = text_scope_rows_sql(
+            return False
+        scopes = passage_scope_rows_sql(
             "SELECT CAST(:id AS uuid) AS media_id"
             if ref.scheme == "media"
             else requested_media_ids_cte_sql()
@@ -134,15 +148,11 @@ def resolve_location(
         admitted = db.scalar(
             text(f"""SELECT EXISTS (SELECT 1 FROM fragments f
                 WHERE f.id=:fragment AND :end<=char_length(f.canonical_text)
-                  AND {authority})"""),
+                  AND {authority}
+                  AND (CAST(:exact AS text) IS NULL OR substring(f.canonical_text FROM :start+1 FOR LEAST(:end-:start,char_length(CAST(:exact AS text))))=:exact))"""),
             parameters,
         )
-        if not admitted:
-            return False, None
-        if byte_limit is None:
-            return True, None
-        body_sql = "substring(canonical_text FROM :start+1 FOR :end-:start)"
-        rows_sql = "FROM fragments WHERE id=:fragment AND :end<=char_length(canonical_text)"
+        return bool(admitted)
     elif locator.kind == "TextOffsets":
         parameters |= {"start": locator.start_offset, "end": locator.end_offset}
         if reference.field == "annotation":
@@ -151,11 +161,17 @@ def resolve_location(
             table, column = "note_blocks", "body_text"
         else:
             table, column = "messages", "content"
-        body_sql = f"substring({column} FROM :start+1 FOR :end-:start)"
-        rows_sql = f"FROM {table} WHERE id=:id AND :end<=char_length({column})"
+        return bool(
+            db.scalar(
+                text(f"""SELECT EXISTS (SELECT 1 FROM {table}
+                    WHERE id=:id AND :end<=char_length({column})
+                      AND (CAST(:exact AS text) IS NULL OR substring({column} FROM :start+1 FOR LEAST(:end-:start,char_length(CAST(:exact AS text))))=:exact))"""),
+                parameters,
+            )
+        )
     elif isinstance(locator, (PdfPageTarget, PdfPageGeometryTargetOut)):
         if ref.scheme != "media":
-            return False, None
+            return False
         parameters["page"] = locator.page_number
         page = db.execute(
             text("""SELECT p.page_width,p.page_height FROM pdf_page_text_spans p JOIN media m ON m.id=p.media_id
@@ -163,7 +179,7 @@ def resolve_location(
             parameters,
         ).first()
         if page is None:
-            return False, None
+            return False
         if locator.kind == "PdfPageGeometry":
             from nexus.services.reader_locations import resolved_highlight_reader_target
 
@@ -177,17 +193,12 @@ def resolve_location(
                 pdf_quads=[quad.model_dump() for quad in locator.quads],
             )
             if target is None:
-                return False, None
-            label = (
-                "current page containing the selected region; exact region text is unavailable:\n"
-            )
-        body_sql = "substring(m.plain_text FROM p.start_offset+1 FOR p.end_offset-p.start_offset)"
-        rows_sql = """FROM pdf_page_text_spans p JOIN media m ON m.id=p.media_id
-            WHERE p.media_id=:id AND p.page_number=:page AND m.plain_text IS NOT NULL"""
+                return False
+        return True
     else:
         assert locator.kind == "TimeRange"
         if ref.scheme != "media":
-            return False, None
+            return False
         parameters |= {"start": locator.start_ms, "end": locator.end_ms}
         if not db.scalar(
             text(
@@ -199,94 +210,5 @@ def resolve_location(
             ),
             parameters,
         ):
-            return False, None
-        body_sql = "string_agg(canonical_text,E'\\n' ORDER BY idx)"
-        rows_sql = """FROM fragments
-            WHERE media_id=:id AND t_end_ms>:start AND t_start_ms<:end"""
-        label = "current transcript overlapping the selected time range:\n"
-    if byte_limit is None:
-        return bool(db.scalar(text(f"SELECT EXISTS (SELECT 1 {rows_sql})"), parameters)), None
-    sql = f"SELECT {body_sql} AS body {rows_sql}"
-    size = db.scalar(text(f"SELECT octet_length(body) FROM ({sql}) selected"), parameters)
-    if size is None:
-        return False, None
-    if size + len(label.encode()) > byte_limit:
-        raise PromptBodyTooLarge(ref.uri)
-    body = db.scalar(text(sql), parameters)
-    return True, label + body
-
-
-@dataclass(frozen=True, slots=True)
-class ReferenceText:
-    text: str
-    x_capture: bool
-
-
-def reference_texts(db: Session, references: list[LiveReference]) -> dict[str, ReferenceText]:
-    """Bounded exact display slices after this snapshot's full-range admission.
-
-    The extra codepoint lets the shared excerpt projection report selected-text
-    omission. Ordinary fragments do not acquire an inferred reading identity.
-    """
-    if not references:
-        return {}
-    ranges = []
-    for position, reference in enumerate(references):
-        ref = require_ref(reference.resource_ref)
-        locator = reference.locator
-        assert isinstance(
-            locator,
-            (
-                WebTextOffsetsTargetOut,
-                EpubTextOffsetsTargetOut,
-                TranscriptTextOffsetsTargetOut,
-                TextOffsetsTarget,
-            ),
-        )
-        ranges.append(
-            {
-                "position": position,
-                "scheme": ref.scheme,
-                "id": str(ref.id),
-                "fragment": str(locator.fragment_id)
-                if isinstance(
-                    locator,
-                    (
-                        WebTextOffsetsTargetOut,
-                        EpubTextOffsetsTargetOut,
-                        TranscriptTextOffsetsTargetOut,
-                    ),
-                )
-                else None,
-                "start_offset": locator.start_offset,
-                "end_offset": locator.end_offset,
-            }
-        )
-    rows = db.execute(
-        text("""WITH requested AS (
-            SELECT * FROM jsonb_to_recordset(CAST(:ranges AS jsonb))
-                AS r(position integer,scheme text,id uuid,fragment uuid,start_offset integer,end_offset integer)
-        )
-        SELECT r.position,substring(f.canonical_text FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)) AS body,
-               f.x_post_capture_id IS NOT NULL AS x_capture
-        FROM requested r JOIN fragments f ON f.id=r.fragment
-        WHERE r.end_offset<=char_length(f.canonical_text)
-        UNION ALL
-        SELECT r.position,substring(n.body_text FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)),false
-        FROM requested r JOIN note_blocks n ON r.scheme='note_block' AND n.id=r.id
-        WHERE r.fragment IS NULL AND r.end_offset<=char_length(n.body_text)
-        UNION ALL
-        SELECT r.position,substring(m.content FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)),false
-        FROM requested r JOIN messages m ON r.scheme='message' AND m.id=r.id
-        WHERE r.fragment IS NULL AND r.end_offset<=char_length(m.content)
-        UNION ALL
-        SELECT r.position,substring(h.annotation_body_text FROM r.start_offset+1 FOR LEAST(601,r.end_offset-r.start_offset)),false
-        FROM requested r JOIN highlights h ON r.scheme='highlight' AND h.id=r.id
-        WHERE r.fragment IS NULL AND r.end_offset<=char_length(h.annotation_body_text)"""),
-        {"ranges": json.dumps(ranges)},
-    ).all()
-    assert len(rows) == len(references), "admitted reference text changed within its snapshot"
-    return {
-        references[row.position].model_dump_json(): ReferenceText(row.body, row.x_capture)
-        for row in rows
-    }
+            return False
+        return True

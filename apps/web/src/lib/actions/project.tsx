@@ -614,7 +614,7 @@ export function projectResourceActions(
       },
       { tracked: false },
     ],
-    Chat: [() => launchChatDraft({ ctx, guard: ctx.workGuard, originPaneId: originPaneId(),       draft: { text: "", selection: { kind: "Uninitialized" }, quote: { id: createRandomId(), reference: { resource_ref: ref, field: null, locator: null } } } }), { tracked: false }],
+    Chat: [() => launchChatDraft({ ctx, guard: ctx.workGuard, originPaneId: originPaneId(),       draft: { text: "", selection: { kind: "Uninitialized" }, quote: { id: createRandomId(), attachment: { kind: "Reference", reference: { resource_ref: ref, field: null, locator: null } } } } }), { tracked: false }],
     DownloadOriginal: [
       async () => {
         const response = await apiFetch<

@@ -2,9 +2,10 @@
 
 Imported and oracle sources store observed evidence with the occurrence. Imported owners
 bind their occurrences to these rows; only their fenced completion may fill unknown
-observations, and an oracle citation remains frozen. A message's citations are the local
-projection of its retrieval targets: a sparse subset of the message's citation ordinals
-(url targets have no edge), with no evidence. Their words are read live from the target.
+observations, and an oracle citation remains frozen. A message's citations project its
+attachments or cited retrieval targets: a sparse sequence of citation ordinals
+(url targets have no edge), with no evidence. Saved words belong to the message
+attachment or retrieval, never these edges.
 Source authority admits the relationship, while evidence authority admits its words.
 """
 

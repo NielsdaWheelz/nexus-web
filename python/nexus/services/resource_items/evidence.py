@@ -122,7 +122,7 @@ def capture_reader_selection(
 
     Media coordinates belong to the canonical source; authority and tool scope
     belong to the requested reading. PDF words remain the reader's captured words.
-    The caller holds the media reference barrier and owns the admission transaction.
+    The caller owns a read snapshot; this proof writes nothing.
     """
     locator = capture.locator
     invalid = ApiErrorCode.E_INVALID_REQUEST
@@ -393,7 +393,9 @@ def capture_reader_selection(
             incomplete_tables=[incomplete],
         )[0]
         if accepted is None:
-            raise InvalidRequestError(invalid, "A partial table cannot be quoted")
+            raise InvalidRequestError(
+                ApiErrorCode.E_READER_SELECTION_PARTIAL_TABLE, "A partial table cannot be quoted"
+            )
     return CapturedEvidence(
         completion_ref=None,
         quote=CapturedQuote(
@@ -2067,16 +2069,82 @@ def resolve_source_target(
                 return SourceTargetOut(
                     source_activation=activation, location=WholeSourceLocationOut()
                 )
-            # Current bounds only: an invalid range is unavailable, never repaired.
-            if not resolve_location(db, reference, viewer_id=viewer_id, byte_limit=None)[0]:
-                return SourceTargetOut(
-                    source_activation=activation,
-                    location=UnavailableSourceLocationOut(reason="location_unavailable"),
+            locator = reference.locator
+            if not resolve_location(db, reference, viewer_id=viewer_id):
+                quote = reference.quote
+                if quote is None or locator.kind in ("PdfPage", "PdfPageGeometry"):
+                    return SourceTargetOut(
+                        source_activation=activation,
+                        location=UnavailableSourceLocationOut(reason="location_unavailable"),
+                    )
+                from nexus.errors import ApiError
+                from nexus.schemas.live_reference import (
+                    TextOffsetsTarget,
+                    TimeRangeTarget,
                 )
+                from nexus.schemas.reader import (
+                    EpubTextOffsetsTargetOut,
+                    TranscriptTextOffsetsTargetOut,
+                    WebTextOffsetsTargetOut,
+                )
+                from nexus.services import locator_resolver
+                from nexus.services.passage_anchors import normalize_quote_text
+
+                try:
+                    sources = locator_resolver.read_passage_sources(
+                        db, [(ref.scheme, ref.id)], viewer_id=viewer_id
+                    )
+                    found = locator_resolver.resolve_passage_selector(
+                        db,
+                        owner_scheme=ref.scheme,
+                        owner_id=ref.id,
+                        exact=normalize_quote_text(quote.exact),
+                        locator_hint={"kind": "time"} if locator.kind == "TimeRange" else None,
+                        source_reads=sources,
+                    )
+                except ApiError as error:
+                    if error.code not in (
+                        ApiErrorCode.E_MEDIA_NOT_READY,
+                        ApiErrorCode.E_INVALID_KIND,
+                        ApiErrorCode.E_READER_CONTENT_CHANGED,
+                    ):
+                        raise
+                    return SourceTargetOut(
+                        source_activation=activation,
+                        location=UnavailableSourceLocationOut(reason="location_unavailable"),
+                    )
+                current = found.locator
+                if current is None:
+                    return SourceTargetOut(
+                        source_activation=activation,
+                        location=UnavailableSourceLocationOut(reason="location_unavailable"),
+                    )
+                if current["kind"] == "time":
+                    locator = TimeRangeTarget(
+                        start_ms=current["t_start_ms"], end_ms=current["t_end_ms"]
+                    )
+                elif ref.scheme in ("note_block", "highlight"):
+                    locator = TextOffsetsTarget(
+                        start_offset=current["start_offset"], end_offset=current["end_offset"]
+                    )
+                else:
+                    kind = sources.media_kinds.get(ref.id)
+                    coordinates = {
+                        "fragment_id": UUID(current["fragment_id"]),
+                        "start_offset": current["start_offset"],
+                        "end_offset": current["end_offset"],
+                    }
+                    locator = (
+                        TranscriptTextOffsetsTargetOut(**coordinates, time_range=None)
+                        if kind in ("podcast_episode", "video")
+                        else EpubTextOffsetsTargetOut(**coordinates)
+                        if kind == "epub"
+                        else WebTextOffsetsTargetOut(**coordinates)
+                    )
             return SourceTargetOut(
                 source_activation=activation,
                 location=LiveSourceLocationOut(
-                    locator=reference.locator,
+                    locator=locator,
                     source_identity=source_identities(db, [ref.id]).get(ref.id)
                     if ref.scheme == "media"
                     else None,

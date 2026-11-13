@@ -18,3 +18,13 @@ reproduce with the canonical paired debug apk, owned windowless `nexus-api34` an
 `openLabAndroid`; capture runtime versions, owned pid, adb state, target/version
 responses and guest crash logs before cleanup. resolved when the failed websocket
 owner is identified and repaired, with successful attachment at the same scope.
+
+reference-quotes run `20261112-222846-5b61b0692b3f` at `87e83a8ac`
+reproduced the same bun websocket timeout after owned-page readiness. the
+canonical mise node 22.23.2 playwright runner attached in
+`20261112-223506-daae3f6a5d38`. run
+`20261112-224318-2ebe110218f2` then passed real password handoff, session readiness,
+rich selection draft/send, saved words after republication and stale-selection
+refusal in the owned webview. this adds a reproduction and a qualified
+runner; it does not identify bun as the cause or close the transport defect.
+all recorded owned package/mapping/emulator teardown completed.

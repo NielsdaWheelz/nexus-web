@@ -147,7 +147,7 @@ export function useReaderChrome(input: {
     if (!paneActive) return;
     const region = paneSecondaryRegionId(paneId);
     let pending: number | null = null;
-    const chat = () => launchChatDraft({ ctx, guard: ctx.workGuard, originPaneId: paneId,       draft: { text: "", selection: { kind: "Uninitialized" }, quote: { id: createRandomId(), reference: { resource_ref: `media:${id}`, field: null, locator: null } } } });
+    const chat = () => launchChatDraft({ ctx, guard: ctx.workGuard, originPaneId: paneId,       draft: { text: "", selection: { kind: "Uninitialized" }, quote: { id: createRandomId(), attachment: { kind: "Reference", reference: { resource_ref: `media:${id}`, field: null, locator: null } } } } });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return;
       const owned = !hasActiveInteractionOwner() || isTopmostInteractionOwner(region);

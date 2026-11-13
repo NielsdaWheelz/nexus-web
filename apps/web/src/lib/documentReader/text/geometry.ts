@@ -56,7 +56,7 @@ export interface TextGeometry {
     readonly excerpt: ExcerptBody;
     readonly excerpt_start: number;
     readonly excerpt_end: number;
-  } | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "UnsupportedExcerpt" } | null;
+  } | { readonly kind: "Rejected"; readonly reason: "CrossUnit" | "UnsupportedExcerpt" | "PartialTable" } | null;
   /** A unique canonical id/name alias, scoped to its published source unit. */
   anchor(unit: string, id: string): HTMLElement | null;
 }
@@ -359,7 +359,7 @@ export function createTextGeometry(
       if (!extent) return { kind: "Rejected", reason: "UnsupportedExcerpt" };
       let excerpt: ExcerptBody;
       try { excerpt = captureNativeExcerpt(sourceRoot, range, sourceRoot !== text(id)); }
-      catch (error) { if (error instanceof UnsupportedExcerpt) return { kind: "Rejected", reason: "UnsupportedExcerpt" }; throw error; }
+      catch (error) { if (error instanceof UnsupportedExcerpt) return { kind: "Rejected", reason: error.reason }; throw error; }
       const canonical = excerptCanonicalProof(excerpt);
       const sourceText = Array.from(units.get(id)!.text);
       while (extent.startOffset < extent.endOffset && isCanonicalWhitespace(sourceText[extent.startOffset]!)) extent.startOffset++;
