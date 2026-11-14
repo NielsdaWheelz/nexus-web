@@ -16,7 +16,7 @@ export const SHORTCUTS = {
   },
   "Pane.Search": {
     label: "Search this pane",
-    description: "Searches the active pane when available; otherwise uses browser find.",
+    description: "searches the active pane; / does too, outside a text field. otherwise uses browser find.",
     key: "f",
     shift: false,
   },

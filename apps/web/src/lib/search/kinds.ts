@@ -14,14 +14,14 @@ export const SEARCH_KINDS = [
 export type SearchKind = Schema<"DiscoveryKind">;
 
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
-  documents: "Documents",
-  notes: "Notes",
-  highlights: "Highlights",
+  documents: "documents",
+  notes: "notes",
+  highlights: "highlights",
   messages: "messages",
-  people: "People",
-  libraries: "Libraries",
-  readings: "Readings",
-  saved_passages: "Saved passages",
+  people: "people",
+  libraries: "libraries",
+  readings: "readings",
+  saved_passages: "saved passages",
 };
 
 export const PASSAGE_KINDS: ReadonlySet<SearchKind> = new Set([
@@ -39,12 +39,12 @@ export const MEDIA_FORMATS = [
 export type MediaFormat = (typeof MEDIA_FORMATS)[number];
 
 export const MEDIA_FORMAT_LABELS: Record<MediaFormat, string> = {
-  article: "Articles",
-  pdf: "PDFs",
-  epub: "EPUBs",
-  video: "Videos",
-  episode: "Episodes",
-  podcast: "Podcasts",
+  article: "articles",
+  pdf: "pdfs",
+  epub: "epubs",
+  video: "videos",
+  episode: "episodes",
+  podcast: "podcasts",
 };
 
 // `kind:` values. author is an operator, never a kind.
@@ -85,11 +85,11 @@ export function disabledKinds(filters: {
 }): { kinds: ReadonlySet<SearchKind>; reason: string | null } {
   const [allowed, reason]: [readonly SearchKind[], string | null] =
     filters.hasFormatFilter
-      ? [["documents"], "Formats apply to documents"]
+      ? [["documents"], "formats apply to documents."]
       : filters.hasCreditFilter
         ? [
             ["documents", "people"],
-            "Authors and roles apply to documents and people",
+            "authors and roles apply to documents and people.",
           ]
         : [SEARCH_KINDS, null];
   return {

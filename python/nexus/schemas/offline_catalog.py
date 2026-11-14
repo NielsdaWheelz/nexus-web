@@ -27,9 +27,6 @@ class _Closed(BaseModel):
 
 class LibraryIndexOrder(_Closed):
     default: Rank
-    created_desc: Rank
-    name_asc: Rank
-    name_desc: Rank
 
 
 class MediaOrder(_Closed):

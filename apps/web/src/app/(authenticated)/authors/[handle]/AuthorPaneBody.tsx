@@ -7,17 +7,15 @@
 
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
-import { useCallback, useId, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import CollectionView from "@/components/collections/CollectionView";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import PaneSurface from "@/components/ui/PaneSurface";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import type { CollationOrder } from "@/lib/panes/collation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
 import { indexRowStatus, indexReading } from "@/lib/panes/indexRows";
@@ -61,14 +59,6 @@ const DETAIL =
   definePaneVisitDataKey<Visit<ContributorDetail>>("Author.Detail");
 const WORKS =
   definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof listContributorWorks>>>>("Author.Works");
-
-/** The four views; the first is the default and owns no url keys. */
-const SORTS = [
-  { id: "", label: "Oldest published" },
-  { id: "sort=published&direction=desc", label: "Newest published" },
-  { id: "sort=title&direction=asc", label: "Title A–Z" },
-  { id: "sort=title&direction=desc", label: "Title Z–A" },
-] as const;
 
 function presentWork(work: ContributorWork): CollectionRowView {
   if (work.kind === "Media") {
@@ -209,36 +199,33 @@ function AuthorPane({ handle }: { readonly handle: string }) {
     },
     [handle, params, router],
   );
-  const { inputRef, focusInput } = usePaneQueryInput();
-  const queryStatusId = useId();
   const resetView = useCallback(() => {
     clearQuery();
     setView("");
-    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-  }, [clearQuery, inputRef, setView]);
+  }, [clearQuery, setView]);
   const invalidView =
     works.status === "failed" && works.error.code === "E_INVALID_REQUEST";
   const visible = matches(text);
   const readFeedback = useIndexReadFeedback({ value: works, requestedKey: descriptors.works.key, active, waiting: !invalidView && works.status === "loading", outcome: null });
-  const canReset = view.length > 0;
+  const order: CollationOrder = { value: view || null, rest: "oldest published", keys: [
+    { label: "published", ways: [{ value: "sort=published&direction=desc", label: null, word: "newest published" }] },
+    { label: "title", ways: [
+      { value: "sort=title&direction=asc", label: "a–z", word: "title a–z" },
+      { value: "sort=title&direction=desc", label: "z–a", word: "title z–a" },
+    ] },
+  ], onChange: value => setView(value ?? ""), note: null };
+  const orderKnown = order.value === null || order.keys.some(key => key.ways.some(way => way.value === order.value));
   const headerMeta: PaneHeaderMeta = complete && !invalidView
-    ? { kind: "Count", value: rows.length, unit: "work" }
+    ? { kind: "Count", value: visible.length, of: rows.length, unit: "work" }
     : { kind: "None" };
-  const queryControls = invalidView ? undefined : {
-    kind: "Controls" as const,
-    focusInput,
-    content: <PaneQueryToolbar
-      inputRef={inputRef}
-      input={{ label: "Filter works", placeholder: "Filter works", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: clearQuery }}
-      sort={{ label: "Sort", value: view, choices: SORTS.map(({ id, label }) => ({ value: id, label })), onChange: setView }}
-      status={{
-        placement: "Inline",
-        id: queryStatusId,
-        visible: false,
-        content: <PaneFilterRowsStatus announceQueryChanges={(works.status === "ready") && worksFailure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
-      }}
-      onReset={canReset ? resetView : undefined}
-    />,
+  const queryControls = invalidView || !orderKnown ? undefined : {
+    kind: "Collation" as const, collation: {
+      words: { label: "filter works", value: filterRows.query, applied: filterRows.query,
+        onChange: filterRows.onQueryChange, onClear: clearQuery, standing: false, onSubmit: null,
+        rows: { status: filterRows.rowStatus, announce: works.status === "ready" && worksFailure === null }, notice: null, verbs: [] },
+      dimensions: [], order,
+      reset: order.value !== null ? resetView : null,
+    },
   };
 
   const ref =

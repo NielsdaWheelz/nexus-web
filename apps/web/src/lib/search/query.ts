@@ -7,7 +7,7 @@ import type { ParsedSearchInput } from "./parseSearchInput";
 export interface SearchQuery {
   text: string;
   view: ApiJson<"/search", "get">["view"];
-  /** null: every kind (`kinds` omitted); empty: none (`kinds=`). */
+  /** null includes every kind; otherwise a nonempty selection. */
   requestedKinds: ReadonlySet<SearchKind> | null;
   formats: MediaFormat[];
   authors: string[];

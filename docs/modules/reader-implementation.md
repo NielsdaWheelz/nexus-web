@@ -975,3 +975,13 @@ extension builds. it runs no unit or live suite. affected behavior is qualified
 under [the local verification contract](../local-rules/testing-standards.md).
 historical reader harnesses are retired; this module owns the contract, not
 verification receipts.
+
+## collation
+
+`FindBar` supplies `QueryField` with position, previous/next, pressed
+case/word/scope words, results and close. failures and partial/limit feedback
+are field notices; failures offer retry. the persistent status description stays
+mounted. one escape closes find and returns focus to its opener, else pane chrome.
+the shell owns disclosure and source readiness;
+only visible find holds mobile reader chrome. connection facets share one
+target: glyphs slash when off, the librarian word strikes when off.

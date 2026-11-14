@@ -201,3 +201,23 @@ pending names are shared across scopes; status, refusals and uncertainty remain
 scoped. creation acknowledges an empty library before addition review and survives
 its cancellation. choosing a destination or mode creates no placements or rule.
 media placement's late-acquisition continuation does not participate.
+
+## collation
+
+libraries list by name with all first and expose local text. library entries
+offer all items, unfinished, in progress and (all only) unfiled views. reads
+accept sort/projection; pane urls also admit entry_type. type/text filter rows,
+counts, anchors, visibility and drag eligibility locally. type counts include
+text but ignore selected type; the header denominator is the full projection.
+hand ordering is unavailable while sorted or narrowed. reset clears
+text/type/order, not view. capture keeps type and projection; completion is not
+a filter.
+
+pane urls reject unknown, repeated and unsupported keys before reads. unfiled
+is only a view of all; newest added is only an explicit order of a named library.
+the impossible combination of both is rejected immediately. the other two
+library-dependent choices use the mounted library's accepted identity; if none
+is available, they read identity first, using a visit or saved catalog value when
+available. they start the aggregate only if valid. invalid choices never read
+entries or suggestions. a cold direct arrival at either choice pays for identity
+before its aggregate; ordinary views preload the aggregate directly.

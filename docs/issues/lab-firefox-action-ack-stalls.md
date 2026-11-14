@@ -18,3 +18,10 @@ reproduce with repeated room reloads and real reader-theme choices through
 visual-case deadline can qualify rendering but does not explain this stall.
 resolved when the cause is identified and normal action acknowledgement is
 bounded, with UI response and protocol latency reported separately.
+
+collation baseline at 8a16a039a, lab 20261114-125901-07fa7bae2fd4, also stalled
+while taking the first firefox failure screenshot after the case result had
+been written. the owned runtime was interrupted and completed teardown. this
+does not establish the same cause or an orderly browser exit. temporary image
+capture now has an outer deadline as well as the playwright timeout; its scope
+is bounded verification, not a transport repair.

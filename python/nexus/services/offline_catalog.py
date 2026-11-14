@@ -62,7 +62,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
     library_rows = _ranked(
         db,
         f"SELECT * FROM ({libraries.library_index_rows_sql()}) libraries WHERE system_key IS NULL",
-        {name or "default": plan for name, plan in libraries.INDEX_PLANS.items()},
+        {"default": libraries.INDEX_PLAN},
         params,
     )
     member_libraries = [
@@ -70,7 +70,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         for row in library_rows
     ]
     default_id = libraries.default_library_id(db, viewer_id)
-    empty_view = library_listing.EntryView(None, None, None, None)
+    empty_view = library_listing.EntryView(None, None, None)
     default_order = order_by_sql(
         library_listing.entry_order_plan(empty_view, is_default=True), alias="f"
     )
@@ -79,7 +79,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
     )
     added_orders = ", ".join(
         f"row_number() OVER (PARTITION BY library_id ORDER BY "
-        f"{order_by_sql(library_listing.entry_order_plan(library_listing.EntryView(name, None, None, None), is_default=False), alias='f')}) AS rank_{name}"
+        f"{order_by_sql(library_listing.entry_order_plan(library_listing.EntryView(name, None, None), is_default=False), alias='f')}) AS rank_{name}"
         for name in ("added_asc", "added_desc")
     )
     entry_rows = (
@@ -148,7 +148,7 @@ def read_catalog(db: Session, viewer_id: UUID) -> wire.OfflineCatalogOut:
         ),
         {
             name: library_listing.entry_order_plan(
-                library_listing.EntryView(name, None, None, None), is_default=False
+                library_listing.EntryView(name, None, None), is_default=False
             )
             for name in wire.MediaOrder.model_fields
         },

@@ -19,6 +19,13 @@ import {
 import { admissionReason } from "@/lib/actions/catalog";
 import OutlineCommands from "@/components/notes/OutlineCommands";
 import FindBar from "@/components/find/FindBar";
+import CollationLine from "@/components/workspace/CollationLine";
+import QueryField from "@/components/workspace/QueryField";
+import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import Button from "@/components/ui/Button";
+import ButtonLink from "@/components/ui/ButtonLink";
+import { litWords } from "@/lib/panes/collation";
+import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { StageAnchor } from "@/components/feedback/Slips";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
@@ -72,7 +79,7 @@ import { activateTargetAnchor, activateTargetLink } from "@/lib/panes/targetLink
 import { useRenderEnvironment, useTouchCapable } from "@/lib/renderEnvironment/provider";
 import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useShareController } from "@/lib/sharing/controller";
-import { matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
+import { formatShortcut, matchesShortcut, SHORTCUTS } from "@/lib/shortcuts";
 import { prepareActionSelect, type ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { hasActiveInteractionOwner, isTopmostInteractionOwner, useInteractionBlocked } from "@/lib/ui/overlay";
@@ -265,13 +272,27 @@ function PaneView({
   const viewRowRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const row = viewRowRef.current;
-    if (row?.contains(document.activeElement))
+    if (document.activeElement instanceof Element && row?.querySelector('[role="tablist"]')?.contains(document.activeElement))
       row.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
   }, [views?.value]);
 
   // The shell owns disclosure; the find session survives source readiness changes.
   const query = body?.query;
   const find = query?.kind === "Find" ? query.session.controller : null;
+  const collation = query?.kind === "Collation" ? query.collation : null;
+  const words = collation?.words ?? null;
+  const [fieldFor, setFieldFor] = useState<string | null>(null);
+  const [unfoldedFor, setUnfoldedFor] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const statusId = useId();
+  const fieldVisible = words !== null && (words.standing || words.requestOpen || fieldFor === source || !!words.value || !!words.applied || isMobile && unfoldedFor === source);
+  const setQueryInput = useCallback((node: HTMLInputElement | null) => {
+    inputRef.current = node;
+    const ref = words?.input;
+    if (typeof ref === "function") ref(node); else if (ref) ref.current = node;
+  }, [words?.input]);
+  const unfolded = isMobile && unfoldedFor === source;
+  const hasLine = !!(views || route.sections.length || collation?.dimensions.length || collation?.order);
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
   const findVisible = query?.kind === "Find" && expandedFor === source;
   const clearFind = () => {
@@ -281,16 +302,29 @@ function PaneView({
   useLayoutEffect(
     () => () => {
       setExpandedFor(null);
+      setFieldFor(null);
+      setUnfoldedFor(null);
+      opener.current = null;
       cancelAnimationFrame(focusFrame.current);
       focusFrame.current = 0;
       chrome.set({ results: null });
     },
     [chrome, source],
   );
-  const openQuery = (): boolean => {
-    if (query?.kind === "Controls") return query.focusInput();
-    if (!find) return false;
-    setExpandedFor(source);
+  useLayoutEffect(() => {
+    if (words?.requestOpen) setFieldFor(source);
+  }, [source, words?.requestOpen]);
+  const openQuery = (from?: HTMLElement | null): boolean => {
+    if (query?.kind === "Collation") {
+      if (!words) return false;
+      setFieldFor(source);
+    } else {
+      if (!find) return false;
+      setExpandedFor(source);
+    }
+    if (from) opener.current = from;
+    else if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body &&
+      !inputRef.current?.closest("[data-pane-query-field]")?.contains(document.activeElement)) opener.current = document.activeElement;
     cancelAnimationFrame(focusFrame.current);
     focusFrame.current = requestAnimationFrame(() => {
       focusFrame.current = 0;
@@ -301,12 +335,28 @@ function PaneView({
     });
     return true;
   };
+  const clearField = () => {
+    setFieldFor(source);
+    words?.onClear("Clear");
+  };
+  const returnToOpener = () => {
+    const target = opener.current;
+    opener.current = null;
+    if (target?.isConnected && target.getClientRects().length) target.focus({ preventScroll: true });
+    if (!target || document.activeElement !== target) mobileChrome.focusPaneChrome(paneId);
+  };
+  const closeField = () => {
+    words?.onClear("Close");
+    setFieldFor(null);
+    if (isMobile) setUnfoldedFor(null);
+    returnToOpener();
+  };
   const closeFind = () => {
     clearFind();
     setExpandedFor(null);
     cancelAnimationFrame(focusFrame.current);
     focusFrame.current = 0;
-    mobileChrome.focusPaneChrome(paneId);
+    returnToOpener();
   };
   // Pane.Search belongs to the active pane, never under an open overlay, and
   // suppresses the browser's find only when a pane search took it.
@@ -316,8 +366,9 @@ function PaneView({
     if (!isActive) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        !matchesShortcut(SHORTCUTS["Pane.Search"], event, platform) ||
-        hasActiveInteractionOwner()
+        event.defaultPrevented || hasActiveInteractionOwner() ||
+        !(matchesShortcut(SHORTCUTS["Pane.Search"], event, platform) ||
+          event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target))
       )
         return;
       if (openQueryRef.current()) event.preventDefault();
@@ -356,7 +407,11 @@ function PaneView({
       )
     : undefined;
   const paneActions: ActionDescriptor[] = [];
-  if (query?.kind === "Find") {
+  if (isMobile && words && !words.standing) paneActions.push({
+    kind: "command", id: "Pane.Search", label: `${words.label}…`, icon: <Icon.Search aria-hidden="true" />,
+    restoreFocusOnClose: false, onSelect: ({ triggerEl }) => { openQuery(triggerEl); },
+  });
+  if (isMobile && query?.kind === "Find") {
     const resolving = find === null;
     paneActions.push({
       kind: "command",
@@ -367,7 +422,7 @@ function PaneView({
       disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
       waiting: resolving || undefined,
       restoreFocusOnClose: false,
-      onSelect: openQuery,
+      onSelect: ({ triggerEl }) => { openQuery(triggerEl); },
     });
   }
   if (refresh.command) paneActions.push(refresh.command);
@@ -396,9 +451,16 @@ function PaneView({
   }
   const presentations = useWorkspacePresentations();
   const adjacent = (visit: PaneVisit | undefined) => visit ? { title: presentations.forVisit(visit).name } : null;
+  const statementWords = [...(views && currentView > 0 ? [views.items[currentView]!.label] : []), ...(collation ? litWords(collation) : [])];
+  if (statementWords.length === 0 && views && header.kind === "Section" && header.meta.kind !== "Count") statementWords.push(views.items[currentView]?.label ?? views.items[0]!.label);
+  const canFold = !!(views || collation?.dimensions.length || collation?.order);
+  const searchLabel = words && !words.standing ? words.label : query?.kind === "Find" ? find?.label ?? "find in document" : null;
+  const FieldRow = words?.onSubmit ? "form" : "div";
   const surfaceHeader = (
     <SurfaceHeader
       projection={isMobile ? "Mobile" : "Desktop"}
+      search={searchLabel ? { label: searchLabel, onActivate: openQuery, reason: query?.kind === "Find" && !find ? PANE_COMMAND_RESOLVING_REASON : undefined, hint: `${searchLabel} (${formatShortcut(SHORTCUTS["Pane.Search"], platform)}, /)` } : undefined}
+      statement={isMobile && canFold ? { words: statementWords, expanded: unfolded, controls: `${paneId}-collation`, onToggle: element => { if (!unfolded) opener.current = element; setUnfoldedFor(unfolded ? null : source); } } : undefined}
       header={header}
       identityId={identityId}
       editor={body?.editor}
@@ -422,7 +484,7 @@ function PaneView({
 
   // The whole control stack retreats with the mobile bar; visible Find holds it.
   const hasVisibleControls = Boolean(
-    views || route.sections.length || body?.navigation || query?.kind === "Controls" || findVisible,
+    (hasLine && (!isMobile || unfolded || route.sections.length > 0)) || body?.navigation || findVisible || fieldVisible,
   );
   useMobileChromeSurface(chromeRef, isActive && isMobile && hasVisibleControls);
   useMobileChromeHold(isActive && isMobile && findVisible);
@@ -445,28 +507,19 @@ function PaneView({
     const frame = chromeFrameRef.current;
     const headerFrame = headerFrameRef.current;
     const controlsFrame = controlsFrameRef.current;
-    const controls = chromeRef.current;
-    if (!pane || !frame || !headerFrame || !controlsFrame || !controls) return;
+    if (!pane || !frame || !headerFrame || !controlsFrame) return;
     const paneBox = pane.getBoundingClientRect();
     // Fixed mobile chrome has separate stationary frames; desktop has one stack.
     const frameHeight = isMobile
       ? headerFrame.getBoundingClientRect().height + controlsFrame.getBoundingClientRect().height
       : frame.getBoundingClientRect().height;
     const editorHeight = headerFrame.querySelector<HTMLElement>("[data-pane-header-editor-region]")?.getBoundingClientRect().height ?? 0;
-    const refinements = controls.querySelector<HTMLElement>(
-      "[data-pane-query-refinements]",
-    );
-    const refinementsHeight = refinements?.getBoundingClientRect().height ?? 0;
     const bottomClearance = Math.max(keyboardBottomInsetPx,
       isMobile ? readMobileCssLength("var(--mobile-content-bottom-clearance)") : 0);
     const accessoryHeight = pane.querySelector<HTMLElement>("[data-pane-outline-accessory]")?.getBoundingClientRect().height ?? 0;
     const available = Math.max(0,
       Math.min(paneBox.bottom, window.innerHeight - bottomClearance)
         - Math.max(paneBox.top, visualViewportTopPx) - accessoryHeight);
-    pane.style.setProperty(
-      "--pane-query-refinements-max-height",
-      `min(16rem, ${Math.max(0, available - frameHeight + refinementsHeight) / 2}px)`,
-    );
     pane.style.setProperty("--pane-header-editor-max-height",
       `min(20rem, ${Math.max(0, available - frameHeight + editorHeight) / 2}px)`);
   }, [isMobile, keyboardBottomInsetPx, visualViewportTopPx]);
@@ -534,18 +587,19 @@ function PaneView({
         <div ref={chromeFrameRef} className={styles.chromeFrame}
           data-pane-chrome-focus={isMobile ? undefined : "true"} tabIndex={-1}>
           {surfaceHeader}
-          <div ref={controlsFrameRef} className={styles.controlsFrame}>
+          <div ref={controlsFrameRef} id={`${paneId}-collation`} className={styles.controlsFrame}>
             <div
               ref={chromeRef}
               className={styles.chrome}
             >
-              {views || route.sections.length ? (
-                <div ref={viewRowRef} className={`${styles.controlRow} ${styles.viewRow} ${compact.compact}`}>
-                  {views ? <TabList value={views.value} items={views.items.map((item, index) => ({
+              {hasLine ? (
+                <div ref={viewRowRef} data-collation-row="true" hidden={isMobile && !unfolded && route.sections.length === 0} className={`${styles.controlRow} ${styles.viewRow} ${compact.compact}`}>
+                  {views && (!isMobile || unfolded) ? <TabList value={views.value} items={views.items.map((item, index) => ({
                     ...item, id: `${paneId}-view-${index}`, panelId: bodyId,
-                  }))} onSelect={views.onSelect} aria-label={views.label} /> : <TabLinks
+                  }))} onSelect={views.onSelect} aria-label={views.label} /> : route.sections.length ? <TabLinks
                     current={route.id} items={route.sections.map(section => ({ ...section, value: section.id }))}
-                    aria-label="settings sections" />}
+                    aria-label="settings sections" /> : null}
+                  {collation ? <CollationLine collation={collation} /> : null}
                 </div>
               ) : null}
               {body?.navigation ? (
@@ -557,14 +611,33 @@ function PaneView({
                   {body.navigation.content}
                 </div>
               ) : null}
-              {query ? (
+              {query?.kind === "Collation" && words && fieldVisible ? <FieldRow key={source} className={`${styles.controlRow} ${compact.compact}`}
+                role={words.onSubmit ? "search" : undefined} aria-label={words.onSubmit ? words.label : undefined}
+                onSubmit={words.onSubmit ? event => { event.preventDefault(); words.onSubmit?.(); } : undefined}>
+                <QueryField inputRef={setQueryInput} applied={words.applied} onClear={clearField} notice={words.notice}
+                  onClose={words.standing ? null : closeField}
+                  input={{ ...words.field, type: "search", value: words.value, "aria-label": words.label, placeholder: words.label,
+                    "aria-describedby": words.rows ? statusId : undefined, enterKeyHint: words.onSubmit ? "search" : undefined,
+                    autoComplete: "off", autoCapitalize: "none", spellCheck: false,
+                    onChange: event => words.onChange(event.currentTarget.value),
+                    onKeyDown: event => { words.field?.onKeyDown?.(event); if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+                      if (event.key === "Escape") {
+                        if (words.value || words.applied) { event.preventDefault(); event.stopPropagation(); clearField(); }
+                        else if (!words.standing) { event.preventDefault(); event.stopPropagation(); closeField(); }
+                      } } }}
+                  parts={<>{words.onSubmit && words.value !== words.applied ? <span className={styles.enterHint}>enter</span> : null}
+                    {words.verbs.map(action => action.kind === "command" ? <Button key={action.id} disabled={action.disabled} onClick={event => {
+                      const detail = prepareActionSelect(event, event.currentTarget); if (detail) action.onSelect(detail); }}>{action.label}</Button>
+                      : action.kind === "link" && action.href !== null ? <ButtonLink key={action.id} href={action.href}>{action.label}</ButtonLink> : null)}</>} />
+                {words.rows ? <div className="sr-only"><PaneFilterRowsStatus id={statusId} status={words.rows.status} query={words.value} announceQueryChanges={words.rows.announce} /></div> : null}
+              </FieldRow> : null}
+              {query?.kind === "Find" ? (
                 <div
                   key={source}
                   className={`${styles.controlRow} ${compact.compact}`}
-                  hidden={query.kind === "Find" && !findVisible}
+                  hidden={!findVisible}
                 >
-                  {query.kind === "Find" ? (
-                    <FindBar
+                  <FindBar
                       ref={inputRef}
                       find={find}
                       onClear={clearFind}
@@ -572,7 +645,6 @@ function PaneView({
                       resultsExpanded={state.results?.expanded ?? false}
                       onShowResults={controller.showResults}
                     />
-                  ) : query.content}
                 </div>
               ) : null}
             </div>
@@ -590,8 +662,8 @@ function PaneView({
             ref={scrollportRef}
             id={bodyId}
             role={views ? "tabpanel" : undefined}
-            aria-labelledby={views && currentView >= 0 ? `${paneId}-view-${currentView}` : undefined}
-            aria-label={views && currentView < 0 ? views.label : undefined}
+            aria-labelledby={views && currentView >= 0 && (!isMobile || unfolded) ? `${paneId}-view-${currentView}` : undefined}
+            aria-label={views && (currentView < 0 || isMobile && !unfolded) ? views.items[currentView]?.label ?? views.label : undefined}
             className={styles.body}
             data-body-mode={route.bodyMode}
             data-pane-content="true"

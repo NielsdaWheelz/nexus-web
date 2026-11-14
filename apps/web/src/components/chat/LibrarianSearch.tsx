@@ -2,15 +2,12 @@
 
 // History retrieval owns its query and adopted prefix. Message text is immutable;
 // explicit refresh adopts new ranking, while returning keeps the inspected order.
-import Link from "next/link";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { ExcerptText } from "@/components/resources/ResourceBody";
 import Button from "@/components/ui/Button";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { useServerList, type ListSnapshot, type ServerList } from "@/lib/api/useServerList";
 import type { ApiJson } from "@/lib/api/wire";
@@ -24,7 +21,6 @@ import { searchPrefixTimeoutMs } from "@/lib/search/policy";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import { reconcileSearchActive, useSearchOptions, type SearchActive } from "@/lib/ui/searchOptions";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { definePaneVisitDataKey, usePaneReturnScrollport, usePaneVisitData, usePaneVisitDataWriter } from "@/lib/workspace/paneReturnMemento";
 import { useLatestWorkspace } from "@/lib/workspace/store";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -40,7 +36,15 @@ export function useLibrarianSearch() {
   const { accountId } = useAuthenticatedAccount();
   const active = usePaneIsActive();
   const workspace = useLatestWorkspace();
-  const { inputRef, focusInput } = usePaneQueryInput();
+  const inputRef = useRef<HTMLInputElement>(null);
+  // The shell mounts the field after its body; the ref claims entry focus there.
+  const bindInput = useCallback((field: HTMLInputElement | null) => {
+    inputRef.current = field;
+    const delivery = runtime.paneEntryDelivery;
+    if (field === null || delivery?.entry.kind !== "FocusLibrarianSearch" || !runtime.claimPaneEntryDelivery(delivery)) return;
+    field.focus({ preventScroll: true });
+    field.setSelectionRange(delivery.entry.start, delivery.entry.end, delivery.entry.direction);
+  }, [runtime]);
   const id = useId();
   const queryText = librarianSearchQuery(runtime.href);
   const searching = queryText !== null;
@@ -55,16 +59,17 @@ export function useLibrarianSearch() {
   const previousSearch = previous !== undefined && librarianSearchQuery(previous.href) !== null;
   const hasOrigin = previousUrl?.pathname === "/librarian" && !previousSearch;
   const backToResults = !searching && previousUrl?.pathname === "/librarian" && previousSearch;
-  const clear = useCallback(() => {
+  const clear = useCallback((intent: "Clear" | "Close") => {
     setInput({ applied, text: "" });
     if (!searching) return;
-    if (hasOrigin) runtime.router.back({ disposition: { kind: "Follow" } });
-    else runtime.router.replace("/librarian");
+    const entry = intent === "Clear" ? { kind: "FocusLibrarianSearch" as const, text: "", start: 0, end: 0, direction: "none" as const } : undefined;
+    if (hasOrigin) runtime.router.back({ disposition: { kind: "Follow" }, entry });
+    else runtime.router.replace("/librarian", { entry });
   }, [applied, searching, hasOrigin, runtime.router]);
   const apply = useCallback(() => {
     if (composing) return;
     const query = text.trim();
-    if (!query) { clear(); return; }
+    if (!query) { clear("Clear"); return; }
     if (query === applied) return;
     const href = `/librarian?${new URLSearchParams({ q: query })}`;
     const field = inputRef.current;
@@ -121,42 +126,37 @@ export function useLibrarianSearch() {
   const feedback = useCollectionReadFeedback({ list, unit: { singular: "message", plural: "messages" }, waiting: pending,
     outcome: list.current ? `${rows.length} messages shown.` : null });
   const refresh = async () => { await list.refetch(); return null; };
-  const controls: PaneQuery = { kind: "Controls", focusInput, content: <LibrarianSearchToolbar inputRef={inputRef}
-    input={{ label: "search messages", placeholder: "search messages", value: text, appliedValue: applied,
+  const controls: PaneQuery = { kind: "Collation", collation: {
+    dimensions: [], order: null, reset: null,
+    words: {
+      label: "search messages", value: text, applied, input: bindInput,
+      requestOpen: entry?.kind === "FocusLibrarianSearch",
       onChange: value => setInput({ applied, text: truncatePaneSearchQuery(value) }), onClear: clear,
-      bindings: navigation.inputProps, keyShortcuts: "ArrowDown ArrowUp Enter Shift+Enter Escape",
-      onCompositionStart: () => setComposing(true), onCompositionEnd: () => setComposing(false),
-      onKeyDown: event => {
-        if (event.nativeEvent.isComposing || composing || event.nativeEvent.keyCode === 229) return;
-        if (event.key === "Enter" && !event.altKey && !event.ctrlKey && !event.metaKey && text.trim() !== applied) {
-          event.preventDefault(); event.stopPropagation(); if (!event.repeat) apply(); return;
-        }
-        if (navigation.handleKey(event.nativeEvent, composing)) { event.preventDefault(); event.stopPropagation(); return; }
-        if (event.key === "Escape" && !text && !applied) {
-          event.preventDefault(); event.stopPropagation(); findPaneChromeFocusTarget(runtime.paneId)?.focus({ preventScroll: true });
-        }
-      } }}
-    actions={backToResults ? <Button onClick={() => runtime.router.back({ disposition: { kind: "Follow" } })}>back to results</Button> : null}
-    trailingActions={searching ? <Link href={searchHref({ ...emptySearchQuery(), text: applied })}>search all nexus</Link> : null}
-  /> };
+      standing: false, onSubmit: null, rows: null, notice: null,
+      field: {
+        ...navigation.inputProps, "aria-keyshortcuts": "ArrowDown ArrowUp Enter Shift+Enter Escape",
+        onCompositionStart: () => setComposing(true), onCompositionEnd: () => setComposing(false),
+        onKeyDown: event => {
+          if (event.nativeEvent.isComposing || composing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === "Enter" && !event.altKey && !event.ctrlKey && !event.metaKey && text.trim() !== applied) {
+            event.preventDefault(); event.stopPropagation(); if (!event.repeat) apply(); return;
+          }
+          if (navigation.handleKey(event.nativeEvent, composing)) { event.preventDefault(); event.stopPropagation(); }
+        },
+      },
+      verbs: [
+        ...(backToResults ? [{ kind: "command" as const, id: "back-to-results", label: "back to results", icon: null,
+          onSelect: () => runtime.router.back({ disposition: { kind: "Follow" } }) }] : []),
+        ...(searching ? [{ kind: "link" as const, id: "search-all-nexus", label: "search all nexus", icon: null,
+          href: searchHref({ ...emptySearchQuery(), text: applied }) }] : []),
+      ],
+    },
+  } };
   return {
     searching, query: controls, ready: !eligible || list.current || list.failure !== null, refresh,
     content: searching ? <LibrarianSearchResults query={applied} eligible={eligible} list={list} current={current}
       navigation={navigation} announcement={feedback.announcement} /> : null,
   };
-}
-
-/** The shell mounts published chrome after its body; the mounted field claims focus. */
-function LibrarianSearchToolbar(props: ComponentProps<typeof PaneQueryToolbar>) {
-  const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianSearchToolbar");
-  useLayoutEffect(() => {
-    const delivery = runtime.paneEntryDelivery;
-    const field = props.inputRef.current;
-    if (!field || delivery?.entry.kind !== "FocusLibrarianSearch" || !runtime.claimPaneEntryDelivery(delivery)) return;
-    field.focus({ preventScroll: true });
-    field.setSelectionRange(delivery.entry.start, delivery.entry.end, delivery.entry.direction);
-  }, [runtime, props.inputRef]);
-  return <PaneQueryToolbar {...props} />;
 }
 
 function LibrarianSearchResults({ query, eligible, list, current, navigation, announcement }: {

@@ -16,7 +16,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type RefObject,
 } from "react";
 import { feedActionFacts } from "@/lib/actions/inlineActions";
 import { useFeedActionFacts } from "@/lib/feeds/useFeedActionFacts";
@@ -24,11 +23,9 @@ import CollectionView from "@/components/collections/CollectionView";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
-import RadioGroup from "@/components/ui/RadioGroup";
 import PaneSurface from "@/components/ui/PaneSurface";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import type { PaneCollation } from "@/lib/panes/collation";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import type { ApiError } from "@/lib/api/client";
 import { transportOf } from "@/lib/api/failure";
 import { useServerList, type ListSnapshot } from "@/lib/api/useServerList";
@@ -79,79 +76,57 @@ const KIND_NOUNS: Readonly<Record<BrowseKind, string>> = {
 };
 const refusedQuery = (error: ApiError) => error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_BROWSE_QUERY";
 
-/** Browse owns submitted text, exclusive kind/source choices and provider order. */
-function BrowseToolbar({ query, inputRef, onQuery }: {
-  readonly query: BrowseQuery;
-  readonly inputRef: RefObject<HTMLInputElement | null>;
-  readonly onQuery: (query: BrowseQuery | null) => void;
-}) {
-  const statusId = useId();
-  const [draft, setDraft] = useState(query.text);
-  const [committed, setCommitted] = useState(query.text);
-  if (committed !== query.text) {
-    setCommitted(query.text);
-    setDraft(query.text);
+/** The draft stays with the body while submitted text owns the provider reads. */
+function useBrowseCollation(query: BrowseQuery | null, onQuery: (query: BrowseQuery) => void): PaneCollation | null {
+  const text = query?.text ?? "";
+  const [draft, setDraft] = useState(text);
+  const [committed, setCommitted] = useState(text);
+  if (committed !== text) {
+    setCommitted(text);
+    setDraft(text);
   }
+  if (query === null) return null;
   const normalized = draft.trim().normalize("NFC");
   const invalid = browseDraftInvalid(normalized);
   const sources = browseSourcesFor(query.kind);
   const youTube = browseSupportsNewest(query);
   const mixedSources = youTube && browseSections(query).length > 1;
-  const chips = [
-    ...(query.kind === "All" ? [] : [{ id: "kind", label: `Kind: ${BROWSE_KIND_LABELS[query.kind]}` }]),
-    ...(query.source === null ? [] : [{ id: "source", label: `Source: ${BROWSE_SOURCE_LABELS[query.source]}` }]),
-  ];
-  return <PaneQueryToolbar
-    inputRef={inputRef}
-    input={{
-      label: "Search across sources",
-      placeholder: "Search across sources",
-      value: draft,
-      appliedValue: query.text,
-      error: invalid ? "search text is over 200 characters or has control characters." : undefined,
-      onChange: setDraft,
-      onClear: () => { setDraft(""); onQuery({ ...query, text: "" }); },
-    }}
-    submit={{ onSubmit: () => {
-      if (invalid) { inputRef.current?.focus({ preventScroll: true }); return; }
-      setDraft(normalized);
-      onQuery({ ...query, text: normalized });
-    } }}
-    options={{
-      label: "Filters",
-      activeCount: chips.length,
-      onClear: () => onQuery(withBrowseFilters(query, { kind: "All", source: null })),
-      content: <>
-        <RadioGroup
-          label="Kind"
-          value={query.kind}
-          choices={[{ value: "All", label: "All kinds" }, ...BROWSE_KINDS.map((value) => ({ value, label: BROWSE_KIND_LABELS[value] }))]}
-          onChange={(value) => onQuery(withBrowseFilters(query, { kind: BROWSE_KINDS.find((kind) => kind === value) ?? "All", source: null }))}
-        />
-        {sources.length > 1 || query.source !== null ? <RadioGroup
-          label="Source"
-          value={query.source ?? ""}
-          choices={[{ value: "", label: "All sources" }, ...sources.map((value) => ({ value, label: BROWSE_SOURCE_LABELS[value] }))]}
-          onChange={(value) => onQuery(withBrowseFilters(query, { kind: query.kind, source: sources.find((source) => source === value) ?? null }))}
-        /> : null}
-      </>,
-    }}
-    sort={youTube ? {
-      label: "YouTube sort", value: query.sort,
-      choices: [{ value: "Relevance", label: "Relevance" }, { value: "Newest", label: "Newest source publication" }],
-      onChange: (value) => onQuery({ ...query, sort: value === "Newest" ? "Newest" : "Relevance" }),
-    } : undefined}
-    chips={{ items: chips, onRemove: (id) => onQuery(withBrowseFilters(query, {
-      kind: id === "kind" ? "All" : query.kind,
-      source: null,
-    })) }}
-    status={{ placement: "Details", id: statusId, visible: mixedSources || !youTube || query.text === "", content: <>
-      {mixedSources ? <span>Other sources: relevance</span> : null}
-      {!youTube ? <span>Order: relevance</span> : null}
-      <span id={statusId}>{query.text ? "" : "Enter a search term to browse sources."}</span>
-    </> }}
-    onReset={draft || browseHref(query) !== "/browse" ? () => { setDraft(""); onQuery(null); } : undefined}
-  />;
+  return {
+    words: {
+      label: "search across sources", value: draft, applied: query.text,
+      onChange: setDraft, onClear: () => { setDraft(""); onQuery({ ...query, text: "" }); },
+      standing: true, onSubmit: () => {
+        if (invalid) return;
+        setDraft(normalized);
+        onQuery({ ...query, text: normalized });
+      },
+      rows: null, verbs: [],
+      notice: invalid ? { kind: "Refused", line: { fact: "search text is over 200 characters or has control characters." } } : null,
+      field: { "aria-keyshortcuts": "Enter Escape" },
+    },
+    dimensions: sources.length > 1 || query.source !== null ? [{
+      kind: "One", id: "source", label: "source", rest: "any source", value: query.source,
+      options: sources.map(value => ({ value, label: BROWSE_SOURCE_LABELS[value], sign: null, count: null, reason: null })),
+      onChange: value => {
+        const source = value === null ? null : sources.find(source => source === value);
+        if (source === undefined) throw new Error("unknown browse source");
+        onQuery(withBrowseFilters(query, { kind: query.kind, source }));
+      },
+    }] : [],
+    order: youTube ? {
+      value: query.sort === "Relevance" ? null : query.sort, rest: "by relevance",
+      keys: [{ label: "newest", ways: [{ value: "Newest", label: null, word: "videos newest first" }] }],
+      onChange: value => {
+        if (value !== null && value !== "Newest") throw new Error("unknown browse order");
+        onQuery({ ...query, sort: value ?? "Relevance" });
+      },
+      note: mixedSources ? "other sources stay by relevance." : null,
+    } : null,
+    reset: query.source !== null || youTube && query.sort !== "Relevance" ? () => {
+      setDraft("");
+      onQuery({ ...query, text: "", source: null, sort: "Relevance" });
+    } : null,
+  };
 }
 
 /** Each kind/source keeps its own visit snapshot and its own failure. `quiet` while the body may
@@ -258,7 +233,6 @@ function DirectoryBrowse() {
     () => (query === null || text === "" ? [] : browseSections(query)),
     [query, text],
   );
-  const { inputRef, focusInput } = usePaneQueryInput();
   const chapters = useRef<HTMLDivElement>(null);
   const [reports, setReports] = useState<{ key: string; sections: Readonly<Record<string, SectionStatus>> }>({ key: queryKey, sections: {} });
   const onStatus = useCallback((key: string, status: SectionStatus) => {
@@ -287,30 +261,37 @@ function DirectoryBrowse() {
     }
   }, [shared]);
   usePaneReturnReady(query === null || text === "" || settled === sections.length || invalid);
-  const onQuery = useCallback((next: BrowseQuery | null) => {
-    const href = next === null ? "/browse" : browseHref(next);
-    if (!text && next?.text) { router.push(href); return; }
-    if (text && !next?.text && pane !== null) {
+  const onQuery = useCallback((next: BrowseQuery) => {
+    const href = browseHref(next);
+    if (!text && next.text) { router.push(href); return; }
+    if (text && !next.text && pane !== null) {
       const previous = workspace().state.panes.find(current => current.id === pane.paneId)?.history.back.at(-1);
       const url = previous ? parseWorkspaceHref(previous.href) : null;
-      if (url?.pathname === "/browse" && readBrowseQuery(url.searchParams)?.text === "") {
+      const previousQuery = url?.pathname === "/browse" ? readBrowseQuery(url.searchParams) : null;
+      if (previousQuery !== null && browseHref(previousQuery) === href) {
         router.back({ disposition: { kind: "Follow" } });
         return;
       }
     }
     router.replace(href);
   }, [router, text, pane, workspace]);
-  const queryControls = useMemo(
-    () => query === null ? undefined : {
-      kind: "Controls" as const,
-      content: <BrowseToolbar query={query} inputRef={inputRef} onQuery={onQuery} />,
-      focusInput,
+  const collation = useBrowseCollation(query, onQuery);
+  usePaneChrome({
+    query: collation === null ? undefined : { kind: "Collation", collation },
+    views: query === null ? undefined : {
+      label: "browse kind", value: query.kind,
+      items: [{ value: "All", label: "all" }, ...BROWSE_KINDS.map(value => ({ value, label: value === "WebArticle" ? "articles" : KIND_NOUNS[value] }))],
+      onSelect: value => {
+        const kind = value === "All" ? "All" : BROWSE_KINDS.find(kind => kind === value);
+        if (kind === undefined) throw new Error("unknown browse kind");
+        onQuery(withBrowseFilters(query, { kind, source: null }));
+      },
     },
-    [focusInput, inputRef, onQuery, query],
-  );
-  usePaneChrome({ query: queryControls, header: { kind: "Section", meta: { kind: "None" } }, refresh: text ? undefined : selection.state === null ? { kind: "Resolving" } : {
-    kind: "Refreshable", sourceKey: "browse:selection", execute: async ({ signal }) => { await selection.refresh(signal); return null; },
-  } });
+    header: { kind: "Section", meta: { kind: "None" } },
+    refresh: text ? undefined : selection.state === null ? { kind: "Resolving" } : {
+      kind: "Refreshable", sourceKey: "browse:selection", execute: async ({ signal }) => { await selection.refresh(signal); return null; },
+    },
+  });
   if (query === null || invalid) return <PaneSurface state={
     <Fact line={{ fact: "browse can’t use this link." }}
       verbs={[{ label: "reset browse", commandKey: "reset browse", run: () => router.replace("/browse") }]} />

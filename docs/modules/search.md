@@ -555,11 +555,18 @@ and content contract belongs to [app navigation](app-navigation.md#nexus-content
 
 ## browser presentation
 
-urls own query, kinds, filters, scope and view. omit the default resources view
-and all-kinds selection; `kinds=` means none. switching views preserves criteria,
-resets paging and clears preceding-query rows and metadata. clear filters preserves query/view; reset
-returns empty resources. unsupported passage kinds stay unsupported, with controls
-to return to resources or clear kinds. automatic pagination exposes no rolling
+urls own query, kinds, formats, authors, roles, scope and view. kinds include:
+none selected means every kind; all selected normalizes to no kinds parameter.
+explicit empty `kinds=` is invalid. reasons block inclusion, not removal of a
+selected kind. reset clears words and dimensions while preserving the view.
+unsupported passage kinds retain their explicit empty fact.
+
+`SearchPaneBody` owns draft, caret, composition, last-written text and author
+labels above keyed results. its standing collation field settles after 200ms;
+completed operators lift into words without losing the caret. kind, format and
+author are multiple-choice dimensions; the author finder is a picker aside. role
+and scope appear only when set. related-match ready notice and show live under
+the field; adoption focuses words.input. automatic pagination exposes no rolling
 count or completion receipt; initial query waiting and failures remain explicit.
 
 two `useServerList` instances own independent lexical/hybrid metadata and cursors;

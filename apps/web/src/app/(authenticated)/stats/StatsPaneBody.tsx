@@ -12,15 +12,15 @@ import * as Icon from "@/lib/ui/icons";
 // in shows it landed. A new view keeps the last view's figures, dimmed and inert, until its own land;
 // if its read fails they leave for its `Failed`.
 
-import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import type { CollationDimension } from "@/lib/panes/collation";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { shiftLocalDate } from "@/lib/localDate";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import AppliedFilters from "@/components/ui/AppliedFilters";
-import Input from "@/components/ui/Input";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
 import PaneSection from "@/components/ui/PaneSection";
-import SelectField from "@/components/ui/SelectField";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { Hold, useOutcome, useResendFeedback } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
@@ -683,124 +683,6 @@ const sessionKey = (row: Session) =>
     row.ended_at,
   ].join();
 
-function Controls(props: {
-  view: StatsView;
-  update: (next: Partial<StatsView>) => void;
-  onFilter: OnFilter;
-  chipLabel: (key: "media" | "contributor" | "device", value: string) => string;
-  /** The filters' one stable control, where filter changes leave focus. */
-  modalitySelect: RefObject<HTMLSelectElement | null>;
-}) {
-  const { view, update, onFilter, modalitySelect } = props;
-  const today = browserToday();
-  const thisYear = Number(today.slice(0, 4));
-  const year = view.year ?? thisYear;
-  const anchor = view.anchor ?? today;
-  const yearView = view.view === "year";
-  const shift = (amount: number) => shiftAnchor(anchor, view.period, amount);
-  const move = (amount: number) =>
-    update(yearView ? { year: year + amount } : { anchor: shift(amount) });
-  const canGoNext = yearView
-    ? year < thisYear
-    : periodStart(shift(1), view.period) <= periodStart(today, view.period);
-  const chips = (["media", "contributor", "device"] as const).flatMap((key) => {
-    const value = view.filters[key];
-    const category = key === "media" ? "Work" : key === "contributor" ? "Author" : "Device";
-    return value ? [{ id: key, label: `${category}: ${props.chipLabel(key, value)}` }] : [];
-  });
-  return (
-    <div className={styles.controls}>
-      {yearView ? (
-        <label>
-          Year
-          <Input
-            type="number"
-            size="sm"
-            min="1970"
-            max={thisYear}
-            value={year}
-            onChange={(event) =>
-              update({ year: Number(event.target.value) || null })
-            }
-          />
-        </label>
-      ) : (
-        <>
-          <SelectField
-            layout="Stacked"
-            label="Period"
-            size="sm"
-            value={view.period}
-            onChange={(event) =>
-              update({ period: event.target.value as StatsPeriod })
-            }
-          >
-            {Object.entries(PERIOD_LABEL).map(([period, label]) => (
-              <option key={period} value={period}>
-                {label}
-              </option>
-            ))}
-          </SelectField>
-          <label>
-            Anchor
-            <Input
-              type="date"
-              size="sm"
-              value={anchor}
-              onChange={(event) =>
-                update({ anchor: event.target.value || null })
-              }
-            />
-          </label>
-        </>
-      )}
-      {yearView || view.period !== "all" ? (
-        <div
-          className={styles.dateGroup}
-          role="group"
-          aria-label={yearView ? "Year navigation" : "Date navigation"}
-        >
-          <Button onClick={() => move(-1)}>
-            Previous
-          </Button>
-          <Button
-            onClick={() => update(yearView ? { year: null } : { anchor: null })}
-          >
-            {yearView ? "This year" : "Today"}
-          </Button>
-          <Button
-            onClick={() => move(1)}
-            disabled={!canGoNext}
-          >
-            Next
-          </Button>
-        </div>
-      ) : null}
-      {yearView ? null : (
-        <>
-          <SelectField
-            layout="Stacked"
-            label="Modality"
-            ref={modalitySelect}
-            size="sm"
-            value={view.filters.modality ?? ""}
-            onChange={(event) => onFilter("modality", event.target.value)}
-          >
-            <option value="">All</option>
-            {MODALITIES.map((modality) => (
-              <option key={modality}>{modality}</option>
-            ))}
-          </SelectField>
-          <AppliedFilters chips={chips} returnFocusTo={modalitySelect} onRemove={(id) => {
-            // justify-type-assertion: AppliedFilters returns one of these chips' ids.
-            onFilter(chips.find((chip) => chip.id === id)!.id, "");
-          }} />
-        </>
-      )}
-    </div>
-  );
-}
-
 export default function StatsPaneBody() {
   const mounted = useRef(true);
   useLayoutEffect(() => {
@@ -836,14 +718,7 @@ export default function StatsPaneBody() {
   };
   const update = (next: Partial<StatsView>) =>
     router.replace(statsViewHref({ ...view, ...next }));
-  usePaneChrome({ views: {
-    label: "stats view", value: params.get("view") ?? "stats",
-    items: [{ value: "stats", label: "stats" }, { value: "year", label: "year" }],
-    onSelect: value => {
-      if (value !== "stats" && value !== "year") throw new Error("unknown stats view");
-      update({ view: value, period: value === "year" ? "year" : "day" });
-    },
-  } });
+
 
   const query = timeZone ? statsQuery(view, timeZone).toString() : null;
   // Progress saves move Consumption every few seconds: follow them only while visible here.
@@ -966,16 +841,14 @@ export default function StatsPaneBody() {
     view.period === "all" ||
     periodStart(view.anchor ?? today, view.period) ===
       periodStart(today, view.period);
-  const setFilter = (key: FilterKey, value: string) =>
-    update({ filters: { ...view.filters, [key]: value || undefined } });
-  // A row's Filter sits in the figures the new view makes inert, which would drop its focus to the
-  // document: focus moves first to the filters, where removing the chip returns it too.
-  const modalitySelect = useRef<HTMLSelectElement>(null);
+  const setFilter = (key: FilterKey, value: string | null) =>
+    update({ filters: { ...view.filters, [key]: value ?? undefined } });
+  // Move focus before the next view makes the table inert.
   const filterRow = (key: FilterKey, value: string) => {
-    modalitySelect.current?.focus({ preventScroll: true });
+    findPaneChromeFocusTarget(pane.paneId)?.focus({ preventScroll: true });
     setFilter(key, value);
   };
-  const chipLabel = (
+  const filterLabel = (
     key: "media" | "contributor" | "device",
     value: string,
   ) => {
@@ -990,6 +863,81 @@ export default function StatsPaneBody() {
           : activity?.devices.find((row) => row.device_id === value)?.label;
     return label ?? value;
   };
+  const thisYear = Number(today.slice(0, 4));
+  const year = view.year ?? thisYear;
+  const anchor = view.anchor ?? today;
+  const dimensions: CollationDimension[] = [];
+  if (!yearView) dimensions.push({
+    kind: "One", id: "period", label: "period", rest: "day",
+    value: view.period === "day" ? null : view.period,
+    options: Object.entries(PERIOD_LABEL).filter(([period]) => period !== "day").map(([value, label]) => ({ value, label: label.toLowerCase(), sign: null, count: null, reason: null })),
+    onChange: value => {
+      // justify-type-assertion: the picker returns only one of the published periods.
+      update({ period: (value ?? "day") as StatsPeriod });
+    },
+  });
+  if (yearView || view.period !== "all") {
+    const start = periodStart(anchor, view.period);
+    const end = view.period === "week" ? shiftLocalDate(start, 6) : start;
+    const date = new Date(`${start}T12:00:00`);
+    const format = new Intl.DateTimeFormat(undefined, {
+      ...(view.period !== "year" ? { month: view.period === "month" ? "long" : "short" } as const : {}),
+      ...(view.period === "day" || view.period === "week" ? { day: "numeric" } as const : {}),
+      ...(view.period === "month" || view.period === "year" || start.slice(0, 4) !== today.slice(0, 4) || end.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } as const : {}),
+    });
+    const present = yearView ? year === thisYear : live;
+    dimensions.push({
+      kind: "Span", id: "date", label: "date", unit: yearView ? "year" : view.period,
+      backward: !yearView || year > 1970,
+      value: yearView ? String(year) : (view.period === "week"
+        ? format.formatRange(date, new Date(`${end}T12:00:00`))
+        : format.format(date)).toLocaleLowerCase(),
+      forward: yearView ? year < thisYear : periodStart(shiftAnchor(anchor, view.period, 1), view.period) <= periodStart(today, view.period),
+      onStep: by => {
+        if (yearView) {
+          if (year + by >= 1970 && year + by <= thisYear) update({ year: year + by });
+        } else update({ anchor: shiftAnchor(anchor, view.period, by) });
+      },
+      now: present ? null : {
+        label: yearView || view.period === "year" ? "this year" : view.period === "day" ? "today" : `this ${view.period}`,
+        go: () => update(yearView ? { year: null } : { anchor: null }),
+      },
+      pick: yearView ? null : { value: anchor, max: today, onPick: date => update({ anchor: date || null }) },
+    });
+  }
+  if (!yearView) {
+    dimensions.push({
+      kind: "One", id: "modality", label: "modality", rest: "all modalities",
+      value: view.filters.modality ?? null,
+      options: MODALITIES.map(value => ({ value, label: value.toLowerCase(), sign: null, count: null, reason: null })),
+      onChange: value => setFilter("modality", value),
+    });
+    for (const key of ["media", "contributor", "device"] as const) {
+      const value = view.filters[key];
+      if (!value) continue;
+      const label = key === "media" ? "work" : key === "contributor" ? "author" : "device";
+      dimensions.push({
+        kind: "One", id: key, label, rest: `any ${label}`, value,
+        options: [{ value, label: filterLabel(key, value), sign: null, count: null, reason: null }],
+        onChange: next => setFilter(key, next),
+      });
+    }
+  }
+  usePaneChrome({
+    query: { kind: "Collation", collation: {
+      words: null, dimensions, order: null,
+      reset: (yearView ? year !== thisYear : view.period !== "day" || !live || Object.keys(view.filters).length > 0)
+        ? () => update({ period: yearView ? "year" : "day", anchor: null, year: null, filters: {} }) : null,
+    } },
+    views: {
+      label: "stats view", value: view.view,
+      items: [{ value: "stats", label: "stats" }, { value: "year", label: "year" }],
+      onSelect: value => {
+        if (value !== "stats" && value !== "year") throw new Error("unknown stats view");
+        update({ view: value, period: value === "year" ? "year" : "day" });
+      },
+    },
+  });
   const totals = data?.activity.totals;
   const kept = data?.retained_artifacts;
   const wholeEmpty =
@@ -1009,13 +957,6 @@ export default function StatsPaneBody() {
             Local time{timeZone ? ` · ${timeZone}` : null}
           </p>
         </div>
-        <Controls
-          view={view}
-          update={update}
-          onFilter={setFilter}
-          chipLabel={chipLabel}
-          modalitySelect={modalitySelect}
-        />
       </header>
 
       {initialLoading ? <Ruling /> : null}

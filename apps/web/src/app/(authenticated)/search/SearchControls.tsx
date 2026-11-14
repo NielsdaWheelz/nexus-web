@@ -1,261 +1,129 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { usePaneIsActive } from "@/lib/panes/paneRuntime";
-import ContributorFilter, {
-  useContributorFilterLabels,
-} from "@/components/contributors/ContributorFilter";
-import { Fact } from "@/components/feedback/Fact";
-import ChoiceField from "@/components/ui/ChoiceField";
-import choices from "@/components/ui/ChoiceField.module.css";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import {
-  MEDIA_FORMAT_LABELS,
-  MEDIA_FORMATS,
-  SEARCH_KIND_LABELS,
-  SEARCH_KINDS,
-  disabledKinds,
-  type SearchKind,
-} from "@/lib/search/kinds";
+import ContributorFilter, { useContributorFilterLabels } from "@/components/contributors/ContributorFilter";
+import { CONTRIBUTOR_ROLES, contributorRoleLabel, type ContributorCredit } from "@/lib/contributors/credits";
+import type { CollationDimension, CollationWords, PaneCollation } from "@/lib/panes/collation";
+import { MEDIA_FORMAT_LABELS, MEDIA_FORMATS, SEARCH_KIND_LABELS, SEARCH_KINDS, disabledKinds } from "@/lib/search/kinds";
 import { settleSearchBox } from "@/lib/search/parseSearchInput";
-import {
-  applyParsedInput,
-  emptySearchQuery,
-  type SearchQuery,
-} from "@/lib/search/query";
+import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/search/query";
 import { searchHref } from "@/lib/search/searchParams";
-import styles from "./page.module.css";
 
 const SETTLE_MS = 200;
 
-/**
- * What to find: the box, the inline filter options and the applied chips. The
- * url owns the query; the box is a draft whose text and completed operators
- * become the query 200 ms after typing stops (the operator at the caret waits),
- * or at once on Enter. `commit` replaces the pane url. `show` is offered while results with
- * related matches wait unadopted; it adopts them and reads nothing.
- */
-export default function SearchControls(props: {
+/** Called above keyed results: edits, composition, caret and author labels survive a settle.
+ * The url owns applied criteria; only edits are mined for completed operators. */
+export function useSearchCollation({ query, commit, inputRef }: {
   readonly query: SearchQuery;
   readonly commit: (next: SearchQuery) => void;
   readonly inputRef: RefObject<HTMLInputElement | null>;
-  readonly show: (() => void) | null;
-}) {
-  const { query, commit, inputRef, show } = props;
+}): PaneCollation & { readonly words: CollationWords } {
   const [draft, setDraft] = useState(query.text);
   const [composing, setComposing] = useState(false);
-  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [authorsOpen, setAuthorsOpen] = useState(false);
   const paneActive = usePaneIsActive();
   const written = useRef(query.text);
-  const statusId = useId();
-  const { labels, remember } = useContributorFilterLabels(query.authors);
-
-  const write = useCallback(
-    (next: SearchQuery) => {
-      written.current = next.text;
-      commit(next);
-    },
-    [commit],
-  );
-  // the caret of the last edit: its operator is still being typed (null after Enter)
   const caret = useRef<number | null>(null);
-  const apply = useCallback(
-    (enter: boolean) => {
-      if (enter) caret.current = null;
-      const settled = settleSearchBox(draft, caret.current);
-      if (settled.box !== draft) {
-        if (caret.current !== null) caret.current = settled.caret;
-        // render the new box now, so the caret can be placed in it
-        flushSync(() => setDraft(settled.box));
-        const input = inputRef.current;
-        if (input !== null && input === document.activeElement)
-          input.setSelectionRange(settled.caret, settled.caret);
-      }
-      const next = applyParsedInput(query, settled.parsed);
-      if (searchHref(next) !== searchHref(query)) write(next);
-    },
-    [draft, inputRef, query, write],
-  );
-  // only edits settle: the url's own text is never mined for operators
+  const { labels, remember } = useContributorFilterLabels(query.authors);
+  const write = useCallback((next: SearchQuery) => {
+    written.current = next.text;
+    commit(next);
+  }, [commit]);
+  const apply = useCallback((enter: boolean) => {
+    if (enter) caret.current = null;
+    const settled = settleSearchBox(draft, caret.current);
+    if (settled.box !== draft) {
+      if (caret.current !== null) caret.current = settled.caret;
+      flushSync(() => setDraft(settled.box));
+      const input = inputRef.current;
+      if (input !== null && input === document.activeElement)
+        input.setSelectionRange(settled.caret, settled.caret);
+    }
+    const next = applyParsedInput(query, settled.parsed);
+    if (searchHref(next) !== searchHref(query)) write(next);
+  }, [draft, inputRef, query, write]);
   useEffect(() => {
     if (composing || draft === written.current) return;
     const timer = setTimeout(() => apply(false), SETTLE_MS);
     return () => clearTimeout(timer);
   }, [apply, composing, draft]);
-  // another writer (Nexus, pane history, a restored visit) replaces the box
+  // A different writer (Nexus, pane history or a restored visit) replaces the box.
   useEffect(() => {
     if (query.text === written.current) return;
     written.current = query.text;
+    caret.current = null;
     setDraft(query.text);
   }, [query.text]);
-
   const clearText = () => {
+    caret.current = null;
+    written.current = "";
     setDraft("");
     if (query.text !== "") write({ ...query, text: "" });
-  };
-  const toggleKind = (kind: SearchKind) => {
-    const active = new Set(query.requestedKinds ?? SEARCH_KINDS);
-    if (!active.delete(kind)) active.add(kind);
-    const all = active.size === SEARCH_KINDS.length;
-    write({ ...query, requestedKinds: all ? null : active });
   };
   const { kinds: disabled, reason } = disabledKinds({
     hasFormatFilter: query.formats.length > 0,
     hasCreditFilter: query.authors.length + query.roles.length > 0,
   });
-  const kinds = query.requestedKinds;
-  const chip = (id: string, label: string, change: Partial<SearchQuery>) => ({
-    id,
-    label,
-    next: { ...query, ...change },
-  });
-  const chips = [
-    ...(kinds === null
-      ? []
-      : [
-          chip(
-            "kinds",
-            kinds.size === 0
-              ? "No content types"
-              : `Content types: ${SEARCH_KINDS.filter((kind) => kinds.has(kind))
-                  .map((kind) => SEARCH_KIND_LABELS[kind])
-                  .join(", ")}`,
-            { requestedKinds: null },
-          ),
-        ]),
-    ...query.formats.map((format) =>
-      chip(`format:${format}`, `Format: ${MEDIA_FORMAT_LABELS[format]}`, {
-        formats: query.formats.filter((f) => f !== format),
-      }),
-    ),
-    ...query.authors.map((handle) =>
-      chip(`author:${handle}`, `Author: ${labels[handle] ?? handle}`, {
-        authors: query.authors.filter((a) => a !== handle),
-      }),
-    ),
-    ...query.roles.map((role) =>
-      chip(`role:${role}`, `Role: ${role}`, {
-        roles: query.roles.filter((r) => r !== role),
-      }),
-    ),
-    ...(query.scope === "all"
-      ? []
-      : [chip("scope", `In: ${query.scope}`, { scope: "all" })]),
+  const dimensions: CollationDimension[] = [
+    {
+      kind: "Many", id: "kinds", label: "kind", rest: "any kind",
+      values: SEARCH_KINDS.filter(kind => query.requestedKinds?.has(kind)),
+      options: SEARCH_KINDS.map(value => ({ value, label: SEARCH_KIND_LABELS[value], sign: null, count: null, reason: disabled.has(value) ? reason : null })),
+      onChange: values => {
+        const kinds = SEARCH_KINDS.filter(kind => values.includes(kind));
+        write({ ...query, requestedKinds: kinds.length === 0 || kinds.length === SEARCH_KINDS.length ? null : new Set(kinds) });
+      },
+    },
+    {
+      kind: "Many", id: "formats", label: "format", rest: "any format", values: query.formats,
+      options: MEDIA_FORMATS.map(value => ({ value, label: MEDIA_FORMAT_LABELS[value], sign: null, count: null, reason: null })),
+      onChange: values => write({ ...query, formats: MEDIA_FORMATS.filter(format => values.includes(format)) }),
+    },
+    {
+      kind: "Many", id: "authors", label: "author", rest: "any author", values: query.authors,
+      options: query.authors.map(value => ({ value, label: labels[value] ?? value, sign: null, count: null, reason: null })),
+      onChange: values => write({ ...query, authors: [...values] }),
+      onOpenChange: setAuthorsOpen,
+      aside: <ContributorFilter active={paneActive && authorsOpen} selectedHandles={query.authors} onAdd={item => {
+        remember(item);
+        if (!query.authors.includes(item.handle)) write({ ...query, authors: [...query.authors, item.handle] });
+      }} />,
+    },
   ];
-
-  return (
-    <PaneQueryToolbar
-      inputRef={inputRef}
-      input={{
-        label: "Search content",
-        placeholder: "Search your Nexus",
-        value: draft,
-        appliedValue: query.text,
-        onChange: (value) => {
-          caret.current = inputRef.current?.selectionStart ?? null;
-          setDraft(value);
-        },
-        onClear: clearText,
-        onCompositionStart: () => setComposing(true),
-        onCompositionEnd: () => setComposing(false),
-        keyShortcuts: "Enter Escape",
-        onKeyDown: (event) => {
+  if (query.roles.length > 0) dimensions.push({
+    kind: "Many", id: "roles", label: "role", rest: "any role", values: query.roles,
+    options: query.roles.map(value => {
+      // justify-type-assertion: the shared role vocabulary guards its matching wire role union.
+      const label = CONTRIBUTOR_ROLES.has(value) ? contributorRoleLabel(value as ContributorCredit["role"], 2).toLowerCase() : value;
+      return { value, label, sign: null, count: null, reason: null };
+    }),
+    onChange: values => write({ ...query, roles: [...values] }),
+  });
+  if (query.scope !== "all") dimensions.push({
+    kind: "One", id: "scope", label: "scope", rest: "everywhere", value: query.scope,
+    options: [{ value: query.scope, label: query.scope, sign: null, count: null, reason: null }],
+    onChange: value => write({ ...query, scope: value ?? "all" }),
+  });
+  return {
+    words: {
+      label: "search your nexus", value: draft, applied: query.text, input: inputRef,
+      onChange: value => { caret.current = inputRef.current?.selectionStart ?? null; setDraft(value); },
+      onClear: clearText, standing: true, onSubmit: null, rows: null, notice: null, verbs: [],
+      field: {
+        onCompositionStart: () => setComposing(true), onCompositionEnd: () => setComposing(false),
+        "aria-keyshortcuts": "Enter Escape",
+        onKeyDown: event => {
           if (event.key === "Enter" && !event.repeat && !composing && !event.nativeEvent.isComposing) apply(true);
         },
-      }}
-      options={{
-        label: "Filters",
-        activeCount: chips.length,
-        onExpandedChange: setOptionsOpen,
-        onClear: () => write({ ...emptySearchQuery(), text: query.text, view: query.view }),
-        content: (
-          <>
-            <fieldset className={choices.group}>
-              <legend>Content types</legend>
-              <div className={choices.choices}>
-                {SEARCH_KINDS.map((kind) => (
-                  <ChoiceField
-                    key={kind}
-                    label={SEARCH_KIND_LABELS[kind]}
-                    checked={(kinds?.has(kind) ?? true) && !disabled.has(kind)}
-                    disabled={disabled.has(kind)}
-                    description={disabled.has(kind) ? (reason ?? undefined) : undefined}
-                    onChange={() => toggleKind(kind)}
-                  />
-                ))}
-              </div>
-            </fieldset>
-            <fieldset className={choices.group}>
-              <legend>Formats</legend>
-              <div className={choices.choices}>
-                {MEDIA_FORMATS.map((format) => {
-                  const on = query.formats.includes(format);
-                  return (
-                    <ChoiceField
-                      key={format}
-                      label={MEDIA_FORMAT_LABELS[format]}
-                      checked={on}
-                      onChange={() =>
-                        write({
-                          ...query,
-                          formats: on
-                            ? query.formats.filter((f) => f !== format)
-                            : [...query.formats, format],
-                        })
-                      }
-                    />
-                  );
-                })}
-              </div>
-            </fieldset>
-            <ContributorFilter
-              active={paneActive && optionsOpen}
-              selectedHandles={query.authors}
-              onAdd={(item) => {
-                remember(item);
-                if (!query.authors.includes(item.handle))
-                  write({ ...query, authors: [...query.authors, item.handle] });
-              }}
-            />
-            <p className={styles.hint}>
-              Type format:pdf or author:le-guin in search, then a space or
-              Enter.
-            </p>
-          </>
-        ),
-      }}
-      chips={{
-        items: chips,
-        onRemove: (id) => {
-          const chip = chips.find((candidate) => candidate.id === id);
-          if (chip) write(chip.next);
-        },
-      }}
-      status={{
-        placement: "Details",
-        id: statusId,
-        visible: show !== null,
-        content: <div id={statusId}>
-          {show === null ? null : <Fact line={{ fact: "results with related matches are ready." }}
-            verbs={[{ label: "show", commandKey: "show related matches", run: show }]} speak={paneActive} />}
-        </div>,
-      }}
-      onReset={
-        draft || query.text || chips.length > 0 || query.view !== "resources"
-          ? () => {
-              setDraft("");
-              write(emptySearchQuery());
-            }
-          : undefined
-      }
-    />
-  );
+      },
+    },
+    dimensions, order: null,
+    reset: query.requestedKinds !== null || query.formats.length + query.authors.length + query.roles.length > 0 || query.scope !== "all" ? () => {
+      caret.current = null;
+      setDraft("");
+      write({ ...emptySearchQuery(), view: query.view });
+    } : null,
+  };
 }

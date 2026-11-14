@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 23;
+export const WIRE_REVISION = 24;
 
 export interface paths {
     "/assistant-writes": {
@@ -1342,7 +1342,7 @@ export interface paths {
         };
         /**
          * List Libraries
-         * @description `sort` = created_desc | name_asc | name_desc; absent is oldest created.
+         * @description All first, then named libraries in name order.
          */
         get: operations["list_libraries_libraries_get"];
         put?: never;
@@ -1493,7 +1493,7 @@ export interface paths {
         };
         /**
          * List Entries
-         * @description `sort`, `entry_type`, `projection`, `completion`: see `library_listing`.
+         * @description `sort` and `projection`: see `library_listing`.
          */
         get: operations["list_entries_libraries__library_id__entries_get"];
         put?: never;
@@ -8140,14 +8140,8 @@ export interface components {
         };
         /** LibraryIndexOrder */
         LibraryIndexOrder: {
-            /** Created Desc */
-            created_desc: number;
             /** Default */
             default: number;
-            /** Name Asc */
-            name_asc: number;
-            /** Name Desc */
-            name_desc: number;
         };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
@@ -8311,8 +8305,6 @@ export interface components {
         };
         /** LibraryQueueCapture */
         LibraryQueueCapture: {
-            /** Completion */
-            completion: "unfinished" | null;
             /** Entry Type */
             entry_type: ("web_article" | "epub" | "pdf" | "video" | "podcast_episode") | null;
             /**
@@ -8326,7 +8318,7 @@ export interface components {
              */
             library_id: string;
             /** Projection */
-            projection: ("unfiled" | "in_progress") | null;
+            projection: ("unfiled" | "in_progress" | "unfinished") | null;
             /** Query */
             query: string;
             /** Sort */

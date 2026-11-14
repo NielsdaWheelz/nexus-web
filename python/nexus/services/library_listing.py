@@ -8,14 +8,13 @@ in either direction. Feed release dates never stand in for original publication.
 """
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.collection_index import parse_index_query
 from nexus.schemas.library import (
@@ -57,7 +56,6 @@ _SORTS: dict[str, tuple[SortKey, ...]] = {
     "added_desc": (SortKey("added_at", "desc", KeysetValueKind.DateTime),),
     "added_asc": (SortKey("added_at", "asc", KeysetValueKind.DateTime),),
 }
-_ENTRY_TYPES = {kind.value for kind in MediaKind}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,17 +63,16 @@ class EntryView:
     sort: str | None
     entry_type: str | None
     projection: str | None
-    completion: str | None
 
 
 def parse_entries_query(items: Sequence[tuple[str, str]]) -> EntryView:
-    query = parse_index_query(items, domain_keys={"sort", "entry_type", "projection", "completion"})
-    view = EntryView(**{key: query.get(key) for key in EntryView.__slots__})
-    if (
-        (view.sort is not None and view.sort not in _SORTS)
-        or (view.entry_type is not None and view.entry_type not in _ENTRY_TYPES)
-        or view.projection not in (None, "unfiled", "in_progress")
-        or view.completion not in (None, "unfinished")
+    query = parse_index_query(items, domain_keys={"sort", "projection"})
+    view = EntryView(query.get("sort"), None, query.get("projection"))
+    if (view.sort is not None and view.sort not in _SORTS) or view.projection not in (
+        None,
+        "unfiled",
+        "in_progress",
+        "unfinished",
     ):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported library view")
     return view
@@ -151,14 +148,14 @@ def _entries_sql(view: EntryView, *, is_default: bool) -> str:
         predicates.append(f"facts.media_id IN ({unfiled_media_ids_sql()})")
     if view.projection == "in_progress":
         predicates.append("facts.read_state='InProgress'")
-    if view.completion == "unfinished":
+    if view.projection == "unfinished":
         predicates.append("facts.read_state IS DISTINCT FROM 'Finished'")
     if view.entry_type is not None:
         predicates.append("facts.media_kind=:entry_type")
     facts = entry_fact_rows_sql(
         membership,
         creator=(view.sort or "").startswith("creator"),
-        engagement=view.projection == "in_progress" or view.completion == "unfinished",
+        engagement=view.projection in ("in_progress", "unfinished"),
         remaining=(view.sort or "").startswith("remaining"),
     )
     return f"""
@@ -180,7 +177,7 @@ def list_library_entries(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unfiled is a view of All")
     order_revision = (
         str(library.order_revision)
-        if library.mutable and all(value is None for value in asdict(view).values())
+        if library.mutable and view.sort is None and view.projection is None
         else None
     )
     order = order_by_sql(entry_order_plan(view, is_default=library.is_default), alias="facts")

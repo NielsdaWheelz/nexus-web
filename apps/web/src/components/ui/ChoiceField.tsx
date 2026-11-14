@@ -6,7 +6,7 @@ import Tooltip from "./Tooltip";
 
 /**
  * Native selection, including radio-group arrow keys and checkbox space. A `Facet`
- * draws only the exception: unchecked dims and slashes its icon. `help` is a tooltip.
+ * draws only the exception: unchecked dims and slashes its icon or strikes its word.
  */
 export default function ChoiceField({
   label, checked, onChange, disabled, type = "checkbox", name, value, description, presentation = "Inline", icon, help,
@@ -21,7 +21,7 @@ export default function ChoiceField({
   readonly value?: string;
   readonly description?: string;
   readonly presentation?: "Inline" | "Segment" | "Facet";
-  readonly icon?: ReactElement;
+  readonly icon?: ReactElement | string;
   readonly help?: string;
   readonly ref?: Ref<HTMLInputElement>;
   readonly "aria-describedby"?: string;
@@ -42,7 +42,7 @@ export default function ChoiceField({
           checked={checked} disabled={disabled} aria-labelledby={labelId}
           aria-describedby={described ?? tooltip["aria-describedby"]}
           onChange={(event) => onChange(event.currentTarget.checked)} />}/>
-      {icon ? <span className={classes.icon} aria-hidden="true">{icon}</span> : null}
+      {icon ? <span className={presentation === "Facet" && typeof icon === "string" ? styles.facetWord : classes.icon} aria-hidden="true">{icon}</span> : null}
       <span>
         <span id={labelId}>{label}</span>
         {description ? <span id={descriptionId} className={styles.description}>{description}</span> : null}

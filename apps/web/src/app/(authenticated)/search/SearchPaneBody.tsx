@@ -25,7 +25,6 @@ import { Fact, Failed } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import Button from "@/components/ui/Button";
 import useCollectionReadFeedback from "@/components/collections/useCollectionReadFeedback";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { assertNever } from "@/lib/assertNever";
 import { useChangeStamp } from "@/lib/api/changes";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
@@ -44,7 +43,7 @@ import { definePaneVisitDataKey, usePaneReturnReady, usePaneVisitData } from "@/
 import { localSearchApplies, useLocalSearch, type LocalMatch } from "@/lib/search/localSearch";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resourceType, resourceTypeName } from "@/lib/resources/type";
-import SearchControls from "./SearchControls";
+import { useSearchCollation } from "./SearchControls";
 import styles from "./page.module.css";
 
 type Response = ApiJson<"/search", "get">;
@@ -71,12 +70,21 @@ const phaseRank = { lexical: 0, hybrid: 1 };
 /** What the last key showed, rows or none, so the next key can stand them dimmed until it adopts. */
 type Shown = { readonly accountId: string; readonly view: SearchQuery["view"]; readonly rows: readonly Row[] };
 
-export default function SearchPaneBody() {
+export default function SearchPane() {
   const params = usePaneSearchParams();
   const { accountId } = useAuthenticatedAccount();
   const query = useMemo(() => searchQueryFromParams(params), [params]);
+  return query === null ? <InvalidSearch /> : <SearchPaneBody query={query} accountId={accountId} />;
+}
+
+function SearchPaneBody({ query, accountId }: { query: SearchQuery; accountId: string }) {
+  const router = usePaneRouter();
   const shown = useRef<Shown | null>(null);
-  return query === null ? <InvalidSearch /> : <SearchResults key={`${accountId}:${searchQueryToParams(query)}`} query={query} accountId={accountId} shown={shown} />;
+  const inputRef = useRef<HTMLInputElement>(null);
+  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
+  const collation = useSearchCollation({ query, commit, inputRef });
+  return <SearchResults key={`${accountId}:${searchQueryToParams(query)}`} query={query} accountId={accountId}
+    shown={shown} inputRef={inputRef} commit={commit} collation={collation} />;
 }
 
 function InvalidSearch() {
@@ -98,12 +106,14 @@ function InvalidSearch() {
   return <Fact line={{ fact: "search doesn’t know this link’s view or filters." }} verbs={[{ label: "reset search", commandKey: "reset search", run: () => router.replace("/search") }]} />;
 }
 
-function SearchResults({ query, accountId, shown }: { query: SearchQuery; accountId: string; shown: RefObject<Shown | null> }) {
-  const router = usePaneRouter();
+function SearchResults({ query, accountId, shown, inputRef, commit, collation }: {
+  query: SearchQuery; accountId: string; shown: RefObject<Shown | null>;
+  inputRef: RefObject<HTMLInputElement | null>; commit: (next: SearchQuery) => void;
+  collation: ReturnType<typeof useSearchCollation>;
+}) {
   const paneId = usePaneRuntime()?.paneId;
   const visible = usePaneIsVisible();
   const active = usePaneIsActive();
-  const { inputRef, focusInput } = usePaneQueryInput();
   const root = useRef<HTMLDivElement>(null);
   const key = searchQueryToParams(query).toString();
   const stamp = `${useMediaQueryRevision()}:${useChangeStamp("Notes", "NoteBodies", "Metadata")}`;
@@ -221,11 +231,11 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
       const port = root.current?.closest<HTMLElement>("[data-pane-content]");
       if (port) port.scrollTop = 0;
       window.getSelection()?.removeAllRanges();
-      focusInput();
+      inputRef.current?.focus({ preventScroll: true });
     }
     setRefreshPhase(null);
     setRefreshError(null);
-  }, [focusInput, key]);
+  }, [inputRef, key]);
   useLayoutEffect(() => {
     if (!enabled || candidate === null || !currentCandidate) return;
     const replacingSame = staged?.key === candidate.key && visit.adopted?.phase === candidate.phase;
@@ -317,7 +327,6 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
   useLayoutEffect(() => {
     shown.current = { accountId, view: query.view, rows };
   });
-  const commit = useCallback((next: SearchQuery) => router.replace(searchHref(next)), [router]);
   const filtered = query.requestedKinds !== null || query.formats.length + query.authors.length + query.roles.length > 0 || query.scope !== "all";
   const clearFilters: Verbs = [{ label: "clear filters", commandKey: "clear filters", run: () => commit({ ...emptySearchQuery(), text: query.text, view: query.view }) }];
   const noun = query.view === "passages" ? "passages" : "results";
@@ -333,7 +342,11 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
         commit({ ...query, view: value });
       },
     },
-    query: { kind: "Controls", focusInput, content: <SearchControls query={query} commit={commit} inputRef={inputRef} show={show} /> },
+    query: { kind: "Collation", collation: { ...collation, words: {
+      ...collation.words,
+      notice: show === null ? null : { kind: "Ready", line: { fact: "results with related matches are ready." },
+        verbs: [{ label: "show", commandKey: "show related matches", run: show }] },
+    } } },
     header: { kind: "Section", meta: count ? { kind: "Count", value: count, unit: query.view === "passages" ? "passage" : "result" } : { kind: "None" } },
   });
   const sections = [
@@ -345,11 +358,11 @@ function SearchResults({ query, accountId, shown }: { query: SearchQuery; accoun
   // Where results stand: the reason there are none, a wait, a failure, or the rows.
   const state = blank ? <Fact line={{ fact: query.view === "passages" ? "type text to find passages in your sources." : "type a name or text to search your nexus." }} />
     : unsupported ? query.view === "passages"
-      ? <Fact line={{ fact: "none of these content types have passages." }} verbs={[
+      ? <Fact line={{ fact: "none of these kinds have passages." }} verbs={[
         { label: "show resources", commandKey: "show resources", run: () => commit({ ...query, view: "resources" }) },
-        { label: "clear content types", commandKey: "clear content types", run: () => commit({ ...query, requestedKinds: null }) },
+        { label: "any kind", commandKey: "any kind", run: () => commit({ ...query, requestedKinds: null }) },
       ]} />
-      : <Fact line={{ fact: "these filters leave no content types to search." }} verbs={clearFilters} />
+      : <Fact line={{ fact: "these filters leave no kinds to search." }} verbs={[{ label: "any kind", commandKey: "any kind", run: () => commit({ ...query, requestedKinds: null }) }]} />
     : count > 0 ? null
     : unfixable !== undefined ? <Fact line={{ fact: unfixable.code === "E_INVALID_REQUEST" ? "nexus can’t run this search." : "the item this search is inside isn’t available." }} />
     : textFailed && phaseIncidents.lexical !== null

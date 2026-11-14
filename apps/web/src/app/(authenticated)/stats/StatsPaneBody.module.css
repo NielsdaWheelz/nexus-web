@@ -40,23 +40,6 @@
 .timeZone {
   margin: 0.35rem 0 0;
 }
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-.controls label {
-  display: grid;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-.dateGroup {
-  display: flex;
-  gap: 0.25rem;
-}
 .summary > div {
   padding: 0.8rem 1rem;
   border: 1px solid var(--edge-subtle);
@@ -229,10 +212,6 @@
 @container (max-width: 720px) {
   .header {
     display: block;
-  }
-  .controls {
-    justify-content: start;
-    margin-top: 1rem;
   }
   .grid {
     grid-template-columns: 1fr;

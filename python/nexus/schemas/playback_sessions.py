@@ -43,8 +43,7 @@ class LibraryQueueCapture(Closed):
     query: str
     sort: LibrarySort | None
     entry_type: EntryType | None
-    projection: Literal["unfiled", "in_progress"] | None
-    completion: Literal["unfinished"] | None
+    projection: Literal["unfiled", "in_progress", "unfinished"] | None
 
 
 class PodcastQueueCapture(Closed):

@@ -106,3 +106,10 @@ search refinement activity requires both its pane and its options disclosure.
 closing filters pauses further appends; admitted reads may settle. shared
 exhaustion feedback owns progress, recovery and completion speech, returning retry
 focus to the author input.
+
+## collation
+
+author works publish local words and published/title order; oldest published is
+default. search owns selected author labels above keyed results and publishes
+the existing contributor finder below its author listbox. adding an author keeps
+the finder in tab order; removing one changes chosen values.

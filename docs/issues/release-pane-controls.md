@@ -20,7 +20,7 @@ as observed.
   unchanged.
 
 before claiming these observations: use an owned supported hybrid to check
-whole-chip removal and 44px targets with both inputs; check tab/radio/checkbox
+word pickers, field/disclosure focus and 44px targets with both inputs; check tab/listbox/disclosure
 announcements and count descriptions with native assistive technology; induce
 an actual disposable local read failure and verify available content, unknown
 counts and retry; confirm skip-silence during real native podcast playback.

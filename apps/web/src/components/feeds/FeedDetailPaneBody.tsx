@@ -29,13 +29,11 @@ import { ContributorCreditList, ContributorRoleGroups } from "@/components/contr
 import { selectMediaAuthors } from "@/lib/contributors/credits";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import { viewHref } from "@/lib/collections/view";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
+import type { PaneCollation } from "@/lib/panes/collation";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneSection from "@/components/ui/PaneSection";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   useMediaSummaries,
@@ -98,7 +96,6 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
   const scheme = kind === "podcast" ? "podcast" : "feed";
   const href = `/${kind === "podcast" ? "podcasts" : "feeds"}/${feedId}`;
   const STATES: readonly { value: EntryState; label: string }[] = [{ value: "all", label: `all ${noun}` }, { value: "unread", label: kind === "podcast" ? "unplayed" : "unread" }, { value: "in_progress", label: "in progress" }, { value: "finished", label: kind === "podcast" ? "played" : "finished" }];
-  const SORTS = [{ value: "newest", label: "Newest published" }, { value: "oldest", label: "Oldest published" }, ...(kind === "podcast" ? [{ value: "duration_asc", label: "Shortest duration" }, { value: "duration_desc", label: "Longest duration" }] : [])];
   const speak = useActiveRegion();
   const router = usePaneRouter();
   const params = usePaneSearchParams();
@@ -115,6 +112,7 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
   const librariesCard = useRef<HTMLElement>(null);
   const state = params.get("state") ?? "all";
   const sort = params.get("sort") ?? "newest";
+  const orderKnown = ["newest", "oldest", ...(kind === "podcast" ? ["duration_asc", "duration_desc"] : [])].includes(sort);
   const catalog = useCatalogState();
   const query = new URLSearchParams({ state, sort }).toString();
   const { read: descriptor, group } = useFeedEntriesRead();
@@ -265,28 +263,29 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
       router.replace(viewHref(href, params, changes)),
     [params, href, router],
   );
-  const { inputRef, focusInput } = usePaneQueryInput();
-  const queryStatusId = useId();
-  const sortChoices = SORTS.some((choice) => choice.value === sort) ? SORTS : [...SORTS, { value: sort, label: "Unsupported order" }];
-  const canReset = sort !== "newest" || state !== "all";
-  const queryControls = {
-    kind: "Controls" as const,
-    focusInput,
-    content: <PaneQueryToolbar
-      inputRef={inputRef}
-      input={{ label: `Filter ${noun}`, placeholder: `Filter ${noun}`, value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
-      sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "newest" ? null : value }) }}
-      status={{
-        placement: "Inline",
-        id: queryStatusId,
-        visible: false,
-        content: <PaneFilterRowsStatus announceQueryChanges={(episodes.status === "ready") && episodeFailure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
-      }}
-      onReset={canReset ? () => {
-        filterRows.clearQuery();
-        replaceView({ sort: null, state: null });
-      } : undefined}
-    />,
+  const collation: PaneCollation = {
+    words: {
+      label: `filter ${noun}`, value: filterRows.query, applied: filterRows.query,
+      onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery,
+      standing: false, onSubmit: null, notice: null, verbs: [],
+      rows: { status: filterRows.rowStatus, announce: episodes.status === "ready" && episodeFailure === null },
+    },
+    dimensions: [],
+    order: orderKnown ? {
+      value: sort === "newest" ? null : sort, rest: "newest first",
+      keys: [
+        { label: "oldest", ways: [{ value: "oldest", label: null, word: "oldest first" }] },
+        ...(kind === "podcast" ? [{ label: "duration", ways: [
+          { value: "duration_asc", label: "shortest", word: "shortest first" },
+          { value: "duration_desc", label: "longest", word: "longest first" },
+        ] }] : []),
+      ],
+      onChange: value => replaceView({ sort: value }), note: null,
+    } : null,
+    reset: orderKnown && sort !== "newest" ? () => {
+      filterRows.clearQuery();
+      replaceView({ sort: null });
+    } : null,
   };
   const execute = useMemo(
     () => feedRefresh({ kind: "Feed", feed_id: feedId }, kind),
@@ -345,7 +344,7 @@ function FeedDetailPane({ feedId, kind }: { readonly feedId: string; readonly ki
           : undefined,
     resourceRef: ready === null ? undefined : canonicalResourceRef({ scheme, id: feedId }),
     header: { kind: "Section", meta: { kind: "None" } },
-    query: queryControls,
+    query: { kind: "Collation", collation },
   });
   usePaneReturnReady(
     head.status === "failed" ||
