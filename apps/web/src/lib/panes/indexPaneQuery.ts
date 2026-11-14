@@ -19,6 +19,6 @@ export function indexPaneQuery(routeId: PaneRouteId | "unsupported", query: URLS
     if (library !== null) result.set("library_id", library);
     return result.toString();
   }
-  const keys = routeId === "libraries" ? ["sort"] : routeId === "library" ? ["sort", "entry_type", "projection", "completion"] : ["sort", "direction"];
+  const keys = routeId === "libraries" ? [] : routeId === "library" ? ["sort", "projection"] : ["sort", "direction"];
   return new URLSearchParams(keys.flatMap(key => query.getAll(key).map(value => [key, value]))).toString();
 }

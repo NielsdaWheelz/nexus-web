@@ -1635,40 +1635,24 @@ answers its own acceptance. Commands stage Default/All plus named destinations,
 and replace Preview with the canonical owned pane only after success. browse
 publishes a query focus capability; preview publishes none.
 
-### 8.11 Collection refinement
+### 8.11 the collation
 
-Every primary collection pane composes the same visible grammar: input,
-readable order, conditional filters disclosure, applied chips, and an honest
-result status. shared query controls remain above the existing body scrollport;
-inline native options own disclosure/focus, while domains own clear/reset and
-request policy. the shell hosts independent query/navigation publications and
-its `Pane.Search` focus command. each
-domain owns a closed view type, URL codec, option inventory and labels, request
-identity, server query, total order and local match fields. this is
-presentation composition, not a query engine: no row-metadata schema, runtime
-registry, generic controller, Boolean AST, or client sorting of pageable rows.
+bodies publish what their lists can be asked as typed words, dimensions, order
+and reset. the shell owns one wrapping line and on-call field; view tabs remain
+independent. phones fold controls behind a statement of view, lit words and
+count. [workspace](modules/workspace.md) owns disclosure and focus; [visual
+system](modules/visual-system.md) owns paint.
 
-| Surface | Local match fields | Canonical view | `Sort by` options | Execution |
-| --- | --- | --- | --- | --- |
-| Lectern | title; presented subtitle | Custom order | Custom order; newest/oldest added; title A–Z/Z–A | client over the complete snapshot |
-| Author works | work title | Newest published | Newest/oldest published; title A–Z/Z–A | owner SQL over the complete result |
-| Chats | chat title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
-| Libraries | presented Library name | Oldest created | Oldest/newest created; name A–Z/Z–A | owner SQL over the complete result |
-| Notes index | Page title | Title/ref | none | local keyset prefix; filter describes loaded rows |
-| Library entries | row title; contributor names | Recently added / Custom order | title/creator A–Z/Z–A; newest/oldest published or added; least/most time left | owner SQL over the complete result |
-| Podcast subscriptions | title; contributor names | Newest episode | Newest episode; most unplayed; title A–Z | owner SQL |
-| Podcast episodes | title; contributor names | Newest released | Newest/oldest released; shortest/longest duration | owner SQL |
-| Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
-
-browse and search use the shared query presentation while retaining their
-remote query, facets, ranking and provider continuation. preview publishes no
-query controls. page/note direct items use permanent local row filtering in
-authored order. chat messages, TOCs, chapters,
-transcripts, sources, citations, trust trails, fork trees, navigation, menus,
-settings choices, destination pickers, and ranked slate/quick-read lists retain
-semantic owner order. Connections, Downloads, Library members/invites,
-choosers, overlays, Preview episodes and Stats tables are secondary lists and
-out of scope.
+meaning stays with each domain: url codec, request identity, ordering and local
+match predicate. this is presentation composition, not a query engine. libraries
+are name-ordered, all first; lectern retains custom order. library type/text filter
+the complete server projection locally; reads accept sort/projection, including
+unfinished. capture also accepts type. malformed libraries/library/lectern urls
+fail before reads; library-dependent semantics resolve when identity is known.
+author, feeds and browse retain owner ordering; search retains operator parsing
+and settling. stats publishes period/date/filter words. find supplies its session
+through the shared field. forms, settings sections and secondary list owners
+keep their existing contracts.
 
 For server-owned indexes, the chain is:
 

@@ -143,3 +143,11 @@ auth/update recovery. artwork remains best effort.
 full transfers, whole-file parsing and stale saved views are deliberate costs for
 one complete publication contract. format/wire changes require an online rebuild;
 there are no compatibility readers or alternate stores.
+
+## collation
+
+the saved library index has one default rank: named flag, normalized name,
+presented name, id. catalogLibraries accepts no order. catalogEntries accepts
+sort/projection, with unfinished excluding Finished consumption. type belongs to
+the pane over that complete projection. a wire mismatch retires old catalogs
+through the existing online-rebuild outcome.

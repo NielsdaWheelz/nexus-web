@@ -4,12 +4,10 @@ import * as Icon from "@/lib/ui/icons";
 import { forwardRef, useId, useImperativeHandle, useRef, type ReactNode } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
-import ChoiceField from "@/components/ui/ChoiceField";
-import choices from "@/components/ui/ChoiceField.module.css";
 import { Fact } from "@/components/feedback/Fact";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { Ruling } from "@/components/feedback/Ruling";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
+import QueryField from "@/components/workspace/QueryField";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { FIND_LIMIT, type FindRow } from "@/lib/find/find";
 import type { FindController, FindResult } from "@/lib/find/useFind";
@@ -24,21 +22,20 @@ const TOO_MANY = `more than ${FIND_LIMIT} matches. narrow the search.`;
 /** Find's own count, beside its input. A pane that has not loaded leaves the input disabled with
  * a reason for a screen reader alone; a search under way shows nothing here. */
 function findFeedback(result: FindResult | null): {
-  readonly placement: "Inline" | "Details";
-  readonly visible: boolean;
-  readonly content: ReactNode;
+  readonly position: ReactNode;
+  readonly notice: string | null;
   readonly description: string;
 } | null {
   if (result === null)
-    return { placement: "Inline", visible: false, content: null, description: PANE_COMMAND_RESOLVING_REASON };
+    return { position: null, notice: null, description: PANE_COMMAND_RESOLVING_REASON };
   switch (result.kind) {
     case "Idle":
     case "Searching":
       return null;
     case "TooMany":
-      return { placement: "Details", visible: true, content: TOO_MANY, description: TOO_MANY };
+      return { position: null, notice: TOO_MANY, description: TOO_MANY };
     case "Failed":
-      return { placement: "Details", visible: true, content: result.message, description: result.message };
+      return { position: null, notice: result.message, description: result.message };
     case "Rows": {
       const count = result.rows.length;
       const found = count === 0
@@ -47,9 +44,8 @@ function findFeedback(result: FindResult | null): {
       const partial = result.partial !== null;
       const text = partial ? `${found} in the ${result.partial} only.` : found;
       return {
-        placement: partial ? "Details" : "Inline",
-        visible: true,
-        content: partial || count === 0 ? text : <span aria-hidden="true">{result.active + 1}/{count}</span>,
+        position: count === 0 ? "no matches" : <span aria-hidden="true">{result.active + 1}/{count}</span>,
+        notice: partial ? text : null,
         description: result.wrapped
           ? `${text}${partial ? "" : "."} wrapped to the ${result.wrapped} match.`
           : text,
@@ -70,22 +66,17 @@ const FindBar = forwardRef<
   }
 >(function FindBar({ find, onClear, onClose, resultsExpanded, onShowResults }, ref) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // justify-type-assertion: the toolbar mounts this input before imperative handles run.
+  // justify-type-assertion: QueryField mounts this input before imperative handles run.
   useImperativeHandle(ref, () => inputRef.current!, []);
   const statusId = useId();
   const feedback = findFeedback(find?.result ?? null);
   const count = find?.result.kind === "Rows" ? find.result.rows.length : 0;
   const scope = find?.query
-    ? find.narrow ?? "Selected scope unavailable"
-    : find?.narrowLabel ?? "Selected scope unavailable";
+    ? find.narrow ?? "selected scope unavailable"
+    : find?.narrowLabel ?? "selected scope unavailable";
   const scopeOption = find?.query
-    ? find.narrow ? `Limit to ${find.narrow}` : "Selected scope unavailable"
-    : find?.narrowLabel ? `Limit to ${find.narrowLabel.toLowerCase()}` : "Selected scope unavailable";
-  const chips = [
-    ...(find?.matchCase ? [{ id: "case", label: "Match case" }] : []),
-    ...(find?.wholeWord ? [{ id: "word", label: "Whole word" }] : []),
-    ...(find?.narrowed ? [{ id: "scope", label: `Scope: ${scope}` }] : []),
-  ];
+    ? find.narrow ? `limit to ${find.narrow}` : "selected scope unavailable"
+    : find?.narrowLabel ? `limit to ${find.narrowLabel.toLowerCase()}` : "selected scope unavailable";
   return (
     <div className={styles.bar} onKeyDown={(event) => {
       if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
@@ -93,17 +84,17 @@ const FindBar = forwardRef<
       event.stopPropagation();
       onClose();
     }}>
-      <PaneQueryToolbar
+      <QueryField
         inputRef={inputRef}
+        applied={find?.query ?? ""}
         input={{
-          label: find?.label ?? "Find in pane",
-          placeholder: find?.label ?? "Find in pane",
+          "aria-label": find?.label ?? "find in document",
+          placeholder: find?.label ?? "find in document",
+          "aria-describedby": statusId,
+          "aria-keyshortcuts": "Enter Shift+Enter Escape",
           value: find?.query ?? "",
-          appliedValue: find?.query ?? "",
           disabled: find === null,
-          keyShortcuts: "Enter Shift+Enter Escape",
-          onChange: (value) => value ? find?.setQuery(value) : onClear(),
-          onClear,
+          onChange: event => event.currentTarget.value ? find?.setQuery(event.currentTarget.value) : onClear(),
           onKeyDown(event) {
             if (event.nativeEvent.isComposing) return;
             if (event.key === "Escape") {
@@ -116,55 +107,27 @@ const FindBar = forwardRef<
             }
           },
         }}
-        options={find ? {
-          label: "Find options",
-          iconOnly: true,
-          activeCount: chips.length,
-          content: (
-            <fieldset className={choices.group}>
-              <legend>Find options</legend>
-              <div className={choices.choices}>
-                <ChoiceField label="Match case" checked={find.matchCase} onChange={find.setMatchCase} />
-                <ChoiceField label="Whole word" checked={find.wholeWord} onChange={find.setWholeWord} />
-                {find.narrowLabel !== null || find.narrowed ? (
-                  <ChoiceField label={scopeOption} checked={find.narrowed} onChange={find.setNarrowed} />
-                ) : null}
-              </div>
-            </fieldset>
-          ),
-          onClear() {
-            find.setMatchCase(false);
-            find.setWholeWord(false);
-            find.setNarrowed(false);
-          },
-        } : undefined}
-        chips={{
-          items: chips,
-          onRemove(id) {
-            if (id === "case") find?.setMatchCase(false);
-            else if (id === "word") find?.setWholeWord(false);
-            else find?.setNarrowed(false);
-          },
-        }}
-        status={feedback ? {
-          placement: feedback.placement,
-          id: statusId,
-          visible: feedback.visible,
-          content: <span className={styles.status}>{feedback.content}</span>,
-        } : undefined}
-        actions={<>
-          <div className={styles.group} role="group" aria-label="Match navigation">
-            <Button iconOnly aria-label="Previous match" tooltip={{ text: "Previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<Icon.Up aria-hidden="true" />} />
-            <Button iconOnly aria-label="Next match" tooltip={{ text: "Next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<Icon.Down aria-hidden="true" />} />
+        onClear={onClear}
+        onClose={onClose}
+        notice={feedback?.notice ? {
+          kind: "Ready", line: { fact: feedback.notice },
+          ...(find?.result.kind === "Failed" ? { verbs: [{ label: "retry", commandKey: "Find.Retry", run: () => find.retry() }] } : {}),
+        } : null}
+        parts={<>
+          {feedback?.position ? <span className={styles.status}>{feedback.position}</span> : null}
+          <div className={styles.group} role="group" aria-label="match navigation">
+            <Button iconOnly aria-label="previous match" tooltip={{ text: "previous match (Shift+Enter)" }} disabled={count === 0} onClick={() => find?.step(-1)} icon={<Icon.Up aria-hidden="true" />} />
+            <Button iconOnly aria-label="next match" tooltip={{ text: "next match (Enter)" }} disabled={count === 0} onClick={() => find?.step(1)} icon={<Icon.Down aria-hidden="true" />} />
           </div>
-          {find?.result.kind === "Failed" ? <Button onClick={() => {
-            inputRef.current?.focus({ preventScroll: true });
-            find.retry();
-          }}>Retry</Button> : null}
-        </>}
-        trailingActions={<>
-          <Button aria-label="Show search results" tooltip={{ text: "Show search results" }} disabled={count === 0} aria-expanded={resultsExpanded} onClick={(event) => onShowResults(event.currentTarget)}>results</Button>
-          <Button iconOnly aria-label="Close find" onClick={onClose} icon={<Icon.Dismiss aria-hidden="true" />} />
+          {find ? <>
+            <Button className={styles.switch} aria-label="match case" tooltip={{ text: "match case" }} aria-pressed={find.matchCase} onClick={() => find.setMatchCase(!find.matchCase)}>case</Button>
+            <Button className={styles.switch} aria-label="whole word" tooltip={{ text: "whole word" }} aria-pressed={find.wholeWord} onClick={() => find.setWholeWord(!find.wholeWord)}>word</Button>
+            {find.narrowLabel !== null || find.narrowed ? <Button
+              className={styles.switch} aria-label={scopeOption} tooltip={{ text: scopeOption }} aria-pressed={find.narrowed}
+              onClick={() => find.setNarrowed(!find.narrowed)}
+            >{scope.toLocaleLowerCase()}</Button> : null}
+          </> : null}
+          <Button aria-label="show search results" tooltip={{ text: "show search results" }} disabled={count === 0} aria-expanded={resultsExpanded} onClick={event => onShowResults(event.currentTarget)}>results</Button>
         </>}
       />
       <span id={statusId} className="sr-only" role="status" aria-live="polite" aria-atomic="true">

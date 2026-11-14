@@ -1,12 +1,49 @@
-// The libraries panes' url-owned view choices, spelled as the server reads them,
-// the one name rule, and the one order and summary of library names. The server
-// validates every value and every combination composes; these are only the options
-// offered.
+// The libraries panes' url grammar, view choices and shared name rules.
 
 import type { Line, Verbs } from "@/components/feedback/stage";
 import type { ViewChanges } from "@/lib/collections/view";
 
 type Options = readonly { readonly value: string; readonly label: string }[];
+
+export const ENTRY_TYPES = [
+  { value: "web_article", label: "articles" },
+  { value: "epub", label: "epubs" },
+  { value: "pdf", label: "pdfs" },
+  { value: "video", label: "videos" },
+  { value: "podcast_episode", label: "episodes" },
+] as const;
+
+const LIBRARY_SORTS = ["title_asc", "title_desc", "creator_asc", "creator_desc", "published_desc", "published_asc", "remaining_asc", "remaining_desc", "added_desc", "added_asc"] as const;
+const LIBRARY_PROJECTIONS = ["unfinished", "in_progress", "unfiled"] as const;
+
+type LibraryView = {
+  sort: typeof LIBRARY_SORTS[number] | null;
+  entry_type: typeof ENTRY_TYPES[number]["value"] | null;
+  projection: typeof LIBRARY_PROJECTIONS[number] | null;
+};
+
+/** The whole pane url is a view; malformed urls never initiate a read. */
+export function decodeEmptyView(params: URLSearchParams): boolean {
+  return [...params].length === 0;
+}
+export function decodeLibraryView(params: URLSearchParams): LibraryView | null {
+  const choices = { sort: LIBRARY_SORTS, entry_type: ENTRY_TYPES.map(option => option.value), projection: LIBRARY_PROJECTIONS };
+  for (const [key, value] of params) {
+    if (!Object.hasOwn(choices, key) || params.getAll(key).length !== 1 ||
+      !(choices[key as keyof typeof choices] as readonly string[]).includes(value)) return null;
+  }
+  if (params.get("projection") === "unfiled" && params.get("sort") === "added_desc") return null;
+  return {
+    sort: LIBRARY_SORTS.find(value => value === params.get("sort")) ?? null,
+    entry_type: ENTRY_TYPES.find(option => option.value === params.get("entry_type"))?.value ?? null,
+    projection: LIBRARY_PROJECTIONS.find(value => value === params.get("projection")) ?? null,
+  };
+}
+
+/** Only these choices depend on whether the library is All. */
+export function libraryViewNeedsIdentity(view: LibraryView): boolean {
+  return view.projection === "unfiled" || view.sort === "added_desc";
+}
 
 /** The server's name rule (1–100 characters once trimmed, never All), as copy. */
 export function libraryNameError(text: string): string | null {
@@ -28,80 +65,34 @@ export function libraryNames(libraries: readonly { id: string; name: string }[])
   return names.length <= 2 ? names.join(", ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
 }
 
-export const INDEX_SORTS: Options = [
-  { value: "", label: "Oldest created" },
-  { value: "created_desc", label: "Newest created" },
-  { value: "name_asc", label: "Name A–Z" },
-  { value: "name_desc", label: "Name Z–A" },
-];
-
-/** All's own order is newest added, so it does not offer that order twice. */
-export const entrySorts = (isAll: boolean): Options => [
-  { value: "", label: isAll ? "Recently added" : "Custom order" },
-  { value: "title_asc", label: "Title A–Z" },
-  { value: "title_desc", label: "Title Z–A" },
-  { value: "creator_asc", label: "Creator A–Z" },
-  { value: "creator_desc", label: "Creator Z–A" },
-  { value: "published_desc", label: "First published: newest" },
-  { value: "published_asc", label: "First published: oldest" },
-  { value: "remaining_asc", label: "Least time left" },
-  { value: "remaining_desc", label: "Most time left" },
-  ...(isAll ? [] : [{ value: "added_desc", label: "Newest added" }]),
-  { value: "added_asc", label: "Oldest added" },
-];
-
-export const ENTRY_TYPES: Options = [
-  { value: "", label: "All types" },
-  { value: "web_article", label: "Web articles" },
-  { value: "epub", label: "EPUBs" },
-  { value: "pdf", label: "PDFs" },
-  { value: "video", label: "Videos" },
-  { value: "podcast_episode", label: "Podcast episodes" },
-];
-
 /** Unfiled is a view of All only. */
 export const projections = (isAll: boolean): Options => [
   { value: "", label: "all items" },
-  ...(isAll ? [{ value: "unfiled", label: "unfiled" }] : []),
+  { value: "unfinished", label: "unfinished" },
   { value: "in_progress", label: "in progress" },
+  ...(isAll ? [{ value: "unfiled", label: "unfiled" }] : []),
 ];
-
-/** An unknown current value (a hand-written url) is offered as itself, its label
- * bounded to 24 code points so the toolbar keeps its width until the server
- * refuses the view. */
-export function offered(options: Options, value: string): Options {
-  if (options.some((option) => option.value === value)) return options;
-  const chars = Array.from(value);
-  const label = chars.length > 24 ? `${chars.slice(0, 23).join("")}…` : value;
-  return [...options, { value, label }];
-}
-
-/** What each type is called where a view of it is empty. */
-const TYPE_PLURALS: Readonly<Record<string, string>> = {
-  web_article: "web articles", epub: "epubs", pdf: "pdfs", video: "videos", podcast_episode: "podcast episodes",
-};
 
 /** A complete view's empty state: what it lacks, and the way back. */
 export function emptyEntries({
-  params,
+  view,
   isAll,
   change,
 }: {
-  readonly params: URLSearchParams;
+  readonly view: Pick<LibraryView, "entry_type" | "projection">;
   readonly isAll: boolean;
   readonly change: (changes: ViewChanges) => void;
 }): { readonly line: Line; readonly verbs?: Verbs } {
-  const type = params.get("entry_type");
-  const projection = params.get("projection");
-  const unfinished = params.get("completion") === "unfinished";
+  const { entry_type: type, projection } = view;
   const verb = (label: string, changes: ViewChanges): Verbs => [{ label, commandKey: `library-view:${label}`, run: () => change(changes) }];
-  const clear = verb("clear filters", { entry_type: null, completion: null });
+  const clear = verb("show all types", { entry_type: null });
   if (type !== null) {
-    const plural = TYPE_PLURALS[type];
-    return { line: { fact: plural === undefined ? "nothing of this type here." : `no ${plural} in this view.` }, verbs: clear };
+    // justify-type-assertion: the decoder admits only the published type options.
+    const plural = ENTRY_TYPES.find(option => option.value === type)!.label;
+    return { line: { fact: `no ${plural} in this view.` }, verbs: clear };
   }
   if (projection === "in_progress") return { line: { fact: "nothing in progress." }, verbs: verb("show all items", { projection: null }) };
-  if (projection === "unfiled") return { line: { fact: unfinished ? "no unfinished unfiled items." : "no unfiled items." }, verbs: verb("show all items", { projection: null }) };
-  if (unfinished) return { line: { fact: "no unfinished items." }, verbs: verb("show finished", { completion: null }) };
+  if (projection === "unfiled") return { line: { fact: "no unfiled items." }, verbs: verb("show all items", { projection: null }) };
+  if (projection === "unfinished") return { line: { fact: "no unfinished items." }, verbs: verb("show all items", { projection: null }) };
   return { line: { fact: isAll ? "nothing saved yet." : "nothing in this library yet." } };
 }

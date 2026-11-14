@@ -424,8 +424,8 @@ export default function EvidencePane({ state, reader, actions, openKey, onRetry,
               : remote?.status === "partial" ? "count incomplete" : "count loading";
             const Glyph = FILTER_ICONS[filter];
             return <Fragment key={filter}>
-              <ChoiceField ref={index === 0 ? firstType : undefined} presentation={Glyph ? "Facet" : "Inline"} checked={!hidden.has(filter)} icon={Glyph ? <Glyph size={16} /> : undefined}
-                label={<><span className={Glyph ? "sr-only" : undefined}>{FILTER_LABELS[filter]}</span>{Glyph ? null : " "}<span className={styles.count} aria-hidden="true">{count ?? "—"}</span></>}
+              <ChoiceField ref={index === 0 ? firstType : undefined} presentation="Facet" checked={!hidden.has(filter)} icon={Glyph ? <Glyph size={16} /> : "librarian"}
+                label={<><span className="sr-only">{FILTER_LABELS[filter]}</span><span className={styles.count} aria-hidden="true">{count ?? "—"}</span></>}
                 help={count === null ? `${FILTER_LABELS[filter]}, ${description}` : FILTER_LABELS[filter]}
                 aria-describedby={`${ids}-${filter}`}
                 onChange={checked => setHidden(current => { const next = new Set(current); if (checked) next.delete(filter); else next.add(filter); return next; })} />

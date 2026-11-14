@@ -146,3 +146,11 @@ batch/child ids; accepted children remain untouched. retry preserves original by
 `/feed-opml-imports` supplies active/attention batches plus bounded recent terminal summaries; imports draws batches only while unsettled, as register rows whose companion holds the child record.
 the imports revision and digest own refresh. export includes active
 subscriptions only and retains the source owner's retrieval-url privacy gate.
+
+## collation
+
+feed and podcast indexes publish filter views, an on-open library dimension and
+owner order. loading/failure stays inside the library picker. text remains
+local; reset clears text/library/order while preserving the view. detail panes
+retain state views, local words and newest/oldest ordering; podcasts also offer
+duration.

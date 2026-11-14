@@ -11,8 +11,6 @@ import { Fact } from "@/components/feedback/Fact";
 import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { useLocalOutlineRoot, type LocalOutlineHandle } from "@/components/notes/LocalOutline";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
@@ -78,15 +76,16 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const rootField = useMemo(() => ({label: "page title", initialTitle, placeholder: pageTitle("", date)}), [date, initialTitle]);
   const root = useLocalOutlineRoot({rootRef, prelude, apiRef: outline, filter, rootField, entering: params.get("via") ?? undefined});
   usePaneReturnReady(root.ready || root.error !== null);
-  const { inputRef, focusInput } = usePaneQueryInput();
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   usePaneChrome({workHistory: root.controller?.history,
     displayTitle, editor: root.rootEditor ?? undefined,
     header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
-    query: { kind: "Controls", focusInput, content: <PaneQueryToolbar inputRef={inputRef}
-      input={{ label: "Filter page items", placeholder: "Filter page items", value: filter, appliedValue: filter, onChange: setFilter, onClear: () => setFilter("") }}
-      onReset={filter ? () => setFilter("") : undefined} /> },
+    query: { kind: "Collation", collation: {
+      words: { label: "filter page items", value: filter, applied: filter, onChange: setFilter,
+        onClear: () => setFilter(""), standing: false, onSubmit: null, rows: null, notice: null, verbs: [] },
+      dimensions: [], order: null, reset: null,
+    } },
   });
   useEffect(() => {
     if (newPage && page !== null && id !== null) pane.router.replace(`/pages/${id}`, { activate: false });

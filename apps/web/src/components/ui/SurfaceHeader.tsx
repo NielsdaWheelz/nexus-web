@@ -73,6 +73,8 @@ export default function SurfaceHeader({
   onMouseDown,
   editor,
   frameRef,
+  search,
+  statement,
 }: {
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
@@ -94,6 +96,8 @@ export default function SurfaceHeader({
   onMouseDown?: MouseEventHandler<HTMLElement>;
   editor?: PaneChrome["editor"];
   frameRef: RefObject<HTMLDivElement | null>;
+  search?: { readonly label: string; readonly onActivate: (opener: HTMLElement) => void; readonly reason?: string; readonly hint: string };
+  statement?: { readonly words: readonly string[]; readonly expanded: boolean; readonly controls: string; readonly onToggle: (opener: HTMLElement) => void };
 }) {
   const reasonId = useId();
   const paneId = usePaneRuntime()?.paneId;
@@ -200,9 +204,15 @@ export default function SurfaceHeader({
               model={header}
               projection={projection}
               editor={editor?.kind === "Inline" ? editor.content : editor?.control}
+              statement={statement}
             />
           </div>
           <div className={styles.trailing}>
+            {!mobile && search ? <Button iconOnly icon={<Icon.Search />} className={styles.headerButton} aria-label={search.label}
+              aria-disabled={search.reason ? true : undefined} aria-describedby={search.reason ? `${reasonId}-search` : undefined}
+              tooltip={{ text: search.reason ? `${search.label}: ${search.reason}` : search.hint }}
+              onClick={event => { if (!search.reason) search.onActivate(event.currentTarget); }} /> : null}
+            {!mobile && search?.reason ? <span id={`${reasonId}-search`} className="sr-only">{search.reason}</span> : null}
             {resourceActions ? <ResourceActions subject={resourceActions} density="Header"
               returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
             {!narrow && primaryAction && primary && primaryState ? (

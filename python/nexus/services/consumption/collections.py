@@ -28,7 +28,7 @@ def ordered_source_ids(
     if isinstance(target, wire.FeedCollectionTarget):
         return _feed_selection(db, viewer_id, target, state="all")
     return library_listing.ordered_selection_ids(
-        db, viewer_id, target.library_id, library_listing.EntryView(None, None, None, None)
+        db, viewer_id, target.library_id, library_listing.EntryView(None, None, None)
     )
 
 

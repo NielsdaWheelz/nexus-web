@@ -1,7 +1,7 @@
 "use client";
 
 // The search pane's author filter: type to find an author, click to add its
-// handle to `authors=`; applied chips read display names from a label cache.
+// handle to `authors=`; chosen options read display names from a label cache.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Fact, Failed } from "@/components/feedback/Fact";
@@ -22,7 +22,7 @@ import styles from "./ContributorFilter.module.css";
 /**
  * Display names for applied handles: remembered on add, else fetched with
  * retry. A failed fetch is forgotten, so the next change to the handles
- * retries it; until then the chip shows the handle.
+ * retries it; until then the option shows the handle.
  */
 export function useContributorFilterLabels(handles: readonly string[]) {
   const [labels, setLabels] = useState<Readonly<Record<string, string>>>({});
@@ -84,12 +84,12 @@ export default function ContributorFilter({
   return (
     <div className={styles.filter}>
       <label className={styles.label}>
-        <span>Authors</span>
+        <span>authors</span>
         <Input
           ref={inputRef}
           type="search"
           value={query}
-          placeholder="Find an author"
+          placeholder="find an author"
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>

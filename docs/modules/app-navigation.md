@@ -509,3 +509,12 @@ This is the production-shaped 80/20 solution: a typed identity registry, one
 small curated projection, semantic route metadata, and the existing pane store.
 It avoids both duplicated conditionals and a premature configurable-navigation
 system.
+
+## collation
+
+`Pane.Search`, bare `/` outside editable targets and the desktop magnifier open
+and select the active pane query. slash is consumed only when opening succeeds
+and no interaction owner stands. phone more supplies the command; its header
+statement unfolds views and words. disclosures belong to the source visit.
+invalid libraries/library/lectern urls offer reset view; ordinary collation
+reset preserves the view.

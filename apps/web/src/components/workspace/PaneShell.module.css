@@ -331,3 +331,7 @@
     pointer-events: none;
   }
 }
+.controlRow.viewRow { display: flex; flex-wrap: wrap; align-items: end; }
+.controlRow.viewRow[hidden] { display: none; }
+.controlRow.viewRow > [role="tablist"], .controlRow.viewRow > nav { flex: 0 1 auto; max-inline-size: 100%; }
+.enterHint { color: var(--ink-muted); font-size: var(--text-xs); }

@@ -3,7 +3,7 @@
 // The local account database owns the index online and offline. Pages use one
 // title/ref ordering; filtering describes only the loaded bounded prefix.
 import * as Icon from "@/lib/ui/icons";
-import { useEffect, useId, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { pageTitle } from "@nexus/authored/queries";
 import CollectionView from "@/components/collections/CollectionView";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
@@ -11,9 +11,6 @@ import { Fact } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Input from "@/components/ui/Input";
-import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
@@ -48,17 +45,15 @@ export default function NotesPaneBody() {
         : { kind: read.error === null ? "Partial" : "Failed", visibleCount, loadedCount: rows.length, unit: UNIT };
     },
   });
-  const { inputRef, focusInput } = usePaneQueryInput();
-  const statusId = useId();
   const visible = rows.filter(row => matchesPaneFilterQuery(filter.query, [row.title.text]));
   usePaneChrome({
-    query: { kind: "Controls", focusInput, content: <PaneQueryToolbar
-      inputRef={inputRef}
-      input={{ label: "Filter pages", placeholder: "Filter pages", value: filter.query, appliedValue: filter.query, onChange: filter.onQueryChange, onClear: filter.clearQuery }}
-      status={{ placement: "Inline", id: statusId, visible: false, content: <PaneFilterRowsStatus id={statusId} status={filter.rowStatus} query={filter.query} announceQueryChanges={read.data !== null && read.error === null} /> }}
-      onReset={filter.query ? filter.clearQuery : undefined}
-    /> },
-    header: { kind: "Section", meta: complete ? { kind: "Count", value: rows.length, unit: "page" } : { kind: "Pending" } },
+    query: { kind: "Collation", collation: {
+      words: { label: "filter pages", value: filter.query, applied: filter.query,
+        onChange: filter.onQueryChange, onClear: filter.clearQuery, standing: false, onSubmit: null,
+        rows: { status: filter.rowStatus, announce: read.data !== null && read.error === null }, notice: null, verbs: [] },
+      dimensions: [], order: null, reset: null,
+    } },
+    header: { kind: "Section", meta: complete ? { kind: "Count", value: visible.length, of: rows.length, unit: "page" } : { kind: "Pending" } },
   });
 
   const title = useResourceDraft("Notes.NewPageTitle", () => "");

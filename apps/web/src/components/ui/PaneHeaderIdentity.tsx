@@ -1,3 +1,4 @@
+import * as Icon from "@/lib/ui/icons";
 import type { ReactNode } from "react";
 import type {
   PaneHeaderCreditGroup,
@@ -22,11 +23,13 @@ export default function PaneHeaderIdentity({
   model,
   projection,
   editor,
+  statement,
 }: {
   readonly id: string;
   readonly model: PaneHeaderModel;
   readonly projection: "Desktop" | "Mobile";
   readonly editor?: ReactNode;
+  readonly statement?: { readonly words: readonly string[]; readonly expanded: boolean; readonly controls: string; readonly onToggle: (opener: HTMLElement) => void };
 }) {
   let pending = false;
   let support: ReactNode = null;
@@ -36,10 +39,12 @@ export default function PaneHeaderIdentity({
     const meta =
       model.meta.kind === "Count"
         ? [
-            `${model.meta.value.toLocaleString()} ${plural(model.meta.unit, model.meta.value)}`,
+            model.meta.of !== undefined && model.meta.of !== model.meta.value
+              ? `${model.meta.value.toLocaleString()} of ${model.meta.of.toLocaleString()}${projection === "Mobile" ? "" : ` ${plural(model.meta.unit, model.meta.of)}`}`
+              : `${model.meta.value.toLocaleString()} ${plural(model.meta.unit, model.meta.value)}`,
           ]
         : [];
-    const pieces = [...context, ...meta];
+    const pieces = [...(projection === "Mobile" && statement ? [] : context), ...meta];
     pending = model.meta.kind === "Pending";
     support =
       pieces.length > 0 ? (
@@ -68,7 +73,13 @@ export default function PaneHeaderIdentity({
         {model.title}
       </h1>
       {editor === undefined ? null : <div className={styles.editor}>{editor}</div>}
-      {support === null ? null : <p className={styles.support}>{support}</p>}
+      {projection === "Mobile" && statement ? <button type="button" className={`${styles.support} ${styles.statement}`}
+        aria-expanded={statement.expanded} aria-controls={statement.controls} onClick={event => statement.onToggle(event.currentTarget)}>
+        <span className="sr-only">list: </span>
+        <span className={styles.statementWords}>{statement.words.join(" · ")}</span>
+        {statement.words.length > 0 && support !== null ? <span className={styles.fixed}> · </span> : null}
+        {support}<Icon.Disclose size={12} aria-hidden="true" open={statement.expanded} />
+      </button> : support === null ? null : <p className={styles.support}>{support}</p>}
     </div>
   );
 }

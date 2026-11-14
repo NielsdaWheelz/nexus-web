@@ -462,33 +462,20 @@ def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> bool:
     return changed
 
 
-# The index orders names as shown (the default library is All); absent sort is
-# oldest created, so All comes first. Every plan ends in the unique id.
+# All precedes named libraries, then names use the canonical stable order.
 _PRESENTED = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
-_ID = SortKey("id", "asc", KeysetValueKind.Uuid)
-INDEX_PLANS: dict[str | None, tuple[SortKey, ...]] = {
-    None: (SortKey("created_at", "asc", KeysetValueKind.DateTime), _ID),
-    "created_desc": (
-        SortKey("created_at", "desc", KeysetValueKind.DateTime),
-        SortKey("id", "desc", KeysetValueKind.Uuid),
-    ),
-    "name_asc": (
-        SortKey("name_key", "asc", KeysetValueKind.Text),
-        SortKey("presented_name", "asc", KeysetValueKind.Text),
-        _ID,
-    ),
-    "name_desc": (
-        SortKey("name_key", "desc", KeysetValueKind.Text),
-        SortKey("presented_name", "desc", KeysetValueKind.Text),
-        _ID,
-    ),
-}
+INDEX_PLAN = (
+    SortKey("named", "asc", KeysetValueKind.Int),
+    SortKey("name_key", "asc", KeysetValueKind.Text),
+    SortKey("presented_name", "asc", KeysetValueKind.Text),
+    SortKey("id", "asc", KeysetValueKind.Uuid),
+)
 
 
 def library_index_rows_sql() -> str:
     """Every member library with its presented name and canonical index order facts."""
     return f"""
-                SELECT {_COLUMNS}, l.created_at, {_PRESENTED} AS presented_name,
+                SELECT {_COLUMNS}, (NOT l.is_default)::int AS named, {_PRESENTED} AS presented_name,
                        lower(btrim({_PRESENTED})) AS name_key
                 FROM libraries l
                 JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
@@ -498,12 +485,9 @@ def library_index_rows_sql() -> str:
 def list_libraries(
     db: Session, viewer_id: UUID, items: Sequence[tuple[str, str]]
 ) -> CollectionIndex[LibraryOut]:
-    """Every member library, in the canonical `sort` order."""
-    query = parse_index_query(items, domain_keys={"sort"})
-    sort = query.get("sort")
-    if sort not in INDEX_PLANS:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported libraries view")
-    order = order_by_sql(INDEX_PLANS[sort], alias="facts")
+    """Every member library, All first and then by name."""
+    parse_index_query(items, domain_keys=set())
+    order = order_by_sql(INDEX_PLAN, alias="facts")
     rows = db.execute(
         text(f"SELECT * FROM ({library_index_rows_sql()}) facts ORDER BY {order}"),
         {"viewer_id": viewer_id},

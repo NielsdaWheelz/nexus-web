@@ -22,7 +22,7 @@ export type PaneHeaderMeta =
   | { readonly kind: "None" }
   | { readonly kind: "Pending" }
   /** `value` counts whole rows; its producer owns that. */
-  | { readonly kind: "Count"; readonly value: number; readonly unit: string };
+  | { readonly kind: "Count"; readonly value: number; readonly unit: string; readonly of?: number };
 
 export type PaneResourceHeaderPublication =
   | {

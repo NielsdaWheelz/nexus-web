@@ -115,3 +115,10 @@ cancellation/expiry cannot later grant playback or release an unrelated holder.
 native format 2 removes saved provenance through one atomic version-1 conversion,
 preserving all pending listening facts, descriptors and checkpoints. unsupported
 or malformed state refuses; it is never reset or treated as absence.
+
+## collation
+
+library capture carries sort, entry_type and projection. unfinished excludes
+Finished; completion is not accepted. entry_type remains a capture criterion
+even though ordinary reads leave it to the browser. captured membership follows
+the displayed criterion.

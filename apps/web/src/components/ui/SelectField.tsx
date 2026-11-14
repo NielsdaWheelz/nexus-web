@@ -2,9 +2,8 @@ import type { ChangeEventHandler, ReactNode, Ref } from "react";
 import Select, { type SelectSize } from "./Select";
 import styles from "./Field.module.css";
 
-/** One visibly labelled native select: Stacked for a pane refinement, Inline for a compact instrument option. */
+/** One visibly labelled native select for forms. */
 export default function SelectField({
-  layout,
   label,
   id,
   size,
@@ -15,7 +14,6 @@ export default function SelectField({
   ref,
   children,
 }: {
-  readonly layout: "Stacked" | "Inline";
   readonly label: string;
   readonly id?: string;
   readonly size?: SelectSize;
@@ -28,7 +26,7 @@ export default function SelectField({
 }) {
   return (
     <label
-      className={layout === "Stacked" ? styles.stacked : styles.inline}
+      className={styles.stacked}
       htmlFor={id}
     >
       <span>{label}</span>

@@ -54,7 +54,7 @@ ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 def list_libraries(
     request: Request, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[CollectionIndex[LibraryOut]]:
-    """`sort` = created_desc | name_asc | name_desc; absent is oldest created."""
+    """All first, then named libraries in name order."""
     return Data(
         data=libraries.list_libraries(db, viewer.user_id, request.query_params.multi_items())
     )
@@ -132,7 +132,7 @@ def list_entries(
     db: RepeatableReadDbSession,
     response: Response,
 ) -> ConsumptionData[LibraryEntriesIndexOut]:
-    """`sort`, `entry_type`, `projection`, `completion`: see `library_listing`."""
+    """`sort` and `projection`: see `library_listing`."""
     response.headers["Cache-Control"] = "private, no-store"
     view = library_listing.parse_entries_query(request.query_params.multi_items())
     data = library_listing.list_library_entries(db, viewer.user_id, library_id, view=view)

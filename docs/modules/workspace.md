@@ -423,69 +423,52 @@ readers keep their own document viewport and collection return anchors stay in
 `.routeContent`. canvas dragging begins only in the identity header's
 noninteractive region. controls and option labels never drag the canvas.
 
-`query` is `Controls {content, focusInput}` or `Find {session}`. absent means
-unsupported; a null session controller means a promised source is not ready.
-ordinary collection/page/note controls stay visible. find starts collapsed at
-every width; only explicit disclosure opens its row, alongside navigation.
-closing clears the session and collapses the row. an open find stays visible
-and closable while its source reloads. only active, visible mobile find holds
-chrome. disclosure and empty focused inputs survive pane activation and an
-active-pane breakpoint change; visit retirement ends disclosure and transient
-results. hidden find occupies no space or tab stops. reader reflow owns passage
-continuity when the row changes height.
+`query` is `Collation {collation}` or `Find {session}`. absence means unsupported;
+a null find controller means the promised source is not ready. bodies publish
+words, dimensions, order and reset through `usePaneChrome`; they own urls, read
+keys, timing and list meaning. `lib/panes/collation.ts` owns the contract and word
+derivation. reset clears words, dimensions and order, never the view, and exists
+only while a dimension or order is off its default.
 
-pane control rows, the reader’s page running head and companion/strip headers
-consume the shared compact density recipe. controls own paint; the shell owns layout and available space. published
-`views` and route `sections` share the first control row, which retreats with the
-mobile controls. [panes](panes.md#pane-views-and-sections) owns selection and route
-contracts. controlled companion word tabs retain guarded focus, relocation,
-panel ids and active-body lifetime. active-tab reveal observes the live header
-and selected tab across relocation and text zoom.
+every selected value must name a published option or order way. `One` uses null
+for rest; `Many` uses an empty array. an optional `restCount` supplies the total
+when a pane can count it. `Span.unit` names its step controls, and `backward` and
+`forward` state whether each step is allowed; unavailable steps remain focusable.
+the body supplies the displayed date, optional return-to-now command and native
+date-input value/bound, so the shell knows no calendar or url semantics.
 
-`PaneQueryToolbar` owns presentation: a stable input/clear entry with optional
-submit, followed by operation actions, inline options disclosure, native
-sort/reset and optional trailing actions. options may use the shared icon-only
-contract; their accessible name retains the active-option count. optional status
-declares `Inline` or `Details` placement; inline
-feedback shares the actions group. applied text, chips and details status share
-one compact summary; errors and expanded options remain in its single bounded
-refinement region, capped by the shell. mounted options retain their drafts.
-controls wrap when their readable minimum sizes require it; no pane-width rule
-forces another row. empty actions/controls wrappers have no layout footprint.
-submitted queries use a form; local filters/find use labelled groups, with
-details/options outside the form. checkboxes represent booleans/sets; uniquely
-named radio groups represent singular choices. domains own options, draft/applied
-text, timing, results, urls and reset. clear removes draft AND applied text
-while retaining facets/order; browse immediately returns to its empty-query
-state. an aborted response cannot publish as current. browse labels its
-provider-scoped control
-“youtube sort”; other sources keep relevance. newest survives facet removal
-while the planned sections include youtube and resets only when the scope
-excludes it.
+`PaneShell` draws views/sections and `CollationLine` on one wrapping hairline row.
+only the tab scroller scrolls horizontally. dimensions and order use
+`PickerSurface` and collection listboxes; a single choice closes, multiple choices
+stay open. reasons block inclusion, not removal of an already-selected multiple
+choice. asides hold finders or read state outside listbox markup. withdrawal and
+reset leave focus on a surviving row control, else pane chrome.
 
-supplied status requires `{ placement, id, content, visible }`. omit status for
-idle find. visibility changes only the
-wrapper's sighted presentation (`sr-only` when false); the described element
-and domain-owned live subtree stay mounted. local-filter publishers use fixed
-inline placement with `visible: false`: full scope descriptions remain attached
-to the input, while routine loading/count text has no chrome footprint. local
-query changes speak after 400ms only with a usable source in the active pane;
-imports server queries disable that narrator. the first-read feedback owner
-speaks its own initial outcome once. no narrator speaks automatic page arrivals.
-sorting, reset eligibility and independent header counts do not imply filtering.
-local reset appears only for changed facets/order and clears text plus those
-settings; text-only views use clear/escape. header totals retain their existing
-exact/domain meaning. unfinished local filters use provisional empty copy and,
-when matches exist, explain “filter applies to loaded items.” at the results
-boundary. outline filters name loaded top-level items and retain explicit show
-more; failures and complete empty results stay distinct. browse/search keep
-explicit query waiting, failures and ordering descriptions, without rolling
-counts or automatic-pagination completion summaries. empty details have zero
-visual height and no tab stop; a suppressed status keeps its live subtree
-mounted and accessible. empty details without that subtree are hidden. capture
-focus ownership before hiding; repair to the enabled input before paint, or
-existing pane chrome/landmark if the input is disabled. retain focus already
-transferred outside.
+`QueryField` owns the bare input, reserved clear slot, caret line, parts and
+notice. submitted words use a native search form; other words keep their own
+key handling. local fields open through `Pane.Search`, bare `/` outside editable targets,
+or the header magnifier. each opens, focuses and selects. standing, filled and
+explicitly opened fields survive blur. `requestOpen` opens and latches the field for
+the current source while an entry delivery is pending; the body’s input ref claims
+and focuses it. `onClear` receives `Clear` or `Close` so a body can preserve that
+intent across a source change. clear retains focus; close clears and
+returns to the opener or pane chrome. escape belongs first to an open picker,
+then the body handler, then clears text, then closes an empty non-standing field.
+reopening from inside the field preserves its opener. a picker word withdrawn
+after selection restores focus to a surviving row control if it still held focus.
+browse submits on enter; search retains its settle timing. `Refused` notices
+describe and invalidate the input; `Ready` notices inform. `PaneFilterRowsStatus`
+keeps its description and 400ms local-query announcement; views, dimensions and
+order are silent.
+
+phone views and dimensions start folded behind the header statement: the
+non-default view, lit words and count, or the current view when otherwise empty.
+unfolding reveals the line and field; filled and standing fields survive folding.
+settings sections remain visible. phone more supplies the field command; desktop
+supplies the magnifier. find keeps its one-escape close and transient companion
+results; close returns to its opener or pane chrome. only visible find holds
+reader chrome; visit retirement ends disclosures.
+reader reflow owns passage continuity when find changes the control height.
 
 `usePaneFilterRows` captures its committed source and query in the existing
 per-visit memento. pane back/forward restores that query before list and scroll
@@ -521,11 +504,10 @@ retire without replay; restored-ready mounts and passive traversal stay silent.
 controller and a clear command that remains effective through source replacement.
 the shell owns disclosure/results; clear preserves find preferences and the
 reader's held return origin. [reader implementation](reader-implementation.md)
-owns scope, computation, navigation supersession and painting. `FindBar` adapts the shared
-query toolbar: idle is silent, complete counts are compact, and partial/failure
-details stay explicit. navigation/retry precede icon-only find options, followed
-by the word `results` (named and tooltipped "Show search results") and icon-only
-close. applied-option chips remain visible. options draws `Filter`;
+owns scope, computation, navigation supersession and painting. `FindBar` adapts
+`QueryField`: idle is silent, complete counts are compact, and partial/failure
+details stay explicit. position and steps precede pressed case, word and scope
+words, followed by `results` and `close`. failures supply a notice with retry;
 the companion's transient tab is the lowercase word `search results`. results opens its existing companion presentation and never
 toggles it closed. one persistent status region supplies full descriptions.
 retry transfers focus before its control disappears; companion results remain
@@ -533,8 +515,8 @@ transient. `useFind` owns find movement and cancellation; the shell owns
 disclosure/focus, and the shared field primitives own ordinary text editing and
 keyboard behavior.
 the chrome's canonical resource identity is `resourceRef?: CanonicalResourceRef`.
-[the visual system](visual-system.md) owns query-toolbar sizing, wrapping and
-refinement presentation. historical #628 browser/dom and native zoom observations
+[the visual system](visual-system.md) owns field sizing, wrapping and
+picker presentation. historical #628 browser/dom and native zoom observations
 make no spoken assistive-technology claim.
 
 a resource pane publishes its canonical `resourceRef`
@@ -612,8 +594,7 @@ owner measures stationary frames
 and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
 publishes their shown envelope in each content surface. routes reserve no extra
 media action row. hidden reader chrome follows the measured overlay contract,
-not a permanent header reservation. refinement-room measurement consumes that
-result. the content row explicitly occupies grid row two, the declared fill row,
+not a permanent header reservation. the content row explicitly occupies grid row two, the declared fill row,
 so loading content cannot determine scrollport height. reader composition is
 selected from the active route before publication loading; mounting a reader
 does not change layout.
@@ -993,6 +974,14 @@ panes return null. `goBackPane`/`goForwardPane` require a disposition: `Follow`
 traverses the exact adjacent occurrence; `Fork` peeks without changing either
 source stack. named forks insert after the named pane, preserving minimization.
 all forks create fresh pane/visit ids, empty history, default width and no inspector.
+
+history traversal may carry an explicit pane entry. admission, the visit move
+and that entry's delivery commit together: `Follow` addresses the restored visit;
+`Fork` addresses the new fork, leaving both source stacks intact. without an
+explicit entry, ordinary history retains its `InspectSource` restoration.
+explicit entries use the same claim, authored-seed ownership and replacement
+rules as target activation. clearing librarian search returns to its origin with
+an empty `FocusLibrarianSearch`; closing returns without a focus entry.
 
 named/history forks copy only shell scroll/eye-line (without keyboard focus) and
 `Reader.InspectionView` from the exact visit/route key. authored data, drafts and

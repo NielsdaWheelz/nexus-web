@@ -2,11 +2,10 @@
 
 // One library: its entries under the url's view, drag order for those who manage
 // a named library, the Reading Slate, the inspector's Members and Linked items,
-// and Leave for a member who is not its owner. The url owns sort, type, view and
-// completion and hands them to the server, which validates and combines them;
-// the text filter stays local.
+// and Leave for a member who is not its owner. The server owns sort and view;
+// type and text narrow the complete view locally.
 
-import { useCallback, useEffect, useId, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Icon from "@/lib/ui/icons";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import LibraryFeedsSection from "@/components/feeds/LibraryFeedsSection";
@@ -20,21 +19,16 @@ import { useActiveRegion } from "@/components/feedback/stage";
 import { catalogLine } from "@/lib/catalog/copy";
 import { Ruling } from "@/components/feedback/Ruling";
 import LibraryMembers, { useLibraryMembers } from "@/components/libraries/LibraryMembers";
-import ChoiceField from "@/components/ui/ChoiceField";
 import PaneSurface from "@/components/ui/PaneSurface";
-import RadioGroup from "@/components/ui/RadioGroup";
-import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { PlaybackSourceContext, captureSavedView, capturePlaybackSource, type PlaybackSource } from "@/lib/actions/playbackSource";
 import { useCatalogRead, useCatalogState, usePromoteLiveGroup } from "@/lib/catalog/provider";
 import { unstamped } from "@/lib/consumption/listening";
 import { catalogEntries, catalogLibrary } from "@/lib/catalog/selectors";
-import { LIVE_SOURCE } from "@/lib/catalog/types";
+import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import { remoteReady } from "@/lib/native/admission";
 import { type LibraryFeedIndex } from "@/lib/feeds/api";
 import { ApiError, isApiError } from "@/lib/api/client";
-import { publishChange, useChangeStamp } from "@/lib/api/changes";
+import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -48,22 +42,22 @@ import {
   presentLibraryEntry,
 } from "@/lib/collections/presenters/library";
 import { viewHref, type ViewChanges } from "@/lib/collections/view";
-import { orderStatus, presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
+import { presentOrder, projectOrder, useLibraryOrder } from "@/lib/collections/order";
 import { useResourceInspector } from "@/components/resource-inspector/useResourceInspector";
 import {
   libraryEntriesIndex,
-  getLibrary,
   type Library,
   type LibraryEntry,
 } from "@/lib/libraries/api";
 import {
   ENTRY_TYPES,
   emptyEntries,
-  entrySorts,
-  offered,
+  decodeLibraryView,
+  libraryViewNeedsIdentity,
   projections,
 } from "@/lib/libraries/views";
 import { mediaListFilterFields } from "@/lib/media/mediaListFilter";
+import { mediaKindGlyph } from "@/lib/media/kind";
 import {
   useMediaSummaries,
 } from "@/lib/media/MediaSummaryProvider";
@@ -98,10 +92,18 @@ const fields = (entry: LibraryEntry) =>
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("library route requires an id");
-  return <LibraryPane key={id} id={id} />;
+  return <LibraryView key={id} id={id} />;
 }
 
-function LibraryPane({ id }: { readonly id: string }) {
+function LibraryView({ id }: { readonly id: string }) {
+  const params = usePaneSearchParams();
+  const router = usePaneRouter();
+  const view = decodeLibraryView(params);
+  if (view === null) return <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => router.replace(`/libraries/${id}`) }]} />;
+  return <LibraryPane id={id} view={view} />;
+}
+
+function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNullable<ReturnType<typeof decodeLibraryView>> }) {
   const speak = useActiveRegion();
   const { ctx } = useActionRuntime();
   const runtime = usePaneRuntime();
@@ -110,25 +112,41 @@ function LibraryPane({ id }: { readonly id: string }) {
   const router = usePaneRouter();
   const params = usePaneSearchParams();
   const query = indexPaneQuery("library", params)!;
+  const { entry_type: type, sort, projection } = view;
 
   const catalog = useCatalogState();
-  const { read: descriptor, group } = useLibraryEntriesRead();
+  const { read: descriptor, identity: identityDescriptor, group } = useLibraryEntriesRead();
+  // The accepted identity belongs to this mounted library; its kind does not change.
+  const accepted = useRef<{ data: Library; source: ReadSource } | null>(null);
+  const retained = accepted.current?.source.kind === "catalog" && accepted.current.source.snapshot_id !== catalog.data?.value.snapshot_id
+    ? null : accepted.current;
+  const needsIdentity = libraryViewNeedsIdentity(view);
+  const savedIdentity = useCatalogRead(value => catalogLibrary(value, id));
+  const identity = useServerValue({ ...identityDescriptor, catalog: savedIdentity, visit: IDENTITY,
+    enabled: observing && needsIdentity && retained === null });
+  const identityError = identity.status === "loading" ? null : identity.error;
+  const identityMissing = identityError?.status === 404;
+  const known = retained ?? (identity.status === "ready" && identityError === null &&
+    (identity.source.kind === "live" || identity.source.snapshot_id === catalog.data?.value.snapshot_id)
+    ? { data: identity.data, source: identity.source } : null);
+  const invalidSelection = known !== null && (projection === "unfiled" && !known.data.is_default || sort === "added_desc" && known.data.is_default);
+  const admitted = !needsIdentity || known !== null && !invalidSelection;
   const savedRead = useCatalogRead(value => {
     const data = catalogEntries(value, id, new URLSearchParams(query));
     return data === null ? null : { data, consumption_revision: value.value.consumption_revision };
   });
-  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: ENTRIES, enabled: observing });
+  const raw = useServerValue({ ...descriptor, catalog: savedRead, visit: ENTRIES, enabled: observing && admitted });
   const relevantMediaIds = useMemo(() => new Set(catalog.raw?.value.library_media.flatMap(row => row.library_id === id ? [row.media_id] : []) ?? []), [catalog.raw, id]);
-  usePromoteLiveGroup(group, raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh
+  usePromoteLiveGroup(group, admitted && raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh
     ? [raw.data.consumption_revision] : null, relevantMediaIds);
   const saved = useMemo(() => {
-    if (catalog.data === null) return null;
+    if (!admitted || catalog.data === null) return null;
     try {
       const data = catalogEntries(catalog.data, id, new URLSearchParams(query));
       return data === null ? null : { data: { data, consumption_revision: catalog.data.value.consumption_revision },
         source: { kind: "catalog" as const, snapshot_id: catalog.data.value.snapshot_id, captured_at: catalog.data.value.captured_at } };
     } catch (error) { if (isApiError(error)) return null; throw error; }
-  }, [catalog.data, id, query]);
+  }, [admitted, catalog.data, id, query]);
   const snapshot: typeof raw = group.live || saved === null ? raw : {
     ...raw, status: "ready", data: saved.data, source: saved.source, fresh: false, acceptedStale: null, generation: 0,
     error: raw.status === "loading" ? null : raw.error, refreshing: indexReading(raw),
@@ -137,28 +155,28 @@ function LibraryPane({ id }: { readonly id: string }) {
   const index = list.status === "ready" ? list.data : null;
   const indexItems = useMemo(() => index?.items ?? [], [index]);
   const failure = list.status === "loading" ? null : list.error;
-  const invalidView = failure?.code === "E_INVALID_REQUEST";
   const busy = indexReading(list);
-  const savedIdentity = useCatalogRead(value => catalogLibrary(value, id));
-  const identity = useServerValue<Library>({
-    key: `/libraries/${id}`, stale: useChangeStamp("Libraries"), visit: IDENTITY,
-    enabled: observing && invalidView && index === null, catalog: savedIdentity,
-    load: signal => getLibrary(id, signal).then(read => read.data),
-  });
+  useLayoutEffect(() => {
+    if (admitted && list.status === "ready" && list.error === null) accepted.current = { data: list.data.library, source: list.source };
+    else if (retained === null && identity.status === "ready" && identity.error === null)
+      accepted.current = { data: identity.data, source: identity.source };
+  }, [admitted, identity, list, retained]);
   const detail: ServerValue<Library> = list.status === "ready" ? { ...list, data: list.data.library }
-    : invalidView || list.status === "loading" && identity.status === "ready" ? identity : list;
+    : list.status === "loading" && known !== null ? { status: "ready", data: known.data, source: known.source,
+      acceptedStale: null, fresh: false, generation: 0, error: null, refreshing: false, refetch: list.refetch, revalidate: list.revalidate }
+    : list;
   const catalogFailure = detail.status === "loading" || detail.error === null ? null : catalogLine(detail.error);
   const shows: ServerValue<LibraryFeedIndex> = list.status === "ready" ? { ...list, data: list.data.feeds } : list;
   const sourceWork = index !== null && (index.feeds.imports.some(operation => operation.work_in_flight)
     || index.feeds.subscriptions.some(source => source.recurring.work_in_flight || source.recurring.history.work_in_flight
       || source.imports.some(operation => operation.work_in_flight)));
   // justify-polling: one aggregate owns both source cards and their incoming entries.
-  useIntervalPoll({ enabled: observing && remoteReady() && list.status === "ready" && list.source.kind === "live",
+  useIntervalPoll({ enabled: admitted && observing && remoteReady() && list.status === "ready" && list.source.kind === "live",
     pollIntervalMs: sourceWork ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS,
     onPoll: () => list.revalidate({ passive: true }) });
   // Publication belongs to the aggregate owner, with one baseline per exact view.
   const publicationKey = `${ctx.accountId}:${descriptor.key}`;
-  const publicationData = raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh ? raw.data.data : null;
+  const publicationData = admitted && raw.status === "ready" && raw.source.kind === "live" && raw.error === null && raw.fresh ? raw.data.data : null;
   const publication = useMemo(() => publicationData === null ? null : JSON.stringify([
     publicationData.items.map(entry => [entry.entry_id, entry.media_summary.media_id]), publicationData.order_revision,
     publicationData.feeds.order_revision,
@@ -178,10 +196,10 @@ function LibraryPane({ id }: { readonly id: string }) {
   const source = list.status === "ready" ? list.source : detail.status === "ready" ? detail.source : LIVE_SOURCE;
   const live = source.kind === "live";
   const suggestionDestination = { kind: "Library" as const, id, name: library ? libraryDisplayName(library) : "library" };
-  const suggestions = useSuggestions(suggestionDestination, library !== null && live);
+  const suggestions = useSuggestions(suggestionDestination, admitted && library !== null && live);
   const { refresh: refreshSuggestionFeed } = suggestions;
   const order = useLibraryOrder(id, raw.status === "ready" && raw.source.kind === "live" && raw.fresh && raw.error === null ? raw.data.data.order_revision : null);
-  usePaneReturnReady((list.status === "ready" || list.status === "failed" || missing) && detail.status !== "loading");
+  usePaneReturnReady(invalidSelection || identityMissing || needsIdentity && known === null && identityError !== null || (list.status === "ready" || list.status === "failed" || missing) && detail.status !== "loading");
   const scroll = usePaneScrollRetention(indexItems);
   const change = useCallback(
     (changes: ViewChanges) => {
@@ -211,28 +229,26 @@ function LibraryPane({ id }: { readonly id: string }) {
       indexRowStatus(
         list,
         shown.length,
-        shown.filter((entry) => matchesPaneFilterQuery(text, fields(entry))).length,
+        shown.filter((entry) => (type === null || entry.media_summary.media_kind === type) && matchesPaneFilterQuery(text, fields(entry))).length,
         UNIT,
       ),
   });
   const text = filterRows.query.trim();
-  const visible = useMemo(() => text === "" ? shown
-    : shown.filter(entry => matchesPaneFilterQuery(text, fields(entry))), [shown, text]);
+  const visible = useMemo(() => shown.filter(entry => (type === null || entry.media_summary.media_kind === type) && matchesPaneFilterQuery(text, fields(entry))), [shown, text, type]);
 
   const isAll = library?.is_default === true;
   const supportsOrder = live && remoteReady() && library?.can_manage === true && !isAll;
-  const ordered = live && query === "" && text === "" && !isAll
+  const ordered = live && query === "" && type === null && text === "" && !isAll
     ? projectOrder(shown, (entry) => entry.entry_id!, order)
     : visible;
   const rows = useMemo(() => ordered.map(entry => ({ ...presentLibraryEntry(entry),
     id: entry.entry_id ?? libraryEntryId(entry) })), [ordered]);
   const ordering = supportsOrder ? presentOrder({ order, complete: (list.status === "ready"),
-    view: params.get("sort") ? "Sorted" : query || text ? "Filtered" : "Custom",
+    view: sort ? "Sorted" : query || type || text ? "Filtered" : "Custom",
     titleOf: itemId => shown.find(entry => entry.entry_id === itemId)?.media_summary.title ?? "" }) : undefined;
-  const orderingStatus = orderStatus(ordering);
 
   const members = useLibraryMembers(
-    live ? library : null,
+    admitted && live ? library : null,
     runtime?.secondaryPane?.group_id === "resource-inspector" &&
       runtime.secondaryPane.visibility === "visible" &&
       runtime.secondaryPane.active_surface_id === "resource-members",
@@ -240,7 +256,7 @@ function LibraryPane({ id }: { readonly id: string }) {
   );
   useResourceInspector({
     scheme: "library",
-    handle: library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
+    handle: admitted && library && detail.status === "ready" && detail.error?.status !== 403 ? id : null,
     bodies: {
       members: members.shown ? <LibraryMembers state={members.shown} /> : undefined,
       linkedItems: useMemo(
@@ -250,28 +266,10 @@ function LibraryPane({ id }: { readonly id: string }) {
     },
   });
 
-  const { inputRef, focusInput } = usePaneQueryInput();
-  const queryStatusId = useId();
-  const sort = params.get("sort") ?? "";
-  const type = params.get("entry_type") ?? "";
-  const projection = params.get("projection") ?? "";
-  const hideFinished = params.get("completion") === "unfinished";
-  const types = offered(ENTRY_TYPES, type);
   const views = projections(isAll);
-  const chips = [
-    ...(type ? [{ id: "entry_type", label: `Type: ${types.find((option) => option.value === type)!.label}` }] : []),
-    ...(hideFinished ? [{ id: "completion", label: "Hide finished" }] : []),
-  ];
-  const canReset = sort.length > 0 || projection.length > 0 || chips.length > 0;
-  const headerMeta: PaneHeaderMeta = (list.status === "ready")
-    ? { kind: "Count", value: shown.length, unit: "entry" }
+  const headerMeta: PaneHeaderMeta = !admitted ? { kind: "None" } : (list.status === "ready")
+    ? { kind: "Count", value: visible.length, of: shown.length, unit: "entry" }
     : { kind: "Pending" };
-  const clearFilters = { entry_type: null, completion: null };
-  // Recoveries and resets return focus to the permanent query input.
-  const recover = (changes: ViewChanges) => {
-    inputRef.current?.focus({ preventScroll: true });
-    change(changes);
-  };
   const { refetch: refetchEntries } = list;
   // Refresh asks the library's shows to sync, then rereads the library; only the shows' sync
   // speaks. A reread or suggestions refresh that fails over shown rows says nothing.
@@ -297,70 +295,63 @@ function LibraryPane({ id }: { readonly id: string }) {
         requestNexusOpen({ kind: "Import", into: library.is_default ? [] : [{ id, name: library.name }] }, triggerEl),
     }
     : undefined;
-  const emptyState = emptyEntries({ params, isAll, change: recover });
+  const emptyState = emptyEntries({ view, isAll, change });
   const emptyLine = text ? { fact: "no entries match this filter." } : emptyState.line;
-  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: !invalidView && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
+  const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: active && admitted, waiting: admitted && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
   const menuActions: ActionDescriptor[] = importHere ? [importHere] : [];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
-    primaryAction: importHere,
-    views: library === null ? undefined : {
-      label: "library view", value: projection, items: views,
+    primaryAction: admitted ? importHere : undefined,
+    views: !admitted || library === null ? undefined : {
+      label: "library view", value: projection ?? "", items: views,
       onSelect: value => change({ projection: value || null }),
     },
-    query: library === null ? undefined : {
-      kind: "Controls",
-      focusInput,
-      content: (
-        <PaneQueryToolbar
-          inputRef={inputRef}
-          input={{ label: "Filter library entries", placeholder: "Filter entries", value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
-          options={{
-            label: "Filters",
-            activeCount: chips.length,
-            onClear: () => change(clearFilters),
-            content: <>
-              <RadioGroup label="Type" value={type} choices={types} onChange={(value) => change({ entry_type: value || null })} />
-              <ChoiceField label="Hide finished" checked={hideFinished} onChange={(checked) => change({ completion: checked ? "unfinished" : null })} />
-            </>,
-          }}
-          sort={{ label: "Sort", value: sort, choices: offered(entrySorts(isAll), sort), onChange: (value) => change({ sort: value || null }) }}
-          chips={{ items: chips, onRemove: (param) => change({ [param]: null }) }}
-          status={{
-            placement: "Inline",
-            id: queryStatusId,
-            visible: false,
-            content: <PaneFilterRowsStatus announceQueryChanges={(list.status === "ready") && failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
-          }}
-          actions={orderingStatus ? <span>{orderingStatus}</span> : undefined}
-          onReset={canReset ? () => {
-            filterRows.clearQuery();
-            change({ sort: null, projection: null, ...clearFilters });
-          } : undefined}
-        />
-      ),
-    },
-    refresh: live && remoteReady() && library
+    query: !admitted || library === null ? undefined : { kind: "Collation", collation: {
+      words: { label: "filter entries", value: filterRows.query, applied: filterRows.query,
+        onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery, standing: false, onSubmit: null,
+        rows: { status: filterRows.rowStatus, announce: list.status === "ready" && failure === null }, notice: null, verbs: [] },
+      dimensions: [{ kind: "One", id: "entry_type", label: "type", rest: "all types", restCount: list.status === "ready" ? shown.filter(entry => matchesPaneFilterQuery(text, fields(entry))).length : undefined, value: type,
+        options: ENTRY_TYPES.map(option => ({ ...option,
+          sign: mediaKindGlyph(option.value),
+          count: list.status === "ready" ? shown.filter(entry => entry.media_summary.media_kind === option.value && matchesPaneFilterQuery(text, fields(entry))).length : null,
+          reason: null })),
+        onChange: value => change({ entry_type: value }),
+      }],
+      order: { value: sort, rest: isAll ? "recently added" : "custom order", keys: [
+        { label: "title", ways: [{ value: "title_asc", label: "a–z", word: "title a–z" }, { value: "title_desc", label: "z–a", word: "title z–a" }] },
+        { label: "creator", ways: [{ value: "creator_asc", label: "a–z", word: "creator a–z" }, { value: "creator_desc", label: "z–a", word: "creator z–a" }] },
+        { label: "first published", ways: [{ value: "published_desc", label: "newest", word: "newest published" }, { value: "published_asc", label: "oldest", word: "oldest published" }] },
+        { label: "time left", ways: [{ value: "remaining_asc", label: "least", word: "least time left" }, { value: "remaining_desc", label: "most", word: "most time left" }] },
+        { label: "added", ways: isAll ? [{ value: "added_asc", label: null, word: "oldest added" }] : [{ value: "added_desc", label: "newest", word: "newest added" }, { value: "added_asc", label: "oldest", word: "oldest added" }] },
+      ], onChange: value => change({ sort: value }), note: !supportsOrder ? null : sort ? "only custom order can be dragged." : projection ? "show all items to drag." : type ? "reset to drag." : text ? "clear text to drag." : null },
+      reset: sort !== null || type !== null ? () => { filterRows.clearQuery(); change({ sort: null, entry_type: null }); } : null,
+    } },
+    refresh: admitted && live && remoteReady() && library
       ? { kind: "Refreshable", sourceKey: `Library:${id}?${query}`, execute }
       : undefined,
-    resourceRef: canonicalResourceRef({ scheme: "library", id }),
-    menuActions,
+    resourceRef: admitted ? canonicalResourceRef({ scheme: "library", id }) : undefined,
+    menuActions: admitted ? menuActions : [],
     header: { kind: "Section", meta: headerMeta },
   });
 
   const name = library === null ? "" : libraryDisplayName(library);
   const captureReady = live && list.status === "ready" && list.fresh && list.error === null && !list.refreshing && order.state.pending === null;
   const capture = useCallback<PlaybackSource>(async selected_media_id => {
-    const sourceSort = (["title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"] as const).find(value => value === sort) ?? null;
-    const entry_type = (["web_article", "epub", "pdf", "video", "podcast_episode"] as const).find(value => value === type) ?? null;
-    const sourceProjection = (["unfiled", "in_progress"] as const).find(value => value === projection) ?? null;
-    const view = { library_id: id, sort: sourceSort, entry_type, projection: sourceProjection, completion: hideFinished ? "unfinished" as const : null };
     if (source.kind === "catalog")
       return captureSavedView(visible.map(entry => entry.media_summary), selected_media_id);
     if (!captureReady || !remoteReady()) throw new ApiError(409, "E_RESOURCE_CONFLICT", "load the current library before starting this queue");
-    return capturePlaybackSource({ source: { kind: "Library", query: text, ...view }, selected_media_id });
-  }, [sort, type, projection, hideFinished, id, source, visible, text, captureReady]);
+    return capturePlaybackSource({ source: { kind: "Library", query: text, library_id: id, sort: view.sort, entry_type: view.entry_type, projection: view.projection }, selected_media_id });
+  }, [view, id, source, visible, text, captureReady]);
 
+  if (needsIdentity && known === null) {
+    if (identityMissing) return <Fact line={{ fact: "this library isn’t available.", reason: "it was deleted, or you’re not a member." }} speak />;
+    if (identityError !== null) {
+      const line = catalogLine(identityError);
+      return line !== null ? <Fact line={line} speak={speak} /> : <Failed error={identityError} noun="library" retry={{ run: () => { void identity.refetch().catch(() => {}); }, busy: identity.status === "failed" ? identity.retrying : identity.status === "ready" && identity.refreshing }} />;
+    }
+    return <Ruling />;
+  }
+  if (invalidSelection) return <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => router.replace(`/libraries/${id}`) }]} />;
   if (missing) {
     return <>
       {readFeedback.announcement}
@@ -379,17 +370,6 @@ function LibraryPane({ id }: { readonly id: string }) {
       {libraryFailure ?? <Ruling />}
     </>;
   }
-  if (invalidView) {
-    return <>
-      {readFeedback.announcement}
-      {members.held}
-      {libraryFailure ?? <Fact line={{ fact: "this view doesn’t exist." }} speak verbs={[{ label: "reset view", commandKey: `library-view-reset:${id}`, run: () => {
-        filterRows.clearQuery();
-        router.replace(`/libraries/${id}`);
-        requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-      } }]} />}
-    </>;
-  }
 
   const empty = <Fact line={emptyLine} verbs={!text && list.status === "ready" ? emptyState.verbs : undefined} />;
   return (
@@ -406,7 +386,7 @@ function LibraryPane({ id }: { readonly id: string }) {
           empty={empty}
           status={list.status === "failed" ? "error" : list.status}
           ariaLabel={name}
-          anchorKey={text}
+          anchorKey={`${type ?? ""}:${text}`}
           collectionBusy={busy}
           surface={false}
           order={ordering}

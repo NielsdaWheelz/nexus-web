@@ -83,14 +83,12 @@ mobile rows register with the shared control surface; the hide gesture remains
 owned by the active reader.
 
 stats publishes stats/year with its existing period resets; search publishes
-resources/passages. library publishes known all-items/unfiled/in-progress
-projections (unfiled belongs only to all). filters no longer include the view:
-clear filters preserves it, reset clears it, and an empty unfiled view offers
-show all items. loaded libraries keep query and views reachable alongside invalid
-criteria. a cold invalid entry view reads only library identity through the normal
-server/catalog owner; accepted identity stays mounted while a corrected aggregate
-loads. ordinary valid views keep the single atomic library/entries/feeds read. show/feed views publish their known state choices; their otherwise-empty
-filters control and state chip are absent; reset clears the state.
+resources/passages. library publishes all items, unfinished, in progress and
+unfiled (all only). reset clears words, dimensions and order, never the view.
+an empty unfiled view offers show all items. syntactically invalid library urls
+read nothing; cold library-kind-dependent views read identity before collection
+admission. ordinary valid views keep the atomic library/entries/feeds read.
+show/feed views retain their state choices; reset preserves the selected state.
 
 settings sections come from the route model's one section table: account first,
 then the existing section order. the shell renders `TabLinks`, so ordinary
@@ -168,16 +166,22 @@ head inside the reader frame. imports retain the pane navigation slot. the
 admission and focus. active-pane resizing preserves the mounted query; inactive
 panes unmounted on mobile retain their existing reset behavior.
 
-collections and page/note rows publish the shared query toolbar with inline
-native filter choices. find publishers supply `useFind` sessions and
+collections and page/note rows publish collation data. the shell draws words,
+dimensions and order; only standing or filled fields show at rest. find publishers supply `useFind` sessions and
 transient companion results. domains own urls, query timing, results and clear/
 reset semantics. see [workspace controls](workspace.md) for the capability,
 geometry and keyboard contract.
 
+`SurfaceHeader.search.hint` supplies the shortcut tooltip; the field label names
+the command. search activation and phone statement toggling pass the actual
+button element as the opener. the shell owns its lifetime and focus return.
+
 Every domain view is pane-URL state. Most are decoded by one strict, total
 owner codec: an unknown, duplicate, partial, or redundantly-default owned key is
-`Invalid`, and the pane renders `Invalid {surface} view` with `Reset view` and
-makes no collection request. The podcast and browse panes pass their params to
+`Invalid`, and the pane renders its invalid-view fact with `reset view` and
+makes no collection request. library `unfiled` and `added_desc` additionally
+need the library kind: their identity read precedes collection admission;
+ordinary views retain their aggregate preload. The podcast and browse panes pass their params to
 the API instead and render its 400 as a notice with `Reset view` (browse:
 `Reset Browse`); browse keeps only the mapping of `kind`/`source` onto its
 planned sections ([podcast](podcast.md)). Because a view change replaces the pane URL on the same

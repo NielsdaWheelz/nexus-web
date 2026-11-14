@@ -1,5 +1,5 @@
 // SearchQuery <-> its canonical url params (I1): kinds in SEARCH_KINDS order,
-// omitted for every kind and `kinds=` for none; list values deduped in order.
+// omitted for every kind; an explicit empty kinds value is invalid. list values dedupe in order.
 
 import {
   SEARCH_KINDS,
@@ -20,7 +20,8 @@ export function searchQueryToParams(query: SearchQuery): URLSearchParams {
   const kinds = query.requestedKinds;
   if (text) params.set("q", text);
   if (query.view === "passages") params.set("view", query.view);
-  if (kinds !== null)
+  if (kinds?.size === 0) throw new Error("search kinds must be null or nonempty");
+  if (kinds !== null && kinds.size !== SEARCH_KINDS.length)
     params.set(
       "kinds",
       SEARCH_KINDS.filter((kind) => kinds.has(kind)).join(","),
@@ -41,7 +42,7 @@ export function searchQueryFromParams(params: URLSearchParams): SearchQuery | nu
   const formats = list(params.get("formats"));
   const isKind = (token: string): token is SearchKind => SEARCH_KINDS.some((kind) => kind === token);
   const isFormat = (token: string): token is MediaFormat => MEDIA_FORMATS.some((format) => format === token);
-  if (!tokens.every(isKind) || !formats.every(isFormat)) return null;
+  if ((raw !== null && tokens.length === 0) || !tokens.every(isKind) || !formats.every(isFormat)) return null;
   const kinds: Set<SearchKind> | null =
     raw === null
       ? null

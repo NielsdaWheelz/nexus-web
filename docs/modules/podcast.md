@@ -201,3 +201,10 @@ public captions; otherwise Video Transcribe fails closed as
 YouTube transcript live proof skips when this proxy is not configured because
 the YouTube Data API key proves only metadata and caption-track listing, not
 caption download.
+
+## collation
+
+podcast index and show detail use the collation described in [feeds](feeds.md).
+state stays a view; local text and owner order are independent. capture keeps
+the chosen state and canonical order. player panels and subscription forms
+retain existing form controls.

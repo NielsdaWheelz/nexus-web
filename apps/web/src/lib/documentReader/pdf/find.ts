@@ -122,8 +122,8 @@ export function createPdfFind(
 
   const source: FindSource<PdfHit> = {
     key: "",
-    label: "Find in PDF",
-    narrowLabel: "This page",
+    label: "find in pdf",
+    narrowLabel: "this page",
     prepare() {
       const primary = reader.getState().viewport?.primary;
       anchorPage = primary?.kind === "pdf" ? primary.page : null;

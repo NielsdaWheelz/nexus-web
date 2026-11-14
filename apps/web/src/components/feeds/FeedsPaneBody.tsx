@@ -4,20 +4,18 @@
 // them to the server, which validates them; the text filter stays local.
 // A selected scope owns its label read independently of the closed choices.
 
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { useActiveRegion } from "@/components/feedback/stage";
 import { catalogLine } from "@/lib/catalog/copy";
 import { viewHref } from "@/lib/collections/view";
-import PaneQueryToolbar from "@/components/workspace/PaneQueryToolbar";
-import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
-import RadioGroup from "@/components/ui/RadioGroup";
+import { Ruling } from "@/components/feedback/Ruling";
+import type { PaneCollation } from "@/lib/panes/collation";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { feedBrowseAction } from "@/lib/feeds/navigation";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import { usePaneQueryInput } from "@/components/workspace/usePaneQueryInput";
 import { presentFeed } from "@/lib/collections/presenters/feed";
 import { libraryReason } from "@/lib/libraries/errors";
 import { getLibrary, librariesIndex, type Library } from "@/lib/libraries/api";
@@ -59,16 +57,14 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
   const noun = kind === "podcast" ? "podcasts" : "feeds";
   const href = kind === "podcast" ? "/podcasts" : "/feeds";
   const browse = feedBrowseAction(kind);
-  const sorts = [{ value: "recent_entry", label: kind === "podcast" ? "Newest episode" : "Newest article" }, { value: "unfinished_count", label: kind === "podcast" ? "Most unplayed" : "Most unfinished" }, { value: "alpha", label: "Title A–Z" }];
-  const filters = [{ value: "all", label: kind === "podcast" ? "All shows" : "All feeds" }, { value: "has_new", label: kind === "podcast" ? "Has new episodes" : "Has new articles" }, { value: "not_in_library", label: "Not in a library" }];
+  const filters = [{ value: "all", label: kind === "podcast" ? "all shows" : "all feeds" }, { value: "has_new", label: kind === "podcast" ? "new episodes" : "new articles" }, { value: "not_in_library", label: "unfiled" }];
   const speak = useActiveRegion();
   const router = usePaneRouter();
   const active = usePaneIsActive();
-  const [librariesOpen, setLibrariesOpen] = useState(false);
   const params = usePaneSearchParams();
   const [librariesSeen, setLibrariesSeen] = useState(false);
-  if (librariesOpen && !librariesSeen) setLibrariesSeen(true);
   const sort = params.get("sort") ?? "recent_entry";
+  const orderKnown = ["recent_entry", "unfinished_count", "alpha"].includes(sort);
   const filter = params.get("filter") ?? "all";
   const libraryId = params.get("library_id");
   const librariesRevision = useChangeStamp("Libraries");
@@ -148,76 +144,63 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
   });
   const replaceView = useCallback(
     (changes: Readonly<Record<string, string | null>>) =>
-      router.replace(viewHref(href, params, changes), {
-      }),
+      router.replace(viewHref(href, params, changes)),
     [params, router, href],
   );
-  const { inputRef, focusInput } = usePaneQueryInput();
-  const queryStatusId = useId();
   const text = filterRows.query.trim();
   const visible = (rows ?? []).filter((row) => matchesPaneFilterQuery(text, fields(row)));
   const filtered = filter !== "all" || libraryId !== null;
   const emptyTitle = text
     ? `no ${noun} match this filter.` : filtered ? `no ${noun} match these filters.` : `no subscribed ${noun}.`;
   const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active, waiting: list.status === "loading", outcome: visible.length > 0 ? "results updated." : emptyTitle });
-  const libraryChoices = [
-    { value: "", label: "All libraries" },
-    ...(libraries.status === "ready" ? libraryItems.map((library) => ({ value: library.id, label: library.name })) : []),
-  ];
-  if (libraryId !== null && !libraryChoices.some((choice) => choice.value === libraryId)) {
-    libraryChoices.push({ value: libraryId, label: selectedLibrary.status === "ready" ? selectedLibrary.data.name : "selected library" });
+  const libraryChoices = libraryItems.map(library => ({ value: library.id, label: library.name, sign: null, count: null, reason: null }));
+  if (libraryId !== null && !libraryChoices.some(choice => choice.value === libraryId)) {
+    libraryChoices.push({ value: libraryId, label: selectedLibrary.status === "ready" ? selectedLibrary.data.name : "selected library", sign: null, count: null, reason: null });
   }
-  const showChoices = filters.some((choice) => choice.value === filter) ? filters : [...filters, { value: filter, label: filter }];
-  const sortChoices = sorts.some((choice) => choice.value === sort) ? sorts : [...sorts, { value: sort, label: "Unsupported order" }];
-  const chips = [
-    ...(filter === "all" ? [] : [{ id: "filter", label: `Show: ${showChoices.find((choice) => choice.value === filter)?.label}` }]),
-    ...(libraryId === null ? [] : [{ id: "library_id", label: `Library: ${libraryChoices.find((choice) => choice.value === libraryId)?.label}` }]),
-  ];
-  const canReset = sort !== "recent_entry" || chips.length > 0;
   const headerMeta: PaneHeaderMeta = complete
-    ? { kind: "Count", value: rows?.length ?? 0, unit: kind === "podcast" ? "show" : "feed" }
-    : list.status === "loading"
-      ? { kind: "Pending" }
-      : { kind: "None" };
+    ? { kind: "Count", value: visible.length, of: rows?.length ?? 0, unit: kind === "podcast" ? "show" : "feed" }
+    : list.status === "loading" ? { kind: "Pending" } : { kind: "None" };
   const libraryFailureReason = libraries.status === "failed" ? libraryReason(libraries.error) : null;
   const catalogLibraryFailure = libraries.status === "failed" ? catalogLine(libraries.error) : null;
-  const queryControls = {
-    kind: "Controls" as const,
-    focusInput,
-    content: <PaneQueryToolbar
-      inputRef={inputRef}
-      input={{ label: `Filter followed ${noun}`, placeholder: `Filter ${noun}`, value: filterRows.query, appliedValue: filterRows.query, onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery }}
-      options={{
-        label: "Filters", activeCount: chips.length, onExpandedChange: setLibrariesOpen,
-        onClear: () => replaceView({ filter: null, library_id: null }),
-        content: <>
-          <RadioGroup label="Show" value={filter} choices={showChoices} onChange={(value) => replaceView({ filter: value === "all" ? null : value })} />
-          <RadioGroup label="Library" value={libraryId ?? ""} choices={libraryChoices} disabled={libraries.status === "loading"} onChange={(value) => replaceView({ library_id: value || null })} />
-          {libraries.status === "failed" ? catalogLibraryFailure !== null ? <Fact line={catalogLibraryFailure} speak={speak} />
-            : libraryFailureReason !== null
-            ? <Fact line={{ fact: "couldn’t load libraries.", reason: libraryFailureReason }} />
-            : <Failed error={libraries.error} noun="libraries" retry={{ run: retryLibraries, busy: indexReading(libraries) }} /> : null}
-        </>,
-      }}
-      sort={{ label: "Sort", value: sort, choices: sortChoices, onChange: (value) => replaceView({ sort: value === "recent_entry" ? null : value }) }}
-      chips={{ items: chips, onRemove: (id) => replaceView({ [id]: null }) }}
-      status={{
-        placement: "Inline",
-        id: queryStatusId,
-        visible: false,
-        content: <PaneFilterRowsStatus announceQueryChanges={(list.status === "ready") && failure === null} id={queryStatusId} status={filterRows.rowStatus} query={filterRows.query} />,
-      }}
-      onReset={canReset ? () => {
-        filterRows.clearQuery();
-        replaceView({ sort: null, filter: null, library_id: null });
-      } : undefined}
-    />,
+  const collation: PaneCollation = {
+    words: {
+      label: `filter ${noun}`, value: filterRows.query, applied: filterRows.query,
+      onChange: filterRows.onQueryChange, onClear: filterRows.clearQuery,
+      standing: false, onSubmit: null, notice: null, verbs: [],
+      rows: { status: filterRows.rowStatus, announce: list.status === "ready" && failure === null },
+    },
+    dimensions: [{
+      kind: "One", id: "library", label: "library", rest: "any library", value: libraryId,
+      options: libraryChoices,
+      onChange: value => replaceView({ library_id: value }),
+      onOpenChange: open => { if (open) setLibrariesSeen(true); },
+      aside: libraries.status === "loading" ? <Ruling /> : libraries.status === "failed"
+        ? catalogLibraryFailure !== null ? <Fact line={catalogLibraryFailure} speak={speak} />
+          : libraryFailureReason !== null ? <Fact line={{ fact: "couldn’t load libraries.", reason: libraryFailureReason }} />
+          : <Failed error={libraries.error} noun="libraries" retry={{ run: retryLibraries, busy: indexReading(libraries) }} />
+        : null,
+    }],
+    order: orderKnown ? {
+      value: sort === "recent_entry" ? null : sort,
+      rest: kind === "podcast" ? "newest episode" : "newest article",
+      keys: [
+        { label: kind === "podcast" ? "most unplayed" : "most unfinished", ways: [{ value: "unfinished_count", label: null, word: kind === "podcast" ? "most unplayed" : "most unfinished" }] },
+        { label: "title", ways: [{ value: "alpha", label: null, word: "title a–z" }] },
+      ],
+      onChange: value => replaceView({ sort: value }), note: null,
+    } : null,
+    reset: orderKnown && sort !== "recent_entry" || libraryId !== null ? () => {
+      filterRows.clearQuery();
+      replaceView({ sort: null, library_id: null });
+    } : null,
   };
   usePaneChrome({
     header: { kind: "Section", meta: headerMeta },
     primaryAction: browse,
     menuActions: [browse],
-    query: queryControls,
+    views: { label: kind === "podcast" ? "podcast view" : "feed view", value: filter, items: filters,
+      onSelect: value => replaceView({ filter: value === "all" ? null : value }) },
+    query: { kind: "Collation", collation },
     refresh: list.status === "ready" && list.source.kind === "catalog" ? undefined : {
       kind: "Refreshable",
       sourceKey: `Podcasts.Subscriptions:${key}`,

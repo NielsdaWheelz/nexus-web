@@ -96,10 +96,8 @@ const sorted = <T,>(rows: readonly T[], rank: (row: T) => number) => [...rows].s
 const index = <T,>(items: T[]) => ({ items });
 const feedRow = ({ id, kind, title, contributors, image_url }: Schema<"FeedListItemOut">): Schema<"FeedIndexItemOut"> => ({ id, kind, title, contributors, image_url });
 
-export function catalogLibraries(catalog: CatalogIndex, params = new URLSearchParams()): Schema<"CollectionIndex_LibraryOut_"> {
-  query(params, { sort: ["created_desc", "name_asc", "name_desc"] });
-  const sort = params.get("sort");
-  return index(sorted(catalog.value.libraries, row => sort === "created_desc" ? row.order.created_desc : sort === "name_asc" ? row.order.name_asc : sort === "name_desc" ? row.order.name_desc : row.order.default).map(row => row.value));
+export function catalogLibraries(catalog: CatalogIndex): Schema<"CollectionIndex_LibraryOut_"> {
+  return index(sorted(catalog.value.libraries, row => row.order.default).map(row => row.value));
 }
 export const catalogLibrary = (catalog: CatalogIndex, id: string) => catalog.libraries.get(id)?.value ?? null;
 /** Compact section and entry projection share this exact catalog capture. */
@@ -116,21 +114,17 @@ export function catalogEntries(catalog: CatalogIndex, id: string, params = new U
   if (!library) return null;
   query(params, {
     sort: ["title_asc", "title_desc", "creator_asc", "creator_desc", "published_asc", "published_desc", "remaining_asc", "remaining_desc", "added_asc", "added_desc"],
-    entry_type: ["web_article", "epub", "text_part", "pdf", "video", "podcast_episode"],
-    projection: ["unfiled", "in_progress"], completion: ["unfinished"],
+    projection: ["unfiled", "in_progress", "unfinished"],
   });
   const projection = params.get("projection");
   if (projection === "unfiled" && !library.is_default) throw invalid();
-  const kind = params.get("entry_type");
-  const unfinished = params.get("completion") === "unfinished";
   const rows = catalog.value.library_media.filter(row => {
     if (row.library_id !== id) return false;
     const value = catalog.media.get(row.media_id);
     if (!value) throw new Error("catalog membership has no media");
-    return (kind === null || value.summary.media_kind === kind) &&
-      (projection !== "unfiled" || value.is_unfiled) &&
+    return (projection !== "unfiled" || value.is_unfiled) &&
       (projection !== "in_progress" || value.summary.consumption.state === "InProgress") &&
-      (!unfinished || value.summary.consumption.state !== "Finished");
+      (projection !== "unfinished" || value.summary.consumption.state !== "Finished");
   });
   const sort = params.get("sort");
   const media = (row: { readonly media_id: string }) => {

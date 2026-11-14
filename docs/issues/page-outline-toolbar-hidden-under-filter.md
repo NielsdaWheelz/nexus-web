@@ -6,7 +6,7 @@ editor
 selecting text in any row of a page outline (`/pages/:id`) shows no usable toolbar.
 `role=toolbar` exists, but `.toolbar` (`NoteEditor.module.css:10`) is absolutely
 positioned above the outline's shell, not the selection, so every row puts it in one
-box over `Filter page items`. the input wins hit testing: a click on
+box over the open `filter page items` field. the field is absent at rest after the collation cut; while open, it still covers the formatting toolbar. the input wins hit testing: a click on
 `Code presentation` times out and the row gets no code. the screenshot shows no
 toolbar.
 

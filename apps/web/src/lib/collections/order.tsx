@@ -211,23 +211,6 @@ export function presentOrder(input: {
   return { scopeKey: order.state.scopeKey, state };
 }
 
-export function orderStatus(order: OrderPresentation | undefined): string | null {
-  switch (order?.state.kind) {
-    case undefined:
-    case "Ready":
-    case "Incomplete":
-    case "Refreshing":
-    case "Saving":
-    case "Checking":
-    case "Unconfirmed":
-      return null;
-    case "Sorted":
-      return "choose custom order to reorder.";
-    case "Filtered":
-      return "clear filters to reorder.";
-  }
-}
-
 /** An unknown move, held until its retry lands or a read settles it. */
 export function MoveHold({ pending, check }: { readonly pending: PendingMove; readonly check: () => void }) {
   const resendFeedback = useResendFeedback();

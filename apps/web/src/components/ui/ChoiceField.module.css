@@ -115,6 +115,12 @@ label.facet:has(> input:disabled) { color: var(--ink-muted); background: transpa
   pointer-events: none;
 }
 
+.facetWord { pointer-events: none; }
+label.facet:has(> input:not(:checked):not(:disabled)) .facetWord {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
 label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon {
   color: var(--ink-faint);
 }
@@ -142,4 +148,5 @@ label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon::after {
   label.facet:has(> input:focus-visible) { outline-color: CanvasText; }
   /* Off keeps only its slash in forced colours. */
   label.facet:has(> input:not(:checked):not(:disabled)) .facetIcon { color: inherit; }
+  label.facet:has(> input:not(:checked):not(:disabled)) .facetWord { color: GrayText; }
 }

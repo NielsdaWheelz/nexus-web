@@ -35,9 +35,7 @@ def capture(
             db,
             viewer_id,
             source.library_id,
-            library_listing.EntryView(
-                source.sort, source.entry_type, source.projection, source.completion
-            ),
+            library_listing.EntryView(source.sort, source.entry_type, source.projection),
         )
     else:
         _, ids = episodes.ordered_selection_ids(

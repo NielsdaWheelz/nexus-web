@@ -15,6 +15,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import type { PaneCollation } from "@/lib/panes/collation";
 import type { ApiError } from "@/lib/api/client";
 import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorTypes";
 import type { FindSession } from "@/lib/find/useFind";
@@ -40,13 +41,9 @@ export function truncatePaneSearchQuery(query: string): string {
   return Array.from(query).slice(0, FIND_QUERY_LIMIT).join("");
 }
 
-/** A shared query toolbar, or Find with its existing Companion integration. */
+/** A pane collation, or Find with its existing Companion integration. */
 export type PaneQuery =
-  | {
-      readonly kind: "Controls";
-      readonly content: ReactNode;
-      readonly focusInput: () => boolean;
-    }
+  | { readonly kind: "Collation"; readonly collation: PaneCollation }
   | { readonly kind: "Find"; readonly session: FindSession };
 
 export type PaneRefreshProgress =

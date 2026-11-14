@@ -115,3 +115,7 @@
 .moreCredits {
   margin-inline-start: var(--space-1);
 }
+.statement { position: relative; box-sizing: border-box; inline-size: 100%; min-block-size: 44px; margin-block-start: -28px; padding: 28px 0 0; border: 0; background: transparent; font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.statement:focus-visible { outline: var(--focus-ring-width) solid var(--ring); }
+.statementWords { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.statement svg { flex: none; margin-inline-start: var(--space-1); }

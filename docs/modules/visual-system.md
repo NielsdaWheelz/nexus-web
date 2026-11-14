@@ -302,9 +302,8 @@ and pane view/section rows set it to zero. the head consumes it to place the sec
 row's bottom edge. targets grow with
 content, with 32px fine-pointer and 44px any-coarse-pointer minima. chrome stays
 13px; coarse text-entry/native-select values use 16px. the two type roles are
-independent. non-pane field defaults remain unchanged. `SelectField`'s `Inline` layout owns the label and
-native intrinsic value width; the whole control wraps before its label stacks.
-`Stacked` forms keep their layout.
+independent. non-pane field defaults remain unchanged. `SelectField` owns the
+label and native select in forms; pane chrome uses collation words and pickers.
 
 content in a companion beside a text is a third type role. a `Column` or `Sheet`
 companion and inline librarian figure host apply `[data-type-role="margin"]`
@@ -316,15 +315,23 @@ ordinary note bodies and page titles read the tokens with their own sizes as fal
 room; dark rooms use the reader's dark highlight inks, light rooms retain their inks. notes
 outside a companion use one 14px/1.5 type; chrome and targets never read these tokens.
 
-`PaneQueryToolbar` groups controls by pane width. its boxed input always reserves
-the clear slot, so typing/clearing preserves the input's bounds and node.
-applied text, chips, visible status and reset wrap in one compact summary;
-errors and expanded options share its bounded refinement region. shell
-measurement publishes the cap. essential controls never depend on horizontal
-scrolling. [workspace controls](workspace.md) own capability, find and focus
-behavior; this module owns toolbar presentation. historical browser qualification
-in #628 included native firefox 158 page/text zoom at 200% in a 320px pane;
-it makes no spoken assistive-technology claim.
+the collation is a line of chrome type on the header hairline. views precede
+end-aligned dimension/order words and conditional `reset`; words wrap as a group,
+then among themselves. default words use muted ink, changed words use ink, and
+12px `Choose` stays quieter. forced colours underline changed words; accent marks
+view position. words truncate after 23 code points plus an ellipsis while their
+accessible names retain the full value.
+
+pickers use `PickerSurface` and collection check/sign/label/count rows with
+unavailable reasons. order keys group their ways; vertical keys walk every option.
+asides and notes stay outside listboxes. date spans step around a word that can
+open the platform date picker. unavailable steps are `aria-disabled`; the body publishes each direction and
+the unit named by its arrows.
+
+`QueryField` has no input border or fill. the caret paints a 2px ink line under
+the input stretch (`Highlight` in forced colours); any coarse pointer uses 16px
+input type. the clear slot is reserved; close is a word. the collation adds no
+animation. [workspace](workspace.md) owns disclosure, phone folding and focus.
 
 ## pane sections
 
@@ -451,8 +458,8 @@ menu activation and keyboard semantics remain with `ActionMenu`.
 
 `ChoiceField` owns native label/input geometry and group layouts. names reference
 label-only spans; descriptions and tooltip help remain separate; refs address
-the input. its `Facet` is a native checkbox with a glyph and short label. checked
-is quiet; unchecked dims and slashes the glyph, leaving the word legible.
+the input. its `Facet` is a native checkbox with a glyph or word in the same slot. checked
+is quiet; unchecked dims and slashes a glyph or strikes a word.
 facets own hover fill, target, focus, disabled and forced-colour rules; forced
 colours keep only the unchecked slash. independent switches use control tint.
 all these targets are at least 32px fine and 44px with any coarse pointer.
@@ -464,11 +471,6 @@ library membership retain their own semantics;
 [overlays](overlays.md#surfaces) owns the responsive picker shell. chat's single
 generation control, provider sections and effort region belong to
 [chat](chat.md#generation-selection).
-
-`Chip` is one native whole-label removal button with a decorative cross. it uses
-shared action appearance and target minima; labels wrap. `AppliedFilters` owns
-neighbor focus after removal and the caller's surviving-control destination.
-query toolbars return to their input; stats returns to its modality select.
 
 ## action controls
 

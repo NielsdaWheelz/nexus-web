@@ -14,7 +14,8 @@ import type { Catalog, Timeline } from "@/lib/chat/wire";
 import { indexPaneQuery, librarianSearchQuery } from "@/lib/panes/indexPaneQuery";
 import { getContributor, listContributorWorks } from "@/lib/contributors/api";
 import { useRefreshStamp } from "@/lib/consumption/refresh";
-import { librariesIndex, libraryEntriesIndex } from "@/lib/libraries/api";
+import { getLibrary, librariesIndex, libraryEntriesIndex } from "@/lib/libraries/api";
+import { decodeEmptyView, decodeLibraryView, libraryViewNeedsIdentity } from "@/lib/libraries/views";
 import { useMediaQueryRevision } from "@/lib/media/MediaSummaryProvider";
 import { listFeeds, listFeedEntries } from "@/lib/feeds/api";
 
@@ -26,7 +27,7 @@ import { PaneEntryReads } from "@/lib/api/serverState";
 
 type Result<F extends (...args: never[]) => unknown> = Awaited<ReturnType<F>>;
 const Libraries = createContext<ReadDescriptor<Result<typeof librariesIndex>> | null>(null);
-const Entries = createContext<{ read: ReadDescriptor<Result<typeof libraryEntriesIndex>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
+const Entries = createContext<{ read: ReadDescriptor<Result<typeof libraryEntriesIndex>>; identity: ReadDescriptor<Result<typeof getLibrary>["data"]>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Feeds = createContext<{ read: ReadDescriptor<Result<typeof listFeeds>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const FeedEntries = createContext<{ read: ReadDescriptor<Result<typeof listFeedEntries>>; group: ReturnType<typeof useLiveGroup> } | null>(null);
 const Author = createContext<{ detail: ReadDescriptor<Result<typeof getContributor>>; works: ReadDescriptor<Result<typeof listContributorWorks>> } | null>(null);
@@ -47,18 +48,22 @@ function LibrariesEntry({ query, children }: EntryProps) {
   const text = indexPaneQuery("libraries", query)!;
   const stale = useChangeStamp("Libraries");
   const read = useMemo(() => ({ key: `/libraries?${text}`, stale, load: (signal: AbortSignal) => librariesIndex(new URLSearchParams(text ?? ""), signal) }), [text, stale]);
-  return <Libraries.Provider value={read}><PaneEntryReads reads={[read]}>{children}</PaneEntryReads></Libraries.Provider>;
+  return <Libraries.Provider value={read}><PaneEntryReads reads={decodeEmptyView(query) ? [read] : []}>{children}</PaneEntryReads></Libraries.Provider>;
 }
 function LibraryEntry({ query, params, children }: EntryProps) {
   const id = params.id;
   const text = indexPaneQuery("library", query)!;
   const group = useLiveGroup(`${id}?${text}`);
   const consumption = useChangeStamp("Consumption");
-  const follows = query.has("projection") || query.has("completion") || (query.get("sort") ?? "").startsWith("remaining");
+  const follows = query.has("projection") || (query.get("sort") ?? "").startsWith("remaining");
+  const libraryStale = useChangeStamp("Libraries");
   const stale = `${useChangeStamp("Libraries", "Entries", "Feeds")}|${follows ? consumption : "-"}|${useMediaQueryRevision()}|${useRefreshStamp(usePaneIsActive(), 60_000)}|${group.stale}`;
   const read = useMemo(() => ({ key: `/libraries/${id}/entries?${text}`, stale, load: (signal: AbortSignal) => libraryEntriesIndex(id, new URLSearchParams(text ?? ""), signal) }), [id, text, stale]);
+  const identity = useMemo(() => ({ key: `/libraries/${id}`, stale: libraryStale, load: (signal: AbortSignal) => getLibrary(id, signal).then(result => result.data) }), [id, libraryStale]);
   const suggestions = useMemo(() => suggestionRead(id), [id]);
-  return <Entries.Provider value={{ read, group }}><SuggestionEntryRead.Provider value={suggestions}><PaneEntryReads reads={[read, suggestions]}>{children}</PaneEntryReads></SuggestionEntryRead.Provider></Entries.Provider>;
+  const view = decodeLibraryView(query);
+  const reads = view === null ? [] : libraryViewNeedsIdentity(view) ? [identity] : [read, suggestions];
+  return <Entries.Provider value={{ read, identity, group }}><SuggestionEntryRead.Provider value={suggestions}><PaneEntryReads reads={reads}>{children}</PaneEntryReads></SuggestionEntryRead.Provider></Entries.Provider>;
 }
 function FeedsEntry({ query, children, kind }: EntryProps & { kind: "podcast" | "article" }) {
   const text = indexPaneQuery(kind === "podcast" ? "podcasts" : "feeds", query)!;
@@ -91,12 +96,12 @@ function AuthorEntry({ query, params, children }: EntryProps) {
   const works = useMemo(() => ({ key: `/contributors/${encodeURIComponent(handle)}/works?${text}`, stale, load: (signal: AbortSignal) => listContributorWorks(handle, new URLSearchParams(text ?? ""), signal) }), [handle, text, stale]);
   return <Author.Provider value={{ detail, works }}><PaneEntryReads reads={[detail, works]}>{children}</PaneEntryReads></Author.Provider>;
 }
-function LecternEntry({ children }: EntryProps) {
+function LecternEntry({ query, children }: EntryProps) {
   const active = usePaneIsActive();
   const refresh = useRefreshStamp(active, null);
   const quick = useMemo(() => ({ key: "/lectern/quick-reads", stale: String(refresh), load: getQuickReads }), [refresh]);
   const suggestions = useMemo(() => suggestionRead(null), []);
-  return <SuggestionEntryRead.Provider value={suggestions}><QuickReadsEntryRead.Provider value={quick}><PaneEntryReads reads={[suggestions, quick]}>{children}</PaneEntryReads></QuickReadsEntryRead.Provider></SuggestionEntryRead.Provider>;
+  return <SuggestionEntryRead.Provider value={suggestions}><QuickReadsEntryRead.Provider value={quick}><PaneEntryReads reads={decodeEmptyView(query) ? [suggestions, quick] : []}>{children}</PaneEntryReads></QuickReadsEntryRead.Provider></SuggestionEntryRead.Provider>;
 }
 function LibrarianEntry({ query, children }: EntryProps) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "LibrarianEntry");

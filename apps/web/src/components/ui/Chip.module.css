@@ -1,8 +1,0 @@
-.chip {
-  max-inline-size: 100%;
-  overflow-wrap: anywhere;
-}
-
-.label {
-  min-inline-size: 0;
-}

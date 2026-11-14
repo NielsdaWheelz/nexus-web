@@ -71,6 +71,7 @@ export type WorkspaceNavigationResult = "committed" | "unchanged" | "cancelled";
 export interface PaneHistoryOptions {
   disposition: WorkspaceTargetDisposition;
   discardOwnerIds?: readonly string[];
+  entry?: WorkspacePaneEntry;
 }
 
 const MAX_PANE_HISTORY = 12;
@@ -248,6 +249,25 @@ function createWorkspaceStore(
     return memento.read(visit.id, resolvePaneRouteModel(visit.href).routeKey, PENDING_ENTRY) as PaneEntryDelivery | null;
   }
 
+  /** After admission, replace a delivery while retaining authored seeds with their existing owner. */
+  function preparePaneEntry(paneId: string, visit: PaneVisit, entry: WorkspacePaneEntry): PaneEntryDelivery {
+    const delivery = { activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry };
+    const previous = retainedEntry(visit);
+    const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
+    if (entry.kind === "ComposeChat" || entry.kind === "ComposePage") {
+      memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
+      if (entry.kind !== "ComposePage") memento.retainWorkOwner({
+        id: paneEntryWorkOwnerId(delivery), scope,
+        read: () => ({ changed: entry.text !== "", unconfirmed: false, stopsBrowserWork: false }),
+        subscribe: () => () => {},
+      });
+    } else if (previous) {
+      memento.write(visit.id, scope.routeKey, PENDING_ENTRY, null);
+    }
+    if (previous) memento.forgetWorkOwner(paneEntryWorkOwnerId(previous));
+    return delivery;
+  }
+
   /** Admission has succeeded: capture, retire, arrive, then publish synchronously. */
   function commit(next: WorkspaceState, patch: Partial<Data> = {}, sourceArrival: string | null = null,
     materializedPage: { visitId: string; previousRoute: string; routeKey: string } | null = null): void {
@@ -383,7 +403,7 @@ function createWorkspaceStore(
     }): WorkspaceTargetActivationResult | null {
       const pane = find(input.paneId);
       if (!pane) return null;
-      if (input.disposition.kind === "Fork") return forkVisit(pane, pane.current_visit, input.discardOwnerIds ?? []);
+      if (input.disposition.kind === "Fork") return forkVisit(pane, pane.current_visit, input.discardOwnerIds ?? [], null);
       const state = activated(data.state, pane.id);
       if (!admit(state, input.discardOwnerIds)) return { kind: "Cancelled" };
       const kind = state === data.state ? "Unchanged" : "ActivatedExisting";
@@ -468,20 +488,8 @@ function createWorkspaceStore(
       if (!admit(state, ownerIds)) return { kind: "Cancelled" };
       let focus: WorkspaceSelection = { paneId, visitId: visit.id };
       if (entry) {
-        const delivery = { activationId: crypto.randomUUID(), paneId, visitId: visit.id, entry };
+        const delivery = preparePaneEntry(paneId, visit, entry);
         if (entry.kind === "FocusReadingBrief") focus = delivery;
-        if (entry.kind === "ComposeChat" || entry.kind === "ComposePage") {
-          const scope = { kind: "visit" as const, visitId: visit.id, routeKey: resolvePaneRouteModel(visit.href).routeKey };
-          memento.write(visit.id, scope.routeKey, PENDING_ENTRY, delivery);
-          if (entry.kind !== "ComposePage") memento.retainWorkOwner({
-            id: paneEntryWorkOwnerId(delivery), scope,
-            read: () => ({ changed: entry.text !== "", unconfirmed: false, stopsBrowserWork: false }),
-            subscribe: () => () => {},
-          });
-        } else if (previous) {
-          memento.write(visit.id, resolvePaneRouteModel(visit.href).routeKey, PENDING_ENTRY, null);
-        }
-        if (previous) memento.forgetWorkOwner(paneEntryWorkOwnerId(previous));
         deliveries.set(paneId, delivery);
       }
       const previousForeground = find(data.state.active_primary_pane_id);
@@ -708,7 +716,7 @@ function createWorkspaceStore(
   };
 
   /** Fork one exact visit. Admission precedes every capture, copy and delivery. */
-  function forkVisit(pane: WorkspacePane, visit: PaneVisit, ownerIds: readonly string[]): WorkspaceTargetActivationResult {
+  function forkVisit(pane: WorkspacePane, visit: PaneVisit, ownerIds: readonly string[], requestedEntry: WorkspacePaneEntry | null): WorkspaceTargetActivationResult {
     const destination = newPane(visit.href, visit.title_hint ?? undefined);
     const panes = [...data.state.panes];
     panes.splice(panes.findIndex(current => current.id === pane.id) + 1, 0, destination);
@@ -719,14 +727,13 @@ function createWorkspaceStore(
     memento.forkVisitPresentation(visit.id, routeKey, destination.current_visit.id, routeKey);
     const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
     const target = sourceTargetFromHref(visit.href, true);
-    if (target) deliveries.set(destination.id, {
-      activationId: crypto.randomUUID(), paneId: destination.id, visitId: destination.current_visit.id,
-      entry: { kind: "InspectSource", target, purpose: "RestoreVisit" },
-    });
+    const entry = requestedEntry ?? (target ? { kind: "InspectSource" as const, target, purpose: "RestoreVisit" as const } : null);
+    const delivery = entry === null ? null : preparePaneEntry(destination.id, destination.current_visit, entry);
+    if (delivery) deliveries.set(destination.id, delivery);
     commit(state, {
       pendingPaneEntryDeliveryByPaneId: deliveries,
-      pendingPaneFocus: { paneId: destination.id, visitId: destination.current_visit.id },
-    });
+      pendingPaneFocus: delivery?.entry.kind === "FocusReadingBrief" ? delivery : { paneId: destination.id, visitId: destination.current_visit.id },
+    }, entry?.kind === "InspectSource" && entry.purpose === "Open" ? destination.current_visit.id : null);
     record(find(destination.id));
     return { kind: "CreatedPane", paneId: destination.id };
   }
@@ -737,7 +744,7 @@ function createWorkspaceStore(
     const visit = back ? b.at(-1) : f[0];
     if (!pane || !visit) return "unchanged";
     if (options.disposition.kind === "Fork") {
-      return forkVisit(pane, visit, options.discardOwnerIds ?? []).kind === "Cancelled" ? "cancelled" : "committed";
+      return forkVisit(pane, visit, options.discardOwnerIds ?? [], options.entry ?? null).kind === "Cancelled" ? "cancelled" : "committed";
     }
     const history = back
       ? { back: b.slice(0, -1), forward: [pane.current_visit, ...f] }
@@ -750,19 +757,22 @@ function createWorkspaceStore(
       ...current,
       secondary: remembered.secondary && route.groups.includes(remembered.secondary.group_id) ? remembered.secondary : null,
     })));
-    if (!admit(next, options.discardOwnerIds)) return "cancelled";
+    const previous = options.entry ? retainedEntry(visit) : null;
+    const ownerIds = [...(options.discardOwnerIds ?? []), ...(previous ? [paneEntryWorkOwnerId(previous)] : [])];
+    if (!admit(next, ownerIds)) return "cancelled";
     const deliveries = new Map(data.pendingPaneEntryDeliveryByPaneId);
     const target = sourceTargetFromHref(visit.href, true);
-    if (target) deliveries.set(pane.id, {
+    const delivery = options.entry ? preparePaneEntry(pane.id, visit, options.entry) : target ? {
       activationId: crypto.randomUUID(), paneId: pane.id, visitId: visit.id,
-      entry: { kind: "InspectSource", target, purpose: "RestoreVisit" },
-    });
+      entry: { kind: "InspectSource" as const, target, purpose: "RestoreVisit" as const },
+    } : null;
+    if (delivery) deliveries.set(pane.id, delivery);
     else deliveries.delete(pane.id);
     const previousForeground = find(data.state.active_primary_pane_id);
     commit(next, {
       pendingPaneEntryDeliveryByPaneId: deliveries,
-      pendingPaneFocus: { paneId: pane.id, visitId: visit.id },
-    });
+      pendingPaneFocus: delivery?.entry.kind === "FocusReadingBrief" ? delivery : { paneId: pane.id, visitId: visit.id },
+    }, delivery?.entry.kind === "InspectSource" && delivery.entry.purpose === "Open" ? visit.id : null);
     record(find(pane.id), previousForeground);
     return "committed";
   }
