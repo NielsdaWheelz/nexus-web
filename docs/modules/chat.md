@@ -73,6 +73,10 @@ own existing data contracts.
 - `DELETE /chat-runs/{id}`: terminal pair only; absent is success, active is conflict.
   later retries and independent action/undo receipts survive.
 
+[shared memory capture](memory-capture.md) separately admits future owner turns.
+its immutable export commits inside the terminal fold and survives turn deletion
+until central acknowledgement; no later edit, undo or delete synchronization.
+
 one timeline/turn response loads shared facts once inside its existing database
 snapshot. runs, messages, tools and retrievals feed both message projection and
 trust trails. resource hydration deduplicates full references and reconstructs

@@ -145,6 +145,9 @@ class LibrarianState(Base):
     user_id: Mapped[UUID] = mapped_column(primary_key=True)
     next_seq: Mapped[int] = mapped_column(BigInteger)
     deletion_revision: Mapped[int] = mapped_column(BigInteger)
+    memory_capture_id: Mapped[UUID | None]
+    memory_capture_after_message_seq: Mapped[int | None] = mapped_column(BigInteger)
+    memory_next_export_seq: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
 
 
 class Page(Base):
@@ -1111,6 +1114,7 @@ class ChatRun(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, server_default=FetchedValue())
     owner_user_id: Mapped[UUID]
     retry_of_run_id: Mapped[UUID | None]
+    memory_capture_id: Mapped[UUID | None]
     user_message_id: Mapped[UUID]
     assistant_message_id: Mapped[UUID]
     generation_spec: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
@@ -1123,6 +1127,20 @@ class ChatRun(Base):
     publication_warning_code: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class MemoryExport(Base):
+    """A terminal turn's frozen delivery, independent of its deletable source rows."""
+
+    __tablename__ = "memory_exports"
+    owner_user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    capture_id: Mapped[UUID] = mapped_column(primary_key=True)
+    export_seq: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    run_id: Mapped[UUID]
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    payload_sha256: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    parked_code: Mapped[str | None]
 
 
 class ChatRunEvent(Base):

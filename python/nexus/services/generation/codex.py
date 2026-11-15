@@ -53,6 +53,7 @@ from provider_runtime.agent_runtime import (
     AgentRuntimeConfig,
     AgentRuntimeError,
     AgentTurnRef,
+    CodexNativeOptions,
     CredentialRef,
     CredentialRejected,
     CredentialUnavailable,
@@ -126,6 +127,9 @@ async def run_codex(
             reasoning,
             target.definition_revision,
             target.row_fingerprint,
+            native=CodexNativeOptions(
+                web_search=False, builtin_tools="disabled", archive_internal=True
+            ),
         ),
         role=AgentRole(role, sections("instructions", intent.instructions)),
         output=JsonSchemaAgentOutput(name=output.name, schema=output.schema_)

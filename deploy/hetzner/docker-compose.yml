@@ -247,6 +247,7 @@ services:
       BACKGROUND_PROCESS_TERM_GRACE_SECONDS: "5"
       BACKGROUND_PROCESS_RESULT_MAX_BYTES: "1048576"
       BACKGROUND_PROCESS_OOM_SCORE_ADJ: "750"
+      MEMORY_CAPTURE_CONFIG_PATH: /run/secrets/nexus-memory-capture.json
       NEXUS_CODEX_CONTROL_ENDPOINT: unix:///tmp/codex-daemon-10001/control.sock
       NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
     depends_on:
@@ -264,6 +265,12 @@ services:
     volumes:
       - /var/lib/nexus/parser-tmp:/var/lib/nexus/parser-tmp
       - nexus_codex_run:/tmp/codex-daemon-10001
+      - type: bind
+        source: ${NEXUS_MEMORY_CAPTURE_CONFIG_FILE:?publish the private memory publisher declaration}
+        target: /run/secrets/nexus-memory-capture.json
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "python", "-S", "-m", "apps.worker.health", "--lane", "background"]
       interval: 5s
