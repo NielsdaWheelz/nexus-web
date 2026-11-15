@@ -45,6 +45,7 @@
         "@vitejs/plugin-react": "^6.0.2",
         "eslint": "^9.17.0",
         "eslint-config-next": "15.5.28",
+        "lightningcss": "1.32.0",
         "mdast-util-from-markdown": "2.0.3",
         "openapi-typescript": "7.13.0",
         "typescript": "^6.0.2",

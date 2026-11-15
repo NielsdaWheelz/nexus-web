@@ -11,6 +11,8 @@ import { applyParsedInput, emptySearchQuery, type SearchQuery } from "@/lib/sear
 import { searchHref } from "@/lib/search/searchParams";
 import type { NexusAction, NexusCommandId } from "./model";
 
+export const TODAY_ALIAS = "/t";
+
 export type BrowseKind = "WebArticle" | "Podcast" | "Video" | "Epub";
 
 export const NEXUS_COMMANDS: Record<
@@ -102,6 +104,7 @@ function wholeLinks(text: string): string[] | null {
 function parseIntent(text: string, norm: string): NexusIntent {
   if (text.startsWith("/")) {
     const head = text.split(/\s/, 1)[0]!;
+    if (head.toLowerCase() === TODAY_ALIAS && text.slice(head.length).trim() === "") return { kind: "Destination", id: "today" };
     const id = (Object.keys(NEXUS_COMMANDS) as NexusCommandId[])
       .find((id) => NEXUS_COMMANDS[id].aliases.includes(head.toLowerCase()));
     return id

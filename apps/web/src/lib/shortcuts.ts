@@ -7,36 +7,56 @@ export const SHORTCUTS = {
     description: "Opens Nexus and focuses its query. An open desktop palette keeps its current state.",
     key: "k",
     shift: false,
+    alt: false,
   },
   "Nexus.Ask": {
     label: "ask librarian",
-    description: "sends the command palette text to the librarian.",
+    description: "sends the command argument to the librarian, or opens the librarian when it is empty.",
     key: "Enter",
     shift: false,
+    alt: false,
+  },
+  "Nexus.Keep": {
+    label: "save to today",
+    description: "saves the command argument to today in place, or opens today at a new line when it is empty.",
+    key: "Enter",
+    shift: false,
+    alt: true,
+  },
+  "Nexus.KeepOpen": {
+    label: "save and open today",
+    description: "saves the command argument and opens today at the note in a new pane.",
+    key: "Enter",
+    shift: true,
+    alt: true,
   },
   "Pane.Search": {
     label: "Search this pane",
     description: "searches the active pane; / does too, outside a text field. otherwise uses browser find.",
     key: "f",
     shift: false,
+    alt: false,
   },
   "pane-next": {
     label: "Next pane",
     description: "Moves to the next visible pane, except while typing or using a menu or dialog.",
     key: "ArrowRight",
     shift: true,
+    alt: false,
   },
   "pane-previous": {
     label: "Previous pane",
     description: "Moves to the previous visible pane, except while typing or using a menu or dialog.",
     key: "ArrowLeft",
     shift: true,
+    alt: false,
   },
   "Stage.Reach": {
     label: "Go to notices",
     description: "Moves focus to a standing notice. Esc closes or tucks it and returns focus.",
     key: ".",
     shift: false,
+    alt: false,
   },
 } as const;
 
@@ -179,8 +199,8 @@ export function matchesShortcut(
 ): boolean {
   const meta = usesMeta(platform);
   return !event.defaultPrevented && !event.isComposing &&
-    event.metaKey === meta && event.ctrlKey === !meta &&
-    !event.altKey && event.shiftKey === shortcut.shift &&
+    event.metaKey === (meta && !shortcut.alt) && event.ctrlKey === (!meta && !shortcut.alt) &&
+    event.altKey === shortcut.alt && event.shiftKey === shortcut.shift &&
     event.key.toLowerCase() === shortcut.key.toLowerCase();
 }
 
@@ -188,11 +208,11 @@ export function formatShortcut(shortcut: Shortcut, platform: PlatformKind): stri
   const key = shortcut.key === "ArrowRight" ? "→"
     : shortcut.key === "ArrowLeft" ? "←" : shortcut.key.toUpperCase();
   return usesMeta(platform)
-    ? `⌘${shortcut.shift ? "⇧" : ""}${key}`
-    : `Ctrl+${shortcut.shift ? "Shift+" : ""}${key}`;
+    ? `${shortcut.alt ? "⌥" : "⌘"}${shortcut.shift ? "⇧" : ""}${key}`
+    : `${shortcut.alt ? "Alt" : "Ctrl"}+${shortcut.shift ? "Shift+" : ""}${key}`;
 }
 
 export function shortcutAriaKeys(shortcut: Shortcut, platform: PlatformKind): string {
   const key = shortcut.key.length === 1 ? shortcut.key.toUpperCase() : shortcut.key;
-  return `${usesMeta(platform) ? "Meta" : "Control"}+${shortcut.shift ? "Shift+" : ""}${key}`;
+  return `${shortcut.alt ? "Alt" : usesMeta(platform) ? "Meta" : "Control"}+${shortcut.shift ? "Shift+" : ""}${key}`;
 }

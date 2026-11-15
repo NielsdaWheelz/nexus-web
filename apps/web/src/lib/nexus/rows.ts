@@ -19,7 +19,7 @@ import { emptySearchQuery } from "@/lib/search/query";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { NexusAction, NexusCommandId, NexusGroup, NexusPage, NexusPane, NexusRow, NexusStream, NexusTarget, RankTier, UsageMap } from "./model";
 import { rowPrimaryText } from "./rowText";
-import { RESULT_CAP } from "./policy";
+import { PASSAGE_CAP, RESULT_CAP } from "./policy";
 import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusQuery } from "./query";
 import { canonicalHref, compareRank, frecency, nameTier } from "./rank";
 
@@ -33,6 +33,8 @@ const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podc
 const NO_USAGE: UsageMap = {};
 const UNSCORED = { href: null, evidence: false, frecency: 0, recency: 0 } as const;
 
+export type ClosedItem = { id: string; href: string; presentation: PanePresentation; recentKey: string | null };
+
 export type RecentItem = { entry: RecentEntry; presentation: PanePresentation; resourceRef: string | null };
 
 const rank = (stream: NexusStream, tier: RankTier) => ({ stream, tier });
@@ -44,7 +46,7 @@ function paneState(pane: NexusPane): "Current" | "Minimized" | undefined {
 function paneRow(pane: NexusPane, tier: RankTier, usage: UsageMap, recency: number): NexusRow {
   const { presentation } = pane;
   return {
-    key: `Pane:${pane.id}`, localMatch: null, label: presentation.title, icon: paneGlyph(pane.href, presentation.mediaKind),
+    class: "Resource", key: `Pane:${pane.id}`, localMatch: null, label: presentation.title, icon: paneGlyph(pane.href, presentation.mediaKind),
     detail: presentation.detail ?? undefined, keywords: presentation.status === "Ready" && presentation.detail ? [presentation.detail] : [],
     state: paneState(pane),
     action: { kind: "Available", target: { kind: "PaneOpen", paneId: pane.id } },
@@ -54,38 +56,28 @@ function paneRow(pane: NexusPane, tier: RankTier, usage: UsageMap, recency: numb
   };
 }
 
-function placeActionLabel(place: Destination): string {
-  return place.id === "authors" ? "search people" : `open ${place.label.toLowerCase()}`;
-}
-
-/**
- * The identity a selection is learned under (law 10): the href its dispatch lands on. A day's page is
- * learned date-free as `/daily`, so `quick note` is one target across days; `remember` posts the same.
- */
+/** The identity learned by a selection; the today place is date-free, quick note does not learn. */
 export function learnedHref(target: NexusTarget): string | null {
   if (target.kind === "InternalHref") return target.href;
-  if (target.kind === "OpenDailyPage") return getDestination("today").href;
+  if (target.kind === "OpenDailyPage" && target.entry.kind === "View") return getDestination("today").href;
   return null;
 }
 
-/** The Today place learns under no identity: `/daily` is `quick note`'s, and one identity names one row. */
-const placeHref = (place: Destination): string | null => place.id === "today" ? null : place.href;
-
 function placeRow(place: Destination, tier: RankTier, usage: UsageMap): NexusRow {
-  const href = placeHref(place);
+  const href = place.href;
   return {
-    key: `Destination:${place.id}`, localMatch: null,
-    label: placeActionLabel(place),
+    class: "Place", key: `Destination:${place.id}`, localMatch: null,
+    label: place.label,
     icon: place.icon ?? getPaneRouteIcon(place.href),
     detail: place.id === "authors" ? "authors and contributors" : undefined,
     action: {
       kind: "Available",
-      target: href === null
+      target: place.id === "today"
         ? { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } }
         : { kind: "InternalHref", href, labelHint: place.label },
     },
-    learns_selection: href !== null,
-    href, evidence: false, frecency: href === null ? 0 : frecency(href, usage), recency: 0, rank: rank("Navigation", tier),
+    learns_selection: true,
+    href, evidence: false, frecency: frecency(href, usage), recency: 0, rank: rank("Navigation", tier),
   };
 }
 
@@ -94,7 +86,7 @@ function commandRow(id: NexusCommandId, tier: RankTier, argument: string, usage:
   const action = command.action(argument);
   const href = action.kind === "Available" ? learnedHref(action.target) : null;
   return {
-    key: `QuickAction:${id}`, localMatch: null,
+    class: "Do", key: `QuickAction:${id}`, localMatch: null,
     label: id === "Nexus.Quick.Note" && argument ? "save note to today" : command.label,
     icon: command.icon,
     detail: argument || undefined,
@@ -130,7 +122,7 @@ function resourceRow(item: ResourceItem, panes: readonly NexusPane[], stream: Ne
   const pane = matching.find((pane) => pane.current) ?? matching[0];
   const href = item.activation.kind === "route" ? item.activation.href : null;
   return {
-    key: `Resource:${item.ref}`, localMatch: null, label: item.label, item,
+    class: "Resource", key: `Resource:${item.ref}`, localMatch: null, label: item.label, item,
     icon: resourceTypeGlyph(resourceType(ref.scheme, itemMediaKind(item))), keywords: itemKeywords(item),
     state: pane ? paneState(pane) : undefined,
     action: resourceAction(item),
@@ -147,7 +139,7 @@ function localRow(match: LocalMatch, panes: readonly NexusPane[], tier: RankTier
   const matching = panes.filter((candidate) => candidate.resourceRef === ref);
   const pane = matching.find((pane) => pane.current) ?? matching[0];
   return {
-    key: `Resource:${ref}`, localMatch: match, label: match.label,
+    class: "Resource", key: `Resource:${ref}`, localMatch: match, label: match.label,
     item: authoredItem(match.resource, match.readingRef, match.href),
     match: excerpt === null ? null : { excerpt: { text: excerpt.text, truncated_before: excerpt.before, truncated_after: excerpt.after }, ranges: excerpt.marks.map(([start, end]) => ({ start: Array.from(excerpt.text.slice(0, start)).length, end: Array.from(excerpt.text.slice(0, end)).length })) },
     icon: resourceIconForScheme(parseResourceRef(ref)!.scheme),
@@ -165,7 +157,7 @@ function recentRow(item: RecentItem, panes: readonly NexusPane[], tier: RankTier
   const matching = panes.filter(pane => resourceRef !== null ? pane.resourceRef === resourceRef : pane.href === entry.href);
   const pane = matching.find(candidate => candidate.current) ?? matching[0];
   return {
-    key: !blank && resourceRef ? `Resource:${resourceRef}` : `Recent:${recentTargetKey(entry.target)}`,
+    class: "Resource", key: !blank && resourceRef ? `Resource:${resourceRef}` : `Recent:${recentTargetKey(entry.target)}`,
     localMatch: null, recentEntry: entry, label: presentation.title, icon: paneGlyph(entry.href, presentation.mediaKind),
     detail: presentation.detail ?? undefined, keywords: presentation.status === "Ready" && presentation.detail ? [presentation.detail] : [],
     state: pane ? paneState(pane) : undefined,
@@ -185,9 +177,9 @@ type Reference = {
 
 /** The one row of an exact ref: its present state, keyed by the typed ref so each state updates in place. */
 function referenceRow(ref: string, input: Reference, panes: readonly NexusPane[], usage: UsageMap): NexusRow {
-  const row = input.localReference ? localRow(input.localReference, panes, "ExplicitIntent", usage)
+  const row: NexusRow = input.localReference ? localRow(input.localReference, panes, "ExplicitIntent", usage)
     : input.reference ? resourceRow(input.reference, panes, "Resources", "ExplicitIntent", usage) : {
-      key: "", localMatch: null, label: ref, icon: resourceIconForScheme(parseResourceRef(ref)!.scheme),
+      class: "Resource", key: "", localMatch: null, label: ref, icon: resourceIconForScheme(parseResourceRef(ref)!.scheme),
       action: { kind: "Unavailable" as const, reason: input.localReferenceMissing ? "not on this device" : input.referenceFailed ? "couldn’t look up this item" : "looking up resource…" },
       ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     };
@@ -202,7 +194,7 @@ function plainSearch(query: NexusQuery): boolean {
 
 /**
  * The candidates nameable at the keystroke: intents, panes, places, commands and recent picks that match
- * the text by name, plus the latched target whatever its name; ranked once and capped.
+ * the text by name, plus the latched target whatever its name; list.ts owns the caps.
  */
 export function syncRows(input: Reference & {
   readonly query: NexusQuery;
@@ -219,7 +211,7 @@ export function syncRows(input: Reference & {
   switch (intent.kind) {
     case "Resource": return [referenceRow(intent.ref, input, panes, usage)];
     case "ImportLinks": return [{
-      key: `Import:${JSON.stringify(intent.links)}`, localMatch: null, icon: Icon.Upload,
+      class: "Do", key: `Import:${JSON.stringify(intent.links)}`, localMatch: null, icon: Icon.Upload,
       ...(intent.links.length === 1 ? { label: "import", detail: linkPointer(intent.links[0]!), name: `import ${linkPointer(intent.links[0]!)}` } : { label: `import ${intent.links.length} links` }),
       action: intent.links.length > ADMIT_LIMIT
         ? { kind: "Unavailable", reason: `100 at a time. this has ${intent.links.length}.` }
@@ -231,11 +223,11 @@ export function syncRows(input: Reference & {
     case "CommandLookup": return COMMAND_IDS.map((id, index) => commandRow(id, "ExplicitIntent", "", NO_USAGE, COMMAND_IDS.length - index));
     case "Destination": return [placeRow(getDestination(intent.id), "ExplicitIntent", usage)];
     case "ChooseCreate": return [{
-      key: "Intent:ChooseCreate", localMatch: null, label: "new…", icon: Icon.Add,
+      class: "Do", key: "Intent:ChooseCreate", localMatch: null, label: "new…", icon: Icon.Add,
       action: { kind: "Available", target: { kind: "ChooseCreate", initialDraft: "" } }, ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
     case "Browse": return [{
-      key: `Intent:Browse.${intent.browseKind}`, localMatch: null,
+      class: "Do", key: `Intent:Browse.${intent.browseKind}`, localMatch: null,
       label: intent.query ? `browse ${BROWSE_LABELS[intent.browseKind]} for “${intent.query}”…` : `browse ${BROWSE_LABELS[intent.browseKind]}…`,
       icon: Icon.Browse, detail: "explicit kind", action: nexusBrowseAction(intent.query, intent.browseKind), ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
     }];
@@ -246,7 +238,7 @@ export function syncRows(input: Reference & {
   const plain = plainSearch(query);
   const rows: NexusRow[] = [];
   const places: NexusRow[] = DESTINATIONS.flatMap(place => {
-    const tier = tierOf(placeHref(place), placeActionLabel(place), [place.label, ...place.keywords]);
+    const tier = tierOf(place.href, place.label, place.keywords);
     return tier ? [placeRow(place, tier, usage)] : [];
   });
   for (const pane of panes) {
@@ -282,7 +274,7 @@ export function syncRows(input: Reference & {
   }
   const unique = new Map<string, NexusRow>();
   for (const row of rows) if (!unique.has(row.key)) unique.set(row.key, row);
-  return [...unique.values()].sort(compareRank).slice(0, RESULT_CAP);
+  return [...unique.values()].sort(compareRank);
 }
 
 /**
@@ -316,7 +308,7 @@ export function arrivalRows(input: Reference & {
     match: result.match, matchMethod: result.match_method, matchingPassage: result.matching_passage,
   }));
   const passages = (preview?.passages ?? []).map(passage => ranked({
-    ...resourceRow(passage.item, panes, "Passages", content(passage.match_method), usage), match: passage.match, matchMethod: passage.match_method,
+    ...resourceRow(passage.item, panes, "Passages", content(passage.match_method), usage), class: "Passage", match: passage.match, matchMethod: passage.match_method,
   }));
   // Local authored rows own their refs; otherwise the earlier stream does.
   const owners = new Map<string, NexusRow>();
@@ -325,19 +317,25 @@ export function arrivalRows(input: Reference & {
     if (!previous || row.localMatch?.resource.authored_by_viewer && !previous.localMatch) owners.set(row.key, row);
   }
   const shown = new Map(input.shown.map(row => [row.key, row] as const));
-  // An arriving source absorbs its passage; a shown one keeps its lines, so the passage stays its own row.
-  for (const passage of passages) {
+  const room = RESULT_CAP - input.shown.filter(row => row.class !== "Passage").length;
+  const admittedKeys = [...owners.values()].filter(row => row.class !== "Passage" && !shown.has(row.key)).sort(compareRank)
+    .filter((row, index) => index < room || row.rank.tier === "Latched").map(row => row.key);
+  // Only an owner admitted in this arrival absorbs a passage. Shown or cut owners keep it separate.
+  for (const passage of owners.values()) {
+    if (passage.class !== "Passage" || shown.has(passage.key)) continue;
     const ref = passage.item?.preview.source?.ref;
     const owner = ref ? owners.get(`Resource:${ref}`) : undefined;
-    if (!owner || owner.localMatch || shown.has(owner.key) || owner.matchingPassage || !passage.item || !passage.matchMethod || owners.get(passage.key) !== passage) continue;
+    if (!owner || !admittedKeys.includes(owner.key) || owner.localMatch || owner.matchingPassage || !passage.item || !passage.matchMethod) continue;
     if (passage.rank.tier === "Latched" && owner.rank.tier !== "Latched") continue;
     owners.set(owner.key, { ...owner, matchingPassage: { item: passage.item, match: passage.match ?? null, match_method: passage.matchMethod, matched_field: passage.item.activation.field === "annotation" ? "annotation" : null } });
     owners.delete(passage.key);
   }
-  const rows = [...owners.values()];
-  const fresh = rows.filter(row => !shown.has(row.key)).sort(compareRank)
-    .filter((row, index) => row.rank.tier === "Latched" || index < RESULT_CAP - shown.size);
-  return [...rows.flatMap(row => { const before = shown.get(row.key); return before ? [refreshed(before, row)] : []; }), ...fresh];
+  const tailRoom = PASSAGE_CAP - input.shown.filter(row => row.class === "Passage").length;
+  const tail = [...owners.values()].filter(row => row.class === "Passage" && !shown.has(row.key)).sort(compareRank).slice(0, tailRoom);
+  return [
+    ...[...owners.values()].flatMap(row => { const before = shown.get(row.key); return before ? [{ ...refreshed(before, row), class: before.class }] : []; }),
+    ...admittedKeys.map(key => owners.get(key)!), ...tail,
+  ];
 }
 
 /**
@@ -358,7 +356,7 @@ function refreshed(shown: NexusRow, update: NexusRow): NexusRow {
 
 export function playbackRow(title: string, subtitle: string | undefined): NexusRow {
   return {
-    key: "Resource:Playback:Current", localMatch: null,
+    class: "Do", key: "Resource:Playback:Current", localMatch: null,
     label: title, icon: Icon.Play, detail: subtitle,
     action: { kind: "Available", target: { kind: "ResumeCurrentPlayback" } },
     ...UNSCORED, rank: rank("Navigation", "PrefixOrToken"),
@@ -366,28 +364,27 @@ export function playbackRow(title: string, subtitle: string | undefined): NexusR
 }
 
 /** `search all results` and `use this text…`; lookup keeps only its literal search. */
-export function continuations(query: NexusQuery): NexusRow[] {
+export function continuations(query: NexusQuery, useText: boolean): NexusRow[] {
   if (!query.text || query.intent.kind !== "Search" && query.intent.kind !== "CommandLookup") return [];
   const literal = query.intent.kind === "CommandLookup";
   const searchQuery = literal ? { ...emptySearchQuery(), text: query.text } : query.searchQuery;
   const search: NexusRow = {
-    key: "Continuation:SeeAll", localMatch: null, label: literal ? `search for “${query.text}”` : "search all results",
+    class: "Do", key: "Continuation:SeeAll", localMatch: null, label: literal ? `search for “${query.text}”` : "search all results",
     detail: null,
     icon: Icon.Search, action: nexusSearchAction(searchQuery), learns_selection: true, ...UNSCORED, rank: rank("Navigation", "Substring"),
   };
-  if (literal) return [search];
+  if (literal || !useText) return [search];
   return [search, textRow(query.text)];
 }
 
 function textRow(text: string, detail?: string): NexusRow {
-  return { key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Icon.Add, detail,
+  return { class: "Do", key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Icon.Add, detail,
     action: { kind: "Available", target: { kind: "UseText", text } }, ...UNSCORED, rank: rank("Navigation", "Substring") };
 }
 
 /**
- * The blank list, in rank order: a pre-armed `use this text…`, `here`, the other tabs most recent first
- * (layout order with the current pane while a reorder runs), recent picks without the current resource,
- * then the actions. Nothing here is matched, so every row is PrefixOrToken, as the empty prefix is.
+ * The blank list: selection, optional pane rows, recent picks without the current resource,
+ * optional actions, then closed panes not represented by those recents. No row is name-matched.
  */
 export function blankRows(input: {
   readonly panes: readonly NexusPane[];
@@ -397,27 +394,45 @@ export function blankRows(input: {
   readonly useText: string | null;
   readonly layoutOrder: boolean;
   readonly panesExpanded: boolean;
+  readonly tabs: boolean;
+  readonly actions: boolean;
+  readonly closed: readonly ClosedItem[];
 }): NexusRow[] {
   const { panes } = input;
   const current = panes.find(pane => pane.current);
   const recency = (pane: NexusPane) => panes.length - input.mru.indexOf(pane.id);
   const tabs = input.layoutOrder ? panes : input.mru.flatMap(id => panes.filter(pane => pane.id === id && !pane.current));
   const shownTabs = input.layoutOrder || input.panesExpanded ? tabs : tabs.slice(0, OPEN_CAP);
-  const recents = input.recent.filter(item => !current || (item.resourceRef !== null ? item.resourceRef !== current.resourceRef : item.entry.href !== current.href));
-  const actions = (["Nexus.Quick.Note", "Nexus.Quick.Chat", "Nexus.Quick.Import"] as const).map(id => commandRow(id, "PrefixOrToken", "", NO_USAGE));
-  if (input.playback) actions.push({ ...input.playback, label: `resume ${input.playback.label}` });
+  const recents = input.recent.filter(item => !current || (item.resourceRef !== null ? item.resourceRef !== current.resourceRef : item.entry.href !== current.href)).slice(0, RECENT_CAP);
+  const actions = input.actions ? (["Nexus.Quick.Note", "Nexus.Quick.Chat", "Nexus.Quick.Import"] as const).map(id => commandRow(id, "PrefixOrToken", "", NO_USAGE)) : [];
+  if (input.actions && input.playback) actions.push({ ...input.playback, label: `resume ${input.playback.label}` });
   return [
     ...(input.useText ? [textRow(input.useText, input.useText)] : []),
-    ...(current && !input.layoutOrder ? [{ ...paneRow(current, "PrefixOrToken", NO_USAGE, recency(current)), secondary: targetMenu(current.resourceRef, [current]) }] : []),
-    ...shownTabs.map(pane => paneRow(pane, "PrefixOrToken", NO_USAGE, recency(pane))),
-    ...recents.slice(0, RECENT_CAP).map(item => recentRow(item, panes, "PrefixOrToken", NO_USAGE, true)),
+    ...(input.tabs && current && !input.layoutOrder ? [{ ...paneRow(current, "PrefixOrToken", NO_USAGE, recency(current)), secondary: targetMenu(current.resourceRef, [current]) }] : []),
+    ...(input.tabs ? shownTabs.map(pane => paneRow(pane, "PrefixOrToken", NO_USAGE, recency(pane))) : []),
+    ...recents.map(item => {
+      const row = recentRow(item, panes, "PrefixOrToken", NO_USAGE, true);
+      const matching = panes.some(pane => item.resourceRef !== null ? pane.resourceRef === item.resourceRef : pane.href === item.entry.href);
+      const closed = matching ? undefined : input.closed.find(closed => closed.recentKey === recentTargetKey(item.entry.target));
+      return closed ? { ...row, secondary: undefined, action: { kind: "Available" as const, target: { kind: "RestorePane" as const, paneId: closed.id } } } : row;
+    }),
     ...actions,
+    ...input.closed.filter(closed => closed.recentKey === null || !recents.some(item => recentTargetKey(item.entry.target) === closed.recentKey)).slice(0, PASSAGE_CAP).map(closedRow),
   ];
+}
+
+function closedRow(item: ClosedItem): NexusRow {
+  return {
+    key: `Closed:${item.id}`, class: "Resource", localMatch: null,
+    label: item.presentation.title, icon: paneGlyph(item.href, item.presentation.mediaKind), detail: item.presentation.detail,
+    action: { kind: "Available", target: { kind: "RestorePane", paneId: item.id } },
+    ...UNSCORED, rank: rank("Navigation", "PrefixOrToken"),
+  };
 }
 
 /** The sheet's places: each destination's label as written, `Today` first. */
 export function placeChipRows(): NexusRow[] {
-  return PLACES.map(id => { const place = getDestination(id); return { ...placeRow(place, "PrefixOrToken", NO_USAGE), label: place.label }; });
+  return PLACES.map(id => placeRow(getDestination(id), "PrefixOrToken", NO_USAGE));
 }
 
 /** Blank rows fall into their sections by key; typed rows share one unlabelled list before the continuations. */
@@ -436,6 +451,7 @@ export function nexusGroups(input: {
     ...group("Here", "", where(row => row.key === input.hereKey)),
     ...group("Open", `tabs · ${input.paneCount}`, where(row => row.key.startsWith("Pane:") && row.key !== input.hereKey)),
     ...group("Recent", "recent picks", where(row => row.key.startsWith("Recent:"))),
+    ...group("Closed", "closed", where(row => row.key.startsWith("Closed:"))),
     ...group("QuickActions", "actions", where(row => row.key.startsWith("QuickAction:") || row.key === "Resource:Playback:Current")),
   ];
 }
@@ -443,7 +459,7 @@ export function nexusGroups(input: {
 /** The rows of a choice page: what to create from a draft, or which kind to browse. */
 export function choiceRows(page: NexusPage): NexusRow[] {
   const choice = (label: string, icon: NexusRow["icon"], action: NexusAction): NexusRow => ({
-    key: `Choice:${label}`, localMatch: null, label, icon, action, ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
+    class: "Do", key: `Choice:${label}`, localMatch: null, label, icon, action, ...UNSCORED, rank: rank("Navigation", "ExplicitIntent"),
   });
   if (page.kind === "UseText") return [
     choice("ask librarian", Icon.Chat, NEXUS_COMMANDS["Nexus.Quick.Chat"].action(page.text)),

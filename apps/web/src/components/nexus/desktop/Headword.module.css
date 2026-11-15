@@ -1,0 +1,123 @@
+/* The headword's page has five fixed tracks; only the block yields height and scrolls. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 15dvh var(--space-6) var(--space-6);
+  background: var(--overlay-scrim);
+  animation: scrimIn 120ms var(--ease-bloom);
+}
+
+.page {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-rows: 3.75rem 2rem minmax(0, 1fr) 6rem 2rem;
+  inline-size: min(45rem, calc(100vw - 3rem));
+  block-size: min(31.75rem, calc(85dvh - var(--space-6)));
+  box-sizing: content-box;
+  overflow: hidden;
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-4);
+  color: var(--ink);
+  transform-origin: 50% 0;
+  animation: cardIn 120ms var(--ease-bloom);
+}
+
+/* A failed text source keeps its passages and retry; the block lends it height inside the fixed page. */
+.page:has(.apparatus > section:not(:empty)) { grid-template-rows: 3.75rem 2rem minmax(0, 1fr) minmax(6rem, max-content) 2rem; }
+
+@keyframes cardIn { from { opacity: 0.7; transform: translateY(-0.25rem) scale(0.985); } }
+@keyframes scrimIn { from { opacity: 0; } }
+@keyframes onset { from { opacity: 0; } }
+
+.workflow { display: flex; grid-row: 1 / -1; min-block-size: 0; flex-direction: column; overflow: hidden; }
+.query, .line { display: grid; grid-template-columns: 6rem 2.75rem minmax(0, 1fr) auto var(--space-6); align-items: center; }
+.query .input {
+  grid-column: 3 / 5;
+  min-inline-size: 0;
+  min-block-size: 0;
+  padding: 0;
+  color: var(--ink);
+  font: var(--weight-regular) var(--text-xl) / 1.75rem var(--font-sans);
+}
+.query .input::placeholder { color: var(--ink-faint); }
+:global([data-theme="light"]) .input, :global([data-theme="elvish"]) .input { font: var(--pane-section-title-font); }
+:global([data-theme="light"]) .input::placeholder, :global([data-theme="elvish"]) .input::placeholder { font-style: italic; }
+.star { display: flex; grid-column: 2; padding-inline-start: 1rem; }
+.star circle { fill: var(--edge-strong); transition: fill var(--star-onset) var(--ease-glide) var(--star-grace); }
+.star [data-lit] { fill: var(--accent); transition: fill var(--star-onset) var(--ease-glide); }
+
+.legend { position: relative; display: flex; align-items: center; gap: var(--space-1); margin-inline: 8.75rem var(--space-6); }
+.legend::after, .foot::before { content: ""; position: absolute; inset-inline: 0; block-size: var(--stroke-hairline); background: var(--edge-subtle); }
+.legend::after { inset-block-end: 0; }
+.word { display: inline-flex; align-items: baseline; gap: var(--space-1); flex: none; padding: 0 var(--space-1); border: 0; background: transparent; color: var(--ink-muted); font: var(--weight-regular) var(--text-sm) / 1.5rem var(--font-sans); cursor: pointer; }
+.word:first-child { margin-inline-start: calc(-1 * var(--space-1)); }
+.word[data-lit] { color: var(--ink); }
+.word:focus { outline: none; background: var(--surface-active); border-radius: var(--radius-sm); }
+.key { color: var(--ink-muted); font: var(--weight-regular) var(--text-xs) / 1 var(--font-mono); }
+
+.block { min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; }
+.line { position: relative; block-size: 2.25rem; cursor: pointer; }
+.line[data-active]::before { content: ""; position: absolute; inset-block: 0; inset-inline: 6.5rem var(--space-4); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); pointer-events: none; }
+.line[data-band="arriving"] { animation: onset var(--arrival-onset) var(--ease-glide); }
+.cell, .primary { display: grid; grid-template-columns: subgrid; align-items: center; min-inline-size: 0; position: relative; }
+.cell { grid-column: 1 / -1; block-size: 100%; }
+.primary { grid-column: 1 / 4; block-size: 100%; touch-action: pan-y pinch-zoom; }
+.sideHead { grid-column: 1; padding-inline: var(--space-6) 0; text-align: end; color: var(--ink-muted); font: var(--weight-regular) var(--text-xs) / 1 var(--font-sans); letter-spacing: var(--tracking-wide); }
+.sign { display: flex; grid-column: 2; padding-inline-start: 1rem; color: var(--ink-muted); }
+.sign > svg { inline-size: 1rem; block-size: 1rem; }
+.text { display: flex; grid-column: 3; align-items: baseline; gap: var(--space-2); min-inline-size: 0; }
+.headword { flex: 0 0 auto; max-inline-size: 74%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font: var(--weight-semibold) var(--text-base) / 1.25rem var(--font-sans); letter-spacing: var(--tracking-tight); }
+.gloss { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.25rem; }
+.locator { display: flex; grid-column: 4; align-items: center; gap: var(--space-1); padding-inline-start: var(--space-2); color: var(--ink-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.locator button { --control-min-size: 1.75rem; inline-size: 1.75rem; min-block-size: 1.75rem; block-size: 1.75rem; padding: 0; }
+.empty { margin: 0; padding-inline: 8.75rem var(--space-6); color: var(--ink-muted); font-size: var(--text-sm); line-height: 2.25rem; }
+.block > section, .apparatus > section { padding-inline: 8.75rem var(--space-6); }
+
+.apparatus { position: relative; min-block-size: 0; padding-block-start: var(--space-3); }
+.apparatus::before { content: ""; position: absolute; inset-block-start: 0; inset-inline-start: 8.75rem; inline-size: 4rem; block-size: var(--stroke-hairline); background: var(--edge); }
+.apparatus .line { block-size: 1.75rem; }
+.passage { display: flex; grid-column: 3; align-items: baseline; gap: var(--space-2); min-inline-size: 0; overflow: hidden; color: var(--ink-muted); font: var(--weight-regular) var(--text-sm) / 1.125rem var(--font-sans); }
+.passage :global([data-resource-match]) { color: var(--ink); }
+.work { flex: 0 1 auto; max-inline-size: 12rem; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); font-size: var(--text-xs); font-style: italic; }
+.waiting { block-size: 1.75rem; margin-inline: 8.75rem var(--space-6); border-block-end: var(--stroke-hairline) solid var(--edge-subtle); opacity: 0; animation: rulingIn var(--duration-deliberate) var(--ease-glide) var(--ruling-delay) forwards; }
+@keyframes rulingIn { to { opacity: 1; } }
+
+.foot { position: relative; display: flex; align-items: center; gap: var(--space-2); min-inline-size: 0; margin-inline: 8.75rem var(--space-6); color: var(--ink-muted); font-size: var(--text-xs); }
+.foot::before { inset-block-start: 0; }
+.hints { display: flex; flex: 0 1 auto; align-items: center; gap: var(--space-3); min-inline-size: 0; white-space: nowrap; }
+.verb { color: var(--ink); }
+.search { flex: 0 1 auto; min-inline-size: 0; margin-inline-start: auto; }
+.search [role="gridcell"] { padding: var(--space-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.search [data-active] { background: var(--surface-active); border-radius: var(--radius-sm); }
+
+:global([data-theme="elvish"]) .headword { font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); }
+:global([data-theme="elvish"]) .sideHead { font: italic var(--text-sm) / 1 var(--font-serif); }
+:global([data-theme="elvish"]) .work { font-family: var(--font-serif); font-size: var(--text-sm); }
+/* The solar's vine is the legend's rule, on the same axis as the pane header's ornament. */
+:global([data-theme="elvish"]) .legend::after {
+  inset-block-end: calc(-0.375rem - var(--stroke-hairline) / 2);
+  block-size: 0.75rem;
+  color: var(--edge-strong);
+  opacity: calc((0.28 + 0.72 * var(--moon)) * 0.5 * var(--ornament-root));
+  background: linear-gradient(90deg, transparent, currentcolor 12%, currentcolor 88%, transparent);
+  mask: var(--elvish-vine) left center / 15rem 0.75rem repeat-x;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop, .page, .line[data-band="arriving"], .waiting { animation: none; }
+  .waiting { opacity: 1; }
+  .star circle, .star [data-lit] { transition: none; }
+}
+@media (forced-colors: active) {
+  .page { border-color: CanvasText; background: Canvas; box-shadow: none; }
+  .line[data-active]::before, .search [data-active], .word:focus { outline: 1px solid Highlight; box-shadow: none; }
+  .star circle, .star [data-lit] { fill: CanvasText; }
+  .legend::after, .foot::before, .apparatus::before, :global([data-theme="elvish"]) .legend::after { background: CanvasText; mask: none; opacity: 1; block-size: var(--stroke-hairline); }
+  .waiting { border-color: CanvasText; }
+}

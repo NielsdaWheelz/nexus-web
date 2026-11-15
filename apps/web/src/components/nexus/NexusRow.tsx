@@ -1,7 +1,6 @@
 "use client";
 
-// What both presenters share about a row: its gutter and two text lines, its spoken name, its verbs,
-// and the notices that follow the candidates.
+// Shared row evidence, spoken names, verbs and notices; the phone keeps its two-line body.
 import * as Icon from "@/lib/ui/icons";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
@@ -38,7 +37,14 @@ function isPassage(item: ResourceItem): boolean {
 }
 
 /** A match whose window lies inside the title underlines there and adds no line (the row never repeats its title). */
-function titleMatch(row: NexusRow, title: string): Match | null {
+export function titleMatch(row: NexusRow, title: string, query = ""): Match | null {
+  const needle = query.trim().toLowerCase();
+  const localAt = needle ? title.toLowerCase().indexOf(needle) : -1;
+  if (!row.item && localAt >= 0) {
+    const start = Array.from(title.slice(0, localAt)).length;
+    return { excerpt: { text: title, truncated_before: false, truncated_after: false },
+      ranges: [{ start, end: start + Array.from(title.slice(localAt, localAt + needle.length)).length }] };
+  }
   const match = row.match;
   if (!row.item || isPassage(row.item) || !match?.excerpt.text) return null;
   const at = title.indexOf(match.excerpt.text);
@@ -49,7 +55,7 @@ function titleMatch(row: NexusRow, title: string): Match | null {
 }
 
 /** The evidence line: an absorbed passage's window, else the row's own window outside its title. */
-function rowEvidence(row: NexusRow, title: string): Match | null {
+export function rowEvidence(row: NexusRow, title: string): Match | null {
   const occurrence = row.matchingPassage;
   if (occurrence) return occurrence.match ?? { excerpt: { text: occurrence.item.label, truncated_before: false, truncated_after: false }, ranges: [] };
   if (!row.match?.excerpt.text || titleMatch(row, title)) return null;
@@ -57,7 +63,7 @@ function rowEvidence(row: NexusRow, title: string): Match | null {
 }
 
 /** A single clamped line begins at its first match; preceding context cannot hide it at large text sizes. */
-function windowed(match: Match): Match {
+export function windowed(match: Match): Match {
   const first = match.ranges[0];
   if (!first || first.start === 0) return match;
   const points = Array.from(match.excerpt.text);
@@ -66,6 +72,31 @@ function windowed(match: Match): Match {
     excerpt: { ...match.excerpt, text: points.slice(start).join(""), truncated_before: true },
     ranges: match.ranges.map(range => ({ start: range.start - start, end: range.end - start })),
   };
+}
+
+/** Literal matches share an axis. The browser owns first-strong direction, including mixed scripts. */
+export function NexusConcordance({ row }: { row: NexusRow }) {
+  const source = row.match ?? { excerpt: { text: row.label, truncated_before: false, truncated_after: false }, ranges: [] };
+  // One display space per line control keeps both the line and every code-point range intact.
+  const match = { ...source, excerpt: { ...source.excerpt, text: source.excerpt.text.replace(/[\t\n\v\f\r\u0085\u2028\u2029]/gu, " ") } };
+  const first = match.ranges[0];
+  const run = windowed(match);
+  if (row.matchMethod === "semantic" || !first) return <span className={styles.concordanceRun} dir="auto"><ExcerptText excerpt={run.excerpt} match={run} /></span>;
+  const points = Array.from(match.excerpt.text);
+  let start = Math.max(0, first.start - 40);
+  // Cut a partial word at the left, preserving the whitespace immediately before the match.
+  if (start > 0) while (start < first.start && !/\s/u.test(points[start - 1]!)) start++;
+  const after = { excerpt: { ...match.excerpt, text: points.slice(first.start).join(""), truncated_before: false },
+    ranges: match.ranges.map(range => ({ start: range.start - first.start, end: range.end - first.start })) };
+  return <span className={styles.concordance} dir="auto">
+    {/* Direction must come from the whole excerpt, even when its first word was cut from view. */}
+    <span className="sr-only" aria-hidden="true">{source.excerpt.text}</span>
+    <span className={styles.concordancePlain}><ExcerptText excerpt={run.excerpt} match={run} /></span>
+    <span className={styles.concordanceAxis}>
+      <span className={styles.concordanceBefore}>{points.slice(start, first.start).join("")}</span>
+      <span className={styles.concordanceRun}><ExcerptText excerpt={after.excerpt} match={after} /></span>
+    </span>
+  </span>;
 }
 
 /** In `/` lookup, a command row's first alias, shown and spoken after its title. */
@@ -78,15 +109,7 @@ export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
 export function NexusRowBody({ row, here, position, query }: { row: NexusRow; here: boolean; position?: number; query: string }) {
   const Glyph = row.icon;
   const title = rowPrimaryText(row);
-  let inline = titleMatch(row, title);
-  // Synchronous pane/recent names have no remote match window; mark their literal name match here.
-  const needle = query.trim().toLowerCase();
-  const at = needle ? title.toLowerCase().indexOf(needle) : -1;
-  if (inline === null && !row.item && at >= 0) {
-    const start = Array.from(title.slice(0, at)).length;
-    inline = { excerpt: { text: title, truncated_before: false, truncated_after: false },
-      ranges: [{ start, end: start + Array.from(title.slice(at, at + needle.length)).length }] };
-  }
+  const inline = titleMatch(row, title, query);
   const evidence = rowEvidence(row, title);
   const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
   // An unavailable row keeps its facts and says why last, instead of any evidence.
@@ -215,27 +238,27 @@ const SOURCE_NOUNS: Record<string, string> = { Hybrid: "related matches", Refere
 
 /** The query's own facts, after its candidates: each failed source where its results would be,
  * then what the query and recent say. A refresh failure over shown data says nothing. */
-export function NexusNotices({ controller, returnFocus, id }: {
-  controller: NexusController; returnFocus: () => HTMLElement | null; id: string;
+export function NexusNotices({ controller, returnFocus, id, set }: {
+  controller: NexusController; returnFocus: () => HTMLElement | null; id: string; set?: "Block" | "Apparatus";
 }) {
   const { kind, text, action } = controller.searchProgress;
   const { blank, snapshot, readFailure, read } = controller.recentStatus;
   const back = () => returnFocus()?.focus({ preventScroll: true });
   return <section id={id} tabIndex={-1} className={styles.notices} aria-label="nexus notices">
-    {controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} noun="search results" />)}
-    {[...controller.searchFailures].map(([source, failure]) => source === "Reference" && failure.error.code === "E_NOT_FOUND"
+    {set !== "Apparatus" && controller.localSearchFailures.map(({key, ...failure}) => <AuthoredReadFailure key={key} {...failure} noun="search results" />)}
+    {[...controller.searchFailures].filter(([source]) => set === undefined || (set === "Apparatus") === (source === "Lexical" || source === "Hybrid")).map(([source, failure]) => source === "Reference" && failure.error.code === "E_NOT_FOUND"
       ? <Fact key={source} line={{ fact: "nothing in nexus matches that link." }} speak />
       : <Failed key={source} error={failure.error} noun={SOURCE_NOUNS[source] ?? "search results"}
         retry={isStaleBuild(failure.error) || failure.error.code === "E_INVALID_REQUEST" ? undefined
           : { run: () => controller.retry(source), busy: controller.retrying.has(source) }} />)}
-    {controller.lookupGuidance !== null ? <div id={`${id}-guidance`}><Fact line={{ fact: controller.lookupGuidance }} speak /></div> : null}
-    {kind === "Pending" && !controller.groups.some(group => group.id === "Results" && group.rows.length > 0) ? <Ruling /> : null}
-    {kind === "Notice" || kind === "Empty" ? <Fact key={text} line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
+    {set !== "Apparatus" && controller.lookupGuidance !== null ? <div id={`${id}-guidance`}><Fact line={{ fact: controller.lookupGuidance }} speak /></div> : null}
+    {set === undefined && kind === "Pending" && !controller.groups.some(group => group.id === "Results" && group.rows.length > 0) ? <Ruling /> : null}
+    {set !== "Apparatus" && (kind === "Notice" || set === undefined && kind === "Empty") ? <Fact key={text} line={{ fact: text }} speak verbs={action === null ? undefined : [{ label: SEARCH_ACTION_LABELS[action], commandKey: `search ${action}`, busy: controller.retrying.size > 0, run: () => {
       if (action === "related") controller.retryRelated();
       else controller.retrySearch();
       back();
     } }]} /> : null}
-    {!blank ? null
+    {set === "Apparatus" || !blank ? null
       : snapshot === null ? readFailure ? <Fact line={{ fact: "couldn’t load recent items." }} speak verbs={[{ label: "retry", commandKey: "retry recent", run: read }]} /> : <Ruling />
       : snapshot.entries.length === 0 ? <Fact line={{ fact: "items you open will appear here." }} /> : null}
   </section>;

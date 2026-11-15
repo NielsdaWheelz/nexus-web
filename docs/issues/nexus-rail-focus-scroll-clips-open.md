@@ -1,14 +1,10 @@
-# a long desktop rail can scroll its open chip out of view
+# a long phone rail can clip its leading open chip
 
-problem: round-1 press rail screenshot at d5c2a6a5f shows `more` focused and the
-leading `open` label clipped. `Nexus.module.css` limits the rail to 70% width;
-`NexusVerbRail.tsx:88-100` scrolls the focused chip into view, including when read
-verbs insert before the initially focused `more`.
+headword removes the desktop rail. the phone keeps the horizontally scrolling
+`NexusVerbRail`; focus retained by descriptor id can scroll the fixed pair out
+of view. the prior desktop reproduction at d5c2a6a5f no longer applies to the
+desktop menu, and phone behavior remains unproved.
 
-impact: the primary open hint can be partly hidden. focus remains pinned by id,
-as required; changing initial focus after the read would violate that contract.
-
-resolve through designer review of the bounded rail: accept horizontal overflow,
-or adjust its geometry while retaining focus and the fixed pair. prove all chips
-remain reachable at desktop widths and 200% text. screenshot location is private
-`palette-shots/round-1/desktop-1440x900@2x-press-rail-on-armed-row.png`.
+inspect the phone rail at narrow widths and 200% text with late descriptor
+arrivals. accept its horizontal overflow explicitly or adjust geometry while
+retaining focus and making every chip reachable. resolve with that observation.

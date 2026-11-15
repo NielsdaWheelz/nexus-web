@@ -387,32 +387,43 @@ launcher's specialized grid keyboard controller retain their own semantics.
 
 ## nexus palette
 
-`Nexus.module.css` owns desktop arrangement; `Switchboard.module.css` owns
-the sheet, mobile page frames and disc. selection paint remains in `Collection`,
-match paint in `ResourceContent`, scrims in the room blocks.
+`Headword.module.css` owns the desktop page; `Nexus.module.css` owns shared
+rows and child pages; `Switchboard.module.css` owns the phone. the desktop
+content box is 45rem by 31.75rem, bounded by viewport width minus 3rem and the
+height below 15dvh. its rows are 3.75rem query, 2rem legend, shrinking 18rem
+block, 6rem apparatus and 2rem foot. a text-source failure lets the apparatus
+grow to fit retained passages and retry, taking height from the block while
+keeping the frame and foot fixed. only the block scrolls. child pages fill
+the same box and scroll internally. the frame uses `--edge`, `--radius-lg`,
+`--shadow-4` and `--surface-canvas` over the room's scrim.
 
-both surfaces use one 40px gutter; caret and titles share its x. palette glyphs
-are 16px with the registry’s shared 1.5px stroke. titles are sans 15px/400 in press and study, serif 18px/500 in
-solar. heads, facts and hints use `--ink-muted`. rows have square corners and
-one title plus at most one supplement; the resource identity never changes
-weight when matched or armed.
+the title/caret axis is 8.75rem, with a 6rem margin and signs at 7rem. rules
+begin at the title axis. side-heads occupy the margin; the armed wash begins at
+6.5rem with the collection's accent bar. named lines are 2.25rem; passage lines
+1.75rem. index-weight titles take at most 74% of the text column and the muted
+gloss truncates first. matches underline at hairline weight without changing
+weight. passage concordance aligns the first literal match 11rem after the
+title edge, omitting the axis for semantic, unmarked or first-strong rtl text;
+work and location end the line. display tabs and line separators become one
+space each, preserving codepoint ranges and the original source excerpt.
+solar uses serif titles and its vine rule.
 
-the desktop card is at most 640px wide, on `--surface-canvas`, with a 48px
-query and 36px ordinary rows (44px for coarse pointers). typed holds 70dvh with
-a fixed continuation footer; arrivals consume the result scrollport above it.
-blank remains content-sized within that cap. the sheet has 48px row/control
-targets and a horizontally scrolling inline rail, with no key hints. rank one
-touches the bottom field; dom order is rank order, painted bottom-up. group heads
-are last in their reversed groups and retain accessible group labels.
+press's query is regular sans at `--text-xl`; study and solar use the room's
+section-title face. the asterism counts device, names and texts: waiting dims
+a star after 150ms, answered relights over 200ms, failure stays dim. idle is lit.
+empty waiting apparatus lines rule after 200ms. legend and catchword use the
+active word fill. no hover wash or animated armed-position movement occurs.
 
-desktop open uses 120ms bloom: opacity .7→1, scale .985→1 and y −4→0;
-scrim fades over the same interval. close is instant. arriving rows use a 200ms
-opacity onset; held rows do not animate. rail open uses 100ms glide and 4px
-travel; rail focus paints immediately. `MobileSheet` owns its 220ms transform.
-reduced motion removes these animations; forced colours retain boundaries and
-the armed outline. disc swipes show a destination/clamp chip for 600ms without
-animation. the [release record](../issues/release-palette.md) owns glyph and
-feedback handoff debt.
+phone and child pages retain their 40px title/caret gutter. the phone retains
+48px controls, its scrolling verb rail without key hints, and the reversed
+rank layout with rank one nearest the bottom field.
+
+desktop opening keeps 120ms bloom and scrim fade; closing is instant. arrivals
+fade over 200ms without displacement. the phone rail retains 100ms glide and
+`MobileSheet` its 220ms transform. reduced motion removes animation and star
+transitions. forced colours outline the armed stop with `Highlight` and paint
+rules and stars `CanvasText`. disc swipes retain their 600ms clamp/destination
+chip. [release-palette](../issues/release-palette.md) owns existing handoff debt.
 
 ## choice controls
 

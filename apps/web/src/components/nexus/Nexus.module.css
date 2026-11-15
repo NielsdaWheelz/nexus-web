@@ -1,52 +1,4 @@
-/* The palette's arrangement: a card with the query, one scrollport of rows and, while typed, the
-   continuations pinned below it; the rows, the rail and the pane list both surfaces share. Selection
-   paint is Collection's, the scrim the room's, the match ResourceContent's. 120 and 100ms are literals
-   here: no duration token holds them, so the reduced-motion block is mandatory. The arrival onset is
-   policy's ARRIVAL_ONSET_MS, set on each grid as `--arrival-onset`. */
-
-.backdrop {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 15dvh var(--space-6) var(--space-6);
-  background: var(--overlay-scrim);
-  animation: scrimIn 120ms var(--ease-bloom);
-}
-
-.surface {
-  display: flex;
-  flex-direction: column;
-  width: min(640px, calc(100vw - 48px));
-  max-height: 70dvh;
-  overflow: hidden;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-xl);
-  background: var(--surface-canvas);
-  box-shadow: var(--shadow-5);
-  color: var(--ink);
-  transform-origin: 50% 0;
-  animation: cardIn 120ms var(--ease-bloom);
-}
-
-/* Typed, the card holds its height: arrivals fill the scrollport and never move the continuations. */
-.typed { height: 70dvh; }
-
-@keyframes cardIn { from { opacity: 0.7; transform: translateY(-4px) scale(0.985); } }
-@keyframes scrimIn { from { opacity: 0; } }
-
-.workflow { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; }
-
-/* One 40px gutter: the caret and every title share one x. */
-.query { display: grid; flex: 0 0 auto; grid-template-columns: 40px minmax(0, 1fr); align-items: center; min-height: 48px; border-bottom: 1px solid var(--edge-subtle); }
-.query .input { min-width: 0; min-height: 48px; padding: 0 var(--space-3) 0 0; color: var(--ink); font-size: var(--text-md); }
-.query .gutter { color: var(--accent); }
-
-.body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
-.list { flex: 1 1 auto; min-height: 0; padding: var(--space-1) 0 var(--space-2); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-/* The footer reserves the list's scrollbar gutter, so its rows are as wide as the list's. */
-.continuations { flex: 0 0 auto; padding-block: var(--space-1); border-top: 1px solid var(--edge-subtle); overflow: hidden; scrollbar-gutter: stable; }
+/* The phone’s row, rail and pane list; shared notices and literal concordance runs. */
 
 .head {
   margin: 0;
@@ -126,7 +78,6 @@
 .notices { display: grid; flex: 0 0 auto; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 40px; overflow-wrap: anywhere; }
 .notices:empty { display: none; }
 .notices:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
-.empty { margin: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
 
 /* One ordered pane list; source, destination and current pane are separate facts. */
 .paneListHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-inline: 40px var(--space-2); }
@@ -161,16 +112,20 @@
   .trailing > button { --control-min-size: 44px; }
 }
 
-@media (max-width: 640px), (pointer: coarse) {
-  .backdrop { padding-inline: var(--space-3); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .backdrop, .surface, .grid .row, .grid .row[data-band="arriving"], .rail { animation: none; }
+  .grid .row, .grid .row[data-band="arriving"], .rail { animation: none; }
 }
 
 @media (forced-colors: active) {
-  .surface, .rail { border-color: CanvasText; background: Canvas; box-shadow: none; }
+  .rail { border-color: CanvasText; background: Canvas; box-shadow: none; }
   .gutter, .sub { color: CanvasText; }
   .rail .kbd { color: inherit; }
 }
+
+/* A native direction probe keeps an earlier, clipped strong character authoritative. */
+.concordance, .concordanceRun { flex: 1 1 0; min-inline-size: 0; overflow: hidden; white-space: pre; }
+.concordancePlain { display: block; overflow: hidden; text-overflow: ellipsis; }
+.concordanceAxis { display: flex; min-inline-size: 0; }
+.concordanceBefore { flex: 0 0 11rem; overflow: hidden; text-align: end; white-space: pre; mask-image: linear-gradient(to right, transparent, currentcolor 1.25rem); }
+.concordanceRun { text-overflow: ellipsis; }
+.concordance:dir(ltr) .concordancePlain, .concordance:dir(rtl) .concordanceAxis { display: none; }
