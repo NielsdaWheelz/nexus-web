@@ -1,22 +1,13 @@
-/* The phone’s row, rail and pane list; shared notices and literal concordance runs. */
-
-.head {
-  margin: 0;
-  padding: var(--space-3) 0 var(--space-1) 40px;
-  color: var(--ink-muted);
-  font: var(--weight-medium) var(--text-2xs) / var(--leading-snug) var(--font-sans);
-  letter-spacing: var(--tracking-widest);
-  text-transform: uppercase;
-}
+/* The phone’s row and pane drag; shared notices and literal concordance runs. */
 
 /* A row is one grid: gutter, text, trailing cell. Its one gridcell lays out on the row's tracks. */
 .grid .row {
   position: relative;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) minmax(40px, auto);
+  grid-template-columns: 3.25rem minmax(0, 1fr) auto;
   align-items: center;
   gap: 0;
-  min-block-size: 36px;
+  min-block-size: 3.25rem;
   padding: 0;
   border-radius: 0;
   font-size: var(--text-base);
@@ -27,99 +18,38 @@
 .grid .row[data-band="arriving"] { animation: onset var(--arrival-onset) var(--ease-glide); }
 @keyframes onset { from { opacity: 0; } }
 
-.cell { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-inline-size: 0; }
+.cell { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-self: stretch; align-items: center; min-inline-size: 0; }
 .primary { display: flex; grid-column: 1 / 3; align-items: center; min-inline-size: 0; cursor: pointer; touch-action: pan-y pinch-zoom; }
-.gutter { display: grid; flex: 0 0 40px; place-items: center; inline-size: 40px; align-self: stretch; color: var(--ink-muted); }
-.gutter > svg, .glyph > svg { inline-size: 16px; block-size: 16px; }
-.glyph { display: inline-grid; place-items: center; }
+.gutter { display: grid; flex: 0 0 3.25rem; place-items: center; inline-size: 3.25rem; align-self: stretch; color: var(--ink-muted); }
+.gutter > svg { inline-size: 1rem; block-size: 1rem; }
 /* The palette's glyph slots draw at 1.5px; css overrides lucide's attribute. The lexicon's sweep deletes this rule. */
-:is(.gutter, .glyph, .trailing) svg { stroke-width: 1.5; }
+:is(.gutter, .trailing) svg { stroke-width: 1.5; }
 
-.text { display: block; flex: 1 1 auto; min-inline-size: 0; padding: 6px var(--space-3) 6px 0; }
-.title { display: block; overflow: hidden; color: var(--ink); font: var(--weight-regular) var(--text-base) / var(--leading-snug) var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
-:global([data-theme="elvish"]) .title { font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); }
-.sub { margin-inline-end: var(--space-2); color: var(--accent); font: var(--weight-medium) var(--text-2xs) / 1 var(--font-sans); letter-spacing: var(--tracking-widest); text-transform: uppercase; }
-.facts, .evidence { display: block; overflow: hidden; color: var(--ink-muted); font-size: var(--text-xs); line-height: var(--leading-snug); text-overflow: ellipsis; white-space: nowrap; }
+.text { display: block; flex: 1 1 auto; min-inline-size: 0; padding: 0.375rem var(--space-3) 0.375rem 0; }
+.title { display: block; overflow: hidden; color: var(--ink); font: var(--weight-semibold) var(--text-base) / 1.25rem var(--font-sans); letter-spacing: var(--tracking-tight); text-overflow: ellipsis; white-space: nowrap; }
+:global([data-theme="elvish"]) .title { font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-serif); letter-spacing: 0; }
+.facts, .evidence { display: block; overflow: hidden; color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.125rem; text-overflow: ellipsis; white-space: nowrap; }
 
-.trailing { display: flex; grid-column: 3; align-items: center; justify-content: flex-end; gap: var(--space-2); min-inline-size: 40px; padding-inline-end: var(--space-2); color: var(--ink-muted); }
+.trailing { display: flex; grid-column: 3; align-items: center; justify-content: flex-end; gap: var(--space-2); min-inline-size: 0; color: var(--ink-muted); }
 .kbd { color: var(--ink-muted); font: var(--text-2xs) / 1 var(--font-mono); }
 
-/* The rail sits over the row's trailing end: 2 + 32 + 2 = the row's 36px. */
-.rail {
-  position: absolute;
-  z-index: 1;
-  inset-inline-end: var(--space-2);
-  top: 50%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  max-inline-size: 70%;
-  padding: 2px;
-  overflow-x: auto;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-2);
-  translate: 0 -50%;
-  animation: railIn 100ms var(--ease-glide);
-}
-
-@keyframes railIn { from { opacity: 0; translate: 4px -50%; } }
-/* A crowded verb rail scrolls; each verb keeps its whole word. */
-.rail .verb { flex: none; gap: var(--space-2); font-size: var(--text-sm); white-space: nowrap; transition: none; }
-.rail .verb[data-armed]:not([aria-disabled="true"]) { background: var(--surface-active); }
-@media (forced-colors: active) {
-  .rail .verb[data-armed]:not([aria-disabled="true"]) { forced-color-adjust: none; background: Highlight; color: HighlightText; }
-}
-@media (forced-colors: none) {
-  .rail .verb:not([aria-disabled="true"]) { color: var(--ink); }
-}
-
-.notices { display: grid; flex: 0 0 auto; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 40px; overflow-wrap: anywhere; }
+.notices { display: grid; flex: 0 0 auto; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-2) 3.25rem; overflow-wrap: anywhere; }
 .notices:empty { display: none; }
 .notices:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
 
-/* One ordered pane list; source, destination and current pane are separate facts. */
-.paneListHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-inline: 40px var(--space-2); }
-.paneListHeading .head { padding-inline-start: 0; }
-.paneListActions { display: flex; flex: 0 1 auto; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--space-1); margin-inline-start: auto; }
-.paneDisclosureText { display: grid; }
-.paneDisclosureText > span { grid-area: 1 / 1; }
-.paneDisclosureText > span:first-child { visibility: hidden; }
-.paneListAction { white-space: nowrap; }
-.mobileControl { --control-min-size: 48px; min-block-size: 48px; }
-.paneMoveHelp { margin: 0; padding: var(--space-1) var(--space-2) var(--space-1) 40px; color: var(--ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
-.touchDragHint { display: none; }
-.panePosition { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: var(--weight-semibold); }
-.grid .row[data-move-source="true"] { box-shadow: inset 3px 0 0 var(--accent); }
 .grid .row[data-drag-over="before"] { box-shadow: inset 0 2px 0 var(--accent); }
 .grid .row[data-drag-over="after"] { box-shadow: inset 0 -2px 0 var(--accent); }
 .paneDragPreview { display: flex; align-items: center; padding-block: var(--space-2); border: 1px solid var(--edge-strong); border-radius: var(--radius-md); background: var(--surface-canvas); color: var(--ink); box-shadow: var(--shadow-3); }
-.closedPanes { margin-top: var(--space-2); }
-.closedPaneRows[hidden] { display: none; }
-.paneRecovery { display: flex; width: 100%; min-height: 36px; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink); font: inherit; text-align: start; }
-.paneRecovery span { min-width: 0; overflow-wrap: anywhere; }
-.paneRecovery small { color: var(--ink-muted); overflow-wrap: anywhere; }
-.paneRecovery:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: -2px; }
 
-@media (pointer: coarse) {
-  .mouseDragHint { display: none; }
-  .touchDragHint { display: inline; }
-}
-
-@media (any-pointer: coarse) {
-  .grid .row { min-block-size: 44px; }
-  .trailing > button { --control-min-size: 44px; }
-}
+.row[data-marked] .gutter, .row[data-marked] .title { color: var(--ink-faint); }
 
 @media (prefers-reduced-motion: reduce) {
-  .grid .row, .grid .row[data-band="arriving"], .rail { animation: none; }
+  .grid .row, .grid .row[data-band="arriving"] { animation: none; }
 }
 
 @media (forced-colors: active) {
-  .rail { border-color: CanvasText; background: Canvas; box-shadow: none; }
-  .gutter, .sub { color: CanvasText; }
-  .rail .kbd { color: inherit; }
+  .gutter { color: CanvasText; }
+  .row[data-marked] .gutter, .row[data-marked] .title { color: GrayText; }
 }
 
 /* A native direction probe keeps an earlier, clipped strong character authoritative. */

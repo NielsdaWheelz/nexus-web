@@ -206,8 +206,9 @@ Mobile mode:
 - presents sequential adjacent pane switching through a primary-touch
   horizontal swipe on the Nexus control
 - presents random pane access, complete-order rearrangement, recently closed
-  restoration and minimized-pane restore through inline disclosures in the
-  shell-mounted full-screen Nexus task
+  restoration and minimized-pane restore through the thumb index: a
+  shell-mounted bottom sheet listing every pane in strip order, with drag-only
+  reorder and folded `earlier` recovery
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.

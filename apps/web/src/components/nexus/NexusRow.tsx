@@ -1,13 +1,10 @@
 "use client";
 
 // Shared row evidence, spoken names, verbs and notices; the phone keeps its two-line body.
-import * as Icon from "@/lib/ui/icons";
 import { ACTION_CATALOG } from "@/lib/actions/catalog";
 
 // Row parts: resource bodies, menus, and visible search status.
 import { Fact, Failed } from "@/components/feedback/Fact";
-import { ControlContents } from "@/components/ui/control";
-import AsterismMark from "@/components/AsterismMark";
 import { Ruling } from "@/components/feedback/Ruling";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { ExcerptText } from "@/components/resources/ResourceBody";
@@ -22,14 +19,13 @@ import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceItem } from "@/lib/resources/items";
 import { resourceMetadataText } from "@/lib/resources/metadata";
 import { SEARCH_ACTION_LABELS } from "@/lib/search/progress";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
 import type { NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
 type Match = Schema<"SearchMatchOut">;
-export type NexusVerb = Extract<ActionDescriptor, { kind: "command" | "link" }>;
+type NexusVerb = Extract<ActionDescriptor, { kind: "command" | "link" }>;
 
 /** Passage-bodied items other than highlights are titled by their work and always show their window. */
 function isPassage(item: ResourceItem): boolean {
@@ -105,8 +101,8 @@ export function nexusRowAlias(row: NexusRow, lookup: boolean): string | null {
   return Object.entries(NEXUS_COMMANDS).find(([id]) => row.key === `QuickAction:${id}`)?.[1].aliases[0] ?? null;
 }
 
-/** The gutter's glyph (or a reorder position) and the text cell: the title, then one supplement. */
-export function NexusRowBody({ row, here, position, query }: { row: NexusRow; here: boolean; position?: number; query: string }) {
+/** The gutter's glyph and the text cell: the title, then one supplement. */
+export function NexusRowBody({ row, query }: { row: NexusRow; query: string }) {
   const Glyph = row.icon;
   const title = rowPrimaryText(row);
   const inline = titleMatch(row, title, query);
@@ -117,11 +113,10 @@ export function NexusRowBody({ row, here, position, query }: { row: NexusRow; he
   const shown = evidence && reason === null ? windowed(evidence) : null;
   return <>
     <span className={styles.gutter} aria-hidden="true">
-      {position === undefined ? <Glyph size={16} aria-hidden="true" /> : <span className={styles.panePosition}>{position}</span>}
+      <Glyph size="1rem" aria-hidden="true" />
     </span>
     <span className={styles.text}>
       <span className={styles.title} title={title}>
-        {here ? <span className={styles.sub}>here</span> : null}
         <bdi>{inline ? <ExcerptText excerpt={inline.excerpt} match={inline} /> : title}</bdi>
       </span>
       {shown ? <span className={styles.evidence}><ExcerptText excerpt={shown.excerpt} match={shown} /></span>
@@ -140,31 +135,26 @@ export function nexusRowName(row: NexusRow, here: boolean, alias: string | null)
     row.action.kind === "Unavailable" ? row.action.reason : null]);
 }
 
-export interface NexusRowVerbs {
+interface NexusRowVerbs {
   /** `open` (`run` on commands) and `new pane`, as far as the target takes a disposition. */
   readonly pair: readonly NexusVerb[];
-  /** `close pane` on `here` and tab rows, after the read verbs, named for its pane. */
-  readonly close: { readonly verb: NexusVerb; readonly name: string } | null;
   /** The source of the read verbs and of `more`; null when the row has no menu. */
   readonly menu: ContextualActionsInput | null;
-  /** Opening the rail prepares the menu's read; a tab's rail never reads. */
-  readonly read: boolean;
 }
 
 /**
  * A row's verbs: the palette's own descriptors (`Nexus.Open`, `Nexus.OpenInNewPane`,
- * `Nexus.OpenMatchingPassage`, `Nexus.ShowExcerpt`, `Nexus.ClosePane:*`) and the input of its existing
- * contextual menu. Continuations and `resume` have none. Only the pair goes through `activate`, so only
+ * `Nexus.OpenMatchingPassage`, `Nexus.ShowExcerpt`) and the input of its existing
+ * contextual menu. Continuations have none. Only the pair goes through `activate`, so only
  * the pair learns.
  */
 export function nexusRowVerbs(
   row: NexusRow,
   here: boolean,
-  controller: Pick<NexusController, "activate" | "closePane" | "destinationHref" | "panes">,
-  paneName: string,
+  controller: Pick<NexusController, "activate" | "destinationHref">,
   showExcerpt: (item: ResourceItem) => void,
 ): NexusRowVerbs | null {
-  if (row.key.startsWith("Continuation:") || row.key === "Resource:Playback:Current") return null;
+  if (row.key.startsWith("Continuation:")) return null;
   const href = controller.destinationHref(row);
   const reason = row.action.kind === "Unavailable" ? row.action.reason : null;
   const run = row.key.startsWith("Import:") || /^(QuickAction|Intent):/.test(row.key);
@@ -185,10 +175,7 @@ export function nexusRowVerbs(
       return result && result.kind !== "Cancelled" ? fork || intent.intent === "new_pane" ? "handled-new-pane" : "handled-default" : "consumed";
     } };
   };
-  const tab = row.secondary?.kind === "ClosePane" ? row.secondary.paneId : null;
-  const closing = tab ?? (here ? controller.panes.find(pane => pane.current)?.id ?? null : null);
-  const paneRef = tab === null ? null : controller.panes.find(pane => pane.id === tab)?.resourceRef ?? null;
-  const resourceRef = row.secondary?.kind === "TargetMenu" ? row.secondary.resourceRef : paneRef === null ? null : assumeCanonicalResourceRef(paneRef);
+  const resourceRef = row.secondary?.kind === "TargetMenu" ? row.secondary.resourceRef : null;
   const occurrence: MenuOption[] = [];
   if (row.matchingPassage) {
     const action = row.action.kind === "Unavailable" ? row.action : resourceAction(row.matchingPassage.item);
@@ -211,27 +198,21 @@ export function nexusRowVerbs(
   const capture = row.matchingPassage?.item ?? row.item;
   if (capture?.preview.body.kind === "passage" && capture.preview.body.capture_revision !== null)
     occurrence.push({ kind: "command", id: "Nexus.ShowExcerpt", label: "show excerpt", icon: null, hasPopup: "dialog", restoreFocusOnClose: false, onSelect: () => showExcerpt(capture) });
-  if (row.secondary?.kind === "TargetMenu") for (const pane of row.secondary.closePanes) {
-    if (here && resourceRef === null && pane.id === closing) continue;
-    occurrence.push({ kind: "command", id: `Nexus.ClosePane:${pane.id}`, label: pane.label, icon: <Icon.Dismiss aria-hidden="true" />, onSelect: () => controller.closePane(pane.id) });
-  }
   return {
     pair: [...(here ? [] : [verb(false)]), ...(opensImport ? [] : [verb(true)])],
-    close: closing === null ? null : { name: `close ${paneName}`,
-      verb: { kind: "command", id: `Nexus.ClosePane:${closing}`, label: "close pane", icon: null, onSelect: () => controller.closePane(closing) } },
     menu: resourceRef === null && occurrence.length === 0 ? null : {
       title: row.label, subjectKey: `nexus:${row.key}`, resourceRef: resourceRef ?? undefined,
       showSourceSubject: row.item !== undefined && row.item.action_ref !== row.item.ref,
       navigation: { key: row.key, fork: null },
       sections: [{ id: "Occurrence", actions: occurrence }],
     },
-    read: tab === null && resourceRef !== null,
   };
 }
 
-/** The query paints its wait in its existing glyph. */
-export function NexusQuerySpinner({ pending }: { pending: boolean }) {
-  return <ControlContents icon={<AsterismMark />} busy={pending} />;
+/** The first typed line stands alone; later lines name their class band. */
+export function typedSideHead(row: NexusRow, first: string | null): string {
+  return row.key === first ? row.rank.tier === "Latched" ? "usual" : ""
+    : { Do: "do", Place: "places", Resource: "resources", Passage: "passages" }[row.class];
 }
 
 const SOURCE_NOUNS: Record<string, string> = { Hybrid: "related matches", Reference: "linked items", Direct: "destinations" };

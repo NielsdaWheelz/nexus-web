@@ -5,6 +5,9 @@ observation: the round-1 phone typed screenshot at d5c2a6a5f still shows busy ab
 `lib/nexus/useNexusFind.ts:196` also includes local preview, retained-local admission
 and resource reads in `pending`; `NexusRow.tsx` publishes that to `FeedbackBusy`.
 
+the thumb index replaces the aggregate spinner with separate device/names/texts
+stars. correlate each star with its owned source, including delayed rereads.
+
 impact: the palette may appear unfinished after remote results settle. the exact
 pending owner was not captured, so removing busy on hybrid would conceal real work.
 

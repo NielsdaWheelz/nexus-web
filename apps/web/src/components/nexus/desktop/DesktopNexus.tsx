@@ -17,7 +17,7 @@ import { SHORTCUTS, shortcutAriaKeys, usesMeta } from "@/lib/shortcuts";
 import { revealCollectionItem } from "@/lib/ui/collection";
 import { isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { workspaceTargetActivationIntent } from "@/lib/ui/targetActivation";
-import { NexusNotices, nexusRowAlias, nexusRowName, nexusRowVerbs } from "../NexusRow";
+import { NexusNotices, nexusRowAlias, nexusRowName, nexusRowVerbs, typedSideHead } from "../NexusRow";
 import NexusPages from "../NexusPages";
 import type { NexusController } from "../useNexusController";
 import HeadwordRow from "./HeadwordRow";
@@ -66,8 +66,8 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   const active = rows[index] ?? null;
   const held = new Set(controller.list.held);
   const listed = new Set(controller.list.rows.map(row => row.key));
-  const verbs = active ? nexusRowVerbs(active, active.state === "Current", controller, "", setExcerpt) : null;
-  const occurrence = verbs?.menu?.sections?.[0]?.actions.filter(action => !action.id.startsWith("Nexus.ClosePane:")) ?? [];
+  const verbs = active ? nexusRowVerbs(active, active.state === "Current", controller, setExcerpt) : null;
+  const occurrence = verbs?.menu?.sections?.[0]?.actions ?? [];
   const menu: ContextualActionsInput | null = verbs?.menu && (verbs.menu.resourceRef !== undefined || occurrence.length > 0)
     ? { ...verbs.menu, sections: [{ id: "Occurrence", actions: [...verbs.pair, ...occurrence] }] } : null;
   const pointerPress = useRef<{ key: string; x: number; y: number; moved: boolean } | null>(null);
@@ -187,8 +187,7 @@ export default function DesktopNexus({ controller }: { controller: NexusControll
   };
   const bands: { label: string; sideHead: string; rows: NexusRow[] }[] = [];
   for (const row of block) {
-    const sideHead = typed ? row.key === controller.list.first ? row.rank.tier === "Latched" ? "usual" : ""
-      : { Do: "do", Place: "places", Resource: "resources", Passage: "passages" }[row.class]
+    const sideHead = typed ? typedSideHead(row, controller.list.first)
       : row.key === "Continuation:UseText" ? "selection" : "recent";
     const label = sideHead || "first";
     const last = bands.at(-1);

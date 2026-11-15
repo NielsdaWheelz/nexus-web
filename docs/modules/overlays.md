@@ -307,12 +307,15 @@ padding. `heightLimit="available"` instead projects the backdrop onto the visual
 viewport using `useKeyboardInset`, with a top gap of the larger of `--space-6`
 and the safe top inset. its intrinsic panel clears the keyboard once and keeps
 safe-bottom padding inside its available height. nexus uses this sheet with
-`handleLabel="close nexus"`, no root header and a bottom field outside the
-reversed result scrollport. blank focus lands on the armed row, keeping the
-keyboard down; a field tap raises it. back/escape lets native ime handling and
-nested owners precede rail, child page and root handling; root text clears
+`handleLabel="close nexus"`, no root header and a fixed legend/field foot below
+its downward-reading scrollport. blank focus lands on the screen-reader heading,
+with nothing armed, keeping the keyboard down; a field tap raises it.
+back/escape lets native ime handling and nested owners precede drag, child page
+and root handling; root text clears
 before close. scrim and handle dismissal use the same writing guard. workflow
-pages retain their headers and own initial focus inside the sheet.
+pages retain their headers and own initial focus inside the sheet, without the
+root foot. all sheet-close routes commit marked panes at the open→closed
+transition; current-pane close commits marks before choosing its successor.
 sheet layout and height policies
 live in `MobileSheet.module.css`; the component projects the viewport snapshot.
 
