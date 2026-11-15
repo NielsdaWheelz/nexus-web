@@ -4,6 +4,15 @@ the capture source and central `nexus-turn-capture-v1` contract must ship togeth
 source implementation alone does not enable capture. no production cutover has
 been performed.
 
+source qualification passed for `12f74c865eb289e186ff33b310f8d34a28c9220d`:
+authenticated send/cancel/retry, all six memory tools collectively across paid
+provider/native journeys, typed outage continuation and exact `Call.id` replay
+after uncertain saves. future-only exports survived deletion/outage, lost
+acknowledgements and overlapping publishers; malformed/oversize heads parked
+without losing content. native internal exclusion passed. temporary probes and
+fixtures were deleted. [immutable source evidence](https://github.com/NielsdaWheelz/jarvis/blob/d66e84057cb2468f23aacf3f359dac49453e0a3a/docs/universal-memory.md#memory-completion-source-qualification)
+records exact pins, image ids and the remaining deployment limits.
+
 - drain admitted runs before the existing stopped-writer cutover changes capture
   settings; do not restamp old runs or reset an established boundary.
 - publish generated client and publisher files from one sharing declaration.
