@@ -1,4 +1,4 @@
-# optional memory client; the caller supplies its explicit private configuration.
+# optional memory; each lane receives only its private scope.
 
 x-memory-config: &memory-config
   type: bind
@@ -14,3 +14,13 @@ services:
       MEMORY_CLIENT_CONFIG_PATH: /run/secrets/nexus-memory-client.json
     volumes:
       - *memory-config
+  worker-background:
+    environment:
+      MEMORY_CAPTURE_CONFIG_PATH: /run/secrets/nexus-memory-capture.json
+    volumes:
+      - type: bind
+        source: ${NEXUS_MEMORY_CAPTURE_CONFIG_FILE:?set the memory publisher configuration file}
+        target: /run/secrets/nexus-memory-capture.json
+        read_only: true
+        bind:
+          create_host_path: false

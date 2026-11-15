@@ -182,6 +182,7 @@ class Settings(BaseSettings):
     codex_control_token: _Secret = Field(None, alias="NEXUS_CODEX_CONTROL_TOKEN")
     codex_cwd_root: Path = Field(Path("/tmp/codex-daemon-10001/cwds"), alias="NEXUS_CODEX_CWD_ROOT")
     memory_client_config_path: Path | None = None
+    memory_capture_config_path: Path | None = None
     metadata_enrichment_max_content_words: int = Field(1000, ge=1, le=1000)
     connection_discovery_enabled: bool = True
     atlas_project_schedule_seconds: int = Field(0, ge=0)  # 0: not periodic (prod: 86400)

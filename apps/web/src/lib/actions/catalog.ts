@@ -222,7 +222,7 @@ export const ACTION_CATALOG = {
   },
   DeleteTurn: {
     label: "delete turn", icon: null, group: "Danger",
-    confirmation: { title: "delete this turn?", body: "deletes this question and its answer. completed actions and later messages remain. this cannot be undone." },
+    confirmation: { title: "delete this turn?", body: "deletes this question and its answer. completed actions and later messages remain. this cannot be undone. deleting this turn does not remove copies already captured or queued for shared memory." },
   },
   DeleteHighlight: {
     label: "Delete highlight",

@@ -308,12 +308,14 @@ def _insert(
         context_budget_tokens=context_budget,
         output_budget_tokens=output_budget,
     )
-    seq = db.execute(
+    allocated = db.execute(
         text(
-            "UPDATE librarian_state SET next_seq=next_seq+2 WHERE user_id=:viewer RETURNING next_seq-2"
+            "UPDATE librarian_state SET next_seq=next_seq+2 WHERE user_id=:viewer "
+            "RETURNING next_seq-2 AS seq,memory_capture_id,memory_capture_after_message_seq"
         ),
         {"viewer": viewer_id},
-    ).scalar_one()
+    ).one()
+    seq = allocated.seq
     user = Message(
         owner_user_id=viewer_id,
         seq=seq,
@@ -344,6 +346,16 @@ def _insert(
         user_message_id=user.id,
         assistant_message_id=assistant.id,
         retry_of_run_id=retry_of_run_id,
+        memory_capture_id=allocated.memory_capture_id
+        if (
+            tools.memory_config is not None
+            and tools.memory_config.owner_user_id == viewer_id
+            and tools.memory_config.capture
+            and tools.memory_config.admit
+            and allocated.memory_capture_id is not None
+            and seq >= allocated.memory_capture_after_message_seq
+        )
+        else None,
         status="queued",
         generation_spec=spec.model_dump(mode="json"),
     )
