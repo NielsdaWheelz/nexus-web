@@ -8,6 +8,11 @@ the interaction is owned by `apps/web/src/components/nexus/NexusPaneList.tsx`: w
 250ms hold, 8px tolerance and an independent 48px mobile close target. no personal
 phone or browser was used for this change.
 
-resolve by checking native scrolling before hold, first/last placement through
+the thumb index removes numbered placement. it adds stationary 500ms
+hold-to-fork on other lines/signs and deferred close marks; open lines retain
+250ms drag only, including the current pane. marked lines remain drop slots.
+
+resolve by checking native scrolling before hold, first/last drag through
 overflow, outside-release cancellation and the next ordinary tap on a physical
-device. confirm the close target stays independent and the hold is comfortable.
+device. confirm the close target stays independent, marks commit at dismissal,
+and both hold timings are comfortable without native callout or double activation.

@@ -23,3 +23,6 @@ without the focus wait.
 2026-10-28: four immediate-account attempts passed on the header-icon candidate
 in run `20261028-172107-ee2d53d2c712`; unchanged-source baseline runs also passed.
 this did not reproduce the old intermittent failure and establishes no repair.
+
+the thumb index moves account to an icon-only trigger at the fixed legend end.
+repeat the immediate-opening tap at that target; the admit-click guard remains.

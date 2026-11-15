@@ -196,45 +196,37 @@ restoration preserves the store's position/history and does not learn a query
 selection. shift does not fork a restore. the pane strip owns desktop close and
 reorder.
 
-blank mobile nexus shows the current pane separately as `here`, then other panes under
-`tabs · {total}` in most-recently-active order. the controller owns that order
-for the session, seeded from layout order; it is not workspace persistence.
-the most recently active other pane is armed at open, so mod+k then enter returns
-there. mobile previews up to five other panes; expand reveals all
-including minimized panes, and collapse restores the preview. omit disclosure
-when nothing is hidden. disclosure lasts through same-opening query/page visits
-and responsive handoff, and resets on explicit reopening.
+blank mobile nexus lists every pane, including minimized panes, in `state.panes`
+order under `open · {n}`. the current line carries `here` in its trailing column.
+there is no cap or initial arm; the heading has focus and the keyboard stays
+down. `earlier` is always present after the open lines, folded at each opening.
+it holds recent picks not held by any open pane, then up to five session-closed
+panes not represented by those recents. restores ignore disposition, preserve
+position/history and recover no discarded writing.
 
-`reorder` or hold-drag switches the blank pane section to complete layout order,
-including the current pane, for the transaction. completion/cancellation returns
-to most-recently-active order. completeness compares the presented ids with
-layout ids; an mru permutation containing all panes is still complete.
-ranked typed results cannot reorder. phone tab rows keep × and no verb rail;
-the current resource row retains its resource verbs. the
-[sheet](app-navigation.md#nexus-content-grammar) opens keyboard-down.
+non-current × marks the pane without changing workspace state or moving its
+line. its primary button gains focus, its line says `closed`, and tapping it
+unmarks without navigating. every sheet close commits marks in order, skipping
+missing panes and the active pane; each unsaved pane may refuse independently.
+such a refused pane remains eligible as the successor of a current-pane close.
+marks clear after commit and on a shell flip. closing the current pane commits
+marks first, then closes it and the sheet, focuses the committed successor and
+offers `closed {title}` with `reopen`. a refused current close keeps the sheet
+open with marks already committed. typed pane activation unmarks before going
+there. the store retains five closed records, so a sixth displaces the oldest.
 
-the row body opens/restores its exact pane; only the independent × closes it.
-closing keeps nexus open and adopts the store's committed successor, including
-final-pane replacement. focus follows the next displayed row, else previous or
-replacement, independently of workspace activation; refused close retains its
-initiator. recently closed is a separate inline disclosure over the store's five
-session-local records. reopening restores navigation and activates; it does not
-recover discarded writing. its native controls use tab order, outside query candidates.
+the complete blank projection with at least two panes permits whole-body drag,
+including the current pane, excluding ×. marked lines cannot be dragged but
+remain drop slots. ranked typed results cannot reorder. the nexus gesture owner
+calls `movePane` once through a snapshot-checked drag commit. mouse uses 8px;
+touch uses a 250ms hold/8px tolerance and keeps native scrolling before activation.
+only the nexus scrollport autoscrolls. the preview is decorative and
+modal-contained; the release guard prevents subsequent activation.
 
-complete pane projections with at least two panes permit whole-body drag, excluding
-×. truncated/ranked search projections cannot reorder. the nexus gesture owner
-shares one snapshot-checked commit for drag and numbered placement, calling
-`movePane` once. mouse uses 8px; touch uses 250ms hold/8px tolerance and keeps native
-scrolling before activation. only the nexus scrollport autoscrolls. the preview
-is decorative and modal-contained; the release guard prevents subsequent activation.
-
-`reorder` chooses a source, then a final numbered position; each placement returns
-to normal opening behavior, including no-op placement. keyboard navigation uses
-mobile native buttons. current pane,
-keyboard highlight and moving source remain distinct. query editing/composition,
-ineligible presentation, changed captured ids/order, shell replacement, window
-focus loss or ownership loss cancels; element blur/tab traversal does not.
-the first task-owned escape/back/scrim dismissal cancels; explicit close/done
-cancels then dismisses. only changed moves announce success. no new persistence
-or order revision is introduced. mobile offers no minimize/layout command and
-never mounts a desktop strip or inactive columns.
+reorder has no placement mode, keyboard path or screen-reader instructions.
+query editing/composition, ineligible presentation, changed captured ids/order,
+shell replacement, window focus loss or ownership loss cancels; element blur/tab
+traversal does not. the first task-owned escape/back/scrim dismissal cancels;
+explicit close cancels then dismisses. only changed moves announce success.
+no new persistence or order revision is introduced. mobile offers no
+minimize/layout command and never mounts a desktop strip or inactive columns.

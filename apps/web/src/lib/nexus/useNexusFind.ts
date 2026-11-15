@@ -282,7 +282,6 @@ export function useNexusFind({ open, composing, query, retainedLocalTargets }: {
     retryRelated: () => retry("Hybrid"),
     busy: pending,
     pending,
-    failures,
     retrying,
     retry,
     remember,

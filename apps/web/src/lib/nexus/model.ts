@@ -29,7 +29,7 @@ export type MaterializedOpenDailyPageTarget = {
     | { readonly kind: "FocusNote"; readonly noteBlockId: string };
 };
 
-/** Every navigation is an InternalHref; the rest open a pane, Today, the player, or a page. */
+/** Every navigation is an InternalHref; the rest open a pane, Today, or a page. */
 export type NexusTarget =
   | { readonly kind: "Resource"; readonly activation: Schema<"ResourceActivationOut">; readonly label: string }
   | {
@@ -48,7 +48,6 @@ export type NexusTarget =
         | { readonly kind: "View" }
         | { readonly kind: "AppendNote"; readonly initialText: string };
     }
-  | { readonly kind: "ResumeCurrentPlayback" }
   /** The import page, with `text` in its field when given; it sends nothing. */
   | { readonly kind: "OpenImport"; readonly text: string }
   /** Sends the links, then shows their lines on the import page. */
@@ -96,7 +95,7 @@ export interface NexusRow {
   readonly matchingPassage?: Schema<"SearchOccurrenceOut"> | null;
   readonly action: NexusAction;
   readonly secondary?:
-    | { readonly kind: "TargetMenu"; readonly resourceRef: CanonicalResourceRef | null; readonly closePanes: readonly { readonly id: string; readonly label: string }[] }
+    | { readonly kind: "TargetMenu"; readonly resourceRef: CanonicalResourceRef | null }
     | { readonly kind: "ClosePane"; readonly paneId: string };
   /** Whether an accepted selection of this row contributes to server selection ranking. */
   readonly learns_selection?: boolean;
@@ -112,7 +111,7 @@ export interface NexusRow {
 }
 
 export interface NexusGroup {
-  readonly id: "Here" | "Open" | "Recent" | "QuickActions" | "Results" | "Continuations" | "Closed";
+  readonly id: "Open" | "Recent" | "Results" | "Continuations" | "Closed";
   readonly label: string;
   readonly rows: readonly NexusRow[];
 }
@@ -134,15 +133,10 @@ export interface NexusList {
 
 export type FireTarget = { readonly kind: "Fire"; readonly key: string } | { readonly kind: "Wait"; readonly until: number } | { readonly kind: "None" };
 
-/** The verb rail over one row: which row, the focused descriptor id and the typed filter. */
-export type Rail = { readonly key: string; readonly focus: string | null; readonly filter: string } | null;
-
 export type NexusSource = "Direct" | "Lexical" | "Hybrid" | "Reference";
 
 export interface NexusPane {
   readonly id: string;
-  /** One-based position in workspace strip order, independent of matching subsets and mru. */
-  readonly position: number;
   readonly href: string;
   readonly resourceRef: string | null;
   readonly visibility: "visible" | "minimized";

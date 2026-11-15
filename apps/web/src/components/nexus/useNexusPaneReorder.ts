@@ -6,9 +6,8 @@ import { getInteractionOwner, useInteractionOwner, type Layer } from "@/lib/ui/o
 import { useLatestWorkspace, useSubscribeWorkspace } from "@/lib/workspace/store";
 
 type Move = { readonly paneId: string; readonly paneIds: readonly string[] };
-type Placement = null | { readonly kind: "ChoosePane" } | ({ readonly kind: "ChoosePosition" } & Move);
 
-/** One temporary transaction, shared by placement and drag. Workspace order stays in the store. */
+/** One temporary drag transaction. Workspace order stays in the store. */
 export function useNexusPaneReorder(input: {
   readonly open: boolean;
   readonly eligible: boolean;
@@ -23,11 +22,8 @@ export function useNexusPaneReorder(input: {
   const owner = useInteractionOwner();
   const latest = useRef(input);
   latest.current = input;
-  const [placement, setPlacement] = useState<Placement>(null);
-  const placementRef = useRef<Placement>(null);
   const [draggingPaneId, setDraggingPaneId] = useState<string | null>(null);
   const drag = useRef<Move | null>(null);
-  const triggerPaneId = useRef<string | null>(null);
   const [sensorEpoch, setSensorEpoch] = useState(0);
 
   function ownsInput() {
@@ -45,21 +41,19 @@ export function useNexusPaneReorder(input: {
   }
 
   function clear() {
-    placementRef.current = null;
     drag.current = null;
-    setPlacement(null);
     setDraggingPaneId(null);
   }
 
   function cancel({ silent = false, restoreFocus = true }: { silent?: boolean; restoreFocus?: boolean } = {}): boolean {
-    const source = drag.current?.paneId ?? (placementRef.current?.kind === "ChoosePosition" ? placementRef.current.paneId : triggerPaneId.current);
-    const moving = placementRef.current !== null || drag.current !== null;
+    const source = drag.current?.paneId ?? null;
+    const moving = drag.current !== null;
     clear();
     // Pending activation timers also belong to the retiring sensor, before drag start.
     setSensorEpoch((epoch) => epoch + 1);
     if (moving && !silent) {
       latest.current.announce("move cancelled");
-      if (restoreFocus && latest.current.open && getInteractionOwner() === latest.current.interactionLayer.current) latest.current.focus(source !== null && latestWorkspace().state.panes.some((pane) => pane.id === source) ? `Pane:${source}` : "Reorder");
+      if (restoreFocus && latest.current.open && getInteractionOwner() === latest.current.interactionLayer.current) latest.current.focus(source !== null && latestWorkspace().state.panes.some((pane) => pane.id === source) ? `Pane:${source}` : null);
     }
     return moving;
   }
@@ -91,7 +85,7 @@ export function useNexusPaneReorder(input: {
   const handlers = useRef({ cancel, valid });
   handlers.current = { cancel, valid };
   useLayoutEffect(() => subscribeWorkspace(() => {
-    const move = drag.current ?? (placementRef.current?.kind === "ChoosePosition" ? placementRef.current : null);
+    const move = drag.current;
     if (move !== null && !handlers.current.valid(move)) handlers.current.cancel({ silent: !latest.current.open || getInteractionOwner() !== latest.current.interactionLayer.current });
   }), [subscribeWorkspace]);
   const context = `${input.open}:${input.eligible}:${input.isMobile}`;
@@ -107,51 +101,16 @@ export function useNexusPaneReorder(input: {
     window.addEventListener("blur", blur);
     return () => {
       window.removeEventListener("blur", blur);
-      placementRef.current = null;
       drag.current = null;
     };
   }, []);
 
-  const source = placement?.kind === "ChoosePosition" ? placement : drag.current;
-  const sourcePane = source ? input.panes.find((pane) => pane.id === source.paneId) ?? null : null;
-  const duplicate = sourcePane !== null && input.panes.filter((pane) => pane.presentation.title === sourcePane.presentation.title).length > 1;
-  const sourceName = source && sourcePane ? [sourcePane.presentation.title,
-    duplicate ? sourcePane.presentation.detail : null,
-    duplicate ? `pane ${source.paneIds.indexOf(source.paneId) + 1} of ${source.paneIds.length}` : null,
-  ].filter(Boolean).join(", ") : null;
-
   return {
-    placement,
     draggingPaneId,
-    sourceName,
     sensorEpoch,
     available: input.eligible,
-    start() {
-      if (!ownsInput()) return;
-      clear();
-      setSensorEpoch((epoch) => epoch + 1);
-      triggerPaneId.current = latestWorkspace().state.active_primary_pane_id;
-      const next = { kind: "ChoosePane" } as const;
-      placementRef.current = next;
-      setPlacement(next);
-      latest.current.announce("");
-      latest.current.focus(`Pane:${triggerPaneId.current}`);
-    },
     cancel,
-    choosePane(paneId: string) {
-      if (placementRef.current?.kind !== "ChoosePane") return;
-      const move = capture(paneId);
-      if (move === null) { cancel(); return; }
-      const next = { kind: "ChoosePosition", ...move } as const;
-      placementRef.current = next;
-      setPlacement(next);
-      latest.current.focus(`Pane:${paneId}`);
-    },
-    place(position: number) {
-      if (placementRef.current?.kind === "ChoosePosition") commit(placementRef.current, position);
-    },
     startDrag(paneId: string): boolean {
-      if (placementRef.current !== null) return false;
       const move = capture(paneId);
       if (move === null) return false;
       drag.current = move;

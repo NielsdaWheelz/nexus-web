@@ -414,13 +414,19 @@ a star after 150ms, answered relights over 200ms, failure stays dim. idle is lit
 empty waiting apparatus lines rule after 200ms. legend and catchword use the
 active word fill. no hover wash or animated armed-position movement occurs.
 
-phone and child pages retain their 40px title/caret gutter. the phone retains
-48px controls, its scrolling verb rail without key hints, and the reversed
-rank layout with rank one nearest the bottom field.
+child pages retain their 40px title/caret gutter. the phone's thumb index has a
+3.25rem sign column and minimum line height, with one-line titles and glosses.
+typed rank one is at the head; band names share the trailing locator column.
+passages show the excerpt then italic work without a glyph. the page reads down
+above a fixed 3.5rem legend and 3.75rem field. place signs are 2.875rem wide;
+the account mark, or search sign and `ask`/`note`, cover the legend's inline end.
+solar uses serif titles and the vine rule. the field names the armed target as
+`go · {name}` and carries the three-source asterism. no focus accent rule or
+hover wash is painted.
 
 desktop opening keeps 120ms bloom and scrim fade; closing is instant. arrivals
-fade over 200ms without displacement. the phone rail retains 100ms glide and
-`MobileSheet` its 220ms transform. reduced motion removes animation and star
+fade over 200ms without displacement. `MobileSheet` retains its 220ms transform.
+only the `earlier` chevron turns; reduced motion removes animation and star
 transitions. forced colours outline the armed stop with `Highlight` and paint
 rules and stars `CanvasText`. disc swipes retain their 600ms clamp/destination
 chip. [release-palette](../issues/release-palette.md) owns existing handoff debt.
@@ -639,7 +645,10 @@ maximize `Maximize`, restore `Restore`, close `Dismiss`. end-control identity
 survives active-pane changes and keeps focus. successful minimize says
 `minimized {title}.` in the strip's polite status; last-visible refusal explains
 `keep at least one pane visible`. reorder announces position once. the nexus
-pane list retains its independent wrapping titles and 48px close targets.
+pane list retains independent 3rem by 3.25rem close targets. a marked pane's
+sign and title use `--ink-faint` (`GrayText` in forced colours); its line stays
+in place, says `closed` and has no close target. the armed line has the
+collection's inset accent and surface wash, or a `Highlight` outline.
 
 ## the lint
 

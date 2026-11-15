@@ -7,7 +7,8 @@ and offline restart. mobile browser checks established
 comfort or real-device gesture ergonomics, required by the compact palette spec.
 
 on a physical phone, exercise typing/IME dismissal, result/options activation,
-use-text back chains, pane expansion/close and the inherited touch-reorder/scroll
+use-text back chains, pane marking/current close, earlier recovery,
+hold-to-fork and the inherited touch-reorder/scroll
 boundary. controls must remain comfortably reachable without accidental action
 or lost focus. use an explicitly approved disposable package/session; do not
 replace the owner's regular app or change device-wide trust/settings. resolve

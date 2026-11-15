@@ -3,7 +3,8 @@
 recent is device-local recall of deliberately accepted resource use. it retains
 100 unique targets, newest first; nexus shows eight when blank and searches all
 retained titles in ordinary unfiltered search. utilities, commands, external
-sites and uncommitted creation forms are excluded. open panes remain eligible.
+sites and uncommitted creation forms are excluded. open panes remain eligible
+in storage and typed search; the phone's blank sheet excludes all their resources.
 
 ## owners
 
@@ -94,6 +95,13 @@ no menu. matching uses `recentTargetKey` on the visit's supported recent target;
 utilities have no such identity. closed panes not represented by listed recents
 occupy the apparatus, newest first, capped at three. restore contributes normal
 accepted resource use but no query-selection learning.
+
+the phone's blank thumb index excludes recents held by every open pane,
+including marked panes, before applying the eight-recent cap. its always-present
+`earlier` disclosure holds those recents, then every unrepresented closed record
+(up to the store's five), in engine order. the folded summary counts restore
+rows, not records; duplicate closed resources can share one recent row. notices
+appear only while unfolded. opening always folds it again.
 
 ## server boundary
 

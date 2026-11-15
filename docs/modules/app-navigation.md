@@ -30,9 +30,9 @@ the incoming command once. restored data never dispatches commands.
   but do not displace discovery, listening, and conversation tasks.
 - **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes, Atlas, Oracle.
-- **mobile places order is exact:** today, lectern, libraries, browse,
-  podcasts, librarian, notes, atlas, oracle. the sheet presents one horizontal
-  chip row; stats remains in account and retrievable through nexus.
+- **mobile places order is exact:** today, librarian, lectern, libraries,
+  podcasts, notes, browse, feeds, atlas, oracle, then import. the thumb index
+  presents signs on a horizontally scrolling rule; stats remains in account.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
@@ -43,7 +43,8 @@ count (`Import · {n}`) is distinct from the account's needs-attention count.
 the shared account menu is exactly stats, imports, downloads when available,
 settings, a separator, and danger-last sign out. imports retains its canonical
 `/imports` link, query/deep links, inspector and contextual acquisition entrances.
-the mobile nexus account projection renders that same component and order;
+the mobile nexus account mark ends the legend while the field is empty and
+renders that same component and order;
 mobile attention remains inside nexus, without a closed-launcher badge.
 
 the settings section row lists account, librarian, appearance, reader and
@@ -56,7 +57,8 @@ sign-out command.
 
 `AccountMenu` owns its decorative person-in-circle mark and passive attention
 dot. the desktop rail retains its expanded label. the mobile sheet places the
-same account menu behind its farthest `account` row; the root has no header.
+same account menu behind an icon-only trigger at the legend's inline end while
+the field is empty; the root has no header.
 account retains its trigger state, status description and focus/navigation owners.
 
 `AccountMenu` reads the existing `ImportsProvider` summary once. a known positive
@@ -81,22 +83,28 @@ membership and the engine owns typed order and caps. renderers own geometry.
 Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
-mobile nexus opens keyboard-down in a bottom sheet, with the armed row focused.
-tapping the field raises the keyboard. the field is the last child outside the
-scrollport and follows the keyboard inset; rank one touches it, with subsequent
-ranks above and continuations farthest away. blank order, nearest the field
-first, is here, previous pane, other tabs, recent picks, actions, places chips,
-then account. the sheet has a 44px handle strip, scrim dismissal and a guarded
+mobile nexus opens keyboard-down in a bottom sheet, with nothing armed and the
+screen-reader heading focused. tapping the field raises the keyboard without
+changing the blank page. the thumb index reads down: surviving selection,
+every open pane in strip order, then the always-present folded `earlier` line.
+the page alone scrolls; the legend and field form its fixed foot. blank height
+follows content; typed height fills the available viewport. the sheet has a
+44px handle strip, scrim dismissal and a guarded
 96px downward drag. back clears root text before closing. nested overlays,
 child pages and active pane moves retain their own dismissal precedence; see
 [overlays](overlays.md#surfaces).
 
+the legend end stays pinned while its actual width contributes to the strip's
+scroll extent. every place and import can scroll clear of account or the typed
+keys. opening resets the strip to its start.
+
 import, create library, use text, choices and capture today stay in the same sheet
-with their own back/title headers and initial focus. pane expansion and
-recently-closed recovery remain inline disclosures. `new pane` is a row verb,
-with the workspace's `Fork` disposition; there is no new-pane picker mode.
-ordinary row activation retains `Follow`. phone tab rows keep the independent
-× and have no rail; fork an open pane through its resource row.
+with their own back/title headers and initial focus, without the foot. `earlier`
+unfolds recent picks and session-closed panes, excluding recents held by any
+open pane. a tap follows; a stationary 500ms touch hold opens beside with
+`Fork`, consuming its release click. open pane lines reserve hold for the
+250ms drag; typed resource rows can fork. × marks a non-current pane for close
+on sheet dismissal; tapping its line keeps it open. current × closes at once.
 
 the nexus control opens through native button activation: pointer click,
 keyboard and assistive technology. primary button-0 presses are captured so
@@ -160,10 +168,11 @@ newest matching pane with its position and history. up to three closed panes
 not represented by listed recents occupy the apparatus. closed lines have no
 menu and ignore the fork disposition.
 
-mobile retains `here`, other panes under `tabs · {total}`, recent picks and
-actions, plus paused playback. it arms the previous pane or surviving selection
-and keeps its pane disclosures, reorder controls and verb rail. the desktop
-owns no pane-closing or reordering controls.
+mobile lists every pane under `open · {n}` in strip order, with `here` in the
+current line's trailing column. `earlier` follows even with one pane and no
+recents. nothing is armed at open. reorder is drag-only, including the current
+pane; no row menu or verb rail is mounted. the desktop owns no pane-closing or
+reordering controls.
 
 typed order is the best named row known at the keystroke, then `do` (two),
 `places` (three), and `resources`, to eight names in all. the first line does
@@ -171,9 +180,12 @@ not consume its band's cap; a latch there reads `usual`. three passages sit
 below, independently capped. arrivals preserve shown positions; only a named
 arrival within the arming window can take enter. the catchword is the last
 arrow stop and is armed when no named row is armed. desktop paints
-`all results for “{text}”`; mobile keeps `search all results` and `use this text…`.
-the desktop's empty name block reads `nothing by that name.` after device and
-names settle. both surfaces use the [arming contract](search.md#launcher).
+`all results for “{text}”`; the phone paints its search sign at the legend's
+end, followed by `ask` and `note` for a plain search. its field echoes
+`go · {armed name}`, or `go · all results`; unarmed lookup and an absent arm have no
+echo. typed use-text is absent. both empty name blocks read
+`nothing by that name.` after device and names settle. both surfaces use the
+[arming contract](search.md#launcher).
 repeat and composition never activate. retirement announces
 `selection no longer available`; unavailable targets explain refusal.
 
@@ -201,6 +213,8 @@ opens today at a new line. this holds for slash, legend, chord and use-text or
 create choices on both surfaces. quick note never learns; today learns under
 `/daily`. other eligible row picks retain learning; legend runs and chords do
 not. empty ask opens the librarian; nonempty ask uses its retained composer.
+the phone's `ask` key follows an existing librarian pane or forks one when none
+is open; both keys take the field's text as typed, including filters.
 page/library/import/browse open existing drafts or choosers without submitting.
 `import policy` searches; `/i policy` opens an import draft. literal search
 preserves outer-trimmed text without filter parsing.
@@ -223,21 +237,25 @@ outside the title, otherwise already-projected distinguishing facts. facts carry
 contributors, source, location, related-match state or refusal reason; no kind
 words or `current`. the current resource carries `here`; minimized is a
 distinct state. no metadata is fetched to decorate a row. note titles are their
-first line, with a separate matched window. phone passage titles are the work, with the matched window below; desktop
+first line, with a separate matched window. phone passages show the matched
+window then the italic work, without a glyph; desktop
 passages use a concordance with the work at the line end. highlights retain the quoted selected literal.
 identical title evidence underlines in the title; matches never change weight.
 the palette renderer clips long evidence to its first native match, rebases the
 codepoint ranges and marks omitted context honestly. the full source excerpt,
 its frozen identity and its activation remain unchanged.
+phone passages wait until device, names and texts have all settled or the
+eight-name block is full. once drawn for a query they remain through rereads;
+the polite status counts only drawn rows.
 
 on desktop, tab or right at the query's end opens the armed row's contextual
 menu. its occurrence section starts with open and new pane (only new pane for
 the current row). the menu exists only for a resource or occurrence verbs;
 commands, places and closed lines have none. only the armed row mounts `…`.
 closing restores the field's caret and selection. desktop menus omit pane close.
-mobile keeps the verb rail: fixed open/new-pane pair, preferred descriptors,
-then more; descriptor focus is retained by id. its menu and full-excerpt dialog
-use their existing owners. only primary row activation learns.
+mobile holds activate `Fork` directly; its palette has no contextual menu or
+full-excerpt dialog. resource-specific verbs remain in their own panes.
+only primary row activation learns.
 
 desktop uses a combobox with a one-column grid; `aria-activedescendant` names
 the mounted armed candidate while the query has focus. plain up/down browses
@@ -252,7 +270,7 @@ and overlays, and uses the committed displayed successor. renderers forward
 gestures; the controller owns arming, dispatch, guards and announcements.
 
 desktop root escape closes with or without text. mobile root back/escape clears
-text, then closes; an open rail, nested overlay, child page or pane move wins
+text, then closes; a nested overlay, child page or running drag wins
 first. enabled secondary actions remain usable when the primary is unavailable.
 
 ## the import page
@@ -303,8 +321,9 @@ phone retains import as its return control. explicit field replacement clears
 feedback;
 arrow back preserves it. closing retires the visit. deferred admissions retain
 filing work but cannot revive an open intent after input, selection or exit.
-the desktop legend and phone action read `import · {n}` while
-the intake has unsettled lines; its complete spoken name retains the count.
+the desktop legend reads `import · {n}` while the intake has unsettled lines.
+the phone's final place sign paints digits and is named `import, {n} importing`;
+it remains the return control from the import page.
 
 document ingress yields to existing editable, attachment and overlay owners.
 an unclaimed file drop opens the page and admits up to 100 files; the same cap
@@ -459,15 +478,19 @@ related link gestures still work. The rendered anchor always retains a real
 
 The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
-the Nexus trigger. workspace creation has no pane-count refusal. the launcher's
-own close/reorder commands stay in place, including final close;
-primary open and recently closed restore dismiss it and
+the Nexus trigger. workspace creation has no pane-count refusal. the thumb
+index's non-current × marks a pane without moving its line. dismissal commits
+marks in order, skipping the active pane; unsaved writing asks once per pane
+and refusal does not stop the other closes. current × commits marks first,
+then closes the current pane and sheet, focuses the successor and offers
+`closed {title}` with `reopen`. refusal keeps the sheet open with marks already
+committed. primary open and closed-pane restore dismiss it and
 focus the destination. external navigation still dismisses the task. the desktop Account
 menu retains its existing focus contract.
 
 pane rows share the workspace command owners with the desktop strip. mobile
 omits layout/minimize controls; its minimized title restores through ordinary
-activation. both nexus presenters support full-order rearrangement. see
+activation. only the phone's complete blank pane list offers drag reorder. see
 [panes](panes.md) for the state table and focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,

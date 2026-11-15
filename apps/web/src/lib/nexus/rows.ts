@@ -1,5 +1,5 @@
 // Candidate rows per stream: the synchronous set at a keystroke, the arrivals after it, the blank
-// list, the continuations and the places chips. Ordering is rank.ts's; bands are list.ts's.
+// list, the continuations and the phone legend. Ordering is rank.ts's; bands are list.ts's.
 import { recentTargetKey, type RecentEntry } from "@/lib/recent/model";
 import type { PanePresentation } from "@/lib/workspace/presentations";
 import { authoredItem } from "@/lib/notes/presentation";
@@ -23,12 +23,10 @@ import { PASSAGE_CAP, RESULT_CAP } from "./policy";
 import { NEXUS_COMMANDS, nexusBrowseAction, nexusSearchAction, type BrowseKind, type NexusQuery } from "./query";
 import { canonicalHref, compareRank, frecency, nameTier } from "./rank";
 
-/** Other panes shown in the blank list before `expand tabs`. */
-export const OPEN_CAP = 5;
 const RECENT_CAP = 8;
 const COMMAND_IDS = Object.keys(NEXUS_COMMANDS) as NexusCommandId[];
-/** The sheet's places chips, rail order. */
-const PLACES: readonly DestinationId[] = ["today", "lectern", "libraries", "browse", "podcasts", "feeds", "librarian", "notes", "atlas", "oracle"];
+/** The phone's legend, its order. */
+const PLACES: readonly DestinationId[] = ["today", "librarian", "lectern", "libraries", "podcasts", "notes", "browse", "feeds", "atlas", "oracle"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
 const NO_USAGE: UsageMap = {};
 const UNSCORED = { href: null, evidence: false, frecency: 0, recency: 0 } as const;
@@ -104,10 +102,9 @@ export function resourceAction(item: ResourceItem): NexusAction {
     : { kind: "Available", target: { kind: "Resource", activation: item.activation, label: item.label } };
 }
 
-function targetMenu(ref: string | null, panes: readonly NexusPane[]): Extract<NonNullable<NexusRow["secondary"]>, { kind: "TargetMenu" }> {
+function targetMenu(ref: string | null): Extract<NonNullable<NexusRow["secondary"]>, { kind: "TargetMenu" }> {
   return {
     kind: "TargetMenu", resourceRef: ref === null ? null : assumeCanonicalResourceRef(ref),
-    closePanes: panes.map(pane => ({ id: pane.id, label: pane.current ? "close current pane" : panes.length > 1 ? `close pane ${pane.position}` : "close pane" })),
   };
 }
 
@@ -126,7 +123,7 @@ function resourceRow(item: ResourceItem, panes: readonly NexusPane[], stream: Ne
     icon: resourceTypeGlyph(resourceType(ref.scheme, itemMediaKind(item))), keywords: itemKeywords(item),
     state: pane ? paneState(pane) : undefined,
     action: resourceAction(item),
-    secondary: targetMenu(item.action_ref, matching),
+    secondary: targetMenu(item.action_ref),
     learns_selection: true,
     href, evidence: tier === "Lexical" || tier === "Semantic", frecency: href === null ? 0 : frecency(href, usage), recency: 0, rank: rank(stream, tier),
   };
@@ -146,7 +143,7 @@ function localRow(match: LocalMatch, panes: readonly NexusPane[], tier: RankTier
     state: pane ? paneState(pane) : undefined,
     action: match.href === null ? { kind: "Unavailable", reason: "source unavailable" }
       : { kind: "Available", target: { kind: "InternalHref", href: match.href, labelHint: match.label } },
-    secondary: targetMenu(ref, matching),
+    secondary: targetMenu(ref),
     learns_selection: true,
     href: match.href, evidence: tier === "Lexical", frecency: match.href === null ? 0 : frecency(match.href, usage), recency: 0, rank: rank("Local", tier),
   };
@@ -162,7 +159,7 @@ function recentRow(item: RecentItem, panes: readonly NexusPane[], tier: RankTier
     detail: presentation.detail ?? undefined, keywords: presentation.status === "Ready" && presentation.detail ? [presentation.detail] : [],
     state: pane ? paneState(pane) : undefined,
     action: { kind: "Available", target: { kind: "InternalHref", href: entry.href, labelHint: presentation.title } },
-    ...(resourceRef ? { secondary: targetMenu(resourceRef, matching) } : {}),
+    ...(resourceRef ? { secondary: targetMenu(resourceRef) } : {}),
     learns_selection: true,
     href: entry.href, evidence: false, frecency: frecency(entry.href, usage), recency: Number(entry.used_revision), rank: rank("Recent", tier),
   };
@@ -250,15 +247,15 @@ export function syncRows(input: Reference & {
     const recency = panes.length - input.mru.indexOf(pane.id);
     const row = paneRow(pane, tier, usage, recency);
     if (pane.resourceRef === null) {
-      // A place that is already open keeps its row and gains the pane's closure.
+      // A place that is already open keeps its row and gains the pane's state.
       const routeId = resolveWorkspaceActivationRouteId(pane.href);
       const at = places.findIndex(place => place.action.kind === "Available" && place.action.target.kind === "InternalHref" && resolveWorkspaceActivationRouteId(place.action.target.href) === routeId);
-      if (at >= 0) places[at] = { ...places[at]!, state: row.state, secondary: targetMenu(null, [pane]) };
+      if (at >= 0) places[at] = { ...places[at]!, state: row.state };
       else rows.push(row);
     } else if (plain && presentation.status !== "Unavailable") rows.push({
       ...row, key: `Resource:${pane.resourceRef}`, href, frecency: frecency(href, usage),
       action: { kind: "Available", target: { kind: "InternalHref", href, labelHint: presentation.title } },
-      secondary: targetMenu(pane.resourceRef, panes.filter(candidate => candidate.resourceRef === pane.resourceRef)),
+      secondary: targetMenu(pane.resourceRef),
     });
   }
   rows.push(...places);
@@ -354,17 +351,8 @@ function refreshed(shown: NexusRow, update: NexusRow): NexusRow {
   };
 }
 
-export function playbackRow(title: string, subtitle: string | undefined): NexusRow {
-  return {
-    class: "Do", key: "Resource:Playback:Current", localMatch: null,
-    label: title, icon: Icon.Play, detail: subtitle,
-    action: { kind: "Available", target: { kind: "ResumeCurrentPlayback" } },
-    ...UNSCORED, rank: rank("Navigation", "PrefixOrToken"),
-  };
-}
-
-/** `search all results` and `use this text…`; lookup keeps only its literal search. */
-export function continuations(query: NexusQuery, useText: boolean): NexusRow[] {
+/** Search continuation; lookup keeps its literal search. */
+export function continuations(query: NexusQuery): NexusRow[] {
   if (!query.text || query.intent.kind !== "Search" && query.intent.kind !== "CommandLookup") return [];
   const literal = query.intent.kind === "CommandLookup";
   const searchQuery = literal ? { ...emptySearchQuery(), text: query.text } : query.searchQuery;
@@ -373,51 +361,38 @@ export function continuations(query: NexusQuery, useText: boolean): NexusRow[] {
     detail: null,
     icon: Icon.Search, action: nexusSearchAction(searchQuery), learns_selection: true, ...UNSCORED, rank: rank("Navigation", "Substring"),
   };
-  if (literal || !useText) return [search];
-  return [search, textRow(query.text)];
+  return [search];
 }
 
-function textRow(text: string, detail?: string): NexusRow {
-  return { class: "Do", key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Icon.Add, detail,
-    action: { kind: "Available", target: { kind: "UseText", text } }, ...UNSCORED, rank: rank("Navigation", "Substring") };
-}
-
-/**
- * The blank list: selection, optional pane rows, recent picks without the current resource,
- * optional actions, then closed panes not represented by those recents. No row is name-matched.
- */
+/** The blank selection, the phone's panes in strip order, then recents and closed panes.
+ * The phone excludes every open resource from recents; the desktop excludes its current resource. */
 export function blankRows(input: {
   readonly panes: readonly NexusPane[];
+  /** Pane ids, most recently active first: the rows' recency only. */
   readonly mru: readonly string[];
   readonly recent: readonly RecentItem[];
-  readonly playback: NexusRow | null;
   readonly useText: string | null;
-  readonly layoutOrder: boolean;
-  readonly panesExpanded: boolean;
   readonly tabs: boolean;
-  readonly actions: boolean;
   readonly closed: readonly ClosedItem[];
+  /** Closed rows not represented by recents: the desktop's three, the phone's every record. */
+  readonly closedCap: number;
 }): NexusRow[] {
   const { panes } = input;
   const current = panes.find(pane => pane.current);
+  const holds = (pane: NexusPane, item: RecentItem) => item.resourceRef !== null ? pane.resourceRef === item.resourceRef : pane.href === item.entry.href;
   const recency = (pane: NexusPane) => panes.length - input.mru.indexOf(pane.id);
-  const tabs = input.layoutOrder ? panes : input.mru.flatMap(id => panes.filter(pane => pane.id === id && !pane.current));
-  const shownTabs = input.layoutOrder || input.panesExpanded ? tabs : tabs.slice(0, OPEN_CAP);
-  const recents = input.recent.filter(item => !current || (item.resourceRef !== null ? item.resourceRef !== current.resourceRef : item.entry.href !== current.href)).slice(0, RECENT_CAP);
-  const actions = input.actions ? (["Nexus.Quick.Note", "Nexus.Quick.Chat", "Nexus.Quick.Import"] as const).map(id => commandRow(id, "PrefixOrToken", "", NO_USAGE)) : [];
-  if (input.actions && input.playback) actions.push({ ...input.playback, label: `resume ${input.playback.label}` });
+  const recents = input.recent.filter(item => input.tabs ? !panes.some(pane => holds(pane, item)) : !current || !holds(current, item)).slice(0, RECENT_CAP);
   return [
-    ...(input.useText ? [textRow(input.useText, input.useText)] : []),
-    ...(input.tabs && current && !input.layoutOrder ? [{ ...paneRow(current, "PrefixOrToken", NO_USAGE, recency(current)), secondary: targetMenu(current.resourceRef, [current]) }] : []),
-    ...(input.tabs ? shownTabs.map(pane => paneRow(pane, "PrefixOrToken", NO_USAGE, recency(pane))) : []),
+    ...(input.useText ? [{ class: "Do" as const, key: "Continuation:UseText", localMatch: null, label: "use this text…", icon: Icon.Add, detail: input.useText,
+      action: { kind: "Available" as const, target: { kind: "UseText" as const, text: input.useText } }, ...UNSCORED, rank: rank("Navigation", "Substring") }] : []),
+    ...(input.tabs ? panes.map(pane => paneRow(pane, "PrefixOrToken", NO_USAGE, recency(pane))) : []),
     ...recents.map(item => {
       const row = recentRow(item, panes, "PrefixOrToken", NO_USAGE, true);
-      const matching = panes.some(pane => item.resourceRef !== null ? pane.resourceRef === item.resourceRef : pane.href === item.entry.href);
+      const matching = panes.some(pane => holds(pane, item));
       const closed = matching ? undefined : input.closed.find(closed => closed.recentKey === recentTargetKey(item.entry.target));
       return closed ? { ...row, secondary: undefined, action: { kind: "Available" as const, target: { kind: "RestorePane" as const, paneId: closed.id } } } : row;
     }),
-    ...actions,
-    ...input.closed.filter(closed => closed.recentKey === null || !recents.some(item => recentTargetKey(item.entry.target) === closed.recentKey)).slice(0, PASSAGE_CAP).map(closedRow),
+    ...input.closed.filter(closed => closed.recentKey === null || !recents.some(item => recentTargetKey(item.entry.target) === closed.recentKey)).slice(0, input.closedCap).map(closedRow),
   ];
 }
 
@@ -430,8 +405,8 @@ function closedRow(item: ClosedItem): NexusRow {
   };
 }
 
-/** The sheet's places: each destination's label as written, `Today` first. */
-export function placeChipRows(): NexusRow[] {
+/** The phone legend: each destination's own label and glyph. */
+export function placeRows(): NexusRow[] {
   return PLACES.map(id => placeRow(getDestination(id), "PrefixOrToken", NO_USAGE));
 }
 
@@ -439,8 +414,6 @@ export function placeChipRows(): NexusRow[] {
 export function nexusGroups(input: {
   readonly blank: boolean;
   readonly rows: readonly NexusRow[];
-  readonly hereKey: string | null;
-  readonly paneCount: number;
   readonly continuations: readonly NexusRow[];
 }): NexusGroup[] {
   const group = (id: NexusGroup["id"], label: string, rows: readonly NexusRow[]): NexusGroup[] => rows.length ? [{ id, label, rows }] : [];
@@ -448,11 +421,9 @@ export function nexusGroups(input: {
   const where = (test: (row: NexusRow) => boolean) => input.rows.filter(test);
   return [
     ...group("Continuations", "", where(row => row.key === "Continuation:UseText")),
-    ...group("Here", "", where(row => row.key === input.hereKey)),
-    ...group("Open", `tabs · ${input.paneCount}`, where(row => row.key.startsWith("Pane:") && row.key !== input.hereKey)),
+    ...group("Open", "open", where(row => row.key.startsWith("Pane:"))),
     ...group("Recent", "recent picks", where(row => row.key.startsWith("Recent:"))),
     ...group("Closed", "closed", where(row => row.key.startsWith("Closed:"))),
-    ...group("QuickActions", "actions", where(row => row.key.startsWith("QuickAction:") || row.key === "Resource:Playback:Current")),
   ];
 }
 

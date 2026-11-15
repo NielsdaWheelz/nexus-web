@@ -1583,17 +1583,18 @@ late results preserve the active target; deliberate selection freezes its visibl
 prefix and group without consuming another section's capacity.
 
 named resources open whole; matching passages have a separate menu action.
-desktop enter follows a selected row, otherwise parsed intent or full search;
-mobile keyboard submit follows intent/full search, leaving row activation explicit.
-query actions never become automatic defaults. composition/repeat guards and
+enter/go follows the armed row under the shared perception-window contract;
+with no named arm, a typed search arms the search continuation. blank has no
+default arm. composition/repeat guards and
 shift opening remain. the full-search pane defaults to resources, offers a
 url-owned passages view, preserves criteria between views, and uses shared
 resource bodies, metadata and outline controls. details belong to
 [modules/search.md](modules/search.md).
 
-mobile uses one opaque nexus full-screen task (`components/switchboard/`,
-`lib/switchboard/`). its root paints synchronously from workspace state and fixed
-place/quick projections. the controller computes only the active viewport's
+mobile uses the thumb index, a nexus bottom sheet (`components/switchboard/`,
+`lib/switchboard/`). its blank page lists every pane in strip order then folded
+recent/closed recovery. its fixed foot holds place signs and the field; typed
+answers read down from the head. the controller computes only the active viewport's
 projection and retains the last committed projection while hidden. accepted
 selection history uses the existing write/retry contract. external discovery
 remains in explicit acquisition workflows.
@@ -1608,11 +1609,12 @@ The mobile Nexus control also carries a primary-touch horizontal adjacent-pane
 accelerator over visible panes in `state.panes` order, the store's clamped
 traversal command; tap remains the task entrance and the gesture creates
 no second navigation model.
-The viewport-fixed dialog owns an opaque safe-area- and keyboard-aware canvas;
-it has no scrim, grabber, outside-click target, drag dismissal, or
-primitive-owned toolbar. Guarded Back pops one Nexus level before dismissing
-Root, nonnavigation close restores control focus, and accepted workspace
-activation leaves focus with the destination.
+`MobileSheet` owns the safe-area- and keyboard-aware viewport, scrim, handle,
+guarded drag dismissal and rise. guarded back pops one nexus level before
+dismissing root; nonnavigation close restores control focus, and accepted
+workspace activation leaves focus with the destination. non-current pane closes
+are marked until sheet dismissal; current close commits marks first and offers
+reopen. child pages retain their own headers and have no root foot.
 
 **Browse** is a fixed desktop/mobile destination and a read-only discovery
 boundary. `/browse` owns exact `q`, `kind`, `source`, and `sort` URL state; the
@@ -1857,8 +1859,7 @@ open over Resume and never become panes.
   `components/appnav/navModel.ts` independently owns the flat desktop rail, the
   footer utility link (Imports) and the Account pair; Nexus owns the mobile
   Places projection. Mobile global access is the bottom Nexus control
-  plus its full-screen task, not a navigation drawer, bottom sheet, or second
-  desktop palette. Section routes
+  plus its bottom sheet. Section routes
   derive semantic navigation ownership from
   `header.destinationId`; resource routes (notably `/media/{id}`) declare one
   `sectionDestinationId`, with no duplicate field or prefix map. All cross-pane

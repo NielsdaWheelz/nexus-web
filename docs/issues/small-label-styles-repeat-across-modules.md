@@ -25,6 +25,6 @@ resolved when the label has one declared form (a class or a token set) with the
 exceptions named, or the differences are recorded as intended in
 `docs/modules/visual-system.md`.
 
-headword replaces desktop uses of `.head` and `.sub` with lowercase margin
-side-heads and locators. both uppercase declarations remain for the phone;
-this change removes no duplicate label declarations.
+headword replaces desktop uses with lowercase margin side-heads and locators.
+the thumb index deletes `.head` and `.sub` from `Nexus.module.css`; other
+listed modules retain their separate declarations.
