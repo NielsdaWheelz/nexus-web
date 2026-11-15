@@ -126,6 +126,6 @@
 .concordance, .concordanceRun { flex: 1 1 0; min-inline-size: 0; overflow: hidden; white-space: pre; }
 .concordancePlain { display: block; overflow: hidden; text-overflow: ellipsis; }
 .concordanceAxis { display: flex; min-inline-size: 0; }
-.concordanceBefore { flex: 0 0 11rem; overflow: hidden; text-align: end; white-space: pre; mask-image: linear-gradient(to right, transparent, currentcolor 1.25rem); }
+.concordanceBefore { display: flex; flex: 0 0 11rem; justify-content: flex-end; overflow: hidden; white-space: pre; mask-image: linear-gradient(to right, transparent, currentcolor 1.25rem); }
 .concordanceRun { text-overflow: ellipsis; }
 .concordance:dir(ltr) .concordancePlain, .concordance:dir(rtl) .concordanceAxis { display: none; }

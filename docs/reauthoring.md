@@ -402,7 +402,7 @@ changes ride the unreleased wire 18 already introduced by acquisition; no second
 bump, migration or authored-format change. release pairing and remaining device/
 design handoffs live in [release-palette](issues/release-palette.md).
 
-headword against `8a16a039a`: +182 net authored runtime lines (706 added,
+headword against `14c0dde4c`: +182 net authored runtime lines (706 added,
 524 deleted). desktop nexus has a fixed page, command legend, ranked name bands,
 passage concordance and contextual menus. the desktop rail, pane disclosures,
 close/reorder controls and use-text continuation are removed; phone keeps those
