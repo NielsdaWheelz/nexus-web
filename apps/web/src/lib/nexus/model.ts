@@ -40,6 +40,7 @@ export type NexusTarget =
       readonly entry?: WorkspacePaneEntry;
     }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
+  | { readonly kind: "RestorePane"; readonly paneId: string }
   | {
       readonly kind: "OpenDailyPage";
       readonly date: DailyPageLocator;
@@ -78,6 +79,7 @@ export type UsageMap = Schema<"NexusUsageMapOut">["usages"];
 export interface NexusRow {
   /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", "Recent:<target>", "Continuation:<id>", …: identity and last tie-break. */
   readonly key: string;
+  readonly class: "Do" | "Place" | "Resource" | "Passage";
   readonly localMatch: LocalMatch | null;
   readonly label: string;
   /** The spoken name, where it is not the label's words. */
@@ -110,16 +112,17 @@ export interface NexusRow {
 }
 
 export interface NexusGroup {
-  readonly id: "Here" | "Open" | "Recent" | "QuickActions" | "Results" | "Continuations";
+  readonly id: "Here" | "Open" | "Recent" | "QuickActions" | "Results" | "Continuations" | "Closed";
   readonly label: string;
   readonly rows: readonly NexusRow[];
 }
 
-/** A query's list: held and arriving rows, with a fresh latch first, and what enter fires. */
+/** A query's block and passage tail, the first line fixed at the keystroke, and what enter fires. */
 export interface NexusList {
   readonly identity: string;
   readonly rows: readonly NexusRow[];
-  /** Keys painted at the keystroke; other rows arrived, including a latch prepended ahead of them. */
+  readonly first: string | null;
+  /** Keys painted at the keystroke; arrivals keep their landing position. */
   readonly held: readonly string[];
   readonly armed: string | null;
   readonly armedAt: number;

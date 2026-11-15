@@ -13,7 +13,7 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { truncateText } from "@/lib/display/format";
 import { chatDraftOwnerId } from "@/lib/chat/drafts";
 import { resourceDraftOwnerId } from "@/lib/resourceGraph/useResourceDraft";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import { recentValueForHref, resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useWorkGuard, type WorkOwner } from "@/lib/unsavedWork";
 import { planWorkspaceTarget, type WorkspaceTargetActivationRequest, type WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
@@ -30,6 +30,7 @@ import {
   type MaterializedOpenDailyPageTarget,
   type ChoiceReturn,
   type NexusAction,
+  type NexusCommandId,
   type NexusImportOrigin,
   type NexusOpenIntent,
   type ReplayableSubmitState,
@@ -46,7 +47,7 @@ import {
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, parseNexusQuery } from "@/lib/nexus/query";
 import { canonicalHref, latchedHref, normalizeQuery } from "@/lib/nexus/rank";
-import { arrivalRows, blankRows, choiceRows, continuations, learnedHref, nexusGroups, OPEN_CAP, playbackRow, syncRows } from "@/lib/nexus/rows";
+import { arrivalRows, blankRows, choiceRows, continuations, learnedHref, nexusGroups, OPEN_CAP, playbackRow, syncRows, type ClosedItem } from "@/lib/nexus/rows";
 import { useNexusFind } from "@/lib/nexus/useNexusFind";
 import { getWritingRuntime, LocalCommitError } from "@/lib/notes/runtime";
 import { ACCOUNT_DAY_UNAVAILABLE } from "@/lib/notes/accountDay";
@@ -174,7 +175,7 @@ export function useNexusController() {
   const latestList = useRef(list);
   latestList.current = list;
   const [rail, setRail] = useState<Rail>(null);
-  /** A reader selection read at open; `use this text…` is pre-armed with it until the first keystroke. */
+  /** A reader selection read at open; only the phone pre-arms it. */
   const [useText, setUseText] = useState<string | null>(null);
   /** The armed row was removed; enter announces until a new query. */
   const retired = useRef(false);
@@ -207,6 +208,7 @@ export function useNexusController() {
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
   const rootMode: NexusRootMode = parsed.text ? "Typed" : "Blank";
+  const commandArgument = parsed.intent.kind === "Command" ? parsed.intent.argument : parsed.text.startsWith("/") ? "" : parsed.text;
   const lookupGuidance = parsed.intent.kind === "CommandLookup"
     ? parsed.intent.head === "/" ? "choose a command, or search for this text."
       : `no command named “${truncateText(parsed.intent.head, 32)}”. choose one, or search for this text.`
@@ -227,6 +229,11 @@ export function useNexusController() {
       })),
     [presentations, state],
   );
+  const closedItems = useMemo<ClosedItem[]>(() => workspace.recentlyClosedPanes.map(({ pane }) => {
+    const visit = pane.current_visit;
+    const value = recentValueForHref(visit.href, visit.title_hint);
+    return { id: pane.id, href: visit.href, presentation: presentations.forVisit(visit), recentKey: value ? recentTargetKey(value.target) : null };
+  }), [workspace.recentlyClosedPanes, presentations]);
   const currentPane = panes.find(pane => pane.current) ?? null;
 
   // Most recently active first, session-local, seeded from layout order (owner decision 5).
@@ -335,36 +342,46 @@ export function useNexusController() {
   const latched = parsed.text && find.usage ? latchedHref(normalizeQuery(parsed.text), find.usage) : null;
   const shape = JSON.stringify([parsed.text, reordering, panesExpanded, viewport.isMobile, useText]);
   const lastShape = useRef<string | null>(null);
-  const continuationRows = useMemo(() => continuations(parsed), [parsed]);
+  const continuationRows = useMemo(() => continuations(parsed, viewport.isMobile), [parsed, viewport.isMobile]);
   useLayoutEffect(() => {
     if (!open || page.kind !== "Root") { lastShape.current = null; return; }
     const fresh = lastShape.current !== shape;
     lastShape.current = shape;
     const now = performance.now();
     const usage = find.usage ?? NO_USAGE;
-    const blank = { panes, mru, recent: recentItems, playback: playbackItem, useText, layoutOrder: reordering, panesExpanded };
+    const previous = latestList.current;
+    // Keep the first snapshot's order during an open; new recents fill only its remaining places.
+    const heldRecent = !fresh && !viewport.isMobile && !parsed.text ? previous.rows.flatMap(row => row.recentEntry ? [recentTargetKey(row.recentEntry.target)] : []) : [];
+    const blank = { panes, mru, recent: [
+      ...heldRecent.flatMap(key => recentItems.filter(item => recentTargetKey(item.entry.target) === key)),
+      ...recentItems.filter(item => !heldRecent.includes(recentTargetKey(item.entry.target))),
+    ], playback: playbackItem, useText, layoutOrder: reordering, panesExpanded,
+      tabs: viewport.isMobile, actions: viewport.isMobile, closed: viewport.isMobile ? [] : closedItems };
+    const blankCandidates = blankRows(blank);
     const sync = { query: parsed, panes, mru, recent: recentItems, usage, latched,
       reference: find.reference, referenceFailed: find.referenceFailed, localReference: find.localReference, localReferenceMissing: find.localReferenceMissing };
     if (fresh) clearTimeout(pendingFire.current ?? undefined);
-    const previous = latestList.current;
     let next = previous;
     if (fresh || previous === EMPTY) {
       if (!parsed.text) {
-        const rows = blankRows(blank);
-        // Open arms where you were (law 7); a rebuild the user caused keeps what they armed.
+        const rows = blankCandidates;
+        // The desktop opens unarmed; the phone keeps its pane or selected-text default.
         const kept = previous.armed !== null && rows.some(row => row.key === previous.armed) ? previous.armed : null;
-        const armed = kept ?? (useText ? "Continuation:UseText" : previousPaneId !== null && !reordering ? `Pane:${previousPaneId}` : null);
-        next = { identity: "", rows, held: rows.map(row => row.key), armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
+        const armed = !viewport.isMobile ? null : kept ?? (useText ? "Continuation:UseText" : previousPaneId !== null && !reordering ? `Pane:${previousPaneId}` : null);
+        next = { identity: "", rows, first: null, held: rows.map(row => row.key), armed, armedAt: now, deliberate: true, previous: null, paintedAt: now };
       } else {
         const latchedKey = latched === null ? null : previous.rows.find(row => row.href !== null && canonicalHref(row.href) === latched)?.key ?? null;
-        next = keystroke(previous, parsed.text, syncRows(sync), latchedKey, now);
+        // Explicit grammar replaces discovery; only a search retains rows across keystrokes.
+        next = parsed.intent.kind === "Search" ? keystroke(previous, parsed.text, syncRows(sync), latchedKey, now)
+          : keystroke(EMPTY, parsed.text, parsed.intent.kind === "CommandLookup" && !viewport.isMobile ? [] : syncRows(sync), null, now);
         // Lookup arms nothing until the user does (target behaviour, `/`).
         if (parsed.intent.kind === "CommandLookup") next = { ...next, armed: null, previous: null };
       }
-    } else if (!parsed.text) next = arrive(previous, blankRows(blank), now);
+    } else if (!parsed.text) next = arrive(previous, blankCandidates, now);
     if (parsed.text) next = arrive(next, arrivalRows({ ...sync, preview: find.preview, local: find.local, missingLocal: find.missingLocal, shown: next.rows }), now);
     const gone = new Set<string>();
     for (const row of next.rows) {
+      if (!viewport.isMobile && !parsed.text && (row.key.startsWith("Closed:") || row.recentEntry) && !blankCandidates.some(candidate => candidate.key === row.key)) gone.add(row.key);
       if (row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && !panes.some(pane => row.action.kind === "Available" && row.action.target.kind === "PaneOpen" && pane.id === row.action.target.paneId)) gone.add(row.key);
       if (row.localMatch && find.missingLocal.has(row.localMatch.resource.ref)) gone.add(row.key);
       if (row.recentEntry && presentations.isRecentRemoved(row.recentEntry)) gone.add(row.key);
@@ -373,7 +390,7 @@ export function useNexusController() {
     if (next.armed !== null && gone.has(next.armed)) retired.current = true;
     latestList.current = remove(next, gone);
     setList(latestList.current);
-  }, [open, page.kind, shape, parsed, panes, mru, recentItems, playbackItem, useText, reordering, panesExpanded, latched, find.usage, find.reference, find.referenceFailed, find.localReference, find.localReferenceMissing, find.preview, find.local, find.missingLocal, presentations, previousPaneId]);
+  }, [open, page.kind, shape, parsed, panes, mru, recentItems, playbackItem, useText, reordering, panesExpanded, latched, find.usage, find.reference, find.referenceFailed, find.localReference, find.localReferenceMissing, find.preview, find.local, find.missingLocal, presentations, previousPaneId, viewport.isMobile, closedItems]);
   const hereKey = currentPane && !reordering ? `Pane:${currentPane.id}` : null;
   const groups = useMemo(() => nexusGroups({ blank: rootMode === "Blank", rows: list.rows, hereKey, paneCount: panes.length, continuations: continuationRows }),
     [rootMode, list.rows, hereKey, panes.length, continuationRows]);
@@ -488,6 +505,10 @@ export function useNexusController() {
       target.kind !== "Resource" &&
       !guard.confirmLoss({ scopes: [], ownerIds: sourceOwnerIds(target) })) return { kind: "Cancelled" };
     switch (target.kind) {
+      case "RestorePane":
+        if (!latestWorkspace().recentlyClosedPanes.some(closed => closed.pane.id === target.paneId)) { announce(RETIRED); return null; }
+        restoreClosed(target.paneId);
+        return null;
       case "Resource": {
         let result: WorkspaceTargetActivationResult | null = null;
         activateResource(target.activation, {
@@ -555,7 +576,7 @@ export function useNexusController() {
     return result;
   }
 
-  /** Quick note with text: one append to the day, then the day at that note (the
+  /** Quick note with text: one append to today, opened only for a fork (the
    * launcher keeps the text with Retry, under the same note id, when it fails). */
   function capture(running: Extract<NexusPage, { kind: "CaptureToday" }> & { readonly submit: Extract<ReplayableSubmitState, { kind: "Running" }> }) {
     void openCreated(running, async () => {
@@ -588,15 +609,16 @@ export function useNexusController() {
     running: Extract<NexusPage, { kind: "CreateLibrary" | "CaptureToday" }>,
     create: () => Promise<OpenResult>,
   ) {
+    const inPlace = running.kind === "CaptureToday" && running.activation.disposition.kind !== "Fork";
     let livePage: NexusPage = running;
     setOpen(true);
     setPage(running);
     const originPaneId = latestWorkspace().state.active_primary_pane_id;
     return openAsyncResult({
       ctx, originPaneId, intent: running.activation.disposition.kind === "Fork" ? "new_pane" : "default",
-      subject: running.kind === "CreateLibrary" ? running.name : running.text,
+      subject: running.kind === "CreateLibrary" ? running.name : inPlace ? undefined : running.text,
       initiatingLayer: interactionLayer.current,
-      mayOpen: () => visible.current && currentPage.current === livePage,
+      mayOpen: () => !inPlace && visible.current && currentPage.current === livePage,
       discardOwnerIds: [pageOwner.id],
       onOpened: () => { if (currentPage.current === livePage) finishNavigation(null); },
       create: async () => {
@@ -604,6 +626,7 @@ export function useNexusController() {
         if (currentPage.current === running && !ctx.sessionSignal().aborted) {
           livePage = { ...running, submit: { kind: "Acknowledged" } };
           setPage(livePage);
+          if (inPlace) performExit({ kind: "Close" });
         }
         return result;
       },
@@ -764,8 +787,10 @@ export function useNexusController() {
       setQuery(sent ? "" : text);
       // Search on a phone rests in its input. Otherwise the row: the one that opened
       // this page, or the import row if that row left with the query or never existed.
-      rootFocus.current = viewport.isMobile && !sent && mode === "Typed" ? "Search"
-        : sent || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control;
+      rootFocus.current = viewport.isMobile
+        ? !sent && mode === "Typed" ? "Search" : sent || control === "Search" ? "QuickAction:Nexus.Quick.Import" : control
+        : sent || control === "Search" ? null : control;
+      if (!viewport.isMobile) setList(EMPTY);
     }
     if (page.kind === "CreateLibrary" && page.returnTo.kind === "ChooseCreate") {
       rootFocus.current = "Choice:library";
@@ -827,13 +852,25 @@ export function useNexusController() {
     return selected;
   }
 
+  function runLegend(word: NexusCommandId | "today", activation: NexusTargetActivation = PROGRAMMATIC_NEXUS_TARGET_ACTIVATION) {
+    return activate(word === "today"
+      ? { kind: "Available", target: { kind: "OpenDailyPage", date: { kind: "Today" }, entry: { kind: "View" } } }
+      : NEXUS_COMMANDS[word].action(commandArgument), activation);
+  }
+
   const keydown = useRef<(event: KeyboardEvent) => void>(() => undefined);
   keydown.current = (event) => {
-    if (open && page.kind === "Root" && isTopmostInteractionOwner("Nexus") && !composing && query.trim()
-      && matchesShortcut(SHORTCUTS["Nexus.Ask"], event, platform)) {
-      event.preventDefault();
-      if (!event.repeat) activate(NEXUS_COMMANDS["Nexus.Quick.Chat"].action(query), PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
-      return;
+    if (open && page.kind === "Root" && isTopmostInteractionOwner("Nexus") && !composing) {
+      if (matchesShortcut(SHORTCUTS["Nexus.Ask"], event, platform)) {
+        event.preventDefault();
+        if (!event.repeat) runLegend("Nexus.Quick.Chat");
+        return;
+      }
+      if (matchesShortcut(SHORTCUTS["Nexus.Keep"], event, platform) || matchesShortcut(SHORTCUTS["Nexus.KeepOpen"], event, platform)) {
+        event.preventDefault();
+        if (!event.repeat) runLegend("Nexus.Quick.Note", { disposition: { kind: event.shiftKey ? "Fork" : "Follow" } });
+        return;
+      }
     }
     if (!matchesShortcut(SHORTCUTS["Nexus.Open"], event, platform)) return;
     if (hasActiveInteractionOwner() && !isTopmostInteractionOwner("Nexus")) return;
@@ -859,19 +896,21 @@ export function useNexusController() {
   if (defect) throw defect.error;
   // The held list keeps its ranking; the live import count decorates only its presentation.
   const importing = intake.unsettled;
-  const counted = importing === 0 ? groups : groups.map(group => ({ ...group, rows: group.rows.map(row =>
+  const counted = !viewport.isMobile || importing === 0 ? groups : groups.map(group => ({ ...group, rows: group.rows.map(row =>
     row.key !== "QuickAction:Nexus.Quick.Import" || row.detail != null ? row
-      : { ...row, label: `import · ${importing}${viewport.isMobile ? "" : " importing"}`, name: `import, ${importing} importing` }) }));
+      : { ...row, label: `import · ${importing}`, name: `import, ${importing} importing` }) }));
   return {
     interactionLayer,
     open,
     isMobile: viewport.isMobile,
     hydrated: viewport.hydrated,
     query,
+    parsed,
+    commandArgument,
     page,
     rootMode,
     rootScroll,
-    /** Held keys retain their band even when a fresh latch arrives before them. */
+    /** Held keys retain their band while fresh rows land after them. */
     list,
     groups: counted,
     continuations: continuationRows,
@@ -889,6 +928,9 @@ export function useNexusController() {
     choices: choiceRows(page),
     explicitIntent: parsed.intent.kind !== "Search",
     lookupGuidance,
+    sources: find.sources,
+    importing,
+    runLegend,
     failures: find.failures,
     recentStatus: { blank: !parsed.text, snapshot: recent.snapshot, readFailure: recent.readFailure, read: recent.read },
     searchProgress: find.progress,

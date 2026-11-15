@@ -28,3 +28,8 @@ above. spoken-only text ("shift plus enter") may stay spelled out.
 
 resolved when `git grep -i "shift-enter\|shift+enter"` over `apps/web/src`
 user-facing strings returns one form.
+
+headword uses `formatShortcut` for note/ask legend keys and spoken
+`shift plus enter` in combobox guidance. its compact foot uses `⇧↵` and `⇥`.
+`shortcuts.ts` now owns alt chords too; the remaining cross-app prose spelling
+cleanup is unchanged.

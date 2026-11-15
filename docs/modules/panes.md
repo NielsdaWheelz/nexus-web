@@ -189,11 +189,18 @@ path, every refinement-capable route declares `queryNavigation: "in-place"` so
 its body survives the replacement with its local text, focus, scroll, and
 previously committed rows intact.
 
-blank nexus shows the current pane separately as `here`, then other panes under
+desktop nexus offers recent resources and session-closed recovery, without pane
+close or reorder controls. a recent with no open match restores the newest
+closed pane for its resource; other closed panes occupy the three-line apparatus.
+restoration preserves the store's position/history and does not learn a query
+selection. shift does not fork a restore. the pane strip owns desktop close and
+reorder.
+
+blank mobile nexus shows the current pane separately as `here`, then other panes under
 `tabs · {total}` in most-recently-active order. the controller owns that order
 for the session, seeded from layout order; it is not workspace persistence.
 the most recently active other pane is armed at open, so mod+k then enter returns
-there. desktop and mobile preview up to five other panes; expand reveals all
+there. mobile previews up to five other panes; expand reveals all
 including minimized panes, and collapse restores the preview. omit disclosure
 when nothing is hidden. disclosure lasts through same-opening query/page visits
 and responsive handoff, and resets on explicit reopening.
@@ -223,7 +230,7 @@ is decorative and modal-contained; the release guard prevents subsequent activat
 
 `reorder` chooses a source, then a final numbered position; each placement returns
 to normal opening behavior, including no-op placement. keyboard navigation uses
-the existing desktop combobox/grid or mobile native buttons. current pane,
+mobile native buttons. current pane,
 keyboard highlight and moving source remain distinct. query editing/composition,
 ineligible presentation, changed captured ids/order, shell replacement, window
 focus loss or ownership loss cancels; element blur/tab traversal does not.

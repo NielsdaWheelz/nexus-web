@@ -14,6 +14,9 @@ const LITERALS_ALLOWED =
 const RUNTIME = new Set([
   "--anchored-max-width",
   "--arrival-onset",
+  "--star-onset",
+  "--star-grace",
+  "--ruling-delay",
   "--font-cormorant",
   "--font-eb-garamond",
   "--font-im-fell",

@@ -402,6 +402,15 @@ changes ride the unreleased wire 18 already introduced by acquisition; no second
 bump, migration or authored-format change. release pairing and remaining device/
 design handoffs live in [release-palette](issues/release-palette.md).
 
+headword against `14c0dde4c`: +182 net authored runtime lines (706 added,
+524 deleted). desktop nexus has a fixed page, command legend, ranked name bands,
+passage concordance and contextual menus. the desktop rail, pane disclosures,
+close/reorder controls and use-text continuation are removed; phone keeps those
+owners and takes the shared typed order. quick note saves in place unless
+forked; today alone learns `/daily`. source requests, wire and schema stay with
+their existing owners. phone qualification is tracked in
+[release-headword](issues/release-headword.md).
+
 recent resources against `10aa3df7b`: +915 net authored runtime lines
 (1,275 added, 360 deleted): web +591, android +352, python -28. device-local
 ordered use replaces server palette-selection recency; existing navigation,

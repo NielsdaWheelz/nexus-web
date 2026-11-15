@@ -10,8 +10,20 @@ export const ARRIVAL_ONSET_MS = 200;
 export const SWIPE_CHIP_MS = 600;
 /** A target chosen this often under one typed string owns that string's prefixes and extensions. */
 export const LATCH_USES = 2;
-/** Principal rows shown for a typed query. */
+/** Name lines shown in the block for a typed query. */
 export const RESULT_CAP = 8;
+/** Command lines besides the first line. */
+export const DO_CAP = 2;
+/** Place lines besides the first line. */
+export const PLACE_CAP = 3;
+/** Passage lines in the apparatus. */
+export const PASSAGE_CAP = 3;
+/** A waiting source stays lit for this many ms. */
+export const STAR_GRACE_MS = 150;
+/** A source star relights over this many ms. */
+export const STAR_ONSET_MS = 200;
+/** Empty apparatus lines begin ruling after this many ms. */
+export const RULING_DELAY_MS = 200;
 /** Verb chips before `more`, the fixed pair included. */
 export const RAIL_CHIPS = 4;
 /** Read verbs the rail prefers after the fixed pair, in order; everything else stays in `more`. */

@@ -81,9 +81,19 @@ canonical candidates coalesce before caps; authoritative titles determine
 relevance. filtered search uses structured sources, never guessed hint metadata.
 accepted use revalidates the existing metadata batches against its use revision;
 this costs another read when remote targets are present, without metadata clocks.
-after interaction, blank-list membership/order and activation remain fixed until
-reopen, query change or refresh. metadata updates in place; confirmed deletion
+after interaction, shown blank rows retain their order; fresh entries append
+within the cap. metadata updates in place; confirmed deletion
 removes the row and its activation without selecting a replacement.
+
+desktop blank nexus excludes the current resource and arms nothing. its initial
+snapshot is newest first; additions during the same opening append without
+reordering or arming. once eight lines are shown, new entries wait until
+reopening. a recent keeps its href but restores the newest matching
+session-closed pane when no open pane holds the resource, showing `closed` and
+no menu. matching uses `recentTargetKey` on the visit's supported recent target;
+utilities have no such identity. closed panes not represented by listed recents
+occupy the apparatus, newest first, capped at three. restore contributes normal
+accepted resource use but no query-selection learning.
 
 ## server boundary
 

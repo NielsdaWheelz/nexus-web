@@ -247,7 +247,20 @@ export function useNexusFind({ open, composing, query, retainedLocalTargets }: {
   else if (pending || failures.size > 0 || local.error || retainedLocal.error || localRead.error || referenceRef !== null)
     presentation = { kind: null, text: "", action: null };
 
+  const referenceWanted = open && !composing && referenceRef !== null && !localRow?.authored_by_viewer;
+  const names = referenceWanted
+    ? reference.status === "ready" ? "Answered" : failures.has("Reference") ? "Failed" : "Waiting"
+    : identityKey === null ? "Idle" : best !== null ? "Answered" : failures.has("Direct") ? "Failed" : "Waiting";
+  const texts = !wantsLexical ? "Idle"
+    : hybridData !== null || (!wantsHybrid && lexicalData !== null) ? "Answered"
+    : failures.has("Lexical") || failures.has("Hybrid") ? "Failed" : "Waiting";
+  const deviceAsked = open && !composing && (localRef !== null || query.intent.kind === "Search" && localSearchApplies(query.searchQuery));
+  const device = !deviceAsked ? "Idle"
+    : local.error || retainedLocal.error || localRead.error || localSource.read.error ? "Failed"
+    : local.pending || retainedLocal.pending || localRead.pending || localSource.read.pending ? "Waiting" : "Answered";
+
   return {
+    sources: { device, names, texts } as const,
     usage,
     preview,
     reference: referenceRef !== null && reference.status === "ready" && !reference.data.authored_by_viewer ? reference.data : null,

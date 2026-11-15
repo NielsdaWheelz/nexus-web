@@ -443,7 +443,8 @@ remain content. canonical refs use the existing resolver instead of text search;
 pending enter waits, and unavailable refs keep their exact disabled target.
 full search treats commands and refs as content.
 
-ordinary find composes at most eight principal rows, plus the two continuations
+ordinary find composes at most eight named or content-resource rows and three
+passages, plus the surface-specific continuations
 owned by [app navigation](app-navigation.md#nexus-content-grammar).
 `rank.ts` owns one comparator across navigation, local, recent, resources, saved
 and passages: explicit intent, latched, exact, prefix/token, abbreviation,
@@ -507,29 +508,32 @@ never splice activation and evidence from different snapshots. closed/hidden
 surfaces abort reads; composition dispatches only committed input.
 
 account, raw text, filters, scope and intent form query identity. `list.ts`
-owns held and arriving bands. each keystroke retains still-name-matching or
-latched rows, releases content-only evidence rows, and re-ranks held plus new
-synchronous candidates once. retained rows stay actionable because the new name
+owns held and arriving membership. each keystroke retains still-name-matching
+or latched names, releases passages and content-only rows, and ranks held plus
+synchronous candidates once. the comparator winner is `first`; remaining rows
+form capped do, places and resources bands. `first` changes only at a keystroke
+or when its row retires. class is assigned at construction and retained while
+shown. retained rows stay actionable because the new name
 match is checked synchronously; this is the palette's exception to dim/inert
 preceding-query rows. name matching uses the same canonical noun as the painted
 row; a captured passage's quote is evidence, not its work's name. evidence
 classification is independent of latch rank.
 
-later arrivals append in ranked batches after shown rows, with 200ms opacity
-onset. a fresh latched row is the exception: it enters first and, at the eight-row
-cap, displaces the last non-armed row. surviving rows keep their relative order.
-held membership is a list of row keys, not a prefix length, so the prepended
-latch still receives arrival onset while every surviving row keeps its band.
-updates preserve shown position and geometry; deliberate arming never freezes
-arrivals.
+later arrivals append to resources in ranked batches, with 200ms opacity onset.
+the block holds eight and the passage tail three. a fresh latch at the cap
+replaces the last unarmed resource in place; without one it is not admitted.
+held membership is row keys, preserving arrival paint independently of position.
+passages are absorbed only into owners admitted in the same arrival. a passage
+whose owner is shown, absent or cut remains in the apparatus. updates keep a
+shown row's class and position; deliberate arming does not freeze arrivals.
 
-the keystroke arms the best row with latency and remembers the old armed row
-while it remains shown. a better-tier arrival in the first 200ms may re-arm;
-later arrivals do not change the armed key. arrows, tab, printable input and
-pointer travel of at least 8px since the last keystroke are deliberate; modifiers
-alone and a resting pointer are not. `select(list, key, now)` records
-`armedAt = now`, marks the selection deliberate and forgets the previous row.
-that timestamp does not impose a perception delay: deliberate enter fires at once.
+the keystroke arms its best named row and remembers the old arm while shown.
+only a named better-tier arrival in the first 200ms can re-arm: lexical,
+semantic and passage arrivals never do. without a named arm, the controller
+arms the catchword. arrows and pointer travel of at least 8px are deliberate;
+modifiers and a resting pointer are not. `select` records its timestamp, marks
+the selection deliberate and forgets the previous row; deliberate enter fires
+at once. blank desktop opens unarmed and arrivals cannot change that.
 
 enter fires a deliberately armed row immediately, or an automatic row armed for
 at least 120ms. before that it fires the remembered previous row if still shown;
@@ -547,8 +551,8 @@ there is no interaction-frozen branch, legacy ranker or compatibility mode.
 
 command and lookup views are separate from retrieval. exact slash heads accept
 end-of-input or whitespace; unknown heads retain command lookup, never search.
-lookup shows all six commands without a default; deliberate selection starts an
-empty command. available explicit commands are initial defaults, including creation.
+desktop lookup shows guidance and lights the legend, without rows or a default;
+mobile retains all six commands. choosing one starts an empty command. available explicit commands are initial defaults, including creation.
 command/lookup views omit incidental query continuations. the explicit literal-search
 escape retains outer-trimmed text without parsing filters. the full interaction
 and content contract belongs to [app navigation](app-navigation.md#nexus-content-grammar).

@@ -7,6 +7,7 @@ import { cpSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } f
 import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { Features } from "lightningcss";
 import { compileQuery, compileOutlineWindows, SEARCH_INDEX_SQL, SEARCH_REMOVE_SQL, SEARCH_READ_SQL, SEARCH_MATCH_SQL } from "../../node/authored/src/queries";
 import { SCOPE_SQL } from "../../node/authored/src/scope";
 import { nativeQueryPlans } from "./src/lib/authored/nativeQuery";
@@ -26,6 +27,8 @@ export default defineConfig({
   root: path.resolve(__dirname, "src/android"),
   base: "/_nexus/app/",
   publicDir: false,
+  // dir=auto follows the excerpt's first strong character; language is not its direction.
+  css: { lightningcss: { exclude: Features.DirSelector } },
   html: { cspNonce: "__NEXUS_NONCE__" },
   define: { __NEXUS_PDF_RUNTIME_ROOT__: JSON.stringify("/_nexus/app/pdfjs") },
   resolve: { dedupe: ["yjs", "prosemirror-model", "prosemirror-state", "prosemirror-view"], alias: { "@": path.resolve(__dirname, "src") } },

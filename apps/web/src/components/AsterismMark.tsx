@@ -5,12 +5,14 @@ interface AsterismMarkProps extends Omit<SVGProps<SVGSVGElement>, "color"> {
   size?: number | string;
   color?: string;
   title?: string;
+  lit?: readonly [boolean, boolean, boolean];
 }
 
 export default function AsterismMark({
   size = 24,
   color = "currentColor",
   title,
+  lit = [true, true, true],
   ...rest
 }: AsterismMarkProps) {
   const labelled = Boolean(title);
@@ -28,7 +30,7 @@ export default function AsterismMark({
     >
       {labelled ? <title>{title}</title> : null}
       {ASTERISM_DOTS.map((d, i) => (
-        <circle key={i} cx={d.cx} cy={d.cy} r={d.r} />
+        <circle key={i} data-lit={lit[i] || undefined} cx={d.cx} cy={d.cy} r={d.r} />
       ))}
     </svg>
   );

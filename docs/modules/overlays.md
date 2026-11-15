@@ -470,8 +470,12 @@ z-indices.
 
 ## browser floor
 
-chromium 118+, firefox 121+ (esr 128) and safari 16+ for `inert`, `:has()`,
-`findLast`/`toReversed`, `:focus-visible`, `visualViewport` and logical `float` values.
+chromium 120+, firefox 121+ (esr 128) and safari 16.4+ for `inert`, `:has()`,
+`findLast`/`toReversed`, `:focus-visible`, `visualViewport`, logical `float` values
+and native `:dir()`. concordance uses first-strong text direction; the application
+build preserves that selector instead of lowering it to language guesses.
+native support starts in [chromium 120](https://developer.chrome.com/blog/chrome-120-beta)
+and [safari 16.4](https://webkit.org/blog/13966/webkit-features-in-safari-16-4/).
 the native android
 shell requires system webview 144+ for its edge-to-edge safe-area and keyboard
 viewport contract; the android os version alone does not establish that floor.

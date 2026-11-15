@@ -42,7 +42,7 @@ export function ExcerptText({ excerpt, match }: { excerpt: Excerpt; match?: Reso
   const pieces = ranges.map((range) => {
     const before = points.slice(end, range.start).join("");
     end = range.end;
-    return <Fragment key={`${range.start}:${range.end}`}>{before}<span className={styles.match}>{points.slice(range.start, range.end).join("")}</span></Fragment>;
+    return <Fragment key={`${range.start}:${range.end}`}>{before}<span data-resource-match className={styles.match}>{points.slice(range.start, range.end).join("")}</span></Fragment>;
   });
   return <>
     {excerpt.truncated_before ? <span aria-label="earlier text omitted">…</span> : null}

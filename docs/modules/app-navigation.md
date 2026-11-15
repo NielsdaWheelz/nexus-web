@@ -76,8 +76,8 @@ and count without claiming freshness; unavailable summaries add no global
 warning, spinner or live announcement. the imports workspace owns errors and
 recovery; navigation adds no observation or polling policy. quick note and today exist
 only in Nexus. Both Nexus projections expose the same commands, results,
-targets, workflows, history, and dispatch; the shared composer owns section
-membership, order, and caps, while each renderer owns platform geometry.
+targets, workflows, history, and dispatch; the controller owns surface-specific
+membership and the engine owns typed order and caps. renderers own geometry.
 Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
@@ -149,50 +149,61 @@ overlay contract is documented in
 
 nexus is one intent router with platform-native renderers. dialog and rail entry
 are named `Nexus`; the input is labelled and placeholdered `find anything…`.
-blank opens on `here`, the current pane's resource, followed by other panes
-under `tabs · {total}`, up to eight `recent picks` excluding the current
-resource, and `actions`: quick note, ask librarian, import, plus resume only while
-playback is paused. recent history is device-local; unknown history is not empty.
-`loading recent…` and `resources you open will appear here.` retain their
-recent-read meanings. failure exposes retry while usable rows remain visible.
+the desktop headword is a fixed page: query, seven-word command legend, eight-line
+name block, three-line apparatus and foot. blank lists up to eight recent picks,
+excluding the current resource, with no default arm. a surviving selection
+leads the block unarmed. down arms the first line; up enters commands; enter
+with nothing armed does nothing. late recent snapshots never arm a row.
+recent history is device-local; loading, failure with retry and empty are distinct.
+a recent held only by a session-closed pane reads `closed` and restores its
+newest matching pane with its position and history. up to three closed panes
+not represented by listed recents occupy the apparatus. closed lines have no
+menu and ignore the fork disposition.
 
-blank arms the most recently active other pane; with one pane nothing is armed
-and enter is a silent no-op. session-local activation order and the reorder
-transaction are owned by [panes](panes.md#mobile-contract).
+mobile retains `here`, other panes under `tabs · {total}`, recent picks and
+actions, plus paused playback. it arms the previous pane or surviving selection
+and keeps its pane disclosures, reorder controls and verb rail. the desktop
+owns no pane-closing or reordering controls.
 
-a nonempty dom selection surviving at open pre-arms `use this text…`, carrying
-that literal and performing no write. page/note selections can survive this way.
-reader pointer drag commits the selection into the highlight composer and clears
-the dom selection; that path does not pre-arm nexus from the composer.
+typed order is the best named row known at the keystroke, then `do` (two),
+`places` (three), and `resources`, to eight names in all. the first line does
+not consume its band's cap; a latch there reads `usual`. three passages sit
+below, independently capped. arrivals preserve shown positions; only a named
+arrival within the arming window can take enter. the catchword is the last
+arrow stop and is armed when no named row is armed. desktop paints
+`all results for “{text}”`; mobile keeps `search all results` and `use this text…`.
+the desktop's empty name block reads `nothing by that name.` after device and
+names settle. both surfaces use the [arming contract](search.md#launcher).
+repeat and composition never activate. retirement announces
+`selection no longer available`; unavailable targets explain refusal.
 
-typed find has at most eight principal rows, followed by `search all results`
-and `use this text…`. with no principals, search-all is armed with the detail
-`nothing matched here`; no separate empty notice is inserted. the two
-continuations are a fixed footer outside the desktop result scrollport; the
-typed desktop card holds 70dvh so arrivals do not move them. both query inputs,
-including mobile go, fire the armed row under the same
-[arming contract](search.md#launcher). shift-enter requests a fresh pane.
-repeat and composition never activate. retired selection consumes enter and
-announces `selection no longer available` until a new query; unavailable
-targets explain refusal without falling through.
+the registry owns exact case-insensitive slash heads: `/n`, `/p`, `/c` or `/a`,
+`/l`, `/i`, `/b`. `/t` alone is the today place; `/t` with an argument is unknown.
+recognized commands show one armed row. desktop `/` or unknown heads show only
+lookup guidance and literal search, with nothing armed. mobile retains the six
+registry-ordered choices. enter without a choice announces the guidance.
 
-the command registry owns exact case-insensitive slash tokens followed by end of
-input or whitespace. `/n`, `/p`, `/c` or `/a`, `/l`, `/i` and `/b`
-select note, page, librarian, library, import and browse. recognized commands show their
-prepared action without generic continuations. `/` and unknown heads show all
-six commands in registry order with their first alias as a trailing kbd, no
-default, literal search and lookup guidance. enter without a choice announces
-that guidance. choosing a command starts it empty; unknown text never becomes
-a guessed command or an implicit corpus request.
+beneath the desktop query, the legend is `note`, `ask`, `import`, `today`,
+`page`, `library`, `browse`. up from the first stop reaches note; left/right
+clamp, home/end reach the ends, enter runs, shift-enter forks, down/escape
+returns to the field. printable keys append once; backspace removes one
+character. tab in either legend or field is consumed. unknown slash heads
+light every word with its alias; recognized heads light their word, links light
+import, and the held platform modifier lights ask. the legend is a toolbar
+with no tab stops. import carries its unsettled count.
 
-nonempty quick note says `save note to today` and commits locally; empty quick
-note opens insertion. a librarian question appends through its retained composer;
-blank opens the librarian. page/library/import/browse open their existing draft
-or chooser without submitting. `import policy` searches; `/i policy` opens an
-import draft. literal search retains outer-trimmed text without filter parsing.
-commands participate in latching. use-text's ask/browse/create choices do not.
-the today place does not learn: its date-free identity would collide with quick
-note; name matching still reaches it.
+legend commands and the note/ask chords take a recognized command's argument,
+otherwise plain text; unknown slash text supplies no argument. today takes none.
+nonempty quick note commits locally under one retained note id: ordinary
+activation closes nexus without moving a pane and announces `added to today`
+with an `open` action; fork opens the day at the note in a new pane. empty note
+opens today at a new line. this holds for slash, legend, chord and use-text or
+create choices on both surfaces. quick note never learns; today learns under
+`/daily`. other eligible row picks retain learning; legend runs and chords do
+not. empty ask opens the librarian; nonempty ask uses its retained composer.
+page/library/import/browse open existing drafts or choosers without submitting.
+`import policy` searches; `/i policy` opens an import draft. literal search
+preserves outer-trimmed text without filter parsing.
 
 a whole query of links has one explicit `import {pointer}` or `import {n} links`
 row. activating it sends the links and shows their lines. more than 100 is a
@@ -212,34 +223,29 @@ outside the title, otherwise already-projected distinguishing facts. facts carry
 contributors, source, location, related-match state or refusal reason; no kind
 words or `current`. the current resource carries `here`; minimized is a
 distinct state. no metadata is fetched to decorate a row. note titles are their
-first line, with a separate matched window. passage titles are the work, with
-the matched window below. highlights retain the quoted selected literal.
+first line, with a separate matched window. phone passage titles are the work, with the matched window below; desktop
+passages use a concordance with the work at the line end. highlights retain the quoted selected literal.
 identical title evidence underlines in the title; matches never change weight.
 the palette renderer clips long evidence to its first native match, rebases the
 codepoint ranges and marks omitted context honestly. the full source excerpt,
 its frozen identity and its activation remain unchanged.
 
-right at the query's end with no selection, or tab, opens the armed row's verb
-rail. the row's `…` opens the same disclosure. the rail projects existing action
-descriptors, not another registry or executor. it presents `open ↵` and
-`new pane ⇧↵` (`run ↵` for commands; no new-pane chip where disposition is
-ignored), then preferred descriptors from `RAIL_VERBS` up to four chips, then
-`more` when a contextual menu exists. danger-tone actions remain in that menu.
-`show excerpt` is a rail verb opening the existing full-excerpt dialog.
-
-initial rail focus is the first chip after the fixed pair. descriptor arrivals
-retain focus by id. typing filters read verbs without running them; the pair
-and more remain. letter hints appear only when that letter singles out a verb.
-enter runs the focused verb once through the existing descriptor activation
-owner. unavailable verbs retain their slots and reasons. left/escape closes the
-rail and restores query text, caret and selection. more opens the existing
-contextual menu, which prepares its own read: a server-backed rail followed by
-more intentionally makes two action GETs. only the row's primary operation
-learns; contextual descriptor actions do not.
+on desktop, tab or right at the query's end opens the armed row's contextual
+menu. its occurrence section starts with open and new pane (only new pane for
+the current row). the menu exists only for a resource or occurrence verbs;
+commands, places and closed lines have none. only the armed row mounts `…`.
+closing restores the field's caret and selection. desktop menus omit pane close.
+mobile keeps the verb rail: fixed open/new-pane pair, preferred descriptors,
+then more; descriptor focus is retained by id. its menu and full-excerpt dialog
+use their existing owners. only primary row activation learns.
 
 desktop uses a combobox with a one-column grid; `aria-activedescendant` names
 the mounted armed candidate while the query has focus. plain up/down browses
-clamped result order and reveals only its scrollport. space edits the query;
+clamped block, apparatus and catchword order; up from the first reaches the
+legend. only the block scrolls. the grid owns apparatus and catchword rowgroups
+outside that scrollport. the foot states the armed action, fork and menu hints;
+held shift restates the fork and held mod restates ask, clearing on focus loss.
+space edits the query;
 home/end and modified editing retain native meaning. menus retain query and
 selection. accepted close repairs only lost focus, yields to surviving controls
 and overlays, and uses the committed displayed successor. renderers forward
@@ -254,8 +260,8 @@ first. enabled secondary actions remain usable when the primary is unavailable.
 email discovery belongs here, outside account settings. a mount-scoped `/me` read uses `usePaneFreeServerValue`: pending shows a local ruling, null omits the row, initial failure owns retry, and retained data remains usable on refresh failure. the owner’s address adds an `email import` button after file choice. its inline `PickerSurface` is a separate nonselectable grid row with a scrolling body, selectable wrapping address, ordinary copy feedback and manual recovery. opening focuses the named region; closing returns to the desktop combobox or phone trigger. the address/account scopes the disclosure, while draft, destination and intake keep their existing owner. email always files into all, independently of the link/file destination.
 
 the import page is one nexus page through `NexusPages`, inside the shared desktop
-frame or phone sheet. its back arrow occupies the desktop query's leading
-gutter, keeping the field and line pointers on the root query's edge. on a phone
+frame or phone sheet. child pages retain their own 40px gutter inside the
+fixed desktop frame; their back arrow has its own edge. on a phone
 the child header holds the arrow and `import`, with `into` below the field.
 the combobox (`links to import`) owns focus and names the selected cell in the
 `import options` grid. its field and destinations belong to the intake visit:
@@ -291,12 +297,13 @@ feedback regardless of the focused descendant, then the page transition.
 | outside, such as rail or library | blank root | close to opener |
 
 the origin retains query, root mode and invoking control. desktop returns to the
-combobox with that control armed when it survives; phone returns to the typed
-query or blank root's invoking control. after admission the query is cleared
-and import is the return control. explicit field replacement clears feedback;
+combobox; a blank return arms nothing. phone returns to the typed query or
+blank root's invoking control. after admission the query is cleared; only the
+phone retains import as its return control. explicit field replacement clears
+feedback;
 arrow back preserves it. closing retires the visit. deferred admissions retain
 filing work but cannot revive an open intent after input, selection or exit.
-the root action reads `import · {n} importing` (`import · {n}` on a phone) while
+the desktop legend and phone action read `import · {n}` while
 the intake has unsettled lines; its complete spoken name retains the count.
 
 document ingress yields to existing editable, attachment and overlay owners.
@@ -324,7 +331,9 @@ the keyboard layout's `event.key` rather than a physical key position.
   palette consumes the chord without changing query, selection, page or focus.
   repeated keydown does not perform a second action.
   the chord yields to any other active overlay owner, including a nested menu.
-- command/control+enter sends nonempty root palette text to the librarian.
+- command/control+enter asks with the root argument, or opens the librarian
+  when empty. alt+enter saves the argument to today in place; shift+alt+enter
+  opens the saved note in a new pane. with no argument both open a new line.
 - command/control+f belongs to the active pane. it yields to overlays and only
   prevents browser find when the pane accepts search.
 - command/control+shift+left/right moves between visible panes without wrapping.
