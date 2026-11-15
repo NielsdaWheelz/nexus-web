@@ -159,6 +159,10 @@ def finalize(
     run.support_id = support_id
     run.publication_warning_code = warning
     append(db, run, ChatRunDoneEventPayload(status=status))
+    # Settlement hooks stay import-light in the background supervisor.
+    from nexus.services.memory_capture import append_turn
+
+    append_turn(db, run)
     projection.refresh(db, "message", [run.assistant_message_id])
     enqueue_head(db, run.owner_user_id)
 

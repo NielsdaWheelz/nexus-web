@@ -61,6 +61,10 @@ from universal_memory.tools import (
 if TYPE_CHECKING:
     from nexus.services.tools.run import Call
 
+HTTP_TIMEOUT_SECONDS = 20.0
+HTTP_TIMEOUT = httpx2.Timeout(HTTP_TIMEOUT_SECONDS, connect=10.0)
+BEARER_PATTERN = re.compile(r"jmem_[0-9a-f]{64}")
+
 
 class MemoryClientConfig(BaseModel):
     """The private deployment file: one owner, one endpoint, one bearer, its processors."""
@@ -70,9 +74,10 @@ class MemoryClientConfig(BaseModel):
     client: Literal["nexus-owner"]
     owner_user_id: UUID
     mcp_url: AnyHttpUrl
-    bearer: SecretStr = Field(repr=False)
+    bearer: SecretStr | None = Field(repr=False)
     connect: bool
     admit: bool
+    capture: bool
     processors: tuple[str, ...] = Field(max_length=16)
 
     @model_validator(mode="after")
@@ -88,7 +93,10 @@ class MemoryClientConfig(BaseModel):
             or len(str(url).encode()) > 4096
         ):
             raise ValueError("memory endpoint must be private HTTPS or local HTTP /v1/mcp")
-        if re.fullmatch(r"jmem_[0-9a-f]{64}", self.bearer.get_secret_value()) is None:
+        if (self.bearer is not None) != self.connect or (
+            self.bearer is not None
+            and BEARER_PATTERN.fullmatch(self.bearer.get_secret_value()) is None
+        ):
             raise ValueError("invalid memory bearer")
         if (
             len(self.processors) != len(set(self.processors))
@@ -173,6 +181,8 @@ async def _call_memory(
 ) -> Any:
     """One protocol session per call; a call is never resent."""
 
+    assert config.bearer is not None, "a connected client owns its read/save credential"
+
     async def read_request(request: httpx2.Request) -> None:
         # SDK redirects copy streams without caching request.content.
         await request.aread()
@@ -230,7 +240,7 @@ async def _call_memory(
     try:
         async with httpx2.AsyncClient(
             headers={"authorization": "Bearer " + config.bearer.get_secret_value()},
-            timeout=httpx2.Timeout(20.0, connect=10.0),
+            timeout=HTTP_TIMEOUT,
             follow_redirects=False,
             trust_env=False,
             event_hooks={"request": [read_request], "response": [check_response]},
@@ -243,7 +253,7 @@ async def _call_memory(
                     read,
                     write,
                     client_info=Implementation(name="nexus-owner", version="1"),
-                    read_timeout_seconds=20.0,
+                    read_timeout_seconds=HTTP_TIMEOUT_SECONDS,
                 ) as client:
                     try:
                         await client.initialize()

@@ -165,6 +165,11 @@ to its owner on a processor chain it allows. One MCP session per call, never
 resent; the server must answer one bounded text item. `memory.save_note` is a Write
 outside the cap, the history and undo (D-Q3).
 
+the required `capture` and `admit` flags also govern future turn admission into
+[shared capture](memory-capture.md), independently of `connect`. a configured
+capture-only owner retains this file with `connect=false` and `bearer=null`;
+connected clients require a bearer. publisher credentials never enter this file.
+
 the client speaks the current private stateless json endpoint. sse responses and
 session ids are `unsupported`; generic streaming/stateful compatibility is outside
 this client. the sdk retains supported method-preserving redirects and notification

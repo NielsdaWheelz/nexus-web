@@ -21,6 +21,7 @@ BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
 BACKUP_ENV="${NEXUS_BACKUP_ENV:-${ROOT_DIR}/deploy/env/env-prod-backup}"
 MEMORY_CONFIG="${NEXUS_MEMORY_CLIENT_CONFIG:-}"
+MEMORY_CAPTURE_CONFIG="${NEXUS_MEMORY_CAPTURE_CONFIG:-}"
 TUNNEL_TOKEN_SOURCE="${NEXUS_CLOUDFLARED_TOKEN_FILE:-}"
 
 # The keys the running backend requires. Compose fails closed on the few it
@@ -109,7 +110,7 @@ readonly APPLICATION="${TEMPORARY}/application.env"
 
 require_shape "$APPLICATION" "the application env" "$REQUIRED_KEYS"
 require_shape "$BACKUP_ENV" "the backup env" "$BACKUP_KEYS"
-if grep -Eq '^(MEMORY_CLIENT_CONFIG_PATH|NEXUS_MEMORY_CLIENT_CONFIG_FILE|NEXUS_CLOUDFLARED_TOKEN_FILE)=' "$APPLICATION"; then
+if grep -Eq '^(MEMORY_(CLIENT|CAPTURE)_CONFIG_PATH|NEXUS_MEMORY_(CLIENT|CAPTURE)_CONFIG_FILE|NEXUS_CLOUDFLARED_TOKEN_FILE)=' "$APPLICATION"; then
   die "Compose and the publisher own private configuration paths"
 fi
 if grep -Eq '^(TUNNEL_TOKEN|CLOUDFLARED_TOKEN|CLOUDFLARE_API_TOKEN|CLOUDFLARE_API_KEY|TAILSCALE_AUTH_KEY|TAILSCALE_API_KEY|TS_API_CLIENT_SECRET|TAILSCALE_OAUTH_CLIENT_SECRET)=' "$APPLICATION"; then
@@ -133,25 +134,45 @@ done
   die "R2_BACKUP_S3_API_ORIGIN must be the account's R2 S3 API origin"
 
 readonly MEMORY="${TEMPORARY}/memory.json"
+readonly MEMORY_CAPTURE="${TEMPORARY}/memory-capture.json"
 PYTHONPATH="${ROOT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}" \
-  "${ROOT_DIR}/python/.venv/bin/python" - "$MEMORY_CONFIG" "$MEMORY" <<'PY'
+  "${ROOT_DIR}/python/.venv/bin/python" - "$MEMORY_CONFIG" "$MEMORY" "$MEMORY_CAPTURE_CONFIG" "$MEMORY_CAPTURE" <<'PY'
 from pathlib import Path
 import sys
 
 from nexus.services.tools.memory import load_memory_client_config
+from nexus.services.memory_capture import load_memory_capture_config
 from universal_memory.policy import canonical_json
 
 config = load_memory_client_config(Path(sys.argv[1]) if sys.argv[1] else None)
+capture = load_memory_capture_config(Path(sys.argv[3]) if sys.argv[3] else None)
+if config is not None and config.capture and config.admit and capture is None:
+    raise SystemExit("admitted capture requires its private publisher declaration")
+if capture is not None and (
+    config is None
+    or (config.owner_user_id, config.capture, config.admit)
+    != (capture.owner_user_id, capture.capture, capture.admit)
+):
+    raise SystemExit("memory client and publisher declarations disagree")
 value = (
     None
     if config is None
-    else config.model_dump(mode="json") | {"bearer": config.bearer.get_secret_value()}
+    else config.model_dump(mode="json") | {
+        "bearer": config.bearer.get_secret_value() if config.bearer is not None else None
+    }
 )
 Path(sys.argv[2]).write_text(canonical_json(value) + "\n")
+value = None if capture is None else capture.model_dump(mode="json") | {
+    "bearer": capture.bearer.get_secret_value()
+}
+Path(sys.argv[4]).write_text(canonical_json(value) + "\n")
 PY
 memory_digest="$(sha256sum "$MEMORY" | cut -d' ' -f1)"
 printf '\nNEXUS_MEMORY_CLIENT_CONFIG_FILE=/etc/nexus/memory-config/%s.json\n' \
   "$memory_digest" >>"$APPLICATION"
+capture_digest="$(sha256sum "$MEMORY_CAPTURE" | cut -d' ' -f1)"
+printf '\nNEXUS_MEMORY_CAPTURE_CONFIG_FILE=/etc/nexus/memory-config/%s.json\n' \
+  "$capture_digest" >>"$APPLICATION"
 
 REMOTE_DIRECTORY="$(
   timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
@@ -160,6 +181,7 @@ REMOTE_DIRECTORY="$(
 [[ "$REMOTE_DIRECTORY" =~ ^/tmp/nexus-config\.[A-Za-z0-9]{8}$ ]] || \
   die "the host returned an invalid config transfer path"
 publish "$MEMORY" /etc/nexus/memory-config "" json 10001
+publish "$MEMORY_CAPTURE" /etc/nexus/memory-config "" json 10001
 if [ -n "$TUNNEL_TOKEN_SOURCE" ]; then
   [ -s "$TUNNEL_TOKEN_SOURCE" ] || die "the supplied tunnel token file is missing or empty"
   readonly TUNNEL_TOKEN="${TEMPORARY}/tunnel.token"

@@ -148,6 +148,9 @@ def registry() -> dict[str, JobDefinition]:
             "nexus.services.suggestion_shortlists:run_daily_due_job",
             periodic_seconds=60,
         ),
+        "memory_capture": JobDefinition(
+            "background", "nexus.services.memory_capture:run_job", periodic_seconds=60
+        ),
         "feed_opml_step": JobDefinition(
             "background",
             "nexus.services.feeds.opml:run_job",

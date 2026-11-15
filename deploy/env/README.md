@@ -63,27 +63,33 @@ is not tied to a source SHA — content addressing, not release state, is what
 makes a published config identifiable. Keep a superseded config file in place
 until you are sure no rollback wants it.
 
-optional owner-chat memory is one private json handoff from the central sharing
+optional owner-chat memory uses two private json files from the central sharing
 declaration. set `NEXUS_MEMORY_CLIENT_CONFIG` to the generated nexus `client.json`
-(the config object itself) when publishing. omission publishes `null`; the publisher
-validates the same closed client contract as the backend before host work.
+and `NEXUS_MEMORY_CAPTURE_CONFIG` to `capture.json` when publishing. omission
+publishes `null`. publication validates both closed contracts and coherent owner,
+capture and admission before host work. admitted capture requires both files.
+the client remains configured when capture is enabled without model reads;
+its required nullable bearer is null exactly when `connect=false`.
 it installs `/etc/nexus/memory-config/<sha256>.json` as root:10001 mode 0440
 before recording that immutable path in the application env. only the api and
 interactive worker mount this file at `/run/secrets/nexus-memory-client.json`.
-compose owns both the mount and `MEMORY_CLIENT_CONFIG_PATH`; neither belongs in
-the three input env files. background workers and release helpers receive no
-memory credential. publishing a changed file, including absence, requires the
+the background worker alone mounts the publisher file at
+`/run/secrets/nexus-memory-capture.json`; its upload credential grants no mcp tools.
+compose owns the mounts and `MEMORY_CLIENT_CONFIG_PATH` /
+`MEMORY_CAPTURE_CONFIG_PATH`; neither belongs in the three input env files.
+release helpers receive no memory credential. publishing a changed file,
+including absence, requires the
 ordinary next release to activate it; no live reload or automatic deployment.
 the first release with this handoff requires config publication even when
 memory stays disabled.
 
 for local host processes, `MEMORY_CLIENT_CONFIG_PATH` may name the original
-owner-only file. local interactive compose instead takes
-`NEXUS_MEMORY_CLIENT_CONFIG_FILE`; its private file must be readable by the
-container's uid/gid 10001, as the production root:10001 mode 0440 copy is.
-keep the central generated source owner-only. the local overlay defaults to
-the tracked absent declaration and gives no memory file to its background
-worker.
+owner-only file. the local overlay takes `NEXUS_MEMORY_CLIENT_CONFIG_FILE` for
+interactive and `NEXUS_MEMORY_CAPTURE_CONFIG_FILE` for background. their private
+files must be readable by the container's uid/gid 10001, as the production
+root:10001 mode 0440 copies are.
+keep the central generated source owner-only. the local fleet renderer supplies
+the tracked absent declaration when a scope is disabled.
 
 frontend config is captured separately, outside the source checkout:
 

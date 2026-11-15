@@ -26,6 +26,12 @@ def main() -> None:
         "native-repair", help="reconcile and resume one job held on native execution closure"
     )
     repair_parser.add_argument("job_id", type=UUID)
+    subparsers.add_parser("memory-capture-status", help="inspect pending shared-memory capture")
+    capture_retry = subparsers.add_parser(
+        "memory-capture-retry", help="clear one repaired capture diagnostic"
+    )
+    capture_retry.add_argument("capture_id", type=UUID)
+    capture_retry.add_argument("export_seq", type=int)
     subparsers.add_parser(
         "sync-gutenberg-catalog",
         help="download the Project Gutenberg feed and reconcile the mirror",
@@ -33,6 +39,17 @@ def main() -> None:
     args = parser.parse_args()
 
     bind_database_role("maintenance")
+    if args.command in ("memory-capture-status", "memory-capture-retry"):
+        from nexus.services import memory_capture
+
+        try:
+            if args.command == "memory-capture-retry":
+                memory_capture.retry(args.capture_id, args.export_seq)
+            else:
+                print(json.dumps(memory_capture.status(), sort_keys=True))
+        except ValueError as error:
+            raise SystemExit(str(error)) from None
+        return
     if args.command == "native-repair":
         from nexus.services.generation.native_execution import repair
 
