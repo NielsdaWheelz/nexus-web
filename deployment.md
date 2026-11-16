@@ -172,8 +172,9 @@ no aggregate memory cap or cpu/i/o weight. grouping them creates one sibling
 in the host's resource hierarchy, so capacity qualification still uses the
 actual workload. backup and migration one-offs retain their separate compose
 limits and require their own observed cgroup membership and no-swap proof.
-dev-server bounds developer login scopes/rootless docker at `user-1000.slice`
-and accounts separately for system services and any retained ci runner. shared
+dev-server bounds developer login scopes, rootless docker and the retained ci
+runner at `user-1000.slice`. production system services, including jarvis,
+remain outside that developer budget. shared
 disk exhaustion can still affect every application; keep the declared disk reserve.
 
 postgres has a 2 GiB ceiling with container swap disabled. its startup command
