@@ -204,7 +204,7 @@ printf '\nNEXUS_MEMORY_CAPTURE_CONFIG_FILE=/etc/nexus/memory-config/%s.json\n' \
   "$capture_digest" >>"$DEPLOYMENT"
 
 readonly RUNTIME="${TEMPORARY}/runtime.env"
-sed '/^\(CADDY_IMAGE\|CADDY_SITE\|CLOUDFLARED_IMAGE\)=/d' "$APPLICATION" >"$RUNTIME"
+sed -E '/^(CADDY_IMAGE|CADDY_SITE|CLOUDFLARED_IMAGE)=/d' "$APPLICATION" >"$RUNTIME"
 if grep -Eq '^(POSTGRES_|R2_BACKUP_|CLOUDFLARE|TAILSCALE_|TS_|MIGRATION_DATABASE_URL=|TUNNEL_TOKEN=)' "$RUNTIME"; then
   die "privileged inputs must not enter the runtime config"
 fi
