@@ -9,16 +9,25 @@ human-triggered release. Do not mutate production Compose services, the host
 | Capability | Production owner |
 |---|---|
 | frontend and bff | devbox `nexus-web.service`, through its dedicated cloudflare tunnel |
-| API, interactive worker, background worker | Hetzner Compose project `nexus` |
-| Product database | Hetzner Postgres with pgvector |
+| api, interactive worker, background worker | dev-server system docker, compose project `nexus` |
+| product database | dedicated nexus postgres 15 with pinned pgvector and pg_search |
 | Object storage, database backups | Cloudflare R2 |
 | Authentication | Supabase Auth only |
 | api tls and public ingress | cloudflare edge and named outbound tunnel; private caddy http |
 
-Public hosts are `nexus.nielseriknandal.com` (frontend) and
-`nexus-api.nielseriknandal.com` (api). the vps is `nexus-api-worker`, administered
-as `nexus@nexus-prod` over tailscale. its public address is transport only;
-provider and host firewalls admit only tailscale's encrypted udp transport.
+public hosts are `nexus.nielseriknandal.com` (frontend) and
+`nexus-api.nielseriknandal.com` (api). both run on the existing hetzner dev-server,
+administered as `dev-server-deploy` over tailscale. dev-server owns host accounts,
+packages, private ingress and development limits; nexus owns its application
+release, database, credentials and recovery. jarvis retains its separate native
+postgres 16 and application ownership.
+
+production docker commands always use elevation and
+`--host unix:///var/run/docker.sock`. the developer's rootless engine and login
+cannot administer that daemon. neither engine socket enters an application
+container. the retired nexus vps is not a standby; its writers and credentials
+are retired before it is retained powered off. relocation qualification remains
+in [the release issue](docs/issues/release-dev-server-backend.md).
 
 `deploy/cloudflare/tunnel-config.json` owns the api public route, including a
 503 refusal for `/public/resource-share` and its descendants during the bridge.
@@ -31,7 +40,8 @@ backend application remain unchanged.
 for both nexus hostnames; cloudflare permits one zone deployment of that ruleset.
 the shared rule retains its immutable provider reference `nexus_api_free_managed_waf`. visitors use
 the public website normally. the shared fleet grants policy belongs to
-`dev-server`; production receives operator ssh but no peer application access.
+`dev-server`; nexus publishes neither api nor database ports to peers, and
+administration uses the separate deployment key.
 
 `deploy/cloudflare/frontend-tunnel-config.json` and `frontend-rules.json` own
 the frontend hostname. its separate tunnel reaches only `127.0.0.1:3443` on
@@ -69,7 +79,7 @@ serial admission does not bound one query's memory or duration. background units
 must both yield foreground opportunity and complete useful work; repeatedly
 timing out a whole refresh satisfies neither requirement.
 
-search repair retains the current 2 gib host and 512 mib/no-swap database limit.
+search repair retains the 512 mib/no-swap database limit on the shared host.
 reducing query work and admitted concurrency spends implementation effort and
 waiting time; both must preserve useful progress within those limits. no extra
 memory or new numeric deadline is approved by this contract. allocation changes
@@ -120,12 +130,13 @@ the release needs `curl`, `gh`, `git`, `python3`, `ssh`, `uv`, and the installed
 locked backend environment at `python/.venv`. the controller uses
 `uv run --frozen --no-sync`; a release never creates or updates dependencies.
 
-`gh` supplies GitHub credentials; ssh to `nexus@nexus-prod` must be
-non-interactive with passwordless `sudo` on the host. the same is required for
-`dev-server`, whose web owner is installed at `/opt/nexus-web/control/release.py`.
+`gh` supplies github credentials; ssh to `dev-server-deploy` must be
+non-interactive with passwordless `sudo`. its separate deployment key stays
+outside development and application access. the web owner is installed at
+`/opt/nexus-web/control/release.py`.
 
-production coordinates are committed, not ambient: ssh `nexus@nexus-prod`,
-frontend ssh `dev-server`, web `nexus.nielseriknandal.com`.
+production coordinates are committed, not ambient: backend and frontend ssh
+`dev-server-deploy`, web `nexus.nielseriknandal.com`.
 changing a coordinate is a reviewed infrastructure change, not a release flag.
 
 **After any reboot, unlock the Codex credential volume before releasing.** The
@@ -145,20 +156,23 @@ only the selected candidate on 3443 has a public tunnel route.
 
 the api has a 384 MiB memory ceiling with container swap disabled. the eight
 service ceilings total 2352 MiB; these are independent limits, not reserved
-host ram. the 2 GiB host must be qualified against the actual concurrent working
-set, cache reclaim, memory pressure and request completion. summing separate
+host ram. the shared host must be qualified against concurrent production and
+bounded development, cache reclaim, memory pressure and request completion. summing separate
 historical peaks does not establish that workload's demand; a passing preflight
 does not establish its capacity. swap does not count toward physical memory or
 the available-memory floor.
 
-the eight long-lived services belong to `system-nexus.slice` under
+the eight long-lived services and backup/migration one-offs belong to `system-nexus.slice` under
 `system.slice`. its persistent `MemorySwapMax=0` enforces no-swap for their
 whole subtree, including when a runtime reload resets a container's leaf limit
 to `max`. each container keeps its own declared memory ceiling; the slice adds
 no aggregate memory cap or cpu/i/o weight. grouping them creates one sibling
 in the host's resource hierarchy, so capacity qualification still uses the
 actual workload. backup and migration one-offs retain their separate compose
-limits and are outside this eight-service proof.
+limits and require their own observed cgroup membership and no-swap proof.
+dev-server bounds developer login scopes/rootless docker at `user-1000.slice`
+and accounts separately for system services and any retained ci runner. shared
+disk exhaustion can still affect every application; keep the declared disk reserve.
 
 postgres has a 512 MiB ceiling with container swap disabled. its startup command
 sets `shared_buffers=64MB`, budgeting 64 MiB of shared database cache within that
@@ -166,7 +180,7 @@ ceiling alongside backend processes, shared-memory bookkeeping and file cache.
 shared buffers become resident as queries fill them and cannot be reclaimed
 without swap. the smaller cache can increase database i/o; qualification must
 verify concurrent requests complete within their existing deadlines on the
-2 GiB host.
+shared host.
 
 ## Immutable artifact lineage
 
@@ -229,10 +243,21 @@ runtime memory-client declaration.
 ./deploy/hetzner/sync-env.sh
 ```
 
-Concatenates `deploy/env/env-prod`, `env-prod-backend` and `env-prod-worker`
-into the application config, validates shape and the required keys, and installs
-it as `/etc/nexus/config/<sha256>.env` with `/etc/nexus/current.env` repointed by
-an atomic rename. It publishes `deploy/env/env-prod-backup` the same way to
+the publisher validates `deploy/env/env-prod`, `env-prod-backend` and
+`env-prod-worker`, then captures ordinary application inputs at
+`/etc/nexus/runtime-config/<sha256>.env`. api and both workers receive only that
+file; `DATABASE_URL` authenticates as `nexus_runtime`.
+
+`env-prod-database` supplies bootstrap postgres credentials and
+`MIGRATION_DATABASE_URL` to the separate root-only deployment descriptor at
+`/etc/nexus/config/<sha256>.env`. `/etc/nexus/current.env` selects it by atomic
+rename; its `NEXUS_RUNTIME_CONFIG_FILE` names the captured runtime file. each
+file must match its own content hash. admin credentials never enter ordinary
+application containers. migration receives its administrative url explicitly.
+`runtime-role.sql` owns current/default runtime grants after restore and every
+migration; runtime owns no schema objects or administrative capability.
+
+the publisher captures `deploy/env/env-prod-backup` separately at
 `/etc/nexus/backup-config/<sha256>.env` and `/etc/nexus/backup.env`. The four
 `R2_BACKUP_*` keys are refused in the application config: only the backup job
 may hold them.
@@ -244,8 +269,8 @@ and mounts; it never reconstructs them from these potentially newer pointers.
 
 for owner-chat shared memory, pass the central private nexus `client.json` as
 `NEXUS_MEMORY_CLIENT_CONFIG` to that publisher. it validates and publishes a
-content-addressed private json file before capturing its path in the application
-env. omission publishes the closed absent declaration. only the api and
+content-addressed private json file before capturing its path in the deployment
+descriptor. omission publishes the closed absent declaration. only the api and
 interactive worker receive the read-only mount; the configured viewer and
 complete processor chain still govern every send, rerun and regenerate. this
 publication neither admits native capture lanes nor captures nexus chats.
@@ -266,7 +291,7 @@ or source label substitutes for those bytes.
 one ssh session holds `/run/lock/nexus-web-release.lock` on the devbox for the
 whole transfer → prepare → backend → activate → check sequence. a competing
 release refuses immediately. losing the lock connection stops the coordinator's
-current child and refuses further phases; inspect both hosts before retrying.
+current child and refuses further phases; inspect both application owners before retrying.
 the backend retains its independent backup lock. no helper reacquires the web lock.
 
 the web owner installs and probes the candidate before backend mutation. after
@@ -290,12 +315,11 @@ repair described in [native recovery](docs/issues/release-native-recovery.md).
 ### web candidates and host ownership
 
 on linux/x64, publish a private frontend environment outside the clean source
-checkout and build once:
+checkout and build once as the development user, within its user slice:
 
 ```bash
 python3 deploy/web/publish-env.py <source-sha> /private/frontend.env
-sudo systemd-run --unit=nexus-web-build --wait --pipe \
-  --property="User=$(id -un)" --setenv="HOME=$HOME" \
+systemd-run --user --unit=nexus-web-build --wait --pipe \
   --property=MemoryMax=3G --property=MemorySwapMax=0 \
   --property=RuntimeMaxSec=1800 \
   "$PWD/deploy/web/build.sh" /clean/application-checkout /private/frontend.env
@@ -373,7 +397,7 @@ host backup lock from before preflight until it exits (see
    on the original-to-candidate migration path. other residual work refuses with bounded ids/kinds,
    before input installation or schema mutation. see [refusal recovery](#refusal-recovery).
 4. **inputs and backup** — durably invalidate original-cohort restoration, then
-   install `docker-compose.yml`, `system-nexus.slice`, the boot-guard
+   install `docker-compose.yml`, `runtime-role.sql`, `system-nexus.slice`, the boot-guard
    script, its systemd unit, the `docker.service` drop-in and the nightly backup
    script, service and timer; give the backup one-off (uid 10001) the receipt
    root `/var/backups/nexus/r2`; reload systemd, enable the boot guard, enable
@@ -397,7 +421,9 @@ host backup lock from before preflight until it exits (see
    one-time saved-reference conversion ships, run it twice in the separate
    migration container with writers stopped; require zero changes on its second
    pass before startup. remove this step with the conversion command after
-   production verification.
+   production verification. apply `runtime-role.sql`, then prove the ordinary
+   runtime authenticates as `nexus_runtime` and reads the schema revision before
+   starting writers.
 7. **up** — `docker compose up --detach --wait`, then require every service
    healthy. prove the persistent parent unit/property and kernel swap max/current
    are zero, all eight actual process cgroups descend from it, and each actual
@@ -468,7 +494,8 @@ an archive is any `<prefix>/database.dump` in the private backup bucket, with
 its `database.json` recovery manifest beside it: `releases/<sha>/` from step 4,
 `nightly/<utc date>/` from the nightly job, `maintenance/...` from an operator.
 all take `nexus.release_backup create`'s one path (stream, read back, publish
-the manifest). loss on host failure is bounded by a day, not by the last release.
+the manifest). successful nightly backups normally leave about a day of potential
+disaster loss. failed nights can extend that loss; no detection deadline is promised.
 
 **nightly.** `nexus-nightly-backup.timer` fires at 11:00 utc, the owner's night (`Persistent=true`
 catches up after downtime) and runs `deploy/hetzner/nightly-backup.sh` as
@@ -502,13 +529,16 @@ cannot manage r2 lifecycle rules, so retention is code.
 resumes from its receipt, so a prune removes only the receipts of archives it
 deletes. maintenance receipts, and receipts of archives deleted by hand, stay.
 
-**freshness.** `release.py --check` reports the newest archive's key and age;
-once the timer is enabled it fails past 36 hours. nothing else monitors backups.
+**manual freshness.** confirm the timer is enabled, then run `release.py --check`
+and inspect the nightly journal. with the timer enabled, listed archive age over
+36 hours fails that check. listing does not verify bytes or the recovery manifest.
+no automatic alert exists; failures can remain unnoticed until manual inspection.
 
 ```bash
-systemctl list-timers nexus-nightly-backup.timer
-journalctl -u nexus-nightly-backup.service --since -2days
-sudo systemctl start nexus-nightly-backup.service   # run now
+ssh dev-server-deploy 'systemctl is-enabled nexus-nightly-backup.timer'
+ssh dev-server-deploy 'systemctl list-timers nexus-nightly-backup.timer'
+ssh dev-server-deploy 'sudo journalctl -u nexus-nightly-backup.service --since -2days'
+ssh dev-server-deploy 'sudo systemctl start nexus-nightly-backup.service'   # run now
 ```
 
 ## Codex agent host isolation
@@ -521,11 +551,11 @@ The isolation is **declared**, not re-derived:
 | default docker apparmor/seccomp confinement | same |
 | internal, gateway-less private bridge whose only other member is the egress proxy | same, `networks.codex_private` |
 | egress allowlist `chatgpt.com:443`, `auth.openai.com:443`: names pinned with `extra_hosts`; stock nginx forwards only those SNIs | same, `x-codex-egress-conf`, `codex-egress-policy` |
-| tmpfs layout, ulimits, cgroup limits, 45 s stop grace, `restart: on-failure:3` | same |
+| tmpfs layout, ulimits, cgroup limits, 45 s stop grace, `restart: on-failure` | same |
 | exactly one host bind: the private account directory inside the LUKS volume | same |
 | uid/gid 10001; shared native socket volume `0700`, socket `0600`; workers receive no account state | same; `docker/Dockerfile.backend` |
 | the credential underlay is closed before Docker starts | `codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
-| `kernel.apparmor_restrict_unprivileged_userns=1` | `deploy/hetzner/cloud-init.yml` |
+| `kernel.apparmor_restrict_unprivileged_userns=1` | dev-server host provisioning |
 
 After start the release asserts that the declaration took effect: the boot guard
 is enabled; `/srv/nexus/codex-state` is a mountpoint with `rw,nosuid,nodev,noexec`;
@@ -672,14 +702,15 @@ and process limits, the deployed image and its captured configuration. check hos
 headroom and remove that exact container when finished. never import application
 services with `docker exec` inside a serving api or worker container: the extra
 process shares its memory limit and can cause the serving process to be killed.
-bind the `maintenance` database role in standalone service scripts.
+ordinary service scripts use `nexus_runtime`; administrative operations use the
+separate migration owner. never restore runtime superuser access to make a command pass.
 
 include the compose-owned settings required by the command; the application env
 file alone does not supply them. the database-only commands below supply
 `NEXUS_CODEX_CONTROL_ENDPOINT` for settings validation.
 confirm `/etc/nexus/current.env` still names the deployed configuration before
-using these examples. if a newer publication is staged, use the deployed config's
-immutable path for both `NEXUS_CONFIG_FILE` and `--env-file`.
+using these examples. if a newer publication is staged, use the deployed
+descriptor's immutable path for `--env-file`; it names the captured runtime file.
 
 ## Oracle corpus seed
 
@@ -689,9 +720,9 @@ run the seed once in a one-off `migration` container, with the production owner'
 user id:
 
 ```bash
-ssh nexus@nexus-prod 'sudo env API_IMAGE=<deployed api digest> \
-  WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
-  docker compose --project-name nexus --env-file /etc/nexus/current.env \
+ssh dev-server-deploy 'sudo env API_IMAGE=<deployed api digest> \
+  WORKER_IMAGE=<deployed worker digest> \
+  docker --host unix:///var/run/docker.sock compose --project-name nexus --env-file /etc/nexus/current.env \
   --file /etc/nexus/docker-compose.yml --profile release \
   run --rm --no-deps --no-TTY \
   -e NEXUS_CODEX_CONTROL_ENDPOINT=unix:///tmp/codex-daemon-10001/control.sock migration \
@@ -710,9 +741,9 @@ Run it in a one-off `migration` container (the API image, 512 MiB, its own
 cgroup), not inside `worker-background`, whose 448 MiB belongs to its job child:
 
 ```bash
-ssh nexus@nexus-prod 'sudo env API_IMAGE=<deployed api digest> \
-  WORKER_IMAGE=<deployed worker digest> NEXUS_CONFIG_FILE=/etc/nexus/current.env \
-  docker compose --project-name nexus --env-file /etc/nexus/current.env \
+ssh dev-server-deploy 'sudo env API_IMAGE=<deployed api digest> \
+  WORKER_IMAGE=<deployed worker digest> \
+  docker --host unix:///var/run/docker.sock compose --project-name nexus --env-file /etc/nexus/current.env \
   --file /etc/nexus/docker-compose.yml --profile release \
   run --rm --no-deps --no-TTY \
   -e NEXUS_CODEX_CONTROL_ENDPOINT=unix:///tmp/codex-daemon-10001/control.sock migration \
@@ -757,7 +788,8 @@ deleting archives outside it is a reviewed operator decision.
 | frontend public routing and browser-check/cache policy | `deploy/cloudflare/frontend-tunnel-config.json`, `deploy/cloudflare/frontend-rules.json` |
 | shared nexus managed waf | `deploy/cloudflare/nexus-managed-waf.json` |
 | private api proxy | `deploy/hetzner/Caddyfile` |
-| Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
+| host prerequisites, administration and development limits | dev-server `ansible/roles/nexus_host/`, security and rootless-docker owners |
+| runtime database grants | `deploy/hetzner/runtime-role.sql` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
 | Streamed database backup and retention | `python/nexus/release_backup.py` |
 | frontend config publication | `deploy/web/publish-env.py` |

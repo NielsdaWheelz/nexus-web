@@ -42,3 +42,12 @@ boundary. rehearse the role/config cutover before changing production.
 acceptance: ordinary runtime journeys and background jobs pass with the scoped
 role; administrative ddl, role management and unrelated grants are denied;
 migration/backup paths still work with their separately held credentials.
+
+2026-11-15 source review adds a configuration requirement: api and both workers
+load the same `NEXUS_CONFIG_FILE` used by compose, and the publisher's application
+roster requires bootstrap `POSTGRES_PASSWORD` (`deploy/hetzner/docker-compose.yml:133-134`,
+`deploy/hetzner/sync-env.sh:30-35`). changing only the database url leaves admin
+credentials available to ordinary processes. the
+[deployment contract](../../deployment.md)
+requires separately captured runtime/deployment inputs. acceptance must inspect
+credential names/authority without printing their values.

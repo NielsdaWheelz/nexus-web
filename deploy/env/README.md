@@ -11,19 +11,21 @@ Create the ignored files owner-only beside the tracked contracts:
 install -m 600 deploy/env/env-prod.example deploy/env/env-prod
 install -m 600 deploy/env/env-prod-frontend.example deploy/env/env-prod-frontend
 install -m 600 deploy/env/env-prod-backend.example deploy/env/env-prod-backend
+install -m 600 deploy/env/env-prod-database.example deploy/env/env-prod-database
 install -m 600 deploy/env/env-prod-worker.example deploy/env/env-prod-worker
 install -m 600 deploy/env/env-prod-backup.example deploy/env/env-prod-backup
 ```
 
 | File | Owner |
 |---|---|
-| `env-prod` | Values genuinely shared by web and VPS |
+| `env-prod` | values shared by web and backend |
 | `env-prod-frontend` | devbox standalone web only |
-| `env-prod-backend` | API, Caddy, Postgres, R2 credentials, provider secrets |
+| `env-prod-backend` | api/runtime database login, caddy, r2 and provider inputs |
+| `env-prod-database` | bootstrap postgres image/login and administrative migration URL |
 | `env-prod-worker` | Worker parser path, timing, and schedule values only |
 | `env-prod-backup` | operator-only private database backup bucket and credentials |
 
-The three VPS inputs must partition their keys: a key may occur in exactly one
+the shared, backend, worker and database inputs must partition their keys: a key may occur in exactly one
 file. Blank, placeholder, malformed, forbidden, and duplicate values fail before
 publication. Compose, not env files, owns worker lane/kind selection and the
 candidate API/worker image digests.
@@ -49,13 +51,23 @@ copy the s3 secret access key, not the separate cloudflare api token value.
 ./deploy/hetzner/sync-env.sh
 ```
 
-One command publishes both host inputs. It concatenates the three VPS files
-into the application config, validates shape, required keys, digest-pinned
-`POSTGRES_IMAGE`/`CADDY_IMAGE` and a Compose-local `DATABASE_URL`, then writes
-`/etc/nexus/config/<sha256>.env` and repoints `/etc/nexus/current.env` with an
-atomic rename. It publishes `env-prod-backup` the same way to
-`/etc/nexus/backup-config/<sha256>.env` and `/etc/nexus/backup.env`, and refuses
-any `R2_BACKUP_*` key found in the application config.
+the publisher validates the application and administrative inputs separately.
+`DATABASE_URL` must select `nexus_runtime` on `postgres:5432/nexus`;
+`MIGRATION_DATABASE_URL` must select `nexus` there with `POSTGRES_PASSWORD`.
+the passwords must differ. `env-prod-database` contains exactly its five declared
+keys. administrative, backup and management inputs are refused in app files.
+
+ordinary application inputs become `/etc/nexus/runtime-config/<sha256>.env`.
+caddy/connector image and site inputs remain only in the deployment descriptor,
+which combines captured artifact/private-file paths and administrative inputs at
+`/etc/nexus/config/<sha256>.env`. its `NEXUS_RUNTIME_CONFIG_FILE` names the exact
+runtime file. `/etc/nexus/current.env` selects that descriptor by atomic rename.
+api and both workers receive only the runtime file; migration explicitly
+substitutes its administrative `DATABASE_URL`. postgres receives its bootstrap
+fields; backup receives administrative postgres fields and the separate
+`/etc/nexus/backup-config/<sha256>.env` selected by `/etc/nexus/backup.env`.
+all three env artifacts are root:root mode `0400`. each file is checked against
+its own content hash before release; the descriptor also binds the runtime path.
 
 Publication is prepare-only: nothing restarts, and the next release picks up
 whatever the pointers name. It is never invoked implicitly by a release, and it
@@ -71,7 +83,7 @@ capture and admission before host work. admitted capture requires both files.
 the client remains configured when capture is enabled without model reads;
 its required nullable bearer is null exactly when `connect=false`.
 it installs `/etc/nexus/memory-config/<sha256>.json` as root:10001 mode 0440
-before recording that immutable path in the application env. only the api and
+before recording that immutable path in the deployment descriptor. only the api and
 interactive worker mount this file at `/run/secrets/nexus-memory-client.json`.
 the background worker alone mounts the publisher file at
 `/run/secrets/nexus-memory-capture.json`; its upload credential grants no mcp tools.
@@ -110,9 +122,16 @@ is `deploy/release.sh <candidate-manifest.json>`.
 
 - Supabase owns authentication only: issuer, JWKS, audiences, frontend URL, and
   frontend anonymous key. Product data never uses Supabase Database or Storage.
-- Hetzner Postgres is the only product database. `DATABASE_URL` uses
-  `postgresql+psycopg`, host `postgres`, port `5432`, and credentials equal to
-  the Compose Postgres values.
+- the compose-local postgres is the only product database. both database URLs
+  use `postgresql+psycopg`, host `postgres`, port `5432`, database `nexus`, and no
+  query options. ordinary runtime has the restricted `nexus_runtime` login;
+  only trusted deployment, migration and backup use the bootstrap `nexus` login.
+  the operator creates the runtime login privately before restoring a backup
+  or making the first release; restored grants may already name that role.
+  `runtime-role.sql` applies its grants after restore/migration and checks that
+  it owns no objects, inherits no roles, has no administrative attributes and
+  cannot write the migration ledger or execute security-definer app functions.
+  the pinned search extension retains its reviewed private tokenizer-cache helper.
 - Cloudflare R2 is the only object store. `R2_S3_API_ORIGIN` is the shared public
   S3 origin; access key, secret, and bucket are VPS-only.
 - `R2_BACKUP_*` is operator-only; application storage credentials cannot read

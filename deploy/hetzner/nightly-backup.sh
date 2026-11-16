@@ -13,16 +13,16 @@ if ! flock --nonblock 9; then
 fi
 
 container() {
-    docker ps --all --quiet \
+    docker --host unix:///var/run/docker.sock ps --all --quiet \
         --filter label=com.docker.compose.project=nexus \
         --filter "label=com.docker.compose.service=$1" \
         --filter label=com.docker.compose.oneoff=False
 }
 # The host records only the released sha; the running containers carry its digests.
 sha=$(cat /var/lib/nexus/releases/current)
-api_image=$(docker inspect --format '{{.Config.Image}}' "$(container api)")
-worker_image=$(docker inspect --format '{{.Config.Image}}' "$(container worker-background)")
-revision=$(docker image inspect \
+api_image=$(docker --host unix:///var/run/docker.sock inspect --format '{{.Config.Image}}' "$(container api)")
+worker_image=$(docker --host unix:///var/run/docker.sock inspect --format '{{.Config.Image}}' "$(container worker-background)")
+revision=$(docker --host unix:///var/run/docker.sock image inspect \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$api_image")
 if [ "$revision" != "$sha" ]; then
     echo "the api runs $revision, not the released $sha; finish that release first" >&2
@@ -30,10 +30,9 @@ if [ "$revision" != "$sha" ]; then
 fi
 
 API_IMAGE=$api_image WORKER_IMAGE=$worker_image \
-    NEXUS_CONFIG_FILE=/etc/nexus/current.env \
     NEXUS_BACKUP_CONFIG_FILE=/etc/nexus/backup.env \
     NEXUS_BACKUP_STATE_DIRECTORY=/var/backups/nexus/r2 \
-    docker compose --project-name nexus --env-file /etc/nexus/current.env \
+    docker --host unix:///var/run/docker.sock compose --project-name nexus --env-file /etc/nexus/current.env \
     --file /etc/nexus/docker-compose.yml --profile backup \
     run --rm --no-deps --no-TTY backup \
     python -m nexus.release_backup nightly --source-sha "$sha" --receipt-root /backup-state
