@@ -105,3 +105,30 @@ checks passed in `20261108-220656-d4b0ed622a0d`.
 this qualifies the bounded local query repair only. production and restored-corpus
 capacity, combined headroom and the historical allocator attribution remain open;
 no memory, swap, pool or retry policy changed.
+
+on 2026-11-16, the dev-server cutover to `b666d936f`, schema 0346, retained
+the 512-mib/no-swap postgres limit. at 17:50:11 utc, api request
+`84d56687-8d77-4397-8d31-f6348ddf9555` (`/authored/scope-text`) and the worker
+lost database connections; the next api connection found postgres in recovery.
+the later 18:05 frontend-build baseline recorded `oom=3`, `oom_kill=2` and
+`State.OOMKilled=true`. the 18:05–18:08 bounded build/native-turn window retained
+the same healthy postgres pid and added ZERO oom/kill events. that bounded result
+does not qualify the earlier incident or general capacity.
+
+the one ordinary title-search intent then admitted request
+`cd08b786-c326-4d9b-8251-2de69f68546d` on backend 26993 at 18:10:54.232 utc.
+nine overlapping hybrid requests returned 503 `E_DATABASE_BUSY` before that
+backend was killed at 18:11:08.919. postgres recovered by 18:11:09.317; the
+admitted request ended 499 `E_CLIENT_DISCONNECT` after 15.202 seconds. client
+evidence retains the unsuccessful lexical request and automatic hybrid retries;
+leaving the search view stopped them. a fresh 18:12 census recorded `oom=4`,
+`oom_kill=3`. this identifies the victim backend and aggregate exhaustion, not
+the responsible allocator or a query-specific memory cause. private
+`search-acceptance-api.log`, `postgres-recovery-after-build.log` and the concurrent
+production snapshots retain the correlation.
+
+the owner explicitly retained the 512-mib limit and deferred tuning. successful
+restore, ordinary native completion and bounded shared-host work do not turn this
+failed production search acceptance green. diagnosis and qualification remain
+with this issue and the connection-budget owner above; no cap, pool or retry
+policy changed during the move.

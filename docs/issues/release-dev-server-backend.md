@@ -1,39 +1,40 @@
-# dev-server backend activation is incomplete
+# dev-server backend closeout is incomplete
 
-frozen candidate: `b666d936f89b9bfa4811560a9e00c5ccc5482d94`, schema `0346`,
-wire `24`. implementation: nexus prs #953/#954 and dev-server pr #221.
+the paired release is live at `b666d936f89b9bfa4811560a9e00c5ccc5482d94`,
+schema `0346`, wire `24`; both public identities match. implementation:
+nexus prs #953/#954 and dev-server pr #221.
 operating contract: [deployment](../../deployment.md).
 
-the old backend's writers/native host are stopped and its nightly timer is
-disabled. its final stopped-writer snapshot and fresh maintenance archive are
-verified. the target restore committed; critical rows/heads/prefixes match,
-runtime grants/password authentication and `ANALYZE` passed, and the target kept
-its distinct physical cluster identity. no predecessor receipt, pointer or
-native account file was copied. the owner-approved target vector catalog is
-`0.8.7` with the same pinned image/library; the source remains `0.8.2`.
+the retained firefox profile's pending writing is acknowledged on the same
+replica at accepted prefix `148`; that acknowledged data survived actual postgres
+recovery. a new native turn, the concurrent bounded development build, the normal
+nightly backup and the web reader for one accepted capture passed. the target
+backup timer is enabled. the old connector, writers, native host and nightly timer
+are stopped, and its luks volume is closed.
 
-target postgres and credential egress are healthy. api, workers, native host,
-connector and timer are OFF. the paired frontend is sealed but not activated.
-fresh device sign-in is pending; use the [enrollment procedure](../runbooks/codex-personal-agent-host.md)
-with one-off container logging disabled. an owned firefox profile holds durable
-offline writing and remains isolated. the actual phone is disconnected; installed
-android acceptance is unverified. preserve all app/profile data.
+remaining:
 
-remaining: enroll, stop the old connector, run the sole paired release, verify
-exact public identities and actual client writing/catch-up/search/import/native
-generation, and qualify shared workload, backup/nightly and manual recovery.
-then remove old restart paths/installed secrets, inventory retained offline data,
-power off the old vps, delete temporary tests/fixtures and run the final static
-gate. the old vps is not a standby; after target writes, recovery moves forward.
+- installed android retained-auth writing, cold reopen and catch-up; the same
+  phone is currently disconnected. preserve app/profile data and keep the owned
+  verification page until every client check finishes.
+- normal hybrid search failed through [postgres oom](production-search-postgres-oom.md)
+  under the preserved 512-mib limit; tuning remains outside the approved move.
+- installed firefox extension `1.1.4` failed to show the capture receipt because
+  of the pre-existing [projection decoder defect](extension-receipt-summary-key-drift.md).
+  its narrow repair and a signed extension update await owner authorization.
+  the [confirmation deadline failure](capture-confirmation-exceeds-client-deadline.md)
+  remains separately recorded.
+- retire old restart paths and installed secrets, inventory retained offline
+  data, and power off the retained old vps. remove temporary tests/fixtures once
+  acceptance finishes.
 
-host privilege/socket/kernel limits and idle-engine preservation passed;
-development has 2 gib soft / 3 gib hard limits, including the retained runner.
-full rolling fleet apply was not run; inherited rootless activation remains deferred.
-backend limits, public origins and auth stay unchanged. no resize, new alerts,
-jarvis changes, forced reboot or automatic disaster reconciliation belongs here.
-[manual backup checks](production-backup-freshness-alert.md), existing capacity
-issues and [authored rewind recovery](authored-database-restore-recovery.md) remain
+the old vps is not a standby; recovery after target writes moves forward.
+development remains bounded at 2 gib soft / 3 gib hard, including the retained
+runner. inherited rootless activation remains deferred; full rolling fleet apply
+was outside this move. no resize, new alerts or jarvis changes belong here.
+[manual backup checks](production-backup-freshness-alert.md) and
+[authored rewind recovery](authored-database-restore-recovery.md) remain
 separate accepted limits. email ingest was unconfigured on source; preserve that.
 
 resolved only after live acceptance, old-host retirement and temporary-test
-removal. current preparation is not deployment completion.
+removal. a live release alone does not complete this move.
