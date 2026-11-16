@@ -22,7 +22,8 @@ scoped owner-approved exception: align the target pgvector catalog to `0.8.7`
 after real restore/search checks, using the same pinned image and installed
 library. preserve the source host's `0.8.2` catalog. this permits no other
 extension, image, schema or wire upgrade; the
-[catalog qualification](dev-server-vector-catalog.md) remains open until verified.
+isolated real restore, product bm25/vector queries and restricted indexed writes
+passed. live application searches remain part of cutover acceptance.
 
 the shared devbox has 4 vcpus and 7.6 gib ram. its frontend, jarvis and development
 load must fit together with nexus; idle measurements do not establish capacity.
@@ -48,10 +49,9 @@ remaining owner steps:
   stays intact. retire old containers/restart paths and installed credentials,
   retain only inventoried offline data/encrypted recovery material, then power off.
 
-[developer root access](dev-server-developer-root-access.md),
-[production docker ownership](dev-server-production-docker-owner.md) and
-[runtime database privileges](production-database-login-is-superuser.md) stay open
-until their real boundaries pass. close them individually with the implementation.
+host authority and production-engine ownership passed live checks in dev-server
+pr #221. [runtime database privileges](production-database-login-is-superuser.md)
+remains open until the actual serving writers use the restricted login.
 
 [backup notification](production-backup-freshness-alert.md) is explicitly deferred.
 manual inspection confirms the timer is enabled and checks listed backup age and
