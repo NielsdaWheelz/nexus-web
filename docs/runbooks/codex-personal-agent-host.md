@@ -118,14 +118,23 @@ compose() {
     --env-file /etc/nexus/current.env --file /etc/nexus/docker-compose.yml "$@"
 }
 compose stop --timeout 45 nexus-codex-agent-host
-compose run --rm nexus-codex-agent-host python -m apps.codex_agent.enroll
+compose up -d --wait codex-egress-policy
+compose --file - run --rm --no-deps -T --interactive=false \
+  nexus-codex-agent-host python -m apps.codex_agent.enroll <<'YAML'
+services:
+  nexus-codex-agent-host:
+    logging:
+      driver: none
+YAML
 ```
 
 the one-off is the host's own service definition: same user, read-only root,
-account bind and allowlisted egress. it prints a device code; complete it in any
-browser. it writes `auth.json` (`0600`) and initializes private host identity,
-refusing existing credentials. re-enrollment retains existing identity. it cannot
-start while the host runs (the host's address is taken). then release.
+account bind and allowlisted egress. only this invocation disables container
+logging. show its device code only in the live operator terminal; complete
+sign-in in any browser. it writes `auth.json` (`0600`) and initializes private
+host identity. it refuses existing credentials; re-enrollment retains existing
+identity. it cannot start while the host runs (the host's address is taken).
+then release.
 
 to re-enroll, stop the host, retire the old file inside the encrypted
 directory, enroll, release, and delete the retired file once the host is
@@ -136,7 +145,8 @@ sudo mv /srv/nexus/codex-state/codex/codex-personal/auth.json \
   "/srv/nexus/codex-state/codex/codex-personal/auth.json.retired-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-never print, copy or archive `auth.json` or a device code.
+never print, copy or archive `auth.json`. never record or archive a device code
+or enrollment output.
 
 ## local enrollment
 
@@ -166,13 +176,21 @@ compose_local() {
 }
 compose_local build nexus-codex-agent-host
 compose_local stop --timeout 45 nexus-codex-agent-host
-compose_local run --rm nexus-codex-agent-host python -m apps.codex_agent.enroll
+compose_local up -d --wait codex-egress-policy
+COMPOSE_FILE="${COMPOSE_FILE}:-" compose_local run --rm --no-deps -T \
+  --interactive=false nexus-codex-agent-host python -m apps.codex_agent.enroll <<'YAML'
+services:
+  nexus-codex-agent-host:
+    logging:
+      driver: none
+YAML
 compose_local up -d --wait nexus-codex-agent-host
 python/.venv/bin/python python/scripts/worker_checkout_image.py worker-interactive worker-background
 compose_local up -d --no-build worker-interactive worker-background
 ```
 
-complete the device login shown by the one-off; keep its credentials private.
+complete the device login in the live terminal; never record or archive its
+output.
 enrollment writes `auth.json` mode `0600` and refuses to replace an existing file.
 use a separate local login; never copy production account state. re-enrollment
 requires stopping the host and retiring its old local file first.
@@ -186,7 +204,7 @@ private subnet defaults to `172.31.0.0/24`; another concurrent local stack sets
 `NEXUS_LOCAL_CODEX_SUBNET_PREFIX` to a different unused /24 prefix. literal host
 entries point only the two allowed names to the local proxy, whose own dns still
 resolves their public upstreams. the local unix overlay publishes no port.
-local services use docker's ordinary logging, not the production journald driver.
+local services use docker's ordinary logging; only enrollment disables it.
 
 `compose_local logs nexus-codex-agent-host codex-egress-policy` explains host/proxy
 startup failures. catalog health proves the socket and native protocol; worker

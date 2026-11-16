@@ -1,65 +1,39 @@
-# backend deployment on dev-server is unqualified
+# dev-server backend activation is incomplete
 
-status: implementation in progress; live cutover and target acceptance NOT_RUN.
+frozen candidate: `b666d936f89b9bfa4811560a9e00c5ccc5482d94`, schema `0346`,
+wire `24`. implementation: nexus prs #953/#954 and dev-server pr #221.
 operating contract: [deployment](../../deployment.md).
 
-target preparation: reviewed host roles are applied; deployment elevation,
-developer sudo/socket denial, kernel memory limits and idle-engine preservation
-passed. development uses 2 gib soft / 3 gib hard limits, including the retained
-hardware runner. existing services, sessions and rootless containers survived.
+the old backend's writers/native host are stopped and its nightly timer is
+disabled. its final stopped-writer snapshot and fresh maintenance archive are
+verified. the target restore committed; critical rows/heads/prefixes match,
+runtime grants/password authentication and `ANALYZE` passed, and the target kept
+its distinct physical cluster identity. no predecessor receipt, pointer or
+native account file was copied. the owner-approved target vector catalog is
+`0.8.7` with the same pinned image/library; the source remains `0.8.2`.
+
+target postgres and credential egress are healthy. api, workers, native host,
+connector and timer are OFF. the paired frontend is sealed but not activated.
+fresh device sign-in is pending; use the [enrollment procedure](../runbooks/codex-personal-agent-host.md)
+with one-off container logging disabled. an owned firefox profile holds durable
+offline writing and remains isolated. the actual phone is disconnected; installed
+android acceptance is unverified. preserve all app/profile data.
+
+remaining: enroll, stop the old connector, run the sole paired release, verify
+exact public identities and actual client writing/catch-up/search/import/native
+generation, and qualify shared workload, backup/nightly and manual recovery.
+then remove old restart paths/installed secrets, inventory retained offline data,
+power off the old vps, delete temporary tests/fixtures and run the final static
+gate. the old vps is not a standby; after target writes, recovery moves forward.
+
+host privilege/socket/kernel limits and idle-engine preservation passed;
+development has 2 gib soft / 3 gib hard limits, including the retained runner.
 full rolling fleet apply was not run; inherited rootless activation remains deferred.
-the new encrypted volume passed canonical-path close/reopen
-with its separate off-host key and private uid/gid 10001 directories. no native
-account has been enrolled and no old account files were copied.
+backend limits, public origins and auth stay unchanged. no resize, new alerts,
+jarvis changes, forced reboot or automatic disaster reconciliation belongs here.
+[manual backup checks](production-backup-freshness-alert.md), existing capacity
+issues and [authored rewind recovery](authored-database-restore-recovery.md) remain
+separate accepted limits. email ingest was unconfigured on source; preserve that.
 
-owner choices: planned downtime/manual repair; existing system docker production
-model; unchanged backend limits; nightly backups with nominal day-scale loss;
-manual backup checks; old vps retained powered off. frontend and backend public
-origins, auth, wire and product schema remain unchanged. no automatic alerts,
-jarvis changes, host resize, memory tuning or forced host reboot.
-
-scoped owner-approved exception: align the target pgvector catalog to `0.8.7`
-after real restore/search checks, using the same pinned image and installed
-library. preserve the source host's `0.8.2` catalog. this permits no other
-extension, image, schema or wire upgrade; the
-isolated real restore, product bm25/vector queries and restricted indexed writes
-passed. live application searches remain part of cutover acceptance.
-
-the shared devbox has 4 vcpus and 7.6 gib ram. its frontend, jarvis and development
-load must fit together with nexus; idle measurements do not establish capacity.
-dev-server owns host prerequisites, production-engine availability and development
-limits. nexus owns release, data, runtime grants, native enrollment and backups.
-
-remaining owner steps:
-
-- qualify concurrent production/development load under the selected limits.
-- publish split runtime/admin configuration, establish `nexus_runtime`, and
-  rehearse an actual restore with the exact pg15/extensions image. prove ordinary
-  api/worker use, administrative denial and retained migration/backup authority.
-  archive traversal in `release_backup.py` alone does not prove restoration.
-- freeze one new paired candidate at the deployed schema/wire. old-host work must
-  settle through its owners before the final stopped-writer/session census and
-  fresh backup.
-- restore accepted state without copying backup receipts, release pointers or
-  native account files. enroll the target account only after old native execution
-  is fenced. run the existing paired release; never serve two restored histories.
-- verify actual web/android/extension writing and catch-up, search, import,
-  configured webhook delivery, native generation, fresh backup and manual unlock.
-  qualify a normal nightly on an unused utc date; an old-cluster same-day archive
-  stays intact. retire old containers/restart paths and installed credentials,
-  retain only inventoried offline data/encrypted recovery material, then power off.
-
-host authority and production-engine ownership passed live checks in dev-server
-pr #221. [runtime database privileges](production-database-login-is-superuser.md)
-remains open until the actual serving writers use the restricted login.
-
-[backup notification](production-backup-freshness-alert.md) is explicitly deferred.
-manual inspection confirms the timer is enabled and checks listed backup age and
-journal; failures can remain unnoticed until then. listing is not byte verification.
-the existing backend capacity issues and [authored disaster rewind](authored-database-restore-recovery.md)
-remain separate accepted follow-ups. after target writes begin, the old database
-cannot be resumed as failback.
-
-resolved when the exact paired release and all above boundaries pass, manual
-recovery works, only the new production path remains, and the old vps is fenced
-and powered off. local/static proof alone does not establish that outcome.
+resolved only after live acceptance, old-host retirement and temporary-test
+removal. current preparation is not deployment completion.
