@@ -1,8 +1,12 @@
 # shared memory capture cutover
 
 the capture source and central `nexus-turn-capture-v1` contract must ship together.
-source implementation alone does not enable capture. no production cutover has
-been performed.
+source implementation alone does not enable capture. production source
+`833eb09a7d3e13562d1a7ecb19890dd51d78ceff` is installed at schema `0346`.
+the client and publisher declarations remain `null`; memory reads and capture
+are disabled. private read-only mounts and the four locked dependency commits
+are verified in the running cohort. activation and real central delivery remain
+unperformed.
 
 source qualification passed for `12f74c865eb289e186ff33b310f8d34a28c9220d`:
 authenticated send/cancel/retry, all six memory tools collectively across paid
@@ -18,8 +22,9 @@ records exact pins, image ids and the remaining deployment limits.
 - publish generated client and publisher files from one sharing declaration.
   active capture requires matching owner/capture/admit. capture-only client has
   `connect=false, bearer=null`; disabled publisher is `null`.
-- upgrade through migration `0346`, then start the paired release. background
-  alone receives the upload file. api/interactive receive only the client file.
+- migration `0346` is installed. retain paired publication and release when
+  enabling capture. background alone receives the upload file; api/interactive
+  receive only the client file.
 - inspect `nexus memory-capture-status`. one synthetic owner turn must reach the
   central archive through the real publisher and disappear from pending only
   after its exact receipt. inspect native internal exclusion too.

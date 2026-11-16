@@ -13,7 +13,9 @@ the default private inputs also differ from the published configuration in
 publishing those defaults would change unrelated scheduling. preserve both
 published feed values and the absence of the two podcast keys in private
 publication inputs. preserve the null memory declaration, backup bytes, and
-tunnel declaration. the proposed application delta is `POSTGRES_IMAGE` only.
+tunnel declaration. the wire-24 release preserved the live postgres pin and
+every existing application value; its only addition was the null memory-capture
+publisher declaration. future publication must name its intended delta explicitly.
 
 `deploy/hetzner/sync-env.sh` owns input overrides and publication;
 `deployment.md` owns ordering and the no-use window. before another publication, compare
