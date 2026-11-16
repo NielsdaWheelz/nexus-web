@@ -646,10 +646,15 @@ A verified archive is a recovery point, not an automatic rollback. Restoring it
 discards writes made after that point. Keep the no-use window closed and review
 the database, application SHA and schema together before any production restore.
 
-First restore into an isolated disposable Postgres instance on a machine with
-space for both the archive and the expanded database. Use the captured Postgres
-image, including pgvector, and create the original database owner role. The
-remote `database.json` recovery manifest binds the R2 endpoint, bucket, key,
+first restore into an isolated disposable postgres instance with space for the
+archive and expanded database. use the captured postgres 15 image, including
+pgvector and pg_search. retain the [postgres service's](deploy/hetzner/docker-compose.yml)
+startup command and resource ceilings, including pg_search preloading; use
+separate disposable storage. bootstrap with `POSTGRES_USER=nexus` and
+`POSTGRES_DB=postgres`, supplying the private bootstrap credentials separately.
+keep database `nexus` and role `nexus_runtime` absent until the commands below
+create them.
+the remote `database.json` recovery manifest binds the R2 endpoint, bucket, key,
 expected sha256, byte count, database identity and starting revision. R2's
 multipart ETag is not the archive's sha256.
 
@@ -680,20 +685,57 @@ printf '%s  %s\n' "$BACKUP_SHA256" recovery.dump | sha256sum --check
 pg_restore --file=/dev/null recovery.dump
 ```
 
-Proceed only after all three checks succeed. In a shell configured to connect
-only to the isolated recovery instance, create a new database and restore it:
+proceed only after all three checks succeed. configure the shell to connect only
+to the isolated instance. create the restricted runtime login before restoration
+so archived grants can resolve it. `\password` prompts for the private password
+from the runtime configuration selected for this recovery; never put it in an
+argument, sql literal or command history.
 
 ```bash
-createdb nexus_backup_rehearsal
-pg_restore --exit-on-error --dbname=nexus_backup_rehearsal recovery.dump
-psql --dbname=nexus_backup_rehearsal --no-psqlrc --tuples-only \
-  --command='SELECT version_num FROM alembic_version'
+set -e
+psql --no-psqlrc --username=nexus --dbname=postgres --set=ON_ERROR_STOP=1 \
+  --command='CREATE ROLE nexus_runtime LOGIN NOINHERIT NOSUPERUSER
+    NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS'
+psql --no-psqlrc --username=nexus --dbname=postgres --set=ON_ERROR_STOP=1 \
+  --command='\password nexus_runtime'
+createdb --username=nexus --owner=nexus --template=template0 nexus
+pg_restore --username=nexus --dbname=nexus --single-transaction \
+  --exit-on-error recovery.dump
+psql --no-psqlrc --username=nexus --dbname=nexus --set=ON_ERROR_STOP=1 \
+  --set=apply=true --file=deploy/hetzner/runtime-role.sql
+psql --no-psqlrc --username=nexus --dbname=nexus --set=ON_ERROR_STOP=1 \
+  --command='ANALYZE'
+psql --no-psqlrc --username=nexus --dbname=nexus --set=ON_ERROR_STOP=1 \
+  --set=apply=false --file=deploy/hetzner/runtime-role.sql
 ```
 
-Require the recorded starting revision and inspect representative product rows
-before treating the rehearsal as complete. Do not substitute this disposable
-database for production, and do not start predecessor code against a migrated
-database.
+use `runtime-role.sql` from the reviewed application checkout selected for
+recovery. this existing-database restore does not restore database-level
+authority: [pg_restore applies database privileges with `--create`](https://www.postgresql.org/docs/15/app-pgrestore.html).
+roles also live outside the custom dump. applying the operational role policy
+after restoration is mandatory even when object grants survive; it is not a
+fallback after a failed privilege check. `ANALYZE` rebuilds planner statistics
+that postgres 15 dumps omit.
+
+from a client outside the postgres container, set `PGHOST` and `PGPORT` to the
+isolated tcp endpoint whose matching `pg_hba.conf` rule requires `scram-sha-256`.
+the captured image trusts unix sockets and container loopback; `--password`
+only forces a prompt. first run this check with a deliberately wrong password
+and require a password-authentication failure, not merely a connection failure.
+then repeat it with the correct private runtime password:
+
+```bash
+psql --no-psqlrc --username=nexus_runtime --dbname=nexus --password \
+  --host="${PGHOST:?select the isolated tcp host}" --port="${PGPORT:?set its port}" \
+  --set=ON_ERROR_STOP=1 --tuples-only \
+  --command='SELECT current_user, current_database(), version_num FROM public.alembic_version'
+```
+
+require `nexus_runtime`, database `nexus` and the manifest's starting revision.
+inspect representative product rows through that runtime login and compare them
+with the selected recovery point. role checks, revision and data checks must all
+pass before any writers start. the rehearsal database stays disposable; do not
+start predecessor code against a migrated database.
 
 ## application maintenance
 
