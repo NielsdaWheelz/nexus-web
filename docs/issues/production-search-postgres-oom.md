@@ -127,16 +127,28 @@ the responsible allocator or a query-specific memory cause. private
 `search-acceptance-api.log`, `postgres-recovery-after-build.log` and the concurrent
 production snapshots retain the correlation.
 
-the owner explicitly retained the 512-mib limit and deferred tuning. successful
-restore, ordinary native completion and bounded shared-host work do not turn this
-failed production search acceptance green. diagnosis and qualification remain
-with this issue and the connection-budget owner above; no cap, pool or retry
-policy changed during the move.
+the initial cutover retained the 512-mib limit. successful restore, ordinary
+native completion and bounded shared-host work did not qualify its failed search.
 
-the subsequent capacity repair raises postgres alone to 2 gib/no swap on the
+the subsequent capacity repair raised postgres alone to 2 gib/no swap on the
 8 gib host; production and disposable composition share that ceiling. it retains
 64 mib shared buffers, executor settings, connection limits and other services'
 caps. this removes the disproved 512-mib envelope, not the unattributed allocator
-or combined-headroom question. the failed ordinary search must complete with
-unchanged data/native identity and no new kernel oom/kill before acceptance;
-unrestricted overlap remains outside that bounded proof.
+or combined-headroom question.
+
+on deployed `d05d69bd1`, the ordinary hybrid request
+`7a053678-ce01-44a5-bc51-c6fe4f4efb7f` completed 200 in 74.998 seconds at
+21:12:15 utc, with a complete bff response and confirmed database retirement.
+the exact remote article was visible under the current query before its lexical
+response completed. the request overlapped a successful bounded frontend
+typecheck; all production container/process identities and restart counts stayed
+unchanged, with zero new oom/kill events. postgres `memory.events.max` increased
+by 1858: ceiling-pressure events, not oom kills. the browser observer had excluded
+this valid shared request because it began before its marker; api/bff traces and
+the contemporaneous visible result establish completion separately.
+
+this qualifies that ordinary search and bounded development overlap at 2 gib.
+slow query cost, aggregate headroom and allocator attribution remain open;
+it does not establish unrestricted concurrent capacity or justify larger pools
+and timeouts. preserve the exact data/native identity and unchanged search
+semantics when resolving those remaining limits.

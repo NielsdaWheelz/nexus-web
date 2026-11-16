@@ -6,9 +6,9 @@ workstation, prefers its available capacity to a larger rented vps, and accepts
 occasional home power, network or maintenance outages, including while away.
 retaining the tiny vps as an intermediate layer is a tentative preference.
 
-this remains the earlier home-host proposal. the 2026-11-15
-[dev-server assessment](release-dev-server-backend.md) targets the existing
-hetzner devbox instead; these are different deployment destinations.
+this remains the earlier home-host proposal. the current
+[dev-server deployment](../../deployment.md) uses the existing hetzner devbox;
+these are different deployment destinations.
 
 recommend keeping api, workers and postgres together on the home host, with one
 authoritative database. preserve the current devbox frontend/bff, supabase auth,
@@ -18,8 +18,8 @@ a relay adds a dependency and cannot serve database-backed requests while home
 is unavailable. ordinary clients must not need a vpn.
 
 capacity, disk headroom, upload reliability and incremental cost are unmeasured.
-the current compose caps are postgres `512m`, api `384m`, interactive worker
-`320m` and background worker `448m`; moving unchanged retains those limits.
+the assessment recorded postgres `512m`, api `384m`, interactive worker `320m`
+and background worker `448m`; these are historical limits.
 [deployment](../../deployment.md) and `deploy/hetzner/release.py` enforce the
 current envelope. change configuration, enforcement and contracts together from
 measured demand, leaving capacity for workstation use. this does not resolve the
