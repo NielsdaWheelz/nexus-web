@@ -22,6 +22,7 @@ so they need nothing installed on the host.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -35,6 +36,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from nexus.release_artifact import CandidateManifest, load_candidate_manifest
 from nexus.release_backup import (
@@ -46,13 +49,12 @@ from nexus.release_backup import (
 
 REPOSITORY = "NielsdaWheelz/nexus-web"
 WORKFLOW = ".github/workflows/backend-images.yml"
-SSH_TARGET = "nexus@nexus-prod"
+SSH_TARGET = "dev-server-deploy"
 SSH_OPTIONS = (
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=10",
     "-o", "ServerAliveInterval=15",
     "-o", "ServerAliveCountMax=4",
-    "-o", "HostKeyAlias=5.78.194.235",
     "-o", "StrictHostKeyChecking=yes",
 )  # fmt: skip
 
@@ -60,6 +62,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 POSTGRES_CAPABILITY_CHECK = "/usr/local/bin/nexus-postgres-check"
 COMPOSE_FILE = "/etc/nexus/docker-compose.yml"
 CONFIG_FILE = "/etc/nexus/current.env"
+DOCKER = "sudo docker --host unix:///var/run/docker.sock"
+RUNTIME_ROLE_FILE = "/etc/nexus/runtime-role.sql"
 BACKUP_CONFIG_FILE = "/etc/nexus/backup.env"
 CADDYFILE = "/etc/nexus/Caddyfile"
 CURRENT_POINTER = "/var/lib/nexus/releases/current"
@@ -83,6 +87,7 @@ BACKUP_MAX_AGE_HOURS = 36
 # release installs them only after the final stopped-writer census.
 HOST_INPUTS = (
     ("docker-compose.yml", COMPOSE_FILE, "0444"),
+    ("runtime-role.sql", RUNTIME_ROLE_FILE, "0444"),
     (RESOURCE_SLICE, f"/etc/systemd/system/{RESOURCE_SLICE}", "0644"),
     ("codex-state-boot-guard.sh", "/usr/local/sbin/nexus-codex-state-boot-guard", "0755"),
     ("nexus-codex-state-boot-guard.service", f"/etc/systemd/system/{BOOT_GUARD_SERVICE}", "0644"),
@@ -218,8 +223,8 @@ def compose(
 
     return host(
         f"sudo env API_IMAGE={candidate.images.api} WORKER_IMAGE={candidate.images.worker}"
-        f" NEXUS_CONFIG_FILE={CONFIG_FILE} {environment}"
-        f" docker compose --project-name nexus --env-file {CONFIG_FILE} --file {COMPOSE_FILE}"
+        f" {environment}"
+        f" docker --host unix:///var/run/docker.sock compose --project-name nexus --env-file {CONFIG_FILE} --file {COMPOSE_FILE}"
         f"{' --profile ' + profile if profile else ''} {arguments}",
         stdin=stdin,
         timeout=timeout,
@@ -230,7 +235,7 @@ def container(service: str) -> str:
     """Resolve one service's container through its Compose project labels."""
 
     identifier = host(
-        "docker ps --all --quiet"
+        f"{DOCKER} ps --all --quiet"
         " --filter label=com.docker.compose.project=nexus"
         f" --filter label=com.docker.compose.service={service}"
         " --filter label=com.docker.compose.oneoff=False"
@@ -241,13 +246,13 @@ def container(service: str) -> str:
 
 
 def inside(service: str, command: str, *, stdin: bytes | None = None, timeout: int = 120) -> str:
-    return host(f"docker exec -i {container(service)} {command}", stdin=stdin, timeout=timeout)
+    return host(f"{DOCKER} exec -i {container(service)} {command}", stdin=stdin, timeout=timeout)
 
 
 def inspect(identifier: str) -> dict[str, Any]:
-    inspected = json.loads(host(f"docker inspect {identifier}"))
+    inspected = json.loads(host(f"{DOCKER} inspect {identifier}"))
     if not isinstance(inspected, list) or len(inspected) != 1:
-        raise Failure(f"docker inspect {identifier} is not one object")
+        raise Failure(f"{DOCKER} inspect {identifier} is not one object")
     return inspected[0]
 
 
@@ -321,13 +326,13 @@ def resolve_candidate(source_sha: str, workspace: Path) -> CandidateManifest:
 def pull_image(candidate: CandidateManifest, image: str) -> None:
     """Pull one candidate image by digest and prove it carries this source."""
 
-    host(f"docker pull {image}", timeout=900)
-    inspected = json.loads(host(f"docker image inspect {image}"))[0]
+    host(f"{DOCKER} pull {image}", timeout=900)
+    inspected = json.loads(host(f"{DOCKER} image inspect {image}"))[0]
     if inspected["Config"]["Labels"]["org.opencontainers.image.revision"] != candidate.source_sha:
         raise Failure(f"{image} OCI revision label differs from the candidate")
     identity = json.loads(
         host(
-            "docker run --rm --network none --read-only --cap-drop ALL"
+            f"{DOCKER} run --rm --network none --read-only --cap-drop ALL"
             f" --entrypoint cat {image} /app/runtime-identity.json"
         )
     )
@@ -354,6 +359,34 @@ def meminfo() -> dict[str, int]:
     return values
 
 
+def assert_config() -> None:
+    """The private descriptor captures one separately sealed runtime environment."""
+    script = """import hashlib, pathlib, re, stat
+def captured(path, directory):
+    resolved = pathlib.Path(path).resolve(strict=True)
+    if not re.fullmatch(directory + r'/[0-9a-f]{64}\\.env', str(resolved)):
+        raise SystemExit('configuration must name its captured content-addressed file')
+    info = resolved.stat()
+    if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (0, 0, 0o400):
+        raise SystemExit('captured configuration must be root:root mode 0400')
+    data = resolved.read_bytes()
+    if hashlib.sha256(data).hexdigest() != resolved.stem:
+        raise SystemExit('captured configuration content differs from its filename')
+    return dict(line.split('=', 1) for line in data.decode().splitlines()
+                if line.strip() and not line.lstrip().startswith('#'))
+descriptor = captured('/etc/nexus/current.env', '/etc/nexus/config')
+runtime = captured(descriptor['NEXUS_RUNTIME_CONFIG_FILE'], '/etc/nexus/runtime-config')
+captured('/etc/nexus/backup.env', '/etc/nexus/backup-config')
+for key in runtime:
+    if key.startswith(('POSTGRES_', 'R2_BACKUP_', 'CLOUDFLARE', 'TAILSCALE_', 'TS_')) or key in {
+        'MIGRATION_DATABASE_URL', 'NEXUS_CLOUDFLARED_TOKEN_FILE', 'TUNNEL_TOKEN',
+        'SUPABASE_MANAGEMENT_ACCESS_TOKEN', 'SUPABASE_AUTH_ADMIN_KEY'
+    }:
+        raise SystemExit('privileged input in runtime configuration: ' + key)
+"""
+    host(f"sudo python3 -c {shlex.quote(script)}")
+
+
 def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> CandidateManifest:
     note("preflight")
     host("true", timeout=30)
@@ -367,7 +400,7 @@ def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> Candidate
         run((*git, "merge-base", "--is-ancestor", source_sha, "origin/main"))
     candidate = resolve_candidate(source_sha, workspace)
 
-    major = int(host("docker version --format '{{.Server.Version}}'").split(".")[0])
+    major = int(host(f"{DOCKER} version --format '{{{{.Server.Version}}}}'").split(".")[0])
     if major < MIN_DOCKER_MAJOR:
         raise Failure(f"Docker Engine {major} cannot isolate the Codex bridge gateway")
     memory = meminfo()
@@ -380,7 +413,7 @@ def preflight(source_sha: str, workspace: Path, *, deploying: bool) -> Candidate
     free = int(host("df --output=avail -B1 /").splitlines()[1])
     if free < MIN_ROOT_FREE:
         raise Failure(f"host root filesystem has only {free} bytes free")
-    host(f"sudo test -r {CONFIG_FILE} && sudo test -r {BACKUP_CONFIG_FILE}")
+    assert_config()
     connector = config_value("CLOUDFLARED_IMAGE")
     if re.fullmatch(r"cloudflare/cloudflared@sha256:[0-9a-f]{64}", connector) is None:
         raise Failure("CLOUDFLARED_IMAGE must pin the official connector by sha256 digest")
@@ -407,7 +440,7 @@ def assert_tunnel_token_readable(candidate: CandidateManifest) -> None:
         "from pathlib import Path; assert Path('/run/secrets/cloudflared-token').read_bytes().strip()"
     )
     host(
-        "docker run --rm --network none --read-only --cap-drop ALL"
+        f"{DOCKER} run --rm --network none --read-only --cap-drop ALL"
         " --security-opt no-new-privileges:true --user 65532:65532"
         " --memory 32m --memory-swap 32m --pids-limit 32"
         f" --mount {mount} --entrypoint /app/.venv/bin/python"
@@ -447,7 +480,7 @@ def prove_ancestry(
     head = candidate.expected_database_revision
     proof = json.loads(
         host(
-            f"docker run --rm --entrypoint /app/.venv/bin/python {candidate.images.api}"
+            f"{DOCKER} run --rm --entrypoint /app/.venv/bin/python {candidate.images.api}"
             f" -c {shlex.quote(ANCESTRY)} {current} {head}"
             f"{' ' + shlex.quote(original_revision) if original_revision else ''}",
             timeout=180,
@@ -578,6 +611,88 @@ def migrate(candidate: CandidateManifest) -> None:
         print(output, end="", flush=True)
         if attempt == 1 and any(json.loads(output).values()):
             raise Failure("saved reference quote conversion changed rows on its second pass")
+    database_access(apply=True)
+
+
+def database_access(*, apply: bool = False) -> None:
+    """The installed SQL owns grants and their read-only privilege census."""
+    statements = host(f"sudo cat {RUNTIME_ROLE_FILE}").encode()
+    inside(
+        "postgres",
+        "psql -X --quiet --set ON_ERROR_STOP=1 -U nexus -d nexus"
+        f" --set apply={'true' if apply else 'false'}",
+        stdin=statements,
+    )
+
+
+def runtime_access(candidate: CandidateManifest, *, running: bool) -> None:
+    script = """import hashlib, os
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+try:
+    url = make_url(os.environ['DATABASE_URL'])
+except (ArgumentError, TypeError, ValueError):
+    raise SystemExit('ordinary runtime has an invalid database URL') from None
+if (url.drivername, url.host, url.port, url.database, url.username) != (
+    'postgresql+psycopg', 'postgres', 5432, 'nexus', 'nexus_runtime'
+):
+    raise SystemExit('ordinary runtime must use nexus_runtime on postgres:5432/nexus')
+for key in os.environ:
+    if key.startswith(('POSTGRES_', 'R2_BACKUP_', 'CLOUDFLARE', 'TAILSCALE_', 'TS_')) or key in {
+        'MIGRATION_DATABASE_URL', 'NEXUS_CLOUDFLARED_TOKEN_FILE', 'TUNNEL_TOKEN',
+        'SUPABASE_MANAGEMENT_ACCESS_TOKEN', 'SUPABASE_AUTH_ADMIN_KEY'
+    }:
+        raise SystemExit('privileged input in runtime environment: ' + key)
+try:
+    with create_engine(url, connect_args={'connect_timeout': 10}).connect() as db:
+        if db.scalar(text('SELECT current_user')) != 'nexus_runtime':
+            raise SystemExit('ordinary runtime authenticated as another database role')
+        db.execute(text('SELECT version_num FROM alembic_version')).one()
+except Exception:
+    raise SystemExit('restricted runtime cannot authenticate or read its schema revision') from None
+print(hashlib.sha256(os.environ['DATABASE_URL'].encode()).hexdigest())
+"""
+    command = f"python -c {shlex.quote(script)}"
+    running_fingerprints: set[str] = set()
+    if running:
+        for service in WRITERS:
+            environment = dict(
+                entry.split("=", 1) for entry in inspect(container(service))["Config"]["Env"]
+            )
+            if any(
+                key.startswith(("POSTGRES_", "R2_BACKUP_", "CLOUDFLARE", "TAILSCALE_", "TS_"))
+                or key
+                in {
+                    "MIGRATION_DATABASE_URL",
+                    "NEXUS_CLOUDFLARED_TOKEN_FILE",
+                    "TUNNEL_TOKEN",
+                    "SUPABASE_MANAGEMENT_ACCESS_TOKEN",
+                    "SUPABASE_AUTH_ADMIN_KEY",
+                }
+                for key in environment
+            ):
+                raise Failure(f"{service} received privileged configuration")
+            try:
+                url = make_url(environment["DATABASE_URL"])
+            except (ArgumentError, TypeError, ValueError):
+                raise Failure(f"{service} has an invalid database URL") from None
+            if (url.drivername, url.host, url.port, url.database, url.username) != (
+                "postgresql+psycopg",
+                "postgres",
+                5432,
+                "nexus",
+                "nexus_runtime",
+            ):
+                raise Failure(f"{service} must use the compose-local restricted database login")
+            running_fingerprints.add(
+                hashlib.sha256(environment["DATABASE_URL"].encode()).hexdigest()
+            )
+    # A separate capped process avoids spending the serving workers' tight memory headroom.
+    authenticated = compose(candidate, f"run --rm --no-deps --no-TTY api {command}").strip()
+    if running and running_fingerprints != {authenticated}:
+        raise Failure("running workers do not share the authenticated published database login")
+    note("ordinary runtime uses its restricted database login without administrative inputs")
 
 
 # ---------------------------------------------------------------------------
@@ -618,8 +733,20 @@ def assert_resource_limits(candidate: CandidateManifest) -> None:
         "for name,service in json.load(sys.stdin)['services'].items()}))"
     )
     declarations = json.loads(
-        compose(candidate, f"config --format json | python3 -c {shlex.quote(projection)}")
+        compose(
+            candidate,
+            "--profile backup --profile release config --format json"
+            f" | python3 -c {shlex.quote(projection)}",
+        )
     )
+    for service in ("backup", "migration"):
+        declared = declarations[service]
+        if (
+            declared["cgroup_parent"] != RESOURCE_SLICE
+            or int(declared["mem_limit"]) != 512 * 1024**2
+            or int(declared["memswap_limit"]) != 512 * 1024**2
+        ):
+            raise Failure(f"{service} must retain its owned slice and 512 MiB/no-swap limit")
     parent = f"/system.slice/{RESOURCE_SLICE}"
     properties = dict(
         line.split("=", 1)
@@ -676,7 +803,16 @@ def install_caddy() -> None:
     desired = (REPO_ROOT / "deploy/hetzner/Caddyfile").read_bytes()
     # Adapt the candidate bytes before replacing the live file, so a malformed
     # Caddyfile can never reach the running proxy's bind mount.
-    inside("caddy", "caddy adapt --config /dev/stdin --adapter caddyfile", stdin=desired)
+    # The official binary requires its file capability even for this offline command.
+    host(
+        f"{DOCKER} run --rm -i --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE"
+        " --security-opt no-new-privileges --memory 48m --memory-swap 48m --pids-limit 128"
+        f" --cgroup-parent {RESOURCE_SLICE}"
+        " --env CADDY_SITE=nexus-api.nielseriknandal.com"
+        f" {shlex.quote(config_value('CADDY_IMAGE'))}"
+        " caddy adapt --config /dev/stdin --adapter caddyfile",
+        stdin=desired,
+    )
     # `tee` truncates in place, so the container's bind mount keeps its inode.
     host(f"sudo tee {CADDYFILE} && sudo chown root:root {CADDYFILE}", stdin=desired)
     host(f"sudo chmod 0444 {CADDYFILE}")
@@ -750,7 +886,7 @@ def assert_isolation() -> None:
     if mount[:1] != [CODEX_STATE_DEVICE] or not {"rw", "nosuid", "nodev", "noexec"} <= options:
         raise Failure(f"the Codex credential state is not the encrypted mount: {mount}")
 
-    network = json.loads(host(f"docker network inspect {CODEX_PRIVATE_NETWORK}"))[0]
+    network = json.loads(host(f"{DOCKER} network inspect {CODEX_PRIVATE_NETWORK}"))[0]
     gatewayed = any(entry.get("Gateway") for entry in network["IPAM"]["Config"])
     if network["Internal"] is not True or network["EnableIPv6"] is not False or gatewayed:
         raise Failure("the Codex private network is not an isolated internal bridge")
@@ -785,7 +921,7 @@ def writer_containers() -> dict[str, str]:
     writers: dict[str, str] = {}
     for service in (*WRITERS, CODEX_AGENT_HOST):
         identifier = host(
-            "docker ps --all --quiet --filter label=com.docker.compose.project=nexus"
+            f"{DOCKER} ps --all --quiet --filter label=com.docker.compose.project=nexus"
             f" --filter label=com.docker.compose.service={service}"
             " --filter label=com.docker.compose.oneoff=False"
         ).strip()
@@ -857,10 +993,10 @@ def original_cohort() -> OriginalCohort | None:
 def stop_writers(writers: dict[str, str]) -> None:
     identifiers = [writers[service] for service in WRITERS if service in writers]
     if identifiers:
-        host(f"docker stop --time 30 {shlex.join(identifiers)}", timeout=300)
+        host(f"{DOCKER} stop --time 30 {shlex.join(identifiers)}", timeout=300)
     if CODEX_AGENT_HOST in writers:
         host(
-            f"docker stop --time 45 {shlex.quote(writers[CODEX_AGENT_HOST])}",
+            f"{DOCKER} stop --time 45 {shlex.quote(writers[CODEX_AGENT_HOST])}",
             timeout=120,
         )
 
@@ -881,7 +1017,7 @@ def assert_no_writers(writers: dict[str, str], *, clean_exit: bool) -> None:
                 f" running={state['Running']} pid={state['Pid']} oom_killed={state['OOMKilled']}"
                 f" runtime_error={bool(state['Error'])}"
             )
-    running = host("docker ps --quiet --filter label=com.docker.compose.project=nexus").split()
+    running = host(f"{DOCKER} ps --quiet --filter label=com.docker.compose.project=nexus").split()
     for identifier in running:
         labels = inspect(identifier)["Config"]["Labels"]
         service = labels.get("com.docker.compose.service")
@@ -943,7 +1079,7 @@ def restore_original() -> None:
         ("worker-interactive", "worker-background"),
     ):
         identifiers = [cohort.containers[service] for service in services]
-        host(f"docker start {shlex.join(identifiers)}")
+        host(f"{DOCKER} start {shlex.join(identifiers)}")
         while True:
             pending = [
                 service
@@ -1056,14 +1192,15 @@ def release(source_sha: str, workspace: Path, *, initialize_native_host: bool) -
             )
     pull_image(candidate, candidate.images.api)
     pull_image(candidate, candidate.images.worker)
-    host(f"docker pull {config_value('CLOUDFLARED_IMAGE')}", timeout=900)
+    host(f"{DOCKER} pull {config_value('CLOUDFLARED_IMAGE')}", timeout=900)
+    host(f"{DOCKER} pull {shlex.quote(config_value('CADDY_IMAGE'))}", timeout=900)
     postgres_image = config_value("POSTGRES_IMAGE")
     if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", postgres_image) is None:
         raise Failure("POSTGRES_IMAGE must be an immutable image reference by sha256 digest")
-    host(f"docker pull {shlex.quote(postgres_image)}", timeout=900)
+    host(f"{DOCKER} pull {shlex.quote(postgres_image)}", timeout=900)
     # Prove the configured upstream package before stopping writers.
     host(
-        "docker run --rm --network none --read-only --cap-drop ALL"
+        f"{DOCKER} run --rm --network none --read-only --cap-drop ALL"
         f" --security-opt no-new-privileges --entrypoint {POSTGRES_CAPABILITY_CHECK}"
         f" {shlex.quote(postgres_image)}"
     )
@@ -1111,7 +1248,7 @@ else:
         timeout=900,
     )
     postgres = inspect(container("postgres"))
-    expected_image = json.loads(host(f"docker image inspect {shlex.quote(postgres_image)}"))[0][
+    expected_image = json.loads(host(f"{DOCKER} image inspect {shlex.quote(postgres_image)}"))[0][
         "Id"
     ]
     if postgres["Config"]["Image"] != postgres_image or postgres["Image"] != expected_image:
@@ -1139,6 +1276,7 @@ else:
     ):
         raise Failure("postgres requires pg15 with preloaded pg_search 0.26.2 available")
     migrate(candidate)
+    runtime_access(candidate, running=False)
 
     start(candidate)
     assert_resource_limits(candidate)
@@ -1179,6 +1317,8 @@ def check(source_sha: str | None, workspace: Path) -> None:
         lambda: assert_resource_limits(candidate),
         assert_isolation,
         lambda: assert_backup_fresh(candidate),
+        database_access,
+        lambda: runtime_access(candidate, running=True),
     ):
         try:
             proof()

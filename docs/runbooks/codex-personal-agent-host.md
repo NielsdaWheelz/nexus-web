@@ -100,14 +100,21 @@ declaration behaves.
 once, or after retiring a credential. the luks volume must be unlocked and
 mounted, the account directory present and private, and the host stopped:
 
+run these production commands in an operator shell reached through
+`ssh dev-server-deploy`. set both immutable images from the reviewed candidate;
+first enrollment cannot inspect api/native containers that do not yet exist.
+use the selected captured deployment descriptor if `current.env` names a newer
+publication. the host's first enrollment follows stopped old writers and fresh
+database restoration; account files and native identities never cross hosts.
+
 ```sh
 sudo install -d -o 10001 -g 10001 -m 0700 \
   /srv/nexus/codex-state/codex /srv/nexus/codex-state/codex/codex-personal
-WORKER_IMAGE=$(docker inspect -f '{{.Config.Image}}' nexus-nexus-codex-agent-host-1)
-API_IMAGE=$(docker inspect -f '{{.Config.Image}}' nexus-api-1)
+WORKER_IMAGE='<reviewed worker image@sha256:digest>'
+API_IMAGE='<reviewed api image@sha256:digest>'
 compose() {
   sudo env API_IMAGE="$API_IMAGE" WORKER_IMAGE="$WORKER_IMAGE" \
-    NEXUS_CONFIG_FILE=/etc/nexus/current.env docker compose --project-name nexus \
+    docker --host unix:///var/run/docker.sock compose --project-name nexus \
     --env-file /etc/nexus/current.env --file /etc/nexus/docker-compose.yml "$@"
 }
 compose stop --timeout 45 nexus-codex-agent-host
@@ -285,7 +292,7 @@ clear ledger metadata, force job completion or manufacture a retirement receipt.
   (`codex app-server exited with status <n>; private diagnostics: <path>`,
   `... must be mode 0600`). read `native-stderr.log` inside the daemon-only
   account volume for the vendor cause; keep its contents private.
-- probe results and restarts: `docker inspect -f '{{json .State.Health}}
+- probe results and restarts: `sudo docker --host unix:///var/run/docker.sock inspect -f '{{json .State.Health}}
   {{.RestartCount}}' nexus-nexus-codex-agent-host-1`.
 - codex's own log: table `logs` of `logs_2.sqlite` in the account directory.
   read it in place; production keeps its copy inside the encrypted volume.
@@ -294,14 +301,15 @@ clear ledger metadata, force job completion or manufacture a retirement receipt.
 
 ## release and repair
 
-the recovery key is kept off production. the current protected local custody
-path is `/Users/nnandal/.config/fleet-security/nexus-codex-state-recovery.key`
+the dev-server recovery key stays off production at
+`/Users/nnandal/.config/fleet-security/nexus-dev-server-codex-state-recovery.key`
 (directory `0700`, file `0600`). never print it, place it in command arguments,
-or copy it onto the vps. stream its bytes through ssh stdin when unlocking:
+or copy it onto the vps. keep the retired host's key separately with its retained
+ciphertext. stream the target key through ssh stdin when unlocking:
 
 ```sh
-ssh nexus@nexus-prod 'sudo cryptsetup open --key-file=- /var/lib/nexus/codex-state.luks nexus-codex-state' \
-  < /Users/nnandal/.config/fleet-security/nexus-codex-state-recovery.key
+ssh dev-server-deploy 'sudo cryptsetup open --key-file=- /var/lib/nexus/codex-state.luks nexus-codex-state' \
+  < /Users/nnandal/.config/fleet-security/nexus-dev-server-codex-state-recovery.key
 ```
 
 the key/container association must pass a fresh close/open and mounted-data
@@ -320,34 +328,35 @@ format command uses the qualified 128-mib argon2id bound, one lane and a
 two-second target, with the recovery key streamed from off-host custody:
 
 ```sh
-ssh nexus@nexus-prod 'sudo cryptsetup luksFormat --batch-mode --type luks2 \
+ssh dev-server-deploy 'sudo cryptsetup luksFormat --batch-mode --type luks2 \
   --pbkdf argon2id --pbkdf-memory 131072 --pbkdf-parallel 1 --iter-time 2000 \
   --key-file=- /var/lib/nexus/codex-state.new.luks' \
-  < /Users/nnandal/.config/fleet-security/nexus-codex-state-recovery.key
+  < /Users/nnandal/.config/fleet-security/nexus-dev-server-codex-state-recovery.key
 ```
 
 verify the intended keyslot and its memory parameters with `cryptsetup luksDump`
 before opening, then prove a fresh close/open before migrating state. a valid
 luks header without a usable keyslot is a failed format.
 
-the independent hetzner console login uses the existing `nexus` account. its
-off-host credential is
-`/Users/nnandal/.config/fleet-security/nexus-console-recovery.password` (`0600`).
-network password and keyboard-interactive ssh authentication stay disabled.
-verify console login and elevation before removing an old network access path.
+the independently held `dev-server-deploy` key and tested sudo access own normal
+recovery over tailscale, including volume unlock after boot. provider-console
+recovery remains separate and is not newly qualified here; the old nexus console
+account and credential do not apply. network password/keyboard-interactive ssh
+stay disabled. this move creates no new console account or credential rotation.
 
-after a reboot, unlock, mount and release:
+after a reboot, unlock from off-host custody as above, mount on dev-server, then
+check/release from the operator's reviewed checkout:
 
 ```sh
-sudo cryptsetup open /var/lib/nexus/codex-state.luks nexus-codex-state
-sudo mount -o rw,nosuid,nodev,noexec \
-  /dev/mapper/nexus-codex-state /srv/nexus/codex-state
-PYTHONPATH=python python3 deploy/hetzner/release.py --check
+ssh dev-server-deploy 'sudo mount -o rw,nosuid,nodev,noexec \
+  /dev/mapper/nexus-codex-state /srv/nexus/codex-state'
+PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py --check
 ./deploy/release.sh <reviewed-web-candidate-manifest.json>
 ```
 
 a host left exited by an explicit operator stop is started with
-`docker start nexus-nexus-codex-agent-host-1`. automatic failures have no fixed
+`sudo docker --host unix:///var/run/docker.sock start nexus-nexus-codex-agent-host-1`
+in the deployment shell. automatic failures have no fixed
 restart allowance. establish host readiness before releasing: the release refuses a host whose last exit code
 is not 0 (`did not stop cleanly`). a host on a rejected credential is
 re-enrolled first, then started. a worker that loses the host mid-turn settles

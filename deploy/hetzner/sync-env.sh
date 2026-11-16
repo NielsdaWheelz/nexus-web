@@ -3,23 +3,24 @@
 #
 #   deploy/hetzner/sync-env.sh
 #
-# Publishes private content-addressed memory JSON, application and backup env.
+# Publishes captured runtime, deployment, memory and backup inputs separately.
 # The next release picks up their captured paths; nothing restarts here.
 set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ROOT_DIR
-readonly SSH_TARGET="nexus@nexus-prod"
+readonly SSH_TARGET="dev-server-deploy"
 readonly -a SSH_OPTIONS=(
   -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15
-  -o HostKeyAlias=5.78.194.235 -o StrictHostKeyChecking=yes
+  -o StrictHostKeyChecking=yes
 )
 
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
 BACKUP_ENV="${NEXUS_BACKUP_ENV:-${ROOT_DIR}/deploy/env/env-prod-backup}"
+DATABASE_ENV="${NEXUS_DATABASE_ENV:-${ROOT_DIR}/deploy/env/env-prod-database}"
 MEMORY_CONFIG="${NEXUS_MEMORY_CLIENT_CONFIG:-}"
 MEMORY_CAPTURE_CONFIG="${NEXUS_MEMORY_CAPTURE_CONFIG:-}"
 TUNNEL_TOKEN_SOURCE="${NEXUS_CLOUDFLARED_TOKEN_FILE:-}"
@@ -29,11 +30,12 @@ TUNNEL_TOKEN_SOURCE="${NEXUS_CLOUDFLARED_TOKEN_FILE:-}"
 readonly REQUIRED_KEYS="
 NEXUS_ENV APP_PUBLIC_URL SUPABASE_ISSUER SUPABASE_JWKS_URL SUPABASE_AUDIENCES
 NEXUS_INTERNAL_SECRET CADDY_SITE DATABASE_URL
-POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD R2_S3_API_ORIGIN R2_ACCESS_KEY_ID
+R2_S3_API_ORIGIN R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY R2_BUCKET NEXUS_HANDLE_KEY
-GENERATION_API_PROVIDERS POSTGRES_IMAGE
+GENERATION_API_PROVIDERS
 CADDY_IMAGE CLOUDFLARED_IMAGE PARSER_TEMP_ROOT
 "
+readonly DATABASE_KEYS="POSTGRES_IMAGE POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD MIGRATION_DATABASE_URL"
 readonly BACKUP_KEYS="
 R2_BACKUP_S3_API_ORIGIN R2_BACKUP_BUCKET R2_BACKUP_ACCESS_KEY_ID R2_BACKUP_SECRET_ACCESS_KEY
 "
@@ -64,11 +66,12 @@ require_shape() {
 }
 
 publish() {
-  local file="$1" directory="$2" pointer="$3" suffix="$4" group="$5" digest staged remote_install
+  local file="$1" directory="$2" pointer="$3" suffix="$4" group="$5" digest staged remote_install mode=0440
+  [ "$suffix" != env ] || mode=0400
   digest="$(sha256sum "$file" | cut -d' ' -f1)"
   staged="${REMOTE_DIRECTORY}/${digest}.${suffix}"
   timeout --foreground 2m scp "${SSH_OPTIONS[@]}" "$file" "${SSH_TARGET}:${staged}"
-  remote_install="sudo install -D -o root -g ${group} -m 0440 ${staged} ${directory}/${digest}.${suffix}"
+  remote_install="sudo install -D -o root -g ${group} -m ${mode} ${staged} ${directory}/${digest}.${suffix}"
   if [ -n "$pointer" ]; then
     remote_install+=" && sudo ln -sfn ${directory}/${digest}.${suffix} ${pointer}.staged"
     remote_install+=" && sudo mv -T ${pointer}.staged ${pointer}"
@@ -82,7 +85,7 @@ for command in scp sha256sum ssh timeout; do
   command -v "$command" >/dev/null 2>&1 || die "$command is not installed"
 done
 [ -x "${ROOT_DIR}/python/.venv/bin/python" ] || die "install the locked backend environment first"
-for file in "$SHARED_ENV" "$BACKEND_ENV" "$WORKER_ENV" "$BACKUP_ENV"; do
+for file in "$SHARED_ENV" "$BACKEND_ENV" "$WORKER_ENV" "$BACKUP_ENV" "$DATABASE_ENV"; do
   [ -f "$file" ] || die "missing env file: $file"
 done
 
@@ -110,18 +113,24 @@ readonly APPLICATION="${TEMPORARY}/application.env"
 
 require_shape "$APPLICATION" "the application env" "$REQUIRED_KEYS"
 require_shape "$BACKUP_ENV" "the backup env" "$BACKUP_KEYS"
-if grep -Eq '^(MEMORY_(CLIENT|CAPTURE)_CONFIG_PATH|NEXUS_MEMORY_(CLIENT|CAPTURE)_CONFIG_FILE|NEXUS_CLOUDFLARED_TOKEN_FILE)=' "$APPLICATION"; then
+require_shape "$DATABASE_ENV" "the database env" "$DATABASE_KEYS"
+if grep -Eq '^(MEMORY_(CLIENT|CAPTURE)_CONFIG_PATH|NEXUS_MEMORY_(CLIENT|CAPTURE)_CONFIG_FILE|NEXUS_CLOUDFLARED_TOKEN_FILE|NEXUS_RUNTIME_CONFIG_FILE)=' "$APPLICATION"; then
   die "Compose and the publisher own private configuration paths"
 fi
-if grep -Eq '^(TUNNEL_TOKEN|CLOUDFLARED_TOKEN|CLOUDFLARE_API_TOKEN|CLOUDFLARE_API_KEY|TAILSCALE_AUTH_KEY|TAILSCALE_API_KEY|TS_API_CLIENT_SECRET|TAILSCALE_OAUTH_CLIENT_SECRET)=' "$APPLICATION"; then
+if grep -Eq '^(POSTGRES_|R2_BACKUP_|MIGRATION_DATABASE_URL=|SUPABASE_MANAGEMENT_ACCESS_TOKEN=|SUPABASE_AUTH_ADMIN_KEY=|TUNNEL_TOKEN=|CLOUDFLARED_TOKEN=|CLOUDFLARE_API_TOKEN=|CLOUDFLARE_API_KEY=|TAILSCALE_AUTH_KEY=|TAILSCALE_API_KEY=|TS_API_CLIENT_SECRET=|TAILSCALE_OAUTH_CLIENT_SECRET=)' "$APPLICATION"; then
   die "management credentials must not enter the application config"
 fi
 for key in $BACKUP_KEYS; do
   grep -Eq "^${key}=" "$APPLICATION" && \
     die "backup credentials must not enter the application config"
 done
+readonly DEPLOYMENT="${TEMPORARY}/deployment.env"
+cat "$APPLICATION" >"$DEPLOYMENT"
+printf '\n' >>"$DEPLOYMENT"
+cat "$DATABASE_ENV" >>"$DEPLOYMENT"
+require_shape "$DEPLOYMENT" "the deployment env" "$REQUIRED_KEYS $DATABASE_KEYS"
 for key in POSTGRES_IMAGE CADDY_IMAGE CLOUDFLARED_IMAGE; do
-  [[ "$(value_of "$key" "$APPLICATION")" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
+  [[ "$(value_of "$key" "$DEPLOYMENT")" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
     die "${key} must be an immutable image reference by sha256 digest"
 done
 [[ "$(value_of CLOUDFLARED_IMAGE "$APPLICATION")" =~ ^cloudflare/cloudflared@sha256:[0-9a-f]{64}$ ]] || \
@@ -136,13 +145,33 @@ done
 readonly MEMORY="${TEMPORARY}/memory.json"
 readonly MEMORY_CAPTURE="${TEMPORARY}/memory-capture.json"
 PYTHONPATH="${ROOT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}" \
-  "${ROOT_DIR}/python/.venv/bin/python" - "$MEMORY_CONFIG" "$MEMORY" "$MEMORY_CAPTURE_CONFIG" "$MEMORY_CAPTURE" <<'PY'
+  "${ROOT_DIR}/python/.venv/bin/python" - "$MEMORY_CONFIG" "$MEMORY" "$MEMORY_CAPTURE_CONFIG" "$MEMORY_CAPTURE" "$APPLICATION" "$DATABASE_ENV" <<'PY'
 from pathlib import Path
 import sys
 
 from nexus.services.tools.memory import load_memory_client_config
 from nexus.services.memory_capture import load_memory_capture_config
 from universal_memory.policy import canonical_json
+from dotenv import dotenv_values
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
+application = dotenv_values(sys.argv[5], interpolate=False)
+database = dotenv_values(sys.argv[6], interpolate=False)
+if set(database) != {"POSTGRES_IMAGE", "POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "MIGRATION_DATABASE_URL"}:
+    raise SystemExit("database inputs must contain exactly the declared bootstrap and migration keys")
+try:
+    runtime = make_url(application["DATABASE_URL"])
+    migration = make_url(database["MIGRATION_DATABASE_URL"])
+except (ArgumentError, TypeError, ValueError):
+    raise SystemExit("database URLs must be valid explicit PostgreSQL URLs") from None
+if database["POSTGRES_USER"] != "nexus" or database["POSTGRES_DB"] != "nexus":
+    raise SystemExit("the database owner and database must both be nexus")
+for url, username in ((runtime, "nexus_runtime"), (migration, "nexus")):
+    if (url.drivername, url.host, url.port, url.database, url.username) != ("postgresql+psycopg", "postgres", 5432, "nexus", username) or not url.password or url.query:
+        raise SystemExit("database URLs must select their declared login on postgres:5432/nexus")
+if migration.password != database["POSTGRES_PASSWORD"] or runtime.password == migration.password:
+    raise SystemExit("migration must use the bootstrap credential; runtime requires a distinct password")
 
 config = load_memory_client_config(Path(sys.argv[1]) if sys.argv[1] else None)
 capture = load_memory_capture_config(Path(sys.argv[3]) if sys.argv[3] else None)
@@ -169,10 +198,16 @@ Path(sys.argv[4]).write_text(canonical_json(value) + "\n")
 PY
 memory_digest="$(sha256sum "$MEMORY" | cut -d' ' -f1)"
 printf '\nNEXUS_MEMORY_CLIENT_CONFIG_FILE=/etc/nexus/memory-config/%s.json\n' \
-  "$memory_digest" >>"$APPLICATION"
+  "$memory_digest" >>"$DEPLOYMENT"
 capture_digest="$(sha256sum "$MEMORY_CAPTURE" | cut -d' ' -f1)"
 printf '\nNEXUS_MEMORY_CAPTURE_CONFIG_FILE=/etc/nexus/memory-config/%s.json\n' \
-  "$capture_digest" >>"$APPLICATION"
+  "$capture_digest" >>"$DEPLOYMENT"
+
+readonly RUNTIME="${TEMPORARY}/runtime.env"
+sed '/^\(CADDY_IMAGE\|CADDY_SITE\|CLOUDFLARED_IMAGE\)=/d' "$APPLICATION" >"$RUNTIME"
+if grep -Eq '^(POSTGRES_|R2_BACKUP_|CLOUDFLARE|TAILSCALE_|TS_|MIGRATION_DATABASE_URL=|TUNNEL_TOKEN=)' "$RUNTIME"; then
+  die "privileged inputs must not enter the runtime config"
+fi
 
 REMOTE_DIRECTORY="$(
   timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
@@ -199,6 +234,9 @@ fi
   die "the tunnel token pointer must resolve to its private content-addressed file"
 timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   sudo test -s "$captured_token" || die "publish the tunnel token before application configuration"
-printf '\nNEXUS_CLOUDFLARED_TOKEN_FILE=%s\n' "$captured_token" >>"$APPLICATION"
-publish "$APPLICATION" /etc/nexus/config /etc/nexus/current.env env root
+printf '\nNEXUS_CLOUDFLARED_TOKEN_FILE=%s\n' "$captured_token" >>"$DEPLOYMENT"
+runtime_digest="$(sha256sum "$RUNTIME" | cut -d' ' -f1)"
+publish "$RUNTIME" /etc/nexus/runtime-config "" env root
+printf '\nNEXUS_RUNTIME_CONFIG_FILE=/etc/nexus/runtime-config/%s.env\n' "$runtime_digest" >>"$DEPLOYMENT"
+publish "$DEPLOYMENT" /etc/nexus/config /etc/nexus/current.env env root
 publish "$BACKUP_ENV" /etc/nexus/backup-config /etc/nexus/backup.env env root

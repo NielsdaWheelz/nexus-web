@@ -1,0 +1,6 @@
+# Private bootstrap/migration inputs. These never enter API or worker environments.
+POSTGRES_IMAGE=<current-production-postgres-image>@sha256:<64-lowercase-hex>
+POSTGRES_USER=nexus
+POSTGRES_PASSWORD=<generate-a-long-random-admin-password>
+POSTGRES_DB=nexus
+MIGRATION_DATABASE_URL=postgresql+psycopg://nexus:<same-admin-password>@postgres:5432/nexus

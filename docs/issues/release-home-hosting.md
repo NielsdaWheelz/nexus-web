@@ -6,8 +6,12 @@ workstation, prefers its available capacity to a larger rented vps, and accepts
 occasional home power, network or maintenance outages, including while away.
 retaining the tiny vps as an intermediate layer is a tentative preference.
 
+this remains the earlier home-host proposal. the 2026-11-15
+[dev-server assessment](release-dev-server-backend.md) targets the existing
+hetzner devbox instead; these are different deployment destinations.
+
 recommend keeping api, workers and postgres together on the home host, with one
-authoritative database. preserve existing vercel frontend/proxy, supabase auth,
+authoritative database. preserve the current devbox frontend/bff, supabase auth,
 r2 objects/backups and public application access. choose explicitly between the
 existing outbound cloudflare tunnel and a vps relay over a narrow private link;
 a relay adds a dependency and cannot serve database-backed requests while home

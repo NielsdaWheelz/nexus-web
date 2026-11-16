@@ -1,5 +1,5 @@
 # Shared production values.
-# This file is included by both the frontend and VPS runtime env flows.
+# This file is included by both the frontend and backend runtime env flows.
 
 NEXUS_ENV=prod
 
@@ -15,7 +15,7 @@ SUPABASE_ISSUER=https://<project-ref>.supabase.co/auth/v1
 SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_AUDIENCES=authenticated
 
-# Shared BFF -> FastAPI secret. Use the same value in the web candidate and on the VPS.
+# Shared BFF -> FastAPI secret. Use the same value in web and backend.
 NEXUS_INTERNAL_SECRET=<generate-a-long-random-secret>
 
 # Public R2 S3 API origin. Shared because the backend signs presigned URLs

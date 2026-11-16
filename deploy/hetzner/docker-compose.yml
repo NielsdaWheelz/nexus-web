@@ -131,7 +131,7 @@ services:
     memswap_limit: 384m
     pids_limit: 256
     env_file:
-      - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
+      - ${NEXUS_RUNTIME_CONFIG_FILE:?publish the captured runtime config}
     environment:
       NEXUS_CODEX_CONTROL_ENDPOINT: unix:///tmp/codex-daemon-10001/control.sock
       NEXUS_CODEX_CWD_ROOT: /tmp/codex-daemon-10001/cwds
@@ -188,7 +188,7 @@ services:
     memswap_limit: 320m
     pids_limit: 256
     env_file:
-      - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
+      - ${NEXUS_RUNTIME_CONFIG_FILE:?publish the captured runtime config}
     environment:
       WORKER_LANE: interactive
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
@@ -237,7 +237,7 @@ services:
     # protects an ad-hoc `docker compose restart`/`down`.
     stop_grace_period: 30s
     env_file:
-      - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
+      - ${NEXUS_RUNTIME_CONFIG_FILE:?publish the captured runtime config}
     environment:
       WORKER_LANE: background
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
@@ -382,6 +382,7 @@ services:
   backup:
     profiles: ["backup"]
     image: ${API_IMAGE:?set an immutable candidate digest}
+    cgroup_parent: system-nexus.slice
     restart: "no"
     init: true
     user: "10001:10001"
@@ -408,12 +409,15 @@ services:
   migration:
     profiles: ["release"]
     image: ${API_IMAGE:?set an immutable candidate digest}
+    cgroup_parent: system-nexus.slice
     mem_reservation: 256m
     mem_limit: 512m
     memswap_limit: 512m
     pids_limit: 256
     env_file:
-      - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}
+      - ${NEXUS_RUNTIME_CONFIG_FILE:?publish the captured runtime config}
+    environment:
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:?publish the private migration login}
     depends_on:
       postgres:
         condition: service_healthy

@@ -29,7 +29,7 @@ SSH = (
     "-o", "ServerAliveInterval=15",
     "-o", "ServerAliveCountMax=4",
     "-o", "StrictHostKeyChecking=yes",
-    "dev-server",
+    "dev-server-deploy",
 )  # fmt: skip
 LOCK = "/run/lock/nexus-web-release.lock"
 OWNER = "sudo python3 /opt/nexus-web/control/release.py"
