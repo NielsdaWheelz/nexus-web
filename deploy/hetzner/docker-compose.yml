@@ -34,13 +34,13 @@ services:
     image: ${POSTGRES_IMAGE:?set an immutable production digest}
     cgroup_parent: system-nexus.slice
     # reader queries compile hundreds of functions in each warm connection.
-    # disable jit to preserve this fixed 512 mib database's memory headroom.
+    # disable jit to preserve the database's memory headroom.
     command: ["postgres", "-c", "shared_buffers=64MB", "-c", "jit=off", "-c", "shared_preload_libraries=pg_search", "-c", "autovacuum_max_workers=1", "-c", "autovacuum_work_mem=16MB"]
     restart: unless-stopped
     mem_reservation: 256m
-    mem_limit: 512m
-    memswap_limit: 512m
-    # /dev/shm capacity only; allocations stay inside the unchanged 512 mib cap.
+    mem_limit: 2g
+    memswap_limit: 2g
+    # /dev/shm capacity only; allocations stay inside the 2 gib database cap.
     shm_size: 128m
     pids_limit: 256
     environment:
