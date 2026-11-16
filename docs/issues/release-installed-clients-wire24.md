@@ -5,6 +5,11 @@ the owner authorized the paired release on 2026-11-15 and explicitly chose
 firefox 1.1.4 must use the released source and wire 24. this deferral covers
 publication after paired deployment and packaged-byte checks pass.
 
+api, web, android and firefox are paired at
+`833eb09a7d3e13562d1a7ecb19890dd51d78ceff`, wire 24/schema 0346.
+paired deployment and signed packaged-byte checks passed; this does not
+establish installed behavior.
+
 in-place upgrade, retained login and writing, app links, offline-to-online
 reconnect, and firefox's persistent signed update and real capture remain
 unobserved. preserve existing storage; never uninstall or clear state to qualify.
