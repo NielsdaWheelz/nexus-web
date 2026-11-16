@@ -51,5 +51,9 @@ signed installation; temporary debugging installation is not distribution.
 the [client release operator](../../README.md#android-release-distribution) owns
 versioning, unlisted signing, reviewer source, signed-installer publication and
 the persistent update/import check for every changed package. publish the
-signed xpi and its source/checksums with the paired native-client release;
+signed xpi and its source/checksums with the paired native-client release.
+an extension-only patch may instead use an `extension-v*` release with
+`--latest=false`, the unsigned/signed/source assets and checksums, and explicit
+hosted wire compatibility. keep the existing android release, apk and latest
+target unchanged; do not rebind the apk to the patch's source.
 `build-extension.mjs` produces only the unsigned input.

@@ -47,7 +47,7 @@ function contributor(raw: unknown): Schema<"ContributorCreditOut"> {
 }
 function item(raw: unknown): ExtensionItem {
   const v = expectExactRecord(raw, ["summary", "has_readable_copy", "source_attempt", "placements", "acquisition_revision"], "item");
-  const s = expectExactRecord(v.summary, ["can_play", "consumption", "contributors", "duration", "media_id", "media_kind", "original_published_date", "part_source", "processing_status", "show", "title", "x_article_content"], "summary");
+  const s = expectRecord(v.summary, "summary");
   let attempt: ExtensionItem["source_attempt"] = null;
   if (v.source_attempt !== null) {
     const a = expectExactRecord(v.source_attempt, ["id", "status", "error_code"], "source attempt");

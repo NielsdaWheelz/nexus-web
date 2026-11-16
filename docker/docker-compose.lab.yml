@@ -2,8 +2,8 @@
 # Match the production database budget without charging all stored data to RAM.
 services:
   postgres:
-    mem_limit: 512m
-    memswap_limit: 512m
+    mem_limit: 2g
+    memswap_limit: 2g
     shm_size: 128m
     command:
       - postgres

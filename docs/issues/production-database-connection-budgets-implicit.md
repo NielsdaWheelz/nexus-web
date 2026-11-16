@@ -25,3 +25,11 @@ combined production query-time headroom and cache-cold behavior remain unproved.
 revisit this owner if ordinary use exposes another capacity failure or the
 accepted deployment scope expands. observations and accepted scopes are recorded
 in the release prs; [remaining client acceptance](release-search.md) is separate.
+
+the 2026-11-16 dev-server capacity repair raises postgres from 512 mib to 2 gib
+with no swap after ordinary search exhausted the old limit. the eight backend
+ceilings now total 3888 mib; they are not reservations. developer sessions remain
+bounded at 3 gib, and frontend, jarvis, host services and maintenance still count.
+current host headroom permits the increase but does not establish unrestricted
+overlap. qualify the failed ordinary search alongside the required frontend build;
+retain allocator attribution and broader workload headroom as explicit limits.

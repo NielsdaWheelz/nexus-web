@@ -118,7 +118,7 @@ SERVICES = (
 )
 
 MIN_DOCKER_MAJOR = 28
-MIN_MEMORY_TOTAL = 1900 * 1024 * 1024
+MIN_MEMORY_TOTAL = 7 * 1024 * 1024 * 1024
 MIN_MEMORY_AVAILABLE = 256 * 1024 * 1024
 MIN_SWAP_TOTAL = 1024 * 1024 * 1024
 MIN_ROOT_FREE = 2 * 1024 * 1024 * 1024
@@ -1255,12 +1255,12 @@ else:
         raise Failure("postgres does not run the configured immutable image")
     limits = postgres["HostConfig"]
     if (
-        limits["Memory"] != 512 * 1024**2
-        or limits["MemorySwap"] != 512 * 1024**2
+        limits["Memory"] != 2 * 1024**3
+        or limits["MemorySwap"] != 2 * 1024**3
         or limits["ShmSize"] != 128 * 1024**2
         or psql("SHOW shared_buffers") != "64MB"
     ):
-        raise Failure("postgres requires 512 MiB/no swap, 128 MiB shm and 64 MiB shared buffers")
+        raise Failure("postgres requires 2 GiB/no swap, 128 MiB shm and 64 MiB shared buffers")
     if database_identity(psql) != identity or database_revision(psql) != revision:
         raise Failure("postgres recreation changed the database identity or revision")
     version = int(psql("SHOW server_version_num"))

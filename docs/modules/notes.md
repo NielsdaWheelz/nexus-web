@@ -818,7 +818,11 @@ remains available during hydration. explicit denial immediately blacklists only
 the affected scope/reading and removes its copied text. readmission waits for a
 complete fenced repair, including when permission changes return the same hash.
 an unchanged idle round samples the exact digest with `active_refs: []` and skips
-stored-ref sweeps unless durable staging/revocation needs repair. evidence revision
+stored-ref sweeps unless durable staging/revocation needs repair.
+status and text pages read the digest and requested-ref authority in one streamed
+snapshot query; authority decisions reuse its canonical materialized relations
+and never enter the digest. this removes per-ref corpus queries, not the revision's
+required corpus work. evidence revision
 alone never replaces authorization or publication consistency. normalization
 advances one 32k-codepoint chunk with retained carry; invalid final coverage fails.
 

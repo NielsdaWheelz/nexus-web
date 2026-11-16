@@ -3,8 +3,10 @@
 Each request owns one read-only snapshot, never the authored head lock. The
 revision hashes canonical authorization/composition facts and publication
 dependencies, not expanded text intervals or source bytes. A device stages pages
-durably and publishes only after a final revision fence. Status requests check every device-held scope/reading in bounded batches;
-an explicit denial withdraws that reading, never its independently admitted parts.
+durably and publishes only after a final revision fence. Status requests check
+device-held refs against the same materialized authority used by the revision,
+never a separate corpus query per ref. An explicit denial withdraws that reading,
+never its independently admitted parts.
 
 Text follows exact reader body and required-note slices. Only ordinary text and
 parts need it: PDF/timed saved quotes remain eligible in their admitted whole
@@ -24,9 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    can_read_media,
     highlight_visibility_sql,
-    is_library_member,
     requested_media_ids_cte_sql,
     visible_media_ids_cte_sql,
 )
@@ -283,7 +283,16 @@ def _records(db: Session, viewer_id: UUID) -> Iterator[tuple[str, dict[str, Any]
         rows.close()
 
 
-def _revision(db: Session, viewer_id: UUID) -> str:
+def _status(db: Session, viewer_id: UUID, refs: list[str]) -> tuple[str, list[str]]:
+    ids: dict[str, list[UUID]] = {"media": [], "fragment": [], "library": []}
+    for ref in refs:
+        value = require_ref(ref)
+        if value.scheme not in ids:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Invalid search scope reference"
+            )
+        ids[value.scheme].append(value.id)
+
     # Publication replacement owns body/apparatus bytes; a part's publication
     # also advances for offset/DOM-cut changes. Capture fragments are immutable.
     # Those identities determine intervals and incomplete-table facts without
@@ -298,47 +307,46 @@ def _revision(db: Session, viewer_id: UUID) -> str:
             FROM readings
     """
     )
+    # These relations already own the revision's exact authority. Select only
+    # requested ids; tagged decisions do not contribute to the revision digest.
+    authority = "".join(
+        f" UNION ALL SELECT '{scheme}:'||{key}::text,NULL,true FROM {relation} "
+        f"WHERE {key}=ANY(:{scheme})"
+        for scheme, relation, key in (
+            ("media", "authorized", "media_id"),
+            ("fragment", "capture_readings", "fragment_id"),
+            ("library", "scope_libraries", "id"),
+        )
+        if ids[scheme]
+    )
     digest = hashlib.sha256(b"nexus-authored-scope:2\n")
+    allowed: set[str] = set()
     rows = db.execute(
-        text(_ctes() + f' SELECT key,state FROM ({relation}) facts ORDER BY key COLLATE "C"'),
-        {"viewer_id": viewer_id},
+        text(
+            _ctes()
+            + f''' SELECT key,state,authority FROM (
+                SELECT key,state,false AS authority FROM ({relation}) facts
+                {authority}
+            ) status ORDER BY authority,key COLLATE "C"'''
+        ),
+        {"viewer_id": viewer_id, **ids},
         execution_options={"yield_per": 256},
     )
     try:
-        for key, record in rows:
-            digest.update(_json([key, record]).encode())
-            digest.update(b"\n")
+        for key, record, is_authority in rows:
+            if is_authority:
+                allowed.add(key)
+            else:
+                digest.update(_json([key, record]).encode())
+                digest.update(b"\n")
     finally:
         rows.close()
-    return digest.hexdigest()
-
-
-def _authorized(db: Session, viewer_id: UUID, ref: str) -> bool:
-    value = require_ref(ref)
-    if value.scheme == "media":
-        return can_read_media(db, viewer_id, value.id)
-    if value.scheme == "fragment":
-        from nexus.services.x_source import readable_x_capture_ids_sql
-
-        return bool(
-            db.scalar(
-                text(
-                    f"SELECT EXISTS (SELECT 1 FROM fragments f JOIN ({readable_x_capture_ids_sql()}) readable ON readable.capture_id=f.x_post_capture_id WHERE f.id=:fragment)"
-                ),
-                {"viewer_id": viewer_id, "fragment": value.id},
-            )
-        )
-    if value.scheme == "library":
-        return is_library_member(db, viewer_id, value.id)
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid search scope reference")
+    return digest.hexdigest(), [ref for ref in refs if ref not in allowed]
 
 
 def inputs(db: Session, viewer_id: UUID, request: ScopeInputsRequest) -> ScopeInputsPage:
-    revision = _revision(db, viewer_id)
-    revoked = (
-        [ref for ref in request.active_refs if not _authorized(db, viewer_id, ref)]
-        if request.kind == "status"
-        else []
+    revision, revoked = _status(
+        db, viewer_id, request.active_refs if request.kind == "status" else []
     )
     restart = request.revision is not None and request.revision != revision
     if request.kind != "metadata" or restart:
@@ -376,13 +384,12 @@ def inputs(db: Session, viewer_id: UUID, request: ScopeInputsRequest) -> ScopeIn
 
 
 def source_text(db: Session, viewer_id: UUID, request: ScopeTextRequest) -> ScopeTextPage:
-    authorized = _authorized(db, viewer_id, request.reading_ref)
-    revision = _revision(db, viewer_id)
-    if not authorized or revision != request.revision:
+    revision, revoked = _status(db, viewer_id, [request.reading_ref])
+    if revoked or revision != request.revision:
         return ScopeTextPage(
             revision=revision,
             restart=True,
-            revoked_refs=[] if authorized else [request.reading_ref],
+            revoked_refs=revoked,
             reading_ref=request.reading_ref,
             chunks=[],
             next_cursor=None,

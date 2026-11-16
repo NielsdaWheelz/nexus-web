@@ -79,11 +79,13 @@ serial admission does not bound one query's memory or duration. background units
 must both yield foreground opportunity and complete useful work; repeatedly
 timing out a whole refresh satisfies neither requirement.
 
-search repair retains the 512 mib/no-swap database limit on the shared host.
+postgres has a 2 gib/no-swap database limit on the shared host.
 reducing query work and admitted concurrency spends implementation effort and
-waiting time; both must preserve useful progress within those limits. no extra
-memory or new numeric deadline is approved by this contract. allocation changes
-within the fixed envelope use the existing release owners. current aggregate
+waiting time; both must preserve useful progress within that limit. the container
+ceiling bounds aggregate database memory; `work_mem` bounds individual executor
+operations, not the whole database or even one query. query settings and physical
+connection limits remain separate owners. allocation changes use the existing
+release owners. current aggregate
 qualification remains open in the
 [connection-budget issue](docs/issues/production-database-connection-budgets-implicit.md).
 
@@ -147,7 +149,7 @@ host without that bind source, so preflight refuses to proceed. See
 
 The host contract is cgroup v2 with the memory controller, Docker Engine 28 or
 newer (the Codex private bridge needs `gateway_mode_ipv4=isolated`), at least
-1900 MiB of physical memory, 1 GiB of swap, 256 MiB of available memory and
+7 GiB of physical memory, 1 GiB of swap, 256 MiB of available memory and
 2 GiB free under `/`.
 preflight measures each of these; after application and connector image pulls, the release
 requires the same 2 gib disk reserve again before stopping writers.
@@ -155,7 +157,7 @@ the frontend candidate is qualified on private port 3444 before activation.
 only the selected candidate on 3443 has a public tunnel route.
 
 the api has a 384 MiB memory ceiling with container swap disabled. the eight
-service ceilings total 2352 MiB; these are independent limits, not reserved
+service ceilings total 3888 MiB; these are independent limits, not reserved
 host ram. the shared host must be qualified against concurrent production and
 bounded development, cache reclaim, memory pressure and request completion. summing separate
 historical peaks does not establish that workload's demand; a passing preflight
@@ -170,11 +172,12 @@ no aggregate memory cap or cpu/i/o weight. grouping them creates one sibling
 in the host's resource hierarchy, so capacity qualification still uses the
 actual workload. backup and migration one-offs retain their separate compose
 limits and require their own observed cgroup membership and no-swap proof.
-dev-server bounds developer login scopes/rootless docker at `user-1000.slice`
-and accounts separately for system services and any retained ci runner. shared
+dev-server bounds developer login scopes, rootless docker and the retained ci
+runner at `user-1000.slice`. production system services, including jarvis,
+remain outside that developer budget. shared
 disk exhaustion can still affect every application; keep the declared disk reserve.
 
-postgres has a 512 MiB ceiling with container swap disabled. its startup command
+postgres has a 2 GiB ceiling with container swap disabled. its startup command
 sets `shared_buffers=64MB`, budgeting 64 MiB of shared database cache within that
 ceiling alongside backend processes, shared-memory bookkeeping and file cache.
 shared buffers become resident as queries fill them and cannot be reclaimed
@@ -414,7 +417,7 @@ host backup lock from before preflight until it exits (see
    `0.26.2`; require unchanged database identity and current revision across
    recreation. a rerun compares the live revision, not its older backup receipt.
    the extension catalog may be absent until migration creates it. retain the
-   existing volume and require the actual 512 mib/no-swap ceiling, 64 mib shared
+   existing volume and require the actual 2 gib/no-swap ceiling, 64 mib shared
    buffers and 128 mib shared memory before migration.
 6. **migrate** — `alembic upgrade head`, then re-read the revision. migration
    0317 checks the exact extension catalog and binary versions. while the

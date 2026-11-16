@@ -19,7 +19,7 @@ this cause is separate from the unattributed historical phone admission holder i
 
 resolve by attributing the remaining demand and qualifying the integrated candidate
 with normal retained connections, complete retrieval/cancellation and useful
-background work inside unchanged service/host budgets, without recovery. see
+background work inside reviewed service/host budgets, without recovery. see
 [capacity](production-database-connection-budgets-implicit.md). the historical
 profiling limits above remain material: emulation, retained-backend demand and
 unattributed allocation are different facts. old timer failures remain failures;
@@ -132,3 +132,11 @@ restore, ordinary native completion and bounded shared-host work do not turn thi
 failed production search acceptance green. diagnosis and qualification remain
 with this issue and the connection-budget owner above; no cap, pool or retry
 policy changed during the move.
+
+the subsequent capacity repair raises postgres alone to 2 gib/no swap on the
+8 gib host; production and disposable composition share that ceiling. it retains
+64 mib shared buffers, executor settings, connection limits and other services'
+caps. this removes the disproved 512-mib envelope, not the unattributed allocator
+or combined-headroom question. the failed ordinary search must complete with
+unchanged data/native identity and no new kernel oom/kill before acceptance;
+unrestricted overlap remains outside that bounded proof.

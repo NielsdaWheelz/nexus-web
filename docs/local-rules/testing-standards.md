@@ -85,7 +85,7 @@ its owned services and data afterward. it requires a dedicated checkout with
 installed locked dependencies and chromium; no dotenv files, ordinary web server,
 static gate or application edits during an invocation. see `./scripts/lab --help`.
 postgres uses its project-owned disk volume, normal durable commits, and the
-production 512 mib memory/no-swap limit; teardown removes that exact volume.
+production 2 gib memory/no-swap limit; teardown removes that exact volume.
 the lab builds or reuses the canonical web production package, including its
 public assets, then serves the canonical tls/http2 standalone runtime without hot reload.
 build constants match the server's public key, exact loopback origin and source
@@ -386,7 +386,7 @@ and serving retain normal production configuration and process ownership.
 
 `docker/docker-compose.lab.yml` applies only to the disposable compose model,
 shared by image preparation, runtime and recorded recovery. postgres uses its
-project-owned disk volume, normal durable commits and the production 512 mib
+project-owned disk volume, normal durable commits and the production 2 gib
 memory/no-swap limit. storage keeps its named volume; supabase's auth database
 remains separately cli-managed.
 
