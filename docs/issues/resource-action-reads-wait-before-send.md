@@ -32,9 +32,23 @@ unintercepted browser/bff/api check with real streams active: the read began wit
 one second and completed within measured normal api latency. this local stack
 does not establish production http2 behavior or resolve the observations above.
 
+production recurrence on `d05d69bd1`, 2026-11-16: the ordinary reader menu twice
+offered only reader settings and `more actions`. `more actions` preparation and
+maximizing the reader still left removal unavailable through the menu. metadata
+and reader requests later returned 200; the existing guarded removal api then
+accepted cleanup, which does not qualify the menu. private
+`client-cleanup-media-menu.json`, `client-cleanup-media-read-failure.json` and
+the current/maximized observations retain the behavior. no action-response
+status or transport-phase attribution was captured; the five-second bound is
+source-defined, not measured here. slow scope work and memory pressure are not
+established causes. investigate `ActionMenu.tsx` preparation
+and `useResourceActions.ts` through the actual request owner within existing
+budgets on representative retained data.
+
 what to do: find what holds the browser's requests before send (connection limit, a
 long-lived stream on the same origin, service worker) and whether the delayed in-request
 times are api latency.
 
 acceptance: on a production-like session with streams open, a menu's action read starts
 within a second of opening and lands within the api's normal latency.
+ordinary reader menus must expose the correct actions within their existing budget.

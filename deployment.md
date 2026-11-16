@@ -25,9 +25,11 @@ postgres 16 and application ownership.
 production docker commands always use elevation and
 `--host unix:///var/run/docker.sock`. the developer's rootless engine and login
 cannot administer that daemon. neither engine socket enters an application
-container. the retired nexus vps is not a standby; its writers and credentials
-are retired before it is retained powered off. relocation qualification remains
-in [the release issue](docs/issues/release-dev-server-backend.md).
+container. the former nexus vps is retained powered off for separate use, with
+its writers, autostart and credentials retired. the operator's private recovery
+inventory is `~/.config/fleet-security/nexus-retained-vps-recovery.json`.
+it is not a standby or failback target: recover the current target's history,
+never restart the old writers or return to its frozen database.
 
 `deploy/cloudflare/tunnel-config.json` owns the api public route, including a
 503 refusal for `/public/resource-share` and its descendants during the bridge.
@@ -457,6 +459,30 @@ must convert or refuse retained payloads and results, including held work.
 historical running tool receipts on terminal calls are
 not active generations and are never rewritten by this procedure.
 
+for a maintenance cutover, quiet ingress and the periodic enqueuer before the
+controller's preflight:
+
+1. stop the `nexus` project's exact `caddy` and `cloudflared` containers. the
+   frontend uses the public api origin, so this closes its backend path too.
+   keep the api, native host and both workers available to settle accepted work.
+   closing clients alone does not cancel synchronous sql left by an expired
+   request; inspect any surviving read before expecting a clean api stop.
+2. let the normal owners settle work until the accepted-work census has no
+   nonterminal chats, open llm calls or pending/failed/running jobs. use a bounded
+   maintenance wait; if work does not settle, leave its owners running and
+   inspect their progress.
+3. immediately stop only the captured idle `worker-background` container by
+   its exact id, using the system docker socket. require exit zero, no oom
+   or runtime error, and the same strict census afterward. this lane also
+   schedules periodic jobs; stopping a running attempt can create
+   `E_WORKER_INTERRUPTED` retry work even when its configured handler is a noop.
+   if a new job races this stop, leave the lane held and inspect the refusal;
+   do not edit the queue or automatically restart and repeat.
+4. keep that idle lane and the api edge stopped through the normal paired
+   release. its `up` step starts the new cohort. retain the exact container/image
+   ids and host inputs throughout preparation; do not bypass either the final
+   stopped-writer census or the clean-exit guard.
+
 after refusal or controller loss before candidate mutation, deliberately run:
 
 ```bash
@@ -471,7 +497,9 @@ competing one-offs or database sessions. it starts those exact original containe
 in codex → api → worker order, requiring health and the original api runtime
 identity. neither candidate compose nor `current.env` recreates anything. the
 original containers retain their captured environment and immutable bind paths.
-settle accepted work through ordinary owners, then retry the normal release.
+this restores the current target's captured cohort, never the retired vps.
+keep the api edge quiet across restoration, settle accepted work through ordinary
+owners, then repeat the idle background hold before retrying the normal release.
 
 the record has only `recoverable` and `invalidated` states. invalidation is durable
 before host/Caddy installation or postgres mutation and survives failed forward
