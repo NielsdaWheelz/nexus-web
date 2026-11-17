@@ -1,12 +1,14 @@
-# annotation selection toolbar can cover the row menu
+# a note toolbar may cover a neighbouring row menu
 
-`NoteEditor.module.css` places `.toolbar` at `right: 0`, above the editor,
-with `z-index: 35`. companion density's full-width annotation shell puts that
-toolbar over `ResourceOutline.module.css`'s absolute `.actions` column.
+source hypothesis after `fcd6843db`; not a rendered reproduction. the floating
+formatting toolbar in `apps/web/src/components/notes/NoteEditor.module.css` is
+absolute at z-index 35. `NoteEditor.tsx` `placeToolbar` now positions it near the
+selection, but does not account for a neighbouring row's trailing action target
+(`ResourceOutline.module.css` `.actions`).
 
-impact: selecting annotation text can obscure `⋯`. select text in an annotation
-under a short quote and inspect both controls. no toolbar placement repair is
-included in the density change.
+impact: a toolbar near the end of a line may cover the row menu or its neighbour.
+this is the reverse of pane chrome obscuring the toolbar, and needs its own
+hit-test evidence before a placement repair is chosen.
 
-resolved when: selection formatting and row actions remain reachable together
-without restoring a full-height reserved action column.
+resolved when: formatting and nearby row actions remain reachable with the
+selection preserved, without reserving a permanent full-height action column.
