@@ -44,7 +44,7 @@ from nexus.services.media_text_scope import (
     apparatus_scope_rows_sql,
     highlight_in_reading_scope_sql,
     incomplete_table_rows_sql,
-    text_scope_rows_sql,
+    text_scope_bounds_sql,
     x_capture_scope_rows_sql,
 )
 from nexus.services.reader_publication import ready_publication_rows_sql
@@ -142,20 +142,26 @@ def _ctes() -> str:
 def _text_ctes(*, selected_reading: bool = False) -> str:
     # Text pages expand only their authorized reading. Metadata needs every
     # reading's intervals; the revision uses their publication dependencies.
+    # Resolve body bounds first, then read each required fragment's length once.
     selection = " AND media_id=:reading" if selected_reading else ""
-    intervals = text_scope_rows_sql(
+    bounds = text_scope_bounds_sql(
         "SELECT media_id FROM readings WHERE text_ready AND source_kind IN ('epub','web_article')"
         + selection
     )
     apparatus = apparatus_scope_rows_sql("SELECT media_id FROM readings WHERE is_part" + selection)
     return f"""{_ctes()},
+        body_bounds AS MATERIALIZED ({bounds}),
+        body_fragments AS MATERIALIZED (
+            SELECT f.id,char_length(f.canonical_text) AS size FROM fragments f
+            WHERE f.x_post_capture_id IS NULL
+              AND f.id IN (SELECT fragment_id FROM body_bounds)
+        ),
         body_intervals AS MATERIALIZED (
             SELECT bounded.reading_media_id,bounded.fragment_id,bounded.fragment_idx,
-                bounded.start_offset,bounded.end_offset,'body'::text AS purpose
-            FROM ({intervals}) bounded
-            JOIN fragments body_fragment ON body_fragment.id=bounded.fragment_id
-            WHERE body_fragment.x_post_capture_id IS NULL
-                AND bounded.start_offset<bounded.end_offset
+                bounded.start_offset,COALESCE(bounded.end_offset,body.size) AS end_offset,
+                'body'::text AS purpose,body.size AS fragment_size
+            FROM body_bounds bounded JOIN body_fragments body ON body.id=bounded.fragment_id
+            WHERE bounded.start_offset<COALESCE(bounded.end_offset,body.size)
         ),
         note_intervals AS MATERIALIZED (
             SELECT DISTINCT admitted.reading_media_id,f.id AS fragment_id,f.idx AS fragment_idx,
@@ -176,9 +182,10 @@ def _text_ctes(*, selected_reading: bool = False) -> str:
         ),
         intervals AS MATERIALIZED (
             SELECT owned.*,owned.reading_media_id::text||':'||owned.fragment_id::text||':'||owned.purpose||':'||owned.start_offset::text||':'||owned.end_offset::text AS interval_key,
-                owned.start_offset>0 AS start_cut,owned.end_offset<char_length(f.canonical_text) AS end_cut
-            FROM (SELECT * FROM body_intervals UNION ALL SELECT * FROM note_intervals) owned
-            JOIN fragments f ON f.id=owned.fragment_id
+                owned.start_offset>0 AS start_cut,owned.end_offset<owned.fragment_size AS end_cut
+            FROM (SELECT * FROM body_intervals UNION ALL
+                SELECT note.*,char_length(f.canonical_text) AS fragment_size
+                FROM note_intervals note JOIN fragments f ON f.id=note.fragment_id) owned
         )"""
 
 

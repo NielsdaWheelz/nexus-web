@@ -111,13 +111,25 @@ def text_scope_rows_sql(reading_ids_sql: str) -> str:
     supplied reading ids already carry their audience contract. this relation
     alone owns source indirection and canonical interval admission for consumers.
     """
+    return _text_scope_rows_sql(reading_ids_sql, "char_length(f.canonical_text)")
+
+
+def text_scope_bounds_sql(reading_ids_sql: str) -> str:
+    """The same occurrences with a nullable end bound, before reading body lengths.
+
+    A null end means the whole fragment's end; it does not change admission.
+    """
+    return _text_scope_rows_sql(reading_ids_sql, "NULL::integer")
+
+
+def _text_scope_rows_sql(reading_ids_sql: str, fragment_end: str) -> str:
     return f"""
         SELECT m.id AS reading_media_id, COALESCE(p.source_media_id,m.id) AS source_media_id,
                f.id AS fragment_id, f.idx AS fragment_idx,
                CASE WHEN p.media_id IS NOT NULL AND f.idx=p.start_fragment_idx
                     THEN p.start_offset ELSE 0 END AS start_offset,
                CASE WHEN p.media_id IS NOT NULL AND f.idx=p.end_fragment_idx
-                    THEN p.end_offset ELSE char_length(f.canonical_text) END AS end_offset
+                    THEN p.end_offset ELSE {fragment_end} END AS end_offset
         FROM media m
         JOIN ({reading_ids_sql}) requested ON requested.media_id=m.id
         LEFT JOIN media_parts p ON p.media_id=m.id
@@ -125,7 +137,7 @@ def text_scope_rows_sql(reading_ids_sql: str) -> str:
         WHERE p.media_id IS NULL OR f.idx BETWEEN p.start_fragment_idx AND p.end_fragment_idx
         UNION ALL
         SELECT x.reading_media_id, NULL::uuid AS source_media_id, f.id, f.idx,
-               0, char_length(f.canonical_text)
+               0, {fragment_end}
         FROM ({x_capture_scope_rows_sql(reading_ids_sql)}) x
         JOIN fragments f ON f.id=x.fragment_id
     """
