@@ -45,7 +45,7 @@
   font: var(--weight-regular) var(--text-xl) / 1.75rem var(--font-sans);
 }
 .query .input::placeholder { color: var(--ink-faint); }
-:global([data-theme="light"]) .input, :global([data-theme="elvish"]) .input { font: var(--pane-section-title-font); }
+:global([data-theme="light"]) .input, :global([data-theme="elvish"]) .input { font: var(--name-font); }
 :global([data-theme="light"]) .input::placeholder, :global([data-theme="elvish"]) .input::placeholder { font-style: italic; }
 .star { display: flex; grid-column: 2; padding-inline-start: 1rem; }
 .star circle { fill: var(--edge-strong); transition: fill var(--star-onset) var(--ease-glide) var(--star-grace); }

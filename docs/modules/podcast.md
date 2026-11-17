@@ -53,11 +53,11 @@ publish `PodcastEpisodes` and invalidate imports. the shared source detail polls
 its visible observation lane while transcript provisioning runs and invalidates
 summaries only after the observed id/state signature changes.
 
-followed-show and library-show outputs always include stored `image_url`
+subscribed-show and library-show outputs always include stored `image_url`
 (string or null), selected in their existing list queries. `presentFeed`
 projects it into an artwork capability; suggestions omit that capability.
 rows never fetch show details or provider metadata for artwork.
-`components/ui/Artwork.tsx` owns presentation for every show tile (rows, overview,
+`components/ui/Artwork.tsx` owns presentation for every show tile (rows, wall, title page,
 metadata overlay, downloaded episode) through `MediaImage`: publisher urls through
 the authenticated image proxy, a downloaded episode's saved image as a local blob.
 [the app csp still blocks saved blob artwork](../issues/downloaded-artwork-blocked-by-csp.md);

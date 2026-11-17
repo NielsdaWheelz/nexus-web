@@ -35,8 +35,6 @@ export function presentMedia(
     contributors: selectMediaAuthors(summary.contributors),
     publicationDate: summary.original_published_date,
     context: null,
-    activity: null,
-    exceptionalStatus: null,
     resourceRef: occurrence.resourceRef,
     selected: occurrence.selected,
   };

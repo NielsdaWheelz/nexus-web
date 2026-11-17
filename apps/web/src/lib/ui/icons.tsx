@@ -228,6 +228,23 @@ export const SeekForward30: Glyph = /*#__PURE__*/ createLucideIcon("nexus-seek-f
   ["rect", { x: "12.75", y: "9.75", width: "3.75", height: "7.75", rx: "1.875", key: "zero" }],
 ]);
 
+// Rows are closed bands across the measure; covers are filled tiles on the same keyline.
+export const Rows: Glyph = /*#__PURE__*/ createLucideIcon("nexus-rows", [ // a list drawn as rows
+  ["rect", { x: "3", y: "3", width: "18", height: "7", rx: "1", key: "upper" }],
+  ["rect", { x: "3", y: "14", width: "18", height: "7", rx: "1", key: "lower" }],
+]);
+export const Wall: Glyph = /*#__PURE__*/ createLucideIcon("nexus-wall", [ // a list drawn as covers
+  ["rect", { x: "3", y: "3", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "a1" }],
+  ["rect", { x: "10.5", y: "3", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "a2" }],
+  ["rect", { x: "18", y: "3", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "a3" }],
+  ["rect", { x: "3", y: "10.5", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "b1" }],
+  ["rect", { x: "10.5", y: "10.5", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "b2" }],
+  ["rect", { x: "18", y: "10.5", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "b3" }],
+  ["rect", { x: "3", y: "18", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "c1" }],
+  ["rect", { x: "10.5", y: "18", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "c2" }],
+  ["rect", { x: "18", y: "18", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "c3" }],
+]);
+
 // Disclosure: closed points right, open points down, by state, in place. The turn is
 // glyph-internal so no owner draws a second chevron; reduced motion zeroes the duration.
 export function Disclose({ open, style, ...props }: LucideProps & { readonly open: boolean }) { // more that way, in place

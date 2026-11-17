@@ -462,10 +462,13 @@ function PaneView({
       search={searchLabel ? { label: searchLabel, onActivate: openQuery, reason: query?.kind === "Find" && !find ? PANE_COMMAND_RESOLVING_REASON : undefined, hint: `${searchLabel} (${formatShortcut(SHORTCUTS["Pane.Search"], platform)}, /)` } : undefined}
       statement={isMobile && canFold ? { words: statementWords, expanded: unfolded, controls: `${paneId}-collation`, onToggle: element => { if (!unfolded) opener.current = element; setUnfoldedFor(unfolded ? null : source); } } : undefined}
       header={header}
+      titleYielded={state.titleYielded}
+      titleYieldReady={state.titleYieldReady}
       identityId={identityId}
       editor={body?.editor}
       frameRef={headerFrameRef}
       resourceActions={body?.resourceActions}
+      drawing={body?.drawing}
       podcastMetadata={body?.podcastMetadata}
       primaryAction={principal ? { action: principal, onActivate: activatePrincipal } : undefined}
       companionAction={inspector}

@@ -32,3 +32,8 @@ listed modules retain their separate declarations.
 the reading-record change removes the old stats body stylesheet. its slip labels
 retain the specified paper material’s mono/uppercase treatment and tracking;
 the remaining cross-module consolidation is still open.
+
+sigla adds the ledger's lowercase margin side-head recipe in
+`components/ui/Ledger.module.css`: tracked muted sans, italic serif in solar.
+it matches headword's intent; the bookplate's `dt` retains its different recipe.
+the shared list-head font absorbs section/list/browse headings only.

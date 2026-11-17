@@ -11,7 +11,7 @@ export default function RadioGroup<V extends string>({
 }: {
   readonly label: string;
   readonly value: V;
-  readonly choices: readonly { readonly value: V; readonly label: ReactNode; readonly disabled?: boolean }[];
+  readonly choices: readonly { readonly value: V; readonly label: ReactNode; readonly disabled?: boolean; readonly help?: string }[];
   readonly onChange: (value: V) => void;
   readonly disabled?: boolean;
   readonly description?: string;
@@ -22,7 +22,7 @@ export default function RadioGroup<V extends string>({
   const name = useId();
   const descriptionId = useId();
   const segmented = presentation === "Segmented";
-  const fields = choices.map((choice) => <ChoiceField key={choice.value} type="radio" name={name} value={choice.value} label={choice.label} disabled={choice.disabled} presentation={segmented ? "Segment" : "Inline"} checked={value === choice.value} onChange={() => onChange(choice.value)} />);
+  const fields = choices.map((choice) => <ChoiceField key={choice.value} type="radio" name={name} value={choice.value} label={choice.label} help={choice.help} disabled={choice.disabled} presentation={segmented ? "Segment" : "Inline"} checked={value === choice.value} onChange={() => onChange(choice.value)} />);
   return (
     <fieldset className={styles.group} disabled={disabled}
       aria-describedby={cx(describedBy, description && descriptionId) || undefined}>

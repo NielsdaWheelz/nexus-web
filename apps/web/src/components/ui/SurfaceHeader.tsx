@@ -35,6 +35,7 @@ import Button from "./Button";
 import ButtonLink from "./ButtonLink";
 import OverflowMenuButton from "./OverflowMenuButton";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
+import RadioGroup from "./RadioGroup";
 import styles from "./SurfaceHeader.module.css";
 
 export interface SurfaceHeaderNavigation {
@@ -61,9 +62,12 @@ const RECOVERY = {
 export default function SurfaceHeader({
   projection,
   header,
+  titleYielded,
+  titleYieldReady,
   identityId,
   primaryAction,
   resourceActions,
+  drawing,
   podcastMetadata,
   companionAction: companion,
   paneActions = [],
@@ -78,8 +82,11 @@ export default function SurfaceHeader({
 }: {
   projection: "Desktop" | "Mobile";
   header: PaneHeaderModel;
+  titleYielded: boolean;
+  titleYieldReady: boolean;
   identityId: string;
   resourceActions?: PaneChrome["resourceActions"];
+  drawing?: PaneChrome["drawing"];
   podcastMetadata?: PaneChrome["podcastMetadata"];
   primaryAction?: {
     readonly action: PanePrimaryAction;
@@ -135,7 +142,11 @@ export default function SurfaceHeader({
     return viewport.registerTopSurface("Header", frame, surface);
   }, [mobile, viewport, frameRef]);
   const recovery = mobile && visibility !== null ? RECOVERY[visibility] : null;
-  const actions = [...paneActions, ...menuActions];
+  const viewActions: readonly MenuOption[] = drawing ? [...menuActions, {
+    kind: "choice", id: "View.Drawing", label: "drawing", value: drawing.value,
+    choices: drawing.choices, onChange: drawing.onChange,
+  }] : menuActions;
+  const actions = [...paneActions, ...viewActions];
   const displaced = narrow ? [primaryAction?.action].filter((action): action is PanePrimaryAction => action !== undefined) : [];
   const seen = new Set(actions.map(action => action.id));
   const projectedPaneActions = [...paneActions, ...displaced.filter(action => {
@@ -143,7 +154,7 @@ export default function SurfaceHeader({
     seen.add(action.id);
     return true;
   })];
-  const sections = [{ id: "Pane" as const, actions: projectedPaneActions }, { id: "View" as const, actions: menuActions }];
+  const sections = [{ id: "Pane" as const, actions: projectedPaneActions }, { id: "View" as const, actions: viewActions }];
   const companionState =
     companion && projectActionControlState(companion.label, companion.state);
   const primary = primaryAction?.action;
@@ -203,6 +214,8 @@ export default function SurfaceHeader({
               id={identityId}
               model={header}
               projection={projection}
+              yielded={titleYielded}
+              yieldReady={titleYieldReady}
               editor={editor?.kind === "Inline" ? editor.content : editor?.control}
               statement={statement}
             />
@@ -215,6 +228,12 @@ export default function SurfaceHeader({
             {!mobile && search?.reason ? <span id={`${reasonId}-search`} className="sr-only">{search.reason}</span> : null}
             {resourceActions ? <ResourceActions subject={resourceActions} density="Header"
               returnFocus={returnFocus} afterRemoval={actionFocus.afterRemoval} /> : null}
+            {drawing ? <div data-pane-drawing="true" className={styles.drawing}>
+              <RadioGroup presentation="Segmented" legend="Hidden" label="drawing" value={drawing.value}
+                choices={drawing.choices.map(choice => ({ value: choice.value, help: choice.label,
+                  label: <>{choice.icon}<span className="sr-only">{choice.label}</span></> }))}
+                onChange={drawing.onChange} />
+            </div> : null}
             {!narrow && primaryAction && primary && primaryState ? (
               <>
                 {primary.kind === "link" ? (
@@ -264,7 +283,7 @@ export default function SurfaceHeader({
                 sections={sections} omitResourceActions={narrow ? [...seen] : undefined}
                 triggerRef={setMore} triggerAttributes={mobile ? { "data-pane-chrome-focus": "true" } : undefined}
                 renderTrigger={props => <OverflowMenuButton {...props} className={mobile ? styles.mobileOverflow : undefined} />} />
-            ) : projectedPaneActions.length > 0 || menuActions.length > 0 || resourceRef !== undefined ? (
+            ) : projectedPaneActions.length > 0 || viewActions.length > 0 || resourceRef !== undefined ? (
               <ContextualActionMenu navigation={null} title={header.title} subjectKey={identityId}
                 label={`more actions for ${header.title}`} placement={mobile ? undefined : "below"} align={mobile ? undefined : "end"}
                 sections={sections}

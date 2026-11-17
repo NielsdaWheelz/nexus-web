@@ -27,8 +27,6 @@ export function presentLibrary(library: Library): CollectionRowView {
       kind: "Text",
       text: library.is_default ? "Across your libraries" : library.role,
     },
-    activity: null,
-    exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "library", id: library.id }),
     selected: false,
   };

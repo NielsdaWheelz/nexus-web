@@ -100,7 +100,7 @@ export default function Register({ selected, onSelect }: {
       rows.push(presentMedia(resolved, { id, resourceRef: assumeCanonicalResourceRef(`media:${item.media_id}`),
         selected: selected === id, primary: { kind: "link", href: `/media/${item.media_id}` } }));
     } else rows.push({ id, kind: item === null ? "feed" : "media", presentation: "Index", title: { text: item?.title ?? "subscription import" },
-      primary: { kind: "static" }, contributors: [], publicationDate: null, context: null, activity: null, exceptionalStatus: null, resourceRef: null, selected: selected === id });
+      primary: { kind: "static" }, contributors: [], publicationDate: null, context: null, resourceRef: null, selected: selected === id });
   }
   const established = useRef(false);
   const firstInGroup = new Set<string>();

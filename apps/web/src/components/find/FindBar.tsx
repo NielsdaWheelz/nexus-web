@@ -205,8 +205,6 @@ export function FindResults({
           : null,
       contributors: [],
       publicationDate: null,
-      activity: null,
-      exceptionalStatus: null,
       resourceRef: null,
       selected: current,
     };

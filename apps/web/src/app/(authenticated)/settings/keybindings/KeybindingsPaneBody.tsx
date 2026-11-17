@@ -26,37 +26,37 @@ export default function KeybindingsPaneBody() {
             }),
           )}
           status="ready"
-          ariaLabel="Keyboard shortcuts"
+          ariaLabel="keyboard shortcuts"
           surface={false}
         />
       </PaneSection>
       <PaneSection
-        title="Pane strip"
+        title="pane strip"
         description="These shortcuts apply while a pane title or one of its controls in the desktop strip has focus. Drag a title to reorder panes."
       >
         <CollectionView
           returnScope="Settings.Keybindings.PaneStrip"
           rows={PANE_STRIP_SHORTCUTS.map(presentSettingsRow)}
           status="ready"
-          ariaLabel="Pane strip shortcuts"
+          ariaLabel="pane strip shortcuts"
           surface={false}
         />
       </PaneSection>
-      <PaneSection title="Librarian line" description="These keys apply while writing a question. Recall is available on the latest window with search closed.">
+      <PaneSection title="librarian line" description="These keys apply while writing a question. Recall is available on the latest window with search closed.">
         <CollectionView
           returnScope="Settings.Keybindings.LibrarianLine"
           rows={librarianLineShortcuts(platform).map(presentSettingsRow)}
           status="ready"
-          ariaLabel="Librarian line shortcuts"
+          ariaLabel="librarian line shortcuts"
           surface={false}
         />
       </PaneSection>
-      <PaneSection title="Outline" description="These keys apply while editing or selecting an item. Touch screens offer six buttons for indentation, movement, undo and redo.">
+      <PaneSection title="outline" description="These keys apply while editing or selecting an item. Touch screens offer six buttons for indentation, movement, undo and redo.">
         <CollectionView
           returnScope="Settings.Keybindings.Outline"
           rows={outlineShortcuts(platform).map(presentSettingsRow)}
           status="ready"
-          ariaLabel="Outline shortcuts"
+          ariaLabel="outline shortcuts"
           surface={false}
         />
       </PaneSection>

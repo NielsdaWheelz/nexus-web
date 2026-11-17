@@ -1,5 +1,5 @@
 import * as Icon from "@/lib/ui/icons";
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import type {
   PaneHeaderCreditGroup,
   PaneHeaderModel,
@@ -24,13 +24,22 @@ export default function PaneHeaderIdentity({
   projection,
   editor,
   statement,
+  yielded,
+  yieldReady,
 }: {
   readonly id: string;
   readonly model: PaneHeaderModel;
   readonly projection: "Desktop" | "Mobile";
+  readonly yielded: boolean;
+  readonly yieldReady: boolean;
   readonly editor?: ReactNode;
   readonly statement?: { readonly words: readonly string[]; readonly expanded: boolean; readonly controls: string; readonly onToggle: (opener: HTMLElement) => void };
 }) {
+  const title = useRef<HTMLHeadingElement>(null);
+  useLayoutEffect(() => {
+    // First placement has no transition, even when the title page arrives asynchronously.
+    if (!yieldReady) title.current?.getBoundingClientRect();
+  }, [yielded, yieldReady]);
   let pending = false;
   let support: ReactNode = null;
   if (model.kind === "Section") {
@@ -68,7 +77,9 @@ export default function PaneHeaderIdentity({
       aria-busy={pending || undefined}
       dir="auto"
     >
-      <h1 id={id} className={editor === undefined ? styles.title : "sr-only"} title={model.title}
+      <h1 ref={title} id={id} className={editor === undefined ? styles.title : "sr-only"} title={model.title}
+        data-yielded={editor === undefined && yielded || undefined}
+        data-yield-ready={editor === undefined && yieldReady || undefined}
         data-title-role={model.kind === "Resource" ? model.titleRole : undefined}>
         {model.title}
       </h1>

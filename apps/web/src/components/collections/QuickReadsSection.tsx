@@ -32,9 +32,9 @@ export default function QuickReadsSection() {
   const rootRef = useRef<HTMLElement>(null);
   usePaneReturnDescendantReady({ rootRef, ready: read.status !== "loading" });
   return (
-    <PaneSection ref={rootRef} title="Quick reads" aria-label="Quick reads" tabIndex={-1}>
+    <PaneSection ref={rootRef} title="quick reads" aria-label="quick reads" tabIndex={-1}>
       <CollectionView geometry="UniformIndex"
-        returnScope="Lectern.QuickReads" ariaLabel="Quick reads" rows={rows}
+        returnScope="Lectern.QuickReads" ariaLabel="quick reads" rows={rows}
         status={read.status === "failed" ? "error" : read.status}
         notice={full ? <Fact line={{ fact: "the lectern is full." }} /> : null}
         error={read.status === "failed" ? <Failed error={read.error} noun="quick reads" retry={{ run: read.refetch, busy: read.retrying }} /> : null}

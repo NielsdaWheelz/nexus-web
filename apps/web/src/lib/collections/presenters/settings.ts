@@ -18,8 +18,6 @@ export function presentSettingsRow(item: {
     contributors: [],
     publicationDate: null,
     context: context ? { kind: "Text", text: context } : null,
-    activity: null,
-    exceptionalStatus: null,
     resourceRef: null,
     selected: false,
   };

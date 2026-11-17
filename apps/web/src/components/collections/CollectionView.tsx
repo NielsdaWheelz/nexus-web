@@ -20,10 +20,12 @@ import { focusableElements } from "@/lib/ui/overlay";
 import { useMeasuredIndexWindow, type IndexGeometry } from "@/lib/collections/measuredIndexWindow";
 import { IndexRowWindow } from "@/lib/collections/indexRowWindow";
 import { usePaneCollectionGeometry } from "@/lib/workspace/paneReturnMemento";
+import styles from "./CollectionView.module.css";
 
 export interface CollectionViewRowRenderProps {
   readonly afterRemoval: () => HTMLElement | null;
   readonly row: CollectionRowView;
+  readonly layout: "Rows" | "Wall";
   readonly as?: "li" | "div";
   readonly primaryControl?: ReactNode;
   readonly rowActionsAvailable: boolean;
@@ -33,7 +35,7 @@ export interface CollectionViewRowRenderProps {
 /**
  * Orchestrates the one canonical collection path. Panes own retrieval, toolbar,
  * and at most one row-level primary control; they do not
- * own row chrome, action placement, density, or alternate views.
+ * own row chrome, action placement or density. Rows may window; Wall mounts every cell.
  * Rows commit directly; anchorKey separates view changes from same-view refreshes.
  */
 export default function CollectionView({
@@ -55,6 +57,7 @@ export default function CollectionView({
   surface = true,
   anchorKey,
   geometry = null,
+  layout = "Rows",
 }: {
   readonly returnScope: string;
   readonly rows: readonly CollectionRowView[];
@@ -75,8 +78,12 @@ export default function CollectionView({
   readonly anchorKey?: string;
   /** The caller guarantees canonical two-line Index rows, including custom renderers. */
   readonly geometry?: IndexGeometry | null;
+  readonly layout?: "Rows" | "Wall";
 }) {
   if (headBefore !== undefined && geometry !== null) throw new Error("List heads require mounted rows");
+  if (layout === "Wall" && geometry !== null) throw new Error("Wall requires mounted cells");
+  if (layout === "Wall" && headBefore !== undefined) throw new Error("Wall cannot contain list heads");
+  if (layout === "Wall" && order !== undefined) throw new Error("Wall cannot contain manual order");
   const returnScopeRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const ownedFocusRef = useRef<{
@@ -166,18 +173,20 @@ export default function CollectionView({
         return recover(row.id, orderedIds);
       },
       row,
+      layout,
       as,
       primaryControl: rowControls?.[row.id],
       rowActionsAvailable,
       listPosition: windowed && index !== undefined && as !== "div" ? { index, count: orderedIds.length } : undefined,
     };
     return <IndexRowWindow window={window} id={row.id}>{renderRow ? renderRow(props) : <CollectionRow {...props} />}</IndexRowWindow>;
-  }, [orderedIds, rowControls, rowActionsAvailable, renderRow, recover, window, windowed]);
+  }, [orderedIds, rowControls, rowActionsAvailable, renderRow, recover, window, windowed, layout]);
   const renderSortableRow = useCallback((row: CollectionRowView) => renderCollectionRow(row, "div"), [renderCollectionRow]);
   usePaneReturnDescendantReady({
     rootRef: returnScopeRef,
     ready,
   });
+  const slots = window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots;
   const body =
     status === "loading" ? (
       <Ruling />
@@ -196,9 +205,16 @@ export default function CollectionView({
         window={window}
         listRef={listRef}
       />
+    ) : layout === "Wall" ? (
+      <ul ref={listRef} className={styles.wall} aria-label={ariaLabel} aria-busy={collectionBusy || !ready}>
+        {slots.map(slot => {
+          const row = rows[slot.index];
+          return row ? <Fragment key={row.id}>{renderCollectionRow(row, undefined, slot.index)}</Fragment> : null;
+        })}
+      </ul>
     ) : (
       <ResourceList ref={listRef} ariaLabel={ariaLabel} busy={collectionBusy || !ready} windowed={windowed} measuring={window.plan.kind === "Measure"}>
-        {(window.plan.kind === "Measure" ? [{ id: window.plan.sampleId, index: 0, gapBeforePx: 0 }] : window.plan.slots).map(slot => {
+        {slots.map(slot => {
           const row = rows[slot.index];
           const head = row ? headBefore?.(row) : null;
           return row ? <Fragment key={row.id}>

@@ -69,7 +69,7 @@ live in a `:root`-only block before reduced-motion overrides. nested rooms inher
 them from the nearest ancestor, including overrides supplied by context owners.
 the press block (`:root, [data-theme="dark"]`) declares only tokens another room
 overrides: colour, shadow, grain, hairline, body size, tracking, serif face and
-the section-title font role and modal scrim. `--overlay-scrim` is room-owned:
+the name font role and modal scrim. `--overlay-scrim` is room-owned:
 press `rgb(0 0 0 / 0.5)`, study `rgb(60 50 30 / 0.22)`, solar
 `rgb(5 15 10 / 0.45)`. dialog, sheet, hover preview, share and nexus consume it;
 `--overlay-scrim-soft` retains its shared default. text on an 18% tint of its own tone (`Pill`) reads
@@ -354,12 +354,44 @@ callers retain their fields, tables and collection rows without a boxed variant.
 `PaneSurface` supplies 16px outer padding, 12px minor stacks and 24px major
 content gaps; statistics owns the equivalent 24px section margin locally.
 
-`--pane-section-title-font` is a complete font shorthand resolved through the
-nearest theme: garamond 500 at 24px/1.2 in the study, sans 600 at 18px/1.35 in
-the press, cormorant 300 at 24px/1.2 in the solar. headings reset tracking and
-inherit section ink; descriptions use `--ink-muted`. the header owns interface
-typography independently of reader prose. headings and actions wrap at the
-containing width; control targets remain owned by their controls.
+`--list-head-font` is the shared 13px semibold sans shorthand at 1.6 leading.
+every `PaneSection` h2, `ResourceListHead` h3 and browse source heading uses it
+with muted ink and inherited room body tracking, preserving existing list-head
+paint. literal heads and their aria twins are
+lowercase. descriptions and actions retain their own contracts.
+
+`--name-font` is resolved through the nearest room: garamond 500 at 24px/1.2
+in the study, sans 600 at 18px/1.35 in the press, cormorant 300 at 24px/1.2
+in the solar. it sets the bookplate name, nexus query names and a source title
+page's name. control targets remain owned by their controls.
+
+`Ledger` renders a `dl`; each `LedgerLine` is a `div` containing `dt` and `dd`.
+its label track is `--ledger-label` (6rem by default), its value track can shrink,
+and its side-heads use muted tracked sans, italic serif in solar. text values align
+on their first baseline; cover strips request start alignment through
+`--ledger-align`. labels stack
+above values below a 30rem primary pane. links inherit their line's ink and
+retain 32px targets, 44px with any coarse pointer. the ledger has no rule or fill.
+
+`ResourceCover` is artwork in a named navigation link with a house tooltip and
+an inner edge. a named-library occurrence can carry its one removal context
+menu; all and saved-catalog occurrences have no menu host. tooltip and context
+anchor share the same native link, and an open menu suppresses its tooltip.
+
+`FeedTitlePage` aligns cover and name on an 8rem margin, 5rem below a 30rem pane.
+the standfirst and ledger span the narrow page. its name is visual; the header
+keeps the sole accessible h1. while the name's top remains inside the padded
+scrollport, the header title yields opacity while retaining its box and semantics.
+the initial name measurement follows layout placement. transition readiness begins
+with the reader's first trusted navigation input, which also relinquishes pending
+return placement; programmatic open/back placement remains instant. scroll measures
+update chrome without body state.
+
+the title page's wash is a second copy of its source image, blurred and faint.
+it appears only after positive image readiness, with no transition. source-over
+opacity is at most .18 in press/solar and .20 in study, preserving 4.5:1 muted
+text contrast even at image-colour extremes. forced colours, more contrast,
+reduced transparency and print omit it; absent or failed art omits it.
 
 ## collections and searchable pickers
 
@@ -368,6 +400,12 @@ adornment and viewport recipes. semantic components retain their actual roots:
 native commands/links, exclusive choices, search listboxes and launcher grids.
 feature css arranges content; it does not duplicate interaction paint.
 `ResourceListHead` supplies nonsticky presentation list items with an `h3` and optional verbs; collection heads forbid windowed geometry.
+`CollectionView` owns rows and wall drawings. a wall rejects row geometry, heads
+and ordering; its grid mounts every cell in source order. both drawings share
+status, filter, scope, menu, focus recovery and return anchoring. the drawing is
+visit data: back restores it, while a fresh visit or reload starts with rows.
+the header's exclusive rows/wall signs and its drawing menu choice project the
+same value; narrow headers retain the menu choice.
 the armed `Collection` row is `--surface-2` plus a 2px leading inset
 `--accent` bar, app-wide. forced colours replace that shadow with a `Highlight`
 outline. arming has no transition. literal `ResourceContent` matches underline
@@ -421,7 +459,7 @@ space each, preserving codepoint ranges and the original source excerpt.
 solar uses serif titles and its vine rule.
 
 press's query is regular sans at `--text-xl`; study and solar use the room's
-section-title face. the asterism counts device, names and texts: waiting dims
+name face. the asterism counts device, names and texts: waiting dims
 a star after 150ms, answered relights over 200ms, failure stays dim. idle is lit.
 empty waiting apparatus lines rule after 200ms. legend and catchword use the
 active word fill. no hover wash or animated armed-position movement occurs.
@@ -570,6 +608,12 @@ at the top of the row's right column; the trigger never shifts content.
 index rows use the shared `ResourceRow` shell. its `indexRow` container owns
 author and shortcut demotion, metadata spacing and tight-row adaptation; see the
 [resource presentation contract](resource-references.md#presentation-contract).
+`ResourceCell` is the wall shell: one navigation link holds square art and a
+two-line title, followed by one author line. title and author heights remain
+reserved. its menu is outside that link, hidden until hover/focus with fine
+pointers and always visible with a 44px target on coarse pointers. cells draw no
+type prefix; artwork or initials identify the source. grids use 6.5rem minimum
+columns, with 20px row and 16px column gaps.
 hosts hide whole `data-action-control-key` wrappers; action components do not
 infer placement from density. standalone preview controls retain their own layout.
 external media rows expose the same more trigger at every width.
@@ -625,6 +669,10 @@ reserve no gutter. podcast list artwork uses a fixed 44px square (`--size-xl`),
 `--space-2` gap, `--radius-sm` corners and `--surface-2` background. containment
 preserves the complete publisher image and can letterbox it. existing compact
 title clamping, metadata ellipsis and status placement remain in force.
+`Artwork size="fill"` fills a square caller-sized box without numeric image
+dimensions; container-relative initials retain the same geometry through absent,
+loading, failed and loaded art. library source lines use 32px covers, 44px with
+any coarse pointer; title pages and cells can be larger.
 
 row defaults yield to each control's owned minimum target size. responsive
 placement follows the resource presentation contract above.

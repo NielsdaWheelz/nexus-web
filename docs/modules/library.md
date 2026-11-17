@@ -19,8 +19,8 @@ effective union membership as `all_membership.included` and physical personal
 retention as `all_membership.retained`; effective all membership alone does not
 prove personal retention.
 
-entries contain only media. feed subscriptions are independent rules, read in
-a separate section above contents; sources never fold entries or enter media sort,
+entries contain only media. feed subscriptions are independent rules, drawn as
+ledger lines above contents, one cover strip per nonempty kind; sources never fold entries or enter media sort,
 counts, order or paging. the rule requires every known entry as a physical
 membership in its exact library and delivers later discoveries there.
 [feeds](feeds.md) owns admission, finite work and scoped stop; the library

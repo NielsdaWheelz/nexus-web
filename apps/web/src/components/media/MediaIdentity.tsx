@@ -2,10 +2,6 @@
 
 import * as Icon from "@/lib/ui/icons";
 import IndexBibliography from "@/components/resources/IndexBibliography";
-import {
-  collectionActivityText,
-  collectionConsumptionText,
-} from "@/components/collections/collectionRowFormatting";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
 import { cx } from "@/lib/ui/cx";
 import styles from "./MediaIdentity.module.css";
@@ -17,10 +13,28 @@ export function MediaTitle({ subject, className }: { subject: MediaSubject; clas
 
 /** Passive saved-position facts; authoritative state wins over percentage and time. */
 export function MediaFacts({ summary }: { summary: MediaSummary }) {
-  const { consumption, duration } = summary;
-  const { state, progress } = consumption;
-  const remaining = state !== "Finished" && duration !== null && duration.estimate.remaining_minutes !== null
-    ? collectionActivityText({ kind: "RemainingTime", modality: duration.modality, minutes: duration.estimate.remaining_minutes }) : null;
+  const { consumption: { state, progress }, duration } = summary;
+  let consumptionText: string;
+  switch (state) {
+    case "Unread": consumptionText = "unread"; break;
+    case "Finished": consumptionText = "finished"; break;
+    case "InProgress": consumptionText = progress !== null
+      ? `in progress; saved position ${Math.round(progress * 100)}%` : "in progress; percentage unavailable"; break;
+  }
+  let remaining: { readonly visible: string; readonly accessible: string } | null = null;
+  if (state !== "Finished" && duration !== null && duration.estimate.remaining_minutes !== null) {
+    const minutes = duration.estimate.remaining_minutes;
+    // The estimate is a known nonnegative integer number of minutes.
+    let visible = minutes > 9 * 525600 ? ">9y" : `${Math.ceil(minutes / 525600)}y`;
+    for (const [unitMinutes, unit] of [[1, "m"], [60, "h"], [1440, "d"], [10080, "w"]] as const) {
+      const count = Math.ceil(minutes / unitMinutes);
+      if (count <= 99) { visible = `${count}${unit}`; break; }
+    }
+    remaining = {
+      visible,
+      accessible: `estimated ${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining to ${{ Read: "read", Listen: "listen at normal speed" }[duration.modality]}`,
+    };
+  }
   let sector: string | null = null;
   if (state === "InProgress" && progress !== null && progress > 0 && progress < 1) {
     const angle = 2 * Math.PI * progress;
@@ -35,7 +49,7 @@ export function MediaFacts({ summary }: { summary: MediaSummary }) {
         stroke="currentColor" strokeWidth="1.5" strokeDasharray={state === "InProgress" && progress === null ? "2 2" : undefined} />
       {sector ? <path d={sector} fill="currentColor" /> : null}
     </svg>}
-    <span className="sr-only">{collectionConsumptionText(consumption)}{remaining ? `; ${remaining.accessible}` : ""}.</span>
+    <span className="sr-only">{consumptionText}{remaining ? `; ${remaining.accessible}` : ""}.</span>
   </span>;
 }
 

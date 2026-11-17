@@ -40,7 +40,7 @@ function cloth(media: MediaSummary) {
 }
 
 function byline(media: MediaSummary): string {
-  return selectMediaAuthors(media.contributors).map(creditName).filter(name => name !== null).join(", ");
+  return selectMediaAuthors(media.contributors).flatMap(credit => creditName(credit)?.label ?? []).join(", ");
 }
 
 function BookInHand({ work, media, compact }: { work: Work; media: MediaSummary; compact: boolean }) {

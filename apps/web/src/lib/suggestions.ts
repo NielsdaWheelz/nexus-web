@@ -74,7 +74,6 @@ export function presentSuggestionItem({ target, rationale }: SuggestionItem): Co
       subtitle: target.subtitle,
       imageUrl: target.image_url,
       contributors: [],
-      recurring: null,
     }),
     context: rationale === null ? null : { kind: "Text", text: rationale },
     id: target.ref,

@@ -1,0 +1,199 @@
+/* A margin column holds the frontispiece and, below, the ledger's labels; the text column holds
+   the rest. The cover spans a flexible row, so its extra height falls below the text, never
+   between name and byline. */
+.page {
+  --ledger-label: 8rem;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: var(--ledger-label) minmax(0, 1fr);
+  grid-template-areas:
+    "cover head"
+    "cover body"
+    "lines lines";
+  grid-template-rows: auto 1fr auto;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3);
+  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+/* The wash: the cover again, blurred and faint, under everything the page paints. Shown only
+   once loaded. Its ceilings keep muted ink at 4.5:1 over any art: .18 press and solar, .20 study.
+   A replaced element ignores `inset` for its width, so the width is stated. */
+.wash {
+  position: absolute;
+  z-index: -1;
+  inset: -5rem calc(-1 * var(--space-6)) auto;
+  inline-size: calc(100% + 2 * var(--space-6));
+  block-size: 20rem;
+  object-fit: cover;
+  filter: blur(44px) saturate(1.3);
+  opacity: 0;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(black 30%, transparent 95%);
+  mask-image: linear-gradient(black 30%, transparent 95%);
+}
+
+.wash[data-loaded] {
+  opacity: 0.18;
+}
+
+:global([data-theme="light"]) .wash[data-loaded] {
+  opacity: 0.2;
+}
+
+.page > .cover {
+  grid-area: cover;
+  align-self: start;
+  border-radius: var(--radius-md);
+}
+
+.page > .cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 12%, transparent);
+  pointer-events: none;
+}
+
+.head {
+  grid-area: head;
+  display: flex;
+  min-inline-size: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  font: var(--name-font);
+  font-size: clamp(var(--text-2xl), 4.6cqi, var(--text-3xl));
+  line-height: 1.15;
+  letter-spacing: var(--tracking-tight);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+:global([data-theme="light"]) .name {
+  font-size: clamp(1.75rem, 5.4cqi, 2.25rem);
+  line-height: 1.1;
+}
+
+:global([data-theme="elvish"]) .name {
+  font-size: clamp(var(--text-3xl), 6cqi, var(--text-display-1));
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+}
+
+.byline {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.body {
+  grid-area: body;
+  display: flex;
+  min-inline-size: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.standfirst {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  max-inline-size: 60ch;
+  margin: 0;
+  color: var(--ink-muted);
+  font-family: var(--font-serif);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+/* Open, the publisher's paragraphs stand as written. */
+.standfirst[data-open] {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: none;
+  white-space: pre-wrap;
+}
+
+/* A quiet word's label meets the column edge, its padding outside it. */
+.word {
+  align-self: flex-start;
+  margin-inline-start: calc(-1 * var(--space-2));
+}
+
+.details {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.facts a {
+  display: inline-flex;
+  min-block-size: max(var(--size-sm), 2rem);
+  align-items: center;
+}
+
+.lines {
+  grid-area: lines;
+}
+
+/* A name with a menu keeps its long press for that menu. */
+.held {
+  -webkit-touch-callout: none;
+}
+
+@container primaryPane (max-width: 30rem) {
+  .page {
+    --ledger-label: 5rem;
+    grid-template-areas:
+      "cover head"
+      "body body"
+      "lines lines";
+    grid-template-rows: auto auto auto;
+  }
+
+  .standfirst {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@media (any-pointer: coarse), (max-width: 768px) {
+  .facts a {
+    min-block-size: var(--size-xl);
+  }
+}
+
+@media (forced-colors: active) {
+  .page > .cover::after {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
+
+@media (forced-colors: active), (prefers-contrast: more), (prefers-reduced-transparency: reduce), print {
+  .wash {
+    display: none;
+  }
+}

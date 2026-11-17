@@ -20,7 +20,7 @@
 }
 
 :global([data-theme]) .name {
-  font: var(--pane-section-title-font);
+  font: var(--name-font);
   font-size: clamp(var(--text-3xl), 7.5cqi, var(--text-display-1));
   line-height: 1.12;
   letter-spacing: -0.022em;

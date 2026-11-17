@@ -17,7 +17,6 @@
 
 .head h3 {
   margin: 0;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
+  font: var(--list-head-font);
   color: var(--ink-muted);
 }

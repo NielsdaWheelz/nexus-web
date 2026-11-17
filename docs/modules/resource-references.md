@@ -104,7 +104,10 @@ kind where the surface already holds it; never its body grammar or another
 resource's source. a collection row's media subject is that row's displayed
 identity. non-note index titles have one passive type prefix inside
 their existing activation; notes reserve no prefix space. rendered podcast
-artwork, including its initials tile, substitutes for that prefix. canonical
+artwork, including its initials tile, substitutes for that prefix. a source wall
+cell draws no type prefix: its square artwork or initials identify the source.
+the cell's cover and title share one navigation link; its menu remains outside.
+canonical
 collection `resourceRef` names the displayed resource and its menu subject;
 null-ref command rows retain their presentation. null-ref external media and
 shows draw their type and share the title edge of stored rows. generated `identity`
@@ -175,7 +178,9 @@ match, and its link retains that passage's exact activation. prose titles identi
 their source/kind rather than repeat the evidence. complete evidence requires
 navigation; the index never recursively expands matching results. failure marks
 decorate the existing stable more control, whose label names the real recovery
-destination. chat mutation failures retain their supplied commands and use the
+destination. source library lines and index cells carry no feed check/addition
+marks; those facts and their commands live on the source's title page.
+chat mutation failures retain their supplied commands and use the
 workspace condition owner. static unavailable rows show a bounded reason.
 
 ordinary full passage bodies resolve frozen evidence against the observed capture

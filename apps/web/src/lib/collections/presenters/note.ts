@@ -18,8 +18,6 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     contributors: [],
     publicationDate: null,
     context: null,
-    activity: null,
-    exceptionalStatus: null,
     resourceRef: canonicalResourceRef({ scheme: "page", id: item.id }),
     selected: false,
   };
