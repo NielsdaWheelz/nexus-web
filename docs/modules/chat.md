@@ -14,7 +14,7 @@ opening an earlier message changes the visible window, never the append destinat
 | `schemas/chat.py`, `api/routes/chat.py` | typed turn, timeline and command boundaries |
 | `chat/admit.py`, `chat/deletion.py` | client run uuid, exact generation choice, account sequence and deletion fence |
 | `chat/timeline.py` | bounded pair windows, terminal-turn deletion, individual message read and run horizon |
-| `chat/context.py`, `chat/references.py` | execution-time brief, mandatory saved attachments and bounded settled history |
+| `chat/context.py`, `chat/references.py` | execution-time brief, mandatory saved attachments and receipts, shared orientation and bounded settled history |
 | `services/live_references.py` | current structural coordinates, quote availability, private annotation authority |
 | `chat/retrievals.py`, `chat/citations.py` | bounded saved evidence, resource targets, message-owned citation ordinals |
 | `chat/events.py`, `chat/worker.py` | fifo head admission, durable frames, sole terminal fold and generation |
@@ -94,9 +94,9 @@ alone never authorizes its body.
 stream pages keep their own snapshot: text pages hydrate nothing, start frames
 exclude later results, and result frames hydrate only that page's retrievals.
 
-foreground tools may read authorized account resources. every message access is
+foreground tools may read authorized account resources. every local message access is
 bounded by the run's horizon: its current question and earlier settled pairs only.
-later queued questions cannot enter an earlier run through attachments or tools.
+later queued questions cannot enter an earlier run through local attachments or resource tools.
 failed/cancelled answers are explicitly incomplete and retain completed-action
 receipts. mandatory request/brief/attachments that cannot fit settle
 `context_too_large`; they are never silently truncated.
@@ -122,12 +122,53 @@ status/error, refs, created-effect refs and undo state. intentional authored out
 belong to their canonical resources. optional jarvis saves use the account uuid as
 the sole timeline association and the tool-call uuid as exact submission identity.
 
+## historical orientation
+
+each fresh owner chat generation receives the external shared-memory view when its
+admitted memory plan and current configured owner/processor grant agree. helpers,
+editorial jobs, other accounts and disconnected clients receive none. both native
+and provider routes consume the same assembled input; the active tool loop stays
+unchanged. `tools/memory.py` uses the existing client and shared renderer; nexus owns
+no tree, compactor or cached substitute.
+
+preparation releases database locks before network access and rechecks the run,
+claim and cancellation before assembling. one frozen `memory.view` snapshot must
+reach its final page within a single twenty-second preparation deadline. all nodes
+cover its ready `[0, through)` prefix in order and fit the shared 128,000-byte
+rendered-view limit. partial, inconsistent, cyclic or oversized responses become
+explicit unavailable orientation. expected transport/auth/protocol errors and stale
+cursors also continue chat with a content-free unavailable code; cancellation and
+defects propagate. no automatic retry, cache or wait for capture/compaction.
+
+the prompt reports ready and admitted boundaries. they do not measure unpublished
+source capture: a previous turn can still be local, pending upload, or awaiting
+central compaction. exact recent turns remain eligible independently of the view.
+shared history is an execution-time snapshot across sources, not a local message
+horizon; see [the source-horizon limitation](../issues/shared-memory-turn-horizon.md).
+
+budget exact current input, the manual reading brief, required authorized
+attachments and completed-action receipts before optional transcript prose.
+receipts cover the retry parent and the same latest hundred settled candidates
+considered for history, even when their prose cannot fit. the complete view and its
+shared guidance are also required when available. all use the admitted model token
+budget and chat's 512-kib input limit, including framing and escaping. inability to
+fit required context settles `context_too_large`; nothing is clipped or replaced by
+a summary. remaining space takes newest whole settled pairs in chronological order.
+
+shared guidance owns orientation-first navigation: zoom a useful route, search when
+the view supplies none, and open retained originals for wording, provenance or
+disagreement. user preferences and decisions remain useful defaults subject to
+correction and staleness. current input governs; history grants no permission.
+source omissions remain explicit and mutable external facts require current reads.
+implementation does not activate private access or capture; the
+[release handoff](../issues/release-memory-capture.md) owns that cutover.
+
 ## presentation
 
 one transcript keeps its generation control and send; queued turns are visible
 and individually cancellable. a selection without a question opens an
 attached empty composer. corrections are follow-ups. the settings-owned reading
-brief is manual; chat has no brief-writing tool or automatic orientation document.
+brief is manual; chat has no brief-writing tool or locally maintained orientation document.
 
 each turn is one unpositioned article containing the labelled question and answer
 groups. the question is its literal `h2`; more than 280 utf-16 units or a blank

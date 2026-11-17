@@ -165,6 +165,17 @@ to its owner on a processor chain it allows. One MCP session per call, never
 resent; the server must answer one bounded text item. `memory.save_note` is a Write
 outside the cap, the history and undo (D-Q3).
 
+the same client prepares complete frozen view pages for automatic
+[owner-turn orientation](chat.md#historical-orientation). this is host context
+preparation, not a model tool invocation or an operational receipt. it uses the
+same current owner/processor grant and typed remote failure boundary. the full
+preparation has one twenty-second deadline, independent of later model calls.
+
+the root dependency override retains nexus's pinned `llm-tools` runtime and web
+wire contract while adopting shared orientation guidance. shared memory consumes
+the same portable tool declarations and prompt renderer; its newer default web
+tool revision is not required by this client.
+
 the required `capture` and `admit` flags also govern future turn admission into
 [shared capture](memory-capture.md), independently of `connect`. a configured
 capture-only owner retains this file with `connect=false` and `bearer=null`;

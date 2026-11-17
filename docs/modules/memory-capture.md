@@ -6,6 +6,13 @@ durable librarian turns. shared-memory reads and explicit note saves remain with
 `universal-memory` library hosted by jarvis. this adopts jarvis adr 0070's source
 contract, `nexus-turn-capture-v1`.
 
+automatic [chat orientation](chat.md#historical-orientation) reads a frozen ready
+shared view independently of capture. terminal settlement, periodic publication
+and host compaction are separate stages; a new question does not wait for its
+predecessor to reach them. ready/admitted positions describe central progress only,
+never pending local exports or uncaptured external events. recent exact context
+bridges some of this delay without claiming read-after-write memory consistency.
+
 ## admission and persistence
 
 the existing account mutex fixes one capture uuid and the first eligible question

@@ -17,8 +17,10 @@ separate instruction. current owners: [chat](modules/chat.md),
   time/progress selection through the existing shared primitives.
 - curation uses existing available resources and feed entries only. existing
   explicit browse/search remains; no new ingestion connector.
-- one optional, manually edited reading brief in librarian settings. no automatic
-  orientation, inferred profile, brief-writing tool or memory tree.
+- one optional, manually edited reading brief in librarian settings. authorized
+  owner turns receive automatic external shared-memory orientation under the
+  [chat contract](modules/chat.md#historical-orientation). no inferred profile,
+  brief-writing tool or nexus-owned memory tree.
 - chat stores messages and saved source quotes. words survive source edits and
   disappearance; opening uses current access and unique exact-word placement.
 - retain existing reading, saving, playback, source acquisition, authored writing,
@@ -30,8 +32,7 @@ non-goals: engagement optimization, infinite scroll recommendations, notificatio
 campaigns, a new agent runtime, active-turn steering, successful-answer regeneration,
 sent-prompt editing, generalized migration/import machinery, new upload features,
 automatic library additions or graph links merely because something was recommended.
-deferred: [orientation](issues/librarian-orientation.md) and
-[external discovery](issues/librarian-external-discovery.md).
+deferred: [external discovery](issues/librarian-external-discovery.md).
 
 ## product and content contract
 

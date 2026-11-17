@@ -8,6 +8,15 @@ are disabled. private read-only mounts and the four locked dependency commits
 are verified in the running cohort. activation and real central delivery remain
 unperformed.
 
+automatic owner-turn orientation is a separate source change on top of these
+disabled declarations. deploying it alone grants no reads and enables no capture.
+after private activation, verify both provider and native owner turns receive all
+pages of the shared ready view, report backlog/capture limits, and recover an old
+topic outside recent transcript context through zoom/open. verify an unavailable
+service yields an explicit limitation with ordinary chat, and other accounts and
+helpers receive no shared content. source probes do not establish installed recall
+or its usefulness.
+
 source qualification passed for `12f74c865eb289e186ff33b310f8d34a28c9220d`:
 authenticated send/cancel/retry, all six memory tools collectively across paid
 provider/native journeys, typed outage continuation and exact `Call.id` replay

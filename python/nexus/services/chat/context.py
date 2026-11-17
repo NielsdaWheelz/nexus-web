@@ -1,4 +1,4 @@
-"""Execution-time context: current brief, live references and bounded settled turns."""
+"""Exact turn inputs and receipts, shared orientation, then bounded settled prose."""
 
 import json
 from dataclasses import dataclass
@@ -8,6 +8,7 @@ from xml.sax.saxutils import escape
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from universal_memory.tools import ORIENTATION_GUIDANCE
 
 from nexus.db.models import ChatRun, Message, User
 from nexus.schemas.live_reference import SavedReference
@@ -40,7 +41,7 @@ SYSTEM_PROMPT = (
 
 
 class ContextTooLarge(ValueError):
-    """Mandatory request, brief or attachments exceed the accepted model/input budget."""
+    """Required turn data or complete orientation exceed the accepted input budget."""
 
 
 @dataclass(frozen=True)
@@ -54,15 +55,15 @@ def tokens(value: str) -> int:
     return max(ceil(len(value) / 3), len(value.split()) * 2, non_ascii) + 4
 
 
-def _completed_actions(db: Session, run_id: UUID) -> str:
+def _completed_actions(db: Session, run_ids: list[UUID]) -> str:
     rows = (
         db.execute(
-            text("""SELECT t.id,t.tool_id,t.created_refs,t.reverted_at,
+            text("""SELECT g.owner_id AS run_id,t.id,t.tool_id,t.created_refs,t.reverted_at,
         CASE WHEN t.tool_id='memory.save_note' THEN t.result #>> '{value,id}' END AS memory_receipt_id
         FROM tool_calls t JOIN llm_calls g ON g.id=t.generation_id
-        WHERE g.owner_kind='chat_run' AND g.owner_id=:id AND t.status='complete'
-        AND (t.created_refs<>'[]'::jsonb OR t.tool_id='memory.save_note') ORDER BY t.position"""),
-            {"id": run_id},
+        WHERE g.owner_kind='chat_run' AND g.owner_id=ANY(:ids) AND t.status='complete'
+        AND (t.created_refs<>'[]'::jsonb OR t.tool_id='memory.save_note') ORDER BY g.owner_id,t.position"""),
+            {"ids": run_ids},
         )
         .mappings()
         .all()
@@ -70,10 +71,14 @@ def _completed_actions(db: Session, run_id: UUID) -> str:
     return json.dumps([dict(row) for row in rows], default=str)
 
 
-def assemble(db: Session, *, run: ChatRun, context_budget: int) -> Assembly:
+def assemble(
+    db: Session, *, run: ChatRun, context_budget: int, orientation: str | None
+) -> Assembly:
     user = db.get_one(Message, run.user_message_id)
     brief = db.get_one(User, run.owner_user_id).reading_brief
     instructions = SYSTEM_PROMPT
+    if orientation is not None:
+        instructions += "\n\n" + ORIENTATION_GUIDANCE
     blocks = ([f"<reading_brief>\n{escape(brief)}\n</reading_brief>"] if brief else []) + [
         f"<current_user>\n{user.content}\n</current_user>"
     ]
@@ -124,19 +129,6 @@ def assemble(db: Session, *, run: ChatRun, context_budget: int) -> Assembly:
         blocks.insert(-1, block)
         tokens_left -= tokens(block)
         bytes_left -= len(block.encode()) + 2
-    if run.retry_of_run_id is not None:
-        block = (
-            "retry of run "
-            + str(run.retry_of_run_id)
-            + "; completed actions: "
-            + _completed_actions(db, run.retry_of_run_id)
-        )
-        blocks.insert(-1, block)
-        tokens_left -= tokens(block)
-        bytes_left -= len(block.encode()) + 2
-    if tokens_left < 0 or bytes_left < 0:
-        raise ContextTooLarge("mandatory context exceeds the model or input budget")
-    history: list[str] = []
     candidates = db.execute(
         text("""SELECT r.id,r.status,r.retry_of_run_id,r.user_message_id,r.assistant_message_id,
         octet_length(q.content)+octet_length(a.content) AS size
@@ -145,10 +137,28 @@ def assemble(db: Session, *, run: ChatRun, context_budget: int) -> Assembly:
         ORDER BY q.seq DESC LIMIT 100"""),
         {"viewer": run.owner_user_id, "seq": user.seq},
     ).all()
+    receipt_runs = [candidate.id for candidate in candidates]
+    if run.retry_of_run_id is not None:
+        receipt_runs.append(run.retry_of_run_id)
+        block = "retry of run " + str(run.retry_of_run_id)
+        blocks.insert(-1, block)
+        tokens_left -= tokens(block)
+        bytes_left -= len(block.encode()) + 2
+    receipts = _completed_actions(db, receipt_runs)
+    if receipts != "[]":
+        block = f"<completed_actions>{escape(receipts)}</completed_actions>"
+        blocks.insert(-1, block)
+        tokens_left -= tokens(block)
+        bytes_left -= len(block.encode()) + 2
+    if orientation is not None:
+        blocks.insert(0, orientation)
+        tokens_left -= tokens(orientation)
+        bytes_left -= len(orientation.encode()) + 2
+    if tokens_left < 0 or bytes_left < 0:
+        raise ContextTooLarge("mandatory context exceeds the model or input budget")
+    history: list[str] = []
     for candidate in candidates:
-        receipts = _completed_actions(db, candidate.id)
         opening = f'<turn run="{candidate.id}" status="{candidate.status}" retry_of="{candidate.retry_of_run_id or ""}">\n'
-        actions = f"<completed_actions>{escape(receipts)}</completed_actions>\n</turn>"
         block = None
         if candidate.size <= bytes_left:
             question = db.get_one(Message, candidate.user_message_id)
@@ -164,25 +174,19 @@ def assemble(db: Session, *, run: ChatRun, context_budget: int) -> Assembly:
                 + f'<user ref="message:{question.id}">{escape(question.content)}</user>\n'
                 + f"<references>{escape(references_json)}</references>\n"
                 + f'<assistant ref="message:{answer.id}" incomplete="{str(candidate.status != "complete").lower()}">{escape(answer.content)}</assistant>\n'
-                + actions
+                + "</turn>"
             )
         if block is None or len(block.encode()) + 2 > bytes_left or tokens(block) > tokens_left:
-            if candidate.status == "complete" or receipts == "[]":
-                break
-            block = (
-                opening
-                + "<text_omitted>earlier question and incomplete answer omitted for space</text_omitted>\n"
-                + actions
-            )
-        size, cost = len(block.encode()) + 2, tokens(block)
-        if size > bytes_left or cost > tokens_left:
             break
+        size, cost = len(block.encode()) + 2, tokens(block)
         history.insert(0, block)
         bytes_left -= size
         tokens_left -= cost
     return Assembly(
         GenerationIntent(
-            instructions=instructions, input="\n\n".join([*history, *blocks]), output=TextOutput()
+            instructions=instructions,
+            input="\n\n".join([*blocks[:-1], *history, blocks[-1]]),
+            output=TextOutput(),
         ),
         tuple(attached),
     )
