@@ -31,5 +31,12 @@ with no swap after ordinary search exhausted the old limit. the eight backend
 ceilings now total 3888 mib; they are not reservations. developer sessions remain
 bounded at 3 gib, and frontend, jarvis, host services and maintenance still count.
 current host headroom permits the increase but does not establish unrestricted
-overlap. qualify the failed ordinary search alongside the required frontend build;
-retain allocator attribution and broader workload headroom as explicit limits.
+overlap. allocator attribution and broader workload headroom remain explicit
+limits; no further overlap campaign is selected.
+
+2026-11-17 `6d130e45c`: query repairs removed the observed ordinary-use refusal
+cascade in one retained browser journey, with 86 completed account requests
+all successful; the interval also contained 24 successful health checks. this is useful-work evidence, not aggregate query-time memory
+headroom. separately, the one fixed isolated diagnostic kept api/postgres
+identities and comparable cgroup epochs unchanged, with zero oom/oom_kill deltas.
+those distinct intervals do not establish unrestricted overlap or a reserve.
