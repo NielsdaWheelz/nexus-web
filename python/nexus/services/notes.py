@@ -13,10 +13,10 @@ from datetime import date, datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyPageBinding, NoteBlock, Page
+from nexus.db.models import DailyPageBinding, Page
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 
@@ -58,18 +58,6 @@ def page_facts(db: Session, viewer_id: UUID, page_ids: Sequence[UUID]) -> dict[U
         )
         for row in rows
     }
-
-
-def count_retained_note_blocks(
-    db: Session, *, viewer_id: UUID, start: datetime | None, end: datetime
-) -> int:
-    """Visible viewer-owned note blocks by creation time."""
-    query = select(func.count()).where(
-        NoteBlock.user_id == viewer_id, NoteBlock.authored_visible, NoteBlock.created_at < end
-    )
-    if start is not None:
-        query = query.where(NoteBlock.created_at >= start)
-    return int(db.scalar(query) or 0)
 
 
 def recent_note_anchor_facts(

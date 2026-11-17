@@ -26,13 +26,13 @@ the incoming command once. restored data never dispatches commands.
 
 - **Lectern is home.** `/lectern` is the canonical authenticated home, the brand
   destination, and the first visible navigation item.
-- **Browse, Podcasts, and Chats remain primary.** Atlas and Oracle are present
+- **browse, podcasts, and librarian remain primary.** Atlas and Oracle are present
   but do not displace discovery, listening, and conversation tasks.
-- **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
-  Chats, Notes, Atlas, Oracle.
-- **mobile places order is exact:** today, librarian, lectern, libraries,
+- **desktop rail order is exact and flat:** lectern, stats, libraries, browse,
+  podcasts, librarian, notes, atlas, oracle.
+- **mobile places order is exact:** today, librarian, lectern, stats, libraries,
   podcasts, notes, browse, feeds, atlas, oracle, then import. the thumb index
-  presents signs on a horizontally scrolling rule; stats remains in account.
+  presents signs on a horizontally scrolling rule.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
@@ -40,7 +40,7 @@ the incoming command once. restored data never dispatches commands.
 on desktop, all imports belongs under account; it has no standalone destination
 in the rail. the footer's `Import` action opens the intake page. its unsettled
 count (`Import · {n}`) is distinct from the account's needs-attention count.
-the shared account menu is exactly stats, imports, downloads when available,
+the shared account menu is exactly imports, downloads when available,
 settings, a separator, and danger-last sign out. imports retains its canonical
 `/imports` link, query/deep links, inspector and contextual acquisition entrances.
 the mobile nexus account mark ends the legend while the field is empty and
@@ -430,8 +430,8 @@ declare `sectionDestinationId` because their header has no section identity:
 - `/podcasts/{id}` keeps **Podcasts** active;
 - the librarian and message anchors keep **librarian** active;
 - pages and note blocks keep **Notes** active;
-- Atlas, Oracle, and Lectern map to their own destinations;
-- Stats, Imports (including query variants), and Settings mark account current
+- atlas, oracle, lectern and stats map to their own destinations;
+- imports (including query variants) and settings mark account current
   without creating a selected rail destination. `activeId` also marks the shared
   account menu's corresponding item current.
 

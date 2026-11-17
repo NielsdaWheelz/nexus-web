@@ -69,7 +69,7 @@ export function groupContributorCredits(
   });
 }
 
-/** The handle grammar, for url state that carries a handle (stats). */
+/** The handle grammar, for contributor route identities. */
 export function isContributorHandle(value: string): boolean {
   return (
     value.length >= 3 &&

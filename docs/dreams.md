@@ -74,8 +74,7 @@ In order:
   `structured_synthesis` schema), not a thread. Later heresy worth revisiting:
   **the Interlocutor** — answers stream into a page you own; the transcript
   dies.
-- **Printed projections** — **Year in Reading** (critic's letter, cited),
-  **Quarterly** (most-connected marginalia as a printable journal), **Standing
+- **printed projections** — **quarterly** (most-connected marginalia as a printable journal), **Standing
   Volume** (the library continuously composed as one book; `Cmd-P` to a press).
 - **Ambient Frame** — chromeless `/ambient` route for an e-ink wall frame:
   yesterday's reading, newest resonances, one thing long unopened.
@@ -85,9 +84,7 @@ In order:
 - Ambient tools die of resurfacing fatigue; never build the feed.
 - **Vespers**: a once-a-day, summoned-only composed reading of what settled
   since the last visit. No badges, no counts, ever.
-- **Stats** is the separate factual lane: observed time, sessions, progress,
-  and deterministic Year in Reading. It does not become a ritual, feed, or
-  badge system.
+- **stats** is the reading record: landscape, slip and stack, outside reading.
 - **Temporal Echo**: a highlight from this date in a prior year, verbatim, no
   prompt attached. **Drift Protocol**: the old highlight nothing ever connected
   to, given one more chance. Both ~SQL-only weekends.
@@ -131,8 +128,8 @@ In order:
 - **Marginalia heresy** (edges demoted to an index over prose) — the flat edge
   table stays sovereign; but steal the half-idea: Synapse rationales deserve to
   be read as prose, not compressed into "↳ 3".
-- Badges, leaderboards, and gamified streak rewards. The factual Stats streak
-  is history, not a reward loop; ritual remains separate.
+- leaderboards, a feed, and rewards for keeping a streak alive remain declined.
+  the factual weeks-running figure records history; ritual remains separate.
 
 ## If only one thing
 

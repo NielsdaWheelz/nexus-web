@@ -7,11 +7,12 @@ import {
   collectionConsumptionText,
 } from "@/components/collections/collectionRowFormatting";
 import type { MediaSubject, MediaSummary } from "@/lib/media/mediaSummary";
+import { cx } from "@/lib/ui/cx";
 import styles from "./MediaIdentity.module.css";
 
 /** Canonical title phrasing, also safe inside an atomic reference link. */
-export function MediaTitle({ subject }: { subject: MediaSubject }) {
-  return <span className={styles.title} dir="auto">{subject.kind === "Stored" ? subject.summary.title : subject.title}</span>;
+export function MediaTitle({ subject, className }: { subject: MediaSubject; className?: string }) {
+  return <span className={cx(styles.title, className)} dir="auto">{subject.kind === "Stored" ? subject.summary.title : subject.title}</span>;
 }
 
 /** Passive saved-position facts; authoritative state wins over percentage and time. */

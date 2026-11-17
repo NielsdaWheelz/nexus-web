@@ -14,6 +14,7 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import type { FindSession } from "@/lib/find/useFind";
 import { mediaSummaryFromDetail, type MediaDetail } from "@/lib/media/mediaDetail";
 import { useMediaSummaries } from "@/lib/media/MediaSummaryProvider";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 import { usePaneChrome, usePaneLayout } from "@/lib/panes/paneChrome";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 import { getDestination } from "@/lib/navigation/destinations";
@@ -46,7 +47,7 @@ export function useReaderChrome(input: {
   readonly isMobile: boolean;
   readonly paneActive: boolean;
   /** Esc with nothing else to close: drop the active deep-link target. */
-}): { readonly head: DocumentReaderViewProps["head"] } {
+}): { readonly head: DocumentReaderViewProps["head"]; readonly summary: MediaSummary | null } {
   const { media, reader, find, readable, isMobile, paneActive } = input;
   const { ctx } = useActionRuntime();
   const runtime = requirePaneRuntime(usePaneRuntime(), "useReaderChrome");
@@ -192,5 +193,5 @@ export function useReaderChrome(input: {
       document.removeEventListener("keydown", keydown);
     };
   }, [ctx, id, media.title, paneActive, paneId, profile.focus_mode, requestSecondarySurface, setFocusMode, toggleSecondaryPane]);
-  return { head: isMobile ? undefined : navigation };
+  return { head: isMobile ? undefined : navigation, summary };
 }

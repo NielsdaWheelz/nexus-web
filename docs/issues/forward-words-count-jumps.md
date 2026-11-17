@@ -1,22 +1,19 @@
-# forward words count jumps and impossible positions as reading
+# activity ingest accepts positions beyond a work's length
 
-status: open · found 2026-11-16 by reading at `fcd6843db` and in the lab · area: consumption activity
+status: open · found 2026-11-16 · area: consumption activity
 
-problem: `forward_word_position` sums `greatest(0, word_end - word_start)` per span with
-no ceiling (`python/nexus/services/consumption/stats.py:168,194-195`). a contents or
-search jump inside one 30-second span counts the whole skipped distance as read.
-ingest never checks positions against the work's length or kind
-(`python/nexus/services/consumption/activity.py:28-60` checks only the time window,
-read access, capture keys and overlap).
+ingest validates the time window, access, capture identity and overlap, but not
+word positions against the work's length or kind
+(`python/nexus/services/consumption/activity.py`, `record`). a client defect can
+therefore store impossible positions. ordinary pdf clients send no word pair,
+but a crafted activity batch can supply one.
 
-evidence: a lab seed that posted word positions for a 25-page pdf showed
-"diffusion.pdf · 8h 2m · 113,972 words" in stats (screenshot `now-dark-week-2.png`,
-2026-11-15). the real web client sends no words for pdfs, so this needed a crafted
-request, but any client defect would land the same way.
+the reading record excludes implausible jumps from coverage and pace while
+retaining their observed time (`stats.py`, `_base_sql`). that repairs the
+record's interpretation; it does not validate the source measurements.
 
-proposed fix: a per-span ceiling (about 900 words a minute for text; 0.25 pages a second
-for pdf progress; audio position advancing more than 4× the wall clock) applied to
-forward totals, and ingest refusing word positions beyond the work's word count.
+fix: validate supplied positions against the canonical work's measurement and
+length at ingest, without inventing observed progress for missing measurements.
 
-resolved when: a span that jumps 20,000 words in 10 seconds adds nothing to forward
-movement, and a word position beyond the work's length is refused or clamped.
+resolved when an activity request with word positions beyond the work's length
+is refused or explicitly clamped under the chosen ingest contract.

@@ -115,7 +115,7 @@ export default [
       "src/app/apple-icon.tsx",
       "src/app/login/LoginPageClient.tsx",
       "src/app/(authenticated)/oracle/ornaments.tsx",
-      "src/app/(authenticated)/stats/StatsPaneBody.tsx",
+      "src/app/(authenticated)/stats/Landscape.tsx",
       "src/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody.tsx",
       "src/components/AsterismMark.tsx",
       "src/components/media/MediaIdentity.tsx",

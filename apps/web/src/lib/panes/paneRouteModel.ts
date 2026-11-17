@@ -309,7 +309,7 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
       ? panePresentationLocatorKey(titleLocator)
       : previewTarget ? `preview:${previewTarget}` : null;
     const defaultLabel = id === "dailyDate" ? `journal · ${pageTitle("", params.localDate!)}`
-      : id === "stats" && url?.searchParams.get("view") === "year" ? "Year in Reading" : traits.defaultLabel;
+      : traits.defaultLabel;
     return { ...traits, defaultLabel, id, pathname, params, routeKey, locator, resourceKey, titleLocator, titleKey };
   }
   return {

@@ -3,7 +3,8 @@
 A span's ``capture_key`` is its identity: a resent key stores nothing, a key reused with other
 facts refuses the batch (I11). Spans too old, in the future or overlapping their predecessor
 are skipped, never stored; the rest of the batch lands (one bad span no longer loses its batch).
-An exclusion names one exact all-time session; at most one is active per session.
+Every accepted exclusion id retains a row. Active rows for one exact all-time session
+count as one logical exclusion.
 """
 
 from __future__ import annotations
@@ -74,8 +75,10 @@ def record(viewer_id: UUID, device_id: str, body: ActivityRecordIn) -> None:
 
 
 def exclude(viewer_id: UUID, exclusion_id: UUID, body: ExcludeSessionIn) -> None:
-    """Stop counting one exact current session. Retry: the same id answers its row; another
-    viewer's id is 409; a session already excluded under another id is success."""
+    """Stop counting one exact current session, retaining every accepted create id.
+
+    Retry answers its row; another viewer's id is 409. Active duplicates count once.
+    """
 
     def run(db: Session) -> None:
         if body.started_at >= body.ended_at:
@@ -91,14 +94,15 @@ def exclude(viewer_id: UUID, exclusion_id: UUID, body: ExcludeSessionIn) -> None
         if not can_read_media(db, viewer_id, body.media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         params = {"id": exclusion_id, "viewer_id": viewer_id} | body.model_dump()
-        # One active exclusion per session (I16): the viewer lock serializes this check.
-        if db.scalar(
+        # The viewer lock serializes admission; active identical rows are one logical sitting.
+        already_excluded = db.scalar(
             text(f"""SELECT 1 FROM consumption_activity_exclusions
                      WHERE user_id = :viewer_id AND {_SESSION} AND restored_at IS NULL"""),
             params,
+        )
+        if not already_excluded and not stats.exact_session_exists(
+            db, viewer_id=viewer_id, **body.model_dump()
         ):
-            return
-        if not stats.exact_session_exists(db, viewer_id=viewer_id, **body.model_dump()):
             raise InvalidRequestError(message="Exclusion must name one exact current session")
         db.execute(
             text("""
@@ -113,18 +117,22 @@ def exclude(viewer_id: UUID, exclusion_id: UUID, body: ExcludeSessionIn) -> None
 
 
 def restore(viewer_id: UUID, exclusion_id: UUID) -> None:
-    """Count an excluded session again, restoring every active exclusion of its session (older
-    duplicates included); already restored is success, unknown is 404."""
+    """Count one logical sitting again, restoring its active exclusion rows.
+
+    An already restored id succeeds without touching later exclusions; unknown is 404.
+    """
 
     def run(db: Session) -> None:
         params = {"id": exclusion_id, "viewer_id": viewer_id}
         session = db.execute(
-            text("""SELECT media_id, modality, device_id, started_at, ended_at
+            text("""SELECT media_id, modality, device_id, started_at, ended_at, restored_at
                     FROM consumption_activity_exclusions WHERE id = :id AND user_id = :viewer_id"""),
             params,
         ).one_or_none()
         if session is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Exclusion not found")
+        if session.restored_at is not None:
+            return
         db.execute(
             text(f"""UPDATE consumption_activity_exclusions SET restored_at = now()
                      WHERE user_id = :viewer_id AND {_SESSION} AND restored_at IS NULL"""),

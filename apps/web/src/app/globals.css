@@ -9,6 +9,32 @@
     var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
 
+  --paper-ink: #2a2520;
+  --paper-muted: #6a6152;
+  --paper-finish: #a37b2a;
+  --stamp-1: #8e86c8;
+  --stamp-2: #7164ba;
+  --stamp-3: #53459f;
+  --stamp-4: #342977;
+  --cloth-1: #135a63;
+  --cloth-2: #74262a;
+  --cloth-3: #4c5d6a;
+  --cloth-4: #9a4a21;
+  --cloth-5: #55304f;
+  --cloth-6: #bd8a3a;
+  --cloth-7: #1c3159;
+  --cloth-8: #35322b;
+  --cloth-ink-1: #eee6d0;
+  --cloth-ink-2: #f2e7cf;
+  --cloth-ink-3: #ece6d6;
+  --cloth-ink-4: #f4e8cc;
+  --cloth-ink-5: #ecdfd8;
+  --cloth-ink-6: #2a1f0c;
+  --cloth-ink-7: #e7e0ca;
+  --cloth-ink-8: #ddd6c3;
+  --cloth-paper: #d8ccb0;
+  --cloth-paper-ink: #3a3226;
+
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
@@ -134,6 +160,10 @@ html:root[data-theme="light"],
 :root,
 [data-theme="dark"] {
   --font-serif: ui-serif, Charter, Georgia, "Times New Roman", Times, serif;
+  --paper: #d8ceb6;
+  --paper-off: #cbc0a6;
+  --paper-rule: #b2a583;
+  --finish: #c4a472;
 
   --highlight-yellow: rgba(249, 226, 175, 0.4);
   --highlight-green: rgba(166, 227, 161, 0.35);
@@ -192,6 +222,10 @@ html:root[data-theme="light"],
 
 /* The Study. */
 [data-theme="light"] {
+  --paper: #f1e9d6;
+  --paper-off: #e6dcc5;
+  --paper-rule: #cbbe9f;
+  --finish: #9a7228;
   --highlight-yellow: rgba(255, 235, 59, 0.4);
   --highlight-green: rgba(76, 175, 80, 0.35);
   --highlight-blue: rgba(33, 150, 243, 0.35);
@@ -245,6 +279,10 @@ html:root[data-theme="light"],
 
 /* The Solar: green twilight, aged brass (not the brand gold), moon-metal. */
 [data-theme="elvish"] {
+  --paper: #d5d0b6;
+  --paper-off: #c8c3a7;
+  --paper-rule: #aeab8a;
+  --finish: var(--gilt-b);
   --highlight-yellow: rgba(249, 226, 175, 0.4);
   --highlight-green: rgba(166, 227, 161, 0.35);
   --highlight-blue: rgba(137, 180, 250, 0.35);

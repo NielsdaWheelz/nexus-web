@@ -31,7 +31,7 @@ import type { TargetActivationEvent } from "@/lib/ui/targetActivation";
 import { cx } from "@/lib/ui/cx";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkGuard } from "@/lib/unsavedWork";
-import { NAV_IMPORTS, NAV_SETTINGS, NAV_STATS, type NavItem } from "./navModel";
+import { NAV_IMPORTS, NAV_SETTINGS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 import accountStyles from "./AccountMenu.module.css";
 
@@ -198,7 +198,6 @@ export default function AccountMenu(props: {
 
   const options: ActionDescriptor[] = [
     ...latched ?? live,
-    link(NAV_STATS, props.activeId === "stats"),
     link(NAV_IMPORTS, props.activeId === "imports"),
     link(NAV_SETTINGS, props.activeId === "settings"),
     {

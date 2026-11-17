@@ -17,6 +17,13 @@ class MediaSummaryMetrics:
     source_section_count: int | None
 
 
+def pdf_pages_sql(media_alias: str) -> str:
+    """The PDF owner's page count, including pages without extracted text."""
+    return f"""coalesce(nullif({media_alias}.page_count, 0), (
+        SELECT count(DISTINCT p.page_number) FROM pdf_page_text_spans p
+        WHERE p.media_id = {media_alias}.id))"""
+
+
 def media_word_count_rows_sql() -> str:
     """Count displayed source occurrences, using stored fragment counts.
 
@@ -56,15 +63,7 @@ def load_media_summary_metrics(db: Session, media_id: UUID) -> MediaSummaryMetri
                         ELSE COALESCE(SUM(f.canonical_text_word_count), 0)
                    END AS word_count,
                    CASE
-                       WHEN m.kind = 'pdf' THEN COALESCE(
-                           NULLIF(m.page_count, 0),
-                           (
-                               SELECT COUNT(DISTINCT page_number)
-                               FROM pdf_page_text_spans
-                               WHERE media_id = m.id
-                           ),
-                           0
-                       )
+                       WHEN m.kind = 'pdf' THEN {pdf_pages_sql("m")}
                        WHEN m.kind IN ('podcast_episode', 'video') THEN COUNT(f.id)
                        ELSE NULL
                    END AS source_section_count

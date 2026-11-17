@@ -187,7 +187,8 @@ competes with system Back. Dismissal never risks silent data loss.
 ### 8. Calm is a product capability
 
 There is no infinite recommendation feed, streak pressure, unread shame,
-notification garden, or engagement machinery.
+notification garden. the record may count and draw what was read outside the
+reader, and never announces a loss.
 
 Home is deterministic and short. Resurfacing offers one considered memory, not
 a slot machine. The application protects attention instead of monetizing it.
@@ -1216,7 +1217,6 @@ Do not build yet:
 - OpenSearch or a vector service;
 - background autonomous filing;
 - social/collaboration features;
-- gamification;
 - a recommendation feed;
 - a plugin platform;
 - a universal drawer;

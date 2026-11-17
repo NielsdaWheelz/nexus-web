@@ -75,6 +75,18 @@ press `rgb(0 0 0 / 0.5)`, study `rgb(60 50 30 / 0.22)`, solar
 `--overlay-scrim-soft` retains its shared default. text on an 18% tint of its own tone (`Pill`) reads
 the tone's `--*-ink` step, which holds 4.5:1 over that tint.
 
+the reading record has three material palettes. `--paper`, `--paper-off` and
+`--paper-rule` paint the slip's ground, uncounted boxes and rules; these vary by
+room. shared `--paper-ink` and `--paper-muted` paint its type, and
+`--paper-finish` its completion points. `--stamp-1` through `--stamp-4` form the
+ordinal counted-time ink ramp. `--cloth-1` through `--cloth-8` and their matching
+`--cloth-ink-*` paint finished spines and open-work coverage; `--cloth-paper`
+and `--cloth-paper-ink` paint pdf and article spines. `--finish` is room-owned
+and marks a finished work and nothing else: its ridge and spine rules. these
+materials do not replace the room's ordinary surface and text roles. spine
+heights have a natural two-pixel minimum; years above 900 pixels shrink as a
+whole, including that minimum.
+
 the pane header's pointer role uses mono and machine ink in every room. the pending
 source body publishes the role; the shell applies it only to a retained visit hint.
 it changes neither the one heading nor the stored resource's canonical title.

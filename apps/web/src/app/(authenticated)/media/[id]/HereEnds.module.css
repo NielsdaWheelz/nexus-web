@@ -1,0 +1,24 @@
+.end {
+  max-inline-size: 50ch;
+  margin: 2px auto 0;
+  text-align: center;
+}
+
+.title {
+  margin: 6px 0 4px;
+  color: var(--ink);
+  font-family: var(--font-eb-garamond), var(--font-serif);
+  font-size: var(--text-3xl);
+  font-weight: 500;
+  line-height: 1.15;
+}
+
+.facts {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  text-wrap: balance;
+}
+
+.copy {
+  margin-block-start: var(--space-4);
+}

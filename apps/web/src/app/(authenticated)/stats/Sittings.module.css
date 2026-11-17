@@ -1,0 +1,6 @@
+.sittings { display: grid; gap: var(--space-6); min-width: 0; }
+.day { margin: 0 0 var(--space-2); color: var(--ink-muted); font: 500 var(--text-xs) var(--font-mono); }
+.rows { margin: 0; padding: 0; list-style: none; }
+.row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--edge-subtle); }
+.row > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.row s { color: var(--ink-muted); }

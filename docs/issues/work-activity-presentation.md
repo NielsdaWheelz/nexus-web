@@ -9,9 +9,9 @@ retrospective surface, but their facts and correction rules differ.
 evidence at `71bee9b5a`: `docs/modules/consumption-activity.md:14-29` owns observed
 duration and the first canonical media completion. ordinary unread/reset keeps
 that completion; exact undo may remove it. the owner chose task reopening to
-remove its completion from the journal. `StatsPaneBody.tsx:319-350` under
-`apps/web/src/app/(authenticated)/stats/` contains an inline read-only duration
-heatmap, not an existing shared interactive habit calendar.
+remove its completion from the journal. the current `apps/web/src/app/(authenticated)/stats/Slip.tsx` presents
+account-zone observed-time stamps and entire weeks. it is separate from the
+interactive habit calendar.
 
 impact: prematurely unifying writers or history would erase provenance or give
 one product the other's correction semantics. a habit check supplies no duration.

@@ -130,18 +130,16 @@ at ("works while you sleep") but never specified:
 
 ## IV. The Attention Ledger — the memory
 
-A `reading_sessions` entity: media, span ranges touched, dwell time, device,
-timestamps — written by the same debounced path that already saves resume
-state. Single-user, never displayed as a productivity metric. It is memory,
-not measurement.
+`consumption_activity_spans` retains bounded observations of reading, listening
+and viewing, separate from resume state. single-user: outside reading, the record
+measures stamps, a print height and four records. a finished text has a quiet
+end line; measuring surfaces never interrupt the text.
 
-Payoffs compound everywhere: honest read-state (the deferred
-`consumption_state` follow-up gets its substance, and "mark as read" can
-finally be a verb); resonance ranking learns what you lingered on rather than
-what you happened to save; Temporal Echo and Year-in-Reading stop being SQL
-over `created_at` and become a record of attention; the Canon weighs dwelled
-evidence over skimmed. This is the signal that makes every ambient feature
-personal, and it is currently thrown away.
+current read-state follows its own ladder; mark as finished and its exact undo
+are existing verbs. future resonance ranking, temporal echo and the canon may
+use the retained observations as evidence of attention. they must preserve its
+provenance: a saved work, a completion and an estimate do not fabricate observed
+time.
 
 ## V. One Press — the artifact engine
 
