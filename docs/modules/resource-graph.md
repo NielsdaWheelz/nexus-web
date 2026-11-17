@@ -103,6 +103,10 @@ an x passage additionally binds the exact locator fragment and capture ids.
 malformed/noncanonical refs match nothing; they are never normalized. the shared
 matcher preserves ordinary fragments and unmatched left-join rows; callers own
 capture admission, exact revision and source visibility.
+the account's readable-capture query materializes these identities once per
+graph edge, resolves their nonnull captures, then shares that relation across
+its three evidence arms. resolving identity before source/admission joins
+prevents their join ordering from multiplying fragment lookup or json parsing.
 
 saved x presentation membership uses proved aliases and primary captures; incidental
 context never makes a post a member. match incoming declared revision and retained
