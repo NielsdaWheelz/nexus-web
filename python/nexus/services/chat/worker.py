@@ -35,6 +35,7 @@ from nexus.services.generation.contract import (
 )
 from nexus.services.generation.contract import text as text_output
 from nexus.services.generation.ledger import generation_exists
+from nexus.services.generation.policy import MEMORY_PLANS, chat_tool_plan
 from nexus.services.generation.run import generate
 from nexus.services.generation.runtime import Runtime, run_generation_job
 
@@ -110,8 +111,44 @@ async def _execute(
     run.started_at = run.started_at or func.now()
     spec = reads.spec(run)
     assert spec.context_budget_tokens is not None, "chat admission requires a context budget"
+    owner = Owner("chat_run", run_id, run.owner_user_id, context)
+    db.commit()
+
+    orientation = None
+    if spec.tool_plan in MEMORY_PLANS:
+        from nexus.services.tools.memory import read_orientation, unavailable_orientation
+
+        orientation = unavailable_orientation("unavailable")
+        row = (await runtime.catalog.read()).rows.get(spec.selection)
+        config = runtime.tools.memory_config
+        if (
+            row is not None
+            and config is not None
+            and spec.tool_plan
+            == chat_tool_plan(
+                config,
+                user_id=owner.user_id,
+                processors=row.presentation.processor_chain.processors,
+            )
+        ):
+            orientation = await read_orientation(config)
+
+    # Preparation holds no locks; cancellation and claim replacement can commit during I/O.
+    run = events.lock_run(db, run_id)
+    if run is None or run.status in events.TERMINAL:
+        finish_job(db, context=context, result=None)
+        db.commit()
+        return
+    events.fence(db, context)
+    if run.cancel_requested_at is not None:
+        events.finalize(db, run, status="cancelled", content="")
+        finish_job(db, context=context, result=None)
+        db.commit()
+        return
     try:
-        assembly = chat_context.assemble(db, run=run, context_budget=spec.context_budget_tokens)
+        assembly = chat_context.assemble(
+            db, run=run, context_budget=spec.context_budget_tokens, orientation=orientation
+        )
     except chat_context.ContextTooLarge:
         events.finalize(db, run, status="error", content="", error_code="context_too_large")
         finish_job(db, context=context, result=None)
@@ -119,7 +156,6 @@ async def _execute(
         return
     citations.persist_attached(db, run, assembly.attached)
     intent = assembly.intent
-    owner = Owner("chat_run", run_id, run.owner_user_id, context)
     db.commit()
 
     def write(chunk: str) -> None:

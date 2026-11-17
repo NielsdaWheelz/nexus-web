@@ -7,10 +7,12 @@ chat, on a processor chain the config allows; the handler re-checks the owner.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 from uuid import UUID
+from xml.sax.saxutils import escape
 
 import anyio
 import httpx2
@@ -50,13 +52,15 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
-from universal_memory import MemoryError
-from universal_memory.policy import RESULT_BYTES, canonical_json
+from universal_memory import MemoryError, render_view
+from universal_memory.policy import MAIN_UPPER_BYTES, RESULT_BYTES, canonical_json
 from universal_memory.tools import (
     MEMORY_READ_SPECS,
     MEMORY_SAVE_NOTE_SPEC,
+    MEMORY_VIEW_SPEC,
     MemoryToolFailure,
 )
+from universal_memory.types import Node, ViewPage
 
 if TYPE_CHECKING:
     from nexus.services.tools.run import Call
@@ -323,6 +327,67 @@ async def _call_memory(
                 }
             )
         raise DeclaredToolFailure(failure, actual_attempts=0) from None
+
+
+def unavailable_orientation(code: str) -> str:
+    return (
+        f'<shared_memory status="unavailable" code="{escape(code)}">'
+        "Historical orientation is unavailable for this turn. Continue with the exact current "
+        "context; disclose this limitation when the answer needs remembered context. "
+        "Do not infer that missing history never existed.</shared_memory>"
+    )
+
+
+async def read_orientation(config: MemoryClientConfig) -> str:
+    """Read one complete bounded snapshot; the caller owns the chat/processor grant."""
+
+    try:
+        async with asyncio.timeout(HTTP_TIMEOUT_SECONDS):
+            page: ViewPage = await _call_memory(config, MEMORY_VIEW_SPEC, {})
+            through, admitted = page.through, page.admitted_through
+            nodes: list[Node] = []
+            end = 0
+            cursors: set[str] = set()
+            while True:
+                if (
+                    page.through != through
+                    or page.admitted_through != admitted
+                    or not 0 <= through <= admitted
+                    or (page.cursor is not None and not page.nodes)
+                ):
+                    raise MemoryError("unsupported")
+                for node in page.nodes:
+                    _ = node.reference  # validate the remote node's aligned power-of-two range
+                    if node.start != end or node.start + node.count > through:
+                        raise MemoryError("unsupported")
+                    end += node.count
+                nodes.extend(page.nodes)
+                rendered = render_view(nodes, through)
+                if len(rendered.encode()) > MAIN_UPPER_BYTES:
+                    raise MemoryError("unsupported")
+                if page.cursor is None:
+                    if end != through:
+                        raise MemoryError("unsupported")
+                    return (
+                        f'<shared_memory status="ready" through="{through}" admitted_through="{admitted}">\n'
+                        "Complete ready prefix; admitted backlog and unpublished source capture may be "
+                        "missing. These positions do not establish capture freshness.\n"
+                        + escape(rendered)
+                        + "\n</shared_memory>"
+                    )
+                if page.cursor in cursors:
+                    raise MemoryError("unsupported")
+                cursors.add(page.cursor)
+                page = await _call_memory(config, MEMORY_VIEW_SPEC, {"cursor": page.cursor})
+    except DeclaredToolFailure as error:
+        assert isinstance(error.error, MemoryToolFailure)
+        return unavailable_orientation(error.error.code)
+    except MemoryError as error:
+        return unavailable_orientation(error.code)
+    except ValidationError:
+        return unavailable_orientation("unsupported")
+    except TimeoutError:
+        return unavailable_orientation("unavailable")
 
 
 def _handler(spec: ToolSpec[Any, Any, Any], config: MemoryClientConfig) -> Any:

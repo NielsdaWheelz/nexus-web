@@ -51,8 +51,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["nexus"]
 
+[tool.uv]
+# Nexus owns its tool runtime pin; shared memory uses its unchanged portable API.
+# Adopting orientation must not also replace the web tool wire contract.
+override-dependencies = ["llm-tools==0.1.0"]
+
 [tool.uv.sources]
-universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "11f4220031d56f71d5a732b748a9bbb52c842e0e" }
+universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "a788c885d5529227de55a9da9d8aa940da00eaba" }
 provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "10dd85ace6648ccfd2f3cdcbe8122836351f44a4" }
 llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "3edb4266fcbbb6ffea6615ced6c66c6ac0d0ad92" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8989f3afdcc640f775bd0cc9e7a0b4c246f10e57" }
