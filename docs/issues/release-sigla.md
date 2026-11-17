@@ -12,6 +12,11 @@ these observations require owner qualification; none was run during this change:
 - screen-reader speech: the retained header heading and cover/name menu and
   tooltip announcements.
 - offline catalog: library cover lines and the show title page.
+- genuine external blur/foreground return in both browsers: the playwright
+  setup retained focus, including chromium after a public CDP override attempt;
+  firefox forces `focusmanager.testmode=true`. native return qualification was
+  not run. first-click paging is qualified separately; the return branch is
+  source-reviewed.
 
 headless chromium media emulation and firefox observations do not qualify
 handset, installed-app or spoken output. resolved when the observations above
