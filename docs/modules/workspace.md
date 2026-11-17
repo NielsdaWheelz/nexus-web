@@ -391,8 +391,9 @@ resourceRef, refresh, drawing }` with independent navigation, principal-task and
 reader's intrinsic width and rail), plus `usePaneTitleYield` (a title page's
 visible name). the latter owns `titleYielded` and `titleYieldReady`: the first
 post-layout measurement commits without a transition. shared trusted navigation
-attention relinquishes pending return placement and arms the transition only
-after its actual opacity is established. passive scroll events coalesce to one frame; resize remeasures
+attention relinquishes pending return placement and arms the transition from
+the last displayed opacity before measuring the reader's new position, including
+when passive scrolling precedes input delivery. passive scroll events coalesce to one frame; resize remeasures
 the scrollport. only changed yield values publish, without body state. the h1
 retains its box and accessibility semantics. `drawing` projects one visit-owned
 exclusive value into header segments and the menu. each hook writes its slot in a layout effect and

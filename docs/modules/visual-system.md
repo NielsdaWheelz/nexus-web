@@ -622,7 +622,9 @@ external media rows expose the same more trigger at every width.
 list larger than 200 can window. its two text lines share a measured vertical
 slot across media, artwork and independent controls. rows without artwork or
 controls reserve the same minimum height, and all rows use one narrow-width
-fold threshold. width, font and control-size changes remeasure the actual
+fold threshold, `144px + 12em`. it keeps the artwork/control budget and the
+ordinary row's 12em text budget; above it text ellipsizes instead of adding height.
+width, font and control-size changes remeasure the actual
 fractional border box; the full extent is count × measured height. a hidden,
 inert canonical row supplies measurement while waiting remains in chrome.
 ready rows are never clipped to enforce an estimated height.

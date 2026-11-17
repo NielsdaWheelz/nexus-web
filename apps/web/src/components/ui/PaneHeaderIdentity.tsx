@@ -37,8 +37,8 @@ export default function PaneHeaderIdentity({
 }) {
   const title = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
-    // First placement has no transition, even when the title page arrives asynchronously.
-    if (!yieldReady) title.current?.getBoundingClientRect();
+    // Establish each placement, including the old opacity when transitions are armed.
+    if (title.current) getComputedStyle(title.current).getPropertyValue("opacity");
   }, [yielded, yieldReady]);
   let pending = false;
   let support: ReactNode = null;

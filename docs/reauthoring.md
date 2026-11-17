@@ -4,8 +4,8 @@ status: active · 2026-10-25, release source `3d81ef45e` · production `3d81ef45
 
 ## goal
 
-sigla against `ef44ba92d`: +719 net authored runtime lines (1,215 added,
-496 deleted), all web source. library cover lines and show title pages replace
+sigla against `ef44ba92d`: +719 net authored runtime lines (1,217 added,
+498 deleted), all web source. library cover lines and show title pages replace
 source sections, subscription rows and the overview stylesheet. the shared
 collection path owns rows and mounted cover walls; one header contract projects
 visit-owned drawing, while trusted navigation input owns title-fade readiness.

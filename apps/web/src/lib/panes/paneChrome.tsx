@@ -284,10 +284,10 @@ export function usePaneTitleYield(name: RefObject<HTMLElement | null>): void {
     const arm = (event: Event) => {
       if (!isNavigationAttention(event)) return;
       for (const type of NAVIGATION_ATTENTION_EVENTS) scrollport.removeEventListener(type, arm, true);
-      // The same input relinquishes the memento's placement. Commit its last opacity before
-      // arming fades; a frame count cannot establish when windowed rows have restored.
-      flushSync(measure);
-      store.set({ titleYieldReady: true });
+      // Passive scrolling may already have moved. Arm from the last displayed opacity;
+      // the next measurement owns the reader's new position.
+      flushSync(() => store.set({ titleYieldReady: true }));
+      schedule();
     };
     for (const type of NAVIGATION_ATTENTION_EVENTS)
       scrollport.addEventListener(type, arm, { capture: true, passive: true });
