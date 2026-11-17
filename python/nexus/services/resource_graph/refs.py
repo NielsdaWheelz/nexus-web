@@ -59,6 +59,17 @@ def parse_resource_ref(raw: str) -> ResourceRef | ResourceRefParseFailure:
     return ResourceRefParseFailure(raw, "invalid_format")
 
 
+def resource_ref_id_sql(expression: str, scheme: ResourceScheme) -> str:
+    """Nullable uuid from a canonical ref; the expression is checked-in SQL, never input.
+
+    Guard the cast inside CASE: PostgreSQL also accepts noncanonical uuid spellings.
+    """
+    uuid = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    return f"""(CASE WHEN length(({expression}))={len(scheme) + 37}
+        AND ({expression}) ~ '^{scheme}:{uuid}$'
+        THEN substring(({expression}) FROM {len(scheme) + 2})::uuid END)"""
+
+
 def assert_resource_ref(raw: str) -> ResourceRef:
     """Parse a ref built from typed columns or already-validated input."""
     parsed = parse_resource_ref(raw)

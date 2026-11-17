@@ -1,0 +1,26 @@
+services:
+  inspect:
+    image: ${NEXUS_INSPECT_IMAGE:?select the running api image}
+    user: "10001:10001"
+    cgroup_parent: system-nexus.slice
+    mem_limit: 384m
+    memswap_limit: 384m
+    pids_limit: 256
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment: [DATABASE_URL]
+    entrypoint:
+      - timeout
+      - --signal=TERM
+      - --kill-after=1s
+      - 55s
+      - python
+      - -B
+      - -m
+      - nexus.lectern_diagnostic
+
+networks:
+  default:
+    external: true
+    name: nexus_default

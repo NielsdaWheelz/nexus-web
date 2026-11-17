@@ -43,6 +43,7 @@ from nexus.schemas.x_source import (
     XSourceScope,
 )
 from nexus.services import source_types as st
+from nexus.services.resource_graph.refs import resource_ref_id_sql
 from nexus.services.x_identity import native_x_article_id, x_article_provider_id
 
 
@@ -603,17 +604,28 @@ def x_source_contexts(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, X
     return result
 
 
-def x_evidence_capture_match_sql(evidence: str, fragment: str) -> str:
-    """A captured body, never a supplementary metadata observation's body."""
-    return f"""((({evidence}) #>> '{{target,owner_ref}}'='fragment:' || {fragment}.id
-        AND (({evidence}) #>> '{{target,kind}}'='resource' OR (
-            ({evidence}) #>> '{{target,kind}}'='passage'
+def _x_evidence_body_id_sql(evidence: str) -> str:
+    """One canonical body identity; metadata completion never replaces a known body."""
+    owner = f"({evidence}) #>> '{{target,owner_ref}}'"
+    kind = f"({evidence}) #>> '{{target,kind}}'"
+    original = resource_ref_id_sql(owner, "fragment")
+    external = resource_ref_id_sql(owner, "external_snapshot")
+    completion = resource_ref_id_sql(f"({evidence}) #>> '{{completion_ref}}'", "fragment")
+    return f"""CASE
+        WHEN {kind}='resource' THEN
+            CASE WHEN {external} IS NOT NULL THEN {completion} ELSE {original} END
+        WHEN {kind}='passage'
             AND ({evidence}) #>> '{{target,locator,type}}'='x_capture_offsets'
-            AND ({evidence}) #>> '{{target,locator,fragment_id}}'={fragment}.id::text
-            AND ({evidence}) #>> '{{target,locator,capture_id}}'={fragment}.x_post_capture_id::text)))
-        OR (({evidence}) #>> '{{target,owner_ref}}' LIKE 'external_snapshot:%'
-            AND ({evidence}) #>> '{{target,kind}}'='resource'
-            AND ({evidence}) #>> '{{completion_ref}}'='fragment:' || {fragment}.id))"""
+            AND {owner}='fragment:' || (({evidence}) #>> '{{target,locator,fragment_id}}')
+            THEN {original}
+        END"""
+
+
+def x_evidence_capture_match_sql(evidence: str, fragment: str) -> str:
+    """Join admission, preserving unmatched LEFT JOIN rows and ordinary fragments."""
+    return f"""({fragment}.id=({_x_evidence_body_id_sql(evidence)})
+        AND (({evidence}) #>> '{{target,kind}}'='resource'
+            OR ({evidence}) #>> '{{target,locator,capture_id}}'={fragment}.x_post_capture_id::text))"""
 
 
 def x_capture_read_manifest(db: Session, *, capture_ids: Sequence[UUID]) -> set[UUID]:
@@ -650,7 +662,19 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
 
     visible_media = visible_media_ids_cte_sql().replace(":viewer_id", viewer_id)
     return f"""
-        WITH visible_media AS ({visible_media}), roots AS (
+        WITH visible_media AS ({visible_media}), evidence_bodies AS MATERIALIZED (
+            SELECT e.id AS edge_id,
+                {_x_evidence_body_id_sql("e.snapshot->'evidence'")} AS fragment_id,
+                e.snapshot #>> '{{evidence,target,kind}}'='resource' AS is_resource,
+                e.snapshot #>> '{{evidence,target,locator,capture_id}}' AS capture_id_text
+            FROM resource_edges e
+        ), evidence_captures AS MATERIALIZED (
+            SELECT body.edge_id,f.x_post_capture_id AS capture_id
+            FROM evidence_bodies body
+            JOIN fragments f ON f.id=body.fragment_id
+                AND (body.is_resource OR body.capture_id_text=f.x_post_capture_id::text)
+            WHERE f.x_post_capture_id IS NOT NULL
+        ), roots AS (
             SELECT xm.capture_id FROM x_post_media xm
             JOIN visible_media vm ON vm.media_id=xm.media_id
             UNION
@@ -662,13 +686,13 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
             WHERE de.provider='x' AND de.embed_kind='post'
               AND de.canonical_end_offset IS NOT NULL AND de.target_x_post_capture_id IS NOT NULL
             UNION
-            SELECT f.x_post_capture_id FROM document_embeds de
+            SELECT body.capture_id FROM document_embeds de
             JOIN visible_media vm ON vm.media_id=de.media_id
             JOIN resource_edges e ON e.id=de.citation_id
                 AND e.source_scheme='media' AND e.source_id=de.media_id
-            JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+            JOIN evidence_captures body ON body.edge_id=e.id
             JOIN x_post_capture_admissions admission
-              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+              ON admission.capture_id=body.capture_id AND admission.user_id={viewer_id}
             WHERE de.provider='x' AND de.embed_kind='post'
             UNION
             SELECT f.x_post_capture_id FROM highlights h
@@ -690,10 +714,10 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
                   AND ((e.source_scheme='passage_anchor' AND e.source_id=pa.id)
                     OR (e.target_scheme='passage_anchor' AND e.target_id=pa.id)))
             UNION
-            SELECT f.x_post_capture_id FROM resource_edges e
-            JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
+            SELECT body.capture_id FROM resource_edges e
+            JOIN evidence_captures body ON body.edge_id=e.id
             JOIN x_post_capture_admissions admission
-              ON admission.capture_id=f.x_post_capture_id AND admission.user_id={viewer_id}
+              ON admission.capture_id=body.capture_id AND admission.user_id={viewer_id}
             WHERE e.origin='citation' AND e.ordinal IS NOT NULL AND {edge_live_sql("e")}
               AND {generated_citation_source_visible_sql("e", viewer_id)}
         )
@@ -705,11 +729,11 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
           ON admission.capture_id=context.target_capture_id AND admission.user_id={viewer_id}
         WHERE context.target_capture_id IS NOT NULL
         UNION
-        SELECT f.x_post_capture_id FROM roots
+        SELECT body.capture_id FROM roots
         JOIN x_post_capture_contexts context ON context.capture_id=roots.capture_id
         JOIN resource_edges e ON e.id=context.citation_id
-        JOIN fragments f ON {x_evidence_capture_match_sql("e.snapshot->'evidence'", "f")}
-        JOIN x_post_captures capture ON capture.id=f.x_post_capture_id
+        JOIN evidence_captures body ON body.edge_id=e.id
+        JOIN x_post_captures capture ON capture.id=body.capture_id
             AND capture.source_revision_id=context.referenced_revision_id
         JOIN x_post_capture_admissions admission
           ON admission.capture_id=capture.id AND admission.user_id={viewer_id}

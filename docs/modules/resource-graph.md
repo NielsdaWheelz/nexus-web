@@ -96,6 +96,18 @@ facts intact and exposes no new fields or private proof id. supplementary metada
 on a known excerpt grants no full-body root or context traversal; a URL-only base
 may use its proof for its first body at the existing admitted root positions.
 
+captured-body joins derive one canonical fragment uuid from evidence before
+matching the fragment primary key. a resource uses its original fragment, or its
+completion only when the original owner is a canonical external-snapshot ref.
+an x passage additionally binds the exact locator fragment and capture ids.
+malformed/noncanonical refs match nothing; they are never normalized. the shared
+matcher preserves ordinary fragments and unmatched left-join rows; callers own
+capture admission, exact revision and source visibility.
+the account's readable-capture query materializes these identities once per
+graph edge, resolves their nonnull captures, then shares that relation across
+its three evidence arms. resolving identity before source/admission joins
+prevents their join ordering from multiplying fragment lookup or json parsing.
+
 saved x presentation membership uses proved aliases and primary captures; incidental
 context never makes a post a member. match incoming declared revision and retained
 evidence independently, deduplicate before paging, and retain existing edge cursor
