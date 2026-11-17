@@ -177,6 +177,8 @@ export function createPaneReturnMemento(guard: WorkGuard) {
   }
 
   function captureEyeLine(port: Scrollport): Memento["eyeLine"] {
+    // At scroll zero, the pane's top owns position instead of a visible row.
+    if (port.element.scrollTop === 0) return null;
     const viewport = port.element.getBoundingClientRect();
     let eyeLine: Memento["eyeLine"] = null;
     const windows = frames(port);

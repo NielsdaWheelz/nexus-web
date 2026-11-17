@@ -1255,6 +1255,8 @@ stamp it was read under. complete value readers paint the visit snapshot and
 reread; paged readers retain their stamp-based return policy (architecture §8.12).
 `PaneRefreshAnchor` captures same-query row replacement before mutation and
 restores one shared pane eye-line after layout, unless newer input intent wins.
+at scroll zero, the pane's top owns position instead of a visible row below it;
+visit return, refresh and measurement changes retain that absolute top.
 large eligible indices register their complete ordered ids and measured row
 geometry through `usePaneCollectionGeometry`. the same memento owns return,
 refresh and measurement-change scroll writes; the row window owns measurement

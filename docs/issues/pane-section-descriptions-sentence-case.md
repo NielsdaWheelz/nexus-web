@@ -1,8 +1,9 @@
 # section descriptions retain sentence case
 
 sigla lowercases list heads at their literal sources; descriptions retain their
-existing sentence case. `SettingsAppearancePaneBody.tsx` and
-`SettingsReaderPaneBody.tsx` pair these two copy conventions.
+existing sentence case. `SettingsAppearancePaneBody.tsx:72-74` and
+`KeybindingsPaneBody.tsx:33-35` pair these two copy conventions, as do the stats
+`Section` descriptions.
 
 impact: adjacent quiet copy has inconsistent case. the owner excluded a
 description pass from sigla on 2026-11-17.

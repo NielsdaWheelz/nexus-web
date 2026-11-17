@@ -14,6 +14,12 @@ description to `EpisodeFacts.description_text`; the text fallback in web
 `app/(authenticated)/media/[id]/Transcript.tsx:113-125` correctly escapes it.
 the provider text boundary still admits markup as plain text.
 
+sigla also exposes this in a show's standfirst: at `41c99d124`, run
+`20261117-141010-b0d0bb50b404`, TWiT's channel description contains literal
+`<p>` and `<em>` tags. the `w3` chromium failure snapshot records the text.
+`python/nexus/services/feeds/parsing.py:221-225` reads the RSS channel description
+without text normalization; the title page escapes that canonical string.
+
 normalize provider description content at its existing text boundary; do not
 render unsanitized provider html. resolved when the real preview and acquired
 episode show readable paragraph text without tags and preserve their content

@@ -43,3 +43,9 @@ the next firefox fixture launched normally. the owned residual profile retained
 `.startup-incomplete`; no owned firefox process remained. the unchanged disclosure
 fixture launched normally in `20261112-133811-b97cf6609586`, then reached a distinct
 product refresh failure. no launcher or deadline change was made.
+
+sigla recurrence: `20261117-141010-b0d0bb50b404` at `41c99d124`, firefox's
+first `w1 rows drawing` stopped in `launchPersistentContext` before a page or
+product assertion. the fixture and worker teardown exceeded 60 seconds; the next
+firefox fixture launched normally. owned lab teardown completed. this is no
+verdict on the drawing, and no launcher repair is claimed.
