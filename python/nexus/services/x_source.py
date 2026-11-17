@@ -43,6 +43,7 @@ from nexus.schemas.x_source import (
     XSourceScope,
 )
 from nexus.services import source_types as st
+from nexus.services.resource_graph.refs import resource_ref_id_sql
 from nexus.services.x_identity import native_x_article_id, x_article_provider_id
 
 
@@ -604,16 +605,25 @@ def x_source_contexts(db: Session, *, media_ids: Sequence[UUID]) -> dict[UUID, X
 
 
 def x_evidence_capture_match_sql(evidence: str, fragment: str) -> str:
-    """A captured body, never a supplementary metadata observation's body."""
-    return f"""((({evidence}) #>> '{{target,owner_ref}}'='fragment:' || {fragment}.id
-        AND (({evidence}) #>> '{{target,kind}}'='resource' OR (
-            ({evidence}) #>> '{{target,kind}}'='passage'
+    """Join one evidence-derived body id; metadata completion never replaces a known body.
+
+    Unmatched evidence preserves LEFT JOIN rows. Capture admission belongs to callers.
+    """
+    owner = f"({evidence}) #>> '{{target,owner_ref}}'"
+    kind = f"({evidence}) #>> '{{target,kind}}'"
+    original = resource_ref_id_sql(owner, "fragment")
+    external = resource_ref_id_sql(owner, "external_snapshot")
+    completion = resource_ref_id_sql(f"({evidence}) #>> '{{completion_ref}}'", "fragment")
+    return f"""({fragment}.id=CASE
+        WHEN {kind}='resource' THEN
+            CASE WHEN {external} IS NOT NULL THEN {completion} ELSE {original} END
+        WHEN {kind}='passage'
             AND ({evidence}) #>> '{{target,locator,type}}'='x_capture_offsets'
-            AND ({evidence}) #>> '{{target,locator,fragment_id}}'={fragment}.id::text
-            AND ({evidence}) #>> '{{target,locator,capture_id}}'={fragment}.x_post_capture_id::text)))
-        OR (({evidence}) #>> '{{target,owner_ref}}' LIKE 'external_snapshot:%'
-            AND ({evidence}) #>> '{{target,kind}}'='resource'
-            AND ({evidence}) #>> '{{completion_ref}}'='fragment:' || {fragment}.id))"""
+            AND {owner}='fragment:' || (({evidence}) #>> '{{target,locator,fragment_id}}')
+            THEN {original}
+        END
+        AND ({kind}='resource'
+            OR ({evidence}) #>> '{{target,locator,capture_id}}'={fragment}.x_post_capture_id::text))"""
 
 
 def x_capture_read_manifest(db: Session, *, capture_ids: Sequence[UUID]) -> set[UUID]:
@@ -713,7 +723,7 @@ def readable_x_capture_ids_sql(viewer_id: str = ":viewer_id") -> str:
             AND capture.source_revision_id=context.referenced_revision_id
         JOIN x_post_capture_admissions admission
           ON admission.capture_id=capture.id AND admission.user_id={viewer_id}
-        WHERE context.relation='quoted'
+        WHERE context.relation='quoted' AND f.x_post_capture_id IS NOT NULL
     """
 
 
