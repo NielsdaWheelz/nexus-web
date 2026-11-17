@@ -1,5 +1,32 @@
 # synapse and slate query plans are unmeasured at production shape
 
+2026-11-17 live follow-up on `e6ee83f67`: the shared summary repair reduced
+its statement from 9,555 ms to 85 ms, but ordinary quick-read requests still
+took 4,630–4,996 ms. overlapping scope requests took 5,659–6,373 ms; workspace
+PUT `9e184676-0826-435e-91b1-8f1e5cfefe4a` exhausted checkout after 5,005 ms.
+this is a remaining release blocker, not proof that its cause matches the old
+similarity path. attribute the isolated current owner before changing ranking,
+duration/eligibility or admission. private evidence is
+`~/.local/state/nexus-read-responsiveness-20261116/live-api-first.log`.
+
+the isolated running-image owner read then measured quick reads at 4,520 ms:
+`highlights.recent_highlight_anchor_facts` consumed 3,983 ms, eligibility
+106 ms and hydration 369 ms. lexical evidence had no ranking call. the same
+read-only snapshot's empty-active-ref scope status took 361 ms; this does not
+qualify every scope request. serving identities were unchanged and the owned
+container/session were removed. repair the highlight-to-reading resolution at
+its owner, preserving direct-owner preference, all-anchor containment, smallest
+fallback scope and existing ties; do not alter selection policy or pool capacity.
+private timing: `d2-probe-32ac5d89-80b7-45b6-b6ae-ee5fc08fe53d-metadata.json`
+in the same directory. the candidate resolves each owner once and derives
+fallback readings through anchor identities. nine actual-schema cases preserve
+complete ordered facts. one same-snapshot runtime-role comparison retained all
+five ordered production facts while reducing the highlight statement from
+3,978 ms to 1,413 ms. the plan shares fallback nomination's canonical scope pass
+across highlights; that corpus pass remains an explicit cost. this is one owner
+comparison, not a complete quick-read/browser result or a capacity guarantee.
+the deployed ordinary journey and checkout contention remain to be qualified.
+
 status: open · origin: 2026-10-04 synapse reauthor (design §9 risk, branch cleanup/synapse-reauthor) · area: suggestions / discovery / performance
 
 the rewrite moved slate ranking into one sql statement per surface
