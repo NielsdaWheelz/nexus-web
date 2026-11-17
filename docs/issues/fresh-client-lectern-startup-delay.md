@@ -8,8 +8,12 @@ at 01:39:31.035 utc. this is not yet attributed to scripts, auth, local storage,
 workspace adoption or initial authored catch-up.
 
 impact: a fresh device can feel slow despite the repaired summary statement.
-the same-profile retained reopen is not yet observed because the temporary
-playwright teardown stalled; the browser is stopped and its profile retained.
+the same-profile reopen on `4ea24bcaf` showed current main rows in 3.009 s
+and warm rows in 64 ms. supporting quick reads still took 8.294 s and two book
+images hit pool refusals. that remaining owner contention is tracked in the
+read release issue; it does not attribute the earlier fresh-profile delay.
+the temporary harness failed only at its final warm account selector after
+recording those clocks. its browser/helper processes are confirmed stopped.
 do not claim a retained-client regression from this fresh-profile result.
 
 resolve by measuring the startup dependencies at their actual boundaries and

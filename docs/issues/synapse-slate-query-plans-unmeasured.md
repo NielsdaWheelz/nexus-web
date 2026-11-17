@@ -1,5 +1,13 @@
 # synapse and slate query plans are unmeasured at production shape
 
+2026-11-17 retained-client qualification on deployed `4ea24bcaf` still failed:
+two restored-book images exhausted pool checkout after five seconds. the api
+logged scope-inputs at 10.110/6.705 s and quick reads at 5.162/3.702 s. these are
+complete request costs, not isolated statement attribution. the prior same-
+snapshot query improvement remains valid; it did not establish whole-app
+acceptance. private evidence: `live-api-retained-F.log` and
+`ordinary-production-retained-observation.json` in the directory below.
+
 2026-11-17 live follow-up on `e6ee83f67`: the shared summary repair reduced
 its statement from 9,555 ms to 85 ms, but ordinary quick-read requests still
 took 4,630–4,996 ms. overlapping scope requests took 5,659–6,373 ms; workspace
