@@ -94,9 +94,10 @@ alone never authorizes its body.
 stream pages keep their own snapshot: text pages hydrate nothing, start frames
 exclude later results, and result frames hydrate only that page's retrievals.
 
-foreground tools may read authorized account resources. every local message access is
-bounded by the run's horizon: its current question and earlier settled pairs only.
-later queued questions cannot enter an earlier run through local attachments or resource tools.
+foreground tools may read authorized account resources. local transcript context,
+message attachments and resource tools use the run's question-sequence horizon:
+its current question and earlier settled pairs only. this controls which local
+messages those paths expose; it is not a cutoff over the librarian's knowledge.
 failed/cancelled answers are explicitly incomplete and retain completed-action
 receipts. mandatory request/brief/attachments that cannot fit settle
 `context_too_large`; they are never silently truncated.
@@ -143,8 +144,20 @@ defects propagate. no automatic retry, cache or wait for capture/compaction.
 the prompt reports ready and admitted boundaries. they do not measure unpublished
 source capture: a previous turn can still be local, pending upload, or awaiting
 central compaction. exact recent turns remain eligible independently of the view.
-shared history is an execution-time snapshot across sources, not a local message
-horizon; see [the source-horizon limitation](../issues/shared-memory-turn-horizon.md).
+shared memory supplies knowledge available at execution time, not a reconstruction
+of what was known when the question was submitted. this is the accepted temporal
+contract for both automatic orientation and explicit memory reads. the initial
+view freezes one ready snapshot during preparation; later memory calls can observe
+newer captures. no whole-turn snapshot, source-sequence filter or historical replay
+is promised.
+
+for example, while an active turn runs, the owner queues b then c and cancels c.
+if c settles, publishes and becomes ready before b's view is prepared, b may use
+c as context even though local transcript tools exclude it. that influence is
+intentional. the exact current question defines the task; the archived c is neither
+an additional request nor a reason to revive cancelled work. source attribution,
+corrections, exact operational receipts and existing owner/processor grants still
+govern interpretation and action.
 
 budget exact current input, the manual reading brief, required authorized
 attachments and completed-action receipts before optional transcript prose.

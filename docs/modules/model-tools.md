@@ -1,7 +1,7 @@
 # Model tools
 
 what a model may do inside nexus on a user's behalf, inside a frozen grant: read
-account-authorized resources within the librarian's message horizon, make five
+account-authorized resources with local messages limited by the librarian's horizon, make five
 kinds of additive writes, search and read the web, and (for one configured owner)
 use shared memory. every call leaves one row;
 nexus writes are attributable and undoable. remote memory saves are append-only.
@@ -34,7 +34,7 @@ Code: `python/nexus/services/tools/` (`contract`, `presentation`, `run`, `reads`
   omits unconfigured optional web search; an exposed web search or page-read
   refusal, unavailability or timeout is a typed result, so research may continue
   with saved text and learned knowledge.
-- **admission**: librarian tools use current account visibility, with messages
+- **admission**: librarian tools use current account visibility, with local messages
   bounded before the active turn's user-message sequence. attachments focus the
   question without restricting resource access. background tools use frozen
   resource URIs: metadata research admits its media; selection admits offered
@@ -170,6 +170,9 @@ the same client prepares complete frozen view pages for automatic
 preparation, not a model tool invocation or an operational receipt. it uses the
 same current owner/processor grant and typed remote failure boundary. the full
 preparation has one twenty-second deadline, independent of later model calls.
+explicit memory reads share the chat owner's execution-time knowledge contract;
+the local message-sequence horizon does not filter the shared archive. subsequent
+reads may observe newer captures than the initial orientation view.
 
 the root dependency override retains nexus's pinned `llm-tools` runtime and web
 wire contract while adopting shared orientation guidance. shared memory consumes

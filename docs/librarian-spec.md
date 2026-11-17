@@ -78,13 +78,14 @@ manual brief + committed intent + existing resources/feed entries
 existing time/progress selection -> immediate quick reads
 
 selection / palette / composer -> durable account fifo -> existing chat worker
-  -> brief + earlier settled turns without quotes + current request + saved attachments
+  -> brief + earlier local settled turns + current request + saved attachments/receipts
+  -> authorized owner shared-memory orientation at execution time
   -> existing generation/tools -> persisted answer and operational receipts
 ```
 
 | caller | reads | writes |
 | --- | --- | --- |
-| foreground librarian | account-authorized resource/search readers, message history within the run horizon, current brief; existing explicitly configured web/shared-memory capabilities | only existing explicitly requested additive actions through current tool/undo owners; no brief write |
+| foreground librarian | account-authorized resource/search readers, local message history within the run horizon, current brief; explicitly configured web and execution-time shared memory | only existing explicitly requested additive actions through current tool/undo owners; no brief write |
 | editorial job | bounded candidates and intent resources through a `SelectionRead` plan; enforce current visibility on every read | selection publication only; no web discovery, shared-memory grant, authored write, save, subscribe or graph mutation |
 | settings | current account brief and version | absolute version-checked brief update |
 
@@ -204,10 +205,15 @@ settlement folds committed text frames into terminal partial content and preserv
 failure/correlation, using existing unpublished-citation cleanup. never rerun the
 model to reconstruct lost output. durable automatic continuation remains deferred.
 
-run-start context includes the current brief, bounded earlier settled turns,
-current question and freshly resolved attachments; exclude later queued questions.
-older history is searchable through existing resource search. preserve current
-input/output limits and transport recovery. no automatic historical synopsis.
+run-start context includes the current brief, bounded earlier local settled turns,
+current question, freshly resolved attachments and exact operational receipts.
+authorized owner turns also receive bounded shared-memory orientation under the
+[chat contract](modules/chat.md#historical-orientation). shared knowledge available
+at execution time may include later-submitted settled or cancelled questions;
+it may inform the current answer without becoming another task. later memory reads
+can observe newer captures; there is no whole-turn historical snapshot. older local
+history remains searchable through existing resource search. preserve current
+input/output limits and transport recovery.
 brief edits affect subsequent turns; they do not rewrite an answer already running.
 `settled` means terminal: complete, failed or cancelled. label incomplete answers
 explicitly and retain completed-action receipts; omitting a failed turn must not
@@ -215,10 +221,11 @@ hide actions that already happened. mark retries as new attempts rather than
 independent interest votes. explicit attachments and mandatory question/brief
 that cannot fit produce the existing terminal `context_too_large` outcome, retain
 the question and release the queue; do not silently truncate mandatory input.
-enforce the same message horizon in every tool search/read/inspection and message
-attachment: current question plus earlier terminal turns only. whole-account
-access must not expose later queued messages through tools. ordinary user timeline
-reads can show the queue; this is a run capability, not a new conversation scope.
+enforce the question-sequence horizon in local message search/read/inspection and
+message attachments: current question plus earlier terminal turns only. shared
+memory follows its execution-time contract instead. ordinary user timeline reads
+can show the queue; the local horizon is a run capability, not a global knowledge
+cutoff or a new conversation scope.
 
 retry is a new appended attempt using current brief/resources and surviving
 completed-action receipts. retain the original partial answer. it neither rolls
@@ -389,7 +396,7 @@ lab-only repair.
 | a2 | queue two sends during an active turn, reload and open a second pane; fifo and exactly one active generation hold. cancel a middle waiter without releasing its successor; cancel/fail/interrupt the head and preserve committed partial text plus known failure. next head starts only after settlement. |
 | a3 | lost admission response retries the same uuid without duplication; failed-turn retry appends and preserves old text/receipts; successful retry is rejected. `delete turn` names its pair/action scope; delete then replay its old send: no resurrection. |
 | a4 | edit/delete a referenced source before execution and afterward; saved quotes survive with truthful current availability. only a unique readable text match relocates on open. inspect storage to prove quotes belong only to attachments and cited retrievals and disappear with their turn. |
-| a5 | librarian retrieves an unattached authorized resource and earlier message; excluded resources remain unavailable. later queued input never enters an earlier run. editorial tools cannot browse externally, write, or access shared memory. existing owner-only jarvis saves retain exact submission retry with the new stable timeline association. |
+| a5 | librarian retrieves an unattached authorized resource and earlier local message; excluded resources remain unavailable. local message paths exclude later queued input. a later queued question cancelled and captured before execution may inform the current answer through shared memory, while the exact current question remains the task. editorial tools cannot browse externally, write, or access shared memory. existing owner-only jarvis saves retain exact submission retry with the new stable timeline association. |
 | a6 | brief save/clear, text bounds, equal retry and stale-version conflict are correct; draft survives failure. foreground answers and curation read it; neither can write it. an in-flight curation result using an obsolete brief cannot publish. |
 | a7 | one small inspectable corpus proves each mode’s distinct eligibility, intent from multiple recent user messages, no recommendation echo, duration/news windows and source diversity. actual model output meets the designer’s evidence/rationale rubric. |
 | a8 | duplicate/out-of-pool output fails without replacing last success; legitimate empty succeeds; access loss during generation cannot publish an ineligible row. brief supersession and job repair leave new work admissible. |
@@ -407,8 +414,9 @@ issue files. run no unrelated capacity campaign or permanent regression suite.
 
 ## accepted trade-offs
 
-- existing corpus only tests curation, not new-source discovery; no orientation
-  means retrieval can miss forgotten subjects.
+- existing corpus only tests curation, not new-source discovery. bounded shared
+  orientation can miss details and lag capture; execution-time knowledge can
+  include questions submitted after the current one.
 - saved reference quotes copy evidence per occurrence; settings-only brief
   sacrifices offline document editing.
 - fifo trades steering immediacy for simple ordering. failure retry is a fresh

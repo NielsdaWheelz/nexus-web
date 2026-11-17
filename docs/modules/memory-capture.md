@@ -26,7 +26,10 @@ attachments, published citations and persisted tool receipts after terminal
 publication and pruning. fresh sql reads follow the flush; cached message objects
 cannot substitute for those rows. snapshot, terminal state and next export
 sequence commit together under the account mutex. exports follow settlement
-order, not question order. no network call runs in that transaction.
+order, not question order. a cancelled later question can therefore reach shared
+memory before an earlier queued question executes. the chat owner's execution-time
+knowledge contract permits that context; capture adds no question-sequence filter.
+no network call runs in that transaction.
 
 `memory_exports` has no cascading relationship to deletable turns or evidence.
 its identity, canonical payload and digest are immutable. only its content-free

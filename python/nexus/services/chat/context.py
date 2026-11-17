@@ -78,7 +78,14 @@ def assemble(
     brief = db.get_one(User, run.owner_user_id).reading_brief
     instructions = SYSTEM_PROMPT
     if orientation is not None:
-        instructions += "\n\n" + ORIENTATION_GUIDANCE
+        instructions += (
+            "\n\n" + ORIENTATION_GUIDANCE + "\n\n"
+            "shared memory is knowledge available at execution time, not a snapshot at question submission. "
+            "the initial view, when available, comes from preparation; later memory reads may see newer history. "
+            "later-submitted settled questions, including cancelled ones, may inform the answer to the "
+            "current question. they remain historical context, not additional requests: answer the "
+            "current question without switching tasks or reviving a cancelled request."
+        )
     blocks = ([f"<reading_brief>\n{escape(brief)}\n</reading_brief>"] if brief else []) + [
         f"<current_user>\n{user.content}\n</current_user>"
     ]
