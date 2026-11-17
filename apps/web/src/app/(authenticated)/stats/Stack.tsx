@@ -153,12 +153,14 @@ function YearStack({ stack, currentYear, firstDay, width, compact, newIds, onWor
             const spineWidth = column * widthOf(work), spineHeight = heights[index];
             const author = byline(work.media), fontSize = Math.min(21, Math.max(10.5, spineHeight * 0.4));
             const flank = spineHeight >= 30 && fontSize >= 14 && spineWidth - Math.max(58, author.length * 5.4 + 34) * 2 >= work.media.title.length * 7;
+            // borders impose a two-pixel layout floor; shrink the painted button below it.
             return <div key={work.media.media_id} className={styles.spineRow} style={{ height: spineHeight }}>
               <button type="button" className={styles.spine} onClick={() => onWork(work.media.media_id)}
                 aria-label={`${work.media.title}, finished ${recordDate(work.finished_on)}, ${recordTime(work.active_ms)}, ${cm(work.thickness_mm)} in print`}
                 data-new={stack.year === currentYear && newIds.has(work.media.media_id) || undefined}
                 data-double={spineHeight >= 26 || undefined} data-flanked={flank || undefined}
-                style={{ ...cloth(work.media), width: spineWidth, height: spineHeight, fontSize }}>
+                style={{ ...cloth(work.media), width: spineWidth, height: Math.max(2, spineHeight), fontSize,
+                  transform: spineHeight < 2 ? `scaleY(${spineHeight / 2})` : undefined }}>
                 {spineHeight >= 12 ? <>{flank ? <span className={styles.spineBy}>{author}</span> : null}
                   <span className={styles.spineTitle}>{work.media.title}</span>
                   {flank ? <span className={styles.spineYear}>{work.media.original_published_date?.slice(0, 4)}</span> : null}</> : null}
