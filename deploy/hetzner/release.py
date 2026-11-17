@@ -34,11 +34,13 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+from nexus.lectern_diagnostic import LecternDiagnosticReport
 from nexus.release_artifact import CandidateManifest, load_candidate_manifest
 from nexus.release_backup import (
     BackupEvidence,
@@ -87,6 +89,7 @@ BACKUP_MAX_AGE_HOURS = 36
 # release installs them only after the final stopped-writer census.
 HOST_INPUTS = (
     ("docker-compose.yml", COMPOSE_FILE, "0444"),
+    ("docker-compose.inspect.yml", "/etc/nexus/docker-compose.inspect.yml", "0444"),
     ("runtime-role.sql", RUNTIME_ROLE_FILE, "0444"),
     (RESOURCE_SLICE, f"/etc/systemd/system/{RESOURCE_SLICE}", "0644"),
     ("codex-state-boot-guard.sh", "/usr/local/sbin/nexus-codex-state-boot-guard", "0755"),
@@ -1329,6 +1332,194 @@ def check(source_sha: str | None, workspace: Path) -> None:
     note("check passed")
 
 
+_LECTERN_INSPECT = r"""
+import json, os, re, signal, subprocess, sys, time
+from urllib.parse import urlsplit
+
+docker = ['docker', '--host', 'unix:///var/run/docker.sock']
+deadline = time.monotonic() + 75
+cleaning = False
+run_id = report['run_id']
+name = 'nexus-inspect-lectern-' + run_id
+application = 'nexus:inspect:lectern:' + run_id
+started = False
+before = []
+report['cleanup_complete'] = True
+
+class Refused(Exception):
+    pass
+
+def interrupted(signum, frame):
+    raise InterruptedError
+
+def call(args, *, check=True, **kwargs):
+    remaining = deadline - time.monotonic() - (0 if cleaning else 15)
+    if remaining <= 0:
+        raise subprocess.TimeoutExpired(args, 75)
+    return subprocess.run(docker + args, capture_output=True, text=True,
+                          timeout=remaining, check=check, **kwargs)
+
+def service(service_name):
+    ids = call(['ps', '-q', '--no-trunc', '--filter', 'label=com.docker.compose.project=nexus',
+                '--filter', 'label=com.docker.compose.service=' + service_name,
+                '--filter', 'label=com.docker.compose.oneoff=False']).stdout.split()
+    if len(ids) != 1:
+        raise Refused('deployment_changed')
+    return json.loads(call(['inspect', ids[0]]).stdout)[0]
+
+def identity(container):
+    return (container['Id'], container['State']['Pid'], container['RestartCount'],
+            container['State']['Running'])
+
+def owned():
+    return call(['ps', '-aq', '--no-trunc', '--filter', 'name=^/' + name + '$']).stdout.split()
+
+signal.signal(signal.SIGHUP, interrupted)
+signal.signal(signal.SIGTERM, interrupted)
+try:
+    api, postgres = service('api'), service('postgres')
+    before = [identity(api), identity(postgres)]
+    image = json.loads(call(['image', 'inspect', api['Image']]).stdout)[0]
+    source = image['Config']['Labels']['org.opencontainers.image.revision']
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', api['Image']) or not re.fullmatch(r'[0-9a-f]{40}', source):
+        raise Refused('deployment_changed')
+    report.update(source_sha=source, image_id=api['Image'])
+    environment = dict(entry.split('=', 1) for entry in api['Config']['Env'])
+    database = environment['DATABASE_URL']
+    url = urlsplit(database)
+    if (url.scheme, url.hostname, url.port, url.path, url.username) != (
+        'postgresql+psycopg', 'postgres', 5432, '/nexus', 'nexus_runtime'
+    ):
+        raise Refused('database_refused')
+    if owned() or identity(service('api')) != before[0]:
+        raise Refused('deployment_changed')
+    started = True
+    report['cleanup_complete'] = None
+    completed = call(
+        ['compose', '--project-name', 'nexus', '--file', '/etc/nexus/docker-compose.inspect.yml',
+         'run', '--rm', '--no-deps', '--pull', 'never', '-T', '--name', name,
+         'inspect', sys.argv[1], run_id, source], check=False,
+        env=dict(os.environ, NEXUS_INSPECT_IMAGE=api['Image'], DATABASE_URL=database),
+    )
+    report.update(status='failed', error_code='deadline' if completed.returncode == 124 else 'profile_failed')
+    if completed.returncode in (0, 1):
+        result = json.loads(completed.stdout)
+        if result['run_id'] != run_id or result['source_sha'] != source:
+            report.update(status='failed', error_code='deployment_changed')
+        else:
+            for key in ('status', 'owner_ms', 'db_execute_ms', 'item_count', 'result_sha256', 'statements', 'error_code'):
+                report[key] = result[key]
+            if completed.returncode != 0 and report['status'] == 'complete':
+                report.update(status='failed', error_code='profile_failed')
+except Refused as error:
+    report.update(status='refused', error_code=error.args[0])
+except subprocess.TimeoutExpired:
+    report.update(status='failed', error_code='deadline')
+except Exception:
+    # Privacy boundary: subprocess/driver details must never become operator output.
+    report.update(status='failed', error_code='profile_failed')
+finally:
+    cleaning = True
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    if started:
+        absent = None
+        try:
+            ids = owned()
+            if ids:
+                call(['rm', '--force', *ids], check=False)
+            absent = not owned()
+            sql = ("BEGIN READ ONLY; SET LOCAL statement_timeout='3s'; SET LOCAL lock_timeout='1s'; "
+                   "SELECT count(*) FROM pg_stat_activity WHERE application_name='" + application + "'; ROLLBACK;")
+            remaining = int(call(['exec', '-i', postgres['Id'], 'psql', '-XqAt', '-v', 'ON_ERROR_STOP=1',
+                                  '-U', 'nexus', '-d', 'nexus'], input=sql).stdout.strip())
+            retired = remaining == 0
+            report['cleanup_complete'] = absent and retired
+        except Exception:
+            report['cleanup_complete'] = False if absent is False else None
+    if before:
+        try:
+            after = json.loads(call(['inspect', before[0][0], before[1][0]]).stdout)
+            report['serving_unchanged'] = [identity(item) for item in after] == before
+        except Exception:
+            report['serving_unchanged'] = None
+    if report['cleanup_complete'] is not True:
+        report.update(status='cleanup_unconfirmed', error_code='cleanup_unconfirmed')
+    elif report['status'] == 'complete' and report['serving_unchanged'] is not True:
+        report.update(status='failed', error_code='deployment_changed')
+print(json.dumps(report), flush=True)
+"""
+
+
+def profile_lectern(viewer: UUID) -> int:
+    """Own one fixed remote inspection; raw transport errors never reach the release printer."""
+    report = LecternDiagnosticReport(run_id=str(uuid4()))
+    script = f"report = {report.model_dump()!r}\n" + _LECTERN_INSPECT
+    try:
+        completed = subprocess.run(
+            (
+                "ssh",
+                *SSH_OPTIONS,
+                SSH_TARGET,
+                f"sudo flock -n -E 73 --no-fork {BACKUP_LOCK} python3 - {viewer}",
+            ),
+            input=script.encode(),
+            capture_output=True,
+            timeout=75,
+            check=False,
+        )
+        if completed.returncode == 73:
+            report.error_code, report.cleanup_complete = "maintenance_busy", True
+        elif completed.returncode == 0:
+            observed = LecternDiagnosticReport.model_validate_json(completed.stdout)
+            if observed.run_id != report.run_id or (
+                observed.status == "complete"
+                and (
+                    observed.error_code is not None
+                    or observed.cleanup_complete is not True
+                    or observed.serving_unchanged is not True
+                    or any(
+                        value is None
+                        for value in (
+                            observed.source_sha,
+                            observed.image_id,
+                            observed.owner_ms,
+                            observed.db_execute_ms,
+                            observed.item_count,
+                            observed.result_sha256,
+                        )
+                    )
+                )
+            ):
+                raise ValueError("invalid inspection report")
+            report = observed
+        else:
+            report.status, report.error_code = (
+                "cleanup_unconfirmed",
+                "cleanup_unconfirmed",
+            )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        report.status, report.error_code = "cleanup_unconfirmed", "cleanup_unconfirmed"
+    if report.cleanup_complete is not True:
+        report.status, report.error_code = "cleanup_unconfirmed", "cleanup_unconfirmed"
+    elif report.status != "complete" and report.error_code is None:
+        report.error_code = "profile_failed"
+    print(report.model_dump_json())
+    if report.status == "complete":
+        return 0
+    messages = {
+        "maintenance_busy": "maintenance owns the lock; no profile started; retry after it finishes",
+        "deployment_changed": "deployment identity differs; the profile is unqualified; inspect the running release",
+        "database_refused": "database binding was refused; no owner read completed; inspect role and schema",
+        "profile_failed": "the profile failed; no complete qualification; inspect the recorded sqlstate and source",
+        "deadline": "the execution bound expired; the profile is incomplete; inspect cleanup before another attempt",
+        "cleanup_unconfirmed": f"owned cleanup is unconfirmed; result unqualified; inspect only nexus-inspect-lectern-{report.run_id} and its database application name",
+    }
+    code = report.error_code or "profile_failed"
+    print(f"{code}: {messages[code]}", file=sys.stderr)
+    return 125 if report.status == "cleanup_unconfirmed" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Release the Nexus backend to Hetzner.")
     parser.add_argument("source_sha", nargs="?")
@@ -1338,6 +1529,12 @@ def main(argv: list[str] | None = None) -> int:
         help="explicit first installation of native identity after stopped writers and backup",
     )
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--profile-lectern",
+        type=UUID,
+        metavar="VIEWER_UUID",
+        help="profile the running lectern owner once in an isolated read-only container",
+    )
     mode.add_argument(
         "--check",
         action="store_true",
@@ -1350,6 +1547,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     source_sha: str | None = arguments.source_sha
+    if arguments.profile_lectern is not None:
+        if source_sha is not None or arguments.initialize_native_host:
+            parser.error("--profile-lectern takes no source SHA or initialization flag")
+        return profile_lectern(arguments.profile_lectern)
     if source_sha is not None and SHA.fullmatch(source_sha) is None:
         parser.error("source SHA must be 40 lowercase hex characters")
     if arguments.restore_original and source_sha is not None:

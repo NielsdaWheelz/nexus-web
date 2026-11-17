@@ -778,6 +778,34 @@ process shares its memory limit and can cause the serving process to be killed.
 ordinary service scripts use `nexus_runtime`; administrative operations use the
 separate migration owner. never restore runtime superuser access to make a command pass.
 
+the supported lectern diagnostic runs the canonical read and observation stamp once:
+
+```bash
+PYTHONPATH=python uv run --project python --frozen --no-sync python \
+  deploy/hetzner/release.py --profile-lectern <viewer-uuid>
+```
+
+it binds the running api image and database login, without consulting staged
+configuration. a separate 384 mib/no-swap container receives only the runtime
+database credential, with no provider credentials or native/memory mounts.
+the existing maintenance lock covers its lifetime. the read is one read-only,
+repeatable-read snapshot; statement/container/controller limits are 30/55/75 seconds.
+there is no arbitrary script, sql, repeat or timeout option.
+
+stdout is one metadata-only json report. `owner_ms` includes fetch, projection,
+observation and serialization; `db_execute_ms` measures cursor execution, not all
+fetch or python work. sql fingerprints, statement timings and the complete result
+fingerprint expose no rows or parameters. changing account data can change the
+result hash. this measures the owner, not browser latency or unrestricted capacity.
+
+exit 0 requires the completed read, confirmed cleanup and unchanged serving
+processes. refusal/failure is 1, invalid input 2, and uncertain cleanup 125.
+`cleanup_complete` is true for known absence, false for a known survivor, null
+when unknown. after 125, inspect only `nexus-inspect-lectern-<run_id>` and database
+application `nexus:inspect:lectern:<run_id>` before another attempt; transport loss
+never retries the read. the command isolates application memory but still shares
+postgres capacity; trusted root can bypass it.
+
 include the compose-owned settings required by the command; the application env
 file alone does not supply them. the database-only commands below supply
 `NEXUS_CODEX_CONTROL_ENDPOINT` for settings validation.
