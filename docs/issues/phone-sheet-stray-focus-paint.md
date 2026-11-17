@@ -1,18 +1,20 @@
-# phone programmatic focus paint
+# phone sheet focus paint needs qualification after the redraw
 
-observed 2026-11-15 at `42618db32`, chromium 390×844 with protocol touch; no
-handset observation. choose-create and browse headings paint focus rings as if
-they were fields. the old close flow also left a neighbour × tooltip standing
-across dismissal/reopening, contrary to the touch tooltip contract.
+historical evidence: touch-emulated chromium, 390×844, `42618db32` on
+2026-11-15; not a handset observation. first opening painted a focus box on the
+previous pane, closing a pane left a neighbour's close tooltip visible, and
+choose-create/browse headings acquired field-like focus rings.
 
-the thumb index removes the initial armed-row focus box and the neighbour ×
-focus flow: opening focuses the hidden heading, marking focuses its primary
-button, and current close dismisses the sheet. recheck the old tooltip symptom
-under these paths; the child-page heading paint retains its focus owner.
+impact: programmatic focus appeared to claim a keyboard selection, and the
+standing tooltip obscured a title.
 
-evidence owners: `components/switchboard/SwitchboardTask.tsx`,
-`components/nexus/NexusPages.tsx` and the shared control tooltip. impact is paint
-that implies keyboard input or covers a title after a touch action.
+the thumb-index redraw (`02c38da85`) changed the first two paths: opening arms
+nothing and focuses a hidden heading; the close control in
+`apps/web/src/components/switchboard/SwitchboardTask.tsx` is now a plain button.
+there is no evidence that the old tooltip mechanism survives. heading focus
+and recovery remain owned by `useNexusController.ts` `initialFocus` and the
+sheet's focus handoff; the reported touch cases have not been rerun.
 
-resolve when touch opening/marking/current close and both child pages show no
-stray ring or tooltip, while a hardware keyboard retains its focus indication.
+resolved when: opening, closing a pane and visiting choose-create/browse with
+touch produce no stray ring or tooltip, while hardware-keyboard focus remains
+visible. archive any case already removed by the new focus path.

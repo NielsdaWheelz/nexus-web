@@ -1,20 +1,23 @@
-# note formatting toolbar can sit behind pane controls
+# note formatting can be obscured by pane chrome
 
-on 2026-10-19, an isolated authenticated chromium journey on `d8b0d4a730`
-selected the entire root note body near the top of its pane. clicking the visible
-`Bold` control repeatedly failed: `PaneShell_controlRow` intercepted pointer
-events. keyboard formatting and rich html paste remained usable. this blocks
-pointer formatting in that position; it is separate from deletion retention.
-the collation field is absent at rest; opening it still places chrome over the formatting toolbar.
-normal pointer clicks still reproduce the same interception after integrating
-main `7b7d9f82a`.
+two inherited lab reports concern the same formatting-toolbar placement:
 
-reproduce: open a note at the top of a desktop pane, select its body, then click
-`Bold` in `Text formatting`. `components/notes/NoteEditor.module.css:10` places
-that toolbar absolutely above its editor; `components/notes/NoteEditor.tsx:669`
-renders it inside the editor shell. pane controls are owned by
-`components/workspace/PaneShell.module.css:53` (all paths under `apps/web/src/`).
+- at `d8b0d4a730` on 2026-10-19, chromium intercepted a pointer click on bold
+  with `PaneShell_controlRow` when selecting the top root note. keyboard
+  formatting and paste still worked.
+- firefox lab `20261101-171428-20e56342b48d`, 1280×720: selecting any of three
+  page-outline rows put the toolbar at the same position above the outline.
+  hit-testing the code-presentation button returned the open filter input.
 
-resolve by placing the formatting toolbar where pane chrome cannot cover it,
-using the existing overlay/placement owner. prove pointer bold/italic/link actions
-work at the top of a pane and after scrolling, without moving the selection.
+impact: the visible formatting commands could not reliably be clicked, despite
+a valid selection.
+
+current source has changed: `apps/web/src/components/notes/NoteEditor.tsx`
+`placeToolbar` (lines 393–404) places below the selection and flips within the
+nearest scrollport. the filter is also absent at rest. these changes invalidate
+the old placement explanation; neither hit-test case has been requalified.
+
+resolved when: pointer formatting at the first row and after scrolling reaches
+bold, italic, link and code commands without losing the selection or being
+intercepted by current pane chrome. include an open collation picker where
+that combination is supported.
