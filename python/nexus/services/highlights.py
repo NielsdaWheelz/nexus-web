@@ -1,4 +1,4 @@
-"""Server reads of the highlight projection: reader maps, action facts and statistics.
+"""Server reads of the highlight projection: reader maps and action facts.
 
 A highlight is an independently identified authored annotation whose canonical
 selection lives in ``authored_resources``; these rows are its projection. Readers
@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_media,
     highlight_readability_filter,
-    highlight_readability_sql,
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
 )
@@ -120,30 +119,6 @@ def highlight_action_facts(
 class RecentHighlightAnchorFact:
     media_id: UUID
     activity_at: datetime
-
-
-def count_retained_highlights(
-    db: Session, *, viewer_id: UUID, start: datetime | None, end: datetime
-) -> int:
-    """Visible viewer-authored highlights over currently visible media."""
-    return int(
-        db.scalar(
-            text(
-                f"""
-                SELECT count(*)
-                FROM highlights h
-                WHERE h.user_id = :viewer_id AND {highlight_readability_sql("h")}
-                  AND (
-                    CAST(:start AS timestamptz) IS NULL
-                    OR h.created_at >= CAST(:start AS timestamptz)
-                  )
-                  AND h.created_at < :end
-                """
-            ),
-            {"viewer_id": viewer_id, "start": start, "end": end},
-        )
-        or 0
-    )
 
 
 def recent_highlight_anchor_facts(

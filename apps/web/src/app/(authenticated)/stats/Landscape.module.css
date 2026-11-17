@@ -1,0 +1,38 @@
+.landscape { min-width: 0; margin: 0; --landscape-far: color-mix(in srgb, var(--ink) 9%, var(--surface-canvas)); --landscape-middle: color-mix(in srgb, var(--ink) 19%, var(--surface-canvas)); --landscape-near: color-mix(in srgb, var(--ink) 37%, var(--surface-canvas)); --landscape-ahead: 0.34; }
+:global([data-theme="dark"]) .landscape { --landscape-far: color-mix(in srgb, var(--ink) 27%, var(--surface-canvas)); --landscape-middle: color-mix(in srgb, var(--ink) 17%, var(--surface-canvas)); --landscape-near: color-mix(in srgb, var(--ink) 9%, var(--surface-canvas)); --landscape-ahead: 0.4; }
+:global([data-theme="elvish"]) .landscape { --landscape-far: color-mix(in srgb, var(--ink) 25%, var(--surface-canvas)); --landscape-middle: color-mix(in srgb, var(--ink) 15%, var(--surface-canvas)); --landscape-near: color-mix(in srgb, var(--ink) 7%, var(--surface-canvas)); --landscape-ahead: 0.4; }
+.drawing { position: relative; padding-top: 12px; }
+.drawing svg { display: block; width: 100%; overflow: visible; }
+.far stop { stop-color: var(--landscape-far); }
+.middle stop { stop-color: var(--landscape-middle); }
+.near stop { stop-color: var(--landscape-near); }
+.ahead { opacity: var(--landscape-ahead); }
+.ridge { fill: none; stroke: var(--ink-faint); stroke-width: 1px; }
+.read .ridge { stroke: var(--accent); stroke-width: 1.7px; stroke-linejoin: round; }
+.read[data-finished="true"] .ridge { stroke: var(--finish); stroke-width: 2px; }
+.ground { fill: none; stroke: var(--ink-faint); stroke-width: 1px; }
+.coveredGround { fill: none; stroke: var(--accent); stroke-width: 3px; }
+.landscape[data-finished="true"] .coveredGround { stroke: var(--finish); stroke-width: 2px; }
+.marker { position: absolute; top: 0; width: 0; border-left: 2px solid var(--accent); pointer-events: none; }
+.marker::after { content: ""; position: absolute; bottom: -3.5px; left: -4.5px; width: 7px; height: 7px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface-canvas); }
+.axis { position: relative; height: 30px; border-top: 1px solid var(--edge-strong); }
+.tick { position: absolute; top: 0; height: 4px; border-left: 1px solid var(--edge-strong); }
+.label { position: absolute; top: 8px; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transform: translateX(-50%); color: var(--ink-muted); font-size: var(--text-xs); }
+.label[data-edge="start"] { transform: none; }
+.label[data-edge="end"] { transform: translateX(-100%); }
+.whole { position: relative; margin-top: 4px; }
+.bracket { position: absolute; top: 0; height: 5px; border: 1.5px solid var(--accent); border-bottom: 0; pointer-events: none; }
+.parts { position: relative; height: 18px; color: var(--ink-faint); font: 500 10px var(--font-sans); }
+.parts span { position: absolute; top: 3px; }
+.caption { margin: 4px 0 14px; color: var(--ink-faint); font-size: var(--text-xs); }
+.landscape[data-strip="true"] .drawing { padding-top: 0; }
+.landscape[data-strip="true"] .marker::after { display: none; }
+.landscape[data-strip="true"] .ridge { stroke-width: 1px; }
+@media (forced-colors: active) {
+  .landscape { forced-color-adjust: none; }
+  .read .wash { fill: CanvasText; }
+  .ahead { opacity: 1; }
+  .ahead .wash { fill: none; stroke: CanvasText; }
+  .read .ridge, .read[data-finished="true"] .ridge, .ahead .ridge, .ground, .coveredGround, .landscape[data-finished="true"] .coveredGround { stroke: CanvasText; }
+  .marker, .marker::after { border-color: Highlight; }
+}

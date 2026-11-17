@@ -62,7 +62,7 @@ const REGISTRY = {
   stats: {
     label: "Stats",
     href: "/stats",
-    keywords: ["reading", "listening", "activity", "sessions", "year"],
+    keywords: ["reading", "listening", "activity", "sittings", "stack"],
   },
   atlas: {
     label: "Atlas",

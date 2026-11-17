@@ -82,7 +82,7 @@ view presses replace the url and preserve pane history/body ownership.
 mobile rows register with the shared control surface; the hide gesture remains
 owned by the active reader.
 
-stats publishes stats/year with its existing period resets; search publishes
+stats publishes record and sittings; search publishes
 resources/passages. library publishes all items, unfinished, in progress and
 unfiled (all only). reset clears words, dimensions and order, never the view.
 an empty unfiled view offers show all items. syntactically invalid library urls

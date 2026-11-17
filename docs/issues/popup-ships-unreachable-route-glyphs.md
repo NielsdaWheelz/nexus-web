@@ -19,7 +19,7 @@ evidence: paths under `apps/web/src`. six popup-closure modules import the route
 `lib/workspace/targetActivation.ts:3`. the popup chunk built by
 `apps/web/scripts/build-extension.mjs` keeps the `ROUTES` literal and `TABLE` as a bare
 `Object.keys(...).map(` statement whose result is discarded, while the code those imports
-name is gone: `Year in Reading` (`resolvePaneRouteModel`), `invalid recent snapshot`
+name is gone: `invalid recent snapshot`
 (`lib/recent/model.ts`) and `recent_open` (`lib/native/client.ts`) are absent. the
 closure's own components name eight signs through `lib/ui/icons.tsx`
 (`components/feedback/Feedback.tsx:3`, `components/libraries/LibraryChooser.tsx:4`,
@@ -38,3 +38,6 @@ gains nothing while `ROUTES` keeps its signs. the icon registry did not fix this
 tables hold references either way.
 
 resolved when the built popup chunk defines only the drawings the popup renders.
+
+the reading-record change removes the route model’s year-view title branch.
+the module-scope route and scheme table ownership remains unchanged.

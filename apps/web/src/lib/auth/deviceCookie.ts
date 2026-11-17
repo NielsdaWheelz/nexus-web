@@ -5,7 +5,7 @@ import type { CookieWrite } from "@/lib/supabase/auth";
 // server-owned per-device identity: the workspace restore key, minted by
 // middleware or native bootstrap and read by server code on the same
 // request. the client never sends it (the bff stamps X-Nexus-Device); stats
-// answers carry the viewer's device ids as opaque labels for filtering.
+// sittings carry the raw device id only to name exact exclusions.
 export const DEVICE_COOKIE_NAME = "nx_device";
 
 export function readDeviceId(store: {

@@ -1,4 +1,4 @@
-"""Flush-only link endpoint materialization, machine-fact removal and link statistics.
+"""Flush-only link endpoint materialization and machine-fact removal.
 
 A passage candidate with a captured ``passage_target`` materializes only where it was
 captured: the candidate is recaptured through that reading owner and must name the
@@ -11,10 +11,8 @@ candidate.
 
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -23,12 +21,10 @@ from nexus.schemas.resource_evidence import CapturedPassageTarget
 from nexus.schemas.resource_graph import LinkEndpoint
 from nexus.services import passage_anchors
 from nexus.services.resource_graph import edges
-from nexus.services.resource_graph.liveness import AUTHORED_LINK_ORIGINS, edge_live_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, require_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import capability
 from nexus.services.resource_items.evidence import capture_evidence
-from nexus.services.resource_items.items import visible_refs
 
 
 def materialize_link_endpoint(
@@ -103,31 +99,3 @@ def remove_machine_fact(db: Session, *, viewer_id: UUID, edge_id: UUID) -> bool:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "This connection cannot be removed")
     edges.delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
     return True
-
-
-def count_retained_neutral_links(
-    db: Session, *, viewer_id: UUID, start: datetime | None, end: datetime
-) -> int:
-    """Live authored links created in the window whose two endpoints are still visible,
-    including ordinary related notes; annotations are a highlight field."""
-    window = [ResourceEdge.created_at < end]
-    if start is not None:
-        window.append(ResourceEdge.created_at >= start)
-    rows = db.execute(
-        select(
-            ResourceEdge.source_scheme,
-            ResourceEdge.source_id,
-            ResourceEdge.target_scheme,
-            ResourceEdge.target_id,
-        ).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin.in_(AUTHORED_LINK_ORIGINS),
-            text(edge_live_sql("resource_edges")),
-            *window,
-        )
-    ).all()
-    refs = [assert_resource_ref(f"{row[i]}:{row[i + 1]}") for row in rows for i in (0, 2)]
-    visible = visible_refs(db, viewer_id=viewer_id, refs=refs)
-    return sum(
-        a.uri in visible and b.uri in visible for a, b in zip(refs[::2], refs[1::2], strict=True)
-    )

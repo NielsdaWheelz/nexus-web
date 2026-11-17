@@ -96,6 +96,7 @@ import { createReaderAnnotations, locatePassage, type ReaderAnnotation } from "@
 import { AnnotationList, PLACEMENT_COPY } from "@/lib/documentReader/chrome/ReaderAnnotation";
 import { useAuthoredStore } from "@/lib/authored/provider";
 import { useReaderChrome } from "./chrome";
+import HereEnds from "./HereEnds";
 import EmbedCard, { PostActions, PostSaveReadFailure } from "./Embeds";
 import { usePostSaveStates } from "@/lib/media/xPostSaves";
 import EvidencePane from "./evidence/EvidencePane";
@@ -908,7 +909,7 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const bounds = verbs.bounds;
   const boundsPrompt: Line | null = !bounds ? null : bounds.issue ?? (bounds.phase === "Submitting" ? null : { fact: bounds.scope.kind === "quote"
     ? "select text matching the original quote." : bounds.scope.kind === "page" ? "select the new passage on this page." : "select the new passage in this section." });
-  const { head } = useReaderChrome({
+  const { head, summary } = useReaderChrome({
     media,
     // a refresh that finds the item gone retires its inspector; any other refresh failure says nothing.
     gone: record.error?.code === "E_MEDIA_NOT_FOUND",
@@ -1034,7 +1035,8 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         end={
           doc?.kind === "text" && doc.format !== "transcript" ? (
             <>
-              <p>{media.kind === "text_part" ? "end of piece" : doc.format === "epub" ? "End of book" : "End of article"}</p>
+              {summary?.consumption.state === "Finished" ? <HereEnds mediaId={id} title={summary.title} />
+                : <p>{media.kind === "text_part" ? "end of piece" : doc.format === "epub" ? "End of book" : "End of article"}</p>}
               {prompt}
             </>
           ) : null

@@ -13,8 +13,8 @@ css modules, in three spellings of the same intent:
 - `font-variant-caps: all-small-caps`: `components/ui/MachineText.module.css:17`,
   `app/(authenticated)/settings/appearance/page.module.css:231`.
 - raw `em` tracking instead of the `--tracking-*` tokens:
-  `app/(authenticated)/stats/StatsPaneBody.module.css:34`,
-  `app/s/publicShare.module.css:36`.
+  `app/s/publicShare.module.css:36`,
+  `app/(authenticated)/stats/Slip.module.css` (`.head`, the specified paper label).
 
 `ChatSurface.module.css:149` calls its rows small-caps and sets uppercase.
 
@@ -28,3 +28,7 @@ exceptions named, or the differences are recorded as intended in
 headword replaces desktop uses with lowercase margin side-heads and locators.
 the thumb index deletes `.head` and `.sub` from `Nexus.module.css`; other
 listed modules retain their separate declarations.
+
+the reading-record change removes the old stats body stylesheet. its slip labels
+retain the specified paper material’s mono/uppercase treatment and tracking;
+the remaining cross-module consolidation is still open.

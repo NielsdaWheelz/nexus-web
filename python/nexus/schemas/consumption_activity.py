@@ -1,30 +1,21 @@
 """Observed activity wire: capture in (web and android), session exclusions and personal
-statistics out. Devices are the opaque stored ids the bff names; nothing is sealed."""
+records out. Devices are the opaque stored ids the bff names; nothing is sealed."""
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, ConfigDict, Field, model_validator
 
 from nexus.schemas.consumption import Closed
+from nexus.schemas.media_summary import MediaSummaryOut
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]
 _Position = Annotated[int, Field(ge=0, le=9_223_372_036_854_775_807)]
 _Progress = Annotated[float, Field(ge=0, le=1)]
-
-
-def _civil_date(value: object) -> str:
-    if not isinstance(value, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
-        raise ValueError("Expected YYYY-MM-DD")
-    return value
-
-
-ConsumptionDate = Annotated[date, BeforeValidator(_civil_date)]
 
 
 class _Row(Closed):
@@ -113,145 +104,116 @@ class ExcludeSessionIn(Closed):
     ended_at: AwareDatetime
 
 
-class DeviceSummaryOut(_Row):
-    device_id: str
-    label: str
-
-
-class ActivitySessionOut(_Row):
-    media_id: UUID
-    title: str
-    modality: ActivityModality
-    device: DeviceSummaryOut
-    started_at: datetime
-    ended_at: datetime
+class DayOut(Closed):
+    date: date
     active_ms: int
-    forward_word_position: int
-    forward_media_position_ms: int
-    continues_before_range: bool
-    continues_after_range: bool
+    level: int
+    finished: int
 
 
-class ActivitySessionPageOut(Closed):
-    items: list[ActivitySessionOut]
-    next_cursor: str | None
+class SlipOut(Closed):
+    weeks_running: int
+    weeks_entire: int
+    days_read: int
+    days: list[DayOut]
 
 
-class ActivityTotalsOut(Closed):
-    active_ms: int
-    recorded_active_ms: int
-    forward_word_position: int
-    forward_media_position_ms: int
-    active_days: int
-    streak: int
-    longest_streak: int
-    session_count: int
-
-
-class ActivityTimelineRowOut(_Row):
-    start: datetime
-    end: datetime
-    local_label: str
-    utc_offset_minutes: int
-    reading_active_ms: int
-    listening_active_ms: int
-    viewing_active_ms: int
+class OpenWorkOut(Closed):
+    media: MediaSummaryOut
+    position: float | None
+    covered: list[tuple[float, float]]
+    thickness_mm: float
     active_ms: int
 
 
-class LocalDayOut(Closed):
+class StackWorkOut(Closed):
+    media: MediaSummaryOut
+    finished_on: date
+    words: int | None
+    thickness_mm: float
+    active_ms: int
+
+
+class StackYearOut(Closed):
+    year: int
+    height_mm: float
+    works: list[StackWorkOut]
+
+
+class SittingRecordOut(Closed):
+    media: MediaSummaryOut
+    started_at: AwareDatetime
+    active_ms: int
+
+
+class DayRecordOut(Closed):
     date: date
     active_ms: int
 
 
-class LocalHourOut(Closed):
-    hour: int
+class WorkLengthOut(Closed):
+    media: MediaSummaryOut
+    words: int
+
+
+class RecordsOut(Closed):
+    longest_sitting: SittingRecordOut | None
+    fullest_day: DayRecordOut | None
+    longest_work: WorkLengthOut | None
+    observed_ms: int
+    first_day: date | None
+
+
+class UnitOut(Closed):
+    label: str | None
+    start: float
+    end: float
+    weight: float
+    part: int | None
+
+
+class WorkRecordOut(Closed):
+    media: MediaSummaryOut
+    words: int | None
+    thickness_mm: float
+    unit: Literal["Chapter", "Section", "Page"] | None
+    parts: list[str]
+    units: list[UnitOut]
+    position: float | None
+    covered: list[tuple[float, float]]
+    full_read_ms: int | None
+    sittings: int
     active_ms: int
+    first_read_on: date | None
+    finished_on: date | None
+    days: list[DayOut]
 
 
-class MediaActivityOut(_Row):
+class RecordOut(Closed):
+    time_zone: str
+    today: date
+    slip: SlipOut
+    open: list[OpenWorkOut]
+    in_hand: WorkRecordOut | None
+    stack: list[StackYearOut]
+    lifetime_mm: float
+    records: RecordsOut
+
+
+class SittingOut(_Row):
     media_id: UUID
-    title: str
-    active_ms: int
-    forward_word_position: int
-    forward_media_position_ms: int
-
-
-class MediaActivityBreakdownOut(Closed):
-    rows: list[MediaActivityOut]
-    other_active_ms: int
-
-
-class ContributorActivityOut(Closed):
-    contributor_handle: str
-    display_name: str
-    roles: list[str]
-    active_ms: int
-
-
-class ContributorActivityBreakdownOut(Closed):
-    rows: list[ContributorActivityOut]
-
-
-class DeviceActivityOut(_Row):
-    device_id: str
-    label: str
-    is_current: bool
-    active_ms: int
-
-
-class ActiveExclusionOut(_Row):
-    id: UUID
     title: str
     modality: ActivityModality
-    device: DeviceSummaryOut
+    device_id: str
     started_at: datetime
-    excluded_active_ms: int
+    ended_at: datetime
+    active_ms: int
+    day: date
+    from_place: float | None
+    to_place: float | None
+    exclusion_id: UUID | None
 
 
-class _Scoped(Closed):
-    applied_filters: list[str]
-    inapplicable_filters: list[str]
-
-
-class ActivityStatsSectionOut(_Scoped):
-    totals: ActivityTotalsOut
-    timeline: list[ActivityTimelineRowOut]
-    local_days: list[LocalDayOut]
-    local_hours: list[LocalHourOut]
-    media: MediaActivityBreakdownOut
-    contributors: ContributorActivityBreakdownOut
-    devices: list[DeviceActivityOut]
-    longest_session: ActivitySessionOut | None
-    active_exclusions: list[ActiveExclusionOut]
-
-
-class MediaCompletionOut(_Row):
-    media_id: UUID
-    title: str
-    total: int
-
-
-class ContributorCompletionOut(Closed):
-    contributor_handle: str
-    display_name: str
-    roles: list[str]
-    total: int
-
-
-class CompletionStatsSectionOut(_Scoped):
-    total: int
-    media: list[MediaCompletionOut]
-    contributors: list[ContributorCompletionOut]
-
-
-class RetainedArtifactsOut(_Scoped):
-    highlights: int
-    note_blocks: int
-    neutral_links: int
-
-
-class ConsumptionStatsOut(Closed):
-    activity: ActivityStatsSectionOut
-    completion: CompletionStatsSectionOut
-    retained_artifacts: RetainedArtifactsOut
+class SittingPageOut(Closed):
+    items: list[SittingOut]
+    next_cursor: str | None

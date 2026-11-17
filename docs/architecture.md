@@ -1459,8 +1459,8 @@ rate under the `reset_epoch` fence), `reader_cursor.py`
 (`reader_media_state` revisioned
 `Empty`/`Positioned` cursor CAS), `activity.py`
 (`consumption_activity_spans` ingest and `consumption_activity_exclusions`),
-`stats.py` (read-time aggregation, sessionization and the Stats and Sessions
-payloads), and `projection.py` (the one read-state ladder and batched
+`stats.py` (the record, work records and all-time sittings), `structure.py`
+(work units, parts and pdf page weights), and `projection.py` (the one read-state ladder and batched
 `PlayerDescriptor`s reusing `derive_playback_source`; the server owns
 the resume point, so a finished episode's descriptor starts at 0). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to suggestions; it
@@ -1551,18 +1551,19 @@ the owned global audio element, and the visible embedded-video pane; it holds
 closed spans in memory and delivers them in batches (a tab closed offline loses
 what it held). Native Android listening uses its service-owned durable outbox.
 Stable capture keys make regrouped delivery idempotent. The BFF stamps the
-device from the httpOnly `nx_device` cookie; no client names it, and Stats shows
-the viewer their own raw device ids.
+device from the httpOnly `nx_device` cookie; no client names it. sittings carry
+raw device ids for exact corrections but display no device label.
 
-`/stats` renders URL-owned factual time buckets, current visibility-scoped
-breakdowns, derived observed sessions, active exclusions, and a deterministic
-Year in Reading view. Exact session Exclude/Restore is the only correction
-lifecycle. Accepted writes publish the Consumption change topic (§8.12); the
-pane rereads on it only while active, on activation, and when the page returns
-to the screen, without polling. Its figures are one `useServerValue` and its
-sessions one automatically exhausted `useServerList` over the keyset sessions read. a
-`null` cursor ends the list; no empty-string cursor stands in for it. stats'
-full contract is
+`/stats` has record and sittings views. the record draws a chapter landscape,
+a slip of account-zone days and yearly stacks of estimated print thickness,
+with open works and four factual records. work and year selections live in the
+url; there are no periods or filters. don’t count and restore correct exact
+sittings in place without changing observations. accepted writes publish
+`Consumption` (§8.12); the active pane rereads on changes, activation, page return
+and account midnight, without polling. the record uses `useServerValue`;
+sittings exhaust one keyset `useServerList`, ending at a `null` cursor.
+finished text documents read their end record independently of lectern membership
+and without following position-save invalidations. the full contract is
 [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
@@ -1652,7 +1653,7 @@ the complete server projection locally; reads accept sort/projection, including
 unfinished. capture also accepts type. malformed libraries/library/lectern urls
 fail before reads; library-dependent semantics resolve when identity is known.
 author, feeds and browse retain owner ordering; search retains operator parsing
-and settling. stats publishes period/date/filter words. find supplies its session
+and settling. stats publishes record and sittings views without a query field. find supplies its session
 through the shared field. forms, settings sections and secondary list owners
 keep their existing contracts.
 

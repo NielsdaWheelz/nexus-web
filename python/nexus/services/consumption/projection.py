@@ -34,7 +34,7 @@ def remaining_time_rows_sql() -> str:
     Text uses its reader owner's estimate; episode duration prefers a stored
     listening duration. Nonpositive/absent durations yield no sortable value.
     """
-    duration = _duration_sql("pls", "pe")
+    duration = listening_duration_sql("pls", "pe")
     return f"""
         SELECT media_id, remaining_seconds FROM ({reading_time_rows_sql()}) reading
         UNION ALL
@@ -48,7 +48,8 @@ def remaining_time_rows_sql() -> str:
     """
 
 
-def _duration_sql(listening_alias: str, episode_alias: str) -> str:
+def listening_duration_sql(listening_alias: str, episode_alias: str) -> str:
+    """Nullable milliseconds: the stored listening duration precedes the source duration."""
     return f"COALESCE({listening_alias}.duration_ms, {episode_alias}.duration_seconds * 1000)"
 
 
@@ -97,7 +98,7 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
     joined subquery, and inlining re-runs the union once per outer row. ``media_ids_param``
     names a bound UUID array applied inside every candidate arm.
     """
-    duration_ms = _duration_sql("pls", "pe")
+    duration_ms = listening_duration_sql("pls", "pe")
     candidate_filter = f"AND media_id = ANY(:{media_ids_param})" if media_ids_param else ""
     read_state = _read_state_case_sql(
         listening="pls",
@@ -206,7 +207,7 @@ def player_descriptors(
     """Descriptors of the playable episodes among ``media_ids``; others are missing."""
     from nexus.services.podcasts.episodes import episode_source_rows_sql
 
-    duration = _duration_sql("pls", "pe")
+    duration = listening_duration_sql("pls", "pe")
     rows = db.execute(
         text(f"""
             SELECT m.id AS media_id, m.title, m.external_playback_url, m.canonical_source_url,

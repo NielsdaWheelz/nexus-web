@@ -1,128 +1,147 @@
-# Consumption Activity
+# consumption activity
 
-## Scope
+## scope
 
-Consumption Activity is Nexus's personal observed-history capability. It owns
-bounded reading, listening, and video-pane spans; client delivery;
-exact-session exclusion and restore; first observed canonical completion facts; and the factual `/stats` and
-session reads. It does not own
-the reader cursor, current reader engagement, audio heartbeat state, explicit
-consumption state, or user-authored time.
+consumption activity owns bounded reading, listening and video-pane observations;
+client delivery; exact-sitting exclusion and restore; first canonical completion
+facts; and the reading record. it does not own the reader cursor, engagement,
+audio heartbeat, explicit consumption state or user-authored time.
 
-## Facts and semantics
+## facts and semantics
 
-- `consumption_activity_spans` is the sole positive-duration fact family. It
-  stores bounded observations; stable client capture keys make a resent batch
-  idempotent.
-- `consumption_activity_exclusions` stores a viewer's decision not to count one
-  exact observed gap-and-island session. Restore reactivates the underlying
-  spans; neither operation edits or creates observation facts.
-- `consumption_completion_facts` stores the first post-cutover canonical
-  `Finished` transition for one viewer/media. Exact completion Undo may remove
-  the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
-  history. the existing account action owner retains the exact finish inverse
-  behind an untimed optional offer; a lost undo response becomes a required
-  condition and reuses that receipt. this does not add restart persistence.
-  Current percentage follows the saved cursor/listening position; accepted
-  known progress ≥95% writes sticky finished separately. Unread preserves the
-  bookmark and genuine canonical activity resumes it. These current-state rules
-  belong to [the player](player.md), not observed-time aggregation.
-- Reading requires the eligible focused reader/input state in a visible tab.
-  Listening follows the sole platform audio owner (the global browser audio
-  element off Android, the native Media3 service in the Android shell) and
-  counts while audio plays, hidden tab or not: audio is the evidence, not focus.
-  Viewing is focused, visible video-pane time, not verified provider playback.
-- Sessions are read-time projections over spans, never stored rows or browser
-  identities. Forward word/media-position change is a cursor delta, not unique
-  consumption.
-- Retained highlights, note blocks, and neutral Links remain their own source
-  rows. Their Stats counts are current retained facts, not immutable activity.
+- `consumption_activity_spans` is the sole positive-duration fact family. stable
+  client capture keys make resent batches idempotent.
+- `consumption_activity_exclusions` records the decision not to count one exact
+  all-time sitting. each accepted command uuid retains its exclusion row;
+  equivalent active rows represent one logical excluded sitting. restore
+  reactivates its spans; neither command changes or creates observations.
+- `consumption_completion_facts` stores the first observed canonical `Finished`
+  transition per viewer and work. exact completion undo may remove the fact it
+  created; ordinary unread and reset preserve history. the account action owner
+  retains the exact inverse behind an untimed optional offer; an unknown undo
+  outcome reuses that receipt without adding restart persistence.
+- current percentage follows the saved cursor or listening position. accepted
+  progress at least 95% writes sticky finished separately. unread preserves the
+  bookmark, and canonical activity resumes it. these state rules belong to
+  [the player](player.md).
+- reading requires eligible focused input in a visible tab. listening follows
+  the sole platform audio owner: the global browser audio element, or android's
+  native media service. audio counts while playing, including when hidden.
+  viewing measures focused, visible video-pane time, without claiming provider
+  playback.
+- a sitting is an island of effective spans for one work, modality and device,
+  separated by a thirty-minute gap. it is projected, never stored.
+- effective time excludes spans inside active exclusions. all record figures,
+  sittings and days derive from this one relation over currently visible media.
+- a day belongs to the civil date on which its span starts in the account's
+  `calendar_time_zone`. a span is not split at midnight. five minutes counts a
+  day; stamp levels begin at five, twenty, forty-five and ninety minutes.
+- weeks run monday to sunday and belong to the year of their monday. one counted
+  day keeps a week; seven make it entire. weeks running counts back from this
+  week, or the preceding week when this one is not yet kept, across year edges.
+- covered stretches are merged span progress intervals. a pass retains its time
+  but contributes neither coverage nor pace: more than fifteen words a second,
+  a quarter pdf page a second, or four times wall-clock listening advancement.
+  missing measurements do not imply a pass.
+- print thickness is an estimate from words, with boards for epubs. listening
+  and viewing use transcript words, or the duration estimate when available.
+  thickness never represents observed time.
+- the stack contains completion facts, once per work, grouped by the account-zone
+  year of completion. rereads do not add another spine. removing a work still
+  removes its observations, exclusions and completion fact.
 
-For every Stats query:
+## owners
 
-```text
-recorded_active_ms = accepted visible observed duration
-excluded_active_ms = recorded duration removed by active exclusions
-active_ms          = recorded_active_ms - excluded_active_ms
-```
-
-All breakdowns, sessions, streaks, and Year presentation derive from effective
-`active_ms`. There is no manual or alternate observed-time projection.
-
-## Owners
-
-| Concern | Owner |
+| concern | owner |
 | --- | --- |
-| Viewer-locked write transactions | `python/nexus/services/consumption/__init__.py` |
-| Span ingest and session exclusions | `python/nexus/services/consumption/activity.py` |
-| Current state writes, completion facts and the player read | `python/nexus/services/consumption/state.py` |
-| Aggregation, filtering, sessions and the Stats and Sessions payloads | `python/nexus/services/consumption/stats.py` |
-| The read-state derivation | `python/nexus/services/consumption/projection.py` |
-| Wire shapes and routes | `python/nexus/schemas/consumption_activity.py`, `api/routes/consumption_activity.py`; the web reads generated wire types |
-| Browser capture and delivery | `apps/web/src/lib/consumption/capture.tsx` (in memory) |
-| Android listening capture and durability | `playback/ListeningRecorder.kt`, `playback/ActivityOutbox.kt` |
-| Presentation | the authenticated Stats pane (`app/(authenticated)/stats/`) |
+| viewer-locked writes | `python/nexus/services/consumption/__init__.py` |
+| span ingest and exclusions | `activity.py` in that directory |
+| current state and completion facts | `state.py` |
+| record, work record and sittings projections | `stats.py` |
+| navigation units, parts and pdf pages | `structure.py` |
+| the one current read-state ladder | `projection.py` |
+| wire shapes and routes | `schemas/consumption_activity.py`, `api/routes/consumption_activity.py` |
+| browser capture and delivery | `apps/web/src/lib/consumption/capture.tsx` |
+| durable android listening delivery | `playback/ListeningRecorder.kt`, `playback/ActivityOutbox.kt` |
+| pane composition and corrections | `app/(authenticated)/stats/StatsPaneBody.tsx`, `Sittings.tsx` |
+| landscape, slip and stack | `Landscape.tsx`, `landscapeGeometry.ts`, `Slip.tsx`, `Stack.tsx` and their css modules |
+| text exports and duration spelling | `apps/web/src/lib/consumption/recordText.ts` |
+| record clipboard outcome | `apps/web/src/lib/consumption/RecordCopyButton.tsx` |
+| finished text end line | `app/(authenticated)/media/[id]/HereEnds.tsx` |
 
-## Contract
+## contract
 
-Devices are the opaque stored id the bff stamps from the httpOnly `nx_device`
-cookie (`X-Nexus-Device`); no body or query names the caller's device. Stats,
-sessions and exclusions carry that raw id as `device_id` (any of the viewer's
-devices), works their `media_id`, exclusions their uuid `id`. Nothing is sealed.
+paths below are api paths before the web's `/api` prefix. devices are opaque ids
+stamped by the bff from the http-only `nx_device` cookie. sittings carry
+`device_id` only to name exact exclusions; the interface shows no device label.
+works and exclusions use plain uuids.
 
-- `POST /consumption/activity {media_id, device_class, batch{modality, spans[1..120]}}`
-  → 204. Retry: each span's `capture_key` is its identity, so a resent batch
-  stores nothing new; a key reused with other facts refuses the batch (409
-  `E_ACTIVITY_CAPTURE_CONFLICT`). Spans older than 30 days, more than 5 minutes
-  ahead or overlapping their predecessor are skipped; the rest land.
-- `PUT /consumption/exclusions/{id} {media_id, modality, device_id, started_at, ended_at}`
-  → 204: stop counting one exact, unclipped, all-time session. The id is
-  client-minted once per session and resent on retry: the same id answers
-  success, a session already excluded under another id answers success, another
-  viewer's id is 409, an interval that is not one current session is 400.
-- `DELETE /consumption/exclusions/{id}` → 204: count the session again,
-  restoring every active exclusion of it; already restored is success, an
-  unknown id 404.
-- `GET /consumption/stats` (`end`, `time_zone`, `bucket` Hour | Day | Month |
-  Year, optional `start`, `modality`, `media_id`, `contributor_handle`,
-  `device_id`) and `GET /consumption/sessions` (the same scope, `cursor`,
-  `limit` 1..200) are no-store reads. Sessions page by keyset `(started_at,
-  media_id, modality, device_id)` under the first page's `as_of`; a cursor
-  carries a hash of its scope and is refused (400) under another.
-- Writers publish the `Consumption` change topic; the Stats pane rereads on it
-  only while active, on activation and when the page returns to the screen.
+- `POST /consumption/activity {media_id, device_class, batch{modality, spans}}`
+  accepts one to 120 spans and returns 204. a resent capture key stores nothing
+  new; reused identity with different bytes is 409 `E_ACTIVITY_CAPTURE_CONFLICT`.
+  spans older than thirty days, more than five minutes ahead, or overlapping
+  their predecessor are skipped; the rest land.
+- `PUT /consumption/exclusions/{id} {media_id, modality, device_id, started_at,
+  ended_at}` returns 204. the client mints one id per exact all-time sitting and
+  resends it. the same id or a sitting already excluded under another id succeeds;
+  each accepted id remains a receipt after restore. another viewer's id is 409;
+  a non-sitting interval is 400.
+- `DELETE /consumption/exclusions/{id}` returns 204 and restores every active
+  exclusion of that sitting. an already restored id succeeds without touching
+  a later exclusion; an unknown id is 404.
+- `GET /consumption/record` reads the account-zone today, all-time slip days,
+  up to six recent unfinished open works, the first work in hand, yearly stacks,
+  lifetime print height and four records. the slip shows the current year's
+  weeks; all-time days support runs across years.
+- `GET /consumption/works/{media_id}` reads one visible work's units, parts,
+  cursor, coverage, full-read estimate, sittings, days and completion. inaccessible
+  works are 404. epub, article and pdf units require a ready reader publication;
+  pdfs use pages and episodes use timed chapters.
+- `GET /consumption/sittings?cursor&limit` reads all-time effective sittings
+  together with active exclusions, newest first. limit is one to 200, default
+  fifty. keyset order is `(started_at, ended_at, media_id, modality, device_id)`;
+  a cursor freezes `as_of` and is bound to its viewer. excluded rows retain their
+  original time and exclusion id but have no progress interval.
+- every read uses one repeatable-read snapshot and one `as_of`; there is no
+  stored figure, rollup or cache. wire absence is `null`.
+- writers publish `Consumption`. the active pane rereads on changes, activation,
+  page return and account midnight. record and sittings are its only views;
+  work and year selections belong to the record url. retired views and filters
+  are invalid, with a reset action.
+- corrections require no dialog. an unknown outcome remains a `Hold` with the
+  same retry identity. a fresh excluded row carrying that command's id proves
+  exclusion; another command's id requires an acknowledged retry.
+  a complete fresh list without it proves restore. a definitive 400 or 404 settles
+  the held command; transport uncertainty and a busy refusal retain its retry.
+- landscape widths retain source proportions. the minimum visible peak criterion
+  qualifies the reference thirteen-unit layout at 320 px; arbitrary tiny source
+  units may remain tiny rather than distort the scale.
+- date clauses label the reading start and finish separately when observation
+  begins after an earlier completion; the facts and export ribbon remain unchanged.
+- a finished text document shows its end line independently of lectern membership.
+  its work record reads on mount or transition into finished, without following
+  `Consumption`. unfinished texts retain their ordinary end line. exports are
+  plain text through the existing clipboard feedback contract.
 
-## Invariants
+## capture invariants
 
-- Spans are bounded (1..30,000 ms) observations; `capture_key` is unique per
-  viewer. Exclusions never edit or create spans; at most one exclusion of a
-  session is active (the viewer lock serializes the check); Stats lists older
-  duplicates once.
-- Every Stats read projects one `as_of` snapshot over currently visible media;
-  `active_ms = recorded_active_ms - excluded_active_ms`.
-- Civil ranges resolve once to utc instants in the request's zone (the sql
-  three-hour midnight rule); dates a zone skips return empty facts.
-- Browser capture has one tab-local owner: each (media, modality) group accrues
-  at most one span, from its single eligible observer (an observer is its
-  handle); two eligible observers record nothing. Spans close at 10 s
-  checkpoints, on ineligibility, observer or device-class change and pagehide;
-  batches are one lane (≤ 120 spans, ≤ 40 kB); network, 408, 429 and 5xx
-  failures retry with backoff, other refusals drop the batch; pagehide hands
-  at most 60 kB to the browser with `keepalive`. A tab closed offline loses
-  what it held. Android listening is durable in its outbox.
-- Current state (`reader_media_state`, `reader_engagement_states`,
-  `podcast_listening_states`) stays separate; resets keep spans and completion
-  facts. Media teardown removes exclusions and both fact families before the
-  parent media row.
+spans last one to 30,000 ms; capture keys are viewer-unique. the viewer lock
+serializes exclusion writes; active rows for one sitting display once. current reader and
+listening state remain separate, and reset preserves observations and facts.
 
-## Operations
+browser capture has one tab-local owner. each work/modality group accrues at most
+one span; two eligible observers record nothing. spans close at ten-second
+checkpoints, ineligibility, observer/device-class changes and page hide. batches
+use one lane, at most 120 spans or 40 kb. network, 408, 429 and 5xx retry with
+backoff; other refusals drop the batch. page hide hands at most 60 kb to browser
+keepalive. a tab closed offline loses its in-memory queue. android listening
+retains its durable outbox.
 
-There is no rollup or cache: every figure is projected at read time.
+## non-goals
 
-## Non-goals
-
-No positive manual entry, timer, import, external-app or physical-book tracking,
-raw interaction log, stored session, second device identity, sharing/export,
-partial-span editing, genre taxonomy, badge, or LLM reflection exists in this
-capability. Progress, completion, and Library time estimates never fabricate
-observed duration.
+no positive manual entry, timer, import, external-app or physical-book tracking,
+raw interaction log, stored sitting, second device identity, partial-span edit,
+genre taxonomy, feed, leaderboard, streak reward or generated reflection.
+progress, completion, print thickness and library time estimates never fabricate
+observed duration. the record counts and draws what was read outside reading;
+it never announces a loss.

@@ -57,3 +57,8 @@ passed. broader reader reauthoring and other pane concept audits remain open.
 formatted lines became a 530-line pane over two cohesive owners with explicit
 contracts (`lib/podcasts/paneState.ts` server state, `PodcastEpisodeList` rows
 and episode-wide commands). the media host, library and stats remain.
+
+2026-11-17: the reading-record change resolves the stats item. its body owns url,
+chrome and the record read; landscape, slip, stack and sittings each hide their
+own presentation or correction contract. there is no mechanical file-size split.
+the remaining media and library concerns stay open.

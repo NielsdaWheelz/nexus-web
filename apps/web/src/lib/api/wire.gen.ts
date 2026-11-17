@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 24;
+export const WIRE_REVISION = 25;
 
 export interface paths {
     "/assistant-writes": {
@@ -480,15 +480,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/consumption/sessions": {
+    "/consumption/record": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Sessions */
-        get: operations["get_sessions_consumption_sessions_get"];
+        /** Get Record */
+        get: operations["get_record_consumption_record_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -497,15 +497,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/consumption/stats": {
+    "/consumption/sittings": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Stats */
-        get: operations["get_stats_consumption_stats_get"];
+        /** Get Sittings */
+        get: operations["get_sittings_consumption_sittings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/consumption/works/{media_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Work */
+        get: operations["get_work_consumption_works__media_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3442,29 +3459,6 @@ export interface components {
             kind: "Accepted";
             turn: components["schemas"]["ChatRunResponse"];
         };
-        /** ActiveExclusionOut */
-        ActiveExclusionOut: {
-            device: components["schemas"]["DeviceSummaryOut"];
-            /** Excluded Active Ms */
-            excluded_active_ms: number;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Modality
-             * @enum {string}
-             */
-            modality: "Reading" | "Listening" | "Viewing";
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
-            /** Title */
-            title: string;
-        };
         /**
          * ActivityRecordIn
          * @description A batch of one media, modality and device class; the device is the header the bff
@@ -3483,114 +3477,6 @@ export interface components {
              * Format: uuid
              */
             media_id: string;
-        };
-        /** ActivitySessionOut */
-        ActivitySessionOut: {
-            /** Active Ms */
-            active_ms: number;
-            /** Continues After Range */
-            continues_after_range: boolean;
-            /** Continues Before Range */
-            continues_before_range: boolean;
-            device: components["schemas"]["DeviceSummaryOut"];
-            /**
-             * Ended At
-             * Format: date-time
-             */
-            ended_at: string;
-            /** Forward Media Position Ms */
-            forward_media_position_ms: number;
-            /** Forward Word Position */
-            forward_word_position: number;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /**
-             * Modality
-             * @enum {string}
-             */
-            modality: "Reading" | "Listening" | "Viewing";
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
-            /** Title */
-            title: string;
-        };
-        /** ActivitySessionPageOut */
-        ActivitySessionPageOut: {
-            /** Items */
-            items: components["schemas"]["ActivitySessionOut"][];
-            /** Next Cursor */
-            next_cursor: string | null;
-        };
-        /** ActivityStatsSectionOut */
-        ActivityStatsSectionOut: {
-            /** Active Exclusions */
-            active_exclusions: components["schemas"]["ActiveExclusionOut"][];
-            /** Applied Filters */
-            applied_filters: string[];
-            contributors: components["schemas"]["ContributorActivityBreakdownOut"];
-            /** Devices */
-            devices: components["schemas"]["DeviceActivityOut"][];
-            /** Inapplicable Filters */
-            inapplicable_filters: string[];
-            /** Local Days */
-            local_days: components["schemas"]["LocalDayOut"][];
-            /** Local Hours */
-            local_hours: components["schemas"]["LocalHourOut"][];
-            longest_session: components["schemas"]["ActivitySessionOut"] | null;
-            media: components["schemas"]["MediaActivityBreakdownOut"];
-            /** Timeline */
-            timeline: components["schemas"]["ActivityTimelineRowOut"][];
-            totals: components["schemas"]["ActivityTotalsOut"];
-        };
-        /** ActivityTimelineRowOut */
-        ActivityTimelineRowOut: {
-            /** Active Ms */
-            active_ms: number;
-            /**
-             * End
-             * Format: date-time
-             */
-            end: string;
-            /** Listening Active Ms */
-            listening_active_ms: number;
-            /** Local Label */
-            local_label: string;
-            /** Reading Active Ms */
-            reading_active_ms: number;
-            /**
-             * Start
-             * Format: date-time
-             */
-            start: string;
-            /** Utc Offset Minutes */
-            utc_offset_minutes: number;
-            /** Viewing Active Ms */
-            viewing_active_ms: number;
-        };
-        /** ActivityTotalsOut */
-        ActivityTotalsOut: {
-            /** Active Days */
-            active_days: number;
-            /** Active Ms */
-            active_ms: number;
-            /** Forward Media Position Ms */
-            forward_media_position_ms: number;
-            /** Forward Word Position */
-            forward_word_position: number;
-            /** Longest Streak */
-            longest_streak: number;
-            /** Recorded Active Ms */
-            recorded_active_ms: number;
-            /** Session Count */
-            session_count: number;
-            /** Streak */
-            streak: number;
         };
         /**
          * AfterPlacement
@@ -4439,19 +4325,6 @@ export interface components {
         };
         CollectionSelection: components["schemas"]["FeedCollectionSelection"] | components["schemas"]["LibraryCollectionTarget"];
         CollectionTarget: components["schemas"]["FeedCollectionTarget"] | components["schemas"]["LibraryCollectionTarget"];
-        /** CompletionStatsSectionOut */
-        CompletionStatsSectionOut: {
-            /** Applied Filters */
-            applied_filters: string[];
-            /** Contributors */
-            contributors: components["schemas"]["ContributorCompletionOut"][];
-            /** Inapplicable Filters */
-            inapplicable_filters: string[];
-            /** Media */
-            media: components["schemas"]["MediaCompletionOut"][];
-            /** Total */
-            total: number;
-        };
         /** ConfirmCaptureRequest */
         ConfirmCaptureRequest: {
             expected_removal_revision: components["schemas"]["OrderRevision"];
@@ -4701,12 +4574,6 @@ export interface components {
             /** Override Revision */
             override_revision: number;
         };
-        /** ConsumptionStatsOut */
-        ConsumptionStatsOut: {
-            activity: components["schemas"]["ActivityStatsSectionOut"];
-            completion: components["schemas"]["CompletionStatsSectionOut"];
-            retained_artifacts: components["schemas"]["RetainedArtifactsOut"];
-        };
         /** ContentsPart */
         ContentsPart: {
             activation: components["schemas"]["ResourceActivationOut"];
@@ -4754,33 +4621,6 @@ export interface components {
             placement: components["schemas"]["ContentsPlacement"];
             /** Title */
             title: string;
-        };
-        /** ContributorActivityBreakdownOut */
-        ContributorActivityBreakdownOut: {
-            /** Rows */
-            rows: components["schemas"]["ContributorActivityOut"][];
-        };
-        /** ContributorActivityOut */
-        ContributorActivityOut: {
-            /** Active Ms */
-            active_ms: number;
-            /** Contributor Handle */
-            contributor_handle: string;
-            /** Display Name */
-            display_name: string;
-            /** Roles */
-            roles: string[];
-        };
-        /** ContributorCompletionOut */
-        ContributorCompletionOut: {
-            /** Contributor Handle */
-            contributor_handle: string;
-            /** Display Name */
-            display_name: string;
-            /** Roles */
-            roles: string[];
-            /** Total */
-            total: number;
         };
         /**
          * ContributorCreditOut
@@ -5060,10 +4900,6 @@ export interface components {
         Data_AcceptedChanges_: {
             data: components["schemas"]["AcceptedChanges"];
         };
-        /** Data[ActivitySessionPageOut] */
-        Data_ActivitySessionPageOut_: {
-            data: components["schemas"]["ActivitySessionPageOut"];
-        };
         /** Data[Annotated[Union[EmailAccepted, EmailSuppressed], FieldInfo(annotation=NoneType, required=True, discriminator='outcome')]] */
         Data_Annotated_Union_EmailAccepted__EmailSuppressed___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____: {
             /** Data */
@@ -5175,10 +5011,6 @@ export interface components {
         /** Data[ConsumptionOverrideOut] */
         Data_ConsumptionOverrideOut_: {
             data: components["schemas"]["ConsumptionOverrideOut"];
-        };
-        /** Data[ConsumptionStatsOut] */
-        Data_ConsumptionStatsOut_: {
-            data: components["schemas"]["ConsumptionStatsOut"];
         };
         /** Data[ContributorDetailOut] */
         Data_ContributorDetailOut_: {
@@ -5452,6 +5284,10 @@ export interface components {
         Data_ReadingCopyOut_: {
             data: components["schemas"]["ReadingCopyOut"];
         };
+        /** Data[RecordOut] */
+        Data_RecordOut_: {
+            data: components["schemas"]["RecordOut"];
+        };
         /** Data[RemoteChildrenOut] */
         Data_RemoteChildrenOut_: {
             data: components["schemas"]["RemoteChildrenOut"];
@@ -5495,6 +5331,10 @@ export interface components {
         /** Data[SearchRepairAdmission] */
         Data_SearchRepairAdmission_: {
             data: components["schemas"]["SearchRepairAdmission"];
+        };
+        /** Data[SittingPageOut] */
+        Data_SittingPageOut_: {
+            data: components["schemas"]["SittingPageOut"];
         };
         /** Data[SourceAdmission] */
         Data_SourceAdmission_: {
@@ -5545,6 +5385,10 @@ export interface components {
         Data_UserProfileOut_: {
             data: components["schemas"]["UserProfileOut"];
         };
+        /** Data[WorkRecordOut] */
+        Data_WorkRecordOut_: {
+            data: components["schemas"]["WorkRecordOut"];
+        };
         /** Data[WorkspacePresentationsOut] */
         Data_WorkspacePresentationsOut_: {
             data: components["schemas"]["WorkspacePresentationsOut"];
@@ -5581,23 +5425,29 @@ export interface components {
             /** Data */
             data: components["schemas"]["UserSearchOut"][];
         };
-        /** DeviceActivityOut */
-        DeviceActivityOut: {
+        /** DayOut */
+        DayOut: {
             /** Active Ms */
             active_ms: number;
-            /** Device Id */
-            device_id: string;
-            /** Is Current */
-            is_current: boolean;
-            /** Label */
-            label: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Finished */
+            finished: number;
+            /** Level */
+            level: number;
         };
-        /** DeviceSummaryOut */
-        DeviceSummaryOut: {
-            /** Device Id */
-            device_id: string;
-            /** Label */
-            label: string;
+        /** DayRecordOut */
+        DayRecordOut: {
+            /** Active Ms */
+            active_ms: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
         };
         /** @enum {string} */
         DiscoveryKind: "documents" | "notes" | "highlights" | "messages" | "people" | "libraries" | "readings" | "saved_passages";
@@ -8515,23 +8365,6 @@ export interface components {
             /** Source Identity */
             source_identity: string | null;
         };
-        /** LocalDayOut */
-        LocalDayOut: {
-            /** Active Ms */
-            active_ms: number;
-            /**
-             * Date
-             * Format: date
-             */
-            date: string;
-        };
-        /** LocalHourOut */
-        LocalHourOut: {
-            /** Active Ms */
-            active_ms: number;
-            /** Hour */
-            hour: number;
-        };
         /** LocatedSourceLocationOut */
         LocatedSourceLocationOut: {
             /** Apparatus Reference Id */
@@ -8587,41 +8420,6 @@ export interface components {
             target_kind: "library_entry" | "note_block" | "highlight" | "resource_edge" | "queue_item";
             /** Tool Position */
             tool_position: number;
-        };
-        /** MediaActivityBreakdownOut */
-        MediaActivityBreakdownOut: {
-            /** Other Active Ms */
-            other_active_ms: number;
-            /** Rows */
-            rows: components["schemas"]["MediaActivityOut"][];
-        };
-        /** MediaActivityOut */
-        MediaActivityOut: {
-            /** Active Ms */
-            active_ms: number;
-            /** Forward Media Position Ms */
-            forward_media_position_ms: number;
-            /** Forward Word Position */
-            forward_word_position: number;
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /** Title */
-            title: string;
-        };
-        /** MediaCompletionOut */
-        MediaCompletionOut: {
-            /**
-             * Media Id
-             * Format: uuid
-             */
-            media_id: string;
-            /** Title */
-            title: string;
-            /** Total */
-            total: number;
         };
         /** MediaContributorWorkItemOut */
         MediaContributorWorkItemOut: {
@@ -9662,6 +9460,21 @@ export interface components {
              * @enum {string}
              */
             kind: "OpenSource";
+        };
+        /** OpenWorkOut */
+        OpenWorkOut: {
+            /** Active Ms */
+            active_ms: number;
+            /** Covered */
+            covered: [
+                number,
+                number
+            ][];
+            media: components["schemas"]["MediaSummaryOut"];
+            /** Position */
+            position: number | null;
+            /** Thickness Mm */
+            thickness_mm: number;
         };
         /** OperatorActionRequired */
         OperatorActionRequired: {
@@ -12206,6 +12019,35 @@ export interface components {
             /** Subject */
             subject: string;
         };
+        /** RecordOut */
+        RecordOut: {
+            in_hand: components["schemas"]["WorkRecordOut"] | null;
+            /** Lifetime Mm */
+            lifetime_mm: number;
+            /** Open */
+            open: components["schemas"]["OpenWorkOut"][];
+            records: components["schemas"]["RecordsOut"];
+            slip: components["schemas"]["SlipOut"];
+            /** Stack */
+            stack: components["schemas"]["StackYearOut"][];
+            /** Time Zone */
+            time_zone: string;
+            /**
+             * Today
+             * Format: date
+             */
+            today: string;
+        };
+        /** RecordsOut */
+        RecordsOut: {
+            /** First Day */
+            first_day: string | null;
+            fullest_day: components["schemas"]["DayRecordOut"] | null;
+            longest_sitting: components["schemas"]["SittingRecordOut"] | null;
+            longest_work: components["schemas"]["WorkLengthOut"] | null;
+            /** Observed Ms */
+            observed_ms: number;
+        };
         /**
          * RecoveryAction
          * @description One import obligation's offer (source, then search; at most one each), carrying
@@ -12690,19 +12532,6 @@ export interface components {
             next_cursor: string | null;
             /** Targets */
             targets: (components["schemas"]["ResourceTargetResourceOut"] | components["schemas"]["ResourceTargetPassageOut"])[];
-        };
-        /** RetainedArtifactsOut */
-        RetainedArtifactsOut: {
-            /** Applied Filters */
-            applied_filters: string[];
-            /** Highlights */
-            highlights: number;
-            /** Inapplicable Filters */
-            inapplicable_filters: string[];
-            /** Neutral Links */
-            neutral_links: number;
-            /** Note Blocks */
-            note_blocks: number;
         };
         /** RetryMetadataAction */
         RetryMetadataAction: {
@@ -13301,6 +13130,75 @@ export interface components {
              */
             kind: "AddEpisodeToAll" | "AddToQueue" | "AddUnfinishedToLectern" | "Chat" | "DeleteHighlight" | "DeleteLibrary" | "DeletePage" | "DownloadOriginal" | "EditHighlight" | "EditHighlightAnnotation" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "FeedLibraries" | "LeaveLibrary" | "LibraryPlacement" | "LibrarySettings" | "MarkCollectionFinished" | "MarkCollectionUnread" | "Metadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshFeed" | "RemoveFeedEntry" | "RemoveFeedItems" | "RemoveMedia" | "ResetProgress" | "Share" | "SubscribeFeed" | "TranscribePodcastEpisodes" | "UnsubscribeFeed";
         };
+        /** SittingOut */
+        SittingOut: {
+            /** Active Ms */
+            active_ms: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Ended At
+             * Format: date-time
+             */
+            ended_at: string;
+            /** Exclusion Id */
+            exclusion_id: string | null;
+            /** From Place */
+            from_place: number | null;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Modality
+             * @enum {string}
+             */
+            modality: "Reading" | "Listening" | "Viewing";
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Title */
+            title: string;
+            /** To Place */
+            to_place: number | null;
+        };
+        /** SittingPageOut */
+        SittingPageOut: {
+            /** Items */
+            items: components["schemas"]["SittingOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** SittingRecordOut */
+        SittingRecordOut: {
+            /** Active Ms */
+            active_ms: number;
+            media: components["schemas"]["MediaSummaryOut"];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+        };
+        /** SlipOut */
+        SlipOut: {
+            /** Days */
+            days: components["schemas"]["DayOut"][];
+            /** Days Read */
+            days_read: number;
+            /** Weeks Entire */
+            weeks_entire: number;
+            /** Weeks Running */
+            weeks_running: number;
+        };
         /** SnapshotCounts */
         SnapshotCounts: {
             /** Links */
@@ -13738,6 +13636,30 @@ export interface components {
             /** Location */
             location: components["schemas"]["WholeSourceLocationOut"] | components["schemas"]["LocatedSourceLocationOut"] | components["schemas"]["LiveSourceLocationOut"] | components["schemas"]["PointSourceLocationOut"] | components["schemas"]["UnavailableSourceLocationOut"] | components["schemas"]["XPostSourceLocationOut"];
             source_activation: components["schemas"]["ResourceActivationOut"] | null;
+        };
+        /** StackWorkOut */
+        StackWorkOut: {
+            /** Active Ms */
+            active_ms: number;
+            /**
+             * Finished On
+             * Format: date
+             */
+            finished_on: string;
+            media: components["schemas"]["MediaSummaryOut"];
+            /** Thickness Mm */
+            thickness_mm: number;
+            /** Words */
+            words: number | null;
+        };
+        /** StackYearOut */
+        StackYearOut: {
+            /** Height Mm */
+            height_mm: number;
+            /** Works */
+            works: components["schemas"]["StackWorkOut"][];
+            /** Year */
+            year: number;
         };
         /** Stamp */
         Stamp: {
@@ -14248,6 +14170,19 @@ export interface components {
             media_id: string;
             prior_status: components["schemas"]["_Status"] | null;
         };
+        /** UnitOut */
+        UnitOut: {
+            /** End */
+            end: number;
+            /** Label */
+            label: string | null;
+            /** Part */
+            part: number | null;
+            /** Start */
+            start: number;
+            /** Weight */
+            weight: number;
+        };
         /** UnresolvedNavigationTarget */
         UnresolvedNavigationTarget: {
             /** Href */
@@ -14749,6 +14684,45 @@ export interface components {
              * @enum {string}
              */
             kind: "task" | "habit";
+        };
+        /** WorkLengthOut */
+        WorkLengthOut: {
+            media: components["schemas"]["MediaSummaryOut"];
+            /** Words */
+            words: number;
+        };
+        /** WorkRecordOut */
+        WorkRecordOut: {
+            /** Active Ms */
+            active_ms: number;
+            /** Covered */
+            covered: [
+                number,
+                number
+            ][];
+            /** Days */
+            days: components["schemas"]["DayOut"][];
+            /** Finished On */
+            finished_on: string | null;
+            /** First Read On */
+            first_read_on: string | null;
+            /** Full Read Ms */
+            full_read_ms: number | null;
+            media: components["schemas"]["MediaSummaryOut"];
+            /** Parts */
+            parts: string[];
+            /** Position */
+            position: number | null;
+            /** Sittings */
+            sittings: number;
+            /** Thickness Mm */
+            thickness_mm: number;
+            /** Unit */
+            unit: ("Chapter" | "Section" | "Page") | null;
+            /** Units */
+            units: components["schemas"]["UnitOut"][];
+            /** Words */
+            words: number | null;
         };
         /** WorkspaceCaptureLocator */
         WorkspaceCaptureLocator: {
@@ -16127,22 +16101,10 @@ export interface operations {
             };
         };
     };
-    get_sessions_consumption_sessions_get: {
+    get_record_consumption_record_get: {
         parameters: {
-            query: {
-                cursor?: string | null;
-                limit?: number;
-                end: string;
-                time_zone: string;
-                start?: string | null;
-                modality?: ("Reading" | "Listening" | "Viewing") | null;
-                media_id?: string | null;
-                contributor_handle?: string | null;
-                device_id?: string | null;
-            };
-            header: {
-                "X-Nexus-Device": string;
-            };
+            query?: never;
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -16154,7 +16116,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ActivitySessionPageOut_"];
+                    "application/json": components["schemas"]["Data_RecordOut_"];
+                };
+            };
+        };
+    };
+    get_sittings_consumption_sittings_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_SittingPageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16168,22 +16153,13 @@ export interface operations {
             };
         };
     };
-    get_stats_consumption_stats_get: {
+    get_work_consumption_works__media_id__get: {
         parameters: {
-            query: {
-                bucket: "Hour" | "Day" | "Month" | "Year";
-                end: string;
-                time_zone: string;
-                start?: string | null;
-                modality?: ("Reading" | "Listening" | "Viewing") | null;
-                media_id?: string | null;
-                contributor_handle?: string | null;
-                device_id?: string | null;
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
             };
-            header: {
-                "X-Nexus-Device": string;
-            };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -16194,7 +16170,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_ConsumptionStatsOut_"];
+                    "application/json": components["schemas"]["Data_WorkRecordOut_"];
                 };
             };
             /** @description Validation Error */
