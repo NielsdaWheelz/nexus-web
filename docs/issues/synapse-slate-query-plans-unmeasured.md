@@ -1,5 +1,13 @@
 # synapse and slate query plans are unmeasured at production shape
 
+2026-11-17 final repair on `6d130e45c`: the retained ordinary journey completed
+86 account requests successfully, including background scope pages; no checkout
+refusal cascade appeared. main/quick/reader/warm content took 2.855/6.072/3.022 s
+and 63 ms. these are bounded client observations, not a latency guarantee. the
+quick-read canonical scope pass, separate required-note join and the broader
+graph/discovery scaling costs below remain; this closes the observed refusal
+blocker at this scope, not unrestricted capacity or the older query-plan gaps.
+
 2026-11-17 retained-client qualification on deployed `4ea24bcaf` still failed:
 two restored-book images exhausted pool checkout after five seconds. the api
 logged scope-inputs at 10.110/6.705 s and quick reads at 5.162/3.702 s. these are
@@ -12,8 +20,8 @@ acceptance. private evidence: `live-api-retained-F.log` and
 its statement from 9,555 ms to 85 ms, but ordinary quick-read requests still
 took 4,630–4,996 ms. overlapping scope requests took 5,659–6,373 ms; workspace
 PUT `9e184676-0826-435e-91b1-8f1e5cfefe4a` exhausted checkout after 5,005 ms.
-this is a remaining release blocker, not proof that its cause matches the old
-similarity path. attribute the isolated current owner before changing ranking,
+that observation blocked release closeout; it did not prove a common cause with
+the older similarity path. attribute the isolated current owner before changing ranking,
 duration/eligibility or admission. private evidence is
 `~/.local/state/nexus-read-responsiveness-20261116/live-api-first.log`.
 
@@ -33,7 +41,7 @@ five ordered production facts while reducing the highlight statement from
 3,978 ms to 1,413 ms. the plan shares fallback nomination's canonical scope pass
 across highlights; that corpus pass remains an explicit cost. this is one owner
 comparison, not a complete quick-read/browser result or a capacity guarantee.
-the deployed ordinary journey and checkout contention remain to be qualified.
+the later final-source ordinary qualification is recorded above.
 
 status: open · origin: 2026-10-04 synapse reauthor (design §9 risk, branch cleanup/synapse-reauthor) · area: suggestions / discovery / performance
 

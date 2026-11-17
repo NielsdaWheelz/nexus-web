@@ -1,22 +1,21 @@
-# first owned-profile startup delays useful lectern content
+# first-client startup still needs attribution
 
-on `e6ee83f67`, a fresh authenticated chromium verification profile took 11.724 s
-from navigation start to current lectern rows. its lectern request took 851 ms
-at the browser edge / 702 ms in the api; most elapsed time preceded that read.
-the workspace GET completed at 01:39:21.760 utc, before the lectern completed
-at 01:39:31.035 utc. this is not yet attributed to scripts, auth, local storage,
-workspace adoption or initial authored catch-up.
+on `e6ee83f67`, a fresh authenticated verification profile took 11.724 s to
+current lectern rows; the lectern request took 851 ms at the browser edge and
+702 ms in the api. most elapsed time preceded that read. its cause remains
+unattributed; this is separate from the repaired shared-summary statement.
 
-impact: a fresh device can feel slow despite the repaired summary statement.
-the same-profile reopen on `4ea24bcaf` showed current main rows in 3.009 s
-and warm rows in 64 ms. supporting quick reads still took 8.294 s and two book
-images hit pool refusals. that remaining owner contention is tracked in the
-read release issue; it does not attribute the earlier fresh-profile delay.
-the temporary harness failed only at its final warm account selector after
-recording those clocks. its browser/helper processes are confirmed stopped.
-do not claim a retained-client regression from this fresh-profile result.
+on `6d130e45c`, the retained profile showed main content in 2.855 s, quick reads
+in 6.072 s, reader content in 3.022 s, settings in 2.279 s and warm main content
+in 63 ms. lectern and quick-read browser requests took 1.523/3.217 s. all 86
+completed account requests were successful; no pool refusals. the interval
+also contained 24 successful health checks.
+four response-less read attempts were followed by successful responses on the
+same routes; their cancellation cause was not captured. a new-device load on
+this final source was not observed. soft latency guidance remains missed.
 
-resolve by measuring the startup dependencies at their actual boundaries and
-qualifying ordinary retained navigation. no cache purge, personal-profile
-inspection, fabricated timing threshold or storage/freshness-policy change.
-private evidence: `~/.local/state/nexus-read-responsiveness-20261116/ordinary-production-observation.json`.
+resolve by measuring the actual startup dependency chain and qualifying useful
+current content on a fresh owned device. do not purge personal caches, infer
+cold-database timing from a new browser, or weaken freshness. private receipts:
+`~/.local/state/nexus-read-responsiveness-20261116/ordinary-production-observation.json`
+and `ordinary-production-after-scope-observation.json`.

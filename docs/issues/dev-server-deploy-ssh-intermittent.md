@@ -34,6 +34,13 @@ no unrelated payload was captured and no capture privileges were changed.
 
 private release logs: `~/.local/state/nexus-read-responsiveness-20261116/`.
 
+the ordinary paired releases of `4ea24bcaf` and `6d130e45c` completed through
+one foreground authenticated master with daemon dialing and connection reuse.
+this is a qualified operator mitigation, not causal attribution. afterward the
+master, proxy and control socket exited; the temporary include was removed.
+effective ssh configuration exactly matches its pre-task capture, and the
+managed host configuration is unchanged. no server or tailscale policy changed.
+
 resolve by attributing failed connections at the client/server/network boundary
 and verifying the responsible repair with an ordinary canonical transfer and
 release. do not increase timeouts or bypass paired activation to manufacture a
