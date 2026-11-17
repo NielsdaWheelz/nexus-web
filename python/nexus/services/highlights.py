@@ -149,29 +149,47 @@ def count_retained_highlights(
 def recent_highlight_anchor_facts(
     db: Session, *, viewer_id: UUID, limit: int
 ) -> tuple[RecentHighlightAnchorFact, ...]:
-    """Newest distinct readable media the viewer's highlights touched."""
+    """Newest distinct readable media the viewer's highlights touched.
+
+    Resolve each highlight once: its visible direct owner wins; otherwise its
+    anchors nominate readings for exact containment and smallest-scope ordering.
+    """
     if limit < 1:
         return ()
+    # Share fallback nomination's scope pass; materialized owners also prevent
+    # filtering and per-media deduplication from repeating winner resolution.
     rows = db.execute(
         text(f"""
             WITH readable AS ({visible_media_ids_cte_sql()}),
-            newest_per_media AS (
-                SELECT DISTINCT ON (owner.media_id) owner.media_id,h.updated_at AS activity_at
-                FROM highlights h
-                CROSS JOIN LATERAL (
-                    SELECT CASE WHEN EXISTS (
-                        SELECT 1 FROM readable direct WHERE direct.media_id=h.anchor_media_id
-                    ) THEN h.anchor_media_id ELSE (
-                        SELECT reading.media_id FROM readable reading
-                        WHERE {highlight_in_reading_scope_sql("h.id", "reading.media_id")}
-                        ORDER BY (SELECT COALESCE(sum(scope.end_offset-scope.start_offset),0)
-                            FROM ({text_scope_rows_sql("SELECT reading.media_id")}) scope),
-                            reading.media_id LIMIT 1
-                    ) END AS media_id
-                ) owner
-                WHERE owner.media_id IS NOT NULL AND h.user_id=:viewer_id AND h.authored_visible
+            eligible_highlights AS MATERIALIZED (
+                SELECT h.id,h.updated_at,direct.media_id AS direct_media_id
+                FROM highlights h LEFT JOIN readable direct ON direct.media_id=h.anchor_media_id
+                WHERE h.user_id=:viewer_id AND h.authored_visible
                   AND h.anchor_kind IN ('fragment_offsets','pdf_page_geometry')
-                ORDER BY owner.media_id,h.updated_at DESC,h.id ASC
+            ), candidate_readings AS MATERIALIZED (
+                SELECT DISTINCT h.id AS highlight_id,bounded.reading_media_id
+                FROM eligible_highlights h
+                JOIN highlight_fragment_anchors anchor ON anchor.highlight_id=h.id
+                JOIN ({text_scope_rows_sql("SELECT media_id FROM readable")}) bounded
+                  ON bounded.fragment_id=anchor.fragment_id
+                  AND bounded.start_offset<=anchor.start_offset
+                  AND bounded.end_offset>=anchor.end_offset
+                WHERE h.direct_media_id IS NULL
+            ),
+            resolved AS MATERIALIZED (
+                SELECT h.id,h.updated_at,COALESCE(h.direct_media_id,(
+                        SELECT candidate.reading_media_id FROM candidate_readings candidate
+                        WHERE candidate.highlight_id=h.id
+                          AND {highlight_in_reading_scope_sql("h.id", "candidate.reading_media_id")}
+                        ORDER BY (SELECT COALESCE(sum(scope.end_offset-scope.start_offset),0)
+                            FROM ({text_scope_rows_sql("SELECT candidate.reading_media_id AS media_id")}) scope),
+                            candidate.reading_media_id LIMIT 1
+                    )) AS media_id
+                FROM eligible_highlights h
+            ), newest_per_media AS (
+                SELECT DISTINCT ON (media_id) media_id,updated_at AS activity_at
+                FROM resolved WHERE media_id IS NOT NULL
+                ORDER BY media_id,updated_at DESC,id ASC
             )
             SELECT media_id,activity_at FROM newest_per_media
             ORDER BY activity_at DESC,media_id ASC LIMIT :limit
