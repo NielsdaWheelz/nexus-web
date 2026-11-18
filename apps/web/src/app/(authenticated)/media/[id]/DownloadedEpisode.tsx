@@ -24,7 +24,7 @@ import { LocalMutationObservationError, localCall, localContentAvailable, localM
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { publishPaneScroll } from "@/lib/panes/paneScroll";
+import { paneScrollRef, publishPaneScroll } from "@/lib/panes/paneScroll";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
@@ -280,7 +280,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <p>this transcript is partial.</p> : null}
     {contents ? <Contents reader={reader} /> : null}
   </div>;
-  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile} ref={publishPaneScroll}>{header}{annotations.list}{annotations.panel}</div>;
+  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile} ref={paneScrollRef}>{header}{annotations.list}{annotations.panel}</div>;
   return <div className={styles.layout}>
     <DocumentReaderView reader={reader} profile={profile} isMobile={isMobile} playback={null} showCaptureTitle={false}
       before={<>{header}{annotations.list}</>} onSeekTime={ms => { onIntent(); play(ms); }}

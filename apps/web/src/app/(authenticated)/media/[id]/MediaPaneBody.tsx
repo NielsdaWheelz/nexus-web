@@ -38,7 +38,7 @@ import { localContentAvailable } from "@/lib/offline/localContent";
 import DownloadedEpisode, { useSavedEpisode } from "./DownloadedEpisode";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { publishPaneScroll } from "@/lib/panes/paneScroll";
+import { paneScrollRef, publishPaneScroll } from "@/lib/panes/paneScroll";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
@@ -326,7 +326,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   });
   usePaneReturnReady(true);
   const subject = { kind: "Stored" as const, summary };
-  return <div className={styles.stateScrollport} ref={publishPaneScroll}><div className={styles.state}>
+  return <div className={styles.stateScrollport} ref={paneScrollRef}><div className={styles.state}>
     <h1><MediaTitle subject={subject} /></h1>
     <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
     {summary.part_source ? <p>from {summary.part_source.title}</p> : null}

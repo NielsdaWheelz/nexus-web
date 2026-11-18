@@ -21,6 +21,7 @@ import { OutlineHistoryAllowance } from "@/lib/notes/outlineHistoryAllowance";
 import { OutlinePresentationAllowance } from "@/lib/notes/outlinePresentationAllowance";
 import { isAuthoredStorageFailure, LocalCommitError, type WritingRuntime } from "@/lib/notes/runtime";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { paneVisibleBand, watchPaneGeometry } from "@/lib/panes/paneScroll";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
 import { cx } from "@/lib/ui/cx";
@@ -115,25 +116,15 @@ function Journal({ arrival }: { arrival: string }) {
   useLayoutEffect(() => {
     const port = target?.closest<HTMLElement>("[data-pane-content]") ?? null;
     if (target === null || port === null) return;
-    // Any part of the head in the visible scrollport yields. The scrollport's top padding is the phone's opaque chrome
-    // (the mobile viewport contract `usePaneTitleYield` also reads), so a head under it is not seen. Measured at mount, before paint.
+    // Any part of the head in the visible band yields. Measured at mount, before paint, then as the port
+    // scrolls or it or the head changes size.
     const measure = () => {
-      const bounds = port.getBoundingClientRect(), head = target.getBoundingClientRect();
-      const top = bounds.top + parseFloat(getComputedStyle(port).paddingTop);
-      const intersecting = head.bottom > top && head.top < bounds.bottom;
+      const band = paneVisibleBand(port), head = target.getBoundingClientRect();
+      const intersecting = head.bottom > band.top && head.top < band.bottom;
       setSeen(previous => previous?.target === target && previous.intersecting === intersecting ? previous : { target, intersecting });
     };
-    let frame: number | null = null;
-    const schedule = () => { if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); }); };
     measure();
-    port.addEventListener("scroll", schedule, { passive: true });
-    const sizes = new ResizeObserver(schedule);
-    sizes.observe(port); sizes.observe(target);
-    return () => {
-      port.removeEventListener("scroll", schedule);
-      sizes.disconnect();
-      if (frame !== null) cancelAnimationFrame(frame);
-    };
+    return watchPaneGeometry(port, [target], measure).release;
   }, [target]);
   const yielded = seen !== null && seen.target === target && seen.intersecting;
   const chrome = useMemo(() => ({ displayTitle: "journal", navigation: { label: "journal dates", content: <div {...type} className={styles.navigation}>
