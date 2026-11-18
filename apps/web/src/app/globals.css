@@ -193,16 +193,33 @@
   }
 }
 
+/* The band date, the paper title and the habit year share a display line. Its leading
+   is measured against the surrounding paper so all three stand on the same pitch. */
+.reader-display {
+  margin: 0;
+  font-size: 1.875em;
+  line-height: 1.5lh;
+  font-weight: var(--weight-regular);
+  letter-spacing: var(--tracking-tight);
+  text-wrap: balance;
+}
+[data-theme="elvish"] .reader-display {
+  font-family: var(--font-display);
+  font-size: 2.5em;
+  font-weight: 300;
+  letter-spacing: 0;
+}
+
 /* Native controls follow the room; the document rule outranks vendor :root defaults. */
 html:root,
 [data-theme] {
   color-scheme: dark;
   /* a highlight's ink is its wash's pigment carried toward the room's ink; each room derives its own. */
-  --highlight-yellow-ink: color-mix(in srgb, rgb(from var(--highlight-yellow) r g b) 55%, var(--ink));
-  --highlight-green-ink: color-mix(in srgb, rgb(from var(--highlight-green) r g b) 55%, var(--ink));
-  --highlight-blue-ink: color-mix(in srgb, rgb(from var(--highlight-blue) r g b) 55%, var(--ink));
-  --highlight-pink-ink: color-mix(in srgb, rgb(from var(--highlight-pink) r g b) 55%, var(--ink));
-  --highlight-purple-ink: color-mix(in srgb, rgb(from var(--highlight-purple) r g b) 55%, var(--ink));
+  --highlight-yellow-ink: color-mix(in srgb, rgb(from var(--highlight-yellow) r g b / 1) 55%, var(--ink));
+  --highlight-green-ink: color-mix(in srgb, rgb(from var(--highlight-green) r g b / 1) 55%, var(--ink));
+  --highlight-blue-ink: color-mix(in srgb, rgb(from var(--highlight-blue) r g b / 1) 55%, var(--ink));
+  --highlight-pink-ink: color-mix(in srgb, rgb(from var(--highlight-pink) r g b / 1) 55%, var(--ink));
+  --highlight-purple-ink: color-mix(in srgb, rgb(from var(--highlight-purple) r g b / 1) 55%, var(--ink));
 }
 html:root[data-theme="light"],
 [data-theme="light"] {
