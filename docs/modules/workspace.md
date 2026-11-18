@@ -609,7 +609,12 @@ excludes stationary controls and actual occlusions, not the expanding content;
 android's resized viewport does not subtract its keyboard again. the viewport
 owner measures stationary frames
 and places controls with `--mobile-controls-top`; `--mobile-pane-content-offset`
-publishes their shown envelope in each content surface. routes reserve no extra
+publishes their shown envelope in each content surface, measured at that surface's
+top. a document-mode route consumes it exactly once: whatever stands at the body's
+top takes it as padding, and anything stacked below inherits `0px`. media's
+`.strip` (the downloaded-copy switch, a refresh failure) does this for the
+surface beneath it. reader ports measure their own `--reader-content-inset-top`,
+so they need no reset. routes reserve no extra
 media action row. hidden reader chrome follows the measured overlay contract,
 not a permanent header reservation. the content row explicitly occupies grid row two, the declared fill row,
 so loading content cannot determine scrollport height. reader composition is

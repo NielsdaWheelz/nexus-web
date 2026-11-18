@@ -248,37 +248,41 @@ function MediaRoute({ id }: { readonly id: string }) {
     runtime.router.push(`/media/${id}?${query}`);
   };
   if (showSaved && saved.kind === "Ready") return <div className={styles.layout}>
-    <div className={styles.savedSwitch}>
-      <span>downloaded copy</span>
-      <Button aria-busy={view === "live" && record.status === "loading" && admitted || undefined} onClick={() => switchView("live")}>view current version</Button>
+    <div className={styles.strip} data-mobile={isMobile}>
+      <div className={styles.savedSwitch}>
+        <span>downloaded copy</span>
+        <Button aria-busy={view === "live" && record.status === "loading" && admitted || undefined} onClick={() => switchView("live")}>view current version</Button>
+      </div>
+      {gone ? <Fact line={{ fact: "the original isn’t available.", reason: "this downloaded copy is kept." }} speak={speak} />
+        : view === "live" && record.status === "failed" && admitted ? <Failed error={record.error} noun="the current version’s details"
+          retry={{ run: record.refetch, busy: record.retrying }} /> : null}
     </div>
-    {gone ? <Fact line={{ fact: "the original isn’t available.", reason: "this downloaded copy is kept." }} speak={speak} />
-      : view === "live" && record.status === "failed" && admitted ? <Failed error={record.error} noun="the current version’s details"
-        retry={{ run: record.refetch, busy: record.retrying }} /> : null}
     <DownloadedEpisode key={saved.manifest.package_id} saved={saved} onIntent={pinSaved} />
   </div>;
   const viewCurrent = { label: "view current version", commandKey: "ViewCurrentVersion", run: () => switchView("live") };
-  // a source this device can't open: one port scrolls its fact and its retained quotes and notes.
-  const unopened = (fact: ReactNode) => <div className={styles.stateScrollport} data-mobile={isMobile} ref={paneScrollRef}>
-    {fact}<LocalAnnotations mediaId={id} />
-  </div>;
+  // a state page scrolls itself and, on the phone, takes the one chrome clearance.
+  const statePage = (content: ReactNode) => <div className={styles.stateScrollport} data-mobile={isMobile} ref={paneScrollRef}>{content}</div>;
+  // a source this device can't open: its fact, then its retained quotes and notes.
+  const unopened = (fact: ReactNode) => statePage(<>{fact}<LocalAnnotations mediaId={id} /></>);
   if (view === "downloaded" && !savedReady) return saved.kind === "Loading" ? <Ruling />
-    : saved.kind === "Failed" ? <Fact line={{ fact: "couldn’t open the downloaded copy." }} speak={speak}
-      verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, viewCurrent]} />
-    : <Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />;
+    : saved.kind === "Failed" ? statePage(<Fact line={{ fact: "couldn’t open the downloaded copy." }} speak={speak}
+      verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, viewCurrent]} />)
+    : statePage(<Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />);
   if (observation.status === "ready" && observation.observation === null) return unopened(
     <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />);
   if (record.status === "ready") return <div className={styles.layout}>
-    {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
-    {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
-      retry={{ run: record.refetch, busy: record.refreshing }} /></div> : null}
+    {savedReady || record.error !== null ? <div className={styles.strip} data-mobile={isMobile}>
+      {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
+      {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
+        retry={{ run: record.refetch, busy: record.refreshing }} /></div> : null}
+    </div> : null}
     <MediaPane id={id} record={record} />
   </div>;
   if (localContentAvailable && saved.kind === "Loading") return <Ruling />;
-  if (localContentAvailable && saved.kind === "Failed") return <Fact speak={speak}
+  if (localContentAvailable && saved.kind === "Failed") return statePage(<Fact speak={speak}
     line={{ fact: "couldn’t open the downloaded copy.", reason: "saved files and listening history are kept." }}
     verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, { label: "manage downloads", href: "/downloads",
-      onActivate: (event) => activateTargetLink({ event, runtime, target: { href: "/downloads" } }) }]} />;
+      onActivate: (event) => activateTargetLink({ event, runtime, target: { href: "/downloads" } }) }]} />);
   if (failure !== null && failure.status === 426) return unopened(<Failed error={failure} noun="this item’s details" />);
   if (gone) return unopened(<Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />);
   const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
