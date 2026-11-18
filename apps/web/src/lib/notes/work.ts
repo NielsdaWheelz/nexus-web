@@ -12,7 +12,7 @@ import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
 import {findPaneLandmarkFocusTarget} from "@/lib/workspace/paneDom";
 import {ACCOUNT_DAY_UNAVAILABLE} from "./accountDay";
 import {useWritingRuntime} from "./hooks";
-import {LocalCommitError} from "./runtime";
+import {LocalCommitError, type LocalCommit} from "./runtime";
 import {OutlineHistory} from "./structure";
 import {OutlineHistoryAllowance} from "./outlineHistoryAllowance";
 import {useWorkHistoryKeys, workHistoryKey} from "./useWorkHistoryKeys";
@@ -42,9 +42,10 @@ export function useWorkHistory(suppliedAllowance?: OutlineHistoryAllowance): {hi
   return {history,error};
 }
 
-export async function workCommand(history: OutlineHistory, intent: WorkIntent): Promise<void> {
-  try {await history.work(intent).result;}
-  catch (error) {if (error instanceof LocalCommitError) await error.completion; else throw error;}
+/** Runs one work command; resolves with its local commit once it is durable on this device. */
+export async function workCommand(history: OutlineHistory, intent: WorkIntent): Promise<LocalCommit> {
+  try {return await history.work(intent).result;}
+  catch (error) {if (error instanceof LocalCommitError) return await error.completion; throw error;}
 }
 
 export interface WorkCheck {
@@ -54,9 +55,9 @@ export interface WorkCheck {
   /** The account day is unknown: a press does nothing. */
   disabled: boolean;
   busy: boolean;
-  /** Completes or reopens. Resolves true once that change is committed on this device, false when it
-   * was refused or not attempted; a defect is thrown at the caller's next render. */
-  toggle(): Promise<boolean>;
+  /** Completes or reopens. Resolves with the local commit once that change is durable on this device, null
+   * when it was refused or not attempted; a defect is thrown at the caller's next render. */
+  toggle(): Promise<LocalCommit | null>;
   /** A checkbox ignores Enter; the work-history keys run from the sign. */
   onKeyDown(event: KeyboardEvent): void;
 }
@@ -76,15 +77,14 @@ export function useWorkCheck(resource: ResourceProjection, today: string | null,
     checked: habit && today === null ? "mixed" : done, disabled: today === null, busy,
     label: today === null ? `${ACCOUNT_DAY_UNAVAILABLE} ${localResourceLabel(resource)}` : `${action}: ${localResourceLabel(resource)}`,
     toggle: async () => {
-      if (busy || today === null) return false;
+      if (busy || today === null) return null;
       setBusy(true);
       try {
-        await workCommand(history, habit ? {kind: "set_habit_completion", ref: resource.ref, local_date: today, completed: !done, today}
+        return await workCommand(history, habit ? {kind: "set_habit_completion", ref: resource.ref, local_date: today, completed: !done, today}
           : {kind: "set_task_completion", ref: resource.ref, local_date: done ? null : today, today});
-        return true;
       } catch (error) {
         if (error instanceof WorkConversionError || error instanceof WorkUnavailableError) say({fact: error.message}); else setDefect({error});
-        return false;
+        return null;
       } finally {setBusy(false);}
     },
     onKeyDown: event => {

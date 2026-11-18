@@ -5,6 +5,9 @@
 @property --outline-disclose { syntax: "<length>"; inherits: true; initial-value: 16px; }
 @property --outline-sign { syntax: "<length>"; inherits: true; initial-value: 20px; }
 @property --outline-indent { syntax: "<length>"; inherits: true; initial-value: 20px; }
+/* one one-line row: its line and both pads. registered, so it is pixels wherever it is read, whatever
+   the reading element's own line height. */
+@property --outline-row-pitch { syntax: "<length>"; inherits: true; initial-value: 24px; }
 
 /* shared scales, motion and shell geometry inherit through nested rooms. */
 :root {
@@ -174,14 +177,20 @@
   --outline-sign: max(20px, 1.25em);
   --outline-indent: var(--outline-sign);
   --outline-glyph: 14px;
-  --ruling-pitch: 1lh;
+  --outline-pad: 0px;
+  --outline-row-pitch: calc(1lh + 2 * var(--outline-pad));
+  --ruling-pitch: var(--outline-row-pitch);
   --control-font-family: var(--font-sans);
 }
 [data-type-role="reader"] > * { --content-font-size: 1em; --content-line-height: var(--role-leading); }
 [data-type-role="reader"][data-type-scale="large"] { --outline-glyph: 16px; }
 [data-type-role="margin"] [data-type-role="reader"] { --outline-glyph: 14px; }
 @media (any-pointer: coarse) {
-  [data-type-role="reader"] { --outline-disclose: 14px; --outline-sign: max(28px, 1.5em); --outline-indent: max(16px, 1em); }
+  [data-type-role="reader"] {
+    --outline-disclose: 14px; --outline-sign: max(28px, 1.5em); --outline-indent: max(16px, 1em);
+    /* a coarse one-line row is at least 32px, and never pads less than 4px. */
+    --outline-pad: max(4px, calc((32px - 1lh) / 2));
+  }
 }
 
 /* Native controls follow the room; the document rule outranks vendor :root defaults. */

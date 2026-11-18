@@ -37,7 +37,8 @@ export default function NotesPaneBody() {
   const complete = read.data !== null && read.data.next_cursor === null;
   const rows = useMemo(() => (read.data?.rows ?? []).flatMap(({ resource }) => resource.kind === "page"
     ? [presentNote({ id: resource.ref.slice("page:".length), title: pageTitle(resource.title ?? "", resource.local_date) })] : []), [read.data]);
-  const recent = useRecent().snapshot;
+  const recentStore = useRecent();
+  const recent = recentStore.snapshot;
   const recentRefs = useMemo(() => (recent?.entries ?? []).flatMap(({ target }) =>
     target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []), [recent]);
   // Sorted, the query keeps its identity while only the recent order moves.
@@ -85,6 +86,10 @@ export default function NotesPaneBody() {
     previous = head;
   }
   const failure = <AuthoredReadFailure {...read} noun="pages"/>;
+  // A cold failure of either recent read is said; an empty run is simply absent.
+  const recentFailure = recent === null && recentStore.readFailure
+    ? <Fact line={{ fact: "couldn’t load recent items." }} verbs={[{ label: "retry", commandKey: "retry recent", run: recentStore.read }]} />
+    : opened.data === null && opened.error !== null ? <AuthoredReadFailure {...opened} noun="recent pages"/> : null;
   const emptyTitle = filtering
     ? complete ? "no pages match this filter." : "no loaded page matches this filter."
     : complete ? "no pages yet. daily pages stay in the journal." : "no pages loaded yet.";
@@ -94,7 +99,7 @@ export default function NotesPaneBody() {
       status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
       collectionBusy={read.data === null && read.error === null}
       anchorKey={filter.query.trim()}
-      notice={filtering && !complete ? <p>filter applies to loaded pages.</p> : undefined}
+      notice={filtering ? !complete ? <p>filter applies to loaded pages.</p> : undefined : recentFailure ?? undefined}
       error={read.data === null ? failure : undefined}
       empty={<Fact line={{ fact: emptyTitle }} />}
       footer={!complete && read.data !== null ? <Button aria-busy={read.pending} onClick={read.more}>show more pages</Button> : undefined}

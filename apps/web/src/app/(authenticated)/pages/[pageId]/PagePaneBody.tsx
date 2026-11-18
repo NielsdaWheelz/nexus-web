@@ -52,10 +52,11 @@ function PageContent({createdId, pageId}: {createdId: string; pageId: string | n
     if (kind === "EditPageTitle" || kind === "AppendNote" || kind === "FocusNote" || kind === "ComposePage") claim(delivery);
   }, [claim, delivery, gone]);
   usePaneReturnReady(ready || read.error !== null);
-  return !ready
+  // The paper's type stands under every read state, so the ruling, a refusal and the page share one pitch.
+  return <div {...readerType(useReaderProfile())}>{!ready
     ? read.error === null ? <Ruling /> : <AuthoredReadFailure error={read.error} pending={read.pending} retry={read.retry} noun="this page" />
     : gone ? <Fact line={{fact: "this page is no longer available."}} speak />
-    : <PageEditing rootRef={ref} id={ref.slice("page:".length)} page={page} date={page?.local_date ?? null} newPage={newPage} prelude={prelude} />;
+    : <PageEditing rootRef={ref} id={ref.slice("page:".length)} page={page} date={page?.local_date ?? null} newPage={newPage} prelude={prelude} />}</div>;
 }
 
 function PageEditing({rootRef, id, page, date, newPage, prelude}: {
@@ -67,7 +68,6 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const { delivery, claim } = usePaneEntryDelivery();
   const [initialTitle, setInitialTitle] = useState(() => newPage ? params.get("title") ?? "" : "");
   const { say } = useOutcome();
-  const type = readerType(useReaderProfile());
   const [filter, setFilter] = useState("");
   const [entryDefect, setEntryDefect] = useState<{ error: unknown } | null>(null);
   // A storage failure is the entry's outcome; a failed commit is the account's words at risk; the rest is a defect.
@@ -124,12 +124,12 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
     }
   }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say]);
   if (entryDefect !== null) throw entryDefect.error;
-  return <div {...type}>
+  return <>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
     {root.rootEditor}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}
-  </div>;
+  </>;
 }
 
 function Inspector({ pageId }: { pageId: string }) {

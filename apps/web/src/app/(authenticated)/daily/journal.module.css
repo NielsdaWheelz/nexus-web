@@ -1,9 +1,5 @@
-/* The journal is set in the reader's type (the role on .journal). Block spacing is written in lh on elements in
+/* The journal is set in the reader's type (the role on its body). Block spacing is written in lh on elements in
    the paper's own type, never on a display line. */
-.journal {
-  font-variant-numeric: oldstyle-nums proportional-nums;
-}
-
 .band {
   display: flex;
   align-items: baseline;

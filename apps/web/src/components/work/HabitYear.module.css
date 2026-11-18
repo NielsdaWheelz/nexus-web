@@ -37,7 +37,7 @@
 .day[data-today="true"] { outline: 1.5px solid var(--accent); outline-offset: 1.5px; }
 .day:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 1.5px; }
 
-.legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
 .legend .day { display: inline-block; margin-inline-end: var(--space-1); vertical-align: middle; cursor: default; }
 
 /* A forced palette drops backgrounds; a recorded day keeps its fill as the text colour. */

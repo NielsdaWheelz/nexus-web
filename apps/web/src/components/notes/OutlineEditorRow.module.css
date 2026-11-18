@@ -1,9 +1,8 @@
-/* one outline row. the reader role declares --outline-disclose, --outline-sign, --outline-indent and
-   --outline-glyph, and the editing host --outline-text-start; a fine row has no block padding, so it is its
-   lines. the leading column is one line tall and holds the disclose slot, then the sign in the rest of the
+/* one outline row. the reader role declares --outline-disclose, --outline-sign, --outline-indent,
+   --outline-glyph and --outline-pad, and the editing host --outline-text-start; a fine row has no block
+   padding, so it is its lines. the leading column is one line tall and holds the disclose slot, then the sign in the rest of the
    column. the sign's kind is the bullet's data-marker; nothing here reads what the bullet draws. */
 .row {
-  --outline-pad: 0px;
   position: relative;
   isolation: isolate;
   min-width: 0;
@@ -283,7 +282,6 @@
 }
 
 @media (any-pointer: coarse) {
-  .row {--outline-pad: max(4px, calc((32px - 1lh) / 2));}
   /* the slot shows a shut branch and takes no press: folding is in the row's menu. */
   .row .leading > [data-outline-disclose] > .control {pointer-events: none;}
   .row .leading > [data-outline-disclose] > .control[aria-expanded="true"] {opacity: 0;}

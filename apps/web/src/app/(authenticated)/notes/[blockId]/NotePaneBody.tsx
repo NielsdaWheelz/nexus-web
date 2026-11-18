@@ -99,13 +99,10 @@ export default function NotePaneBody() {
   const arrivalFailure = arrival.failure?.title ?? null;
   useEffect(() => arrivalFailure === null ? undefined : say({fact: arrivalFailure}), [arrivalFailure, say]);
   if (defect) throw defect.error;
-  if (!resource) {
-    // Until the root is known, the outline's view owns the empty region: its ruling or its failure.
-    if (!read.rootRead.known) return <>{read.view}</>;
-    return <Fact line={{fact: "this note is no longer available."}}/>;
-  }
+  // The paper's type stands under every read state. Until the root is known, the outline's view owns the
+  // empty region: its ruling or its failure.
   return <div {...type}>
-    {read.rootEditor}
-    {read.view}
+    {resource ? <>{read.rootEditor}{read.view}</>
+      : read.rootRead.known ? <Fact line={{fact: "this note is no longer available."}}/> : read.view}
   </div>;
 }

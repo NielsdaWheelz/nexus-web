@@ -43,11 +43,11 @@ export default function HabitYear({year,today,dates,onOpen}:{year:number;today:s
   </div></div>;
 }
 
-/** The year's key, drawn with the year's own dots; the dots speak their state themselves. */
+/** The year's key, drawn with the year's own dots. The words are read; the sample shapes are not. */
 export function HabitYearLegend() {
-  return <p className={styles.legend} aria-hidden="true">
-    <span><span className={styles.day} data-checked="true" />recorded</span>
-    <span><span className={styles.day} />no record</span>
-    <span><span className={styles.day} data-today="true" />today</span>
-  </p>;
+  return <ul className={styles.legend}>
+    <li><span className={styles.day} data-checked="true" aria-hidden="true" />recorded</li>
+    <li><span className={styles.day} aria-hidden="true" />no record</li>
+    <li><span className={styles.day} data-today="true" aria-hidden="true" />today</li>
+  </ul>;
 }

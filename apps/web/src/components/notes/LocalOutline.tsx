@@ -59,9 +59,7 @@ const pendingRisk = (value: {input: OutlinePendingInput}) => value.input.risk();
 const pendingCopy = (value: {input: OutlinePendingInput}) => value.input.copyText();
 
 export default function LocalOutline(props: Props) {
-  const runtime = useWritingRuntime();
   const inherited = useContext(SharedOutline);
-  if (!runtime) return <Ruling/>;
   if (inherited) return <EmbeddedBranch controller={inherited} rootRef={props.rootRef} prefix={props.occurrencePrefix ?? props.rootRef}/>;
   return <OutlineRoot {...props}/>;
 }
@@ -123,7 +121,6 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   }, [accountId, rootRef]);
   const configuredField = useMemo(() => rootField?.inspection && rootField.inspection.text !== rootRead.resource?.body_text ? {...rootField, inspection: null} : rootField, [rootField, rootRead.resource?.body_text]);
   useLayoutEffect(() => {
-    if (!runtime) return;
     const history = new OutlineHistory(runtime, setFailure, historyAllowance ?? new OutlineHistoryAllowance(), notify);
     const controller = new OutlineController(runtime, history, input, rootRef, branch, configuredField, prelude, notify, changed, guard, pending.value, presentationAllowance ?? new OutlinePresentationAllowance(notify),
       (anchor, focus) => revealAnchor(`outline:${occurrencePrefix}`, anchor, focus), retained ? paneInputLease : null, initialRows);
@@ -140,6 +137,7 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
     else if (!controller || controller.releasePresentation()) setPresented(false);
   }, [attached, controller, revision]);
   const presentation = useAuthoredPaneRoot(controller, configuredField, rootPresentation);
+  const type = readerType(useReaderProfile());
   usePaneAnchorGeometry({scope: `outline:${occurrencePrefix}`, geometry: controller?.readLayout().geometry ?? null, ready: true});
   useLayoutEffect(() => {onControllerReady?.(controller); return () => onControllerReady?.(null);}, [controller, onControllerReady]);
   useLayoutEffect(() => {controller?.refresh();}, [controller, childrenVisible]);
@@ -147,7 +145,9 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   const rootEditor = presented && presentation.rootEditor !== null ? wrap(presentation.rootEditor) : null;
   const view = current && presented ? <div hidden={!childrenVisible}><MountedOutline key={current.id} controller={current.controller} pending={pending}
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
-    received={received} onReady={setEditor}/></div> : presented ? <Ruling/> : null;
+    received={received} onReady={setEditor}/></div>
+    // Before the session mounts, its ruling stands in the session's own type, whatever hosts the outline.
+    : presented ? <div {...type}><Ruling/></div> : null;
   if (current && painted !== current.controller && editor === current.controller &&
     [...current.controller.requests.keys()].every(id => current.controller.windows.has(id) || current.controller.branchRead(id).error !== null)) setPainted(current.controller);
   const read = controller?.branchRead(input.root_id);
