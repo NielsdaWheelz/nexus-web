@@ -122,10 +122,8 @@ export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTM
 export default function OutlineEditorRows({mounts, rows, history}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>; history:OutlineHistory}) {
   const runtime = usePaneRuntime();
   const today = useAccountToday();
-  // a highlight cites its source by title: one read for the session's distinct sources, as they stand in the shown rows.
-  const sources = [...new Set(mounts.flatMap(mount => {const resource = rows.get(mount.row_id)?.resource; return resource?.kind === "highlight" && resource.source_ref !== null ? [resource.source_ref] : [];}))].sort().slice(0, 100);
-  const cited = useAuthoredQuery(sources.length ? {kind: "resolve", refs: sources} : null).data;
-  return mounts.flatMap(mount => {
+  const citations = new Map<string, Citation[]>();
+  const portals = mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
     if (!row) return [];
     const parsed = row.ref === null ? null : parseResourceRef(row.ref);
@@ -191,15 +189,42 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
       </span> : null}
       <AuthoredReadFailure {...row.read} noun="linked items"/>
     </>;
-    const source = resource?.kind === "highlight" && resource.source_ref !== null ? cited?.rows.find(cite => cite.resource.ref === resource.source_ref)?.resource.title?.trim() : undefined;
-    const locator = resource?.kind === "highlight" ? resource.selection?.locator : undefined;
+    if (row.kind === "reference" && resource?.kind === "highlight" && resource.source_ref !== null) {
+      const locator = resource.selection?.locator;
+      const citation = {mount, page: locator?.type === "pdf_page_geometry" ? locator.page_number : null};
+      const occurrences = citations.get(resource.source_ref);
+      if (occurrences) occurrences.push(citation);
+      else citations.set(resource.source_ref, [citation]);
+    }
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(<>
-        {resource?.kind === "highlight" ? <>
-          <div className={styles.excerpt}><FullResourceBody item={authoredItem(resource, null, row.href)}/></div>
-          {source ? <span className={styles.citation}>{source}{locator?.type === "pdf_page_geometry" ? <><span aria-hidden="true"> · </span>page {locator.page_number}</> : null}</span> : null}
-        </> : resource?.excerpt ? <FullResourceBody item={authoredItem(resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
+        {resource?.kind === "highlight" ? <div className={styles.excerpt}><FullResourceBody item={authoredItem(resource, null, row.href)}/></div> : resource?.excerpt ? <FullResourceBody item={authoredItem(resource, null, row.href)} /> : row.href ? <a href={row.href} data-workspace-rich-target="true" onClick={event => activateTargetLink({event, runtime, target: {href: row.href!, labelHint: row.label}})}>{row.label}</a> : row.label}
         {scheme === "media" ? <EpisodeBibliography mediaId={parsed!.id} returnFocus={() => mount.leading.querySelector<HTMLElement>("[data-row-focusable]")}/> : null}
       </>, mount.presentation, `${row.row_id}:content`), ...(resource?.kind === "highlight" ? [createPortal(<HighlightAnnotation highlightRef={resource.ref} resource={resource} occurrenceKey={row.row_id} editable={row.annotation !== null} outline={row.annotation} onWorkOwners={row.workOwners}/>, mount.annotation, `${row.row_id}:annotation`)] : [])] : [])];
   });
+  const sources = [...citations.keys()].sort();
+  const batches = [];
+  for (let start = 0; start < sources.length; start += 100) {
+    batches.push(<HighlightCitations key={start} sources={sources.slice(start, start + 100)} citations={citations}/>);
+  }
+  return <>{portals}{batches}</>;
+}
+
+type Citation = {mount: OutlineRowMount; page: number | null};
+
+/** Each local resolve admits up to 100 distinct sources. Keep the excerpt and annotation mounted
+ * when a source enters or leaves a batch. Only its citation depends on this read. */
+function HighlightCitations({sources, citations}: {sources: string[]; citations: ReadonlyMap<string, Citation[]>}) {
+  const read = useAuthoredQuery({kind: "resolve", refs: sources});
+  return <>
+    <AuthoredReadFailure {...read} noun="highlight sources"/>
+    {read.data?.rows.flatMap(({resource}) => {
+      const title = resource.title?.trim();
+      if (!title) return [];
+      return (citations.get(resource.ref) ?? []).map(({mount, page}) => createPortal(
+        <span className={styles.citation}>{title}{page !== null ? <><span aria-hidden="true"> · </span>page {page}</> : null}</span>,
+        mount.presentation, mount.row_id,
+      ));
+    })}
+  </>;
 }
