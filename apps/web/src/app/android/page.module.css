@@ -43,10 +43,8 @@
 
 .wordmark,
 .descriptor,
-.eyebrow,
 .title,
 .support,
-.accessNote,
 .verificationHeading,
 .verificationCopy,
 .installNote {
@@ -77,13 +75,6 @@
   gap: var(--space-3);
 }
 
-.eyebrow {
-  color: var(--accent);
-  font-size: var(--text-sm);
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-}
-
 .title {
   color: var(--ink);
   font-size: var(--text-2xl);
@@ -93,16 +84,11 @@
 }
 
 .support,
-.accessNote,
 .verificationCopy,
 .installNote {
   color: var(--ink-muted);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
-}
-
-.accessNote {
-  font-weight: var(--weight-medium);
 }
 
 .download {

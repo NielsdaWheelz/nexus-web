@@ -183,9 +183,8 @@ tables and object storage do not use Supabase Database or Supabase Storage.
 
 ## Android Release Distribution
 
-The private Android companion is distributed from
+Download the Android companion from
 [`nexus.nielseriknandal.com/android`](https://nexus.nielseriknandal.com/android).
-GitHub access to the private release repository is required to download it.
 
 The `/android` page projects GitHub Releases' stable latest-release targets and
 does not cache mutable release facts in page copy:
