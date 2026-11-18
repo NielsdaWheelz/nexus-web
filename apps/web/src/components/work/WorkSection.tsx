@@ -124,9 +124,8 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   const around = (index:number) => [...refs.slice(index+1), ...refs.slice(0,index).reverse()];
   return <PaneRefreshAnchor identity="work" value={layout} ready={today === null || read.data !== null}><section className={styles.work} aria-label="work" data-pane-return-scope="work">
     <div className={styles.header} data-collection-row-id="header">
-      <Button className={styles.disclosure} aria-expanded={open} aria-controls={contentId} onClick={() => setOpen(value => !value)}>
-        <Icon.Disclose open={open} size={12} className={styles.chevron} />work
-      </Button>
+      <Button className={styles.disclosure} icon={<Icon.Disclose open={open} size={12} className={styles.chevron} />}
+        aria-expanded={open} aria-controls={contentId} onClick={() => setOpen(value => !value)}>work</Button>
       <ButtonLink className={styles.habits} href="/habits">habits</ButtonLink>
     </div>
     <div id={contentId} hidden={!open}>

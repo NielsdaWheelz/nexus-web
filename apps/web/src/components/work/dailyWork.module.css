@@ -18,7 +18,10 @@
 /* A control's word starts after its own padding; the agenda's words start at the text start, so the control
    hangs into the sign column. `work` also hangs its 12px chevron and the control's gap there. */
 .add > button { margin-inline-start: calc(-1 * var(--space-2)); }
-.disclosure { margin-inline-start: calc(-1 * (2 * var(--space-2) + 12px)); }
+.disclosure {
+  --control-icon-size: 12px;
+  margin-inline-start: calc(-1 * (2 * var(--space-2) + var(--control-icon-size)));
+}
 .header,
 .add,
 .tail,
