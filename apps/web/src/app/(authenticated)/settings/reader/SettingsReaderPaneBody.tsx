@@ -29,7 +29,7 @@ export default function SettingsReaderPaneBody() {
 
   return (
     <PaneSurface>
-      <PaneSection title="Appearance">
+      <PaneSection title="appearance">
 
         {reader.unavailableReason !== null ? <span id={connectionReason} className="sr-only">{reader.unavailableReason}</span> : null}
         <fieldset className={styles.form} aria-label="reader settings" disabled={!reader.editable} aria-describedby={!reader.editable ? connectionReason : undefined}>

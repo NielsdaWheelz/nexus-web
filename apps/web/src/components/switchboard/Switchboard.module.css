@@ -126,7 +126,7 @@
 .clear { --control-min-size: 3rem; transition: none; }
 .sheet .clear:hover { background: transparent; color: var(--ink-muted); }
 
-:global([data-theme="light"]) .field input, :global([data-theme="elvish"]) .field input { font: var(--pane-section-title-font); }
+:global([data-theme="light"]) .field input, :global([data-theme="elvish"]) .field input { font: var(--name-font); }
 :global([data-theme="light"]) .field input::placeholder, :global([data-theme="elvish"]) .field input::placeholder { font-style: italic; }
 :global([data-theme="elvish"]) :is(.sideHead, .trailing > span, .earlier, .earlierCount) { font: italic var(--text-sm) / 1 var(--font-serif); letter-spacing: 0; }
 :global([data-theme="elvish"]) .work { font-family: var(--font-serif); font-size: var(--text-sm); }

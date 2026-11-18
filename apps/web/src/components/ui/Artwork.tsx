@@ -26,26 +26,27 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 export default function Artwork({ title, source, size, className }: {
   readonly title: string;
   readonly source: ArtworkSource;
-  readonly size: number;
+  readonly size: number | "fill";
   readonly className?: string;
 }) {
   // The first grapheme of each of the first two words, so a joined emoji, a flag or a combining
   // mark stays whole. An empty title paints an empty tile.
   const initials = title.trim().split(/\s+/u).slice(0, 2)
     .map(word => graphemes.segment(word.toUpperCase()).containing(0)?.segment ?? "").join("");
-  // Initials scale with the box, not the text: 9/22 gives the 44px tile its 18px. The root marks
-  // its direct image as fixed artwork, so a load never invalidates a sortable drag.
-  return <span className={cx(styles.root, className)} style={{ width: size, height: size, fontSize: size * 9 / 22 }}
+  // The root marks its direct image as fixed artwork, so a load never invalidates a sortable drag.
+  return <span className={cx(styles.root, size === "fill" && styles.fill, className)}
+    style={size === "fill" ? undefined : { width: size, height: size, fontSize: size * 9 / 22 }}
     aria-hidden="true" data-fixed-artwork="">
     <Layers key={source.kind === "Absent" ? "" : source.url} initials={initials} source={source} size={size} />
   </span>;
 }
 
 /** Keyed by source, so a new source mounts unloaded and an old image's late load cannot land. */
-function Layers({ initials, source, size }: { readonly initials: string; readonly source: ArtworkSource; readonly size: number }) {
+function Layers({ initials, source, size }: { readonly initials: string; readonly source: ArtworkSource; readonly size: number | "fill" }) {
   const [loaded, setLoaded] = useState(false);
   const image = {
-    alt: "", width: size, height: size, decoding: "async", draggable: false, className: cx(styles.image, loaded && styles.loaded),
+    alt: "", ...(size === "fill" ? {} : { width: size, height: size }),
+    decoding: "async", draggable: false, className: cx(styles.image, loaded && styles.loaded),
     onLoad: (event: SyntheticEvent<HTMLImageElement>) => setLoaded(event.currentTarget.naturalWidth > 0),
   } as const;
   let picture: ReactNode;

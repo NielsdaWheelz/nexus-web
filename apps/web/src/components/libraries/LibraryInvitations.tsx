@@ -98,15 +98,15 @@ export default function LibraryInvitations({ state }: { state: ReturnType<typeof
   const shown = list.items.length > 0;
   return <>
     {shown ?<section className={styles.inbox} aria-labelledby={headingId}>
-      <div>
-        <h2 id={headingId}>Library invitations</h2>
-        <p>Accept to add the library here, or decline the invitation.</p>
+      <div className={styles.heading}>
+        <h2 id={headingId}>invitations · {list.items.length}</h2>
+        <p>accepting adds the library here.</p>
       </div>
       <div className={styles.rows}>
         {list.items.map((invitation) => (
           <div className={styles.row} key={invitation.id}>
             <span>
-              {invitation.library_name} · {invitation.role === "admin" ? "Admin" : "Member"} · from{" "}
+              {invitation.library_name} · {invitation.role === "admin" ? "admin" : "member"} · from{" "}
               {personLabel({
                 display_name: invitation.inviter_display_name,
                 email: invitation.inviter_email,
@@ -115,38 +115,40 @@ export default function LibraryInvitations({ state }: { state: ReturnType<typeof
             <span className={styles.actions}>
               {declining === invitation.id ? (
                 <>
-                  <span>Decline this invitation?</span>
+                  <span>decline this invitation?</span>
                   <Button
                     emphasis="strong" tone="danger"
-                    aria-label={`Decline invitation to ${invitation.library_name}`}
+                    aria-label={`decline invitation to ${invitation.library_name}`}
                     disabled={blocked}
                     onClick={() => void answer(invitation, false).then(saved => { if (saved) setDeclining(null); })}
                     aria-busy={busy === invitation.id}
                   >
-                    Decline
+                    decline
                   </Button>
                   <Button
                     disabled={busy !== null}
                     onClick={() => setDeclining(null)}
                   >
-                    Keep
+                    keep
                   </Button>
                 </>
               ) : (
                 <>
                   <Button
                     emphasis="strong"
+                    aria-label={`accept invitation to ${invitation.library_name}`}
                     disabled={blocked}
                     onClick={() => void answer(invitation, true)}
                     aria-busy={busy === invitation.id}
                   >
-                    Accept
+                    accept
                   </Button>
                   <Button
+                    aria-label={`decline invitation to ${invitation.library_name}`}
                     disabled={blocked}
                     onClick={() => setDeclining(invitation.id)}
                   >
-                    Decline
+                    decline
                   </Button>
                 </>
               )}

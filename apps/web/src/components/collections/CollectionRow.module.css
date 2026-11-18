@@ -4,4 +4,3 @@
 .supportLine > .context:not(:first-child) { flex-shrink: 0; max-inline-size: 45%; }
 .attentionMark { position: absolute; inset-block-start: 0; inset-inline-end: 1px; pointer-events: none; font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--danger); }
 .accessibleContext { user-select: none; }
-@container indexRow (max-width: calc(32em - 1px)) { .compactPrimaryControl { display: none; } }

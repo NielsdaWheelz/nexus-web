@@ -41,7 +41,7 @@ export default function SettingsAppearancePaneBody() {
   if (room === null) return null;
   return (
     <PaneSurface>
-      <PaneSection title="Theme">
+      <PaneSection title="theme">
         <fieldset className={styles.fieldset}>
           <legend className={styles.legend}>Choose how Nexus looks.</legend>
           {DOORWAYS.map((doorway) => (
@@ -70,7 +70,7 @@ export default function SettingsAppearancePaneBody() {
         </fieldset>
       </PaneSection>
       <PaneSection
-        title="Colophon"
+        title="colophon"
         description="The Solar — the room at the top of the stair; green dusk, one brass lamp, and a book left open."
       >
         <div className={styles.colophon}>

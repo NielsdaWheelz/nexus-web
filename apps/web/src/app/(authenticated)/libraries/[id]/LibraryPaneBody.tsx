@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as Icon from "@/lib/ui/icons";
 import { useIndexReadFeedback } from "@/components/collections/useCollectionReadFeedback";
-import LibraryFeedsSection from "@/components/feeds/LibraryFeedsSection";
+import LibrarySources from "@/components/feeds/LibrarySources";
 import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
 import CollectionView from "@/components/collections/CollectionView";
 import SuggestionsSection from "@/components/collections/SuggestionsSection";
@@ -27,6 +27,7 @@ import { catalogEntries, catalogLibrary } from "@/lib/catalog/selectors";
 import { LIVE_SOURCE, type ReadSource } from "@/lib/catalog/types";
 import { remoteReady } from "@/lib/native/admission";
 import { type LibraryFeedIndex } from "@/lib/feeds/api";
+import { feedBrowseAction } from "@/lib/feeds/navigation";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { publishChange } from "@/lib/api/changes";
 import { useServerValue, type Visit, type ServerValue } from "@/lib/api/serverState";
@@ -170,7 +171,7 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
   const sourceWork = index !== null && (index.feeds.imports.some(operation => operation.work_in_flight)
     || index.feeds.subscriptions.some(source => source.recurring.work_in_flight || source.recurring.history.work_in_flight
       || source.imports.some(operation => operation.work_in_flight)));
-  // justify-polling: one aggregate owns both source cards and their incoming entries.
+  // justify-polling: one aggregate owns the source lines and their incoming entries.
   useIntervalPoll({ enabled: admitted && observing && remoteReady() && list.status === "ready" && list.source.kind === "live",
     pollIntervalMs: sourceWork ? WORK_OBSERVATION_MS : PASSIVE_OBSERVATION_MS,
     onPoll: () => list.revalidate({ passive: true }) });
@@ -298,7 +299,7 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
   const emptyState = emptyEntries({ view, isAll, change });
   const emptyLine = text ? { fact: "no entries match this filter." } : emptyState.line;
   const readFeedback = useIndexReadFeedback({ value: list, requestedKey: descriptor.key, active: active && admitted, waiting: admitted && list.status === "loading", outcome: ordered.length > 0 ? null : emptyLine.fact });
-  const menuActions: ActionDescriptor[] = importHere ? [importHere] : [];
+  const menuActions: ActionDescriptor[] = [...(importHere ? [importHere] : []), feedBrowseAction("podcast"), feedBrowseAction("article")];
   usePaneChrome({
     displayTitle: library === null ? undefined : libraryDisplayName(library),
     primaryAction: admitted ? importHere : undefined,
@@ -377,8 +378,7 @@ function LibraryPane({ id, view }: { readonly id: string; readonly view: NonNull
       {readFeedback.announcement}
       <PaneSurface>
         {members.held}
-        <LibraryFeedsSection library={library} source={shows} kind="podcast" />
-        <LibraryFeedsSection library={library} source={shows} kind="article" />
+        <LibrarySources library={library} source={shows} />
         <PlaybackSourceContext.Provider value={capture}>
         <CollectionView geometry="UniformIndex"
           returnScope="Library.Entries"

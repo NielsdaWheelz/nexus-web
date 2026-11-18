@@ -14,13 +14,12 @@ import IndexBibliography from "@/components/resources/IndexBibliography";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import OverflowMenuButton from "@/components/ui/OverflowMenuButton";
 import ResourceRow from "@/components/ui/ResourceRow";
+import ResourceCell from "@/components/ui/ResourceCell";
 import Artwork, { remoteArtwork } from "@/components/ui/Artwork";
 import ContextualActionMenu, { type ContextActionSection } from "@/components/resources/ContextualActionMenu";
 import type { CollectionContext, CollectionRowView } from "@/lib/collections/types";
-import { collectionActivityText } from "./collectionRowFormatting";
 import { assertNever } from "@/lib/assertNever";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { FeedActionFocus } from "@/lib/actions/inlineActions";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import { mediaSubjectKind } from "@/lib/media/mediaSummary";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -36,28 +35,25 @@ function renderContext(context: CollectionContext): ReactNode {
 }
 
 /**
- * Collection semantics compose the shared bounded shell. Occurrence commands
+ * Collection semantics compose the shared row or cover cell. Occurrence commands
  * retain their authority; only explicitly menu-owned shortcuts demote. Attention
  * names the existing details/recovery destination on the surviving more control.
  */
 export default function CollectionRow({
-  row, as = "li", primaryControl, occurrenceActions, actionFocus: suppliedActionFocus, afterRemoval,
-  compactPrimaryControl = false, rowActionsAvailable = true, attention: suppliedAttention,
-  listPosition, containingPodcastId = null, className, onAnimationEnd,
+  row, as = "li", primaryControl, occurrenceActions, afterRemoval, rowActionsAvailable = true,
+  listPosition, containingPodcastId = null, className, onAnimationEnd, layout = "Rows",
 }: {
   readonly row: CollectionRowView;
   readonly as?: "li" | "div";
   readonly primaryControl?: ReactNode;
   readonly occurrenceActions?: readonly ActionDescriptor[];
-  readonly actionFocus?: FeedActionFocus;
   readonly afterRemoval: () => HTMLElement | null;
-  readonly compactPrimaryControl?: boolean;
   readonly rowActionsAvailable?: boolean;
-  readonly attention?: string;
   readonly listPosition?: { readonly index: number; readonly count: number };
   readonly containingPodcastId?: string | null;
   readonly className?: string;
   readonly onAnimationEnd?: AnimationEventHandler<HTMLElement>;
+  readonly layout?: "Rows" | "Wall";
 }) {
   const parsed = row.resourceRef === null ? null : parseResourceRef(row.resourceRef);
   // justify-defect: a nonnull collection ref identifies the displayed canonical resource.
@@ -77,18 +73,14 @@ export default function CollectionRow({
   const returnFocus = () => moreRef.current?.isConnected && moreRef.current.getClientRects().length
     ? moreRef.current : findPaneCollectionRowFocusTarget(paneId, row.id);
   const successFocus = podcast?.target.kind === "Discovery" ? () => null : afterRemoval;
-  const actionFocus = { get trigger() { return moreRef.current; }, returnFocus,
-    get afterRemoval() { return suppliedActionFocus?.afterRemoval ?? successFocus; },
-  };
+  const actionFocus = { get trigger() { return moreRef.current; }, returnFocus, afterRemoval: successFocus };
   useActionFocusRecovery(primaryControlRef, returnFocus);
   const title = row.title.segments
     ? <EmphasisSegments segments={row.title.segments} emphasisClassName={styles.mark} /> : row.title.text;
   const primary = typeLabel !== null && row.primary.kind !== "static"
     ? { ...row.primary, label: `${typeLabel}: ${row.primary.label ?? row.title.text}` } : row.primary;
-  const attention = suppliedAttention ?? (media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
-    ? "couldn’t process this. see its metadata."
-    : row.exceptionalStatus !== null ? `last ${row.exceptionalStatus.feedKind === "podcast" ? "episode" : "article"} check didn’t finish; check again from source details`
-    : row.activity !== null ? `${collectionActivityText(row.activity).accessible}; open show details for progress` : null);
+  const attention = media?.subject.kind === "Stored" && media.subject.summary.processing_status === "failed"
+    ? "couldn’t process this. see its metadata." : null;
   const sections: readonly ContextActionSection[] = [
     { id: "Occurrence", actions: rowActionsAvailable ? (occurrenceActions ?? []) : [] },
   ];
@@ -101,14 +93,10 @@ export default function CollectionRow({
     subject={podcast} metadataSubject={row.podcastMetadata} subjectKey={`collection:${row.id}`} sections={sections}
     actionFocus={actionFocus} triggerRef={setMore} triggerAttributes={{ "data-row-actions-control": "" }}
     label={menuLabel}
-    renderTrigger={(props) => <>
-      <OverflowMenuButton {...props} title={attention ? menuLabel : undefined} />
-      {attention ? <span className={styles.attentionMark} aria-hidden="true">!</span> : null}
-    </>}
   /> : menuAvailable ? <ContextualActionMenu
     title={row.title.text} subjectKey={`collection:${row.id}`} sections={sections}
     resourceRef={row.resourceRef ?? undefined} actionFocus={actionFocus}
-    navigation={attention !== null && row.kind === "podcast" ? null : {
+    navigation={{
       key: `collection:${row.id}:${row.primary.kind === "link" ? row.primary.href : "unavailable"}`,
       fork: touch && pane && row.primary.kind === "link" && row.primary.href !== null
         ? paneForkLink({ runtime: pane, target: { href: row.primary.href, labelHint: row.primary.paneLabelHint }, disabledReason: null }) : null,
@@ -131,12 +119,20 @@ export default function CollectionRow({
     case "Details": content = { kind: "Details", body: row.context ? renderContext(row.context) : null }; break;
     default: assertNever(row.presentation);
   }
+  const rootProps = { className, onAnimationEnd, "aria-current": row.selected ? "true" as const : undefined,
+    "aria-posinset": listPosition ? listPosition.index + 1 : undefined, "aria-setsize": listPosition?.count,
+    "data-collection-row-id": row.id, "data-collection-item-kind": row.kind };
+  if (layout === "Wall") {
+    if (primary.kind !== "link" || primary.href === null || row.artwork === undefined)
+      throw new Error("a wall cell requires a linked source with artwork");
+    return <ResourceCell as={as} rootProps={rootProps}
+      primary={{ href: primary.href, label: primary.label, paneLabelHint: primary.paneLabelHint }}
+      cover={<Artwork title={row.title.text} source={remoteArtwork(row.artwork.imageUrl)} size="fill" />}
+      title={title} metadata={metadata} controls={more} />;
+  }
   return <ResourceRow
     as={as} primary={primary} selected={row.selected}
-    rootProps={{ className, onAnimationEnd, "aria-current": row.selected ? "true" : undefined,
-      "aria-posinset": listPosition ? listPosition.index + 1 : undefined,
-      "aria-setsize": listPosition?.count,
-      "data-collection-row-id": row.id, "data-collection-item-kind": row.kind }}
+    rootProps={rootProps}
     title={type === null ? title : <ResourceIndexTitle
       type={type} hasArtwork={row.artwork !== undefined}
     >
@@ -146,8 +142,7 @@ export default function CollectionRow({
     content={content}
     leadingVisual={row.artwork !== undefined ? <Artwork title={row.title.text} source={remoteArtwork(row.artwork.imageUrl)} size={44} /> : undefined}
     controls={<>
-      {primaryControl ? <span ref={primaryControlRef} className={compactPrimaryControl ? styles.compactPrimaryControl : undefined}
-        data-row-primary-control="" data-row-compact-primary-control={compactPrimaryControl ? "" : undefined}>{primaryControl}</span> : null}
+      {primaryControl ? <span ref={primaryControlRef} data-row-primary-control="">{primaryControl}</span> : null}
       {row.resourceActions && rowActionsAvailable ? <ResourceActions subject={row.resourceActions} density="Row" returnFocus={returnFocus} afterRemoval={successFocus} /> : null}
       {more}
     </>}

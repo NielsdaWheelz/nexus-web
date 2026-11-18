@@ -1702,6 +1702,11 @@ and visible. library work polling likewise rereads its aggregate. accepted
 publication changes notify other indexes; query changes and first baselines do
 not impersonate publication.
 
+foreground read stamps treat focus as a return only after blur. a repeated focus
+event while the document is already focused does not invalidate a read or interrupt
+the native activation that caused it. visibility, online and pageshow retain their
+existing refresh cadence.
+
 accepted pane entry starts declared get reads beside lazy code loading.
 route-owned descriptors are shared with mounted readers. the account/visit/route
 one-use seed owner holds pending, success or failure until its first read effect

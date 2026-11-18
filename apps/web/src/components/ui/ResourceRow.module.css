@@ -173,7 +173,7 @@ a.primary:hover { text-decoration: underline; }
 }
 
 /* Artwork or a persistent occurrence command needs the larger control budget. */
-@container indexRow (max-width: calc(144px + 15em)) {
+@container indexRow (max-width: calc(144px + 12em)) {
   .grid:not(.details):is(.withVisual, :has(> .trailing > [data-row-primary-control]:not([data-row-compact-primary-control]))) {
     --row-metadata-gap: var(--space-1);
     --row-media-gap: var(--space-1);
@@ -260,7 +260,7 @@ a.primary:hover { text-decoration: underline; }
   min-block-size: calc(var(--index-control-size) + 2 * var(--space-2));
 }
 
-@container indexRow (max-width: calc(144px + 15em)) {
+@container indexRow (max-width: calc(144px + 12em)) {
   :global([data-index-window]) .grid:not(.details) {
     --row-metadata-gap: var(--space-1);
     --row-media-gap: var(--space-1);

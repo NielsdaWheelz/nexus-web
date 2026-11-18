@@ -1,11 +1,13 @@
 "use client";
 
-// The followed sources. The url owns filter, sort and library scope and passes
+// The subscribed sources. The url owns filter, sort and library scope and passes
 // them to the server, which validates them; the text filter stays local.
 // A selected scope owns its label read independently of the closed choices.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import * as Icon from "@/lib/ui/icons";
 import CollectionView from "@/components/collections/CollectionView";
+import CollectionRow from "@/components/collections/CollectionRow";
 import { Fact, Failed } from "@/components/feedback/Fact";
 import { useActiveRegion } from "@/components/feedback/stage";
 import { catalogLine } from "@/lib/catalog/copy";
@@ -20,7 +22,11 @@ import { presentFeed } from "@/lib/collections/presenters/feed";
 import { libraryReason } from "@/lib/libraries/errors";
 import { getLibrary, librariesIndex, type Library } from "@/lib/libraries/api";
 import { useServerValue, type Visit } from "@/lib/api/serverState";
-import { usePaneIsActive, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { usePaneIsActive, usePaneRouter, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { useActionRuntime } from "@/lib/actions/ResourceActionsProvider";
+import { projectFeedLibraryRemovalAction } from "@/lib/actions/project";
+import { remoteReady } from "@/lib/native/admission";
+import { findPaneCollectionRowFocusTarget } from "@/lib/workspace/paneDom";
 import {
   matchesPaneFilterQuery,
   usePaneFilterRows,
@@ -38,6 +44,7 @@ import { feedRefresh } from "@/lib/feeds/paneState";
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
+  usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
 
 const VISIT = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof listFeeds>>>>(
@@ -45,6 +52,7 @@ const VISIT = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof listFeeds>>
 );
 const LIBRARIES = definePaneVisitDataKey<Visit<Awaited<ReturnType<typeof librariesIndex>>>>("Podcasts.LibraryChoices");
 const SELECTED_LIBRARY = definePaneVisitDataKey<Visit<Library>>("Podcasts.SelectedLibrary");
+const DRAWING = definePaneVisitDataKey<"rows" | "wall">("Feeds.Drawing");
 const fields = (row: FeedRow) => [
   row.title,
   ...row.contributors.flatMap((credit) => [
@@ -61,7 +69,13 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
   const speak = useActiveRegion();
   const router = usePaneRouter();
   const active = usePaneIsActive();
+  const paneId = usePaneRuntime()?.paneId;
+  const { ctx, run } = useActionRuntime();
   const params = usePaneSearchParams();
+  const capturedDrawing = useRef<"rows" | "wall" | null>(null);
+  const savedDrawing = usePaneVisitData(DRAWING, () => capturedDrawing.current);
+  const [drawing, setDrawing] = useState(savedDrawing ?? "rows");
+  capturedDrawing.current = drawing;
   const [librariesSeen, setLibrariesSeen] = useState(false);
   const sort = params.get("sort") ?? "recent_entry";
   const orderKnown = ["recent_entry", "unfinished_count", "alpha"].includes(sort);
@@ -78,7 +92,7 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
   const savedLibraries = useCatalogRead(catalogLibraries);
   const { read: descriptor, group } = useFeedsIndexRead();
   const rawList = useServerValue({ ...descriptor, catalog: savedPodcasts, visit: VISIT });
-  // Relevance is the saved entries of the scope's unfiltered sources: every followed source,
+  // Relevance is the saved entries of the scope's unfiltered sources: every subscribed source,
   // or the selected library's subscriptions; never narrowed by has_new/not_in_library.
   const catalog = useCatalogState();
   const scopedEpisodes = useMemo(() => {
@@ -128,6 +142,10 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
     },
   });
   const rows = list.status === "ready" ? list.data.items : null;
+  const library = libraryId === null ? null : libraryItems.find(item => item.id === libraryId)
+    ?? (selectedLibrary.status === "ready" ? selectedLibrary.data : null);
+  const blocked = list.status !== "ready" || list.source.kind !== "live" || !list.fresh || list.error !== null || list.refreshing || !remoteReady()
+    ? "TemporarilyUnavailable" : null;
   const complete = list.status === "ready";
   const getRowStatus = useCallback(
     (text: string) => {
@@ -198,6 +216,15 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
     header: { kind: "Section", meta: headerMeta },
     primaryAction: browse,
     menuActions: [browse],
+    drawing: {
+      value: drawing,
+      choices: [{ value: "rows", label: "rows", icon: <Icon.Rows aria-hidden="true" /> },
+        { value: "wall", label: "wall", icon: <Icon.Wall aria-hidden="true" /> }],
+      onChange: value => {
+        if (value !== "rows" && value !== "wall") throw new Error("unknown source drawing");
+        setDrawing(value);
+      },
+    },
     views: { label: kind === "podcast" ? "podcast view" : "feed view", value: filter, items: filters,
       onSelect: value => replaceView({ filter: value === "all" ? null : value }) },
     query: { kind: "Collation", collation },
@@ -225,7 +252,7 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
   return (
     <>
       {readFeedback.announcement}
-      <CollectionView geometry="UniformIndex"
+      <CollectionView geometry={drawing === "rows" ? "UniformIndex" : null} layout={drawing === "rows" ? "Rows" : "Wall"}
         returnScope="Podcasts.Subscriptions"
         rows={visible.map((row) =>
           presentFeed({
@@ -234,12 +261,22 @@ export default function FeedsPaneBody({ kind }: { readonly kind: "podcast" | "ar
             title: row.title,
             imageUrl: row.image_url,
             contributors: row.contributors,
-            recurring: null,
           }),
         )}
         status={list.status === "loading" ? "loading" : "ready"}
-        ariaLabel={`Followed ${noun}`}
+        ariaLabel={`subscribed ${noun}`}
         anchorKey={text}
+        renderRow={library !== null && !library.is_default ? props => <CollectionRow {...props}
+          occurrenceActions={[projectFeedLibraryRemovalAction({
+            feedId: props.row.id, feedKind: kind, title: props.row.title.text,
+            libraryId: library.id, libraryName: library.name, canRemove: library.can_add_content, blocked,
+            ctx, run, focus: {
+              trigger: null,
+              returnFocus: () => findPaneCollectionRowFocusTarget(paneId, props.row.id)
+                ?.closest("[data-collection-row-id]")?.querySelector<HTMLElement>("[data-row-actions-control]") ?? null,
+              afterRemoval: props.afterRemoval,
+            },
+          })]} /> : undefined}
         empty={<Fact line={{ fact: emptyTitle }} verbs={text ? undefined
           : filtered ? [{ label: "clear filters", commandKey: "clear podcast filters", run: () => replaceView({ filter: null, library_id: null }) }]
           : [{ label: browse.label.toLowerCase(), href: browse.href }]} />}

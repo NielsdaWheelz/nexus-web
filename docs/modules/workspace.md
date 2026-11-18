@@ -384,11 +384,19 @@ credit groups are non-empty by their single producers; nothing re-validates
 them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
-creates for that mounted body (`lib/panes/paneChrome.tsx`), through three hooks:
+creates for that mounted body (`lib/panes/paneChrome.tsx`), through four hooks:
 `usePaneChrome` (`{ header, displayTitle, editor, navigation, primaryAction, resourceActions, query, menuActions,
-resourceRef, refresh }` with independent navigation, principal-task and query capabilities),
+resourceRef, refresh, drawing }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
-reader's intrinsic width and rail). Each writes its slot in a layout effect and
+reader's intrinsic width and rail), plus `usePaneTitleYield` (a title page's
+visible name). the latter owns `titleYielded` and `titleYieldReady`: the first
+post-layout measurement commits without a transition. shared trusted navigation
+attention relinquishes pending return placement and arms the transition from
+the last displayed opacity before measuring the reader's new position, including
+when passive scrolling precedes input delivery. passive scroll events coalesce to one frame; resize remeasures
+the scrollport. only changed yield values publish, without body state. the h1
+retains its box and accessibility semantics. `drawing` projects one visit-owned
+exclusive value into header segments and the menu. each hook writes its slot in a layout effect and
 clears its own value as it unmounts; the shell subscribes in a layout effect
 and so re-renders before paint. Other descendants read only the published
 `resourceRef`, through `usePaneSubject`. The body's mount is the publication and its
@@ -1248,6 +1256,8 @@ stamp it was read under. complete value readers paint the visit snapshot and
 reread; paged readers retain their stamp-based return policy (architecture §8.12).
 `PaneRefreshAnchor` captures same-query row replacement before mutation and
 restores one shared pane eye-line after layout, unless newer input intent wins.
+at scroll zero, the pane's top owns position instead of a visible row below it;
+visit return, refresh and measurement changes retain that absolute top.
 large eligible indices register their complete ordered ids and measured row
 geometry through `usePaneCollectionGeometry`. the same memento owns return,
 refresh and measurement-change scroll writes; the row window owns measurement

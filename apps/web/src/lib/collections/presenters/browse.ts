@@ -75,8 +75,6 @@ export function presentBrowseCandidate(
       kind: "Text",
       text: preview ? source : `${source} · In Nexus`,
     },
-    activity: null,
-    exceptionalStatus: null,
     resourceRef: candidate.kind === "Podcast" ? local === null ? null : assumeCanonicalResourceRef(`podcast:${local.feed_id}`)
       : resolution.kind === "Preview" ? null : assumeCanonicalResourceRef(resolution.action_ref),
     selected: false,

@@ -1,5 +1,5 @@
 /* One box through absent, loading and failed: the image covers the initials only once it has
-   loaded, and nothing transitions. The caller places the box; Artwork sizes it. */
+   loaded, and nothing transitions. A numeric size fixes the box; fill takes its caller's width. */
 .root {
   position: relative;
   display: block;
@@ -38,4 +38,14 @@
 
 .initials.loaded {
   visibility: hidden;
+}
+
+.fill {
+  inline-size: 100%;
+  aspect-ratio: 1;
+  container-type: inline-size;
+}
+
+.fill .initials {
+  font-size: 41cqi;
 }

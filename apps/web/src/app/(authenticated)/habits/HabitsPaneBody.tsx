@@ -39,7 +39,7 @@ export default function HabitsPaneBody() {
   const rows=useMemo<CollectionRowView[]>(()=> (read.data?.rows ?? []).map(({resource})=>({
     id:resource.ref,kind:"note",presentation:"Details",title:{text:resource.body_text||"empty note"},
     primary:{kind:"link",href:`/notes/${resource.ref.slice(11)}`},resourceRef:canonicalResourceRef({scheme:"note_block",id:resource.ref.slice(11)}),
-    contributors:[],publicationDate:null,context:null,activity:null,exceptionalStatus:null,selected:false,
+    contributors:[],publicationDate:null,context:null,selected:false,
   })),[read.data]);
   if(error)throw error;
   return <WorkHistoryContext.Provider value={history}>

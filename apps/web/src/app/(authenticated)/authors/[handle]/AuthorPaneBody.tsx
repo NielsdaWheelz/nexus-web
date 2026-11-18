@@ -79,8 +79,6 @@ function presentWork(work: ContributorWork): CollectionRowView {
     primary: { kind: "link", href: work.href, paneLabelHint: work.title },
     title: { text: work.title },
     publicationDate: null,
-    activity: null,
-    exceptionalStatus: null,
     selected: false,
   } as const;
   if (work.kind === "ExternalWork") {

@@ -7,7 +7,6 @@ import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { ContributorCredit } from "@/lib/contributors/credits";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { Schema } from "@/lib/api/wire";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { Move, MoveOutcome, OrderRevision } from "./order";
@@ -38,23 +37,9 @@ export type CollectionItemKind =
   | "search_result"
   | "settings_row";
 
-export type CollectionActivity =
-  | { readonly kind: "RemainingTime"; readonly modality: "Read" | "Listen"; readonly minutes: number }
-  | {
-      readonly kind: "FeedSync";
-      readonly feedKind: "podcast" | "article";
-      readonly status: Extract<Schema<"FeedRecurringOut">["state"], "pending" | "running">;
-    };
-
 export type CollectionContext =
   | { readonly kind: "Text"; readonly text: string }
   | { readonly kind: "Snippet"; readonly segments: readonly EmphasisSegment[] };
-
-export type ExceptionalStatus = {
-  readonly kind: "FeedSync";
-  readonly feedKind: "podcast" | "article";
-  readonly status: "failed";
-};
 
 interface CollectionRowBase {
   readonly id: string;
@@ -67,8 +52,6 @@ interface CollectionRowBase {
   readonly contributors: readonly ContributorCredit[];
   readonly publicationDate: string | null;
   readonly context: CollectionContext | null;
-  readonly activity: Extract<CollectionActivity, { kind: "FeedSync" }> | null;
-  readonly exceptionalStatus: ExceptionalStatus | null;
   /**
    * The displayed resource's canonical identity and contextual More menu subject.
    * Presenters guarantee both identities coincide; `kind` is collection behavior,

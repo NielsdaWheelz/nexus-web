@@ -10,6 +10,13 @@ the inferred hazard is stale layout on reload before metadata acknowledgement:
 pagehide flush; `model.ts:97-124` retains saved panes and appends an unmatched
 incoming material view. these owners predate lit rule; causation is unproved.
 
+sigla recurrence at `41c99d124`, run `20261117-141010-b0d0bb50b404`: all four
+chromium/firefox `w3` repetitions restored the wall and its focused show, then an
+immediate reload retained the saved show and opened the incoming scoped index in
+a new active pane. the first trace reload starts about 32ms after back, within
+the save debounce. the old pane id therefore cannot identify the reloaded index.
+this narrows the timing evidence; it does not establish the save boundary's cause.
+
 resolve with a controlled save hold: compare immediate reload against reload
 after actual local-binding acknowledgement, checking pane identities, selection
 and collapsed details. do not replace the boundary observation with a sleep.

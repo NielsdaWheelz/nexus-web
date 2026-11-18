@@ -14,7 +14,9 @@ import {
   useSyncExternalStore,
   type ReactElement,
   type ReactNode,
+  type RefObject,
 } from "react";
+import { flushSync } from "react-dom";
 import type { PaneCollation } from "@/lib/panes/collation";
 import type { ApiError } from "@/lib/api/client";
 import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorTypes";
@@ -29,6 +31,7 @@ import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { MetadataSubject } from "@/lib/actions/subjects";
 import type { ResourceActionSubject } from "@/lib/actions/inlineActions";
 import type { ActionDescriptor, MenuOption } from "@/lib/ui/actionDescriptor";
+import { isNavigationAttention, NAVIGATION_ATTENTION_EVENTS } from "@/lib/ui/eventTarget";
 import type {OutlineHistory} from "@/lib/notes/structure";
 import {useWorkHistoryKeys} from "@/lib/notes/useWorkHistoryKeys";
 
@@ -108,6 +111,12 @@ export interface PaneViews {
   readonly onSelect: (value: string) => void;
 }
 
+export interface PaneDrawing {
+  readonly value: string;
+  readonly choices: readonly { readonly value: string; readonly label: string; readonly icon: ReactElement }[];
+  readonly onChange: (value: string) => void;
+}
+
 export interface PaneChrome {
   /** Source menus borrow their actual mounted writing history. */
   readonly workHistory?: OutlineHistory;
@@ -119,6 +128,7 @@ export interface PaneChrome {
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly views?: PaneViews;
+  readonly drawing?: PaneDrawing;
   readonly primaryAction?: PanePrimaryAction;
   readonly resourceActions?: ResourceActionSubject;
   readonly podcastMetadata?: Extract<MetadataSubject, { kind: "DiscoveryPodcast" | "DiscoveryPodcastPreview" }>;
@@ -163,6 +173,9 @@ export interface PaneOutlineCommands {
 
 export interface PaneChromeState {
   readonly chrome: PaneChrome | null;
+  readonly titleYielded: boolean;
+  /** Entry and restored placement stay instant; the reader's first input arms later fades. */
+  readonly titleYieldReady: boolean;
   readonly outlineCommands: PaneOutlineCommands | null;
   readonly companion: PaneCompanion | null;
   readonly layout: PaneLayout | null;
@@ -185,6 +198,8 @@ export interface PaneChromeStore {
 export function createPaneChromeStore(): PaneChromeStore {
   let state: PaneChromeState = {
     chrome: null,
+    titleYielded: false,
+    titleYieldReady: false,
     outlineCommands: null,
     companion: null,
     layout: null,
@@ -237,6 +252,57 @@ export function usePaneOutlineCommands(commands: PaneOutlineCommands | null): vo
 export function usePaneChrome(chrome: PaneChrome | null): void {
   useWorkHistoryKeys(chrome?.workHistory ?? null);
   usePublish("chrome", chrome);
+}
+
+/** A title page yields the header while its name's top is wholly inside the scrollport. */
+export function usePaneTitleYield(name: RefObject<HTMLElement | null>): void {
+  const store = useContext(PaneChromeContext);
+  // justify-defect: only PaneShell renders pane bodies.
+  if (!store) throw new Error("pane title yield requires PaneShell");
+  useLayoutEffect(() => {
+    const element = name.current;
+    const scrollport = element?.closest<HTMLElement>('[data-pane-content][data-body-mode="standard"]');
+    if (!element || !scrollport) return;
+    const measure = () => {
+      const bounds = scrollport.getBoundingClientRect();
+      const top = bounds.top + parseFloat(getComputedStyle(scrollport).paddingTop);
+      const nameTop = element.getBoundingClientRect().top;
+      const yielded = nameTop >= top && nameTop < bounds.bottom;
+      if (store.get().titleYielded !== yielded) store.set({ titleYielded: yielded });
+    };
+    let frame: number | null = null;
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        measure();
+      });
+    };
+    // Parent layout effects can restore the visit after this child's effect. Commit that
+    // placement before paint; an unmounted title page no longer owns the header.
+    queueMicrotask(() => { if (element.isConnected) flushSync(measure); });
+    const arm = (event: Event) => {
+      if (!isNavigationAttention(event)) return;
+      for (const type of NAVIGATION_ATTENTION_EVENTS) scrollport.removeEventListener(type, arm, true);
+      // Passive scrolling may already have moved. Arm from the last displayed opacity;
+      // the next measurement owns the reader's new position.
+      flushSync(() => store.set({ titleYieldReady: true }));
+      schedule();
+    };
+    for (const type of NAVIGATION_ATTENTION_EVENTS)
+      scrollport.addEventListener(type, arm, { capture: true, passive: true });
+    scrollport.addEventListener("scroll", schedule, { passive: true });
+    const sizes = new ResizeObserver(schedule);
+    sizes.observe(scrollport);
+    return () => {
+      scrollport.removeEventListener("scroll", schedule);
+      for (const type of NAVIGATION_ATTENTION_EVENTS) scrollport.removeEventListener(type, arm, true);
+      sizes.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (store.get().titleYielded || store.get().titleYieldReady)
+        store.set({ titleYielded: false, titleYieldReady: false });
+    };
+  }, [name, store]);
 }
 
 /** A body's Companion tabs; the shell derives the Inspector action from them. */

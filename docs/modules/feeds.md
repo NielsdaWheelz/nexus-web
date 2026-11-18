@@ -99,10 +99,26 @@ source lists never fetch every linked page or request transcripts/audio/model wo
 
 ## interface and observation
 
-podcasts and feeds are two instances of `LibraryFeedsSection`, `FeedsPaneBody` and
-`FeedDetailPaneBody`. the cards, menus, glyphs, destination chooser and stop reviews
-share their owners. read-only libraries keep browse access; they grant no writes.
-all has no local unsubscribe shortcut. named shortcuts act on the named destination.
+podcasts and feeds share `LibrarySources`, `FeedsPaneBody` and
+`FeedDetailPaneBody`. a library projects one ledger line per subscribed source
+kind, retaining the server's title order. covers and a measured overflow link
+lead to shows and scoped indexes; an empty aggregate reserves no source area.
+the library menu owns browse entrances. read-only libraries keep browse access;
+they grant no writes. all has no local unsubscribe shortcut. named cover/name
+context menus and scoped index menus remove only that named destination.
+
+`FeedTitlePage` holds cover, name, byline, standfirst and subscription/check/addition
+lines. its one expandable description shares visit state with details. checks and
+unfinished additions retain their source observation and command owners. library
+lines and indexes carry no progress or failure state. source indexes offer rows
+and a cover wall over the same selection; only back navigation retains drawing.
+
+review acknowledgement and refreshed projection can arrive in either order.
+focus resolves surviving names in the captured destination order. a sole
+connected name can hold focus until its line withdraws, then the existing
+withdrawal hook hands focus to the subscribe word or pane landmark. subscribing
+uses the inverse handoff to the first destination; an already-refreshed view
+resolves its surviving control directly.
 
 `presentFeed` projects source rows from supplied facts; it performs no detail fetch.
 the subscription glyph means last-observed recurring delivery somewhere, never

@@ -64,6 +64,9 @@
   --weight-semibold: 600;
   --weight-bold: 700;
 
+  --list-head-font:
+    normal var(--weight-semibold) var(--text-sm) / var(--leading-relaxed) var(--font-sans);
+
   --radius-xs: 2px;
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -171,7 +174,7 @@ html:root[data-theme="light"],
   --highlight-pink: rgba(243, 139, 168, 0.35);
   --highlight-purple: rgba(203, 166, 247, 0.35);
 
-  --pane-section-title-font:
+  --name-font:
     normal 600 var(--text-lg) / var(--leading-snug) var(--font-sans);
 
   --overlay-scrim: rgb(0 0 0 / 0.5);
@@ -231,7 +234,7 @@ html:root[data-theme="light"],
   --highlight-blue: rgba(33, 150, 243, 0.35);
   --highlight-pink: rgba(233, 30, 99, 0.35);
   --highlight-purple: rgba(156, 39, 176, 0.35);
-  --pane-section-title-font:
+  --name-font:
     normal 500 var(--text-2xl) / var(--leading-tight) var(--font-eb-garamond),
     Charter, Georgia, "Times New Roman", serif;
   /* warm and light: a .5 black scrim over the study reads as a crash */
@@ -340,7 +343,7 @@ html:root[data-theme="light"],
   /* Cormorant 300: only at --text-xl and above. */
   --font-display:
     var(--font-cormorant), var(--font-eb-garamond), Georgia, serif;
-  --pane-section-title-font:
+  --name-font:
     normal 300 var(--text-2xl) / var(--leading-tight) var(--font-display);
   --gilt-a: #6b4a20;
   --gilt-b: #c99a4a;

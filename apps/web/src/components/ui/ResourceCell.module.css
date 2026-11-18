@@ -1,0 +1,94 @@
+.cell {
+  --cell-control-size: var(--size-sm);
+  position: relative;
+  container: indexRow / inline-size;
+  min-inline-size: 0;
+}
+
+.primary {
+  display: grid;
+  grid-template-rows: auto minmax(max(2lh, var(--cell-control-size)), auto);
+  gap: var(--space-2);
+  min-inline-size: 0;
+  color: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  text-decoration: none;
+}
+
+.cover {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  aspect-ratio: 1;
+}
+
+.cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 12%, transparent);
+  pointer-events: none;
+}
+
+.primary:is(:hover, :focus-visible) .cover::after {
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+
+.title {
+  display: -webkit-box;
+  block-size: 2lh;
+  overflow: hidden;
+  padding-inline-end: calc(var(--cell-control-size) + var(--space-1));
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.primary:hover .title { text-decoration: underline; }
+
+.controls {
+  position: absolute;
+  inset-block-start: calc(100cqi + var(--space-2));
+  inset-inline-end: 0;
+}
+
+.controls :global([data-row-actions-control]) {
+  --control-min-size: var(--cell-control-size);
+  align-items: flex-start;
+  padding-block-start: calc((var(--text-sm) * var(--leading-normal) - var(--control-icon-size)) / 2);
+  opacity: 0;
+}
+
+.cell:is(:hover, :focus-within) .controls :global([data-row-actions-control]),
+.controls :global([data-row-actions-control][aria-expanded="true"]) {
+  opacity: 1;
+}
+
+.metadata {
+  min-inline-size: 0;
+  block-size: 1lh;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  white-space: nowrap;
+}
+
+.metadata a:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+
+@media (any-pointer: coarse) {
+  .cell { --cell-control-size: var(--size-xl); }
+  .controls :global([data-row-actions-control]) { opacity: 1; }
+}
+
+@media (forced-colors: active) {
+  .cover::after {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
