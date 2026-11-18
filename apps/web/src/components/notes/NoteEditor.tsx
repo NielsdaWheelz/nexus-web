@@ -1,5 +1,4 @@
 "use client";
-import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
@@ -91,7 +90,7 @@ import {
   type NoteBody,
 } from "@nexus/authored/body";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/editorTypes";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { getBrowserTouchCapable, useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { outlineFoldCommand, outlineHistoryCommand, outlineStructuralCommand, usesMeta } from "@/lib/shortcuts";
 import { inspectionDecorations } from "@/lib/notes/inspection";
 import { fieldAt, fieldById, inlinePaste, outlineEditedField, outlineTransactionSource } from "@/lib/notes/outlineEditorModel";
@@ -191,7 +190,6 @@ export interface NoteEditorProjection {
 export interface NoteEditorProps {
   projection?: NoteEditorProjection;
   embedding?: {row_id: string; context: ReturnType<NoteEditorProjection["context"]>};
-  header?: true;
   reference?: ReferenceInputHost | null;
   writingDocument?: WritingDocument;
   writingOrigin?: unknown;
@@ -227,14 +225,20 @@ export interface NoteEditorProps {
   onAskLibrarian?(): void;
 }
 
-// [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
+// [mark, name, key, the mark shown as itself, its class]; the title spells the key as "⌘/Ctrl+B".
 const FORMATS = [
-  ["strong", "Bold", "Mod-b", Icon.Bold],
-  ["em", "Italic", "Mod-i", Icon.Italic],
-  ["underline", "Underline", "Mod-u", Icon.Underline],
-  ["strikethrough", "Strikethrough", "Shift-Mod-s", Icon.Strikethrough],
-  ["code", "Inline code", "Mod-e", Icon.Code],
+  ["strong", "Bold", "Mod-b", "B", styles.bold],
+  ["em", "Italic", "Mod-i", "I", styles.italic],
+  ["underline", "Underline", "Mod-u", "U", styles.underlined],
+  ["strikethrough", "Strikethrough", "Shift-Mod-s", "S", styles.struck],
+  ["code", "Inline code", "Mod-e", "code", styles.mono],
 ] as const;
+/** The nearest scrolling ancestor: where a placed tool must stay in view. */
+function scrollportOf(element: HTMLElement): HTMLElement | null {
+  let port = element.parentElement;
+  while (port && !/auto|scroll/.test(getComputedStyle(port).overflowY)) port = port.parentElement;
+  return port;
+}
 type Format = (typeof FORMATS)[number][0];
 const shortcut = (key: string) =>
   `⌘/Ctrl+${key.startsWith("Shift") ? "Shift+" : ""}${key.at(-1)!.toUpperCase()}`;
@@ -309,7 +313,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const consumedFocus = useRef<number | null>(null);
   const { platform } = useRenderEnvironment();
   const latest = useRef({ ...props, platform });
-  latest.current = { ...props, platform, editable: props.editable };
+  latest.current = { ...props, platform };
   const busy = useRef(false);
   const nativeInputOpen = useRef(false);
   const guard = useWorkGuard();
@@ -380,7 +384,6 @@ function NoteEditorContent(props: NoteEditorProps) {
       restoreReference(view, row_id, base);
     },
   });
-  latest.current = { ...props, platform, editable: props.editable };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const activeReference = (state: EditorState) => {
@@ -388,16 +391,16 @@ function NoteEditorContent(props: NoteEditorProps) {
     return intent?.row_id === editingField(state)?.row_id ? intent : null;
   };
   const toolbarNode = useRef<HTMLDivElement | null>(null);
-  /** The formatting toolbar sits under the selection's end, as the link dialog does, or above the selection when
-   * under would leave the nearest scrollport; it shifts left to stay inside the shell. A header's toolbar stays in flow. */
+  /** Leave the platform's callout above a touch selection. Otherwise prefer the space above it,
+   * within the padded scrollport. Both placements stay inside the shell horizontally. */
   const placeToolbar = useCallback(() => {
     const node = toolbarNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
-    if (!node || !view || !box || latest.current.header || view.state.selection.empty) return;
-    let port = shell.current!.parentElement;
-    while (port && !/auto|scroll/.test(getComputedStyle(port).overflowY)) port = port.parentElement;
-    const bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
+    if (!node || !view || !box || view.state.selection.empty) return;
+    const port = scrollportOf(shell.current!), bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
     const start = view.coordsAtPos(view.state.selection.from), end = view.coordsAtPos(view.state.selection.to), height = node.offsetHeight;
-    const above = end.bottom + 6 + height > bounds.bottom && start.top - 6 - height >= bounds.top;
+    const room = start.top - 6 - height - bounds.top;
+    const above = getBrowserTouchCapable() ? end.bottom + 6 + height > bounds.bottom && room >= 0
+      : room >= (port ? parseFloat(getComputedStyle(port).scrollPaddingTop) || 0 : 0);
     const left = Math.max(0, end.left - box.left);
     node.style.left = `${left}px`;
     node.style.top = `${above ? start.top - box.top - 6 - height : Math.max(0, end.bottom - box.top + 6)}px`;
@@ -412,6 +415,34 @@ function NoteEditorContent(props: NoteEditorProps) {
     observer.observe(shell.current);
     return () => {observer.disconnect(); toolbarNode.current = null;};
   }, [placeToolbar]);
+  const chooserNode = useRef<HTMLDivElement | null>(null);
+  /** The chooser stands at the end of its row's field: below it, or above when below would leave the nearest
+   * scrollport. It is held inside that scrollport vertically and inside the shell horizontally. */
+  const placeChooser = useCallback(() => {
+    const node = chooserNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
+    if (!node || !view || !box) return;
+    const row_id = referenceRef.current.getState()?.row_id ?? null;
+    const field = row_id !== null ? fieldById(view.state.doc, row_id) : editingField(view.state);
+    if (!field) return;
+    const bounds = scrollportOf(shell.current!)?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
+    const end = view.coordsAtPos(field.to), height = node.offsetHeight;
+    const top = end.bottom + height > bounds.bottom ? end.top - height : end.bottom;
+    const left = Math.max(0, end.left - box.left);
+    node.style.left = `${left}px`;
+    node.style.top = `${Math.max(bounds.top, Math.min(top, bounds.bottom - height)) - box.top}px`;
+    node.style.translate = `clamp(${-left}px, ${box.width - left}px - 100%, 0px)`;
+  }, []);
+  /** A shown chooser is placed when it mounts, and again when its scrollport scrolls, the shell reflows, or its own
+   * results change its height. */
+  const chooserRef = useCallback((node: HTMLDivElement | null) => {
+    chooserNode.current = node;
+    if (!node || !shell.current) return;
+    placeChooser();
+    const port = scrollportOf(shell.current), observer = new ResizeObserver(placeChooser);
+    observer.observe(shell.current); observer.observe(node);
+    port?.addEventListener("scroll", placeChooser, {passive: true});
+    return () => {observer.disconnect(); port?.removeEventListener("scroll", placeChooser); chooserNode.current = null;};
+  }, [placeChooser]);
   const referenceFor = (field: EditingField) => field.row_id !== null
     ? latest.current.projection?.reference(field.row_id) ?? null : latest.current.reference ?? null;
   function restoreReference(view: EditorView, row_id: string | null, base: NoteBody) {
@@ -423,10 +454,12 @@ function NoteEditorContent(props: NoteEditorProps) {
     const body = projected?.kind === "reference" ? fieldBody(projected)
       : binding?.document(row_id ?? undefined) ? binding.body(row_id ?? undefined) : base;
     view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
-    if (projection && row_id !== null && projected === null)
-      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, projection.content)
+    if (projection && row_id !== null && projected === null) {
+      // the retirement is usually projected already. an equal document is left alone, and its caret with it: the caret
+      // may have moved on while the replacement settled.
+      if (!view.state.doc.eq(projection)) view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, projection.content)
         .setMeta(SOURCE, "external").setMeta(outlineTransactionSource, "projection").setMeta("addToHistory", false));
-    else replaceDoc(view, docFromBody(body), row_id ?? undefined);
+    } else replaceDoc(view, docFromBody(body), row_id ?? undefined);
     binding?.refresh();
   }
   const cancelReference = (view: EditorView) => {
@@ -1659,7 +1692,9 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (raw === undefined || !view || view.composing) return;
     replaceDoc(view, docFromBody(bodyText(raw)), reference.state?.row_id ?? undefined);
-  }, [reference.state?.raw, reference.state?.row_id]);
+    // the field's end moved with the query.
+    placeChooser();
+  }, [reference.state?.raw, reference.state?.row_id, placeChooser]);
 
   const focusSerial = props.focus?.serial;
   useLayoutEffect(() => {
@@ -1703,7 +1738,6 @@ function NoteEditorContent(props: NoteEditorProps) {
       tabIndex={-1}
       data-row-focusable="true"
       className={styles.shell}
-      data-header-editor={props.header ? "true" : undefined}
       data-words-at-risk={props.wordsAtRisk || undefined}
       onKeyDownCapture={(event) => {
         if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
@@ -1781,7 +1815,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
       })}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
-        <div data-reference-chooser data-collection-constrained={props.header || undefined}>
+        <div ref={chooserRef} className={styles.chooser} data-reference-chooser>
           <ReferencePicker
             input={reference}
             returnFocus={() => viewRef.current?.dom ?? null}
@@ -1796,20 +1830,19 @@ function NoteEditorContent(props: NoteEditorProps) {
           role="toolbar"
           aria-label="Text formatting"
         >
-          {FORMATS.map(([name, label, key, Glyph]) => (
+          {FORMATS.map(([name, label, key, mark, face]) => (
             <Button
               key={name}
-              iconOnly
-              icon={<Glyph aria-hidden="true" />}
+              className={cx(styles.mark, face)}
               aria-label={label}
               aria-pressed={active.has(name)}
               disabled={presentation === "code"}
               tooltip={{text: `${label} (${shortcut(key)})`}}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => format(name)}
-            />
+            >{mark}</Button>
           ))}
-          <Button iconOnly icon={<Icon.Code aria-hidden="true" />} aria-label="Code presentation"
+          <Button className={cx(styles.mark, styles.mono)} aria-label="Code presentation"
             aria-pressed={presentation === "code"}
             tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
               const view=viewRef.current;if(!view||!latest.current.editable||inputMode.current!=="text"||view.composing||compositionBase.current!==null)return;
@@ -1820,22 +1853,21 @@ function NoteEditorContent(props: NoteEditorProps) {
                 warn(ACROSS_FIELDS);return;
               }
               presentBody(view,field,field.node.attrs.presentation==="code"?"prose":"code");
-            }} />
+            }}>block</Button>
           <Button
-            iconOnly
-            icon={<Icon.Link aria-hidden="true" />}
+            className={cx(styles.mark, styles.link)}
             disabled={presentation === "code"}
             aria-label="Link"
             tooltip={{text: "Link (⌘/Ctrl+Shift+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
-          />
+          >link</Button>
         </div>
       ) : null}
       {link && linkVisible ? (
         <div
           className={styles.linkDialog}
-          style={props.header ? undefined : { left: link.left, top: link.top }}
+          style={{ left: link.left, top: link.top }}
           role="dialog"
           aria-label="Add hyperlink"
         >

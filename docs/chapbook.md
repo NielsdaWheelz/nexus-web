@@ -800,7 +800,7 @@ is a beautifully made edition that happens to be alive.
 ### Materials
 
 - **Canvas**: near-paper neutral with a small amount of warmth;
-- **Surface**: one lifted paper tone for bars, sheets, and menus;
+- **Surface**: one lifted paper tone for the workspace strip, sheets, and menus. pane headers and controls use the canvas.
 - **Ink / muted ink / hairline**: three explicit contrast roles;
 - **Link/brand accent**: navigation links and selected controls only;
 - **Machine ink**: a cool secondary hue plus attribution, never color alone;

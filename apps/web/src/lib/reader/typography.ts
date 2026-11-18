@@ -16,3 +16,9 @@ export function readerSurfaceStyle(profile: Readonly<Schema<"ReaderProfileOut">>
     "--reader-column-width-ch": `${profile.column_width_ch}ch`,
   } as CSSProperties;
 }
+
+/** The reader role, spread on one element: authored notes are set in the profile. `large` is where
+ * signs step from 14px to 16px; the threshold lives here alone. */
+export function readerType(profile: Readonly<Schema<"ReaderProfileOut">>): { "data-type-role": "reader"; "data-type-scale": "large" | undefined; style: CSSProperties } {
+  return { "data-type-role": "reader", "data-type-scale": profile.font_size_px >= 20 ? "large" : undefined, style: readerSurfaceStyle(profile) };
+}

@@ -446,6 +446,22 @@
   gap: var(--space-3);
 }
 
+/* A strip above the media's own surface: the downloaded-copy switch, a refresh failure. On the
+ * phone it alone clears the chrome. What follows starts below the chrome, so it inherits no
+ * clearance; a reader port measures its own inset there and finds none. */
+.strip {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.strip[data-mobile="true"] {
+  padding-top: var(--mobile-pane-content-offset);
+}
+
+.strip[data-mobile="true"] ~ * {
+  --mobile-pane-content-offset: 0px;
+}
+
 .savedSwitch {
   padding: var(--space-2) var(--space-4);
   color: var(--ink-muted);

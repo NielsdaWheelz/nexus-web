@@ -4,12 +4,12 @@
  * No clone survives a gesture and no receipt chooses which command to undo. */
 import * as Y from "yjs";
 import {applyBodyEdits, bodyInline, createNote, encodeBytes, hydrateNote, noteEncodingBound, readBody, sliceInline, splitBody} from "@nexus/authored/documents";
-import {emptyBody, parseBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
+import {bodyHasContent, emptyBody, parseBody, noteBodySchema, type NoteBody} from "@nexus/authored/body";
 import {canonicalSerialization} from "@nexus/authored/canonical";
 import {prepareChange, type Intent} from "@nexus/authored/commands";
 import {linkId} from "@nexus/authored/identity";
 import {advanceCoverage, isVisible, mergeChanges, mergeVector} from "@nexus/authored/merge";
-import {CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, MAX_COMMAND_BYTES, type LinkState, type MergeResult, type Vector} from "@nexus/authored/types";
+import {CommandTooLargeError, WorkConversionError, WorkJoinError, WorkUnavailableError, MAX_COMMAND_BYTES, type LinkState, type MergeResult, type OutlineChildrenOccurrence, type Vector} from "@nexus/authored/types";
 import {preparePositions, prepareLink, prepareTarget} from "@/lib/resourceGraph/links";
 import {lowerGraph, LocalCommitError, type GraphIntent, type LocalCommit, type LocalGraphCommit, type WritingDocument, type WritingRuntime} from "./runtime";
 import type {DisplayedSplit, FocusSelection, NoteEdit} from "./editorTypes";
@@ -979,8 +979,12 @@ export class OutlineHistory {
     });
     return {result: admitted.result, committed, link: committed.then(() => link)};
   }
+  /** Replaces one occurrence with a reference, as one step. The source is a reference, or with `consumed` a writing
+   * item taken in its place: its document is held so the inverse can show it again, and the command admits it only
+   * while, inside the command, that document is empty and the store finds no child under it. */
   replaceReference(args: {source: OccurrenceBookmark & {link: LinkState}; parent: WritingDocument | null; target: import("@/lib/resourceGraph/links").LinkTarget; label: string;
-    row_id: string; before: InputBookmark; document: WritingDocument | null; active(): boolean; mayRetire(): boolean; canRetain(): boolean;
+    row_id: string; before: InputBookmark; document: WritingDocument | null; consumed: {document: WritingDocument; children: OutlineChildrenOccurrence} | null;
+    active(): boolean; mayRetire(): boolean; canRetain(): boolean;
     accepted(ref: string, resource: import("@nexus/authored/types").ResourceProjection | null, admission: AdmittedStructure, link: Promise<LinkState>): void;
     refused(reason: RangeReason): void}): Promise<boolean> {
     this.boundary();
@@ -989,7 +993,7 @@ export class OutlineHistory {
     const future = this.future.filter(group => !group.released);
     for (const prior of future) prior.suspended++;
     const group = this.reserve({before: args.before, after: null, placements_before: [source]}, true);
-    group.suspended++; this.hold(group, [args.parent]);
+    group.suspended++; this.hold(group, [args.parent, args.consumed?.document ?? null]);
     group.coverage.links.set(source.link.link_id, {...source.link.add_vv});
     const origin = Symbol("outline reference replacement"), eligible = this.groups();
     let relationship = "", accepted = false;
@@ -1010,6 +1014,9 @@ export class OutlineHistory {
         if (positions.kind === "refusal") return {kind: "refusal", reason: positions.reason === "capacity" ? "capacity" : "changed"};
         const prepared = await prepareLink(this.runtime, {source_ref: placement.parent_ref, target_ref: endpoint.ref, source_label: null, target_label: args.label, after: null, before: source.link.link_id}, {value: positions.values.get(id)!, moves: [...positions.moves]});
         if (!prepared.intents.some(intent => intent.kind === "add_link")) return {kind: "refusal", reason: "collision"};
+        // the last read before the commit: a child or a word that arrived since the gesture keeps the item.
+        if (args.consumed && ((await store.query({kind: "outline_children", occurrences: [args.consumed.children]})).children[0] !== false ||
+          bodyHasContent(readBody(args.consumed.document.doc)))) return {kind: "refusal", reason: "changed"};
         if (!args.canRetain()) return {kind: "refusal", reason: "capacity"};
         if (!args.mayRetire()) return {kind: "refusal", reason: "guarded"};
         relationship = prepared.link_id;

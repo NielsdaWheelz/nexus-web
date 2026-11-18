@@ -24,7 +24,11 @@ prepare their placement from the preceding arrangement's resolved parent and
 anchors; boundary deletion refuses while that arrangement is unresolved. this
 closes the reproduced schedule without changing failure classification: another
 way an ordinary birth's anchor vanishes before preparation could still enter the
-save-failure lane. no remaining ordinary-use trigger has been demonstrated.
+save-failure lane. a reference inserted beside an item uses the same position
+preparation in `OutlineHistory.insertReference`. a move from another pane could
+remove that anchor between the local check and preparation. an open chooser
+blocks arrangement in its own pane. no remaining ordinary-use trigger has
+been demonstrated.
 
 resolve in a separate non-range admission change. preserve any text already
 authored by a compound command, classify expected preflight refusal explicitly,

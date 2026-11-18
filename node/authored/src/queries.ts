@@ -453,8 +453,12 @@ export function compileQuery(query: Exclude<AuthoredQuery, {kind: "search_previe
     case "daily": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE local_date=? AND visible=1", params: [query.local_date] };
     case "pages": {
       const cursor=readAdjacencyCursor(query.cursor);
-      const where=cursor===null?'':`WHERE(display_title,ref)>(?,?)`;
-      return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources WHERE kind='page' AND visible=1) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[1]]:[],limit]};
+      const where=cursor===null?'':`WHERE display_title COLLATE NOCASE>=? AND(display_title COLLATE NOCASE,ref)>(?,?)`;
+      // The register: undated pages by ascii-folded title, then ref. Unanalysed, the planner reads
+      // `local_date IS NULL` as a point lookup on the unique index, then sorts every undated
+      // resource; INDEXED BY holds the ordered partial index and fails to prepare if it drifts.
+      // A row value cannot seek an expression index; the scalar bound before it does.
+      return {sql:`WITH pages AS(SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,ref,${PAGE_TITLE_SQL} AS display_title FROM resources INDEXED BY resources_register WHERE kind='page' AND visible=1 AND local_date IS NULL) SELECT projection_json,NULL AS link_json,json_array(display_title,ref) AS cursor_json FROM pages ${where} ORDER BY display_title COLLATE NOCASE,ref LIMIT ?`,params:[...cursor?[cursor[0],cursor[0],cursor[1]]:[],limit]};
     }
     case "annotations": return { sql: "SELECT json_set(projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM resources WHERE kind='highlight' AND visible=1 AND source_ref=? AND ref>? ORDER BY ref LIMIT ?", params: [query.source_ref, query.cursor ?? "", limit] };
     case "backlinks": return { sql: "SELECT json_set(r.projection_json,'$.authored_by_viewer',json('true')) AS projection_json,NULL AS link_json FROM reference_index i JOIN resources r ON r.ref=i.owner_ref WHERE i.target_ref=? AND r.visible=1 AND r.ref>? ORDER BY r.ref LIMIT ?", params: [query.ref, query.cursor ?? "", limit] };

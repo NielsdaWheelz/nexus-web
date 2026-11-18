@@ -17,7 +17,6 @@ import {
   useMobileChrome,
   useMobileChromeState,
   useMobileChromeSurface,
-  useMobileChromeHold,
 } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { PaneCompanionAction, PanePrimaryAction } from "@/lib/panes/paneChrome";
@@ -75,7 +74,6 @@ export default function SurfaceHeader({
   resourceRef,
   navigation,
   onMouseDown,
-  editor,
   frameRef,
   search,
   statement,
@@ -101,7 +99,6 @@ export default function SurfaceHeader({
   resourceRef?: CanonicalResourceRef;
   navigation: SurfaceHeaderNavigation;
   onMouseDown?: MouseEventHandler<HTMLElement>;
-  editor?: PaneChrome["editor"];
   frameRef: RefObject<HTMLDivElement | null>;
   search?: { readonly label: string; readonly onActivate: (opener: HTMLElement) => void; readonly reason?: string; readonly hint: string };
   statement?: { readonly words: readonly string[]; readonly expanded: boolean; readonly controls: string; readonly onToggle: (opener: HTMLElement) => void };
@@ -134,7 +131,6 @@ export default function SurfaceHeader({
   const mobileChrome = useMobileChrome();
   const visibility = useMobileChromeState();
   useMobileChromeSurface(ref, mobile);
-  useMobileChromeHold(mobile && editor?.kind === "Expandable" && editor.expanded);
   useLayoutEffect(() => {
     const frame = frameRef.current;
     const surface = ref.current;
@@ -182,10 +178,7 @@ export default function SurfaceHeader({
           data-pane-header="true"
           ref={ref}
           className={mobile ? styles.mobile : styles.header}
-          onMouseDown={event => {
-            if (event.target instanceof Element && event.target.closest("[data-pane-header-writing]")) return;
-            onMouseDown?.(event);
-          }}
+          onMouseDown={onMouseDown}
         >
           <div className={styles.navigation}>
             <Button
@@ -209,14 +202,13 @@ export default function SurfaceHeader({
               aria-label={`Go forward${scope}`}
             />
           </div>
-          <div className={styles.identity} data-pane-header-writing={editor ? "true" : undefined}>
+          <div className={styles.identity}>
             <PaneHeaderIdentity
               id={identityId}
               model={header}
               projection={projection}
               yielded={titleYielded}
               yieldReady={titleYieldReady}
-              editor={editor?.kind === "Inline" ? editor.content : editor?.control}
               statement={statement}
             />
           </div>
@@ -309,13 +301,6 @@ export default function SurfaceHeader({
               />
             ) : null}
           </div>
-          {editor?.kind === "Expandable" ? (
-            <div id={editor.regionId} className={styles.editorRegion} hidden={!editor.expanded}
-              data-pane-header-editor-region="true" data-pane-header-writing="true">
-              {editor.content}
-            </div>
-          ) : null}
-          {editor?.feedback ? <div className={styles.feedback} data-pane-header-writing="true">{editor.feedback}</div> : null}
         </header>
       </div>
     </>

@@ -12,10 +12,10 @@ two inherited lab reports concern the same formatting-toolbar placement:
 impact: the visible formatting commands could not reliably be clicked, despite
 a valid selection.
 
-current source has changed: `apps/web/src/components/notes/NoteEditor.tsx`
-`placeToolbar` (lines 393–404) places below the selection and flips within the
-nearest scrollport. the filter is also absent at rest. these changes invalidate
-the old placement explanation; neither hit-test case has been requalified.
+the current `NoteEditor.tsx` places the bar above the selection for fine input
+when it fits the padded scrollport, below for coarse input when it fits, and
+uses text marks for the commands. the selection-placement check does not
+hit-test every mark with the collation picker open.
 
 resolved when: pointer formatting at the first row and after scrolling reaches
 bold, italic, link and code commands without losing the selection or being

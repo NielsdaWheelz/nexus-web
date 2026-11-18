@@ -24,7 +24,10 @@ export type ReferenceInputHost = {
   label: string;
   onActiveChange?(active: boolean): void;
 } & (
-  | {replacement: null; onSelected(target: LinkTarget, item: ResourceItem): void}
+  /** An insertion lands the reference beside the field, at once. Where the field's own occurrence can take the
+   * reference in its place, `consume` answers instead and settles as a replacement does; null means insert. */
+  | {replacement: null; onSelected(target: LinkTarget, item: ResourceItem): void; consume?(target: LinkTarget, item: ResourceItem): Promise<boolean> | null}
+  /** A replacement resolves true once it has settled the acceptance. False: it refused aloud, and the query stands. */
   | {replacement: {occurrence_key: string; link_id: string}; onSelected(target: LinkTarget, item: ResourceItem): Promise<boolean>}
 );
 type ReferenceContext = Pick<ReferenceInputHost, "source_ref" | "replacement">;
@@ -122,13 +125,15 @@ export function useReferenceInput(
         ? { kind: "resource" as const, ref: target.item.ref }
         : { kind: "passage" as const, candidate_ref: target.candidate_ref, passage_target: target.target, capture: { ...target.capture, locator: target.capture.locator === null ? null : captureLocator(target.capture.locator, target.target.owner_ref) } };
     const owner = value.host;
-    if (owner.replacement !== null) {
+    const settling = owner.replacement !== null ? owner.onSelected(selectedTarget, target.item)
+      : host.replacement === null ? host.consume?.(selectedTarget, target.item) ?? null : null;
+    if (settling !== null) {
       accepting.current = value;
-      // The frozen occurrence owns admission. A refusal keeps the exact query
-      // and native selection; preparation never queues another acceptance.
-      void owner.onSelected(selectedTarget, target.item).then(accepted => {
-        const current = draft.read();
-        if (!accepted || current?.host !== value.host || current.raw !== value.raw) return;
+      // The occurrence owns admission. A refusal keeps the exact query and native
+      // selection; preparation never queues another acceptance. A settled acceptance
+      // closes its own draft whatever was typed since: its field is no longer the query's.
+      void settling.then(accepted => {
+        if (!accepted || draft.read()?.host !== value.host) return;
         set(null);
         input.accepted(value.row_id, value.base);
       }).finally(() => {if (accepting.current === value) accepting.current = null;});

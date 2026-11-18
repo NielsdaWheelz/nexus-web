@@ -3,41 +3,44 @@
   width: 100%;
 }
 
+/* `font` does not reset tracking, so the display line's reaches the field only by inheritance. */
 .title textarea {
   font: inherit;
+  letter-spacing: inherit;
 }
 
-.title textarea:focus-visible,
-.disclosure:focus-visible {
+.title textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
-.disclosure {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  width: 100%;
-  min-height: var(--size-lg);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-
-.preview {
-  display: block;
-  overflow: hidden;
-  min-width: 0;
-  white-space: pre;
-  text-overflow: ellipsis;
-}
-
+/* a note's body is the paper's opening paragraph; work leads it with its sign in the rows' sign
+   column, so the body starts where the rows' words do. */
 .note {
   width: 100%;
   min-width: 0;
+  font-size: 1.125em;
+}
+
+.note:has(> .sign:not(:empty)) {
+  display: grid;
+  grid-template-columns: var(--outline-disclose) var(--outline-sign) minmax(0, 1fr);
+  align-items: start;
+}
+
+.note:has(> .sign:not(:empty)) > :not(.sign) {
+  grid-column: 3;
+}
+
+.sign {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 1lh;
+}
+
+.sign:empty {
+  display: none;
 }

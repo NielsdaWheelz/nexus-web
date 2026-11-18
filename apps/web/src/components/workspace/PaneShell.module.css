@@ -64,6 +64,41 @@
   min-height: 0;
 }
 
+/* One hairline at the chrome's foot, lit while the body's scroll port is
+   above 0 (paneScroll.ts writes the shell's data-scrolled) or while the
+   pane is brushed from the strip. */
+.paneShell[data-mobile="false"] .chromeFrame {
+  position: relative;
+}
+
+.paneShell[data-mobile="false"] .chromeFrame::after,
+.paneShell[data-mobile="true"][data-controls-shown] .chrome::after {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: var(--stroke-hairline);
+  background: var(--pane-header-rule-ink, transparent);
+  content: "";
+  pointer-events: none;
+  transition: background-color var(--duration-fast) var(--ease-glide);
+}
+
+.paneShell[data-mobile="false"][data-scrolled] .chromeFrame::after,
+.paneShell[data-mobile="true"][data-controls-shown][data-scrolled] .chrome::after {
+  background: var(--pane-header-rule-ink, var(--edge-subtle));
+}
+
+/* Where the chrome's foot is the header's, the focused Solar pane's lit vine
+   is its only separator; the hairline returns with the dimmer (devtools,
+   forced colours, more contrast, print). */
+:global([data-theme="elvish"]) .paneShell[data-mobile="false"][data-scrolled]:not([data-controls-shown]):focus-within .chromeFrame::after {
+  background: color-mix(
+    in srgb,
+    var(--pane-header-rule-ink, var(--edge-subtle)) calc((1 - var(--ornament-root)) * 100%),
+    transparent
+  );
+}
+
 .controlsFrame {
   min-inline-size: 0;
 }
@@ -73,7 +108,6 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface-2);
 }
 
 .controlRow {
@@ -81,8 +115,6 @@
   min-inline-size: 0;
   padding-block: var(--pane-control-row-padding-block);
   padding-inline: var(--space-4);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-  background: var(--surface-2);
 }
 
 .controlRow[hidden] {
@@ -231,14 +263,11 @@
 
 .paneShell[data-mobile="true"] .chrome {
   --mobile-chrome-offset: calc(-1 * var(--space-2));
+  position: relative;
   pointer-events: auto;
   padding-right: var(--viewport-safe-right);
   padding-left: var(--viewport-safe-left);
-  background: var(--surface-2);
-}
-
-.paneShell[data-mobile="true"] .chrome:empty {
-  border-bottom: none;
+  background: var(--surface-canvas);
 }
 
 .paneShell[data-mobile="true"] .body {
@@ -281,8 +310,13 @@
     background: Canvas;
   }
 
-  .controlRow {
-    border-block-end-color: CanvasText;
+  .paneShell[data-mobile="false"] .chromeFrame::after,
+  .paneShell[data-mobile="false"][data-scrolled] .chromeFrame::after,
+  :global([data-theme="elvish"]) .paneShell[data-mobile="false"][data-scrolled]:not([data-controls-shown]):focus-within .chromeFrame::after,
+  .paneShell[data-mobile="true"][data-controls-shown] .chrome::after,
+  .paneShell[data-mobile="true"][data-controls-shown][data-scrolled] .chrome::after {
+    forced-color-adjust: none;
+    background: CanvasText;
   }
 
   .paneShell[data-active="true"][data-mobile="false"] .primaryPane::before {
@@ -317,7 +351,7 @@
 }
 
 .paneShell[data-active="false"][data-mobile="false"] .chromeFrame { --pane-title-ink: var(--ink-muted); }
-.controlRow.viewRow { --pane-control-row-padding-block: 0px; border-block-end: 0; box-shadow: inset 0 calc(-1 * var(--stroke-hairline)) var(--edge-subtle); }
+.controlRow.viewRow { --pane-control-row-padding-block: 0px; }
 @media (forced-colors: active) {
   .paneShell[data-active="true"][data-mobile="false"] .primaryPane::before {
     position: absolute;

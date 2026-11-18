@@ -43,7 +43,7 @@ export type CollectionContext =
 
 interface CollectionRowBase {
   readonly id: string;
-  readonly presentation: "Index" | "Details";
+  readonly presentation: "Index" | "Details" | "Title";
   readonly primary: ResourceRowPrimary;
   readonly title: {
     readonly text: string;

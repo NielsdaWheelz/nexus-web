@@ -161,7 +161,9 @@ workspace mobile secondary sheet.
 pane-local controls are source-local chrome. identity, supported navigation and
 queries compose independently above the content scrollport. hosted reader
 navigation occupies that chrome slot only on mobile; desktop places its running
-head inside the reader frame. imports retain the pane navigation slot. the
+head inside the reader frame. imports and the journal's running date retain the
+pane navigation slot. the phone header and controls are opaque canvas. the
+lowest shown surface draws the scrolled rule without moving the body. the
 [workspace controls](workspace.md) contract owns query disclosure, shortcut
 admission and focus. active-pane resizing preserves the mounted query; inactive
 panes unmounted on mobile retain their existing reset behavior.

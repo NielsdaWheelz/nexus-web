@@ -21,15 +21,11 @@
   line-height: var(--leading-tight);
 }
 
-.title,
-.editor {
-  color: var(--pane-title-ink, var(--ink));
-  font-size: var(--title-size);
-  font-weight: var(--weight-semibold);
-}
-
 .title {
   overflow: hidden;
+  color: var(--pane-title-ink, var(--ink));
+  font-size: var(--title-size);
+  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
 }
 
@@ -41,19 +37,13 @@
   transition: opacity var(--duration-fast) var(--ease-glide);
 }
 
-.editor {
-  min-inline-size: 0;
-  line-height: var(--leading-tight);
-}
-
 /* The Solar's display face, which needs 20px for its hairlines; the floor
    above rises with it. */
 :global([data-theme="elvish"]) .identity {
   --title-size: var(--text-xl);
 }
 
-:global([data-theme="elvish"]) .title,
-:global([data-theme="elvish"]) .editor {
+:global([data-theme="elvish"]) .title {
   font-family: var(--font-display);
   font-weight: 300;
   letter-spacing: 0.01em;
@@ -61,7 +51,6 @@
 }
 
 .title[data-title-role="Pointer"] {
-  color: var(--ink-machine);
   font-family: var(--font-mono);
   font-weight: var(--weight-regular);
   letter-spacing: normal;

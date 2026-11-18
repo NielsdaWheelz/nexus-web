@@ -68,3 +68,25 @@
 .effort > .needle {
   transition: transform var(--duration-fast) var(--ease-glide);
 }
+
+/* the task's sign. done, its tick takes the canvas over the disc. open, the tick is latent: a
+   hover-capable pointer previews it on the sign it would complete. */
+.taskTick {
+  stroke: var(--surface-canvas);
+}
+
+.taskPreview {
+  opacity: 0;
+}
+
+@media (hover: hover) {
+  [role="checkbox"]:not([aria-disabled="true"]):hover .taskPreview {
+    opacity: .6;
+  }
+}
+
+@media (forced-colors: active) {
+  .taskTick {
+    stroke: Canvas;
+  }
+}

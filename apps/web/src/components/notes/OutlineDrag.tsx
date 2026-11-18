@@ -2,9 +2,10 @@
 
 /** A bullet press lifts the row, or the topmost selection it belongs to; x chooses
  * the depth between the rows around the gap; release places through the controller,
- * which announces and selects. The kernel is SortableList's, reduced to one
- * draggable, no keyboard sensor and silent announcements. Nothing is written by
- * lifting: a cancel leaves the outline as it was. */
+ * which selects. A drag says nothing: its ghost is the row's words in the row's own
+ * type and names the parent it would land under. The kernel is SortableList's,
+ * reduced to one draggable, no keyboard sensor and silent announcements. Nothing is
+ * written by lifting: a cancel leaves the outline as it was. */
 import {useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject} from "react";
 import {createPortal} from "react-dom";
 import {DndContext, DragOverlay, MouseSensor, TouchSensor, useDndContext, useDraggable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent} from "@dnd-kit/core";
@@ -20,7 +21,7 @@ const TOLERANCE = 8;
 type Point = {x: number; y: number};
 type Press = {row_id: string; bullet: HTMLElement; roots: readonly string[]; lifted: ReadonlySet<string>; pointerId: number; pointerType: "mouse" | "touch"; port: HTMLElement; epoch: number; invalidated: boolean};
 type Target = Destination & {depth: number; top: number; left: number; width: number};
-type Session = Press & {origin: Point; point: Point; scrollTop: number; mirror: boolean; label: string; ring: number};
+type Session = Press & {origin: Point; point: Point; scrollTop: number; mirror: boolean; label: string; ring: number; type: Pick<CSSProperties, "fontFamily" | "fontSize" | "lineHeight">};
 
 function point(event: Event): Point | null {
   if (event instanceof MouseEvent) return {x: event.clientX, y: event.clientY};
@@ -177,9 +178,11 @@ export default function OutlineDrag({controller, children}: {controller: Outline
     suppressDragReleaseClick(press.pointerId);
     const origin = point(event.activatorEvent), mount = controller.mounts.get(press.row_id);
     if (press.invalidated || !valid(press) || !origin || !mount) return;
-    const content = mount.content.getBoundingClientRect(), bullet = press.bullet.getBoundingClientRect();
+    const content = mount.content.getBoundingClientRect(), bullet = press.bullet.getBoundingClientRect(), type = getComputedStyle(mount.content);
+    // the ghost leaves the session's dom, so it carries the row's computed type with it.
     const session: Session = {...press, origin, point: origin, scrollTop: press.port.scrollTop, mirror: "altKey" in event.activatorEvent && event.activatorEvent.altKey === true,
-      label: controller.chrome().get(press.roots[0]!)?.label ?? "", ring: bullet.left + bullet.width / 2 - content.left};
+      label: controller.labelOf(press.roots[0]!), ring: bullet.left + bullet.width / 2 - content.left,
+      type: {fontFamily: type.fontFamily, fontSize: type.fontSize, lineHeight: type.lineHeight}};
     for (const id of press.lifted) {const dom = controller.mounts.get(id)?.dom; if (dom) dom.dataset.dragging = "true";}
     active.current = session; setDrag(session); setMirror(session.mirror); setDestination(null);
   };
@@ -217,7 +220,6 @@ export default function OutlineDrag({controller, children}: {controller: Outline
       if (rect.width !== sourceRect.width || rect.height !== sourceRect.height || port.width !== portRect.width || port.height !== portRect.height) invalidate();
     });
     resized.observe(source); resized.observe(drag.port);
-    // the rows' own text and structure; the status region and receipts beside the editor are not the projection.
     const changed = new MutationObserver(invalidate);
     changed.observe(editor, {childList: true, characterData: true, subtree: true});
     const deactivated = new MutationObserver(() => {if (pane?.getAttribute("data-active") !== "true") invalidate();});
@@ -248,11 +250,14 @@ export default function OutlineDrag({controller, children}: {controller: Outline
     <Retirement signal={retire}/>
     <GestureSurface rootRef={root} begin={begin} canActivate={canActivate}>
       {children}
-      {drag ? <div className={styles.indicator} aria-hidden="true" data-outline-drop-indicator="true" hidden={destination === null} data-mirror={mirror || undefined}
+      {drag ? <div className={styles.indicator} aria-hidden="true" data-outline-drop-indicator="true" hidden={destination === null}
         style={destination ? {top: destination.top, left: destination.left, width: destination.width, "--outline-ring-offset": `${drag.ring}px`} as CSSProperties : undefined}/> : null}
     </GestureSurface>
     {overlay ? createPortal(<DragOverlay adjustScale={false} dropAnimation={null} style={{pointerEvents: "none"}}>
-      {drag ? <div className={styles.ghost} inert aria-hidden="true" data-outline-drag-ghost="true" data-mirror={mirror || undefined}>{drag.label}{drag.roots.length > 1 ? ` +${drag.roots.length - 1}` : null}</div> : null}
+      {drag ? <div className={styles.ghost} inert aria-hidden="true" data-outline-drag-ghost="true" data-mirror={mirror || undefined} style={drag.type}>
+        <span>{drag.label}{drag.roots.length > 1 ? ` +${drag.roots.length - 1}` : null}</span>
+        {destination ? <span className={styles.under}>under {controller.labelOf(destination.parent_id)}</span> : null}
+      </div> : null}
     </DragOverlay>, overlay) : null}
   </DndContext>;
 }
