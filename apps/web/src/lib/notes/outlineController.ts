@@ -2437,7 +2437,7 @@ export class OutlineController {
       return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: insert, consume: (target, item) => {
         const observed = this.consumable(row) ? this.pending.observedLink(row_id) ?? row.link : null;
         if (observed === null) return null;
-        const lease = this.lease();
+        const lease = this.lease(), birth = this.pending.birthAttempt(row_id);
         // the item stays, and the reference lands after it as an insertion would; one that is gone says so.
         const beside = () => {
           if (!lease()) return false;
@@ -2448,7 +2448,7 @@ export class OutlineController {
         // failed keeps the item, even once a retry has written it: the reference then lands beside it, on a real link.
         return Promise.resolve(observed).then(async link => {
           const current = this.rows.get(row_id);
-          if (!lease() || !current?.ref || current.ref !== row.ref || !this.consumable(current) || this.pending.firstLinkAttemptFailed(observed)) return beside();
+          if (!lease() || !current?.ref || current.ref !== row.ref || !this.consumable(current) || birth?.failed) return beside();
           const children = (await (await this.runtime.store).query({kind: "outline_children", occurrences: [this.childQuery(current, current.ref, link)]})).children[0];
           return children === false && lease() ? this.replaceReference({...current, link}, target, item.label) : beside();
         }, beside).catch(error => {this.error = error; this.notify(); return false;});

@@ -451,10 +451,10 @@ undo group. undo restores that item in place. a pending birth waits for its
 link and rechecks the local child proof. a birth whose first attempt failed is
 held and retried as words at risk; the accept waits for the retry's link, then
 ordinary insertion leaves the item in place beside the reference. the pending
-layer keeps that fact on the birth's own link promise, so it outlives the row's
-reconciliation and nothing else retains it. a closed lease writes nothing. a
-refused replacement keeps its query open. seeds,
-roots, nonempty items and parents use ordinary insertion.
+layer holds the first attempt’s outcome until the birth writes its link. an
+accept made during that interval observes the outcome even if the row moves
+or reconciles. a closed lease writes nothing. a refused replacement keeps its
+query open. seeds, roots, nonempty items and parents use ordinary insertion.
 
 replacement retains the original edge until admission, revalidates the frozen
 occurrence and edge under the account lease, and allocates before that live edge
