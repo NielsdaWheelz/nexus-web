@@ -47,6 +47,9 @@ export class OutlinePendingInput {
   private owner: InputOwner | null = null;
   private notify = () => {};
   private inflight = 0;
+  /** Births whose first attempt failed, by their own link promise. Whoever still holds that promise can ask
+   * after the retry; nothing else keeps the fact alive. */
+  private readonly failedLinkAttempts = new WeakSet<Promise<LinkState>>();
   private finishing: Promise<void> | null = null;
   private resumeAgain = false;
   /** The latest failure. It stands through a retry, which clears it only if nothing fails meanwhile. */
@@ -88,6 +91,10 @@ export class OutlinePendingInput {
     const ref = parent?.ref ?? parent_ref;
     return {parent_ref: ref, parent: owner.document(ref), after_ref: after_id === null ? null : this.row(after_id).ref,
       before_ref: before_id ? this.row(before_id).ref : null};
+  }
+  /** Whether the birth this link promise belongs to failed its first attempt, whatever a retry did since. */
+  firstLinkAttemptFailed(link: Promise<LinkState> | LinkState): boolean {
+    return link instanceof Promise && this.failedLinkAttempts.has(link);
   }
   observedLink(row_id: string): LinkState | Promise<LinkState> | null {
     const bound = this.bound.get(row_id);
@@ -145,7 +152,7 @@ export class OutlinePendingInput {
     }
     for (const [id, link] of links) this.restoreRelationship(id, link);
     this.inflight++; this.notify();
-    void admission.result.catch(error => this.fail(error));
+    void admission.result.catch(error => {for (const link of links.values()) this.failedLinkAttempts.add(link); this.fail(error);});
     void admission.committed.then(async receipt => {
       await Promise.all(links.values());
       for (const id of ids) {

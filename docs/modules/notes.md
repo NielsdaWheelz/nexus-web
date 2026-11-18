@@ -92,9 +92,10 @@ place. a completion fills the sign immediately. after 600ms, a durable
 completion gives way to its receipt once the row releases its menu, editor
 inputs and other focus owners. a sign already focused at the pointer press
 hands focus to its own receipt's undo. expiry hands that focus to a surviving
-sign or the capture control. the five-second receipt's `undo` clears that same
-note and civil day. a pending-work read at or beyond the undo's local revision
-reconciles the restored row.
+sign or the capture control. pressing `undo` within five seconds clears that
+note and civil day. an accepted press keeps its receipt until the command
+settles. a refused command offers another five seconds. a pending-work read
+at or beyond the undo's local revision reconciles the restored row.
 keyboard completion advances focus. pointer completion preserves it. a day's
 settled, nonempty completion read draws one line of linked names with individual
 `clear` actions. no query manufactures a page, relationship or daily occurrence.
@@ -445,8 +446,12 @@ active row, flips above when needed and stays within the scrollport and editor.
 
 accepting in an empty, childless body item replaces its incoming link in one
 undo group. undo restores that item in place. a pending birth waits for its
-link and rechecks the local child proof. if the birth fails, ordinary insertion
-leaves the item in place. a refused replacement keeps its query open. seeds,
+link and rechecks the local child proof. a birth whose first attempt failed is
+held and retried as words at risk; the accept waits for the retry's link, then
+ordinary insertion leaves the item in place beside the reference. the pending
+layer keeps that fact on the birth's own link promise, so it outlives the row's
+reconciliation and nothing else retains it. a closed lease writes nothing. a
+refused replacement keeps its query open. seeds,
 roots, nonempty items and parents use ordinary insertion.
 
 replacement retains the original edge until admission, revalidates the frozen
