@@ -33,7 +33,7 @@ import styles from "./OutlineEditorRow.module.css";
 import factualStyles from "@/components/resources/ResourceContent.module.css";
 import type {OutlineHistory} from "@/lib/notes/structure";
 import {useAccountToday} from "@/lib/notes/accountDay";
-import {useAuthoredQuery} from "@/lib/notes/hooks";
+import {useResolvedRefs} from "@/lib/notes/hooks";
 import {useWorkCheck} from "@/lib/notes/work";
 import {useTouchCapable} from "@/lib/renderEnvironment/provider";
 
@@ -218,12 +218,13 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
 type Citation = {mount: OutlineRowMount; page: number | null};
 
 /** Each local resolve admits up to 100 distinct sources. Keep the excerpt and annotation mounted
- * when a source enters or leaves a batch. Only its citation depends on this read. */
+ * when a source enters or leaves a batch. Only its citation depends on this read; a citation already
+ * shown holds its line while a new source's read is pending. */
 function HighlightCitations({sources, citations}: {sources: string[]; citations: ReadonlyMap<string, Citation[]>}) {
-  const read = useAuthoredQuery({kind: "resolve", refs: sources});
+  const read = useResolvedRefs(sources);
   return <>
     <AuthoredReadFailure {...read} noun="highlight sources"/>
-    {read.data?.rows.flatMap(({resource}) => {
+    {[...read.resources.values()].flatMap(resource => {
       const title = resource.title?.trim();
       if (!title) return [];
       return (citations.get(resource.ref) ?? []).map(({mount, page}) => createPortal(

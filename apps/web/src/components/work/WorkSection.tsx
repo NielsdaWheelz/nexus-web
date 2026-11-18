@@ -161,9 +161,11 @@ function Receipt({completion, history, step, recover}:{
   // Removed while focused (expiry, undo, or a later change), the receipt hands focus to this row's sign, else the next.
   useActionFocusRecovery(root, recover);
   useEffect(() => {
-    const timer = setTimeout(() => step(ref, press, () => null), RECEIPT_MS);
+    if (completion.undoing) return;
+    // Once pressed, undo owns settlement and focus. A refused command offers its action again.
+    const timer = setTimeout(() => step(ref, press, current => current.phase === "receipt" && !current.undoing ? null : current), RECEIPT_MS);
     return () => clearTimeout(timer);
-  }, [ref, press, step]);
+  }, [ref, press, completion.undoing, step]);
   if (failure) throw failure.error;
   const line = localResourceLabel(snapshot);
   // The inverse is the completion's own civil day cleared: never a toggle of whatever the row now shows.

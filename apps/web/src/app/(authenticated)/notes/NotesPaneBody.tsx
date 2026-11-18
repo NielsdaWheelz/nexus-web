@@ -4,14 +4,14 @@
 // the query's ascii-folded title/ref order, a head on each letter's run, and above them
 // the undated pages this device opened last. Filtering describes only the loaded prefix.
 import * as Icon from "@/lib/ui/icons";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { pageTitle } from "@nexus/authored/queries";
 import CollectionView from "@/components/collections/CollectionView";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { Fact } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
 import { presentNote } from "@/lib/collections/presenters/note";
-import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
+import { useAuthoredPages, useResolvedRefs } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -41,19 +41,19 @@ export default function NotesPaneBody() {
   const recent = recentStore.snapshot;
   const recentRefs = useMemo(() => (recent?.entries ?? []).flatMap(({ target }) =>
     target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []), [recent]);
-  // Sorted, the query keeps its identity while only the recent order moves.
-  const opened = useAuthoredQuery(recentRefs.length ? { kind: "resolve", refs: [...recentRefs].sort() } : null);
-  const openedRows = useMemo(() => {
-    const pages = new Map((opened.data?.rows ?? []).flatMap(({ resource }) =>
-      resource.kind === "page" && resource.local_date === null ? [[resource.ref, resource] as const] : []));
-    return recentRefs.flatMap(ref => {
-      const page = pages.get(ref);
-      const id = ref.slice("page:".length);
-      return page ? [{ ...presentNote({ id, title: pageTitle(page.title ?? "", null) }), id: `recent:${id}` }] : [];
-    }).slice(0, 8);
-  }, [opened.data, recentRefs]);
+  // A page entering recents keeps the run standing while its read is pending.
+  const opened = useResolvedRefs(recentRefs);
+  const openedRows = useMemo(() => recentRefs.flatMap(ref => {
+    const page = opened.resources.get(ref);
+    const id = ref.slice("page:".length);
+    return page?.kind === "page" && page.local_date === null ? [{ ...presentNote({ id, title: pageTitle(page.title ?? "", null) }), id: `recent:${id}` }] : [];
+  }).slice(0, 8), [opened.resources, recentRefs]);
   const listed = useMemo(() => [...openedRows, ...rows], [openedRows, rows]);
-  usePaneReturnReady(read.data !== null || read.error !== null);
+  // The pane is ready once its pages and its first recent run have settled, a failure included.
+  // A later change to recents holds its rows provisionally and does not withdraw readiness.
+  const [recentsSettled, setRecentsSettled] = useState(false);
+  if (!recentsSettled && (recent !== null ? opened.settled : recentStore.readFailure)) setRecentsSettled(true);
+  usePaneReturnReady((read.data !== null || read.error !== null) && recentsSettled);
   usePaneScrollRetention(listed);
   const filter = usePaneFilterRows({
     sourceKey: "Notes.Pages",
@@ -86,10 +86,9 @@ export default function NotesPaneBody() {
     previous = head;
   }
   const failure = <AuthoredReadFailure {...read} noun="pages"/>;
-  // A cold failure of either recent read is said; an empty run is simply absent.
   const recentFailure = recent === null && recentStore.readFailure
     ? <Fact line={{ fact: "couldn’t load recent items." }} verbs={[{ label: "retry", commandKey: "retry recent", run: recentStore.read }]} />
-    : opened.data === null && opened.error !== null ? <AuthoredReadFailure {...opened} noun="recent pages"/> : null;
+    : opened.error !== null ? <AuthoredReadFailure {...opened} noun="recent pages"/> : null;
   const emptyTitle = filtering
     ? complete ? "no pages match this filter." : "no loaded page matches this filter."
     : complete ? "no pages yet. daily pages stay in the journal." : "no pages loaded yet.";
@@ -99,7 +98,11 @@ export default function NotesPaneBody() {
       status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
       collectionBusy={read.data === null && read.error === null}
       anchorKey={filter.query.trim()}
-      notice={filtering ? !complete ? <p>filter applies to loaded pages.</p> : undefined : recentFailure ?? undefined}
+      notice={<>
+        {filtering && !complete ? <p>filter applies to loaded pages.</p> : null}
+        {read.data !== null && read.error !== null ? failure : null}
+        {filtering ? null : recentFailure}
+      </>}
       error={read.data === null ? failure : undefined}
       empty={<Fact line={{ fact: emptyTitle }} />}
       footer={!complete && read.data !== null ? <Button aria-busy={read.pending} onClick={read.more}>show more pages</Button> : undefined}

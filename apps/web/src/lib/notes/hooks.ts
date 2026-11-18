@@ -115,6 +115,30 @@ export function useAuthoredPrefix(query: CursorQuery | null, count: number) {
   return { data: query !== null && state.key === key ? state.data : null, error: query !== null && state.key === key ? state.error : null, occurrence: query !== null && state.key === key ? state.occurrence : null, pending: query !== null && (state.key !== key || state.pending), retry: () => retry(n => n + 1) };
 }
 
+type Resolved = QueryResult["rows"][number]["resource"];
+/** Resources by ref for a display that stays on screen while its set of refs changes: at most 100
+ * refs, one local `resolve`. While a changed set is pending, this account's resources already
+ * resolved for refs still in the set stand, provisionally; refs that left go at once. The settled
+ * read then owns the rows, its absences and its failure (kept rows and all, for `AuthoredReadFailure`).
+ * The provisional rows are presentation alone: anything that waits on or records a read waits on
+ * `settled`, and nothing here is a `QueryResult` to hand on. */
+export function useResolvedRefs(refs: readonly string[]) {
+  const accountId = useAuthoredAccountId();
+  // Sorted and distinct, the read keeps its key while only the order moves.
+  const wanted = useMemo(() => [...new Set(refs)].sort(), [refs]);
+  const read = useAuthoredQuery(wanted.length ? { kind: "resolve", refs: wanted } : null);
+  const [last, setLast] = useState<{ accountId: string; data: QueryResult } | null>(null);
+  const settled = wanted.length === 0 || read.data !== null || read.error !== null;
+  if (read.data !== null && (last?.data !== read.data || last.accountId !== accountId)) setLast({ accountId, data: read.data });
+  else if (read.data === null && settled && last !== null) setLast(null);
+  const source = read.data ?? (!settled && last !== null && last.accountId === accountId ? last.data : null);
+  const resources = useMemo(() => {
+    const members = new Set(wanted);
+    return new Map<string, Resolved>((source?.rows ?? []).flatMap(({ resource }) => members.has(resource.ref) ? [[resource.ref, resource]] : []));
+  }, [source, wanted]);
+  return { resources, settled, error: read.error, pending: read.pending, retry: read.retry };
+}
+
 /** The picker owns its page count; controlled search passes its count to the same prefix owner. */
 export function useAuthoredPages(query: CursorQuery | null) {
   const accountId = useAuthoredAccountId();
