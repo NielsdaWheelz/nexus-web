@@ -385,7 +385,7 @@ them.
 
 A body contributes to its shell by rendering, into a store that `PaneShell`
 creates for that mounted body (`lib/panes/paneChrome.tsx`), through four hooks:
-`usePaneChrome` (`{ header, displayTitle, editor, navigation, primaryAction, resourceActions, query, menuActions,
+`usePaneChrome` (`{ header, displayTitle, navigation, primaryAction, resourceActions, query, menuActions,
 resourceRef, refresh, drawing }` with independent navigation, principal-task and query capabilities),
 `usePaneCompanion` (the Companion's tabs and default) and `usePaneLayout` (a
 reader's intrinsic width and rail), plus `usePaneTitleYield` (a title page's
@@ -421,7 +421,7 @@ override.
 and announcement; both activation paths invoke the same fenced operation. The
 pane owner resolves only after its canonical first page is installed. Only the
 explicitly supported finite panes publish it (authors,
-librarian, librarian settings, lectern, libraries, library, notes, podcasts,
+librarian, librarian settings, lectern, libraries, library, podcasts,
 podcast). refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
@@ -429,7 +429,13 @@ path.
 `PaneShell` composes identity, supported views/sections, navigation and query above
 its existing content scrollport (`auto minmax(0, 1fr)`). controls stay stationary;
 readers keep their own document viewport and collection return anchors stay in
-`.routeContent`. canvas dragging begins only in the identity header's
+`.routeContent`. the header and controls stand on the canvas. the lowest visible
+chrome surface draws a hairline when its active scrollport has content above.
+standard panes use their body. document readers use their text or pdf
+scrollport, and the librarian uses its transcript or search list. the atlas has
+no vertical offset. loading/failed reader states do not publish scroll. companion
+headers retain their own rule and the solar keeps its header vine. a brushed
+strip chip lights the addressed pane's foot at rest. canvas dragging begins only in the identity header's
 noninteractive region. controls and option labels never drag the canvas.
 
 `query` is `Collation {collation}` or `Find {session}`. absence means unsupported;
@@ -446,7 +452,7 @@ when a pane can count it. `Span.unit` names its step controls, and `backward` an
 the body supplies the displayed date, optional return-to-now command and native
 date-input value/bound, so the shell knows no calendar or url semantics.
 
-`PaneShell` draws views/sections and `CollationLine` on one wrapping hairline row.
+`PaneShell` draws views/sections and `CollationLine` on one wrapping canvas row. the tabs retain their own short rail.
 only the tab scroller scrolls horizontally. dimensions and order use
 `PickerSurface` and collection listboxes; a single choice closes, multiple choices
 stay open. reasons block inclusion, not removal of an already-selected multiple
@@ -556,7 +562,8 @@ neither retries the delete nor reads a commit witness.
 icon. `PaneShell` binds workspace activation; `SurfaceHeader` owns its icon-only
 ghost button or native anchor, accessible name, tooltip, projected state and
 disabled explanation. libraries publish `new library` and an
-individual library `add content`, drawn `Add`; podcasts `browse podcasts`, drawn
+individual library `add content`, drawn `Add`. the register publishes `New page` with
+that same sign. podcasts `browse podcasts`, drawn
 `Browse`. existing menu entries reuse those descriptors; `Libraries.Create`
 exists only as the primary action, independent of list loading, filtering and
 invalid views. native anchors retain modified-click behavior; commands receive
@@ -573,11 +580,12 @@ desktop and mobile headers order back/forward, identity, optional primary action
 the shared media action group when published,
 optional passive subscription status, exactly one more trigger when contextual
 commands exist, and the optional typed companion action. identity yields width;
-controls retain whole targets. authored roots publish an inline title editor or
-an expandable note disclosure/content pair, with feedback outside hidden content.
-notes own editing and disclosure; chrome owns placement, typography and geometry.
-one semantic heading and pane name retain the untruncated display label. editing
-text never starts canvas dragging. at primary-pane widths up to 479px, media shortcuts
+controls retain whole targets. authored page and note panes keep the editor and
+its feedback on the paper. the shell names the pane with
+`paneHeaderAccessibleName`. its single semantic heading retains its untruncated
+label and yields visually while the paper's title is in view. focused titles use ink, other panes
+muted ink. press and study use regular weight. solar keeps its display weight.
+at primary-pane widths up to 479px, media shortcuts
 move into the existing more menu; history, identity, more and inspector stay in
 one line. the fixed mobile header uses the same viewport threshold outside the
 desktop containment boundary. search/return, refresh, route share,
@@ -628,7 +636,9 @@ the phone, where it retreats with shell controls. it shows canonical section
 navigation for structured text, or page entry/navigation/zoom for a ready pdf.
 without a sectioned document or pdf page state the host publishes nothing.
 the running head keeps one row at every width; queries keep their own wrapping
-contract. [reader implementation](reader-implementation.md) owns its controls,
+contract. the journal instead publishes its running date in pane navigation at
+every width. it yields while the active day's own heading is visible, including
+the band's date when today's leaf lends its menu there. [reader implementation](reader-implementation.md) owns its controls,
 measure, inspection semantics and responsive disclosure.
 
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body

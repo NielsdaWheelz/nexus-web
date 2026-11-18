@@ -120,10 +120,12 @@ medium and noun of each kind; `lib/resources/type.ts` composes them. all passage
 schemes draw `Passage`. media of unheld kind draws `Page` and the noun `source`.
 resource-specific pane icons consume this vocabulary; a passage's source pane
 still describes its source. invalid canonical refs are defects. availability,
-loading and terminal occurrences do not change type. markers fetch nothing and
-grant no action or editing capability.
+loading and terminal occurrences do not change type. type signs use held
+projections. in an authored outline a work marker is also the row's checkbox.
+its note and account day grant completion. the resource's type alone grants
+neither a command nor an editor.
 
-the shell requires `Index` (title and metadata), `Search` (also one excerpt) or
+the shell requires `Title` (one text line), `Index` (title and metadata), `Search` (also one excerpt) or
 `Details` (wrapping operational/instructional content). `Index` and `Search` accept
 passive `facts`, which callers supply and the shell places: first in the trailing
 cell, before controls and centred with them, reserving nothing when absent. fold
