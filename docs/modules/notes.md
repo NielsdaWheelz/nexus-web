@@ -88,15 +88,17 @@ returns it. text always uses the note's current wording.
 `work_pending`, `work_completed` and `habits` query visible notes before cursor
 pagination. unfinished tasks and today's unchecked habits share one capture order.
 the journal agenda ends with `add a task`, which opens its capture form in
-place. a completion fills the sign immediately. after 600ms, a durable
-completion gives way to its receipt once the row releases its menu, editor
-inputs and other focus owners. a sign already focused at the pointer press
-hands focus to its own receipt's undo. expiry hands that focus to a surviving
-sign or the capture control. pressing `undo` within five seconds clears that
-note and civil day. an accepted press keeps its receipt until the command
-settles. a refused command offers another five seconds. a pending-work read
-at or beyond the undo's local revision reconciles the restored row.
-keyboard completion advances focus. pointer completion preserves it. a day's
+place. a completion fills the sign immediately. after 600ms from the press,
+its receipt replaces the row. an active menu or an editor still in use keeps
+the row until released. keyboard completion advances focus. pointer completion
+preserves focus through the dwell. a focused sign hands its place to its own
+`undo`, and expiry hands focus to a surviving sign or the capture control.
+
+pressing `undo` during the five-second receipt clears the same note and civil
+day after its completion commits locally. a refused completion restores its
+row. an accepted undo keeps its receipt until the inverse settles, and a
+refused inverse offers another five seconds. a pending-work read at or beyond
+the command's local revision reconciles the restored or expired row. a day's
 settled, nonempty completion read draws one line of linked names with individual
 `clear` actions. no query manufactures a page, relationship or daily occurrence.
 
