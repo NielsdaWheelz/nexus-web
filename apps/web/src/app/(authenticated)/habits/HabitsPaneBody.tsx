@@ -44,7 +44,7 @@ export default function HabitsPaneBody() {
   if(error)throw error;
   return <WorkHistoryContext.Provider value={history}><div {...type}>
     <div className={styles.head}>
-      <p ref={title} className={styles.title}>{year === null ? "Habits" : `Habits, ${year}`}</p>
+      <p ref={title} className="reader-display">{year === null ? "Habits" : `Habits, ${year}`}</p>
       {year === null ? null : <div role="group" aria-label="habit years" className={styles.step}>
         <Button aria-label={`previous year, ${year-1}`} disabled={year<=1} onClick={()=>setYear(year-1)}>{year-1}</Button>
         <Button aria-label={`next year, ${year+1}`} disabled={year>=Math.max(year,...(currentYear === null ? [] : [currentYear]),...(read.data?.rows.flatMap(row=>row.resource.work?.habit_dates.map(date=>Number(date.slice(0,4))) ?? []) ?? []))} onClick={()=>setYear(year+1)}>{year+1}</Button>

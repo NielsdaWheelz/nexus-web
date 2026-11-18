@@ -220,7 +220,6 @@ export default function OutlineDrag({controller, children}: {controller: Outline
       if (rect.width !== sourceRect.width || rect.height !== sourceRect.height || port.width !== portRect.width || port.height !== portRect.height) invalidate();
     });
     resized.observe(source); resized.observe(drag.port);
-    // the rows' own text and structure; the status region and receipts beside the editor are not the projection.
     const changed = new MutationObserver(invalidate);
     changed.observe(editor, {childList: true, characterData: true, subtree: true});
     const deactivated = new MutationObserver(() => {if (pane?.getAttribute("data-active") !== "true") invalidate();});

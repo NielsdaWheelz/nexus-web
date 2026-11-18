@@ -67,16 +67,8 @@ function Journal({ arrival }: { arrival: string }) {
   }, [delivery, inputLease]);
   const mayArrive = useCallback((activation: string) => arrivalLease?.activation === activation ? arrivalLease.valid() : null, [arrivalLease]);
   const root = useRef<HTMLDivElement>(null);
-  // The band and each day's head are bound as nodes, so a head replaced without a render here (stub to editing) is still observed.
-  const [band, setBand] = useState<HTMLElement | null>(null);
-  const [heads, setHeads] = useState<ReadonlyMap<string, HTMLElement>>(() => new Map());
-  const head = useCallback((date: string, node: HTMLElement) => {
-    setHeads(previous => previous.get(date) === node ? previous : new Map(previous).set(date, node));
-    return () => setHeads(previous => {
-      if (previous.get(date) !== node) return previous;
-      const next = new Map(previous); next.delete(date); return next;
-    });
-  }, []);
+  // The one head the running head repeats, bound as a node: a stub replaced by its editing leaf without a render here is still seen.
+  const [target, setTarget] = useState<HTMLElement | null>(null);
   // Today's day menu is lent to the band's date line; the slot is state so today's leaf re-renders into it.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [allowance] = useState(() => new OutlineHistoryAllowance());
@@ -117,15 +109,31 @@ function Journal({ arrival }: { arrival: string }) {
   const date = window.visible ?? arrival;
   const name = formatDay(date, today);
   // The running head yields while the head it repeats is in the scrollport. Presentation only: no geometry reads it.
-  const target = headless && date === today ? band : heads.get(date) ?? null;
+  // A headless today is repeated from the band; any other day from its own head.
+  const watchBand = headless && date === today;
   const [seen, setSeen] = useState<{ target: Element; intersecting: boolean } | null>(null);
-  useEffect(() => {
-    if (target === null) return;
-    // An observer's first delivery reports the target's intersection at mount.
-    const observer = new IntersectionObserver(entries => setSeen({ target, intersecting: entries[entries.length - 1]!.isIntersecting }),
-      { root: target.closest<HTMLElement>("[data-pane-content]") });
-    observer.observe(target);
-    return () => observer.disconnect();
+  useLayoutEffect(() => {
+    const port = target?.closest<HTMLElement>("[data-pane-content]") ?? null;
+    if (target === null || port === null) return;
+    // Any part of the head in the visible scrollport yields. The scrollport's top padding is the phone's opaque chrome
+    // (the mobile viewport contract `usePaneTitleYield` also reads), so a head under it is not seen. Measured at mount, before paint.
+    const measure = () => {
+      const bounds = port.getBoundingClientRect(), head = target.getBoundingClientRect();
+      const top = bounds.top + parseFloat(getComputedStyle(port).paddingTop);
+      const intersecting = head.bottom > top && head.top < bounds.bottom;
+      setSeen(previous => previous?.target === target && previous.intersecting === intersecting ? previous : { target, intersecting });
+    };
+    let frame: number | null = null;
+    const schedule = () => { if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); }); };
+    measure();
+    port.addEventListener("scroll", schedule, { passive: true });
+    const sizes = new ResizeObserver(schedule);
+    sizes.observe(port); sizes.observe(target);
+    return () => {
+      port.removeEventListener("scroll", schedule);
+      sizes.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, [target]);
   const yielded = seen !== null && seen.target === target && seen.intersecting;
   const chrome = useMemo(() => ({ displayTitle: "journal", navigation: { label: "journal dates", content: <div {...type} className={styles.navigation}>
@@ -145,8 +153,8 @@ function Journal({ arrival }: { arrival: string }) {
   const shown = [...mounted.values()].sort((a, b) => b.local_date.localeCompare(a.local_date));
   return <WorkHistoryContext.Provider value={work.history}><div {...type}>
     {/* The band is today's reveal anchor: its .5lh top space is inside its box, so its top is the pane's start. */}
-    {today === null ? null : <div ref={setBand} className={styles.band} data-pane-return-scope="journal-band" data-collection-row-id="band">
-      <p className={styles.bandDate}><time dateTime={today}>{formatDay(today, today)}</time></p>
+    {today === null ? null : <div ref={watchBand ? setTarget : undefined} className={styles.band} data-pane-return-scope="journal-band" data-collection-row-id="band">
+      <p className={cx(styles.bandDate, "reader-display")}><time dateTime={today}>{formatDay(today, today)}</time></p>
       <span ref={setSlot} className={styles.menu} />
     </div>}
     {work.history ? <WorkSection history={work.history} /> : null}
@@ -160,7 +168,8 @@ function Journal({ arrival }: { arrival: string }) {
             attached={(day.local_date === arrival || members !== null && members.some(member => member.local_date === day.local_date)) &&
               (window.dates.includes(day.local_date) || receiving && day.local_date === arrival || day.local_date === lending)}
             rank={rank} count={days.length} top={rank < 0 ? 0 : window.tops[rank]}
-            today={today} headless={headless && day.local_date === today} slot={slot} head={head}
+            today={today} headless={headless && day.local_date === today} slot={slot}
+            headRef={!watchBand && day.local_date === date ? setTarget : undefined}
             measure={window.measure} admit={window.admit} retain={retain} mayArrive={mayArrive}
             newer={rank === 0 ? null : dates[rank - 1]} older={rank + 1 === dates.length ? null : dates[rank + 1]} />;
         })}
@@ -182,7 +191,7 @@ function JournalDay(props: {
   day: Day; arrival: string; writing: WritingRuntime; allowance: OutlineHistoryAllowance; presentationAllowance: OutlinePresentationAllowance;
   attached: boolean; rank: number; count: number; top: number;
   today: string | null; headless: boolean; slot: HTMLElement | null;
-  head(date: string, node: HTMLElement): () => void;
+  headRef: ((node: HTMLElement | null) => void) | undefined;
   measure(date: string, element: HTMLElement | null): void; retain(day: Day, keep: boolean, presented: boolean): void;
   admit(date: string, state: "pending" | "ready" | "failed"): void;
   mayArrive(activation: string): boolean | null;
@@ -192,8 +201,6 @@ function JournalDay(props: {
   const heading = useId();
   const stub = useRef<HTMLElement>(null);
   const reveal = usePaneRevealAnchor();
-  const { head } = props;
-  const headRef = useCallback((node: HTMLDivElement | null) => node === null ? undefined : head(day.local_date, node), [head, day.local_date]);
   const [attempt, retry] = useState(0);
   const [resolved, setResolved] = useState<{ value: Resolved | null; error: unknown | null; pending: boolean }>({ value: null, error: null, pending: true });
   useEffect(() => {
@@ -221,13 +228,13 @@ function JournalDay(props: {
       const date = event.key === "PageUp" ? props.newer : event.key === "PageDown" ? props.older : null;
       if (date !== null) { event.preventDefault(); reveal("journal", date, true); }
     }}>
-    <div ref={headRef} className={cx(styles.heading, props.headless && "sr-only")}><h2 id={heading}>
+    <div ref={props.headRef} className={cx(styles.heading, props.headless && "sr-only")}><h2 id={heading}>
       <time dateTime={day.local_date} className={styles.dayName}>{formatDay(day.local_date, props.today)}</time></h2></div>
     {resolved.error === null ? <Ruling /> : <AuthoredReadFailure error={resolved.error} pending={resolved.pending} retry={() => retry(value => value + 1)} noun="this day" />}
   </article> : <DayEditing {...props} resolved={value} />;
 }
 
-function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, attached, rank, count, top, today, headless, slot, head, measure, admit, retain, mayArrive, newer, older }: Parameters<typeof JournalDay>[0] & { resolved: Resolved }) {
+function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, attached, rank, count, top, today, headless, slot, headRef, measure, admit, retain, mayArrive, newer, older }: Parameters<typeof JournalDay>[0] & { resolved: Resolved }) {
   const { delivery, claim } = usePaneEntryDelivery();
   const { say } = useOutcome();
   const reveal = usePaneRevealAnchor();
@@ -235,7 +242,6 @@ function DayEditing({ day, arrival, resolved, allowance, presentationAllowance, 
   const api = useRef<LocalOutlineHandle | null>(null);
   const hold = useRef<(() => void) | null>(null);
   const heading = useId();
-  const headRef = useCallback((node: HTMLDivElement | null) => node === null ? undefined : head(day.local_date, node), [head, day.local_date]);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [focused,setFocused] = useState(false);

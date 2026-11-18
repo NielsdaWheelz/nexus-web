@@ -337,6 +337,9 @@ the margin's limits above. controls use the ui face through
 `--control-font-family`. labels, citations, tails and receipts use the shared
 `--apparatus-font` shorthand. feedback on the paper takes its surrounding type.
 
+each highlight sideline uses the wash's opaque rgb channels, mixed 55% with
+45% room ink. the excerpt's marked words keep the translucent wash.
+
 the collation is a line of chrome type on the canvas. only its tab list has a
 rail at rest. the scroll-lit foot belongs to the whole chrome stack. views precede
 end-aligned dimension/order words and conditional `reset`; words wrap as a group,
@@ -716,8 +719,8 @@ maximized mode gives only the active chip a full bracket. minimized titles stay
 `--ink-muted` and wear a dashed underline with their sign lowered 2px, so they
 remain distinct from off-screen visible panes without disabled ink. reciprocal
 chip/header brushing projects through dom attributes and declared header tokens,
-without react pointer state. canvas selection dims only inactive pane titles;
-controls retain their ink and pointer-role titles keep their own. only forced
+without react pointer state. canvas selection dims inactive pane titles,
+including pointer titles. controls retain their ink. only forced
 colours retain the active pane's top hairline.
 
 `activePaneControls` owns active minimize/layout content. minimize uses `Remove`,

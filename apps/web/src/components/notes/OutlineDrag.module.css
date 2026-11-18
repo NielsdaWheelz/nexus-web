@@ -67,7 +67,8 @@
   }
 
   .indicator::before,
-  .ghost {
+  .ghost,
+  .ghost[data-mirror="true"] {
     border-color: CanvasText;
   }
 
@@ -80,7 +81,4 @@
     color: CanvasText;
   }
 
-  .ghost[data-mirror="true"] {
-    border-color: Highlight;
-  }
 }

@@ -457,10 +457,12 @@ function NoteEditorContent(props: NoteEditorProps) {
     const body = projected?.kind === "reference" ? fieldBody(projected)
       : binding?.document(row_id ?? undefined) ? binding.body(row_id ?? undefined) : base;
     view.updateState(EditorState.create({doc: view.state.doc, selection: view.state.selection, plugins: view.state.plugins}));
-    if (projection && row_id !== null && projected === null)
-      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, projection.content)
+    if (projection && row_id !== null && projected === null) {
+      // the retirement is usually projected already. an equal document is left alone, and its caret with it: the caret
+      // may have moved on while the replacement settled.
+      if (!view.state.doc.eq(projection)) view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, projection.content)
         .setMeta(SOURCE, "external").setMeta(outlineTransactionSource, "projection").setMeta("addToHistory", false));
-    else replaceDoc(view, docFromBody(body), row_id ?? undefined);
+    } else replaceDoc(view, docFromBody(body), row_id ?? undefined);
     binding?.refresh();
   }
   const cancelReference = (view: EditorView) => {

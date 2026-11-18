@@ -9,7 +9,7 @@ import {canonicalSerialization} from "@nexus/authored/canonical";
 import {readBody} from "@nexus/authored/documents";
 import {isVisible} from "@nexus/authored/merge";
 import type {Intent} from "@nexus/authored/commands";
-import type {LinkState, OutlineRange, ResourceProjection} from "@nexus/authored/types";
+import type {LinkState, OutlineChildrenOccurrence, OutlineRange, ResourceProjection} from "@nexus/authored/types";
 import {classifyOutlineOccurrence, enterOutlineOccurrence, type OutlineBranch, type OutlineTarget} from "@/lib/resources/outlineProjection";
 import {localResourceHref, localResourceLabel} from "@/lib/resources/localResource";
 import {pageTitle} from "@nexus/authored/queries";
@@ -22,6 +22,7 @@ import rowStyles from "@/components/notes/OutlineEditorRow.module.css";
 import {isTextEntryTarget} from "@/lib/ui/eventTarget";
 import {ownsOverlayFocus} from "@/lib/ui/overlay";
 import {LinkInputRefusal, type LinkTarget} from "@/lib/resourceGraph/links";
+import type {ResourceItem} from "@/lib/resources/items";
 import type {WorkGuard} from "@/lib/unsavedWork";
 import {OutlineBinding, type OutlineBindingField} from "./outlineBinding";
 import {canonicalBody, fieldAt, fieldById, outlineEditorSchema, outlineTransactionSource, plainTitle} from "./outlineEditorModel";
@@ -1193,10 +1194,15 @@ export class OutlineController {
     } catch (error) {this.error = error; this.notify();}
     finally {if (this.preparing === preparation) this.preparing = null;}
   }
-  /** An empty, childless item with its field admitted. A reference accepted in it takes its place. */
+  /** An empty item with its field admitted and no child this outline knows of, shown or still unsaved. It may take a
+   * reference in its place; whether it is childless is the store's to say (`childQuery`). */
   private consumable(row: OutlineRow): boolean {
     return !row.root && !row.seed && !row.gap && row.kind === "body" && row.ref !== null && !this.filter.trim() && this.editableReady(row) &&
       !bodyHasContent(this.body(row.row_id)) && !this.hasChildren(row);
+  }
+  /** The store's question for an occurrence's children: the links on its resource, but for the edges that led to it. */
+  private childQuery(row: OutlineRow, ref: string, link: LinkState): OutlineChildrenOccurrence {
+    return {refs: [ref], excluded_link_ids: [...enterOutlineOccurrence({branch: row.branch, ref, target: {kind: "occurrence", key: row.row_id}, edgeIds: [link.link_id]}).traversedEdgeIds]};
   }
   private async replaceReference(row: OutlineRow, target: LinkTarget, label: string): Promise<boolean> {
     if (!(this.canEditReference(row) || this.consumable(row)) || !row.link || !row.ref) return false;
@@ -1204,6 +1210,9 @@ export class OutlineController {
     if (!original || original.ref !== row.ref || original.link?.link_id !== row.link.link_id) {this.refuse(rangeReasonMessage("changed")); return false;}
     const source = this.pending.placementBookmark({...original, link: row.link});
     if (!source) return false;
+    // a writing item taken in a reference's place: history holds its document for the inverse and rechecks it in the command.
+    const held = row.kind === "body" ? this.writing(row.ref) : null;
+    if (row.kind === "body" && !held) {this.refuse(rangeReasonMessage("changed")); return false;}
     const lease = this.lease(), replacement_id = crypto.randomUUID();
     let release: (() => void) | null = null;
     try {
@@ -1211,6 +1220,7 @@ export class OutlineController {
       release = writing?.retain() ?? null;
       if (!lease()) return false;
       return await this.history.replaceReference({source: {...source, link: row.link}, parent: this.writing(row.parent_ref), target, label, row_id: replacement_id, before: this.capture(), document: writing,
+        consumed: held ? {document: held, children: this.childQuery(row, row.ref, row.link)} : null,
         canRetain: () => {
           if (writing === null) return true;
           const retained = this.refs().has(writing.ref);
@@ -1226,11 +1236,15 @@ export class OutlineController {
           const replacement: PendingOutlineField = {row_id: replacement_id, ref, resource, parent_id: row.parent_id, parent_ref: row.parent_ref, after_id: null, before_id: row.row_id,
             link: null, kind, body, hidden: false, pending: true, origin: this.history.typingOrigin()};
           this.pending.replaceReference({original: {...original, link: row.link}, replacement, admission, link, document: writing});
-          this.referenceRow = replacement.kind === "reference" ? replacement_id : null;
-          const end = kind === "reference" ? 2 : docFromBody(body).firstChild!.content.size + 1;
-          this.selectionRow = replacement_id; this.annotationRow = null; this.selection = {anchor: end, head: end};
+          // the caret follows the replacement only from the row it replaces. one that moved on while this settled stays.
+          const here = this.selectionRow === row.row_id;
+          if (here) {
+            const end = kind === "reference" ? 2 : docFromBody(body).firstChild!.content.size + 1;
+            this.referenceRow = replacement.kind === "reference" ? replacement_id : null;
+            this.selectionRow = replacement_id; this.annotationRow = null; this.selection = {anchor: end, head: end};
+          } else if (this.referenceRow === row.row_id) this.referenceRow = null;
           this.changed("semantic");
-          if (writing) void this.focus(replacement_id, "end", lease);
+          if (here && writing) void this.focus(replacement_id, "end", lease);
         }});
     } catch (error) {this.error = error instanceof LinkInputRefusal ? new OutlineActionRefusal(error.line) : error; this.notify(); return false;}
     finally {release?.();}
@@ -2073,10 +2087,13 @@ export class OutlineController {
     const id = row_id ?? this.pending.root_id, row = this.rows.get(id), resource = this.windows.get(id)?.rootResource;
     return row ? this.label(row) : resource ? localResourceLabel(resource) : "this outline";
   }
-  /** The day a row stands under: its nearest dated ancestor page, the root included; null under none. */
+  /** The day a row stands under: its nearest dated ancestor page, the root included; null under none. An ancestor
+   * with no row of its own (the root of a host that shows no title, or before its title loads) is read from its window. */
   private day(row: OutlineRow): string | null {
-    for (let parent = row.parent_id ? this.rows.get(row.parent_id) : undefined; parent; parent = parent.parent_id ? this.rows.get(parent.parent_id) : undefined)
-      if (parent.resource?.kind === "page" && parent.resource.local_date !== null) return parent.resource.local_date;
+    for (let id = row.parent_id; id; id = this.parent(id)) {
+      const resource = this.rows.get(id)?.resource ?? this.windows.get(id)?.rootResource;
+      if (resource?.kind === "page" && resource.local_date !== null) return resource.local_date;
+    }
     return null;
   }
   /** The bullet's route carries the entering link so the opened outline excludes it. */
@@ -2404,29 +2421,36 @@ export class OutlineController {
         const frozen = {...row, link: structuredClone(row.link)};
         return {source_ref: parent_ref, label: this.label(row), replacement: {occurrence_key: row.row_id, link_id: row.link.link_id}, onSelected: (target, item) => this.replaceReference(frozen, target, item.label)};
       }
+      const insert = (target: LinkTarget, item: ResourceItem) => {
+        const bookmark = this.capture(), child_id = crypto.randomUUID(), parent_id = row.root ? this.pending.root_id : row.parent_id!;
+        const admitted = this.history.insertReference({placement: {parent_ref, parent: this.writing(parent_ref),
+          after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
+          occurrence: {row_id: child_id, parent_id, after_id: row.root || row.seed ? null : row.row_id, before_id: null},
+          change: {before: bookmark, after: bookmark}});
+        void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, parent_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
+        void admitted.result.catch(error => {this.error = error; this.notify();});
+        if (row.seed) this.consumeSeed(admitted.committed);
+      };
       // the host stays an insertion's: its context is frozen when the query begins, before a newborn has its link.
-      return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: (target, item) => {
-        const insert = () => {
-          const bookmark = this.capture(), child_id = crypto.randomUUID(), parent_id = row.root ? this.pending.root_id : row.parent_id!;
-          const admitted = this.history.insertReference({placement: {parent_ref, parent: this.writing(parent_ref),
-            after_ref: row.root || row.seed ? null : row.ref, before_ref: null}, target, label: item.label,
-            occurrence: {row_id: child_id, parent_id, after_id: row.root || row.seed ? null : row.row_id, before_id: null},
-            change: {before: bookmark, after: bookmark}});
-          void admitted.link.then(link => {if (this.active && link) {this.transfer(child_id, parent_id, link.link_id, this.origin(child_id)); this.changed();}}, () => {});
-          void admitted.result.catch(error => {this.error = error; this.notify();});
-          if (row.seed) this.consumeSeed(admitted.committed);
+      // an empty item takes the reference in its own place and settles as a replacement does: true closes the query,
+      // false leaves it standing after a refusal. every true has placed the reference or said why it could not.
+      return {source_ref: parent_ref, label: parent_ref, replacement: null, onSelected: insert, consume: (target, item) => {
+        const observed = this.consumable(row) ? this.pending.observedLink(row_id) ?? row.link : null;
+        if (observed === null) return null;
+        const lease = this.lease();
+        // the item stays, and the reference lands after it as an insertion would; one that is gone says so.
+        const beside = () => {
+          if (!lease()) return false;
+          if (this.rows.get(row_id)?.ref === row.ref) insert(target, item); else this.refuse(rangeReasonMessage("changed"));
+          return true;
         };
-        const lease = this.lease(), observed = this.consumable(row) ? this.pending.observedLink(row_id) ?? row.link : null;
-        if (observed === null) {insert(); return;}
-        // an item still being born waits for its link. the item is read again after the wait: writing or a child that
-        // arrived meanwhile keeps it, and the reference lands after it as it would have. a replacement that then refuses
-        // has said so, and inserts nothing. a birth that failed leaves the item, and the reference lands after it.
-        void Promise.resolve(observed).then(link => {
+        // an item still being born waits for its link, and is read again after the wait. a birth that failed keeps the item.
+        return Promise.resolve(observed).then(async link => {
           const current = this.rows.get(row_id);
-          if (!current || current.ref !== row.ref) return;
-          if (this.consumable(current)) return this.replaceReference({...current, link}, target, item.label).then(() => {});
-          if (lease()) insert();
-        }, () => {if (lease() && this.rows.get(row_id)?.ref === row.ref) insert();}).catch(error => {this.error = error; this.notify();});
+          if (!lease() || !current?.ref || current.ref !== row.ref || !this.consumable(current)) return beside();
+          const children = (await (await this.runtime.store).query({kind: "outline_children", occurrences: [this.childQuery(current, current.ref, link)]})).children[0];
+          return children === false && lease() ? this.replaceReference({...current, link}, target, item.label) : beside();
+        }, beside).catch(error => {this.error = error; this.notify(); return false;});
       }};
     },
   };

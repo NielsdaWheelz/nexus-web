@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useRef, useState } from "react";
+import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { WorkUnavailableError } from "@nexus/authored/types";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import Button from "@/components/ui/Button";
@@ -9,6 +9,7 @@ import { useAccountToday } from "@/lib/notes/accountDay";
 import { useAuthoredPages } from "@/lib/notes/hooks";
 import type { OutlineHistory } from "@/lib/notes/structure";
 import { WorkHistoryContext, workCommand } from "@/lib/notes/work";
+import { localResourceLabel } from "@/lib/resources/localResource";
 import { useActionFocusRecovery } from "@/lib/ui/useActionFocusRecovery";
 import styles from "./dailyWork.module.css";
 
@@ -24,7 +25,11 @@ export default function CompletedWork({date}:{date:string}) {
 function CompletedLine({date,read,history}:{date:string; read:ReturnType<typeof useAuthoredPages>; history:OutlineHistory}) {
   const today = useAccountToday();
   const root = useRef<HTMLElement>(null);
-  useActionFocusRecovery(root,()=>root.current?.closest("article") ?? null);
+  // The day's article takes focus when a focused name or `clear` leaves, here or by a clear from elsewhere. It is
+  // held from layout, because a line emptied from elsewhere unmounts before recovery asks for it.
+  const article = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {article.current = root.current?.closest("article") ?? null;});
+  useActionFocusRecovery(root,()=>article.current?.isConnected ? article.current : null);
   const [failure,setFailure] = useState<{error:unknown}|null>(null);
   if (failure) throw failure.error;
   const rows = read.data?.rows ?? [];
@@ -35,7 +40,7 @@ function CompletedLine({date,read,history}:{date:string; read:ReturnType<typeof 
       <span className={styles.completedLabel}>completed</span>
       <ul className={styles.completedList}>
         {rows.map(({resource}, index) => {
-          const name = resource.body_text || "empty note";
+          const name = localResourceLabel(resource);
           return <li key={resource.ref} className={styles.completedItem}>
             {index === 0 ? null : <span aria-hidden="true" className={styles.dot}> · </span>}
             <a href={`/notes/${resource.ref.slice(11)}`}>{name}</a>

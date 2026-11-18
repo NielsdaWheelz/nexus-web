@@ -1,5 +1,6 @@
-/* The year scrolls inline when wider than its pane; the block padding keeps today's ring. */
-.scroll { overflow-x: auto; padding-block: 3px; }
+/* The year scrolls inline when wider than its pane. A scroller clips at its padding box, so it
+   pads the far edges by the widest ring a dot wears (focus: 2px + 1.5px offset; today: 3px). */
+.scroll { overflow-x: auto; padding-block: 4px; padding-inline-end: 4px; }
 
 .year {
   display: grid;

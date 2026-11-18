@@ -9,21 +9,6 @@
   padding-inline: var(--space-2);
 }
 
-.title {
-  margin: 0;
-  font-size: 1.875em;
-  line-height: 1.5lh;
-  letter-spacing: var(--tracking-tight);
-  font-weight: var(--weight-regular);
-  text-wrap: balance;
-}
-:global([data-theme="elvish"]) .title {
-  font-family: var(--font-display);
-  font-weight: 300;
-  font-size: 2.5em;
-  letter-spacing: 0;
-}
-
 .step {
   display: flex;
   flex-wrap: wrap;

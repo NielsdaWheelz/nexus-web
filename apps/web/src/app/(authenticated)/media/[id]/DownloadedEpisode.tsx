@@ -280,7 +280,7 @@ export default function DownloadedEpisode({ saved, onIntent }: {
     {capture.transcript.kind === "Available" && capture.transcript.coverage === "partial" && transcriptReady ? <p>this transcript is partial.</p> : null}
     {contents ? <Contents reader={reader} /> : null}
   </div>;
-  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile}>{header}{annotations.list}{annotations.panel}</div>;
+  if (!transcriptReady) return <div className={styles.stateScrollport} data-mobile={isMobile} ref={publishPaneScroll}>{header}{annotations.list}{annotations.panel}</div>;
   return <div className={styles.layout}>
     <DocumentReaderView reader={reader} profile={profile} isMobile={isMobile} playback={null} showCaptureTitle={false}
       before={<>{header}{annotations.list}</>} onSeekTime={ms => { onIntent(); play(ms); }}

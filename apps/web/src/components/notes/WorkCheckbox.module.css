@@ -31,3 +31,11 @@
   outline: var(--focus-ring-width) solid var(--ring);
   outline-offset: calc(-1 * var(--focus-ring-width));
 }
+
+/* the sign is never natively disabled, so forced colours give it no GrayText of their own: a busy, dwelling or
+   day-unknown sign must not look live. */
+@media (forced-colors: active) {
+  .checkbox[aria-disabled="true"] {
+    color: GrayText;
+  }
+}

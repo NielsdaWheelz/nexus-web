@@ -35,6 +35,7 @@ import type {OutlineHistory} from "@/lib/notes/structure";
 import {useAccountToday} from "@/lib/notes/accountDay";
 import {useAuthoredQuery} from "@/lib/notes/hooks";
 import {useWorkCheck} from "@/lib/notes/work";
+import {useTouchCapable} from "@/lib/renderEnvironment/provider";
 
 /** What a row's sign is. Written on the bullet as `data-marker`; the css reads it, never the drawing. */
 type Marker = "terminal" | "task" | "habit" | "note" | "page" | "day" | "highlight" | "passage" | "other";
@@ -61,7 +62,7 @@ function WorkSign({resource, today, history, context, anchorRef, className, mark
       // read before the check cancels Enter: a cancelled key is no one's to open.
       const activation = workspaceTargetActivationIntent(event, "activate");
       check.onKeyDown(event);
-      if (activation.kind === "Open" && href !== null)
+      if (!check.disabled && !check.busy && activation.kind === "Open" && href !== null)
         runtime?.activateTarget({target: {href, labelHint: label}, disposition: {kind: activation.intent === "new_pane" ? "Fork" : "Follow"}});
     }}><Icon.Task checked={check.checked} className={styles.glyph}/></button>;
 }
@@ -122,7 +123,13 @@ export interface OutlineRowMount {row_id: string; dom: HTMLElement; leading: HTM
 export default function OutlineEditorRows({mounts, rows, history}: {mounts: readonly OutlineRowMount[]; rows: ReadonlyMap<string, OutlineRowChrome>; history:OutlineHistory}) {
   const runtime = usePaneRuntime();
   const today = useAccountToday();
+  const coarse = useTouchCapable();
+  // A node view can unmount while its row stays in the session. The admitted rows own the
+  // source set, so scrolling past a citation does not by itself restart its subscription.
   const citations = new Map<string, Citation[]>();
+  for (const {resource} of rows.values()) {
+    if (resource?.kind === "highlight" && resource.source_ref !== null) citations.set(resource.source_ref, []);
+  }
   const portals = mounts.flatMap(mount => {
     const row = rows.get(mount.row_id);
     if (!row) return [];
@@ -176,7 +183,7 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
             data-row-focusable="true" aria-label={`actions for ${identity}: ${row.label}`} onClick={extended}>{glyph}</button>;
         }}/>
     </span>;
-    const disclose = row.childrenAvailable ? <button type="button" className={styles.control} data-row-focusable="true"
+    const disclose = row.childrenAvailable ? <button type="button" className={styles.control} inert={coarse} data-row-focusable={coarse ? undefined : "true"}
       aria-label={`${row.open ? "collapse" : "expand"} ${row.label}`} aria-expanded={row.open} aria-busy={row.read.pending}
       onKeyDown={event => event.stopPropagation()} onClick={event => {event.stopPropagation(); row.toggle();}}><Icon.Disclose open={row.open} size={12}/></button> : null;
     // tails never change on hover. a repeat's figure is a floor: the links loaded here, not all there are.
@@ -192,9 +199,7 @@ export default function OutlineEditorRows({mounts, rows, history}: {mounts: read
     if (row.kind === "reference" && resource?.kind === "highlight" && resource.source_ref !== null) {
       const locator = resource.selection?.locator;
       const citation = {mount, page: locator?.type === "pdf_page_geometry" ? locator.page_number : null};
-      const occurrences = citations.get(resource.source_ref);
-      if (occurrences) occurrences.push(citation);
-      else citations.set(resource.source_ref, [citation]);
+      citations.get(resource.source_ref)!.push(citation);
     }
     return [createPortal(leading, mount.leading, `${row.row_id}:leading`), createPortal(disclose, mount.disclose, `${row.row_id}:disclose`), createPortal(trailing, mount.trailing, `${row.row_id}:trailing`),
       ...(row.kind === "reference" && row.ref !== null ? [createPortal(<>

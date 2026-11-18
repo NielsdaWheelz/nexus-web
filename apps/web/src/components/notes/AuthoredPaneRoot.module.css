@@ -15,23 +15,6 @@
   border-radius: var(--radius-sm);
 }
 
-/* a page's title on the paper: the display line, in the reader's face. its line-height's `lh` is the
-   paper's line, so the title stands on one and a half pitches. */
-.display {
-  font-size: 1.875em;
-  font-weight: var(--weight-regular);
-  line-height: 1.5lh;
-  letter-spacing: var(--tracking-tight);
-  text-wrap: balance;
-}
-
-[data-theme="elvish"] .display {
-  font-family: var(--font-display);
-  font-weight: 300;
-  font-size: 2.5em;
-  letter-spacing: 0;
-}
-
 /* a note's body is the paper's opening paragraph; work leads it with its sign in the rows' sign
    column, so the body starts where the rows' words do. */
 .note {

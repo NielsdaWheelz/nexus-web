@@ -123,7 +123,7 @@ export function useAuthoredPaneRoot(controller: OutlineController | null, field:
     const titleText = readingFrame !== null && handle ? handle.readText() : root.doc.getText("title").toString();
     const pageVisible = !inline || titleText.length > 0 || expanded || ownedFocus.current || root.hasPendingEdits();
     // Click follows pointer/touch attention capture; pointerdown only suppresses premature native focus.
-    const title = <RootAttachment controller={controller} handle={handle} visible={pageVisible} ownsFocus={ownsFocus} reveal={reveal}><div ref={region} hidden={!pageVisible} className={inline ? styles.title : `${styles.title} ${styles.display}`} data-outline-session={controller.pending.root_id}
+    const title = <RootAttachment controller={controller} handle={handle} visible={pageVisible} ownsFocus={ownsFocus} reveal={reveal}><div ref={region} hidden={!pageVisible} className={inline ? styles.title : `${styles.title} reader-display`} data-outline-session={controller.pending.root_id}
       onPointerDownCapture={event => {if (event.button === 0 && controller.readingFrame() !== null && event.target instanceof HTMLTextAreaElement) event.preventDefault();}}
       onClick={event => {if (event.button === 0 && controller.readingFrame() !== null && event.target instanceof HTMLTextAreaElement) void controller.focusRoot();}}
       onFocusCapture={focus} onBlurCapture={blur}>

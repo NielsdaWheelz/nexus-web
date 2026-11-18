@@ -326,7 +326,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   });
   usePaneReturnReady(true);
   const subject = { kind: "Stored" as const, summary };
-  return <div className={styles.stateScrollport}><div className={styles.state}>
+  return <div className={styles.stateScrollport} ref={publishPaneScroll}><div className={styles.state}>
     <h1><MediaTitle subject={subject} /></h1>
     <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
     {summary.part_source ? <p>from {summary.part_source.title}</p> : null}
@@ -510,6 +510,12 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
       if (document.activeElement === root.current) reader.focusSource();
     }
   }, [paneActive, readable, reader, restored]);
+  // unreadable media scrolls its own state page; the reader publishes its port itself.
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (readable || !element) return;
+    return publishPaneScroll(element);
+  }, [readable]);
   // Unread, reset and undo of this media: unsaved progress settles first, the server's cursor after.
   useEffect(
     () =>

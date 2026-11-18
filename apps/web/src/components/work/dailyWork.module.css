@@ -1,6 +1,8 @@
 /* The agenda stands on the paper in the reader's type (the journal's role); no size is declared here.
-   Its labels, tails and receipts are apparatus. Rows are one pitch: the sign and the menu each take one line. */
-.work { padding-inline: var(--space-6); }
+   Its labels, tails and receipts are apparatus. Rows are one pitch: the sign and the menu each take one line.
+   Its columns are the outline's: the disclose column is the agenda's inline padding, the sign column each row's
+   sign, so every word starts at the rows' text start. */
+.work { padding-inline: var(--outline-disclose) var(--space-6); }
 .header,
 .capture,
 .controls {
@@ -9,6 +11,14 @@
   align-items: center;
   gap: var(--space-2);
 }
+.header,
+.add,
+.capture,
+.receipt { padding-inline-start: var(--outline-sign); }
+/* A control's word starts after its own padding; the agenda's words start at the text start, so the control
+   hangs into the sign column. `work` also hangs its 12px chevron and the control's gap there. */
+.add > button { margin-inline-start: calc(-1 * var(--space-2)); }
+.disclosure { margin-inline-start: calc(-1 * (2 * var(--space-2) + 12px)); }
 .header,
 .add,
 .tail,
@@ -38,26 +48,31 @@
 .row {
   display: flex;
   align-items: baseline;
-  gap: var(--space-2);
 }
+/* The sign and the menu are one line tall. Their buttons are larger press areas: a flex box centres an item that
+   overflows it on both axes, so each glyph sits on its column's centre and its line's. */
 .sign,
 .menu {
   flex: none;
   align-self: flex-start;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   block-size: 1lh;
 }
 .sign { inline-size: var(--outline-sign); }
 .writing { flex: 1; min-width: 0; }
 .tail { flex: none; }
-/* The receipt keeps the row's one line in the paper's type; only its words are apparatus. */
+.tail,
+.row > .menu { margin-inline-start: var(--space-2); }
+/* The receipt keeps the row's one line in the paper's type, and its height: only its words are apparatus, and
+   `undo` sheds the control's minimum and block padding. */
 .receipt {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-block-size: 1lh;
-  padding-inline-start: calc(var(--outline-sign) + var(--space-2));
+  block-size: 1lh;
+  --control-min-size: 0;
 }
 .receiptLine {
   min-inline-size: 0;
@@ -66,12 +81,17 @@
   text-overflow: ellipsis;
 }
 .receipt .undo {
+  padding-block: 0;
   color: var(--ink);
   text-decoration: underline;
   text-decoration-color: var(--accent);
 }
 .muted { color: var(--ink-muted); font-size: var(--text-sm); }
-.completed { margin-block-start: .5lh; --control-min-size: 0; }
+.completed {
+  margin-block-start: .5lh;
+  padding-inline: calc(var(--outline-disclose) + var(--outline-sign)) var(--space-6);
+  --control-min-size: 0;
+}
 .completedLabel { margin-inline-end: var(--space-2); }
 .completedList { display: inline; margin: 0; padding: 0; list-style: none; }
 .completedItem { display: inline; }

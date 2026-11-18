@@ -1,11 +1,13 @@
 /* The journal is set in the reader's type (the role on its body). Block spacing is written in lh on elements in
-   the paper's own type, never on a display line. */
+   the paper's own type, never on a display line. Furniture (the band's date, a day's head and title, its completed
+   line, the agenda's words) starts where the rows' words do: the disclose and sign columns from the outline's origin,
+   which the role sizes for every pitch and pointer. */
 .band {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: .5lh var(--space-6) 0;
+  padding: .5lh var(--space-6) 0 calc(var(--outline-disclose) + var(--outline-sign));
   margin-block-end: .5lh;
 }
 
@@ -13,11 +15,6 @@
 .bandDate {
   min-inline-size: 0;
   margin: 0;
-  font-size: 1.875em;
-  font-weight: var(--weight-regular);
-  line-height: 1.5lh;
-  letter-spacing: var(--tracking-tight);
-  text-wrap: balance;
 }
 
 .feed {
@@ -72,7 +69,7 @@
 
 .heading,
 .title {
-  padding-inline: var(--space-6);
+  padding-inline: calc(var(--outline-disclose) + var(--outline-sign)) var(--space-6);
 }
 
 /* Invariant: every day's h2 has identical metrics; journalWindow reads the first one. Only the inner name is sized. */
@@ -92,13 +89,6 @@
   font-family: var(--font-display);
   font-weight: 300;
   font-size: 1.5625em;
-}
-
-:global([data-theme="elvish"]) .bandDate {
-  font-family: var(--font-display);
-  font-weight: 300;
-  font-size: 2.5em;
-  letter-spacing: 0;
 }
 
 .title {

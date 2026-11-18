@@ -153,8 +153,8 @@ reader, compact/downloaded reader, outline and detail surfaces share the native
 annotation engine. an authored outline sets the excerpt in italic at the row's
 size and leading. its coloured sideline hangs before the quote. forced colours
 use system ink and show the highlight sign. the citation gives the locally
-resolved source title and, for a pdf, its page number. the session batches
-distinct sources for the mounted rows. a missing title omits the citation.
+resolved source title and, for a pdf, its page number. the session resolves
+distinct sources for the mounted rows in batches of up to 100. a missing title omits the citation.
 the roman annotation occupies one ordinary full-width line below it, including
 when blank, named `annotation`, without placeholder or
 save/cancel. activation installs the owning outline history before typing; a
