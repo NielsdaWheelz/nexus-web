@@ -25,6 +25,8 @@ import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
 import {useRenderEnvironment} from "@/lib/renderEnvironment/provider";
+import {useReaderProfile} from "@/lib/reader/ReaderProfileContext";
+import {readerType} from "@/lib/reader/typography";
 import {useWorkGuard} from "@/lib/unsavedWork";
 import {LocalCommitError, isAuthoredStorageFailure} from "@/lib/notes/runtime";
 import {emptyBody} from "@nexus/authored/body";
@@ -37,6 +39,7 @@ import OutlineDrag from "./OutlineDrag";
 import OutlineEditorRows from "./OutlineEditorRow";
 import AuthoredReadFailure from "./AuthoredReadFailure";
 import {useAuthoredPaneRoot, type RootPresentation} from "./AuthoredPaneRoot";
+import styles from "./LocalOutline.module.css";
 
 export interface LocalOutlineHandle {
   append(): Promise<void>;
@@ -227,6 +230,13 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
     if (refusal === null || pendingError !== null) return;
     return say(refusal instanceof OutlineActionRefusal ? refusal.line : {fact: "couldn’t change this outline on this device."});
   }, [refusal, pendingError, say]);
+  // One slip per announced occurrence. Caret movement can clear the controller's text during its dwell.
+  const announcementId = controller.announcementId;
+  useEffect(() => {
+    const text = controller.announcement;
+    if (text) return say({fact: text});
+  }, [controller, announcementId, say]);
+  const type = readerType(useReaderProfile());
   const defect = [pendingError, failed, refusal].find(error => error !== null && !(error instanceof OutlineActionRefusal) && !(error instanceof WorkConversionError) && !(error instanceof WorkJoinError) && !(error instanceof WorkUnavailableError) && !isAuthoredStorageFailure(error));
   if (defect !== undefined) throw defect;
   // A retry keeps its slip, and the caret its danger, until the retry settles.
@@ -236,7 +246,7 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
     if (text !== null) void copy(text);
   }};
   return <WorkHistoryContext value={history}><SharedOutline value={controller}>
-    <div data-outline-session={pending.value.input.root_id} data-pane-return-scope={`outline:${occurrencePrefix}`} onFocusCapture={event => {
+    <div {...type} className={styles.session} data-outline-session={pending.value.input.root_id} data-pane-return-scope={`outline:${occurrencePrefix}`} onFocusCapture={event => {
       if (event.target instanceof Element && event.target.matches('.ProseMirror') && event.target.closest("[data-reference-editor]")?.getAttribute("data-reference-editor") === `outline:${occurrencePrefix}`) controller.setFocused(true);
     }} onBlurCapture={event => {
       const next = event.relatedTarget;
@@ -255,7 +265,6 @@ function MountedOutline({controller, pending, rootRef, rootField, filter, occurr
         projection={controller.projection} body={emptyBody()} revision={0} editable={!filter.trim()} label="edit linked items" wordsAtRisk={wordsAtRisk || pendingError !== null}
         history={{undo: history.undo, redo: history.redo, boundary: () => history.boundary()}}
         onEdit={() => {}} onEditorReady={editorReady}/>
-      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true"><span key={controller.announcementId}>{controller.announcement}</span></span>
       <OutlineEditorRows mounts={[...controller.mounts.values()]} rows={controller.chrome()} history={history}/>
     </OutlineDrag></div>
   </SharedOutline></WorkHistoryContext>;

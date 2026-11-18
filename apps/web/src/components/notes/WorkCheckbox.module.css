@@ -1,8 +1,33 @@
+/* the work sign: a button that draws the task glyph. it rests muted, as a control, and falls to faint once done. */
 .checkbox {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
   width: var(--size-xs);
   height: var(--size-xs);
-  flex: none;
   margin: var(--space-1);
-  accent-color: var(--accent);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-muted);
   cursor: pointer;
+}
+
+.checkbox > svg {
+  width: var(--outline-glyph, 14px);
+  height: var(--outline-glyph, 14px);
+}
+
+.checkbox[aria-checked="true"] {
+  color: var(--ink-faint);
+}
+
+.checkbox[aria-disabled="true"] {
+  cursor: default;
+}
+
+.checkbox:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
 }

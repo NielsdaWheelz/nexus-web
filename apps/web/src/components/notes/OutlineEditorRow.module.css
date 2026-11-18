@@ -1,8 +1,8 @@
-/* one outline row. the editing host declares --outline-text-start and --outline-indent; the leading
+/* one outline row. the reader role declares --outline-disclose, --outline-sign and --outline-indent,
+   and the editing host --outline-text-start; a fine row has no block padding, so it is its lines. the leading
    column is one line tall and holds the disclose slot, then the bullet in the rest of the column. */
 .row {
-  --outline-pad: 2px;
-  --outline-disclose: 16px;
+  --outline-pad: 0px;
   --outline-dot: var(--ink-faint);
   position: relative;
   min-width: 0;
@@ -178,7 +178,7 @@
 .bullet {
   position: relative;
   display: flex;
-  width: calc(var(--outline-text-start) - var(--outline-disclose));
+  width: var(--outline-sign);
   height: 1lh;
   isolation: isolate;
 }
@@ -222,7 +222,7 @@
 }
 
 @media (any-pointer: coarse) {
-  .row {--outline-pad: 4px; --outline-disclose: 0px;}
+  .row {--outline-pad: max(4px, calc((32px - 1lh) / 2));}
   .leading > [data-outline-disclose] {display: none;}
   /* the bullet spans its row: the line and both pads, the pads given back so adjacent targets abut. */
   .bullet {height: calc(1lh + 2 * var(--outline-pad)); margin-block: calc(-1 * var(--outline-pad));}

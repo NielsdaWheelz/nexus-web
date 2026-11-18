@@ -392,7 +392,8 @@ export class OutlineController {
       this.resize?.disconnect();
       this.resize = new ResizeObserver(() => {
         const style = getComputedStyle(view.dom);
-        const signature = [view.dom.getBoundingClientRect().width, style.font, style.lineHeight, style.letterSpacing].join("|");
+        const signature = [view.dom.getBoundingClientRect().width, style.font, style.lineHeight, style.letterSpacing,
+          style.getPropertyValue("--outline-disclose"), style.getPropertyValue("--outline-sign"), style.getPropertyValue("--outline-indent")].join("|");
         if (this.layoutSignature !== null && this.layoutSignature !== signature) this.invalidateMeasurements();
         this.layoutSignature = signature;
         const finish = this.layoutTransaction();
@@ -402,6 +403,8 @@ export class OutlineController {
       this.resize.observe(view.dom);
       document.fonts.addEventListener("loadingdone", this.invalidateMeasurements);
       document.addEventListener("selectionchange", this.readNativeSelection);
+      // One line of the root's type is the estimate before any row is measured; gaps built without it are rebuilt.
+      if (this.rootPitch(view) !== this.viewport.pitch) this.invalidateMeasurements();
       this.project("initial");
       this.publishLayout();
       if (this.selectionRow === null && !this.selected.size) {
@@ -496,9 +499,16 @@ export class OutlineController {
       path.unshift(parent.link?.link_id ?? parent.row_id);
     return path.join("/");
   }
+  /** The root's computed line height in px. The reader role gives every outline a numeric leading. */
+  private rootPitch(view: EditorView): number {
+    const pitch = parseFloat(getComputedStyle(view.dom).lineHeight);
+    if (!(pitch > 0)) throw new Error("an outline's root must stand in the reader role, with a computed line height");
+    return pitch;
+  }
   private invalidateMeasurements = (): void => {
     const finish = this.layoutTransaction();
     try {
+      if (this.view) this.viewport.pitch = this.rootPitch(this.view);
       this.viewport.invalidateMeasurements();
       for (const parent of this.branchHeights.keys()) this.branchHeights.set(parent, this.viewport.estimatedHeight(parent));
       this.rebuild(); this.publishLayout();
@@ -508,14 +518,16 @@ export class OutlineController {
   private publishLayout(): void {
     const view = this.view;
     if (!view) return;
-    const rows = [...this.rows.values()].filter(row => !row.root);
-    this.viewport.publish(rows.map(row => ({id: row.row_id, anchor: this.anchorFor(row), parent: row.parent_id, link: row.link?.link_id ?? null, gapHeight: row.gap ? row.gapHeight ?? 32 : null})),
+    const rows = [...this.rows.values()].filter(row => !row.root), estimate = this.viewport.estimate;
+    this.viewport.publish(rows.map(row => ({id: row.row_id, anchor: this.anchorFor(row), parent: row.parent_id, link: row.link?.link_id ?? null, gapHeight: row.gap ? row.gapHeight ?? this.viewport.estimate : null})),
       new Map([...this.mounts].map(([id, mount]) => [id, mount.dom])));
     for (const row of rows) {
       const mount = this.mounts.get(row.row_id);
       if (mount && row.parent_id && row.link) this.viewport.measured(row.parent_id, row.link.link_id, mount.dom.getBoundingClientRect().height);
       if (mount) this.resize?.observe(mount.dom);
     }
+    // A measurement that moves the estimate re-cuts the gaps built from the old one, in this same layout.
+    if (this.viewport.estimate !== estimate) {this.rebuild(); this.publishLayout(); return;}
     const branchHeights = new Map<string, number>();
     for (const metric of this.viewport.metrics) for (let parent = metric.parent; parent && parent !== this.pending.root_id; parent = this.parent(parent))
       branchHeights.set(parent, (branchHeights.get(parent) ?? 0) + metric.height);
@@ -586,7 +598,7 @@ export class OutlineController {
       for (const metric of near) {
         const gap = this.gaps.get(metric.id);
         if (metric.parent === parent && gap && !metric.id.startsWith("reading:") && !ranges.some(range => range.anchor_link_id === gap.range.anchor_link_id && range.cursor === gap.range.cursor))
-          ranges.push({...gap.range, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / 32)))});
+          ranges.push({...gap.range, limit: Math.max(1, Math.min(32, Math.ceil((bottom - top) / Math.max(1, this.viewport.estimate))))});
       }
       // A focused title keeps its root proof, not unrelated offscreen bodies.
       if (!ranges.length && parent === this.pending.root_id && this.rowOverscan === 0)
@@ -1348,11 +1360,11 @@ export class OutlineController {
         if (boundary && direction === "after") {insert++; while (insert < ordered.length && ordered[insert]!.depth > boundary.depth) insert++;}
         const parent = ordered.find(row => row.row_id === this.reading!.parent);
         const row_id = `reading:${this.reading.parent}:${direction}`;
-        this.gaps.set(row_id, {kind: "gap", key: row_id, height: 32, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
+        this.gaps.set(row_id, {kind: "gap", key: row_id, height: this.viewport.estimate, range: {cursor: null, anchor_link_id: edge.link.link_id, limit: 32}, direction});
         ordered.splice(Math.max(0, insert), 0, {row_id, ref: null, link: null, parent_id: this.reading.parent,
           parent_ref: boundary?.parent_ref ?? parent?.ref ?? this.rootRef, depth: boundary?.depth ?? (parent && !parent.root ? parent.depth + 1 : 0),
           branch: boundary?.branch ?? parent?.branch ?? this.rootBranch, resource: null, kind: "reference", children: null,
-          open: false, terminal: false, root: false, seed: false, gap: direction, gapHeight: 32, origin: null});
+          open: false, terminal: false, root: false, seed: false, gap: direction, gapHeight: this.viewport.estimate, origin: null});
       }
       this.rows.clear(); for (const row of ordered) this.rows.set(row.row_id, row);
     }
@@ -2160,7 +2172,7 @@ export class OutlineController {
         if (this.gaps.get(id)?.waiting) {presentation.replaceChildren(); dom.setAttribute("aria-busy", "true");}
         else {presentation.replaceChildren(button); dom.removeAttribute("aria-busy");}
       }
-      if (row.gap) dom.style.minHeight = `${row.gapHeight ?? 32}px`; else dom.style.removeProperty("min-height");
+      if (row.gap) dom.style.minHeight = `${row.gapHeight ?? this.viewport.estimate}px`; else dom.style.removeProperty("min-height");
       if (row.kind === "reference") {
         const editing = this.referenceRow === id && this.canEditReference(row);
         content.hidden = !editing; content.contentEditable = editing ? "true" : "false";

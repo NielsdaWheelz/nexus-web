@@ -1,0 +1,4 @@
+/* The paper session can shrink with its host pane. */
+.session {
+  min-inline-size: 0;
+}

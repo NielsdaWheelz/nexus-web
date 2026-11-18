@@ -119,12 +119,13 @@
   -webkit-box-decoration-break: clone;
 }
 
-/* the outline's one editing host. its geometry tokens are the contract the rows and the drag read. */
+/* the outline's one editing host. its type and its geometry tokens come from the reader role
+   (globals.css); the rows and the drag read them. */
 .outline {
-  --outline-indent: 20px;
-  --outline-text-start: 36px;
-  font-size: calc((var(--text-sm) + var(--text-base)) / 2);
-  line-height: var(--leading-normal);
+  --outline-text-start: calc(var(--outline-disclose) + var(--outline-sign));
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 /* a selected row is the wash; a selected atom inside a row keeps prosemirror's outline. */
@@ -137,14 +138,6 @@
   display: inline-block;
   width: 100%;
   vertical-align: top;
-}
-
-@media (any-pointer: coarse) {
-  .outline {
-    --outline-indent: 16px;
-    --outline-text-start: 28px;
-    font-size: var(--text-md);
-  }
 }
 
 .view pre :is(strong, em, u, s, a, code) {

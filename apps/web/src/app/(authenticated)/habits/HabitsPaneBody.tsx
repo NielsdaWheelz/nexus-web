@@ -3,11 +3,11 @@
 import { useMemo } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
-import { habitDateLabel } from "@/components/notes/HabitHistoryDialog";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import ResourceRow from "@/components/ui/ResourceRow";
 import Button from "@/components/ui/Button";
 import HabitYear from "@/components/work/HabitYear";
+import { habitDateLabel } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { useAuthoredPages } from "@/lib/notes/hooks";
 import { useWorkHistory, useOpenHabitHistory, WorkHistoryContext } from "@/lib/notes/work";

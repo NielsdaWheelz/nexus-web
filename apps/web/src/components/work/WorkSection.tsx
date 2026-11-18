@@ -62,7 +62,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
         <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null}>
           {rows.map((resource,index) => <WorkRow key={resource.ref} resource={resource} retained={!present.has(resource.ref)} today={today} history={history} hold={hold}
             returnFocus={() => {
-              const items = [...(list.current?.querySelectorAll<HTMLElement>('input[type="checkbox"]') ?? [])];
+              const items = [...(list.current?.querySelectorAll<HTMLElement>('[role="checkbox"]') ?? [])];
               const next = [...rows.slice(index+1),...rows.slice(0,index).reverse()]
                 .map(row => items.find(item => item.closest<HTMLElement>('[data-work-ref]')?.dataset.workRef === row.ref)).find(item => item !== undefined);
               return next ?? add.current;
@@ -134,7 +134,7 @@ function WorkRow({resource:initial,retained,today,history,hold,returnFocus}:{
       if (event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget)) return;
       queueMicrotask(() => {if (!root.current?.contains(window.document.activeElement)) setFocused(false);});
     }}>
-    {deleted ? null : <WorkCheckbox resource={resource} today={today} history={history} onCompleted={() => returnFocus()?.focus({preventScroll:true})} />}
+    {deleted ? null : <WorkCheckbox resource={resource} today={today} history={history} onCompleted={({keyboard}) => {if (keyboard) returnFocus()?.focus({preventScroll:true});}} />}
     <div className={styles.writing}>
       {deleted ? <p className={styles.muted}>this note was deleted.</p> : null}
       <AuthoredReadFailure {...opened} noun="this task" />

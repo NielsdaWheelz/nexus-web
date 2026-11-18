@@ -1,5 +1,11 @@
 @import "./brand.css";
 
+/* the outline's geometry is cut from the reader role's type. registered, so a length written in em
+   computes once, on the role, and its rows inherit pixels. */
+@property --outline-disclose { syntax: "<length>"; inherits: true; initial-value: 16px; }
+@property --outline-sign { syntax: "<length>"; inherits: true; initial-value: 20px; }
+@property --outline-indent { syntax: "<length>"; inherits: true; initial-value: 20px; }
+
 /* shared scales, motion and shell geometry inherit through nested rooms. */
 :root {
   --font-sans:
@@ -108,6 +114,9 @@
 
   --icon-stroke: 1.5px;
 
+  /* the apparatus voice: labels, tails, citations, receipts, legends. */
+  --apparatus-font: normal var(--weight-regular) var(--text-2xs) / var(--leading-normal) var(--font-mono);
+
   --z-overlay: 100; /* mobile chrome */
   --z-popover: 900; /* page menus, floating surfaces, previews */
   --z-modal: 1000; /* modal frames stack at calc(var(--z-modal) + depth) */
@@ -144,14 +153,47 @@
   --content-font-size: var(--text-sm);
   --content-meta-font-size: var(--text-xs);
   --content-line-height: var(--leading-snug);
+  --margin-leading: var(--leading-snug);
   --excerpt-scale: .875;
   --excerpt-max-size: var(--text-md);
+}
+
+/* Authored notes are set in the reader profile: `readerType` supplies it on the same element. The
+   size rule is ReaderExcerpt.module.css's; the two must stay equal. The leading is a number at every
+   level and reads the margin's own input, never `--content-line-height`, which this role writes for
+   its children: a role nested directly in a role would otherwise read its own output. */
+[data-type-role="reader"] {
+  --role-leading: var(--margin-leading, var(--reader-line-height, var(--leading-normal)));
+  font-family: var(--reader-font-family, var(--font-serif));
+  font-size: min(var(--reader-font-size-px, var(--text-md)),
+    max(.875rem, calc(var(--reader-font-size-px, var(--text-md)) * var(--excerpt-scale, 1))),
+    var(--excerpt-max-size, 100rem));
+  line-height: var(--role-leading);
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  --outline-disclose: 16px;
+  --outline-sign: max(20px, 1.25em);
+  --outline-indent: var(--outline-sign);
+  --outline-glyph: 14px;
+  --ruling-pitch: 1lh;
+  --control-font-family: var(--font-sans);
+}
+[data-type-role="reader"] > * { --content-font-size: 1em; --content-line-height: var(--role-leading); }
+[data-type-role="reader"][data-type-scale="large"] { --outline-glyph: 16px; }
+[data-type-role="margin"] [data-type-role="reader"] { --outline-glyph: 14px; }
+@media (any-pointer: coarse) {
+  [data-type-role="reader"] { --outline-disclose: 14px; --outline-sign: max(28px, 1.5em); --outline-indent: max(16px, 1em); }
 }
 
 /* Native controls follow the room; the document rule outranks vendor :root defaults. */
 html:root,
 [data-theme] {
   color-scheme: dark;
+  /* a highlight's ink is its wash's pigment carried toward the room's ink; each room derives its own. */
+  --highlight-yellow-ink: color-mix(in srgb, rgb(from var(--highlight-yellow) r g b) 55%, var(--ink));
+  --highlight-green-ink: color-mix(in srgb, rgb(from var(--highlight-green) r g b) 55%, var(--ink));
+  --highlight-blue-ink: color-mix(in srgb, rgb(from var(--highlight-blue) r g b) 55%, var(--ink));
+  --highlight-pink-ink: color-mix(in srgb, rgb(from var(--highlight-pink) r g b) 55%, var(--ink));
+  --highlight-purple-ink: color-mix(in srgb, rgb(from var(--highlight-purple) r g b) 55%, var(--ink));
 }
 html:root[data-theme="light"],
 [data-theme="light"] {

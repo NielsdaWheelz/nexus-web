@@ -245,6 +245,12 @@ export const Wall: Glyph = /*#__PURE__*/ createLucideIcon("nexus-wall", [ // a l
   ["rect", { x: "18", y: "18", width: "3", height: "3", rx: ".5", fill: "currentColor", key: "c3" }],
 ]);
 
+// Two parents drop to one bar and one line descends to the row: a pedigree's join.
+export const Repeat: Glyph = /*#__PURE__*/ createLucideIcon("nexus-repeat", [ // also linked elsewhere
+  ["path", { d: "M7 6v4.5h10V6", key: "parents" }],
+  ["path", { d: "M12 10.5V18", key: "descent" }],
+]);
+
 // Disclosure: closed points right, open points down, by state, in place. The turn is
 // glyph-internal so no owner draws a second chevron; reduced motion zeroes the duration.
 export function Disclose({ open, style, ...props }: LucideProps & { readonly open: boolean }) { // more that way, in place
@@ -301,4 +307,20 @@ export function Effort({ position, className, size }: PlaybackGlyphProps & { rea
     d: "M12 15.5V8.5", transform: `rotate(${(-90 + 180 * position).toFixed(2)} 12 15.5)`, className: styles.needle, key: "needle",
   }]];
   return <LucideGlyph iconNode={[EFFORT_RIM, ...needle, EFFORT_HUB]} size={size} className={cx(styles.effort, className)} />;
+}
+
+// The task's sign draws its own state, as Disclose and PlayPause do. Open is a ring the size of a
+// capital with its tick latent; done is the ring's disc with the tick in the canvas's colour; mixed
+// (the day unknown) is the ring with a bar. The disc's radius is the ring's outer edge at 14px.
+const TASK_RING: IconNode[number] = ["circle", { cx: "12", cy: "12", r: "6.5", key: "ring" }];
+const TASK_TICK = "m8.75 12.25 2.25 2.25 4.25-4.25";
+const TASK_OPEN: IconNode = [TASK_RING, ["path", { d: TASK_TICK, className: styles.taskPreview, key: "tick" }]];
+const TASK_DONE: IconNode = [
+  ["circle", { cx: "12", cy: "12", r: "7.75", fill: "currentColor", stroke: "none", key: "disc" }],
+  ["path", { d: TASK_TICK, className: styles.taskTick, key: "tick" }],
+];
+const TASK_MIXED: IconNode = [TASK_RING, ["path", { d: "M9 12h6", key: "bar" }]];
+
+export function Task({ checked, className, size }: Pick<LucideProps, "className" | "size"> & { readonly checked: boolean | "mixed" }) { // a task: done or not
+  return <LucideGlyph iconNode={checked === "mixed" ? TASK_MIXED : checked ? TASK_DONE : TASK_OPEN} size={size} className={className} />;
 }

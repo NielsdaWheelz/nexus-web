@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { shiftLocalDate } from "@/lib/localDate";
-import { habitDateLabel } from "@/components/notes/HabitHistoryDialog";
+import { habitDateLabel, shiftLocalDate } from "@/lib/localDate";
 import styles from "./dailyWork.module.css";
 
 /** The year is a compact index. Activation opens correction; it never writes. */
