@@ -48,6 +48,17 @@ export async function workCommand(history: OutlineHistory, intent: WorkIntent): 
   catch (error) {if (error instanceof LocalCommitError) return await error.completion; throw error;}
 }
 
+/** Runs one work command for its owner: resolves with the durable commit, or null once a refusal has been said.
+ * Anything else is a defect and rejects; the owner throws it from its own render. */
+export async function tryWorkCommand(history: OutlineHistory, intent: WorkIntent, say: ReturnType<typeof useOutcome>["say"]): Promise<LocalCommit | null> {
+  try {return await workCommand(history, intent);}
+  catch (error) {
+    if (!(error instanceof WorkConversionError || error instanceof WorkUnavailableError)) throw error;
+    say({fact: error.message});
+    return null;
+  }
+}
+
 export interface WorkCheck {
   /** `mixed`: a habit whose day is unknown. */
   checked: boolean | "mixed";
@@ -55,6 +66,8 @@ export interface WorkCheck {
   /** The account day is unknown: a press does nothing. */
   disabled: boolean;
   busy: boolean;
+  /** What a press sends now; null when a press does nothing (the day unknown, or a press in flight). */
+  intent: WorkIntent | null;
   /** Completes or reopens. Resolves with the local commit once that change is durable on this device, null
    * when it was refused or not attempted; a defect is thrown at the caller's next render. */
   toggle(): Promise<LocalCommit | null>;
@@ -73,19 +86,18 @@ export function useWorkCheck(resource: ResourceProjection, today: string | null,
   const habit = work.designation.kind === "habit";
   const done = habit ? today !== null && work.habit_dates.includes(today) : work.task_completed_on !== null;
   const action = habit ? done ? "clear today's check" : "mark done today" : done ? "reopen" : "complete";
+  const intent: WorkIntent | null = busy || today === null ? null
+    : habit ? {kind: "set_habit_completion", ref: resource.ref, local_date: today, completed: !done, today}
+    : {kind: "set_task_completion", ref: resource.ref, local_date: done ? null : today, today};
   return {
-    checked: habit && today === null ? "mixed" : done, disabled: today === null, busy,
+    checked: habit && today === null ? "mixed" : done, disabled: today === null, busy, intent,
     label: today === null ? `${ACCOUNT_DAY_UNAVAILABLE} ${localResourceLabel(resource)}` : `${action}: ${localResourceLabel(resource)}`,
     toggle: async () => {
-      if (busy || today === null) return null;
+      if (intent === null) return null;
       setBusy(true);
-      try {
-        return await workCommand(history, habit ? {kind: "set_habit_completion", ref: resource.ref, local_date: today, completed: !done, today}
-          : {kind: "set_task_completion", ref: resource.ref, local_date: done ? null : today, today});
-      } catch (error) {
-        if (error instanceof WorkConversionError || error instanceof WorkUnavailableError) say({fact: error.message}); else setDefect({error});
-        return null;
-      } finally {setBusy(false);}
+      try {return await tryWorkCommand(history, intent, say);}
+      catch (error) {setDefect({error}); return null;}
+      finally {setBusy(false);}
     },
     onKeyDown: event => {
       if (event.key === "Enter") event.preventDefault();

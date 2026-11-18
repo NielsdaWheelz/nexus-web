@@ -2,12 +2,11 @@
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ResourceProjection } from "@nexus/authored/types";
-import { WorkUnavailableError } from "@nexus/authored/types";
 import { useOutcome } from "@/components/feedback/Feedback";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import BoundNoteEditor from "@/components/notes/BoundNoteEditor";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
-import WorkCheckbox from "@/components/notes/WorkCheckbox";
+import WorkCheckbox, { type WorkCompletion } from "@/components/notes/WorkCheckbox";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
@@ -19,7 +18,7 @@ import { captureTaskToday } from "@/lib/notes/api";
 import { useAuthoredPages, useAuthoredQuery, useWritingDocument, useWritingRuntime } from "@/lib/notes/hooks";
 import { LocalCommitError, type LocalCommit } from "@/lib/notes/runtime";
 import type { OutlineHistory } from "@/lib/notes/structure";
-import { WorkOverlayContext, workCommand } from "@/lib/notes/work";
+import { WorkOverlayContext, tryWorkCommand } from "@/lib/notes/work";
 import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { localResourceLabel } from "@/lib/resources/localResource";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
@@ -29,33 +28,42 @@ import { useWorkGuard } from "@/lib/unsavedWork";
 import { PaneRefreshAnchor } from "@/lib/workspace/paneReturnMemento";
 import styles from "./dailyWork.module.css";
 
-/** A completed row holds its place this long, drawn done, before its receipt. Holds are waits: reduced motion keeps them. */
+/** The row stands drawn done this long after the press, measured from the press's own input timestamp. Holds are
+ * waits: reduced motion keeps them, and neither waits for the local write. */
 const DWELL_MS = 600;
-/** The receipt stands this long, then leaves, focused or not; a focused undo hands focus on by the house recovery. */
+/** The receipt stands this long from its display, then leaves. A pressed undo keeps it until the undo settles. */
 const RECEIPT_MS = 5000;
 
-/** A completion pressed in the agenda, held from the press so its own commit cannot remove the row first. `press`
- * names the gesture: a late promise or timer for an older press of the same row changes nothing.
- * dwell: the row stands drawn done; `commit` is null until the completion is durable. It becomes a receipt once
- * DWELL_MS have passed and nothing retains the row (focus, an editor's pending edits or inputs, its menu, an overlay).
- * receipt: `completed · {line}` and `undo`. restored: the undo is durable; the open row stands from its snapshot.
- * A record leaves when refused, when its receipt expires, or when a pending page at or after its commit lists the row
- * again (a later change outranks it), or, restored, when a page at or after the undo exists. */
+/** An agenda completion. This section owns its durable `write`, so a refusal or a defect is not lost with the row or
+ * the receipt. `press` names the gesture: a late promise or timer for an older press of the same row changes
+ * nothing. `commit` is the write's commit once it is durable.
+ * dwell: the row stands drawn done until DWELL_MS after the press, and while the reader is using it; then receipt.
+ * receipt: `completed · {line}` and `undo`, RECEIPT_MS from its display; then expired.
+ * expired: drawn nowhere. The pending read may list the row until it reaches the commit; this keeps it hidden.
+ * restored: the undo is durable; the open row stands from its snapshot until the pending read reaches the undo.
+ * A record is deleted when its write is refused (the row returns); when a pending page at or after its commit
+ * lists the row again (a later change outranks it); when expired, by a page at or after its commit; and when
+ * restored, by a page at or after the undo. */
+type Pressed = { press: symbol; date: string; snapshot: ResourceProjection; write: Promise<LocalCommit | null>; commit: LocalCommit | null };
 type Completion =
-  | { phase: "dwell"; press: symbol; date: string; snapshot: ResourceProjection; commit: LocalCommit | null }
-  | { phase: "receipt"; press: symbol; date: string; snapshot: ResourceProjection; commit: LocalCommit; undoing: boolean }
+  | Pressed & { phase: "dwell"; at: number }
+  | Pressed & { phase: "receipt"; undoing: boolean }
+  | Pressed & { phase: "expired" }
   | { phase: "restored"; press: symbol; snapshot: ResourceProjection; undo: LocalCommit };
 type Step = (ref: string, press: symbol, next: (completion: Completion) => Completion | null) => void;
 
+const pressed = ({press, date, snapshot, write, commit}: Pressed): Pressed => ({press, date, snapshot, write, commit});
 const reached = (revision: string, commit: LocalCommit) => BigInt(revision) >= BigInt(commit.store_revision);
 
 export default function WorkSection({history}:{history:OutlineHistory}) {
   const today = useAccountToday();
   const read = useAuthoredPages(today === null ? null : {kind:"work_pending", local_date:today, cursor:null, limit:100});
+  const {say} = useOutcome();
   const {value:open,set:setOpen} = useResourceDraft("Work.Open",()=>true);
   const [adding, setAdding] = useState(false);
   const [held, setHeld] = useState<ReadonlyMap<string, ResourceProjection>>(() => new Map());
   const [completions, setCompletions] = useState<ReadonlyMap<string, Completion>>(() => new Map());
+  const [failure, setFailure] = useState<{error:unknown}|null>(null);
   const list = useRef<HTMLUListElement>(null);
   const add = useRef<HTMLButtonElement>(null);
   const refocusAdd = useRef(false);
@@ -76,12 +84,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     if (value === null) map.delete(ref); else map.set(ref, value);
     return map;
   }), []);
-  // Called in the press's own event, before the commit can reach the pending query: the row is held from here.
-  const start = useCallback((resource:ResourceProjection, date:string, committed:Promise<LocalCommit | null>) => {
-    const ref = resource.ref, press = Symbol(ref);
-    setCompletions(previous => new Map(previous).set(ref, {phase:"dwell", press, date, snapshot:resource, commit:null}));
-    void committed.then(commit => step(ref, press, current => current.phase !== "dwell" ? current : commit === null ? null : {...current, commit}));
-  }, [step]);
+  const fail = useCallback((error:unknown) => setFailure({error}), []);
   useLayoutEffect(() => {
     const page = read.data;
     if (page === null) return;
@@ -90,7 +93,7 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
       let next: Map<string, Completion> | null = null;
       for (const [ref, completion] of previous) {
         const ended = completion.phase === "restored" ? reached(page.store_revision, completion.undo)
-          : completion.commit !== null && listed.has(ref) && reached(page.store_revision, completion.commit);
+          : completion.commit !== null && reached(page.store_revision, completion.commit) && (completion.phase === "expired" || listed.has(ref));
         if (ended) (next ??= new Map(previous)).delete(ref);
       }
       return next ?? previous;
@@ -110,10 +113,14 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
     return add.current;
   }, []);
   const layout = useMemo(() => ({rows:read.data?.rows ?? null,held,completions,open,adding}),[read.data?.rows,held,completions,open,adding]);
-  const rows = [...(read.data?.rows.map(row => row.resource) ?? [])];
-  const present = new Set(rows.map(row => row.ref));
-  for (const [ref, resource] of held) if (!present.has(ref)) rows.push(resource);
-  for (const [ref, completion] of completions) if (!present.has(ref) && !held.has(ref)) rows.push(completion.snapshot);
+  if (failure) throw failure.error;
+  const pending = new Map((read.data?.rows ?? []).map(({resource}) => [resource.ref, resource] as const));
+  const visible = new Map([...held, ...pending]);
+  for (const [ref, completion] of completions) {
+    if (completion.phase === "expired") visible.delete(ref);
+    else if (!visible.has(ref)) visible.set(ref, completion.snapshot);
+  }
+  const rows = [...visible.values()];
   rows.sort((a,b) => {
     if (!a.work || !b.work) throw new Error("work list lacks capture state");
     const left=BigInt(a.work.captured.lamport), right=BigInt(b.work.captured.lamport);
@@ -122,6 +129,18 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   const refs = rows.map(row => row.ref);
   // Focus after a row: the next live sign, else the nearest before it, else `add a task`.
   const around = (index:number) => [...refs.slice(index+1), ...refs.slice(0,index).reverse()];
+  // A completing press, in its own event. The write is sent first; nothing it does reaches the pending query before
+  // this event ends, so the record holds the row from here. A keyboard completion moves focus to the next sign now.
+  const complete = (resource:ResourceProjection, index:number, {intent, keyboard, at}:WorkCompletion) => {
+    if (today === null) return;
+    const ref = resource.ref, press = Symbol(ref);
+    const write = tryWorkCommand(history, intent, say);
+    setCompletions(previous => new Map(previous).set(ref, {phase:"dwell", press, date:today, snapshot:resource, write, commit:null, at}));
+    void write.then(
+      commit => step(ref, press, current => current.phase === "restored" ? current : commit === null ? null : {...current, commit}),
+      error => {step(ref, press, () => null); fail(error);});
+    if (keyboard) signOf(around(index))?.focus({preventScroll:true});
+  };
   return <PaneRefreshAnchor identity="work" value={layout} ready={today === null || read.data !== null}><section className={styles.work} aria-label="work" data-pane-return-scope="work">
     <div className={styles.header} data-collection-row-id="header">
       <Button className={styles.disclosure} icon={<Icon.Disclose open={open} size={12} className={styles.chevron} />}
@@ -134,12 +153,12 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
       <ResourceList ref={list} ariaLabel="unfinished work" busy={read.pending && read.data === null}>
         {rows.map((resource, index) => {
           const completion = completions.get(resource.ref);
-          const after = () => signOf(around(index));
           return completion?.phase === "receipt"
-            ? <Receipt key={resource.ref} completion={completion} history={history} step={step} recover={() => signOf([resource.ref, ...around(index)])} />
-            : <WorkRow key={resource.ref} resource={resource} retained={!present.has(resource.ref)} today={today} history={history} hold={hold}
-              completion={completion} step={step} onCompleting={committed => {if (today !== null) start(resource, today, committed);}} returnFocus={after}
-              recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? after()} />;
+            ? <Receipt key={resource.ref} completion={completion} history={history} step={step} fail={fail}
+              recover={() => signOf([resource.ref, ...around(index)])} />
+            : <WorkRow key={resource.ref} resource={resource} retained={!pending.has(resource.ref)} today={today} history={history} hold={hold}
+              completion={completion} step={step} onComplete={press => complete(resource, index, press)}
+              recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? signOf(around(index))} />;
         })}
       </ResourceList>
       {read.data?.next_cursor !== null && read.data !== null ? <Button onClick={read.more} aria-busy={read.pending}>show more work</Button> : null}
@@ -151,37 +170,34 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
   </section></PaneRefreshAnchor>;
 }
 
-function Receipt({completion, history, step, recover}:{
-  completion:Extract<Completion, {phase:"receipt"}>; history:OutlineHistory; step:Step; recover():HTMLElement | null;
+function Receipt({completion, history, step, fail, recover}:{
+  completion:Extract<Completion, {phase:"receipt"}>; history:OutlineHistory; step:Step; fail(error:unknown):void; recover():HTMLElement | null;
 }) {
   const {say} = useOutcome();
-  const [failure,setFailure] = useState<{error:unknown}|null>(null);
   const root = useRef<HTMLLIElement>(null);
-  const {press, date, snapshot} = completion, ref = snapshot.ref;
-  // Removed while focused (expiry, undo, or a later change), the receipt hands focus to this row's sign, else the next.
+  const {press, date, snapshot, write, undoing} = completion, ref = snapshot.ref;
+  // Removed while focused (expiry, undo, refusal, or a later change), the receipt hands focus to this row's sign, else the next.
   useActionFocusRecovery(root, recover);
-  useEffect(() => {
-    if (completion.undoing) return;
-    // Once pressed, undo owns settlement and focus. A refused command offers its action again.
-    const timer = setTimeout(() => step(ref, press, current => current.phase === "receipt" && !current.undoing ? null : current), RECEIPT_MS);
+  // RECEIPT_MS from display. A pressed undo owns settlement and focus until it settles; refused, it is offered again.
+  useLayoutEffect(() => {
+    if (undoing) return;
+    const timer = setTimeout(() => step(ref, press, current => current.phase === "receipt" && !current.undoing ? {...pressed(current), phase:"expired"} : current), RECEIPT_MS);
     return () => clearTimeout(timer);
-  }, [ref, press, completion.undoing, step]);
-  if (failure) throw failure.error;
+  }, [ref, press, undoing, step]);
   const line = localResourceLabel(snapshot);
-  // The inverse is the completion's own civil day cleared: never a toggle of whatever the row now shows.
+  // The inverse is the completion's own civil day cleared, sent only once the completion itself is durable. A refused
+  // completion sends nothing: its record is already gone and the row is back. A completion's defect is the section's.
   const undo = () => {
-    if (completion.undoing) return;
+    if (undoing) return;
     step(ref, press, current => current.phase === "receipt" ? {...current, undoing:true} : current);
-    void workCommand(history, {kind:"clear_work_day", ref, local_date:date}).then(
-      commit => step(ref, press, current => current.phase === "receipt" ? {phase:"restored", press, snapshot:current.snapshot, undo:commit} : current),
-      error => {
-        step(ref, press, current => current.phase === "receipt" ? {...current, undoing:false} : current);
-        if (error instanceof WorkUnavailableError) say({fact:error.message}); else setFailure({error});
-      });
+    void write.then(commit => commit === null ? null : tryWorkCommand(history, {kind:"clear_work_day", ref, local_date:date}, say), () => null).then(
+      undone => step(ref, press, current => current.phase !== "receipt" ? current
+        : undone === null ? {...current, undoing:false} : {phase:"restored", press, snapshot:current.snapshot, undo:undone}),
+      error => {step(ref, press, current => current.phase === "receipt" ? {...current, undoing:false} : current); fail(error);});
   };
   return <li ref={root} className={styles.receipt} data-work-ref={ref} data-collection-row-id={ref}>
     <span className={styles.receiptLine}>completed<span aria-hidden="true"> · </span>{line}</span>
-    <Button className={styles.undo} data-receipt-undo="" aria-label={`undo: ${line}`} aria-busy={completion.undoing} onClick={undo}>undo</Button>
+    <Button className={styles.undo} data-receipt-undo="" aria-label={`undo: ${line}`} aria-busy={undoing} onClick={undo}>undo</Button>
   </li>;
 }
 
@@ -214,10 +230,10 @@ function TaskCapture({history,onClose}:{history:OutlineHistory;onClose():void}) 
   </form>;
 }
 
-function WorkRow({resource:initial,retained,today,history,hold,completion,step,onCompleting,returnFocus,recover}:{
+function WorkRow({resource:initial,retained,today,history,hold,completion,step,onComplete,recover}:{
   resource:ResourceProjection;retained:boolean;today:string|null;history:OutlineHistory;
   hold(resource:ResourceProjection,keep:boolean):void;completion:Completion | undefined;step:Step;
-  onCompleting(committed:Promise<LocalCommit | null>):void;returnFocus():HTMLElement|null;
+  onComplete(completion:WorkCompletion):void;
   /** Where focus goes when the focused control leaves with the row: its own receipt's undo, in place, else the next sign. */
   recover():HTMLElement|null;
 }) {
@@ -249,22 +265,26 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
   const listed = retaining || focus === "sign";
   useLayoutEffect(() => {hold(resource,listed);},[resource,listed,hold]);
   useEffect(() => () => hold(captured.current,false),[hold]);
-  // The dwell: this row owns its timer, and becomes a receipt only once the dwell has passed, the completion is
-  // durable, and nothing the reader is using retains it. Focus on the sign alone moves to the receipt's undo.
+  // The dwell: DWELL_MS from the press's own timestamp, whatever the local write is doing. The timer re-arms rather
+  // than fire early. Then the row becomes its receipt, unless the reader is using it.
   const dwell = completion?.phase === "dwell" ? completion : null;
-  const press = dwell === null ? null : dwell.press, committed = dwell !== null && dwell.commit !== null;
+  const press = dwell === null ? null : dwell.press, at = dwell === null ? 0 : dwell.at;
   const [dwelt,setDwelt] = useState<symbol | null>(null);
   useEffect(() => {
     if (press === null) return;
-    const timer = setTimeout(() => setDwelt(press), DWELL_MS);
+    let timer = 0;
+    const wait = () => {
+      const left = DWELL_MS - (performance.now() - at);
+      if (left > 0) timer = window.setTimeout(wait, left); else setDwelt(press);
+    };
+    wait();
     return () => clearTimeout(timer);
-  }, [press]);
+  }, [press, at]);
   const ref = resource.ref;
   useLayoutEffect(() => {
-    if (press === null || dwelt !== press || !committed || retaining) return;
-    step(ref, press, current => current.phase === "dwell" && current.commit !== null
-      ? {phase:"receipt", press:current.press, date:current.date, snapshot:current.snapshot, commit:current.commit, undoing:false} : current);
-  }, [ref, press, dwelt, committed, retaining, step]);
+    if (press === null || dwelt !== press || retaining) return;
+    step(ref, press, current => current.phase === "dwell" ? {...pressed(current), phase:"receipt", undoing:false} : current);
+  }, [ref, press, dwelt, retaining, step]);
   // The journal's paint of a completion until a projection at or after its commit is in hand: then the row is canonical.
   const presentDone = dwell !== null && !(dwell.commit !== null && retained && read.data !== null && reached(read.data.store_revision, dwell.commit));
   return <IndexRowWindow window={rowWindow} id={resource.ref}><li ref={root} className={styles.row} data-work-ref={resource.ref} data-collection-row-id={resource.ref}
@@ -273,8 +293,7 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
       if (event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget)) return;
       queueMicrotask(() => {if (!root.current?.contains(window.document.activeElement)) setFocus("none");});
     }}>
-    <span className={styles.sign}>{deleted ? null : <WorkCheckbox resource={resource} today={today} history={history} presentDone={presentDone}
-      onCompleting={onCompleting} onCompleted={({keyboard}) => {if (keyboard) returnFocus()?.focus({preventScroll:true});}} />}</span>
+    <span className={styles.sign}>{deleted ? null : <WorkCheckbox resource={resource} today={today} history={history} presentDone={presentDone} onComplete={onComplete} />}</span>
     <div className={styles.writing}>
       {deleted ? <p className={styles.muted}>this note was deleted.</p> : null}
       <AuthoredReadFailure {...opened} noun="this task" />
