@@ -30,25 +30,3 @@ export function paneVisibleBand(port: HTMLElement): { top: number; bottom: numbe
   const bounds = port.getBoundingClientRect();
   return { top: bounds.top + parseFloat(getComputedStyle(port).paddingTop), bottom: bounds.bottom };
 }
-
-/** Runs `measure` at most once a frame after the port scrolls, or it or any of `resized` changes size.
- * The first measurement is the caller's, at the moment its own contract names. `schedule` asks for
- * one more; `release` stops everything, a pending frame included. */
-export function watchPaneGeometry(port: HTMLElement, resized: readonly Element[], measure: () => void): { schedule(): void; release(): void } {
-  let frame: number | null = null;
-  const schedule = () => {
-    if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); });
-  };
-  port.addEventListener("scroll", schedule, { passive: true });
-  const sizes = new ResizeObserver(schedule);
-  sizes.observe(port);
-  for (const element of resized) sizes.observe(element);
-  return {
-    schedule,
-    release: () => {
-      port.removeEventListener("scroll", schedule);
-      sizes.disconnect();
-      if (frame !== null) cancelAnimationFrame(frame);
-    },
-  };
-}

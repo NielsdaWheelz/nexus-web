@@ -21,7 +21,7 @@ import { OutlineHistoryAllowance } from "@/lib/notes/outlineHistoryAllowance";
 import { OutlinePresentationAllowance } from "@/lib/notes/outlinePresentationAllowance";
 import { isAuthoredStorageFailure, LocalCommitError, type WritingRuntime } from "@/lib/notes/runtime";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
-import { paneVisibleBand, watchPaneGeometry } from "@/lib/panes/paneScroll";
+import { paneVisibleBand } from "@/lib/panes/paneScroll";
 import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
 import { readerType } from "@/lib/reader/typography";
 import { cx } from "@/lib/ui/cx";
@@ -116,15 +116,28 @@ function Journal({ arrival }: { arrival: string }) {
   useLayoutEffect(() => {
     const port = target?.closest<HTMLElement>("[data-pane-content]") ?? null;
     if (target === null || port === null) return;
-    // Any part of the head in the visible band yields. Measured at mount, before paint, then as the port
-    // scrolls or it or the head changes size.
-    const measure = () => {
-      const band = paneVisibleBand(port), head = target.getBoundingClientRect();
-      const intersecting = head.bottom > band.top && head.top < band.bottom;
+    // Any part of the head in the port's visible band yields.
+    const see = (intersecting: boolean) =>
       setSeen(previous => previous?.target === target && previous.intersecting === intersecting ? previous : { target, intersecting });
+    // Before paint, once. After that the browser reports the intersection itself, so a row or the agenda
+    // reflowing above the head is seen though nothing scrolled and the head kept its size.
+    const band = paneVisibleBand(port), head = target.getBoundingClientRect();
+    see(head.bottom > band.top && head.top < band.bottom);
+    // The band's top is the port's top padding (the phone's opaque chrome), carried as a negative root margin
+    // and rebuilt only when that padding changes; a padding change resizes the port's content box.
+    let inset: number | null = null, observer: IntersectionObserver | null = null;
+    const observe = () => {
+      const next = parseFloat(getComputedStyle(port).paddingTop);
+      if (next === inset) return;
+      inset = next;
+      observer?.disconnect();
+      observer = new IntersectionObserver(entries => see(entries[entries.length - 1]!.isIntersecting), { root: port, rootMargin: `${-next}px 0px 0px 0px` });
+      observer.observe(target);
     };
-    measure();
-    return watchPaneGeometry(port, [target], measure).release;
+    observe();
+    const sizes = new ResizeObserver(observe);
+    sizes.observe(port);
+    return () => { sizes.disconnect(); observer?.disconnect(); };
   }, [target]);
   const yielded = seen !== null && seen.target === target && seen.intersecting;
   const chrome = useMemo(() => ({ displayTitle: "journal", navigation: { label: "journal dates", content: <div {...type} className={styles.navigation}>

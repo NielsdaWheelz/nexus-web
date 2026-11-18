@@ -9,7 +9,7 @@ matched by the local worker. the row sheet's highlight facts (`source title ·
 location label`) cannot be met from the local projection; the server's row for
 the same highlight carries them.
 
-authored outlines resolve the mounted highlights' distinct source refs locally
+authored outlines resolve the admitted highlights' distinct source refs locally
 and print a citation below the excerpt, with a page number for pdf. this issue
 concerns the palette's existing projection and its single-read contract.
 

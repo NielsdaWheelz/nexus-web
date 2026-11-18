@@ -89,8 +89,10 @@ returns it. text always uses the note's current wording.
 pagination. unfinished tasks and today's unchecked habits share one capture order.
 the journal agenda ends with `add a task`, which opens its capture form in
 place. a completion fills the sign immediately. after 600ms, a durable
-completion gives way to its receipt when the row releases focus, its menu and
-any pending editor input. the five-second receipt's `undo` clears that same
+completion gives way to its receipt once the row releases its menu, editor
+inputs and other focus owners. a sign already focused at the pointer press
+hands focus to its own receipt's undo. expiry hands that focus to a surviving
+sign or the capture control. the five-second receipt's `undo` clears that same
 note and civil day. a pending-work read at or beyond the undo's local revision
 reconciles the restored row.
 keyboard completion advances focus. pointer completion preserves it. a day's

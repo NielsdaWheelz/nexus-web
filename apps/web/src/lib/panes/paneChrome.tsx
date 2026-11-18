@@ -23,7 +23,7 @@ import type { OutlineCommand, OutlineCommandState } from "@/lib/notes/editorType
 import type { FindSession } from "@/lib/find/useFind";
 import { FIND_QUERY_LIMIT } from "@/lib/find/find";
 import type { PaneHeaderPublication } from "@/lib/panes/paneHeaderModel";
-import { paneVisibleBand, watchPaneGeometry } from "@/lib/panes/paneScroll";
+import { paneVisibleBand } from "@/lib/panes/paneScroll";
 import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceIdOf,
@@ -257,7 +257,10 @@ export function usePaneTitleYield(name: RefObject<HTMLElement | null>): void {
       const yielded = nameTop >= band.top && nameTop < band.bottom;
       if (store.get().titleYielded !== yielded) store.set({ titleYielded: yielded });
     };
-    const watch = watchPaneGeometry(scrollport, [], measure);
+    let frame: number | null = null;
+    const schedule = () => {
+      if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); });
+    };
     // Parent layout effects can restore the visit after this child's effect. Commit that
     // placement before paint; an unmounted title page no longer owns the header.
     queueMicrotask(() => { if (element.isConnected) flushSync(measure); });
@@ -267,13 +270,18 @@ export function usePaneTitleYield(name: RefObject<HTMLElement | null>): void {
       // Passive scrolling may already have moved. Arm from the last displayed opacity;
       // the next measurement owns the reader's new position.
       flushSync(() => store.set({ titleYieldReady: true }));
-      watch.schedule();
+      schedule();
     };
     for (const type of NAVIGATION_ATTENTION_EVENTS)
       scrollport.addEventListener(type, arm, { capture: true, passive: true });
+    scrollport.addEventListener("scroll", schedule, { passive: true });
+    const sizes = new ResizeObserver(schedule);
+    sizes.observe(scrollport);
     return () => {
-      watch.release();
+      scrollport.removeEventListener("scroll", schedule);
       for (const type of NAVIGATION_ATTENTION_EVENTS) scrollport.removeEventListener(type, arm, true);
+      sizes.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
       if (store.get().titleYielded || store.get().titleYieldReady)
         store.set({ titleYielded: false, titleYieldReady: false });
     };

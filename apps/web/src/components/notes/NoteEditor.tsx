@@ -90,7 +90,7 @@ import {
   type NoteBody,
 } from "@nexus/authored/body";
 import type { FocusSelection, NoteEdit } from "@/lib/notes/editorTypes";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import { getBrowserTouchCapable, useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { outlineFoldCommand, outlineHistoryCommand, outlineStructuralCommand, usesMeta } from "@/lib/shortcuts";
 import { inspectionDecorations } from "@/lib/notes/inspection";
 import { fieldAt, fieldById, inlinePaste, outlineEditedField, outlineTransactionSource } from "@/lib/notes/outlineEditorModel";
@@ -313,7 +313,7 @@ function NoteEditorContent(props: NoteEditorProps) {
   const consumedFocus = useRef<number | null>(null);
   const { platform } = useRenderEnvironment();
   const latest = useRef({ ...props, platform });
-  latest.current = { ...props, platform, editable: props.editable };
+  latest.current = { ...props, platform };
   const busy = useRef(false);
   const nativeInputOpen = useRef(false);
   const guard = useWorkGuard();
@@ -384,7 +384,6 @@ function NoteEditorContent(props: NoteEditorProps) {
       restoreReference(view, row_id, base);
     },
   });
-  latest.current = { ...props, platform, editable: props.editable };
   const referenceRef = useRef(reference);
   referenceRef.current = reference;
   const activeReference = (state: EditorState) => {
@@ -392,18 +391,16 @@ function NoteEditorContent(props: NoteEditorProps) {
     return intent?.row_id === editingField(state)?.row_id ? intent : null;
   };
   const toolbarNode = useRef<HTMLDivElement | null>(null);
-  /** With a fine pointer the formatting toolbar stands above the selection, and under its end only when above would
-   * leave the nearest scrollport's padded top. A coarse pointer has the platform's own callout above, so there it sits
-   * under the selection's end, as the link dialog does, and above only when under would leave the scrollport. It
-   * shifts left to stay inside the shell. */
+  /** Leave the platform's callout above a touch selection. Otherwise prefer the space above it,
+   * within the padded scrollport. Both placements stay inside the shell horizontally. */
   const placeToolbar = useCallback(() => {
     const node = toolbarNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
     if (!node || !view || !box || view.state.selection.empty) return;
     const port = scrollportOf(shell.current!), bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
     const start = view.coordsAtPos(view.state.selection.from), end = view.coordsAtPos(view.state.selection.to), height = node.offsetHeight;
     const room = start.top - 6 - height - bounds.top;
-    const above = matchMedia("(any-pointer: fine)").matches ? room >= (port ? parseFloat(getComputedStyle(port).scrollPaddingTop) || 0 : 0)
-      : end.bottom + 6 + height > bounds.bottom && room >= 0;
+    const above = getBrowserTouchCapable() ? end.bottom + 6 + height > bounds.bottom && room >= 0
+      : room >= (port ? parseFloat(getComputedStyle(port).scrollPaddingTop) || 0 : 0);
     const left = Math.max(0, end.left - box.left);
     node.style.left = `${left}px`;
     node.style.top = `${above ? start.top - box.top - 6 - height : Math.max(0, end.bottom - box.top + 6)}px`;

@@ -154,7 +154,8 @@ annotation engine. an authored outline sets the excerpt in italic at the row's
 size and leading. its coloured sideline hangs before the quote. forced colours
 use system ink and show the highlight sign. the citation gives the locally
 resolved source title and, for a pdf, its page number. the session resolves
-distinct sources for the mounted rows in batches of up to 100. a missing title omits the citation.
+distinct sources for its admitted rows in batches of up to 100. scrolling a
+citation out of view alone keeps the subscription. a missing title omits the citation.
 the roman annotation occupies one ordinary full-width line below it, including
 when blank, named `annotation`, without placeholder or
 save/cancel. activation installs the owning outline history before typing; a
