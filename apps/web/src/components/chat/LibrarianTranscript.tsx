@@ -9,6 +9,7 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type { ServerValue } from "@/lib/api/serverState";
 import { codepointLength, codepointToUtf16 } from "@/lib/canonicalText/codepoints";
 import type { Timeline, Turn } from "@/lib/chat/wire";
+import { publishPaneScroll } from "@/lib/panes/paneScroll";
 import { requirePaneRuntime, usePaneRuntime, usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { useSourceArrival, useArrivalFailure } from "@/lib/reader/sourceArrival";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
@@ -48,6 +49,10 @@ export default function LibrarianTranscript({ history, adopted, queryKey, retryB
   const after = params.get("after_seq");
   const scrollport = useRef<HTMLDivElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const port = scrollport.current;
+    if (port) return publishPaneScroll(port);
+  }, []);
   const incoming = history.status === "ready" ? history.data.items : null;
   const fresh = history.status === "ready" && history.fresh;
   const [accepted, setAccepted] = useState<{ incoming: readonly Turn[] | null; adopted: readonly Turn[]; fresh: boolean; turns: readonly Turn[] }>({ incoming: null, adopted: [], fresh: false, turns: [] });

@@ -6,7 +6,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export function presentNote(item: NotePageSummary): CollectionRowView {
   return {
-    presentation: "Index",
+    presentation: "Title",
     id: item.id,
     kind: "note",
     primary: {

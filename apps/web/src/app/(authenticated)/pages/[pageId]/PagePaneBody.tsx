@@ -15,6 +15,8 @@ import { useResourceInspector } from "@/components/resource-inspector/useResourc
 import { useAuthoredAccountId } from "@/lib/authored/provider";
 import { useAuthoredQuery } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
+import { readerType } from "@/lib/reader/typography";
 import { requirePaneRuntime, usePaneEntryDelivery, usePaneParam, usePaneRuntime, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { usePaneReturnReady, usePaneVisitData } from "@/lib/workspace/paneReturnMemento";
@@ -65,6 +67,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   const { delivery, claim } = usePaneEntryDelivery();
   const [initialTitle, setInitialTitle] = useState(() => newPage ? params.get("title") ?? "" : "");
   const { say } = useOutcome();
+  const type = readerType(useReaderProfile());
   const [filter, setFilter] = useState("");
   const [entryDefect, setEntryDefect] = useState<{ error: unknown } | null>(null);
   // A storage failure is the entry's outcome; a failed commit is the account's words at risk; the rest is a defect.
@@ -78,7 +81,7 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
   usePaneReturnReady(root.ready || root.error !== null);
   const displayTitle = root.rootTitle ?? pageTitle(page?.title ?? initialTitle, date);
   usePaneChrome({workHistory: root.controller?.history,
-    displayTitle, editor: root.rootEditor ?? undefined,
+    displayTitle,
     header: {kind: "Resource", resource: {status: "Ready", creditGroups: []}},
     resourceRef: page !== null && id !== null ? canonicalResourceRef({ scheme: "page", id }) : undefined,
     query: { kind: "Collation", collation: {
@@ -94,7 +97,9 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
     if (!delivery || !root.rootReady) return;
     const entry = delivery.entry;
     if (entry.kind === "ComposePage") {
-      if (claim(delivery) && newPage) setInitialTitle(entry.title);
+      if (!claim(delivery)) return;
+      if (newPage) setInitialTitle(entry.title);
+      void outline.current?.focusRoot().catch(entryFailed("couldn’t open this page’s title."));
       return;
     }
     if (entry.kind === "EditPageTitle") {
@@ -119,11 +124,11 @@ function PageEditing({rootRef, id, page, date, newPage, prelude}: {
     }
   }, [claim, delivery, id, newPage, root.rootReady, entryFailed, say]);
   if (entryDefect !== null) throw entryDefect.error;
-  return <div>
+  return <div {...type}>
     {page !== null && id !== null ? <Inspector pageId={id} /> : null}
+    {root.rootEditor}
     {filter.trim() ? <p>filter applies to loaded items.</p> : null}
     {root.view}
-
   </div>;
 }
 

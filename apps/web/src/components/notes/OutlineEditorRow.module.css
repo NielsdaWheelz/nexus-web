@@ -1,10 +1,11 @@
-/* one outline row. the reader role declares --outline-disclose, --outline-sign and --outline-indent,
-   and the editing host --outline-text-start; a fine row has no block padding, so it is its lines. the leading
-   column is one line tall and holds the disclose slot, then the bullet in the rest of the column. */
+/* one outline row. the reader role declares --outline-disclose, --outline-sign, --outline-indent and
+   --outline-glyph, and the editing host --outline-text-start; a fine row has no block padding, so it is its
+   lines. the leading column is one line tall and holds the disclose slot, then the sign in the rest of the
+   column. the sign's kind is the bullet's data-marker; nothing here reads what the bullet draws. */
 .row {
   --outline-pad: 0px;
-  --outline-dot: var(--ink-faint);
   position: relative;
+  isolation: isolate;
   min-width: 0;
   padding-block: var(--outline-pad);
   padding-inline-start: calc(var(--outline-depth, 0) * var(--outline-indent));
@@ -15,9 +16,15 @@
   opacity: 0.35;
 }
 
-/* the caret's row: its dot reads one step darker. */
-.row[data-outline-active] {
-  --outline-dot: var(--ink-muted);
+/* a selection is one wash from its shallowest depth's slot to the row's end, behind the words. rows abut,
+   so it runs unbroken down the selection. */
+.row[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset-block: 0;
+  inset-inline: calc(var(--outline-selection-depth, 0) * var(--outline-indent)) 0;
+  background: var(--accent-muted);
 }
 
 /* a 1px line under each ancestor's bullet centre through the whole row. its 9px strip collapses that
@@ -55,11 +62,6 @@
   display: flex;
   align-items: flex-start;
   min-width: 0;
-  border-radius: var(--radius-sm);
-}
-
-.row[data-selected="true"] > .head {
-  background: var(--accent-muted);
 }
 
 .leading {
@@ -87,17 +89,17 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+  transition: color var(--duration-base) var(--ease-glide);
+}
+
+/* a done task's words recede. nothing is struck, and a habit's words stay. */
+.row[data-done="true"] > .head > .content {
+  color: var(--ink-muted);
 }
 
 /* a wrapped reference still leaves one ordinary nonlink target for native editing. */
 .row[data-reference-editable] > .head {
   padding-inline-end: var(--space-6);
-}
-
-.content[data-gap] {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: var(--space-3);
 }
 
 .trailing {
@@ -112,23 +114,23 @@
   display: none;
 }
 
-/* the mirror count shows on hover or selection. */
-.trailing > [data-mirrors] {
-  padding-inline: var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  font-size: var(--text-2xs);
-  line-height: var(--leading-snug);
-  visibility: hidden;
+/* tails stand at the row's end in the apparatus voice and never change on hover. */
+.tail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: var(--space-2);
+  color: var(--ink-muted);
+  font: var(--apparatus-font);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--tracking-wider);
+  white-space: nowrap;
 }
 
-.row[data-selected="true"] .trailing > [data-mirrors] {
-  visibility: visible;
-}
-
-@media (hover: hover) {
-  .row:hover .trailing > [data-mirrors] {visibility: visible;}
+.repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 /* chevrons, bullets and gap rows' commands: quiet controls at the outline's size. */
@@ -149,96 +151,160 @@
   cursor: pointer;
 }
 
-.control:hover {
-  color: var(--ink);
-}
-
 .leading:focus-visible,
 .control:focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
 }
 
-/* the chevron shows itself when usable: row hover, its own focus, or selection. */
+/* the chevron holds its slot on every pointer. it shows when usable (row hover, its own focus, selection)
+   and always while its branch is shut: a shut branch says so without a pointer. */
 .leading > [data-outline-disclose] > .control {
   z-index: 2;
   flex: 1;
+  color: var(--ink-faint);
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-snap);
 }
 
 .row:hover .leading > [data-outline-disclose] > .control,
 .row[data-selected="true"] .leading > [data-outline-disclose] > .control,
-.leading > [data-outline-disclose]:focus-within > .control {
+.leading > [data-outline-disclose]:focus-within > .control,
+.leading > [data-outline-disclose] > .control[aria-expanded="false"] {
   opacity: 1;
 }
 
-/* the bullet is the slot's own one-line box. the note marker is drawn as a 6px dot over its transparent text;
-   glyph markers draw themselves. the 16px halo behind either says the row hides children. */
+/* the sign: the slot's own one-line box, resting faint. a note's is a dot the bullet draws; a glyph sign
+   draws itself at the role's glyph size; a highlight's is its sideline, so its bullet paints nothing. */
 .bullet {
+  --resource-type-size: var(--outline-glyph);
   position: relative;
   display: flex;
   width: var(--outline-sign);
   height: 1lh;
-  isolation: isolate;
+  color: var(--ink-faint);
 }
 
-.bullet:not(:has(svg)),
-.bullet:not(:has(svg)):hover {
-  color: transparent;
+/* the press area: at least 24px tall, centred on the sign. the line box does not grow. */
+.bullet:not([data-seed-bullet])::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: max(100%, 24px);
+  translate: 0 -50%;
 }
 
-.bullet::before,
-.bullet:not(:has(svg))::after {
+.bullet[data-marker="note"]::after {
   content: "";
   position: absolute;
   inset: 0;
-  box-sizing: border-box;
+  width: max(6px, .4em);
+  height: max(6px, .4em);
   margin: auto;
   border-radius: 50%;
+  background: currentColor;
 }
 
-.bullet::before {
-  z-index: -1;
-  width: 16px;
-  height: 16px;
-  background: var(--surface-3);
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-snap);
+.glyph {
+  flex: none;
+  width: var(--outline-glyph);
+  height: var(--outline-glyph);
 }
 
-.row:has(> .head [data-outline-disclose] > [aria-expanded="false"]) .bullet::before {
-  opacity: 1;
+/* drawn in forced colours only, where the sideline's ink is the system's and the row needs its kind. */
+.forced {
+  display: none;
 }
 
-.bullet:not(:has(svg))::after {
-  width: 6px;
-  height: 6px;
-  background: var(--outline-dot);
+/* a task's sign is a control: it rests one step darker, and falls to faint once done. */
+.bullet:is([data-marker="task"], [data-marker="habit"]) {
+  color: var(--ink-muted);
 }
 
-.bullet:not(:has(svg)):hover::after {
-  background: var(--ink);
+.bullet[aria-checked="true"] {
+  color: var(--ink-faint);
+}
+
+.bullet[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* every sign takes the ink on its own hover or focus, its row's hover, or the caret's row. */
+.control:hover,
+.leading > [data-outline-disclose] > .control:hover,
+.bullet:focus-visible,
+.row[data-outline-active] .bullet {
+  color: var(--ink);
+}
+
+@media (hover: hover) {
+  .row:hover .bullet {color: var(--ink);}
+}
+
+.bullet:focus-visible {
+  outline-color: var(--ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* a highlight row takes half a line above and below. its excerpt is italic, and its sign is a rule in the
+   highlight's own ink, hung before the excerpt's start inside the sign column, as tall as the excerpt. */
+.row[data-highlight-color] {
+  --outline-pad: .5lh;
+}
+
+.row[data-highlight-color="yellow"] {--outline-sideline: var(--highlight-yellow-ink);}
+.row[data-highlight-color="green"] {--outline-sideline: var(--highlight-green-ink);}
+.row[data-highlight-color="blue"] {--outline-sideline: var(--highlight-blue-ink);}
+.row[data-highlight-color="pink"] {--outline-sideline: var(--highlight-pink-ink);}
+.row[data-highlight-color="purple"] {--outline-sideline: var(--highlight-purple-ink);}
+
+.excerpt {
+  position: relative;
+  font-style: italic;
+}
+
+.excerpt::before {
+  content: "";
+  position: absolute;
+  inset-block: .34em;
+  inset-inline-start: -10px;
+  inline-size: 3px;
+  background: var(--outline-sideline);
+  pointer-events: none;
+}
+
+.citation {
+  display: block;
+  color: var(--ink-muted);
+  font: var(--apparatus-font);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--tracking-wider);
 }
 
 @media (any-pointer: coarse) {
   .row {--outline-pad: max(4px, calc((32px - 1lh) / 2));}
-  .leading > [data-outline-disclose] {display: none;}
+  /* the slot shows a shut branch and takes no press: folding is in the row's menu. */
+  .row .leading > [data-outline-disclose] > .control {pointer-events: none;}
+  .row .leading > [data-outline-disclose] > .control[aria-expanded="true"] {opacity: 0;}
   /* the bullet spans its row: the line and both pads, the pads given back so adjacent targets abut. */
   .bullet {height: calc(1lh + 2 * var(--outline-pad)); margin-block: calc(-1 * var(--outline-pad));}
   .row > [data-outline-guides] > span {pointer-events: none;}
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bullet::before,
+  .content,
   .leading > [data-outline-disclose] > .control {transition: none;}
 }
 
-/* forced colours drop fills: the selection keeps a system outline, the halo its ring, the dot its ink. */
+/* forced colours drop fills: the selection keeps a system outline, the dot and the sideline the text's ink,
+   and a highlight's bullet shows its glyph. */
 @media (forced-colors: active) {
-  .row[data-selected="true"] > .head {outline: 1px solid Highlight; outline-offset: -1px;}
-  .bullet::before {border: 1px solid CanvasText;}
-  .bullet:not(:has(svg)) {forced-color-adjust: none;}
-  .bullet:not(:has(svg)):focus-visible {outline-color: Highlight;}
-  .bullet:not(:has(svg))::after {background: CanvasText;}
+  .row[data-selected="true"]::after {outline: 1px solid Highlight; outline-offset: -1px;}
+  .bullet[data-marker="note"] {forced-color-adjust: none;}
+  .bullet[data-marker="note"]:focus-visible {outline-color: Highlight;}
+  .bullet[data-marker="note"]::after {background: CanvasText;}
+  .bullet[aria-disabled="true"] {color: GrayText;}
+  .excerpt::before {background: CanvasText; forced-color-adjust: none;}
+  .forced {display: block;}
 }

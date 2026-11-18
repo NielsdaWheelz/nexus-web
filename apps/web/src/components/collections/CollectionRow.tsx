@@ -117,6 +117,7 @@ export default function CollectionRow({
   switch (row.presentation) {
     case "Index": content = { kind: "Index", metadata, facts: media?.subject.kind === "Stored" ? <MediaFacts summary={media.subject.summary} /> : null }; break;
     case "Details": content = { kind: "Details", body: row.context ? renderContext(row.context) : null }; break;
+    case "Title": content = { kind: "Title" }; break;
     default: assertNever(row.presentation);
   }
   const rootProps = { className, onAnimationEnd, "aria-current": row.selected ? "true" as const : undefined,

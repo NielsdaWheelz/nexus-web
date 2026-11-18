@@ -38,6 +38,7 @@ import { localContentAvailable } from "@/lib/offline/localContent";
 import DownloadedEpisode, { useSavedEpisode } from "./DownloadedEpisode";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { publishPaneScroll } from "@/lib/panes/paneScroll";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { MediaFacts, MediaTitle } from "@/components/media/MediaIdentity";
 import ResourceMetadata from "@/components/resources/ResourceMetadata";
@@ -408,11 +409,13 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         progress: hostedProgress(id),
         entry,
         host: { scrollport: (element: HTMLElement, geometryChanged: (reason: "Occlusion" | "Layout") => void) => {
+          const releaseScroll = publishPaneScroll(element);
           readerScrollport.current = element;
           const releaseChrome = chrome.registerReaderScrollport(element);
           const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
           return () => {
             if (readerScrollport.current === element) readerScrollport.current = null;
+            releaseScroll();
             releaseChrome();
             releaseViewport();
           };

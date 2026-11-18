@@ -1,0 +1,46 @@
+/* The year scrolls inline when wider than its pane; the block padding keeps today's ring. */
+.scroll { overflow-x: auto; padding-block: 3px; }
+
+.year {
+  display: grid;
+  grid-template-columns: auto;
+  grid-auto-columns: 7px;
+  grid-template-rows: auto repeat(7, 7px);
+  gap: 2.5px;
+  inline-size: max-content;
+}
+
+.month,
+.weekday,
+.legend {
+  font: var(--apparatus-font);
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-muted);
+}
+
+/* A month's name starts at its first week and runs over the next ones. */
+.month { grid-row: 1; white-space: nowrap; padding-block-end: 2px; }
+.weekday { grid-column: 1; line-height: 7px; padding-inline-end: var(--space-1); }
+
+.day {
+  box-sizing: border-box;
+  inline-size: 7px;
+  block-size: 7px;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.day[data-checked="true"] { border-color: var(--accent); background: var(--accent); }
+.day:disabled:not([data-checked="true"]) { border-color: transparent; cursor: default; }
+.day[data-today="true"] { outline: 1.5px solid var(--accent); outline-offset: 1.5px; }
+.day:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 1.5px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; }
+.legend .day { display: inline-block; margin-inline-end: var(--space-1); vertical-align: middle; cursor: default; }
+
+/* A forced palette drops backgrounds; a recorded day keeps its fill as the text colour. */
+@media (forced-colors: active) {
+  .day[data-checked="true"] { forced-color-adjust: none; border-color: CanvasText; background: CanvasText; }
+}

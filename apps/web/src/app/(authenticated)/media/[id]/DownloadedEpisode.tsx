@@ -24,6 +24,7 @@ import { LocalMutationObservationError, localCall, localContentAvailable, localM
 import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { publishPaneScroll } from "@/lib/panes/paneScroll";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { retryNativeListening } from "@/lib/player/nativeEngine";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
@@ -124,9 +125,10 @@ export default function DownloadedEpisode({ saved, onIntent }: {
       arrivalRef.current?.supersede({ preserveSignal: intent.kind === "Navigate" ? intent.signal : null, retireFailure: intent.kind === "Navigate" });
     },
     scrollport: (element: HTMLElement, changed: (reason: "Occlusion" | "Layout") => void) => {
+      const releaseScroll = publishPaneScroll(element);
       const releaseChrome = chrome.registerReaderScrollport(element);
       const releaseViewport = viewport.registerReaderScrollport(element, changed);
-      return () => { releaseChrome(); releaseViewport(); };
+      return () => { releaseScroll(); releaseChrome(); releaseViewport(); };
     },
     navigation: {
       href: (destination: Parameters<typeof readerDestinationHref>[1]) => {

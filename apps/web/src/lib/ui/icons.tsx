@@ -13,7 +13,6 @@ import {
   ArrowDown,
   ArrowUp,
   AudioLines,
-  Bold as BoldDrawing,
   BookOpen,
   CalendarDays,
   ChartColumn,
@@ -24,7 +23,6 @@ import {
   ChevronUp,
   ChevronsUpDown,
   CircleUser,
-  CodeXml,
   Compass,
   Copy as CopyDrawing,
   Download as DownloadDrawing,
@@ -35,7 +33,6 @@ import {
   Globe,
   Headphones,
   Highlighter,
-  Italic as ItalicDrawing,
   Keyboard as KeyboardDrawing,
   LayoutList,
   Library as LibraryDrawing,
@@ -74,9 +71,7 @@ import {
   Sparkles,
   Square,
   StickyNote,
-  Strikethrough as StrikethroughDrawing,
   TriangleAlert,
-  Underline as UnderlineDrawing,
   Undo2,
   Upload as UploadDrawing,
   User,
@@ -141,13 +136,6 @@ export const Right: Glyph = ChevronRight;             // more that way
 export const Up: Glyph = ChevronUp;                   // more that way
 export const Down: Glyph = ChevronDown;               // more that way
 export const Choose: Glyph = ChevronsUpDown;          // opens a choice
-
-// Formatting.
-export const Bold: Glyph = BoldDrawing;                   // bold
-export const Italic: Glyph = ItalicDrawing;               // italic
-export const Underline: Glyph = UnderlineDrawing;         // underline
-export const Strikethrough: Glyph = StrikethroughDrawing; // strike
-export const Code: Glyph = CodeXml;                       // code
 
 // Nouns. A noun on a control means open or start that noun with this subject.
 export const Book: Glyph = BookOpen;                  // a bound work

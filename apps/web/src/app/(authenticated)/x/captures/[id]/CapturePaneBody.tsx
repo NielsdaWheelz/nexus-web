@@ -31,6 +31,7 @@ import { useSourceArrival } from "@/lib/reader/sourceArrival";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useWorkGuard } from "@/lib/unsavedWork";
 import { usePaneLayout } from "@/lib/panes/paneChrome";
+import { publishPaneScroll } from "@/lib/panes/paneScroll";
 import { MapRail, MAP_RAIL_WIDTH_PX } from "@/lib/documentReader/chrome/MapRail";
 import { destinationTarget, inspectionOfLocator, targetOfLocator, targetOfResolution, targetOfSourcePoint, targetOfLiveLocation, useReaderVisit } from "@/app/(authenticated)/media/[id]/hostedReader";
 import { PostActions, PostSaveReadFailure } from "@/app/(authenticated)/media/[id]/Embeds";
@@ -71,9 +72,10 @@ function CaptureReader({ id }: { readonly id: string }) {
   }), [id]);
   const reader = useDocumentReader(id, useMemo(() => ({ source, progress: null, entry: { fresh: null, cold: null, view: savedView }, host: {
     scrollport: (element: HTMLElement, geometryChanged: (reason: "Occlusion" | "Layout") => void) => {
+      const releaseScroll = publishPaneScroll(element);
       const releaseChrome = chrome.registerReaderScrollport(element);
       const releaseViewport = viewport.registerReaderScrollport(element, geometryChanged);
-      return () => { releaseChrome(); releaseViewport(); };
+      return () => { releaseScroll(); releaseChrome(); releaseViewport(); };
     },
     onIntent: (intent: { kind: "Navigate"; signal: AbortSignal | null } | { kind: "Read" }) => arrivalRef.current?.supersede({ preserveSignal: intent.kind === "Navigate" ? intent.signal : null, retireFailure: intent.kind === "Navigate" }),
     navigation: {

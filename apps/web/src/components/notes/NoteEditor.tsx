@@ -1,5 +1,4 @@
 "use client";
-import * as Icon from "@/lib/ui/icons";
 
 import { UNKNOWN_OUTCOME_REASON } from "@/lib/api/failure";
 import Button from "@/components/ui/Button";
@@ -227,14 +226,20 @@ export interface NoteEditorProps {
   onAskLibrarian?(): void;
 }
 
-// [mark, label, key]; the title spells the key as "⌘/Ctrl+B".
+// [mark, name, key, the mark shown as itself, its class]; the title spells the key as "⌘/Ctrl+B".
 const FORMATS = [
-  ["strong", "Bold", "Mod-b", Icon.Bold],
-  ["em", "Italic", "Mod-i", Icon.Italic],
-  ["underline", "Underline", "Mod-u", Icon.Underline],
-  ["strikethrough", "Strikethrough", "Shift-Mod-s", Icon.Strikethrough],
-  ["code", "Inline code", "Mod-e", Icon.Code],
+  ["strong", "Bold", "Mod-b", "B", styles.bold],
+  ["em", "Italic", "Mod-i", "I", styles.italic],
+  ["underline", "Underline", "Mod-u", "U", styles.underlined],
+  ["strikethrough", "Strikethrough", "Shift-Mod-s", "S", styles.struck],
+  ["code", "Inline code", "Mod-e", "code", styles.mono],
 ] as const;
+/** The nearest scrolling ancestor: where a placed tool must stay in view. */
+function scrollportOf(element: HTMLElement): HTMLElement | null {
+  let port = element.parentElement;
+  while (port && !/auto|scroll/.test(getComputedStyle(port).overflowY)) port = port.parentElement;
+  return port;
+}
 type Format = (typeof FORMATS)[number][0];
 const shortcut = (key: string) =>
   `⌘/Ctrl+${key.startsWith("Shift") ? "Shift+" : ""}${key.at(-1)!.toUpperCase()}`;
@@ -388,16 +393,18 @@ function NoteEditorContent(props: NoteEditorProps) {
     return intent?.row_id === editingField(state)?.row_id ? intent : null;
   };
   const toolbarNode = useRef<HTMLDivElement | null>(null);
-  /** The formatting toolbar sits under the selection's end, as the link dialog does, or above the selection when
-   * under would leave the nearest scrollport; it shifts left to stay inside the shell. A header's toolbar stays in flow. */
+  /** With a fine pointer the formatting toolbar stands above the selection, and under its end only when above would
+   * leave the nearest scrollport's padded top. A coarse pointer has the platform's own callout above, so there it sits
+   * under the selection's end, as the link dialog does, and above only when under would leave the scrollport. It
+   * shifts left to stay inside the shell. A header's toolbar stays in flow. */
   const placeToolbar = useCallback(() => {
     const node = toolbarNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
     if (!node || !view || !box || latest.current.header || view.state.selection.empty) return;
-    let port = shell.current!.parentElement;
-    while (port && !/auto|scroll/.test(getComputedStyle(port).overflowY)) port = port.parentElement;
-    const bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
+    const port = scrollportOf(shell.current!), bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
     const start = view.coordsAtPos(view.state.selection.from), end = view.coordsAtPos(view.state.selection.to), height = node.offsetHeight;
-    const above = end.bottom + 6 + height > bounds.bottom && start.top - 6 - height >= bounds.top;
+    const room = start.top - 6 - height - bounds.top;
+    const above = matchMedia("(any-pointer: fine)").matches ? room >= (port ? parseFloat(getComputedStyle(port).scrollPaddingTop) || 0 : 0)
+      : end.bottom + 6 + height > bounds.bottom && room >= 0;
     const left = Math.max(0, end.left - box.left);
     node.style.left = `${left}px`;
     node.style.top = `${above ? start.top - box.top - 6 - height : Math.max(0, end.bottom - box.top + 6)}px`;
@@ -412,6 +419,34 @@ function NoteEditorContent(props: NoteEditorProps) {
     observer.observe(shell.current);
     return () => {observer.disconnect(); toolbarNode.current = null;};
   }, [placeToolbar]);
+  const chooserNode = useRef<HTMLDivElement | null>(null);
+  /** The chooser stands at the end of its row's field: below it, or above when below would leave the nearest
+   * scrollport. It is held inside that scrollport vertically and inside the shell horizontally. */
+  const placeChooser = useCallback(() => {
+    const node = chooserNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
+    if (!node || !view || !box) return;
+    const row_id = referenceRef.current.getState()?.row_id ?? null;
+    const field = row_id !== null ? fieldById(view.state.doc, row_id) : editingField(view.state);
+    if (!field) return;
+    const bounds = scrollportOf(shell.current!)?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
+    const end = view.coordsAtPos(field.to), height = node.offsetHeight;
+    const top = end.bottom + height > bounds.bottom ? end.top - height : end.bottom;
+    const left = Math.max(0, end.left - box.left);
+    node.style.left = `${left}px`;
+    node.style.top = `${Math.max(bounds.top, Math.min(top, bounds.bottom - height)) - box.top}px`;
+    node.style.translate = `clamp(${-left}px, ${box.width - left}px - 100%, 0px)`;
+  }, []);
+  /** A shown chooser is placed when it mounts, and again when its scrollport scrolls, the shell reflows, or its own
+   * results change its height. */
+  const chooserRef = useCallback((node: HTMLDivElement | null) => {
+    chooserNode.current = node;
+    if (!node || !shell.current) return;
+    placeChooser();
+    const port = scrollportOf(shell.current), observer = new ResizeObserver(placeChooser);
+    observer.observe(shell.current); observer.observe(node);
+    port?.addEventListener("scroll", placeChooser, {passive: true});
+    return () => {observer.disconnect(); port?.removeEventListener("scroll", placeChooser); chooserNode.current = null;};
+  }, [placeChooser]);
   const referenceFor = (field: EditingField) => field.row_id !== null
     ? latest.current.projection?.reference(field.row_id) ?? null : latest.current.reference ?? null;
   function restoreReference(view: EditorView, row_id: string | null, base: NoteBody) {
@@ -1659,7 +1694,9 @@ function NoteEditorContent(props: NoteEditorProps) {
     const view = viewRef.current;
     if (raw === undefined || !view || view.composing) return;
     replaceDoc(view, docFromBody(bodyText(raw)), reference.state?.row_id ?? undefined);
-  }, [reference.state?.raw, reference.state?.row_id]);
+    // the field's end moved with the query.
+    placeChooser();
+  }, [reference.state?.raw, reference.state?.row_id, placeChooser]);
 
   const focusSerial = props.focus?.serial;
   useLayoutEffect(() => {
@@ -1781,7 +1818,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
       })}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
-        <div data-reference-chooser data-collection-constrained={props.header || undefined}>
+        <div ref={props.header ? undefined : chooserRef} className={props.header ? undefined : styles.chooser} data-reference-chooser data-collection-constrained={props.header || undefined}>
           <ReferencePicker
             input={reference}
             returnFocus={() => viewRef.current?.dom ?? null}
@@ -1796,20 +1833,19 @@ function NoteEditorContent(props: NoteEditorProps) {
           role="toolbar"
           aria-label="Text formatting"
         >
-          {FORMATS.map(([name, label, key, Glyph]) => (
+          {FORMATS.map(([name, label, key, mark, face]) => (
             <Button
               key={name}
-              iconOnly
-              icon={<Glyph aria-hidden="true" />}
+              className={cx(styles.mark, face)}
               aria-label={label}
               aria-pressed={active.has(name)}
               disabled={presentation === "code"}
               tooltip={{text: `${label} (${shortcut(key)})`}}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => format(name)}
-            />
+            >{mark}</Button>
           ))}
-          <Button iconOnly icon={<Icon.Code aria-hidden="true" />} aria-label="Code presentation"
+          <Button className={cx(styles.mark, styles.mono)} aria-label="Code presentation"
             aria-pressed={presentation === "code"}
             tooltip={{text:"Code presentation"}} onMouseDown={event=>event.preventDefault()} onClick={()=>{
               const view=viewRef.current;if(!view||!latest.current.editable||inputMode.current!=="text"||view.composing||compositionBase.current!==null)return;
@@ -1820,16 +1856,15 @@ function NoteEditorContent(props: NoteEditorProps) {
                 warn(ACROSS_FIELDS);return;
               }
               presentBody(view,field,field.node.attrs.presentation==="code"?"prose":"code");
-            }} />
+            }}>block</Button>
           <Button
-            iconOnly
-            icon={<Icon.Link aria-hidden="true" />}
+            className={cx(styles.mark, styles.link)}
             disabled={presentation === "code"}
             aria-label="Link"
             tooltip={{text: "Link (⌘/Ctrl+Shift+K)"}}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLink}
-          />
+          >link</Button>
         </div>
       ) : null}
       {link && linkVisible ? (

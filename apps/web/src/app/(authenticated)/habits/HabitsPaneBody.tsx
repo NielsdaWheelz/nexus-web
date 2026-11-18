@@ -1,22 +1,24 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import ResourceRow from "@/components/ui/ResourceRow";
 import Button from "@/components/ui/Button";
-import HabitYear from "@/components/work/HabitYear";
+import HabitYear, { HabitYearLegend } from "@/components/work/HabitYear";
 import { habitDateLabel } from "@/lib/localDate";
 import { useAccountToday } from "@/lib/notes/accountDay";
 import { useAuthoredPages } from "@/lib/notes/hooks";
 import { useWorkHistory, useOpenHabitHistory, WorkHistoryContext } from "@/lib/notes/work";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { usePaneChrome } from "@/lib/panes/paneChrome";
+import { usePaneChrome, usePaneTitleYield } from "@/lib/panes/paneChrome";
 import { usePaneUrlState } from "@/lib/panes/usePaneUrlState";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
+import { readerType } from "@/lib/reader/typography";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-import styles from "@/components/work/dailyWork.module.css";
+import styles from "./habits.module.css";
 
 export default function HabitsPaneBody() {
   const today=useAccountToday();
@@ -30,19 +32,25 @@ export default function HabitsPaneBody() {
   const {history,error}=useWorkHistory();
   const open=useOpenHabitHistory();
   usePaneReturnReady(read.data!==null || read.error!==null);
-  usePaneChrome({displayTitle:"habits",navigation:year === null ? undefined : {label:"habit years",content:<div className={styles.controls}>
-    <Button aria-label="previous year" disabled={year<=1} onClick={()=>setYear(year-1)}>previous year</Button>
-    <span>{year}</span>
-    <Button aria-label="next year" disabled={year>=Math.max(year,...(currentYear === null ? [] : [currentYear]),...(read.data?.rows.flatMap(row=>row.resource.work?.habit_dates.map(date=>Number(date.slice(0,4))) ?? []) ?? []))} onClick={()=>setYear(year+1)}>next year</Button>
-    <Button disabled={currentYear === null} onClick={()=>setYear(currentYear)}>today</Button>
-  </div>}});
+  const type=readerType(useReaderProfile());
+  const title=useRef<HTMLParagraphElement>(null);
+  usePaneTitleYield(title);
+  usePaneChrome({displayTitle:"habits"});
   const rows=useMemo<CollectionRowView[]>(()=> (read.data?.rows ?? []).map(({resource})=>({
     id:resource.ref,kind:"note",presentation:"Details",title:{text:resource.body_text||"empty note"},
     primary:{kind:"link",href:`/notes/${resource.ref.slice(11)}`},resourceRef:canonicalResourceRef({scheme:"note_block",id:resource.ref.slice(11)}),
     contributors:[],publicationDate:null,context:null,selected:false,
   })),[read.data]);
   if(error)throw error;
-  return <WorkHistoryContext.Provider value={history}>
+  return <WorkHistoryContext.Provider value={history}><div {...type}>
+    <div className={styles.head}>
+      <p ref={title} className={styles.title}>{year === null ? "Habits" : `Habits, ${year}`}</p>
+      {year === null ? null : <div role="group" aria-label="habit years" className={styles.step}>
+        <Button aria-label={`previous year, ${year-1}`} disabled={year<=1} onClick={()=>setYear(year-1)}>{year-1}</Button>
+        <Button aria-label={`next year, ${year+1}`} disabled={year>=Math.max(year,...(currentYear === null ? [] : [currentYear]),...(read.data?.rows.flatMap(row=>row.resource.work?.habit_dates.map(date=>Number(date.slice(0,4))) ?? []) ?? []))} onClick={()=>setYear(year+1)}>{year+1}</Button>
+        <Button disabled={currentYear === null} onClick={()=>setYear(currentYear)}>today</Button>
+      </div>}
+    </div>
     {today === null ? <AccountCalendarUnavailable /> : null}
     <CollectionView returnScope="Habits" rows={rows} ariaLabel="habits" status={read.data!==null?"ready":read.error!==null?"error":"loading"}
       error={<AuthoredReadFailure {...read} noun="habits" />} notice={read.data!==null && read.error!==null?<AuthoredReadFailure {...read} noun="habits" />:undefined}
@@ -62,5 +70,6 @@ export default function HabitsPaneBody() {
             <Button data-habit-history="true" disabled={!history || start === null} onClick={()=>{if(history && start !== null)open(resource.ref,start,history);}}>habit history</Button>
           </>}} />;
       }} />
-  </WorkHistoryContext.Provider>;
+    <div className={styles.foot}><HabitYearLegend /></div>
+  </div></WorkHistoryContext.Provider>;
 }

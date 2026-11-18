@@ -1,41 +1,59 @@
 "use client";
 
-// The local account database owns the index online and offline. Pages use one
-// title/ref ordering; filtering describes only the loaded bounded prefix.
+// The register. The local account database owns it online and offline: undated pages in
+// the query's ascii-folded title/ref order, a head on each letter's run, and above them
+// the undated pages this device opened last. Filtering describes only the loaded prefix.
 import * as Icon from "@/lib/ui/icons";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { pageTitle } from "@nexus/authored/queries";
 import CollectionView from "@/components/collections/CollectionView";
 import AuthoredReadFailure from "@/components/notes/AuthoredReadFailure";
 import { Fact } from "@/components/feedback/Fact";
 import Button from "@/components/ui/Button";
-import ButtonLink from "@/components/ui/ButtonLink";
-import Input from "@/components/ui/Input";
 import { presentNote } from "@/lib/collections/presenters/note";
-import { useAccountToday } from "@/lib/notes/accountDay";
-import AccountCalendarUnavailable from "@/components/notes/AccountCalendarUnavailable";
-import { useAuthoredPages } from "@/lib/notes/hooks";
+import { useAuthoredPages, useAuthoredQuery } from "@/lib/notes/hooks";
 import { usePaneChrome } from "@/lib/panes/paneChrome";
 import { matchesPaneFilterQuery, usePaneFilterRows } from "@/lib/panes/paneFilterRows";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
-import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
-import { workspaceTargetActivationIntent, type TargetActivationEvent } from "@/lib/ui/targetActivation";
+import { useReaderProfile } from "@/lib/reader/ReaderProfileContext";
+import { readerType } from "@/lib/reader/typography";
+import { useRecent } from "@/lib/recent/store";
 import { usePaneReturnReady, usePaneScrollRetention } from "@/lib/workspace/paneReturnMemento";
-import type { WorkspaceTargetActivationRequest } from "@/lib/workspace/targetActivation";
-import styles from "./notes.module.css";
+import styles from "./NotesPaneBody.module.css";
 
 const UNIT = { singular: "page", plural: "pages" };
 
+/** sqlite's NOCASE folds ascii alone; a head under any wider fold would split a run. */
+function letter(title: string): string {
+  const first = String.fromCodePoint(title.codePointAt(0)!);
+  return first >= "a" && first <= "z" ? first.toUpperCase() : first;
+}
+
 export default function NotesPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "NotesPaneBody");
-  const today = useAccountToday();
+  const type = readerType(useReaderProfile());
   const read = useAuthoredPages({ kind: "pages", cursor: null, limit: 100 });
   const complete = read.data !== null && read.data.next_cursor === null;
   const rows = useMemo(() => (read.data?.rows ?? []).flatMap(({ resource }) => resource.kind === "page"
     ? [presentNote({ id: resource.ref.slice("page:".length), title: pageTitle(resource.title ?? "", resource.local_date) })] : []), [read.data]);
+  const recent = useRecent().snapshot;
+  const recentRefs = useMemo(() => (recent?.entries ?? []).flatMap(({ target }) =>
+    target.kind === "resource_ref" && target.ref.startsWith("page:") ? [target.ref] : []), [recent]);
+  // Sorted, the query keeps its identity while only the recent order moves.
+  const opened = useAuthoredQuery(recentRefs.length ? { kind: "resolve", refs: [...recentRefs].sort() } : null);
+  const openedRows = useMemo(() => {
+    const pages = new Map((opened.data?.rows ?? []).flatMap(({ resource }) =>
+      resource.kind === "page" && resource.local_date === null ? [[resource.ref, resource] as const] : []));
+    return recentRefs.flatMap(ref => {
+      const page = pages.get(ref);
+      const id = ref.slice("page:".length);
+      return page ? [{ ...presentNote({ id, title: pageTitle(page.title ?? "", null) }), id: `recent:${id}` }] : [];
+    }).slice(0, 8);
+  }, [opened.data, recentRefs]);
+  const listed = useMemo(() => [...openedRows, ...rows], [openedRows, rows]);
   usePaneReturnReady(read.data !== null || read.error !== null);
-  usePaneScrollRetention(rows);
+  usePaneScrollRetention(listed);
   const filter = usePaneFilterRows({
     sourceKey: "Notes.Pages",
     getRowStatus: query => {
@@ -45,8 +63,11 @@ export default function NotesPaneBody() {
         : { kind: read.error === null ? "Partial" : "Failed", visibleCount, loadedCount: rows.length, unit: UNIT };
     },
   });
+  const filtering = filter.query.trim() !== "";
   const visible = rows.filter(row => matchesPaneFilterQuery(filter.query, [row.title.text]));
   usePaneChrome({
+    primaryAction: { kind: "link", id: "NewPage", label: "New page", icon: <Icon.Add aria-hidden="true" />, href: "/pages/new",
+      onActivate: event => activateTargetLink({ event, runtime, target: { href: "/pages/new" }, entry: { kind: "ComposePage", title: "" } }) },
     query: { kind: "Collation", collation: {
       words: { label: "filter pages", value: filter.query, applied: filter.query,
         onChange: filter.onQueryChange, onClear: filter.clearQuery, standing: false, onSubmit: null,
@@ -56,47 +77,29 @@ export default function NotesPaneBody() {
     header: { kind: "Section", meta: complete ? { kind: "Count", value: visible.length, of: rows.length, unit: "page" } : { kind: "Pending" } },
   });
 
-  const title = useResourceDraft("Notes.NewPageTitle", () => "");
-  const titleInput = useRef<HTMLInputElement>(null);
-  const setTitle = title.set;
-  useEffect(() => { if (titleInput.current) setTitle(titleInput.current.value); }, [setTitle]);
-  const todayHref = today === null ? null : `/daily/${today}`;
-  const openToday = (event: TargetActivationEvent) => activateTargetLink({ event, runtime, target: todayHref === null ? null : { href: todayHref } });
-  const submit = (fork: boolean) => {
-    const request: WorkspaceTargetActivationRequest = {
-      originPaneId: runtime.paneId, target: { href: "/pages/new" },
-      disposition: { kind: fork ? "Fork" : "Follow" },
-      ...(title.read() ? { entry: { kind: "ComposePage", title: title.read() } } : {}),
-    };
-    const result = runtime.activateTarget(request);
-    if (result.kind !== "Cancelled") title.set("");
-    return result;
-  };
-  const submitGesture = (event: TargetActivationEvent) => {
-    const activation = workspaceTargetActivationIntent(event);
-    if (activation.kind === "Consume") event.preventDefault();
-    else if (activation.kind === "Open" && activation.intent === "new_pane") { event.preventDefault(); submit(true); }
-  };
+  const runStarts = new Set<string>();
+  let previous: string | null = null;
+  for (const row of visible) {
+    const head = letter(row.title.text);
+    if (head !== previous) runStarts.add(row.id);
+    previous = head;
+  }
   const failure = <AuthoredReadFailure {...read} noun="pages"/>;
-  const emptyTitle = filter.query.trim()
+  const emptyTitle = filtering
     ? complete ? "no pages match this filter." : "no loaded page matches this filter."
-    : complete ? "no pages yet." : "no pages loaded yet.";
-  return <CollectionView
-    returnScope="Notes.Pages" rows={visible} ariaLabel="Notes"
-    status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
-    collectionBusy={read.data === null && read.error === null}
-    anchorKey={filter.query.trim()}
-    notice={filter.query.trim() && !complete ? <p>filter applies to loaded pages.</p> : undefined}
-    error={read.data === null ? failure : undefined}
-    empty={<Fact line={{ fact: emptyTitle }} />}
-    footer={!complete && read.data !== null ? <Button aria-busy={read.pending} onClick={read.more}>show more pages</Button> : undefined}
-    toolbar={<>
-      <form className={styles.toolbar} onSubmit={event => { event.preventDefault(); submit(false); }} onKeyDown={submitGesture}>
-        <Input ref={titleInput} value={title.value} onChange={event => title.set(event.currentTarget.value)} onInput={event => title.set(event.currentTarget.value)} placeholder="New page" aria-label="New page title" style={{ flex: 1 }} />
-        <Button emphasis="strong" iconOnly type="submit" aria-label="Create page" onClick={submitGesture} icon={<Icon.Add aria-hidden="true" />} />
-      </form>
-      {todayHref === null ? <AccountCalendarUnavailable /> : null}
-      <ButtonLink {...(todayHref === null ? { href: null, "aria-disabled": true } as const : { href: todayHref })} data-workspace-rich-target="true" onClick={openToday} onKeyDown={openToday}>Today</ButtonLink>
-    </>}
-  />;
+    : complete ? "no pages yet. daily pages stay in the journal." : "no pages loaded yet.";
+  return <div {...type} className={styles.register}>
+    <CollectionView
+      returnScope="Notes.Pages" rows={filtering ? visible : [...openedRows, ...visible]} ariaLabel="Notes"
+      status={read.data !== null ? "ready" : read.error !== null ? "error" : "loading"}
+      collectionBusy={read.data === null && read.error === null}
+      anchorKey={filter.query.trim()}
+      notice={filtering && !complete ? <p>filter applies to loaded pages.</p> : undefined}
+      error={read.data === null ? failure : undefined}
+      empty={<Fact line={{ fact: emptyTitle }} />}
+      footer={!complete && read.data !== null ? <Button aria-busy={read.pending} onClick={read.more}>show more pages</Button> : undefined}
+      headBefore={row => row.id === openedRows[0]?.id ? <h3 className={styles.recent}>opened here</h3>
+        : runStarts.has(row.id) ? <h3 className={styles.letter}>{letter(row.title.text)}</h3> : null}
+    />
+  </div>;
 }

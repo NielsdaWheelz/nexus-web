@@ -25,6 +25,7 @@ import PaneFilterRowsStatus from "@/components/workspace/PaneFilterRowsStatus";
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import { litWords } from "@/lib/panes/collation";
+import { publishPaneScroll } from "@/lib/panes/paneScroll";
 import { isEditableTarget } from "@/lib/ui/eventTarget";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { StageAnchor } from "@/components/feedback/Slips";
@@ -503,6 +504,12 @@ function PaneView({
     if (!isMobile || !isActive || !element) return;
     return mobileViewport.registerContentSurface(element);
   }, [isActive, isMobile, mobileViewport]);
+  // the standard body is its own scroll port; reader and librarian routes publish theirs.
+  useLayoutEffect(() => {
+    const element = scrollportRef.current;
+    if (route.bodyMode !== "standard" || !element) return;
+    return publishPaneScroll(element);
+  }, [route.bodyMode]);
   // The expandable slot never reduces its own budget. Stationary chrome and
   // actual viewport obstructions consume space once, including resized keyboards.
   const measureControls = useCallback(() => {
@@ -575,6 +582,7 @@ function PaneView({
       data-active={isActive}
       data-mobile={isMobile}
       data-reader-composition={readerComposition || undefined}
+      data-controls-shown={hasVisibleControls || undefined}
       data-maximized={isMaximized || undefined}
       tabIndex={-1}
       onClickCapture={activateAnchor}

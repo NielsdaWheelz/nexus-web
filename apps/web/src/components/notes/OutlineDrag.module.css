@@ -2,12 +2,14 @@
   position: relative;
 }
 
+/* the drop line follows the pointer at once. */
 .indicator {
   position: absolute;
   z-index: 3;
   height: 2px;
   background: var(--accent);
   pointer-events: none;
+  transition: top var(--duration-instant), left var(--duration-instant), width var(--duration-instant);
 }
 
 .indicator::before {
@@ -23,19 +25,30 @@
   transform: translate(-50%, -50%);
 }
 
+/* the ghost is the row's words in the row's own type, set inline from the row; then the parent it would
+   land under, in the apparatus voice. each is one line. */
 .ghost {
-  display: inline-block;
+  display: inline-grid;
   max-width: 40ch;
   padding: var(--space-1) var(--space-2);
-  overflow: hidden;
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-3);
+  border: var(--stroke-hairline) solid transparent;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--surface-canvas) 88%, transparent);
+  box-shadow: var(--shadow-1);
   color: var(--ink);
-  font: inherit;
+}
+
+.ghost > span {
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.under {
+  color: var(--ink-muted);
+  font: var(--apparatus-font);
+  letter-spacing: var(--tracking-wider);
 }
 
 .ghost[data-mirror="true"] {
@@ -60,6 +73,10 @@
 
   .ghost {
     background: Canvas;
+    color: CanvasText;
+  }
+
+  .under {
     color: CanvasText;
   }
 

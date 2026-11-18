@@ -1,7 +1,6 @@
-.work {
-  padding: var(--space-4) var(--space-6);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-}
+/* The agenda stands on the paper in the reader's type (the journal's role); no size is declared here.
+   Its labels, tails and receipts are apparatus. Rows are one pitch: the sign and the menu each take one line. */
+.work { padding-inline: var(--space-6); }
 .header,
 .capture,
 .controls {
@@ -10,19 +9,84 @@
   align-items: center;
   gap: var(--space-2);
 }
-.header { margin-block-end: var(--space-2); }
-.capture { margin-block: var(--space-3); }
+.header,
+.add,
+.tail,
+.receiptLine,
+.completedLabel {
+  font: var(--apparatus-font);
+  letter-spacing: var(--tracking-wider);
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.header,
+.add,
+.receipt,
+.completed {
+  --control-font-family: var(--font-mono);
+  --control-font-size: var(--text-2xs);
+}
+.habits { margin-inline-start: auto; }
+.chevron {
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+.disclosure:is(:hover, :focus-visible, [aria-expanded="false"]) .chevron { opacity: 1; }
+.disclosure:hover .chevron { color: var(--ink); }
 .capture input { flex: 1; min-width: 0; }
 .row {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: var(--space-2);
-  padding-block: var(--space-2);
 }
+.sign,
+.menu {
+  flex: none;
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  block-size: 1lh;
+}
+.sign { inline-size: var(--outline-sign); }
 .writing { flex: 1; min-width: 0; }
+.tail { flex: none; }
+/* The receipt keeps the row's one line in the paper's type; only its words are apparatus. */
+.receipt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 1lh;
+  padding-inline-start: calc(var(--outline-sign) + var(--space-2));
+}
+.receiptLine {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.receipt .undo {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
 .muted { color: var(--ink-muted); font-size: var(--text-sm); }
-.completed { padding-inline: var(--space-6); margin-block-start: var(--space-4); }
-.completed h3 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--ink-muted); }
+.completed { margin-block-start: .5lh; --control-min-size: 0; }
+.completedLabel { margin-inline-end: var(--space-2); }
+.completedList { display: inline; margin: 0; padding: 0; list-style: none; }
+.completedItem { display: inline; }
+.completedItem a { color: inherit; }
+.dot { color: var(--ink-faint); }
+@media not (any-pointer: coarse) {
+  .menu,
+  .clear {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-glide);
+  }
+  .row:is(:hover, :focus-within) .menu,
+  .menu:has([aria-expanded="true"]),
+  .completedItem:is(:hover, :focus-within) .clear { opacity: 1; }
+}
 .calendar { display: grid; gap: var(--space-3); }
 .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-1); }
 .weekday { text-align: center; font-size: var(--text-sm); color: var(--ink-muted); }

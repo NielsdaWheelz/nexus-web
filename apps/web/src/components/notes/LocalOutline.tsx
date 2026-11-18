@@ -20,7 +20,6 @@ import {OutlineHistoryAllowance} from "@/lib/notes/outlineHistoryAllowance";
 import {WorkHistoryContext} from "@/lib/notes/work";
 import {WorkConversionError, WorkJoinError, WorkUnavailableError} from "@nexus/authored/types";
 import {usePaneAnchorGeometry, usePaneBeforeLayout, usePaneInputLease, usePaneRevealAnchor, usePaneVisitRetained} from "@/lib/workspace/paneReturnMemento";
-import type {PaneHeaderEditor} from "@/lib/panes/paneChrome";
 import {usePaneOutlineCommands} from "@/lib/panes/paneChrome";
 import {useNativeKeyboardVisibility} from "@/lib/ui/useKeyboardInset";
 import {ClipboardWriteUnavailableError} from "@/lib/ui/copyText";
@@ -72,7 +71,7 @@ export type OutlineRootMetadata =
   | {ref: string; known: false; resource: null; store_revision: null}
   | {ref: string; known: true; resource: ResourceProjection | null; store_revision: string};
 export interface LocalOutlineRoot {
-  rootEditor: PaneHeaderEditor | null;
+  rootEditor: ReactNode | null;
   rootTitle: string | null;
   rootReady: boolean;
   rootRead: OutlineRootMetadata;
@@ -91,7 +90,7 @@ function OutlineRoot(props: Props) {return useLocalOutlineRoot(props).view;}
 /** The route and editing host consume one root read; descendants retain their
  * own collectors. Canonical root metadata survives paging and refresh failure. */
 export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS, apiRef, filter = "", occurrencePrefix = rootRef, entering, onControllerReady, childrenVisible = true,
-  attached = true, historyAllowance = null, presentationAllowance = null, rootPresentation = "header", initialRows = 32}: Props): LocalOutlineRoot {
+  attached = true, historyAllowance = null, presentationAllowance = null, rootPresentation = "paper", initialRows = 32}: Props): LocalOutlineRoot {
   const runtime = useWritingRuntime();
   const guard = useWorkGuard();
   const accountId = useAuthoredAccountId();
@@ -146,17 +145,14 @@ export function useLocalOutlineRoot({rootRef, rootField, prelude = EMPTY_INTENTS
   useLayoutEffect(() => {onControllerReady?.(controller); return () => onControllerReady?.(null);}, [controller, onControllerReady]);
   useLayoutEffect(() => {controller?.refresh();}, [controller, childrenVisible]);
   const wrap = (node: ReactNode) => <SharedOutline value={controller}><ResourceBranch value={branch}>{node}</ResourceBranch></SharedOutline>;
-  const rootEditor = !presented ? null : presentation.rootEditor;
-  const published = rootEditor === null ? null : rootEditor.kind === "Inline"
-    ? {...rootEditor, content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)}
-    : {...rootEditor, control: wrap(rootEditor.control), content: wrap(rootEditor.content), feedback: rootEditor.feedback === null ? null : wrap(rootEditor.feedback)};
+  const rootEditor = presented && presentation.rootEditor !== null ? wrap(presentation.rootEditor) : null;
   const view = current && presented ? <div hidden={!childrenVisible}><MountedOutline key={current.id} controller={current.controller} pending={pending}
     rootRef={rootRef} rootField={configuredField} filter={filter} occurrencePrefix={occurrencePrefix} failure={failure} setFailure={setFailure}
     received={received} onReady={setEditor}/></div> : presented ? <Ruling/> : null;
   if (current && painted !== current.controller && editor === current.controller &&
     [...current.controller.requests.keys()].every(id => current.controller.windows.has(id) || current.controller.branchRead(id).error !== null)) setPainted(current.controller);
   const read = controller?.branchRead(input.root_id);
-  return {rootEditor: published, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read?.error ?? null,
+  return {rootEditor, rootTitle: presentation.rootTitle, rootReady: presentation.rootReady, rootRead, error: read?.error ?? null,
     retry: () => read?.retry(), ready: current !== null && painted === current.controller, controller,
     retainSession: controller?.retainsSession() ?? false, showTitle: presentation.showTitle, view};
 }

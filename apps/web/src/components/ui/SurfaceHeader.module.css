@@ -10,8 +10,6 @@
   column-gap: var(--space-3);
   min-block-size: var(--pane-chrome-header-height);
   padding-inline: var(--space-4);
-  border-block-end: var(--stroke-hairline) solid var(--pane-header-rule-ink, var(--edge-subtle));
-  background: var(--surface-2);
   cursor: grab;
 }
 
@@ -101,11 +99,11 @@
   }
 }
 
-/* The Solar's Ithildin rule: one vine stroke on the separator, quiet until
-   its pane holds focus, when it silvers ("where am I typing?" across nine
-   panes). Header rules are the Whisper tier (.5); the pseudos hang over the
-   border and take no space, so the dimmer silences them without moving a
-   pixel. */
+/* The Solar's Ithildin rule: one vine stroke at the header's foot, lit by
+   focus, never by scroll; it silvers when its pane holds focus ("where am I
+   typing?" across nine panes). Header ornaments are the Whisper tier (.5);
+   the pseudos hang below the header and take no space, so the dimmer
+   silences them without moving a pixel. */
 :global([data-theme="elvish"]) .header {
   --ornament: calc(0.5 * var(--ornament-root));
   position: relative;
@@ -168,16 +166,6 @@
     filter var(--duration-base) var(--ease-bloom);
 }
 
-/* The lit vine is the focused pane's only separator; the hairline returns
-   with the dimmer (devtools, forced colours, more contrast, print). */
-:global([data-theme="elvish"] [data-pane-shell]:focus-within) .header {
-  border-block-end-color: color-mix(
-    in srgb,
-    var(--edge-subtle) calc((1 - var(--ornament-root)) * 100%),
-    transparent
-  );
-}
-
 /* The transparent frame retains measured geometry while its header retreats. */
 .mobileFrame {
   position: fixed;
@@ -197,8 +185,23 @@
   min-block-size: calc(var(--pane-chrome-header-height) + var(--viewport-safe-top));
   padding: var(--viewport-safe-top) max(var(--space-2), var(--viewport-safe-right)) 0
     max(var(--space-2), var(--viewport-safe-left));
-  background: var(--surface-2);
-  border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
+  background: var(--surface-canvas);
+}
+
+/* The phone header is the chrome's foot when no control row is shown. */
+:global([data-pane-shell]:not([data-controls-shown])) .mobile::after {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: var(--stroke-hairline);
+  background: var(--pane-header-rule-ink, transparent);
+  content: "";
+  pointer-events: none;
+  transition: background-color var(--duration-fast) var(--ease-glide);
+}
+
+:global([data-pane-shell][data-scrolled]:not([data-controls-shown])) .mobile::after {
+  background: var(--pane-header-rule-ink, var(--edge-subtle));
 }
 
 .mobile .navigation,
@@ -247,10 +250,14 @@
 
 @media (forced-colors: active) {
   .header,
-  .mobile,
-  :global([data-theme="elvish"] [data-pane-shell]:focus-within) .header {
-    border-block-end-color: CanvasText;
+  .mobile {
     background: Canvas;
+  }
+
+  :global([data-pane-shell]:not([data-controls-shown])) .mobile::after,
+  :global([data-pane-shell][data-scrolled]:not([data-controls-shown])) .mobile::after {
+    forced-color-adjust: none;
+    background: CanvasText;
   }
 }
 
