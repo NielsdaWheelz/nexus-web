@@ -13,6 +13,7 @@ import {
   useState,
   useSyncExternalStore,
   type FocusEvent,
+  type ReactNode,
 } from "react";
 import { useOutcome } from "@/components/feedback/Feedback";
 import { useActiveRegion, useTransportVerbs } from "@/components/feedback/stage";
@@ -214,6 +215,7 @@ function MediaRoute({ id }: { readonly id: string }) {
   const operation = metadata?.operation;
   const titleJob = operation?.purpose === "title" ? operation.job_id : null;
   const speak = useActiveRegion();
+  const isMobile = useIsMobileViewport();
   const { profile } = useReaderContext();
   const record = usePaneFreeServerValue({
     key: `/media/${id}`,
@@ -256,14 +258,16 @@ function MediaRoute({ id }: { readonly id: string }) {
     <DownloadedEpisode key={saved.manifest.package_id} saved={saved} onIntent={pinSaved} />
   </div>;
   const viewCurrent = { label: "view current version", commandKey: "ViewCurrentVersion", run: () => switchView("live") };
+  // a source this device can't open: one port scrolls its fact and its retained quotes and notes.
+  const unopened = (fact: ReactNode) => <div className={styles.stateScrollport} data-mobile={isMobile} ref={paneScrollRef}>
+    {fact}<LocalAnnotations mediaId={id} />
+  </div>;
   if (view === "downloaded" && !savedReady) return saved.kind === "Loading" ? <Ruling />
     : saved.kind === "Failed" ? <Fact line={{ fact: "couldn’t open the downloaded copy." }} speak={speak}
       verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, viewCurrent]} />
     : <Fact line={{ fact: "this episode isn’t downloaded." }} speak={speak} verbs={[viewCurrent]} />;
-  if (observation.status === "ready" && observation.observation === null) return <>
-    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />
-    <LocalAnnotations mediaId={id} />
-  </>;
+  if (observation.status === "ready" && observation.observation === null) return unopened(
+    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />);
   if (record.status === "ready") return <div className={styles.layout}>
     {savedReady ? <div className={styles.savedSwitch}><Button onClick={() => switchView("downloaded")}>view downloaded copy</Button></div> : null}
     {record.error !== null ? <div className={styles.state}><Failed error={record.error} noun="the updated details"
@@ -275,24 +279,15 @@ function MediaRoute({ id }: { readonly id: string }) {
     line={{ fact: "couldn’t open the downloaded copy.", reason: "saved files and listening history are kept." }}
     verbs={[{ label: "retry", commandKey: "RetryDownloadedCopy", run: saved.retry }, { label: "manage downloads", href: "/downloads",
       onActivate: (event) => activateTargetLink({ event, runtime, target: { href: "/downloads" } }) }]} />;
-  if (failure !== null && failure.status === 426) return <>
-    <Failed error={failure} noun="this item’s details" />
-    <LocalAnnotations mediaId={id} />
-  </>;
-  if (gone) return <>
-    <Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />
-    <LocalAnnotations mediaId={id} />
-  </>;
+  if (failure !== null && failure.status === 426) return unopened(<Failed error={failure} noun="this item’s details" />);
+  if (gone) return unopened(<Fact line={{ fact: "this item isn’t available to you." }} speak={speak} />);
   const summary = catalog.data === null ? null : catalogMedia(catalog.data, id);
-  if (summary !== null) return <><SavedMedia summary={summary} record={record} /><LocalAnnotations mediaId={id} /></>;
-  if (catalogOnly) return <>
-    <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />
-    <LocalAnnotations mediaId={id} />
-  </>;
-  return record.status === "failed" ? <>
-    <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
-    <LocalAnnotations mediaId={id} />
-  </> : <ReaderRuling profile={profile} />;
+  if (summary !== null) return unopened(<SavedMedia summary={summary} record={record} />);
+  if (catalogOnly) return unopened(
+    <UnavailableSavedMedia error={catalog.data !== null ? { code: "E_CATALOG_COVERAGE" } : catalog.error ?? { code: "E_CATALOG_UNAVAILABLE" }} />);
+  return record.status === "failed"
+    ? unopened(<Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />)
+    : <ReaderRuling profile={profile} />;
 }
 
 /** Writing about a source this device can't open: its quotes and notes stay local and editable. */
@@ -326,7 +321,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
   });
   usePaneReturnReady(true);
   const subject = { kind: "Stored" as const, summary };
-  return <div className={styles.stateScrollport} ref={paneScrollRef}><div className={styles.state}>
+  return <div className={styles.state}>
     <h1><MediaTitle subject={subject} /></h1>
     <p><ResourceMetadata parts={bibliographyMetadata(selectMediaAuthors(summary.contributors), summary.original_published_date)} linkSource={false} /></p>
     {summary.part_source ? <p>from {summary.part_source.title}</p> : null}
@@ -335,7 +330,7 @@ function SavedMedia({ summary, record }: { readonly summary: MediaSummary; reado
     {!remoteReady() ? <Fact line={{ fact: "this text isn’t on this device." }} speak={speak} />
       : record.status === "failed" ? <Failed error={record.error} noun="this item’s details" retry={{ run: record.refetch, busy: record.retrying }} />
       : <Ruling />}
-  </div></div>;
+  </div>;
 }
 
 /** The pane over a read record: its route renders it only once the record is ready. */

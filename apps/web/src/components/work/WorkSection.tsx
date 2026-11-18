@@ -139,7 +139,8 @@ export default function WorkSection({history}:{history:OutlineHistory}) {
           return completion?.phase === "receipt"
             ? <Receipt key={resource.ref} completion={completion} history={history} step={step} recover={() => signOf([resource.ref, ...around(index)])} />
             : <WorkRow key={resource.ref} resource={resource} retained={!present.has(resource.ref)} today={today} history={history} hold={hold}
-              completion={completion} step={step} onCompleting={committed => {if (today !== null) start(resource, today, committed);}} returnFocus={after} />;
+              completion={completion} step={step} onCompleting={committed => {if (today !== null) start(resource, today, committed);}} returnFocus={after}
+              recover={() => list.current?.querySelector<HTMLElement>(`[data-work-ref="${CSS.escape(resource.ref)}"] [data-receipt-undo]`) ?? after()} />;
         })}
       </ResourceList>
       {read.data?.next_cursor !== null && read.data !== null ? <Button onClick={read.more} aria-busy={read.pending}>show more work</Button> : null}
@@ -179,7 +180,7 @@ function Receipt({completion, history, step, recover}:{
   };
   return <li ref={root} className={styles.receipt} data-work-ref={ref} data-collection-row-id={ref}>
     <span className={styles.receiptLine}>completed<span aria-hidden="true"> · </span>{line}</span>
-    <Button className={styles.undo} aria-label={`undo: ${line}`} aria-busy={completion.undoing} onClick={undo}>undo</Button>
+    <Button className={styles.undo} data-receipt-undo="" aria-label={`undo: ${line}`} aria-busy={completion.undoing} onClick={undo}>undo</Button>
   </li>;
 }
 
@@ -212,10 +213,12 @@ function TaskCapture({history,onClose}:{history:OutlineHistory;onClose():void}) 
   </form>;
 }
 
-function WorkRow({resource:initial,retained,today,history,hold,completion,step,onCompleting,returnFocus}:{
+function WorkRow({resource:initial,retained,today,history,hold,completion,step,onCompleting,returnFocus,recover}:{
   resource:ResourceProjection;retained:boolean;today:string|null;history:OutlineHistory;
   hold(resource:ResourceProjection,keep:boolean):void;completion:Completion | undefined;step:Step;
   onCompleting(committed:Promise<LocalCommit | null>):void;returnFocus():HTMLElement|null;
+  /** Where focus goes when the focused control leaves with the row: its own receipt's undo, in place, else the next sign. */
+  recover():HTMLElement|null;
 }) {
   const read = useAuthoredQuery(retained ? {kind:"resource",ref:initial.ref} : null);
   const resource = retained ? read.data?.rows[0]?.resource ?? initial : initial;
@@ -223,14 +226,15 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
   const overlay = useContext(WorkOverlayContext);
   const opened = useWritingDocument(resource.ref);
   const document = opened.document;
-  const [focused,setFocused] = useState(false);
+  // Where focus is in this row. Focus on the sign alone is not a use of the row: the receipt replaces it and takes it.
+  const [focus,setFocus] = useState<"none" | "sign" | "other">("none");
   const [pins,setPins] = useState(0);
   const [attachment,setAttachment] = useState(false);
   const [reference,setReference] = useState(false);
   const [menuOpen,setMenuOpen] = useState(false);
   const root = useRef<HTMLLIElement>(null);
   const captured = useRef(initial);
-  useActionFocusRecovery(root,returnFocus);
+  useActionFocusRecovery(root,recover);
   const rowWindow = useMemo(() => ({
     interact: () => {},
     pin: () => {
@@ -238,12 +242,14 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
       return () => setPins(value => value - 1);
     },
   }),[]);
-  // Everything that must not be removed from under the reader: focus, an editor's pending edits or open inputs, the menu, an overlay.
-  const retaining = focused || pins > 0 || attachment || reference || menuOpen || overlay === resource.ref;
-  useLayoutEffect(() => {hold(resource,retaining);},[resource,retaining,hold]);
+  // What the reader is using in this row: focus in its writing or menu, an editor's pending edits or open inputs, the menu, an
+  // overlay. None of it is removed from under them. The row stays listed for these and for focus on its sign.
+  const retaining = focus === "other" || pins > 0 || attachment || reference || menuOpen || overlay === resource.ref;
+  const listed = retaining || focus === "sign";
+  useLayoutEffect(() => {hold(resource,listed);},[resource,listed,hold]);
   useEffect(() => () => hold(captured.current,false),[hold]);
   // The dwell: this row owns its timer, and becomes a receipt only once the dwell has passed, the completion is
-  // durable, and nothing retains it. A focused or edited row is never removed under its reader.
+  // durable, and nothing the reader is using retains it. Focus on the sign alone moves to the receipt's undo.
   const dwell = completion?.phase === "dwell" ? completion : null;
   const press = dwell === null ? null : dwell.press, committed = dwell !== null && dwell.commit !== null;
   const [dwelt,setDwelt] = useState<symbol | null>(null);
@@ -261,10 +267,10 @@ function WorkRow({resource:initial,retained,today,history,hold,completion,step,o
   // The journal's paint of a completion until a projection at or after its commit is in hand: then the row is canonical.
   const presentDone = dwell !== null && !(dwell.commit !== null && retained && read.data !== null && reached(read.data.store_revision, dwell.commit));
   return <IndexRowWindow window={rowWindow} id={resource.ref}><li ref={root} className={styles.row} data-work-ref={resource.ref} data-collection-row-id={resource.ref}
-    onFocusCapture={event => {if (event.currentTarget.contains(event.target)) setFocused(true);}}
+    onFocusCapture={event => {if (event.currentTarget.contains(event.target)) setFocus(event.target.closest('[role="checkbox"]') ? "sign" : "other");}}
     onBlurCapture={event => {
       if (event.relatedTarget instanceof Node && root.current?.contains(event.relatedTarget)) return;
-      queueMicrotask(() => {if (!root.current?.contains(window.document.activeElement)) setFocused(false);});
+      queueMicrotask(() => {if (!root.current?.contains(window.document.activeElement)) setFocus("none");});
     }}>
     <span className={styles.sign}>{deleted ? null : <WorkCheckbox resource={resource} today={today} history={history} presentDone={presentDone}
       onCompleting={onCompleting} onCompleted={({keyboard}) => {if (keyboard) returnFocus()?.focus({preventScroll:true});}} />}</span>

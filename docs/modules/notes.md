@@ -443,8 +443,9 @@ active row, flips above when needed and stays within the scrollport and editor.
 
 accepting in an empty, childless body item replaces its incoming link in one
 undo group. undo restores that item in place. a pending birth waits for its
-link and rechecks emptiness. if the birth fails, ordinary insertion leaves the
-item in place. seeds, roots, nonempty items and parents use ordinary insertion.
+link and rechecks the local child proof. if the birth fails, ordinary insertion
+leaves the item in place. a refused replacement keeps its query open. seeds,
+roots, nonempty items and parents use ordinary insertion.
 
 replacement retains the original edge until admission, revalidates the frozen
 occurrence and edge under the account lease, and allocates before that live edge
@@ -574,9 +575,10 @@ consuming a reconciled semantic key grants no permission to refresh or adopt
 remote state. a field without an admitted document stays
 read-only until synchronous admission binds its real initializer.
 the narrow observer adapter depends on the locked prosemirror-view version and must be requalified
-when it changes. a query consumes its transient text synchronously on acceptance;
-ordinary typing in other fields continues, while structural commands wait for
-the open query to finish.
+when it changes. ordinary insertion consumes the query at acceptance. replacing
+an occurrence keeps its query until the owner admits the change. ordinary
+typing in other fields continues while structural commands wait for the open
+query to finish.
 
 one resource undo manager tracks distinct occurrence origins within the same
 session history. origin changes break typing groups. an inverse extends coverage
