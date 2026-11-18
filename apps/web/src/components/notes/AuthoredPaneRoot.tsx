@@ -159,8 +159,7 @@ function PaperRoot({children}: {children: ReactNode}) {
   return <div ref={name}>{children}</div>;
 }
 
-/** Published nodes commit in the chrome subtree. The route's layout effect
- * precedes that commit, so only this retained attachment can certify visibility. */
+/** Register the committed editor and its current visibility with the outline. */
 function RootAttachment({controller, handle, visible, ownsFocus, reveal, children}: {
   controller: OutlineController; handle: TextEditorHandle | null; visible: boolean;
   ownsFocus(): boolean; reveal(): void; children: ReactNode;

@@ -10,9 +10,9 @@ import { useWordsAtRisk } from "@/lib/notes/hooks";
 import type { EditorHistory } from "@/lib/notes/structure";
 import type { NoteInspection, StructuralKeys, NoteEditorHandle, NoteEditorProps } from "./NoteEditor";
 import NoteEditor from "./NoteEditor";
-export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoin, history, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange, embedding, header }: {
+export default function AuthoredNoteEditor({ document, label, editable = true, onSplit, onJoin, history, structuralKeys, inspection, reference, focus, onSelectionChange, onEditorReady, onAttachmentActiveChange, onLinkInputActiveChange, embedding }: {
   onAttachmentActiveChange?: NoteEditorProps["onAttachmentActiveChange"]; onLinkInputActiveChange?: NoteEditorProps["onLinkInputActiveChange"];
-  embedding?: NoteEditorProps["embedding"]; header?: true;
+  embedding?: NoteEditorProps["embedding"];
   focus?: NoteEditorProps["focus"]; onSelectionChange?: NoteEditorProps["onSelectionChange"]; onEditorReady?: (editor: NoteEditorHandle | null) => void;
   reference?: import("@/lib/resourceGraph/useReferenceInput").ReferenceInputHost | null;
   document: WritingDocument; label: string; editable?: boolean;
@@ -47,7 +47,7 @@ export default function AuthoredNoteEditor({ document, label, editable = true, o
   }, [document]);
   const wordsAtRisk = useWordsAtRisk([document.ref]);
   if(!history && own?.document!==document)return null;
-  return <NoteEditor wordsAtRisk={wordsAtRisk} embedding={embedding} header={header} focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
+  return <NoteEditor wordsAtRisk={wordsAtRisk} embedding={embedding} focus={focus} onAttachmentActiveChange={onAttachmentActiveChange} onLinkInputActiveChange={onLinkInputActiveChange} onSelectionChange={onSelectionChange} onEditorReady={onEditorReady} reference={reference} writingDocument={document} writingOrigin={history?.origin ?? own!.origin} body={body} revision={0} editorKey={document.ref}
     containingNoteRef={document.ref} inspection={inspection} label={label} editable={editable}
     history={history ?? { undo: () => own!.manager.undo(), redo: () => own!.manager.redo(), boundary: () => own!.manager.stopCapturing() }}
     keys={{ ...structuralKeys, ...(document.ref.startsWith("note_block:") && history?.taskPrefix ? {taskPrefix:history.taskPrefix} : {}), ...(onSplit ? { split: (_left,_right,displayed) => {if(!displayed)throw new Error("bound note split requires its displayed baseline");onSplit(displayed);} } : {}), ...(onJoin ? { join: direction => onJoin(direction,document.capture()) } : {}) }}

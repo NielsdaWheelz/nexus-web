@@ -190,7 +190,6 @@ export interface NoteEditorProjection {
 export interface NoteEditorProps {
   projection?: NoteEditorProjection;
   embedding?: {row_id: string; context: ReturnType<NoteEditorProjection["context"]>};
-  header?: true;
   reference?: ReferenceInputHost | null;
   writingDocument?: WritingDocument;
   writingOrigin?: unknown;
@@ -396,10 +395,10 @@ function NoteEditorContent(props: NoteEditorProps) {
   /** With a fine pointer the formatting toolbar stands above the selection, and under its end only when above would
    * leave the nearest scrollport's padded top. A coarse pointer has the platform's own callout above, so there it sits
    * under the selection's end, as the link dialog does, and above only when under would leave the scrollport. It
-   * shifts left to stay inside the shell. A header's toolbar stays in flow. */
+   * shifts left to stay inside the shell. */
   const placeToolbar = useCallback(() => {
     const node = toolbarNode.current, view = viewRef.current, box = shell.current?.getBoundingClientRect();
-    if (!node || !view || !box || latest.current.header || view.state.selection.empty) return;
+    if (!node || !view || !box || view.state.selection.empty) return;
     const port = scrollportOf(shell.current!), bounds = port?.getBoundingClientRect() ?? {top: 0, bottom: innerHeight};
     const start = view.coordsAtPos(view.state.selection.from), end = view.coordsAtPos(view.state.selection.to), height = node.offsetHeight;
     const room = start.top - 6 - height - bounds.top;
@@ -1740,7 +1739,6 @@ function NoteEditorContent(props: NoteEditorProps) {
       tabIndex={-1}
       data-row-focusable="true"
       className={styles.shell}
-      data-header-editor={props.header ? "true" : undefined}
       data-words-at-risk={props.wordsAtRisk || undefined}
       onKeyDownCapture={(event) => {
         if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
@@ -1818,7 +1816,7 @@ function NoteEditorContent(props: NoteEditorProps) {
         /></OutlineEmbeddingOccurrence>, dom, embed.key);
       })}
       {reference.state && reference.state.row_id === activeRowId && referenceFocused && referenceVisible ? (
-        <div ref={props.header ? undefined : chooserRef} className={props.header ? undefined : styles.chooser} data-reference-chooser data-collection-constrained={props.header || undefined}>
+        <div ref={chooserRef} className={styles.chooser} data-reference-chooser>
           <ReferencePicker
             input={reference}
             returnFocus={() => viewRef.current?.dom ?? null}
@@ -1870,7 +1868,7 @@ function NoteEditorContent(props: NoteEditorProps) {
       {link && linkVisible ? (
         <div
           className={styles.linkDialog}
-          style={props.header ? undefined : { left: link.left, top: link.top }}
+          style={{ left: link.left, top: link.top }}
           role="dialog"
           aria-label="Add hyperlink"
         >

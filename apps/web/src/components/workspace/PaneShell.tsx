@@ -241,7 +241,7 @@ function PaneView({
   const mobileViewport = useMobileViewport();
   const readerComposition = useContext(MobileReaderCompositionContext);
   useLayoutEffect(() => mobileViewport.refreshGeometry(), [mobileViewport, readerComposition, isMobile, isActive]);
-  const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
+  const { keyboardBottomInsetPx } = useKeyboardInset();
   const { openShare } = useShareController();
   const { platform } = useRenderEnvironment();
   const touchCapable = useTouchCapable();
@@ -260,7 +260,6 @@ function PaneView({
   const identityId = useId();
   const landmarkLabelId = useId();
   const paneRef = useRef<HTMLElement>(null);
-  const chromeFrameRef = useRef<HTMLDivElement>(null);
   const headerFrameRef = useRef<HTMLDivElement>(null);
   const controlsFrameRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
@@ -466,7 +465,6 @@ function PaneView({
       titleYielded={state.titleYielded}
       titleYieldReady={state.titleYieldReady}
       identityId={identityId}
-      editor={body?.editor}
       frameRef={headerFrameRef}
       resourceActions={body?.resourceActions}
       drawing={body?.drawing}
@@ -510,48 +508,6 @@ function PaneView({
     if (route.bodyMode !== "standard" || !element) return;
     return publishPaneScroll(element);
   }, [route.bodyMode]);
-  // The expandable slot never reduces its own budget. Stationary chrome and
-  // actual viewport obstructions consume space once, including resized keyboards.
-  const measureControls = useCallback(() => {
-    const pane = paneRef.current;
-    const frame = chromeFrameRef.current;
-    const headerFrame = headerFrameRef.current;
-    const controlsFrame = controlsFrameRef.current;
-    if (!pane || !frame || !headerFrame || !controlsFrame) return;
-    const paneBox = pane.getBoundingClientRect();
-    // Fixed mobile chrome has separate stationary frames; desktop has one stack.
-    const frameHeight = isMobile
-      ? headerFrame.getBoundingClientRect().height + controlsFrame.getBoundingClientRect().height
-      : frame.getBoundingClientRect().height;
-    const editorHeight = headerFrame.querySelector<HTMLElement>("[data-pane-header-editor-region]")?.getBoundingClientRect().height ?? 0;
-    const bottomClearance = Math.max(keyboardBottomInsetPx,
-      isMobile ? readMobileCssLength("var(--mobile-content-bottom-clearance)") : 0);
-    const accessoryHeight = pane.querySelector<HTMLElement>("[data-pane-outline-accessory]")?.getBoundingClientRect().height ?? 0;
-    const available = Math.max(0,
-      Math.min(paneBox.bottom, window.innerHeight - bottomClearance)
-        - Math.max(paneBox.top, visualViewportTopPx) - accessoryHeight);
-    pane.style.setProperty("--pane-header-editor-max-height",
-      `min(20rem, ${Math.max(0, available - frameHeight + editorHeight) / 2}px)`);
-  }, [isMobile, keyboardBottomInsetPx, visualViewportTopPx]);
-  useLayoutEffect(measureControls, [measureControls, outlineCommands]);
-  useLayoutEffect(() => {
-    const pane = paneRef.current;
-    const frame = chromeFrameRef.current;
-    const headerFrame = headerFrameRef.current;
-    const controlsFrame = controlsFrameRef.current;
-    if (!pane || !frame || !headerFrame || !controlsFrame) return;
-    const observer = new ResizeObserver(measureControls);
-    observer.observe(pane);
-    observer.observe(frame);
-    observer.observe(headerFrame);
-    observer.observe(controlsFrame);
-    const unsubscribe =
-      mobileViewport.subscribeContentBottomClearance(measureControls);
-    return () => {
-      observer.disconnect();
-      unsubscribe();
-    };
-  }, [measureControls, mobileViewport]);
   usePaneReturnScrollport({
     enabled: route.returnKind === "ShellScroll",
     scrollportRef,
@@ -589,13 +545,13 @@ function PaneView({
       onKeyDownCapture={activateAnchor}
     >
       <span id={landmarkLabelId} className="sr-only">
-        {body?.editor ? header.title : paneHeaderAccessibleName(header)}
+        {paneHeaderAccessibleName(header)}
       </span>
       <div
         className={styles.primaryPane}
         style={isMobile || isMaximized ? undefined : { width: width.widthPx + railPx }}
       >
-        <div ref={chromeFrameRef} className={styles.chromeFrame}
+        <div className={styles.chromeFrame}
           data-pane-chrome-focus={isMobile ? undefined : "true"} tabIndex={-1}>
           {surfaceHeader}
           <div ref={controlsFrameRef} id={`${paneId}-collation`} className={styles.controlsFrame}>
@@ -689,7 +645,7 @@ function PaneView({
           {rail ? <div className={styles.rail}>{rail.body}</div> : null}
           <StageAnchor kind="Pane" paneId={paneId} floor />
         </div>
-        {outlineCommands ? <div className={styles.outlineAccessory} data-pane-outline-accessory="true" style={{marginBottom: commandsBottom}}>
+        {outlineCommands ? <div className={styles.outlineAccessory} style={{marginBottom: commandsBottom}}>
           <OutlineCommands publication={outlineCommands} current={() => {
             const current = chrome.get().outlineCommands;
             return touchCapable && isActive && !hasActiveInteractionOwner() && current?.touchVisible ? current : null;

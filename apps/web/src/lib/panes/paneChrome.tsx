@@ -92,18 +92,6 @@ export type PanePrimaryAction = Extract<
   { readonly kind: "link" | "command" }
 > & { readonly icon: ReactElement };
 
-/** Root writing stays mounted in chrome; feedback remains visible when folded. */
-export type PaneHeaderEditor = { readonly feedback: ReactNode } & (
-  | { readonly kind: "Inline"; readonly content: ReactNode }
-  | {
-      readonly kind: "Expandable";
-      readonly control: ReactNode;
-      readonly content: ReactNode;
-      readonly regionId: string;
-      readonly expanded: boolean;
-    }
-);
-
 export interface PaneViews {
   readonly label: string;
   readonly value: string;
@@ -124,7 +112,6 @@ export interface PaneChrome {
   readonly displayTitle?: string;
   /** The pending source body uses a retained visit hint as a machine pointer. */
   readonly titleRole?: "Pointer";
-  readonly editor?: PaneHeaderEditor;
   readonly header?: PaneHeaderPublication;
   readonly navigation?: { readonly label: string; readonly content: ReactNode };
   readonly views?: PaneViews;

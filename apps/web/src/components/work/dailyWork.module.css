@@ -100,26 +100,6 @@
   cursor: pointer;
   min-height: var(--size-lg);
 }
-.day[aria-pressed="true"],
-.yearDay[data-checked="true"] { background: var(--accent); color: var(--ink-on-accent); }
+.day[aria-pressed="true"] { background: var(--accent); color: var(--ink-on-accent); }
 .day:disabled { color: var(--ink-muted); cursor: default; }
-.day:focus-visible,
-.yearDay:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
-.yearScroll { overflow-x: auto; padding: var(--space-1); }
-.year {
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(7, var(--space-3));
-  grid-auto-columns: var(--space-3);
-  gap: var(--space-1);
-  width: max-content;
-}
-.yearDay {
-  width: var(--space-3);
-  height: var(--space-3);
-  padding: 0;
-  border: var(--stroke-hairline) solid var(--edge-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  cursor: pointer;
-}
+.day:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }

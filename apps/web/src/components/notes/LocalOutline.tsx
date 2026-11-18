@@ -42,7 +42,6 @@ import styles from "./LocalOutline.module.css";
 
 export interface LocalOutlineHandle {
   append(): Promise<void>;
-  revealRoot(): void;
   focusRoot(resolve?: (document: WritingDocument) => FocusSelection, mayFocus?: () => boolean): Promise<void>;
   focusNote(ref: string, signal?: AbortSignal): Promise<boolean>;
   focusFirst(): void;

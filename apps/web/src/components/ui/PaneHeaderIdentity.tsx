@@ -22,7 +22,6 @@ export default function PaneHeaderIdentity({
   id,
   model,
   projection,
-  editor,
   statement,
   yielded,
   yieldReady,
@@ -32,7 +31,6 @@ export default function PaneHeaderIdentity({
   readonly projection: "Desktop" | "Mobile";
   readonly yielded: boolean;
   readonly yieldReady: boolean;
-  readonly editor?: ReactNode;
   readonly statement?: { readonly words: readonly string[]; readonly expanded: boolean; readonly controls: string; readonly onToggle: (opener: HTMLElement) => void };
 }) {
   const title = useRef<HTMLHeadingElement>(null);
@@ -77,13 +75,12 @@ export default function PaneHeaderIdentity({
       aria-busy={pending || undefined}
       dir="auto"
     >
-      <h1 ref={title} id={id} className={editor === undefined ? styles.title : "sr-only"} title={model.title}
-        data-yielded={editor === undefined && yielded || undefined}
-        data-yield-ready={editor === undefined && yieldReady || undefined}
+      <h1 ref={title} id={id} className={styles.title} title={model.title}
+        data-yielded={yielded || undefined}
+        data-yield-ready={yieldReady || undefined}
         data-title-role={model.kind === "Resource" ? model.titleRole : undefined}>
         {model.title}
       </h1>
-      {editor === undefined ? null : <div className={styles.editor}>{editor}</div>}
       {projection === "Mobile" && statement ? <button type="button" className={`${styles.support} ${styles.statement}`}
         aria-expanded={statement.expanded} aria-controls={statement.controls} onClick={event => statement.onToggle(event.currentTarget)}>
         <span className="sr-only">list: </span>
