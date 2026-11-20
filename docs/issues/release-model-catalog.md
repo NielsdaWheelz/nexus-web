@@ -1,22 +1,22 @@
 # current model catalog production cutover
 
-implementation is qualified in the isolated catalog branch; production activation
-remains pending. contracts live in [llms](../modules/llms.md), exact provider/kernel
-revisions in `python/uv.lock`, and native `0.165.0` in `node/codex/bun.lock`.
+the november 20 model refresh requires a coordinated host, api and worker
+release. the exact provider and kernel revisions are in `python/uv.lock` and
+stock codex `0.171.0` is in `node/codex/bun.lock`. [generation contract](../modules/llms.md)
 
 - use the existing [release procedure](../../deployment.md) to stop admissions
   and background producers, drain queued/running generations, and verify zero
   nonterminal work. the stranded-run rehearsal proves refusal, not production
   drain completion. never rewrite admitted specs, receipts or saved history.
 - deploy the compatible host/api/worker/web cohort before reopening admissions.
-  the host uses the locked npm launcher and contained catalog v2; the provider
-  client uses agent catalog v3 and api catalog v5. old clients/hosts are rejected;
-  no version bypass or credential copying. this adds no migration or wire bump;
-  the paired controls release still requires wire 17 and its account-memory
-  migration 0325. retired remembered choices remain unchanged until explicit
-  reselection; accepted-request replay never updates that memory.
+  the host uses the locked npm launcher and contained catalog v3; the provider
+  client uses agent catalog v4 and api catalog v5. deploy matching stock and library versions.
+  this refresh uses the existing database schema and wire revision. verify that
+  a remembered selection removed from the catalog requires explicit reselection
+  and that its historical dispatch presentation is preserved.
 - verify deployed catalog health, current offerings, ordinary-worker chat with
-  the sol 6.1/xhigh seed, strict-json oracle, and preserved historical presentation.
+  the sol 6.2/xhigh seed and strict-json oracle. check metered chat and a tool
+  continuation on the new openai, claude and gemini rows. include gemini xhigh.
   use the existing host account and isolation contract. production account refresh
   remains [separately unqualified](codex-auth-refresh-not-qualified.md).
 - keep [both xai models omitted](model-catalog-xai-live-access.md) until access

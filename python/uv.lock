@@ -284,13 +284,13 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "1.75.0"
+version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
     { name = "google-auth", extra = ["requests"] },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "pydantic" },
     { name = "requests" },
     { name = "sniffio" },
@@ -298,9 +298,14 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/59/3ed61240ef20b3ae6ed54e82c6f8b6d1f194947bc6679679dd6cdb037594/google_genai-1.75.0.tar.gz", hash = "sha256:56bac3991b311c93f980c0a2abcd287b672146905df1fbd71c92ed633d5a07cf", size = 539039, upload-time = "2026-05-04T22:48:54.857Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/15/ecebc770eb7edec0e588498d6b872aff6091ce1af1a9c503bd70b5a1ea7a/google_genai-3.6.1.tar.gz", hash = "sha256:dfd4120a15ba5aff6a3de8a85d76e1d5d0af65c70a54c459b1c5e76f503e46e7", size = 885277, upload-time = "2026-11-18T22:18:48.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/b6/552d40e96da22921eb1fead7c14b00b5b5473a20e45959488660fab35ee2/google_genai-1.75.0-py3-none-any.whl", hash = "sha256:8dc4c096e7d6288c3087f6893f582fe52468932464781edb8193bd92b9fefb2c", size = 793726, upload-time = "2026-05-04T22:48:53.033Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/1a/576adc030b48c7491b33ab94b96521151ef5b956552c0057628ef39c69bb/google_genai-3.6.1-py3-none-any.whl", hash = "sha256:4b35064da644f61d7e5f6c0e9406bf63b945e7e96b4af18cadb3371cbc3acf74", size = 1472097, upload-time = "2026-11-18T22:18:46.803Z" },
+]
+
+[package.optional-dependencies]
+httpx = [
+    { name = "httpx" },
 ]
 
 [[package]]
@@ -497,7 +502,7 @@ wheels = [
 [[package]]
 name = "llm-agent-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=3edb4266fcbbb6ffea6615ced6c66c6ac0d0ad92#3edb4266fcbbb6ffea6615ced6c66c6ac0d0ad92" }
+source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=b26c54d71ff807efd9e2844441234e5cc70c1650#b26c54d71ff807efd9e2844441234e5cc70c1650" }
 dependencies = [
     { name = "llm-tools" },
     { name = "provider-runtime" },
@@ -661,14 +666,14 @@ requires-dist = [
     { name = "html5lib", specifier = "==1.1" },
     { name = "httpcore", specifier = ">=1.0.9" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=3edb4266fcbbb6ffea6615ced6c66c6ac0d0ad92" },
+    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=b26c54d71ff807efd9e2844441234e5cc70c1650" },
     { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=8989f3afdcc640f775bd0cc9e7a0b4c246f10e57" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "mcp", specifier = "==2.3.0" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "openai", specifier = "==2.53.0" },
     { name = "pillow", specifier = ">=10.0.0" },
-    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=10dd85ace6648ccfd2f3cdcbe8122836351f44a4" },
+    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=bc9b6ccdde57b15f37ef4969a96e37220eae4c29" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.8" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
@@ -776,10 +781,10 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=10dd85ace6648ccfd2f3cdcbe8122836351f44a4#10dd85ace6648ccfd2f3cdcbe8122836351f44a4" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=bc9b6ccdde57b15f37ef4969a96e37220eae4c29#bc9b6ccdde57b15f37ef4969a96e37220eae4c29" }
 dependencies = [
     { name = "anthropic" },
-    { name = "google-genai" },
+    { name = "google-genai", extra = ["httpx"] },
     { name = "httpx" },
     { name = "openai" },
     { name = "opentelemetry-api" },

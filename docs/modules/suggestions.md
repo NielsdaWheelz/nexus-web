@@ -57,7 +57,7 @@ candidates. daily retains its source preference before the other soft preference
 bounded retrieval may miss good work; the model cannot choose a context-only ref.
 
 one `selection_curation` generation runs under owner `suggestion_feed`, codex
-personal `gpt-6.1-sol`, medium reasoning, strict json, 180 seconds and 256 kib input.
+personal `gpt-6.2-sol`, medium reasoning, strict json, 180 seconds and 256 kib input.
 `SelectionRead` grants only resource inspection, current resource reading and
 document search, scoped to offered candidates and intent refs. no web discovery,
 shared memory, authored writes, saves, subscriptions or graph writes. no alternate

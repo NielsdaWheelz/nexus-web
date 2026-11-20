@@ -102,7 +102,7 @@ row or the higher `effort_order` of exactly two rows; larger sets require choice
 existing-family effort declarations survive model replacements. new families use
 literal declarations matching their approved native defaults; nondefault modes
 without a declaration still follow the undeclared-tuple rule. source default
-metadata is never a fallback. the first-use seed is codex / `gpt-6.1-sol` / `xhigh`.
+metadata is never a fallback. the first-use seed is codex / `gpt-6.2-sol` / `xhigh`.
 readiness never selects an alternative or erases a default. default policy does
 not grant or withdraw execution eligibility. source defaults choose nothing;
 the old combined reasoning-row label is removed from the wire.
@@ -134,7 +134,7 @@ CodexPersonalSelection(model_key, reasoning_key)
 The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection, validated against the current catalog at
 admission, and never submits dispatch strings, credentials, capabilities,
-defaults, or fallback order. The developer-owned Codex Personal / GPT-6.1-Sol / xhigh
+defaults, or fallback order. The developer-owned Codex Personal / GPT-6.2 Sol / xhigh
 seed initializes a composer only when the account has no remembered choice; it
 does not override remembered or explicit per-run selections.
 
@@ -227,7 +227,7 @@ remains required. the runtime memory-client declaration remains private.
 
 ## Backend composition
 
-codex personal resolves one dedicated stock 0.165.0 app-server through the
+codex personal resolves one dedicated stock 0.171.0 app-server through the
 provider-owned host-control protocol. the host owns authentication and a durable
 host id/incarnation; each complete container lifetime gets a unique unix socket
 or websocket capability. workers own kernel/native callbacks and the portable
@@ -235,7 +235,9 @@ executor. only the host mounts account credentials; network clients receive a
 separate control capability, never exposed to model tools.
 the provider-owned restricted complete model catalogue loads at HOST STARTUP;
 exact public version/config preflight rejects unsupported hosts before thread
-creation. inherited clock, CodeMode, native patching and native user-input are removed. declared
+creation. inherited clock, code mode, native patching, literature search, native user input and
+automatic delegation are disabled. the host omits the delegation-dependent
+`ultra` preset. `max` is the highest single-model effort. declared
 callbacks, strict json and read-only/no-network session containment qualify together.
 see [the native host runbook](../runbooks/codex-personal-agent-host.md).
 
@@ -261,8 +263,9 @@ spec and job id, closed once with `Succeeded | Failed | Cancelled`, one failure
 code, route evidence (never model text) and summed usage. it is an unreplayable
 multi-mutation with no prompt or continuation journal. before native submission,
 `native_execution` records the fresh thread's profile/id and exact host target
-under the current job claim. closure is an observed native terminal, positive
-non-submission or a provider receipt from a later container incarnation. proofs
+under the current job claim. closure requires an observed native terminal, positive writer non-entry, a
+correlated stock refusal of the submission, or a retirement receipt from a later
+container incarnation. proofs
 are monotone for that binding. terminal ledger publication locks the current
 claim, archives the binding/proof into `terminal.native_execution`, and clears
 the active column in the same transaction.
@@ -296,7 +299,8 @@ Codex session that did not open, or a turn Codex did not submit) instead raises
 `RouteUnavailable` while its job has attempts left, so the queue retries it with
 the kind's backoff, and only the last attempt settles the domain row. a failed
 Codex catalog fetch is retried after 10 s (a good one is kept 60 s). a decode
-rejection is `invalid_output` in the same terminal write. a stop that the tool
+rejection is `invalid_output` in the same terminal write. a stock input-size
+refusal closes the bound attempt as `context_too_large` before model execution. a stop that the tool
 fence catches first is still `Cancelled`. anything unexpected closes the row
 `defect` and goes on to the queue's retry. each consumer owns its total map from
 these codes (chat failure, metadata, oracle).
@@ -304,7 +308,7 @@ these codes (chat failure, metadata, oracle).
 native cumulative usage limits and subscription `CapacityPaused` machinery are
 removed. chat policy reserves 400,000 context / 32,000 output tokens, clamped by
 the model's actual capacities. codex does not enforce these as native hard token
-limits. provider api requests retain the bounded output limit; argon exhaustion,
+limits. provider api requests retain the bounded output limit; gemini 4 output exhaustion,
 including an empty terminal or continuation token, settles `output_limit` without
 automatic continuation or budget growth. other operation bounds remain explicit
 in generation policy.
