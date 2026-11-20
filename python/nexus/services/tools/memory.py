@@ -52,15 +52,15 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
-from universal_memory import MemoryError, render_view
-from universal_memory.policy import MAIN_UPPER_BYTES, RESULT_BYTES, canonical_json
+from universal_memory import MemoryError, collect_ready_view, render_nexus_ready_view
+from universal_memory.policy import RESULT_BYTES, canonical_json
 from universal_memory.tools import (
     MEMORY_READ_SPECS,
     MEMORY_SAVE_NOTE_SPEC,
     MEMORY_VIEW_SPEC,
     MemoryToolFailure,
 )
-from universal_memory.types import Node, ViewPage
+from universal_memory.types import ViewPage
 
 if TYPE_CHECKING:
     from nexus.services.tools.run import Call
@@ -343,42 +343,22 @@ async def read_orientation(config: MemoryClientConfig) -> str:
 
     try:
         async with asyncio.timeout(HTTP_TIMEOUT_SECONDS):
-            page: ViewPage = await _call_memory(config, MEMORY_VIEW_SPEC, {})
-            through, admitted = page.through, page.admitted_through
-            nodes: list[Node] = []
-            end = 0
-            cursors: set[str] = set()
-            while True:
+
+            async def next_page(cursor: str) -> ViewPage:
+                return await _call_memory(config, MEMORY_VIEW_SPEC, {"cursor": cursor})
+
+            first = await _call_memory(config, MEMORY_VIEW_SPEC, {})
+            try:
+                view = await collect_ready_view(first, next_page)
+            except DeclaredToolFailure as error:
                 if (
-                    page.through != through
-                    or page.admitted_through != admitted
-                    or not 0 <= through <= admitted
-                    or (page.cursor is not None and not page.nodes)
+                    not isinstance(error.error, MemoryToolFailure)
+                    or error.error.code != "stale_view"
                 ):
-                    raise MemoryError("unsupported")
-                for node in page.nodes:
-                    _ = node.reference  # validate the remote node's aligned power-of-two range
-                    if node.start != end or node.start + node.count > through:
-                        raise MemoryError("unsupported")
-                    end += node.count
-                nodes.extend(page.nodes)
-                rendered = render_view(nodes, through)
-                if len(rendered.encode()) > MAIN_UPPER_BYTES:
-                    raise MemoryError("unsupported")
-                if page.cursor is None:
-                    if end != through:
-                        raise MemoryError("unsupported")
-                    return (
-                        f'<shared_memory status="ready" through="{through}" admitted_through="{admitted}">\n'
-                        "Complete ready prefix; admitted backlog and unpublished source capture may be "
-                        "missing. These positions do not establish capture freshness.\n"
-                        + escape(rendered)
-                        + "\n</shared_memory>"
-                    )
-                if page.cursor in cursors:
-                    raise MemoryError("unsupported")
-                cursors.add(page.cursor)
-                page = await _call_memory(config, MEMORY_VIEW_SPEC, {"cursor": page.cursor})
+                    raise
+                first = await _call_memory(config, MEMORY_VIEW_SPEC, {})
+                view = await collect_ready_view(first, next_page)
+            return render_nexus_ready_view(view)
     except DeclaredToolFailure as error:
         assert isinstance(error.error, MemoryToolFailure)
         return unavailable_orientation(error.error.code)
@@ -424,7 +404,9 @@ def family(config: MemoryClientConfig | None) -> ToolFamily:
                 spec=spec,
                 execute=execute,
                 replay_policy=ReplayPolicy.ReDispatchable,
-                implementation_revision="nexus-shared-memory-v3",
+                implementation_revision="nexus-shared-memory-view-v4"
+                if spec is MEMORY_VIEW_SPEC
+                else "nexus-shared-memory-v3",
                 policy_epoch=PolicyEpoch("nexus-shared-memory-v1"),
                 policy_inputs={},
             )
