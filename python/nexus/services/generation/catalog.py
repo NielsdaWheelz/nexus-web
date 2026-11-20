@@ -522,7 +522,9 @@ def _codex_model(catalog: AgentModelCatalog, row: AgentModelFacts) -> _Model:
         description=f"{row.label} through your authenticated Codex subscription.",
         context_window=_value(row.source_context_window),
         max_output_tokens=_value(row.source_max_output_tokens),
-        input_modalities=row.input_modalities,
+        input_modalities=tuple(
+            modality for modality in row.input_modalities if modality != "audio"
+        ),
         reasoning=row.reasoning,
         target=CodexTarget(
             model_key=row.key,
@@ -577,8 +579,8 @@ def _disclosure(
         PrivacyDisclosure(
             summary="Requests use the operator-managed API credential for this route.",
             retention=(
-                "Anthropic Fable requests and responses may be retained for 30 days; other "
-                "configured Anthropic rows use the operator account's standard retention."
+                "Fable requires 30-day retention unless Anthropic expressly authorizes zero "
+                "retention. Other Claude models use the operator account's retention terms."
                 if provider == "anthropic"
                 else "The configured provider account's retention terms apply."
             ),

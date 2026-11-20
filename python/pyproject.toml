@@ -58,8 +58,8 @@ override-dependencies = ["llm-tools==0.1.0"]
 
 [tool.uv.sources]
 universal-memory = { git = "https://github.com/NielsdaWheelz/universal-memory.git", rev = "a788c885d5529227de55a9da9d8aa940da00eaba" }
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "10dd85ace6648ccfd2f3cdcbe8122836351f44a4" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "3edb4266fcbbb6ffea6615ced6c66c6ac0d0ad92" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "bc9b6ccdde57b15f37ef4969a96e37220eae4c29" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "b26c54d71ff807efd9e2844441234e5cc70c1650" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8989f3afdcc640f775bd0cc9e7a0b4c246f10e57" }
 
 [tool.ruff]

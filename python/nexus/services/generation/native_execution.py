@@ -76,6 +76,12 @@ class NotSubmittedClosure(BaseModel):
     kind: Literal["not_submitted"] = "not_submitted"
 
 
+class SubmissionRejectedClosure(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    kind: Literal["submission_rejected"] = "submission_rejected"
+
+
 class RetiredClosure(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -84,7 +90,8 @@ class RetiredClosure(BaseModel):
 
 
 type Closure = Annotated[
-    NativeTerminalClosure | NotSubmittedClosure | RetiredClosure, Field(discriminator="kind")
+    NativeTerminalClosure | NotSubmittedClosure | SubmissionRejectedClosure | RetiredClosure,
+    Field(discriminator="kind"),
 ]
 
 

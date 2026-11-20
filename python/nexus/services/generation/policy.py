@@ -36,37 +36,37 @@ CHAT_OUTPUT_BUDGET_TOKENS: Final = 32_000
 PROVIDER_MAX_TURNS: Final = 24
 MEMORY_PLANS: Final = frozenset({"ChatMemoryRead", "ChatMemoryReadSave"})
 
-_CHAT_SEED_MODEL = GenerationModelDefault(model_key="gpt-6.1-sol", mode=None)
+_CHAT_SEED_MODEL = GenerationModelDefault(model_key="gpt-6.2-sol", mode=None)
 _CHAT_SEED_EFFORT = "xhigh"
 
 _CHAT_MODEL_DEFAULTS: dict[GenerationApiProvider | None, GenerationModelDefault] = {
     None: _CHAT_SEED_MODEL,
-    "openai": GenerationModelDefault(model_key="openai:gpt-6.1-sol", mode="standard"),
+    "openai": GenerationModelDefault(model_key="openai:gpt-6.2-sol", mode="standard"),
     "anthropic": GenerationModelDefault(model_key="anthropic:claude-sonnet-5-5", mode="adaptive"),
-    "gemini": GenerationModelDefault(model_key="gemini:gemini-3.8-flash", mode=None),
+    "gemini": GenerationModelDefault(model_key="gemini:gemini-4-hydrogen", mode=None),
     "deepseek": GenerationModelDefault(model_key="deepseek:deepseek-flash", mode=None),
     "xai": GenerationModelDefault(model_key="xai:grok-4.7", mode=None),
 }
 _CHAT_EFFORT_DEFAULTS: dict[tuple[GenerationApiProvider | None, str, str | None], str] = {
-    (None, "gpt-6-astra", None): "xhigh",
+    (None, "gpt-6.2-astra", None): "xhigh",
     (None, _CHAT_SEED_MODEL.model_key, _CHAT_SEED_MODEL.mode): _CHAT_SEED_EFFORT,
     (None, "gpt-6.1-terra", None): "low",
     (None, "gpt-6-luna", None): "xhigh",
-    ("openai", "openai:gpt-6-astra", "standard"): "xhigh",
-    ("openai", "openai:gpt-6-astra", "pro"): "xhigh",
-    ("openai", "openai:gpt-6.1-sol", "standard"): "xhigh",
-    ("openai", "openai:gpt-6.1-sol", "pro"): "xhigh",
+    ("openai", "openai:gpt-6.2-astra", "standard"): "xhigh",
+    ("openai", "openai:gpt-6.2-astra", "pro"): "xhigh",
+    ("openai", "openai:gpt-6.2-sol", "standard"): "xhigh",
+    ("openai", "openai:gpt-6.2-sol", "pro"): "xhigh",
     ("openai", "openai:gpt-6.1-terra", "standard"): "medium",
     ("openai", "openai:gpt-6-luna", "standard"): "xhigh",
     ("openai", "openai:gpt-6-luna", "pro"): "xhigh",
-    ("anthropic", "anthropic:claude-fable-5-1", "adaptive"): "xhigh",
+    ("anthropic", "anthropic:claude-fable-5-2", "adaptive"): "xhigh",
     ("anthropic", "anthropic:claude-opus-5-5", "adaptive"): "xhigh",
     ("anthropic", "anthropic:claude-sonnet-5-5", "adaptive"): "xhigh",
     ("anthropic", "anthropic:claude-haiku-5-5", "adaptive"): "medium",
-    ("gemini", "gemini:gemini-4-argon", None): "medium",
-    ("gemini", "gemini:gemini-3.8-flash", None): "high",
+    ("gemini", "gemini:gemini-4-carbon", None): "medium",
+    ("gemini", "gemini:gemini-4-neon", None): "high",
+    ("gemini", "gemini:gemini-4-hydrogen", None): "high",
     ("gemini", "gemini:gemini-3.5-flash-lite", None): "minimal",
-    ("gemini", "gemini:gemini-3.1-pro-preview", None): "high",
     ("deepseek", "deepseek:deepseek-flash", None): "high",
     ("deepseek", "deepseek:deepseek-v4-pro", None): "high",
     ("xai", "xai:grok-4.7", None): "high",
@@ -76,12 +76,12 @@ _CHAT_EFFORT_DEFAULTS: dict[tuple[GenerationApiProvider | None, str, str | None]
 # every background operation is strict JSON over Codex Personal.
 _BACKGROUND: tuple[tuple[BackgroundOperation, OwnerKind, str, str, int, int], ...] = (
     ("metadata_enrichment", "media_enrichment", "gpt-6-luna", "xhigh", 300, 32),
-    ("part_discovery", "part_discovery", "gpt-6.1-sol", "xhigh", 300, 256),
+    ("part_discovery", "part_discovery", "gpt-6.2-sol", "xhigh", 300, 256),
     ("media_title", "media_enrichment", "gpt-6-luna", "low", 120, 256),
     ("media_summary", "media_summary", "gpt-6-luna", "low", 120, 256),
     ("connection_discovery", "connection_discovery_scan", "gpt-6-luna", "low", 120, 256),
-    ("oracle", "oracle_reading", "gpt-6.1-sol", "medium", 180, 256),
-    ("selection_curation", "suggestion_feed", "gpt-6.1-sol", "medium", 180, 256),
+    ("oracle", "oracle_reading", "gpt-6.2-sol", "medium", 180, 256),
+    ("selection_curation", "suggestion_feed", "gpt-6.2-sol", "medium", 180, 256),
 )
 
 
