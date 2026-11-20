@@ -26,7 +26,7 @@ import { canonicalHref, compareRank, frecency, nameTier } from "./rank";
 const RECENT_CAP = 8;
 const COMMAND_IDS = Object.keys(NEXUS_COMMANDS) as NexusCommandId[];
 /** The phone's legend, its order. */
-const PLACES: readonly DestinationId[] = ["today", "librarian", "lectern", "stats", "libraries", "podcasts", "notes", "browse", "feeds", "atlas", "oracle"];
+const PLACES: readonly DestinationId[] = ["today", "librarian", "lectern", "libraries", "podcasts", "notes", "browse", "feeds", "atlas", "oracle"];
 const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podcast: "podcasts", Video: "videos", Epub: "books" };
 const NO_USAGE: UsageMap = {};
 const UNSCORED = { href: null, evidence: false, frecency: 0, recency: 0 } as const;

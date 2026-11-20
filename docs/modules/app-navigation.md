@@ -28,24 +28,25 @@ the incoming command once. restored data never dispatches commands.
   destination, and the first visible navigation item.
 - **browse, podcasts, and librarian remain primary.** Atlas and Oracle are present
   but do not displace discovery, listening, and conversation tasks.
-- **desktop rail order is exact and flat:** lectern, stats, libraries, browse,
+- **desktop rail order is exact and flat:** lectern, libraries, browse,
   podcasts, librarian, notes, atlas, oracle.
-- **mobile places order is exact:** today, librarian, lectern, stats, libraries,
+- **mobile places order is exact:** today, librarian, lectern, libraries,
   podcasts, notes, browse, feeds, atlas, oracle, then import. the thumb index
   presents signs on a horizontally scrolling rule.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
 
-on desktop, all imports belongs under account; it has no standalone destination
-in the rail. the footer's `Import` action opens the intake page. its unsettled
-count (`Import · {n}`) is distinct from the account's needs-attention count.
-the shared account menu is exactly imports, downloads when available,
-settings, a separator, and danger-last sign out. imports retains its canonical
-`/imports` link, query/deep links, inspector and contextual acquisition entrances.
-the mobile nexus account mark ends the legend while the field is empty and
-renders that same component and order;
-mobile attention remains inside nexus, without a closed-launcher badge.
+the shared account menu lists reading record, imports, downloads when available,
+settings, a separator and danger-last sign out after any status, remedy and
+preparation rows. reading record follows bare `/stats`. nexus accepts
+`go to reading record` and `go to stats`. on phones, holding the typed destination
+result opens beside. account uses conventional links.
+the footer's `Import` action opens intake. its unsettled count (`Import · {n}`)
+is distinct from the account's needs-attention count. imports retains its
+canonical `/imports` link, query/deep links, inspector and contextual entrances.
+the phone nexus account mark ends the legend while the field is empty and
+renders the shared menu. mobile attention is visible only while nexus is open.
 
 the settings section row lists account, librarian, appearance, reader and
 keyboard in that order. the registry owns destination names for pane titles,
@@ -430,10 +431,10 @@ declare `sectionDestinationId` because their header has no section identity:
 - `/podcasts/{id}` keeps **Podcasts** active;
 - the librarian and message anchors keep **librarian** active;
 - pages and note blocks keep **Notes** active;
-- atlas, oracle, lectern and stats map to their own destinations;
-- imports (including query variants) and settings mark account current
-  without creating a selected rail destination. `activeId` also marks the shared
-  account menu's corresponding item current.
+- atlas, oracle and lectern map to their own destinations;
+- reading record (all `/stats` views), imports (including query variants) and
+  settings mark account current and leave the rail with no selected destination.
+  `activeId` marks the corresponding shared account row current.
 
 Routes that are intentionally absent from fixed navigation, such as Search and
 Authors, do not fabricate a selected rail item. Section pane titles resolve
