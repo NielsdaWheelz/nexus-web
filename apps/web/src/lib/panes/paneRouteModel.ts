@@ -44,7 +44,7 @@ const ROUTES = {
   highlight: ["highlights/:id", "Highlight", resourceIconForScheme("highlight")],
   note: ["notes/:blockId", "Note", resourceIconForScheme("note_block")],
   imports: ["imports", "Imports", Icon.Upload],
-  stats: ["stats", "Stats", Icon.Stats],
+  stats: ["stats", getDestination("stats").label, Icon.Stats],
   habits: ["habits", "habits", Icon.Check],
   settingsAccount: ["settings/account", getDestination("account").label, Icon.Account],
   settingsLibrarian: ["settings/librarian", getDestination("librarianSettings").label, Icon.Settings],

@@ -73,7 +73,7 @@ function StatsContent({ view, setView }: { view: Exclude<View, { kind: "Invalid"
     changed: false, unconfirmed: value.sending !== null || value.held.length > 0, stopsBrowserWork: false,
   }));
   usePaneChrome({ views: {
-    label: "stats view", value: view.kind === "Record" ? "record" : "sittings",
+    label: "reading record view", value: view.kind === "Record" ? "record" : "sittings",
     items: [{ value: "record", label: "record" }, { value: "sittings", label: "sittings" }],
     onSelect: value => {
       if (value === "record") setView({ kind: "Record", work: null, year: null });
@@ -87,7 +87,7 @@ function StatsContent({ view, setView }: { view: Exclude<View, { kind: "Invalid"
     <Sittings visible={view.kind === "Sittings"} active={active} stale={stale} draft={draft} />
     {view.kind === "Record" ? <>
       {record.status === "loading" ? <Ruling /> : record.status === "failed"
-        ? <Failed error={record.error} noun="statistics" retry={{ run: () => void record.refetch(), busy: record.retrying }} />
+        ? <Failed error={record.error} noun="reading record details" retry={{ run: () => void record.refetch(), busy: record.retrying }} />
         : record.data.slip.days.length === 0 && view.work === null
           ? <Fact line={{ fact: "nothing recorded yet. reading is recorded while the page is in front of you." }} />
           : <RecordView record={record.data} workId={view.work} year={view.year} stale={stale}
