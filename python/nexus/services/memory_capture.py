@@ -41,7 +41,6 @@ from nexus.db.models import (
     MemoryExport,
     Message,
     MessageRetrieval,
-    ToolCall,
 )
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import get_session_factory
@@ -123,14 +122,6 @@ def append_turn(db: Session, run: ChatRun) -> None:
         ),
         {"owner": run.owner_user_id, "capture": run.memory_capture_id},
     ).scalar_one()
-    tools = list(
-        db.execute(
-            select(ToolCall.__table__)
-            .where(ToolCall.assistant_message_id == run.assistant_message_id)
-            .order_by(ToolCall.generation_seq, ToolCall.position, ToolCall.id)
-        ).mappings()
-    )
-    assert all(row["principal_user_id"] == run.owner_user_id for row in tools)
     payload = NexusTurnExport.model_validate_json(
         canonical_json(
             {
@@ -184,23 +175,6 @@ def append_turn(db: Session, run: ChatRun) -> None:
                         )
                         .order_by(MessageRetrieval.citation_ordinal)
                     )
-                ],
-                "tools": [
-                    {
-                        "id": str(row["id"]),
-                        "generation_seq": str(row["generation_seq"]),
-                        "position": row["position"],
-                        "tool_name": row["tool_id"],
-                        "status": row["status"],
-                        "created_at": row["created_at"].isoformat(),
-                        "reverted_at": row["reverted_at"].isoformat()
-                        if row["reverted_at"] is not None
-                        else None,
-                        "arguments_json": canonical_json(row["arguments"]),
-                        "result_json": canonical_json(row["result"]),
-                        "created_refs_json": canonical_json(row["created_refs"]),
-                    }
-                    for row in tools
                 ],
             }
         )

@@ -3,8 +3,8 @@
 `services/memory_capture.py` owns future-only export of the configured owner's
 durable librarian turns. shared-memory reads and explicit note saves remain with
 [model tools](model-tools.md); archive, tree and retrieval remain in the external
-`universal-memory` library hosted by jarvis. this adopts jarvis adr 0070's source
-contract, `nexus-turn-capture-v1`.
+`universal-memory` library hosted by jarvis. jarvis adr 0098 defines the
+`nexus-turn-capture-v2` contract.
 
 automatic [chat orientation](chat.md#historical-orientation) reads a frozen ready
 shared view independently of capture. terminal settlement, periodic publication
@@ -22,9 +22,9 @@ new send/retry admission stamps that uuid only for the configured owner while
 ineligible even when they settle after activation.
 
 the sole `chat/events.finalize` freezes exact canonical question/answer, saved
-attachments, published citations and persisted tool receipts after terminal
-publication and pruning. fresh sql reads follow the flush; cached message objects
-cannot substitute for those rows. snapshot, terminal state and next export
+attachments and published citations after terminal publication and pruning.
+fresh sql reads follow the flush so cached message objects cannot substitute for
+those rows. snapshot, terminal state and next export
 sequence commit together under the account mutex. exports follow settlement
 order, not question order. a cancelled later question can therefore reach shared
 memory before an earlier queued question executes. the chat owner's execution-time
@@ -33,9 +33,11 @@ no network call runs in that transaction.
 
 `memory_exports` has no cascading relationship to deletable turns or evidence.
 its identity, canonical payload and digest are immutable. only its content-free
-parked code changes. deletion, later undo and retries never rewrite an export;
-already-recorded undo state is part of the snapshot. retries are new turns with
-their existing lineage. prompts, reasoning and transient tool bodies are excluded.
+parked code changes. deletion and retries leave previous exports intact.
+retries are new turns with their existing lineage. tool receipts and their undo
+state stay in nexus. each export has two original messages and one original per
+attachment or published citation. the receiver derives those originals and their
+duplicate proof from the immutable envelope. prompts and reasoning are excluded.
 
 ## delivery and operations
 

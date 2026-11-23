@@ -1172,6 +1172,15 @@ def quiesce(candidate: CandidateManifest, starting_revision: str) -> None:
         note("continuing the same immutable candidate/config; retaining its compatible queued work")
     elif starting_revision:
         assert_generation_quiescence()
+        # Remove after verification of the installed 0347 capture cut.
+        if (
+            starting_revision == "0346"
+            and candidate.expected_database_revision != starting_revision
+            and psql("SELECT EXISTS (SELECT FROM memory_exports)") != "f"
+        ):
+            raise Failure(
+                "unacknowledged v1 memory exports remain. use --restore-original and drain the old pair"
+            )
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
         raise Failure(
             "the database holds tables but no Alembic revision; repair it before releasing"
