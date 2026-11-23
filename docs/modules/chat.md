@@ -136,14 +136,17 @@ preparation releases database locks before network access and rechecks the run,
 claim and cancellation before assembling. one frozen `memory.view` snapshot must
 reach its final page within a single twenty-second preparation deadline. all nodes
 cover its ready `[0, through)` prefix in order and fit the shared 128,000-byte
-rendered-view limit. partial, inconsistent, cyclic or oversized responses become
-explicit unavailable orientation. expected transport/auth/protocol errors and stale
-cursors also continue chat with a content-free unavailable code; cancellation and
-defects propagate. no automatic retry, cache or wait for capture/compaction.
+rendered-view limit. a stale continuation discards the partial snapshot and
+restarts once within the same deadline. incomplete, inconsistent, cyclic or
+oversized responses and expected transport, authorization, or protocol errors
+continue chat with a content-free unavailable code. cancellation and defects
+propagate. chat uses no cache and never waits for capture or compaction.
 
 the prompt reports ready and admitted boundaries. they do not measure unpublished
 source capture: a previous turn can still be local, pending upload, or awaiting
-central compaction. exact recent turns remain eligible independently of the view.
+central compaction. recent exchanges in the shared view quote retained source
+text and identify the referenced originals. exact local recent turns remain
+eligible independently of the view.
 shared memory supplies knowledge available at execution time, not a reconstruction
 of what was known when the question was submitted. this is the accepted temporal
 contract for both automatic orientation and explicit memory reads. the initial
