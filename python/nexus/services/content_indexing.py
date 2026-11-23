@@ -20,14 +20,9 @@ requests the selected parents' existing summary jobs.
 A text source (an epub or web article, never an x composition) is indexed once, cut
 at its partition: every detected section start/end and accepted piece endpoint. Its
 state records ``section_bounds_key`` (generation, sorted partition points, chunker
-contract version) for the partition its published index used, and
-``section_witness_key`` (generation, section geometry, detector version) once
-structural preparation completed for that geometry, proved or not, independent of
-embedding status. A job's payload freezes both target keys. A job lacking current
-preparation rederives EPUB navigation from the verified stored package outside any
-transaction and commits it before embedding. changed geometry supersedes the old
-index revision through normal admission, preserving canonical text, generation and
-accepted piece cuts. a provider outage blocks neither creation nor discovery; html proves its cuts from retained dom at read time. Every
+contract version) for the partition its published index used. Each job freezes
+that partition and consumes the installed sections. Section preparation owns its
+own job and witness. Every
 transaction that changes accepted bounds calls ``reconcile_media_section_bounds``,
 which raises the revision unless the partition is already published or requested, and
 publication asserts its captured partition under the revision fence: a ``ready`` index
@@ -66,10 +61,8 @@ from nexus.schemas.import_history import (
     IndexSucceeded,
     IndexSuperseded,
 )
-from nexus.schemas.media_parts import PartPrepare
 from nexus.schemas.media_sources import SearchRepairAdmission
-from nexus.schemas.reader_apparatus import NoteRegion
-from nexus.services import media_intelligence_lifecycle, media_locks
+from nexus.services import media_intelligence_lifecycle
 from nexus.services.content_chunking import (
     CHUNKER_CONTRACT_VERSION,
     Chunk,
@@ -87,21 +80,12 @@ from nexus.services.embeddings import (
     embedding_model,
     pgvector_literal,
 )
-from nexus.services.epub_ingest import (
-    EpubNavigationPlan,
-    RetainedEpubFragment,
-    derive_epub_navigation,
-    replace_epub_navigation_projection,
-)
 from nexus.services.import_history import append_processing_event
-from nexus.services.media_parts import part_source_block_reason, require_part_source_creator
 from nexus.services.media_text_scope import text_scope_rows_sql, x_capture_scope_rows_sql
-from nexus.services.parser_temp import parser_attempt_directory, stream_storage_object_to_file
+from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.reader_navigation import read_media_navigation_proof
 from nexus.services.reader_publication import read_publication_generation
-from nexus.services.reader_structure import NavigationProof
-from nexus.services.reader_text_slice import section_witness_key
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search import projection
@@ -110,14 +94,12 @@ from nexus.services.web_article_structure import (
     add_heading_anchors,
     build_web_article_index_blocks,
 )
-from nexus.storage.client import get_storage_client
 
 JOB_KIND = "media_content_reindex_job"
 ReindexReason = Literal[
     "source_success",
     "reconciliation",
     "oracle_corpus_seed",
-    "section_preparation",
     "section_bounds",
 ]
 _TRANSCRIPT_KINDS = ("podcast_episode", "video")
@@ -439,9 +421,6 @@ def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
 class _Sections:
     """Detected sections and the index partition at the source's current publication."""
 
-    generation: int
-    proof: NavigationProof
-    witness_key: str
     bounds_key: str
     points: list[tuple[int, int]]  # sorted unique (fragment_idx, offset)
 
@@ -449,6 +428,8 @@ class _Sections:
 def _read_sections(db: Session, media_id: UUID) -> _Sections | None:
     """None unless the media is a ready, published piece source (``media_parts`` owns
     that eligibility). Titles, candidates and rich cuts never enter the partition."""
+    from nexus.services.media_parts import part_source_block_reason
+
     media = db.get(Media, media_id)
     if media is None or part_source_block_reason(db, media=media) is not None:
         return None
@@ -475,9 +456,7 @@ def _read_sections(db: Session, media_id: UUID) -> _Sections | None:
     bounds_key = hashlib.sha256(
         json.dumps([generation, ordered, CHUNKER_CONTRACT_VERSION], separators=(",", ":")).encode()
     ).hexdigest()
-    return _Sections(
-        generation, proof, section_witness_key(generation, proof.sections), bounds_key, ordered
-    )
+    return _Sections(bounds_key, ordered)
 
 
 def _partitioned(
@@ -706,7 +685,7 @@ def _lock_media_and_summary_parents(db: Session, media_id: UUID) -> bool:
 
 def _lock(db: Session, media_id: UUID) -> Row[Any] | None:
     """Lock the media row, then its state row: ``(revision, lexical_revision, status, provider, model,
-    section_witness_key, section_bounds_key)``.
+    section_bounds_key)``.
 
     None when either row is missing.
     """
@@ -714,7 +693,7 @@ def _lock(db: Session, media_id: UUID) -> Row[Any] | None:
         return db.execute(
             text(
                 "SELECT revision, lexical_revision, status, active_embedding_provider AS provider,"
-                " active_embedding_model AS model, section_witness_key, section_bounds_key"
+                " active_embedding_model AS model, section_bounds_key"
                 " FROM content_index_states"
                 " WHERE owner_kind = 'media' AND owner_id = :id FOR UPDATE"
             ),
@@ -734,38 +713,11 @@ def _event(db: Session, media_id: UUID, facts: IndexFacts) -> None:
     append_processing_event(db, media_id=media_id, facts=facts, stage="Index", failure_code=None)
 
 
-@dataclass(frozen=True)
-class _ClientRequest:
-    """An explicit section preparation: its client-minted job id and immutable request."""
-
-    job_id: UUID
-    requester_user_id: UUID
-    source_generation: int
-
-    @property
-    def identity(self) -> dict[str, object]:
-        return {
-            "requester_user_id": str(self.requester_user_id),
-            "source_generation": self.source_generation,
-        }
-
-
 def request_media_content_reindex(db: Session, *, media_id: UUID, reason: ReindexReason) -> int:
-    """Raise the revision and leave exactly one waiting job for it; return the revision.
+    """Raise the revision and freeze the installed partition for the new index job.
 
-    The payload freezes the source's target section witness and partition keys (null for
-    a media without sections). A waiting (unclaimed) server-minted job of an older
-    revision is reset to this one; a running job keeps its revision and will find itself
-    superseded at its fence.
+    A waiting server job can be retargeted; a running job retains its old revision.
     """
-    return _request(db, media_id, reason, None)
-
-
-def _request(
-    db: Session, media_id: UUID, reason: ReindexReason, client: _ClientRequest | None
-) -> int:
-    """A client-identified job keeps its original request: it is never reset to another
-    request, only superseded, and a client request always takes its own id."""
     if not _lock_media_and_summary_parents(db, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     sections = _read_sections(db, media_id)
@@ -774,8 +726,6 @@ def _request(
         "media_id": str(media_id),
         "revision": revision,
         "reason": reason,
-        "request": None if client is None else client.identity,
-        "section_witness_key": None if sections is None else sections.witness_key,
         "section_bounds_key": None if sections is None else sections.bounds_key,
     }
     waiting = [
@@ -785,22 +735,27 @@ def _request(
         )
         if job.status in ("pending", "failed", "held")
     ]
-    reused = (
-        [job for job in waiting if job.payload["request"] is None and job.status != "held"][:1]
-        if client is None
-        else []
-    )
+    reused = next((job for job in waiting if job.status != "held"), None)
     for obsolete in waiting:
-        if obsolete not in reused:
+        if obsolete != reused:
             queue.supersede_unclaimed_job(db, job_id=obsolete.id, kind=JOB_KIND)
-    if reused:
-        queue.reset_unclaimed_job(db, job_id=reused[0].id, kind=JOB_KIND, payload=payload)
+    if reused is None:
+        queue.enqueue_job(db, kind=JOB_KIND, payload=payload)
     else:
-        queue.enqueue_job(
-            db, kind=JOB_KIND, payload=payload, id=None if client is None else client.job_id
-        )
+        queue.reset_unclaimed_job(db, job_id=reused.id, kind=JOB_KIND, payload=payload)
     _event(db, media_id, IndexAccepted(revision=revision))
     return revision
+
+
+def record_section_witness(db: Session, *, media_id: UUID, witness_key: str) -> None:
+    """Record the installed preparation proof without changing the search revision."""
+    db.execute(
+        text(
+            "UPDATE content_index_states SET section_witness_key = :key, updated_at = now()"
+            " WHERE owner_kind = 'media' AND owner_id = :id RETURNING id"
+        ),
+        {"key": witness_key, "id": media_id},
+    ).one()
 
 
 def request_stale_media_content_reindex(
@@ -855,65 +810,6 @@ def reconcile_media_section_bounds(db: Session, *, media_id: UUID) -> bool:
     return True
 
 
-def prepare_media_parts(
-    db: Session, *, viewer_id: UUID, source_media_id: UUID, request: PartPrepare
-) -> SearchRepairAdmission:
-    """Ensure the source's current structural preparation; never launches discovery.
-
-    Retry rule: ``request.id`` is the durable job id. After visibility and creator
-    authority, a known id answers its own job when it is this creator's preparation of
-    this source at the same expected generation, else 409; this precedes any reuse or
-    admission. Then a completed preparation or a live job targeting the current section
-    witness key is reused; otherwise the id becomes the job of a new revision. A retry of
-    failed or superseded work uses a new id.
-    """
-    client = _ClientRequest(request.id, viewer_id, request.expected_source_generation)
-
-    def admit() -> SearchRepairAdmission:
-        media = db.get(Media, source_media_id)
-        if media is None or not can_read_media(db, viewer_id, source_media_id):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if media.created_by_user_id != viewer_id:
-            raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
-        known = queue.get_job(db, request.id)  # a client job's request never changes
-        if known is not None:
-            if known.kind != JOB_KIND or (
-                known.payload["media_id"],
-                known.payload["reason"],
-                known.payload["request"],
-            ) != (str(source_media_id), "section_preparation", client.identity):
-                raise ConflictError(
-                    ApiErrorCode.E_RESOURCE_CONFLICT, "The job id belongs to another request."
-                )
-            return SearchRepairAdmission(
-                media_id=source_media_id, revision=known.payload["revision"], job_id=known.id
-            )
-        require_part_source_creator(db, viewer_id=viewer_id, source_media_id=source_media_id)
-        state = _lock(db, source_media_id)
-        sections = _read_sections(db, source_media_id)
-        assert sections is not None  # an eligible ready source is published with sections
-        if sections.generation != request.expected_source_generation:
-            raise ConflictError(
-                ApiErrorCode.E_READER_CONTENT_CHANGED, "The source publication changed."
-            )
-        if state is not None:
-            job = _current_job(db, source_media_id, state.revision)
-            if job is not None and (
-                state.section_witness_key == sections.witness_key
-                or (
-                    job.status in _LIVE
-                    and job.payload["section_witness_key"] == sections.witness_key
-                )
-            ):
-                return SearchRepairAdmission(
-                    media_id=source_media_id, revision=state.revision, job_id=job.id
-                )
-        revision = _request(db, source_media_id, "section_preparation", client)
-        return SearchRepairAdmission(media_id=source_media_id, revision=revision, job_id=request.id)
-
-    return retry_serializable(db, "prepare_media_parts", admit)
-
-
 def retract_media_content_index(db: Session, *, media_id: UUID) -> None:
     """The media's text is being replaced: drop its passages now and raise the revision.
 
@@ -927,83 +823,15 @@ def retract_media_content_index(db: Session, *, media_id: UUID) -> None:
     _set_state(db, owner, "pending", "transcript_replacement", bump=1)
 
 
-# The job: fence and snapshot, prove missing section witnesses and commit them, embed
-# through a spool outside any transaction, fence and publish.
-
-
-@dataclass(frozen=True)
-class _EpubPackage:
-    """The stored package and retained fragments a witness derivation reads."""
-
-    storage_path: str
-    size_bytes: int
-    source_sha256: str
-    fragments: list[RetainedEpubFragment]
-    note_regions: list[NoteRegion]
+# The job snapshots the installed partition, spools outside the transaction and
+# publishes under its revision and queue claim.
 
 
 @dataclass(frozen=True)
 class _Work:
     source_kind: str
     blocks: list[IndexableBlock]
-    sections: _Sections | None
-    package: _EpubPackage | None
     lexical_ready: bool
-
-
-def _capture_epub_package(db: Session, media_id: UUID) -> _EpubPackage:
-    storage_path, size_bytes, source_sha256 = db.execute(
-        text("SELECT storage_path, size_bytes, source_sha256 FROM media_file WHERE media_id = :id"),
-        {"id": media_id},
-    ).one()
-    fragments = [
-        RetainedEpubFragment(
-            row.id, row.idx, row.package_href, row.html_sanitized, row.canonical_text
-        )
-        for row in db.execute(
-            text(
-                "SELECT f.id, f.idx, s.package_href, f.html_sanitized, f.canonical_text"
-                " FROM fragments f JOIN epub_fragment_sources s"
-                " ON s.fragment_id = f.id AND s.media_id = f.media_id"
-                " WHERE f.media_id = :id ORDER BY f.idx"
-            ),
-            {"id": media_id},
-        )
-    ]
-    return _EpubPackage(
-        storage_path, size_bytes, source_sha256, fragments, read_note_regions(db, media_id)
-    )
-
-
-def _derive_epub_navigation(
-    directory: Path, media_id: UUID, package: _EpubPackage
-) -> EpubNavigationPlan:
-    """rebuild the projection outside a transaction from the verified retained package."""
-    path = directory / "source.epub"
-    stream_storage_object_to_file(
-        get_storage_client(),
-        storage_path=package.storage_path,
-        destination=path,
-        expected_size_bytes=package.size_bytes,
-        expected_source_sha256=package.source_sha256,
-    )
-    return derive_epub_navigation(
-        epub_path=path,
-        media_id=media_id,
-        fragments=package.fragments,
-        note_regions=package.note_regions,
-    )
-
-
-def _record_prepared_sections(db: Session, media_id: UUID, sections: _Sections) -> None:
-    """publish the exact current catalogue's witness before embedding work."""
-    db.execute(
-        text(
-            "UPDATE content_index_states SET section_witness_key = :key, updated_at = now()"
-            " WHERE owner_kind = 'media' AND owner_id = :id RETURNING id"
-        ),
-        {"key": sections.witness_key, "id": media_id},
-    ).one()
 
 
 def run_media_reindex_job(
@@ -1011,7 +839,7 @@ def run_media_reindex_job(
 ) -> queue.JobResult:
     media_id, revision = UUID(payload["media_id"]), int(payload["revision"])
     reason = payload["reason"]
-    frozen = (payload["section_witness_key"], payload["section_bounds_key"])
+    frozen = payload["section_bounds_key"]
     result: dict[str, object] = {
         "status": "superseded",
         "media_id": str(media_id),
@@ -1033,14 +861,10 @@ def run_media_reindex_job(
             return None
         return state
 
-    def keys(sections: _Sections | None) -> tuple[str | None, str | None]:
-        return (None, None) if sections is None else (sections.witness_key, sections.bounds_key)
-
     def check_sections(db: Session) -> None:
-        """A revision fixes generation, geometry and partition once captured: any drift is
-        a writer that skipped ``reconcile_media_section_bounds``."""
-        if keys(_read_sections(db, media_id)) != frozen:
-            raise AssertionError("section structure changed without a new index revision")
+        sections = _read_sections(db, media_id)
+        if (None if sections is None else sections.bounds_key) != frozen:
+            raise AssertionError("section bounds changed without a new index revision")
 
     owner = IndexOwner("media", media_id)
 
@@ -1057,25 +881,19 @@ def run_media_reindex_job(
             record(db, IndexSuperseded)
             return None
         sections = _read_sections(db, media_id)
-        if keys(sections) != frozen:
-            # Only a changed detector or chunker contract moves a target under one
+        if (None if sections is None else sections.bounds_key) != frozen:
+            # A changed chunker contract moves a target under one
             # revision: a fresh revision freezes the current target.
             record(db, IndexSuperseded)
-            _request(db, media_id, reason, None)
+            request_media_content_reindex(db, media_id=media_id, reason=reason)
             return None
-        if state.section_bounds_key == frozen[1]:
+        if state.section_bounds_key == frozen:
             completed = completed_content_index(db, owner, state)
             if completed is not None:
                 return completed
         record(db, IndexExecutionStarted)
         _set_state(db, owner, "indexing", reason)
-        package = None
-        if sections is not None and state.section_witness_key != sections.witness_key:
-            if kind == "epub":
-                package = _capture_epub_package(db, media_id)
-            else:
-                _record_prepared_sections(db, media_id, sections)
-        lexical_ready = state.lexical_revision == revision and state.section_bounds_key == frozen[1]
+        lexical_ready = state.lexical_revision == revision and state.section_bounds_key == frozen
         blocks = (
             []
             if lexical_ready
@@ -1085,7 +903,7 @@ def run_media_reindex_job(
         )
         record_input_change(db, owners=(f"media:{media_id}",))
         source_kind = "transcript" if kind in _TRANSCRIPT_KINDS else kind
-        return _Work(source_kind, blocks, sections, package, lexical_ready)
+        return _Work(source_kind, blocks, lexical_ready)
 
     work = index_phase("prepare_media_content_reindex", prepare)
     if work is None:
@@ -1093,36 +911,6 @@ def run_media_reindex_job(
     if isinstance(work, ContentIndexResult):
         return result | {"status": work.status, "chunk_count": work.chunk_count}
     with parser_attempt_directory(context.job_id) as directory:
-        if work.package is not None:
-            assert work.sections is not None
-            package = work.package
-            navigation = _derive_epub_navigation(directory, media_id, package)
-
-            def attach(db: Session) -> bool:
-                # Family writers serialize before the index/job fence; key-share
-                # remains available to queue history's media foreign key.
-                if not media_locks.lock_media_rows_in_order(
-                    db, [media_id], lock_mode="no_key_update"
-                ):
-                    return False
-                if fence(db) is None:
-                    return False
-                check_sections(db)
-                replace_epub_navigation_projection(db, media_id=media_id, plan=navigation)
-                current = _read_sections(db, media_id)
-                assert current is not None
-                _record_prepared_sections(db, media_id, current)
-                changed = keys(current) != frozen
-                if changed:
-                    # This revision captured the old catalogue and old blocks. Normal
-                    # admission freezes a new partition; no old blocks are embedded.
-                    record(db, IndexSuperseded)
-                    _request(db, media_id, reason, None)
-                record_input_change(db, owners=(f"media:{media_id}",))
-                return not changed
-
-            if not index_phase("attach_media_section_witnesses", attach):
-                return result
         text_spool = directory / "text.jsonl"
         chunks_spool = directory / "published-chunks.jsonl"
         embedding_spool = directory / "embeddings.jsonl"
@@ -1135,7 +923,7 @@ def run_media_reindex_job(
                     if state is None:
                         return None
                     check_sections(db)
-                    if state.lexical_revision == revision and state.section_bounds_key == frozen[1]:
+                    if state.lexical_revision == revision and state.section_bounds_key == frozen:
                         count = db.scalar(
                             text(
                                 "SELECT count(*) FROM content_chunks"
@@ -1157,7 +945,7 @@ def run_media_reindex_job(
                             "UPDATE content_index_states SET section_bounds_key = :key"
                             " WHERE owner_kind = 'media' AND owner_id = :id RETURNING id"
                         ),
-                        {"key": frozen[1], "id": media_id},
+                        {"key": frozen, "id": media_id},
                     ).one()
                     queue.record_job_checkpoint(db, context=context)
                     if published.status != "indexing":
@@ -1179,7 +967,7 @@ def run_media_reindex_job(
                 if state is None:
                     return False
                 check_sections(db)
-                if state.lexical_revision != revision or state.section_bounds_key != frozen[1]:
+                if state.lexical_revision != revision or state.section_bounds_key != frozen:
                     return False
                 snapshot_published_chunks(db, owner, chunks_spool)
                 return True
@@ -1206,7 +994,7 @@ def run_media_reindex_job(
             if state is None:
                 return None
             check_sections(db)
-            if state.lexical_revision != revision or state.section_bounds_key != frozen[1]:
+            if state.lexical_revision != revision or state.section_bounds_key != frozen:
                 return None
             published = publish_embeddings(
                 db,

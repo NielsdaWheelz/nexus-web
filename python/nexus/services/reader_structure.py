@@ -66,6 +66,31 @@ class SectionRangeInput:
     container_end_cut: DomCut | None = None
 
 
+class FragmentIntervals:
+    """Sorted, disjoint source ranges for repeated exact point checks."""
+
+    def __init__(self, by_fragment: Mapping[int, list[tuple[int, int]]]) -> None:
+        self._bounds: dict[int, tuple[list[int], list[int]]] = {}
+        for index, spans in by_fragment.items():
+            starts: list[int] = []
+            ends: list[int] = []
+            for start, end in sorted(spans):
+                if ends and start <= ends[-1]:
+                    ends[-1] = max(ends[-1], end)
+                else:
+                    starts.append(start)
+                    ends.append(end)
+            self._bounds[index] = starts, ends
+
+    def contains(self, point: DocumentPoint) -> bool:
+        bounds = self._bounds.get(point.fragment_idx)
+        if bounds is None:
+            return False
+        starts, ends = bounds
+        previous = bisect_right(starts, point.offset) - 1
+        return previous >= 0 and point.offset < ends[previous]
+
+
 class NavigationNoteIndex:
     """One publication's note ranges, indexed once for repeated candidate reads."""
 
@@ -83,34 +108,14 @@ class NavigationNoteIndex:
             target.setdefault(idx, []).append((start.offset, end.offset))
             if isinstance(region, NoteGroupRegion) and region.heading is not None:
                 headings.add(DocumentPoint(idx, region.heading.offset))
-        self._bodies = {idx: self._merge(ranges) for idx, ranges in bodies.items()}
-        self._groups = {idx: self._merge(ranges) for idx, ranges in groups.items()}
+        self._bodies = FragmentIntervals(bodies)
+        self._groups = FragmentIntervals(groups)
         self._headings = headings
 
-    @staticmethod
-    def _merge(ranges: list[tuple[int, int]]) -> tuple[tuple[int, ...], tuple[int, ...]]:
-        merged: list[tuple[int, int]] = []
-        for start, end in sorted(ranges):
-            if merged and start <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
-            else:
-                merged.append((start, end))
-        return tuple(start for start, _ in merged), tuple(end for _, end in merged)
-
-    @staticmethod
-    def _contains(index: tuple[tuple[int, ...], tuple[int, ...]] | None, offset: int) -> bool:
-        if index is None:
-            return False
-        starts, ends = index
-        candidate = bisect_right(starts, offset) - 1
-        return candidate >= 0 and offset < ends[candidate]
-
     def is_routine(self, point: DocumentPoint) -> bool:
-        if self._contains(self._bodies.get(point.fragment_idx), point.offset):
+        if self._bodies.contains(point):
             return False
-        return not self._contains(self._groups.get(point.fragment_idx), point.offset) or (
-            point in self._headings
-        )
+        return not self._groups.contains(point) or (point in self._headings)
 
 
 def resolve_section_extents(

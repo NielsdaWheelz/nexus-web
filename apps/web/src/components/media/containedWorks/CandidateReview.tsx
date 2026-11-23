@@ -20,8 +20,10 @@ import styles from "./parts.module.css";
 
 type Draft = { detail: Schema<"CandidateDetail"> | null; partId: string;
   request: Schema<"PartCandidateDecision"> | null; busy: boolean; attempt: number; conflict: boolean; retired: boolean };
-export default function CandidateReview({ source, candidate, onClose, onSaved, onChoose, returnFocusTo }: {
+export default function CandidateReview({ source, candidate, navigationKey, prepared, onClose, onSaved, onChoose, returnFocusTo }: {
   readonly source: string; readonly candidate: string; readonly onClose: () => void;
+  readonly navigationKey: string | null;
+  readonly prepared: boolean;
   readonly onSaved: (id: string | null) => Promise<void>;
   readonly onChoose: (detail: Schema<"CandidateDetail">) => void;
   readonly returnFocusTo: ReturnFocusTarget;
@@ -65,7 +67,10 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
     }
   };
   const blocking = busy || request !== null;
-  const accept = detail !== null && detail.accept.allowed && detail.selection !== null && preview.status === "ready" && preview.error === null && preview.data.creation_conflict === null;
+  const selectionChanged = detail?.selection != null && navigationKey !== null && detail.selection.navigation_key !== navigationKey;
+  const accept = prepared && navigationKey !== null && detail !== null && detail.accept.allowed
+    && detail.selection?.navigation_key === navigationKey && preview.status === "ready" && preview.error === null
+    && preview.data.creation_conflict === null;
   return <Dialog open title="review suggestion" onClose={onClose} returnFocusTo={returnFocusTo}
     onDismissRequest={() => {
       if (!guard.confirmLoss({ scopes: [], ownerIds: [draft.owner] })) return "blocked";
@@ -83,13 +88,13 @@ export default function CandidateReview({ source, candidate, onClose, onSaved, o
         {preview.status === "ready" && preview.data.creation_conflict ? <p>{partBlockMessage(preview.data.creation_conflict.reason)}</p> : null}
         <div className={styles.actions}>
           <Button emphasis="strong" disabled={blocking || conflict || !accept} onClick={() => void run({ expected_version: detail.version, expected_navigation_key: detail.selection!.navigation_key, decision: "accepted", part_id: draft.value.partId })}>extract</Button>
-          {detail.user_decision !== "rejected" ? <Button disabled={blocking || conflict} onClick={() => void run({ expected_version: detail.version, expected_navigation_key: null, decision: "rejected", part_id: null })}>dismiss</Button> : null}
-          <Button disabled={blocking} onClick={() => { draft.set(value => ({ ...value, retired: true, detail: null, conflict: false })); onChoose(detail); }}>choose sections…</Button>
+          {detail.user_decision !== "rejected" ? <Button disabled={blocking || conflict || navigationKey === null} onClick={() => void run({ expected_version: detail.version, expected_navigation_key: null, decision: "rejected", part_id: null })}>dismiss</Button> : null}
+          <Button disabled={blocking || navigationKey === null || selectionChanged} onClick={() => { draft.set(value => ({ ...value, retired: true, detail: null, conflict: false })); onChoose(detail); }}>choose sections…</Button>
         </div>
       </>}
       {request !== null && draft.value.attempt > 0 ? <Hold id={`part-candidate:${source}:${candidate}`} attempt={draft.value.attempt} {...resendFeedback({ line: UNSURE,
           resend: { label: "retry", commandKey: "RetryCandidateDecision", busy, run: () => void run(request, true) } })} /> : null}
-      {conflict || stalePreview ? <Button disabled={blocking || loaded.status === "ready" && loaded.refreshing} onClick={() => void reviewCurrent()}>review current proposal</Button> : null}
+      {conflict || stalePreview || selectionChanged ? <Button disabled={blocking || loaded.status === "ready" && loaded.refreshing} onClick={() => void reviewCurrent()}>review current proposal</Button> : null}
     </div>
   </Dialog>;
 }

@@ -81,6 +81,7 @@ export type TextDocument = {
   readonly kind: "text";
   readonly format: "web" | "epub" | "transcript";
   readonly identity: string;
+  readonly navigationKey: string | null;
   /** The canonical publication whose fragment offsets the units carry; null when units
    * belong to other owners (X threads), to a part's source, or to no canonical text. */
   readonly generation: number | null;
@@ -174,7 +175,7 @@ export const clampZoom = (zoom: number) =>
   Math.min(PDF_ZOOM.max, Math.max(PDF_ZOOM.min, zoom));
 
 /** The one wire→model mapping, shared by the hosted, shelf and public sources. */
-export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
+export function readerDocument(out: ReaderDocumentOut, navigationKey: string | null = null): ReaderDocument {
   if (out.kind === "pdf") {
     const { url, expires_at } = out.file;
     return {
@@ -260,6 +261,7 @@ export function readerDocument(out: ReaderDocumentOut): ReaderDocument {
     kind: "text",
     format: out.kind === "text_part" ? out.source_format === "web_article" ? "web" : "epub" : out.kind === "web_article" || out.kind === "x_capture" ? "web" : out.kind,
     identity: out.identity,
+    navigationKey,
     generation: out.kind === "web_article" || out.kind === "epub" ? out.publication_generation : null,
     part: out.kind === "text_part" ? { mediaId: out.provenance.source_media_id, generation: out.provenance.source_generation } : null,
     title: out.title,

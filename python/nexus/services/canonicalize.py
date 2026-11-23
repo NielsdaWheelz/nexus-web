@@ -29,6 +29,7 @@ from array import array
 from bisect import bisect_right
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import regex
 from lxml.etree import HTMLParser
@@ -66,6 +67,8 @@ class CanonicalElement:
     numbering_allowed: bool
     roles: frozenset[str] = frozenset()
     in_navigation: bool = False
+    heading_level: int | None = None
+    declared_division: Literal["chapter", "part", "volume"] | None = None
     heading_group: tuple[int, int] | None = None
     link_href: str | None = None
     dom_path: tuple[int, ...] | None = None
@@ -196,6 +199,9 @@ class _CanonicalTextTarget:
                     self._captured_stack[-1] if self._captured_stack else None,
                     tuple(attributes.get("aria-labelledby", "").split()),
                     self._numbering_stack[-1],
+                    heading_level=int(normalized_tag[1])
+                    if normalized_tag in HEADING_TAGS
+                    else None,
                     link_href=attributes.get("href") if normalized_tag == "a" else None,
                     dom_path=dom_path,
                 )

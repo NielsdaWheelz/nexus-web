@@ -69,11 +69,11 @@ export function targetOfSourcePoint(location: Schema<"PointSourceLocationOut">, 
 export function hostedSource(mediaId: string): ReaderSource {
   return {
     async load(signal) {
-      const { data } = await requestWithRetry(attempt => apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(
+      const { data, navigation_key } = await requestWithRetry(attempt => apiFetch<ApiJson<"/media/{media_id}/reader", "get">>(
         `/api/media/${mediaId}/reader`,
         { signal: attempt },
       ), signal);
-      return readerDocument(data);
+      return readerDocument(data, navigation_key);
     },
     async refreshPdf(signal) {
       const { data } = await apiFetch<ApiJson<"/media/{media_id}/file", "get">>(

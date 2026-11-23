@@ -35,6 +35,7 @@ from nexus.schemas.reader import (
 from nexus.schemas.reader_document import (
     ReaderCaptureDocumentOut,
     ReaderCitationOccurrenceOut,
+    ReaderDocumentResponseOut,
     ReaderPartDocumentOut,
     ReaderPartExtentOut,
     ReaderPartExtentPointOut,
@@ -65,7 +66,10 @@ from nexus.services.media_text_scope import (
     read_media_text_scope,
     read_scope_fragment,
 )
-from nexus.services.reader_navigation import read_media_navigation
+from nexus.services.reader_navigation import (
+    read_epub_projection_observations,
+    read_media_navigation,
+)
 from nexus.services.reader_publication import (
     read_publication_source_issues,
     read_ready_publication_generation,
@@ -308,6 +312,17 @@ def read_reader_document(
         return ReaderPdfFileOut(url=file["url"], expires_at=file["expires_at"])
 
     return build_reader_document(db, media_id=media_id, viewer_id=viewer_id, pdf_file=signed)
+
+
+def read_hosted_reader(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderDocumentResponseOut:
+    """Capture the authorized document and its navigation key in one snapshot."""
+    document = read_reader_document(db, viewer_id, media_id)
+    observation = read_epub_projection_observations(db, authorized_media_ids=[media_id]).get(
+        media_id
+    )
+    return ReaderDocumentResponseOut(
+        data=document, navigation_key=None if observation is None else observation[0]
+    )
 
 
 def x_document_identity(generation: int, units: list[ReaderUnitOut]) -> str:

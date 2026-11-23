@@ -522,6 +522,10 @@ def _settle(
 
             for indexed_id in indexed_ids:
                 request_media_content_reindex(db, media_id=indexed_id, reason="source_success")
+        if media_id in indexed_ids and media.kind in ("epub", "web_article"):
+            from nexus.services.section_preparation import seed_published_section_witness
+
+            seed_published_section_witness(db, media=media)
         from nexus.services.part_discovery import enqueue_initial_part_discovery
 
         enqueue_initial_part_discovery(db, source=media, attempt=attempt)

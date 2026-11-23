@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Button from "@/components/ui/Button";
 import ButtonLink from "@/components/ui/ButtonLink";
 import Dialog from "@/components/ui/Dialog";
-import { Contents, ContentsList } from "@/lib/documentReader/chrome/Contents";
+import { Contents, ContentsList, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import { textSectionLookup, type TocNode, type TextPoint } from "@/lib/documentReader/model";
 import type { ReaderDestination } from "@/lib/documentReader/location";
@@ -26,7 +26,8 @@ import { useResourceDraft } from "@/lib/resourceGraph/useResourceDraft";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { WORK_OBSERVATION_MS } from "@/lib/api/observationPolicy";
 import { useObservationDemand } from "@/lib/api/useObservationDemand";
-import { sourceContents, partDefinition, discoverParts, decidePart } from "@/lib/media/parts";
+import { sourceContents, partDefinition, prepareParts, discoverParts, decidePart } from "@/lib/media/parts";
+import { useMediaObservation } from "@/lib/media/mediaMetadataOperations";
 import PartEditor, { partBlockMessage, partFailure, unsure, UNSURE } from "./PartEditor";
 import CandidateReview from "./CandidateReview";
 import styles from "./parts.module.css";
@@ -35,16 +36,22 @@ type Work = Schema<"SourceContentsOut">["works"][number];
 type Intent = { kind: "manual"; section: string | null; title: string; selection: Schema<"SectionSelection"> | null; node: string | null }
   | { kind: "review"; candidate: string; node: string | null }
   | { kind: "unavailable"; message: string; media: string | null; node: string | null };
-type Command = { kind: "discover"; body: Schema<"PartDiscovery"> }
+type Command = { kind: "prepare"; body: Schema<"PartPrepare"> }
+  | { kind: "discover"; body: Schema<"PartDiscovery"> }
   | { kind: "restore"; candidate: string; body: Schema<"PartCandidateDecision"> };
 
-export function SourcePieces({ source, reader, onNavigate }: { readonly source: string; readonly reader: Reader; readonly onNavigate?: (destination: ReaderDestination) => void }) {
+export function SourcePieces({ source, reader, observation, onNavigate }: {
+  readonly source: string; readonly reader: Reader; readonly observation: Schema<"MediaProcessingSnapshotOut"> | null;
+  readonly onNavigate?: (destination: ReaderDestination) => void;
+}) {
   const observing = useObservationDemand(usePaneIsPresented());
-  const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(observing, 0)}`;
+  const stale = JSON.stringify([
+    useChangeStamp("Metadata", "Entries"), useRefreshStamp(observing, 0), observation?.navigation_key ?? null,
+    observation?.section_preparation_key ?? null,
+  ]);
   const contents = usePaneFreeServerValue({ key: `/media/${source}/parts`, stale, enabled: observing, load: signal => sourceContents(source, signal) });
   const speak = useActiveRegion();
-  const page = contents.status === "ready" ? contents.data : null;
-  const navigation = page?.navigation ?? null;
+  const fetched = contents.status === "ready" ? contents.data : null;
   const [intent, setIntent] = useState<Intent | null>(null);
   const root = useRef<HTMLElement>(null);
   const returnedPart = useRef<string | null>(null);
@@ -55,19 +62,34 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
     () => ({ request: null, busy: false, attempt: 0 }), value => ({ changed: false, unconfirmed: value.request !== null, stopsBrowserWork: false }));
   const mounted = useReaderState(reader, state => state.document);
   const viewport = useReaderState(reader, state => state.viewport);
-  const shown = navigation !== null && navigation.media_id === source && mounted.status === "ready" && mounted.doc.kind === "text" ? mounted.doc.generation : null;
-  const matched = shown !== null && shown === navigation?.generation;
-  const behind = shown !== null && navigation !== null && shown < navigation.generation;
-  /** The contents' and the reader's generations this panel last acted on. */
+  const shown = mounted.status === "ready" && mounted.doc.kind === "text" ? mounted.doc : null;
+  const shownGeneration = shown?.generation ?? null;
+  const fetchedNav = fetched?.navigation ?? null;
+  const fetchedKey = fetched?.navigation_key ?? null;
+  const paired = fetchedNav !== null && fetchedNav.media_id === source && shownGeneration !== null;
+  const sameProof = paired && shownGeneration === fetchedNav.generation
+    && (fetchedNav.kind !== "epub" || fetchedKey !== null && shown?.navigationKey === fetchedKey);
+  const matched = sameProof && contents.status === "ready" && contents.fresh && contents.error === null
+    && mounted.status === "ready" && !mounted.refreshing && !mounted.refreshFailed;
+  const [lastOutline, setLastOutline] = useState<Schema<"SourceContentsOut"> | null>(null);
+  if (sameProof && fetched !== lastOutline) setLastOutline(fetched);
+  const readError = contents.status === "loading" ? null : contents.error;
+  const refused = readError !== null && (readError.status === 401 || readError.status === 403 || readError.status === 404);
+  const page = refused ? null : sameProof || fetched?.navigation === null ? fetched
+    : lastOutline?.navigation?.media_id === source ? lastOutline : null;
+  const navigation = page?.navigation ?? null;
+  const behind = paired && shownGeneration < fetchedNav.generation;
+  /** A mismatched pair gets one reconciliation read. The keys have no order. */
   const acted = useRef<string | null>(null);
-  const pair = navigation === null || shown === null ? null : `${navigation.generation}:${shown}`;
+  const pair = paired ? JSON.stringify([fetchedNav.generation, fetchedKey, shownGeneration, shown?.navigationKey ?? null]) : null;
   useEffect(() => {
-    if (navigation === null || pair === null || matched || acted.current === pair) return;
+    if (sameProof || pair === null || !observing || acted.current === pair || contents.status !== "ready"
+      || !contents.fresh || contents.refreshing || contents.error !== null
+      || mounted.status !== "ready" || mounted.refreshing) return;
     acted.current = pair;
-    // the reader behind these contents loads their text; ahead of them, they are stale and read again.
-    if (behind) reader.reload(navigation.generation);
+    if (behind) reader.reload(fetchedNav.generation);
     else contents.revalidate();
-  }, [behind, contents, matched, navigation, pair, reader]);
+  }, [behind, contents, fetchedNav, mounted, observing, pair, reader, sameProof]);
   const snapshot = useMemo(() => {
     if (navigation === null) return null;
     const offsets = new Map<string, number>();
@@ -80,10 +102,9 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
     return { nodes: navigation.toc_nodes.map(node), sectionAt, offset };
   }, [navigation]);
   const current = matched && mounted.status === "ready" && viewport?.identity === mounted.doc.identity && viewport.primary.kind === "text" ? snapshot?.sectionAt(viewport.primary)?.id ?? null : null;
-  const preparationActive = page?.capabilities.create.reason === "preparing_structure" && (page.preparation?.status === "Queued" || page.preparation?.status === "Processing");
+  const preparationActive = page?.preparation?.classification === "Active";
   const operationActive = page?.operation?.status === "pending" || page?.operation?.status === "running" || page?.operation?.status === "failed";
-  const active = operationActive || preparationActive;
-  useIntervalPoll({ enabled: observing && active, pollIntervalMs: WORK_OBSERVATION_MS, onPoll: () => {
+  useIntervalPoll({ enabled: observing && operationActive, pollIntervalMs: WORK_OBSERVATION_MS, onPoll: () => {
     if (!(contents.status === "ready" && contents.refreshing || contents.status === "failed" && contents.retrying)) contents.revalidate();
   } });
   const refresh = useCallback(async () => {
@@ -122,31 +143,34 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
     if (commands.read().busy || commands.read().request !== null && !retry) return;
     commands.set(value => ({ ...value, request, busy: true, attempt: retry ? value.attempt : 0 }));
     try {
-      if (request.kind === "discover") await discoverParts(source, request.body);
+      if (request.kind === "prepare") await prepareParts(source, request.body);
+      else if (request.kind === "discover") await discoverParts(source, request.body);
       else await decidePart(source, request.candidate, request.body);
     } catch (error) {
-      const said = partFailure(outcome, error, request.kind === "discover" ? "couldn’t start extraction." : "couldn’t change this suggestion.") === "Said";
+      const fact = request.kind === "prepare" ? "couldn’t prepare sections."
+        : request.kind === "discover" ? "couldn’t start extraction." : "couldn’t change this suggestion.";
+      const said = partFailure(outcome, error, fact) === "Said";
       commands.set(value => ({ request: said && !retry ? null : request, busy: false, attempt: value.attempt + 1 }));
       contents.revalidate();
       return;
     }
-      commands.set({ request: null, busy: false, attempt: 0 });
-      await refresh();
-      if (request.kind === "restore" && request.body.part_id !== null) {
-        const id = request.body.part_id;
-        if (intent?.kind === "unavailable" && intent.media === id) {
-          returnedPart.current = id;
-          setIntent(current => current === intent ? null : current);
-        } else root.current?.querySelector<HTMLElement>(`[data-contents-work="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
-      }
+    try { await refresh(); }
+    finally { commands.set({ request: null, busy: false, attempt: 0 }); }
+    if (request.kind === "restore" && request.body.part_id !== null) {
+      const id = request.body.part_id;
+      if (intent?.kind === "unavailable" && intent.media === id) {
+        returnedPart.current = id;
+        setIntent(current => current === intent ? null : current);
+      } else root.current?.querySelector<HTMLElement>(`[data-contents-work="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+    }
   };
   const blocking = commands.value.busy || commands.value.request !== null;
   const creator = page !== null && page.capabilities.create.reason !== "not_creator" && page.capabilities.discover.reason !== "not_creator";
   const works = page?.works ?? [];
   const workAction = (work: Work): ReactNode => work.kind === "part" ? work.activation.href !== null
     ? <ButtonLink href={work.activation.href} data-contents-work={work.media_id} data-contents-action="true" aria-label={`open ${work.title}`}>open</ButtonLink> : null
-    : <Button data-contents-work={work.media_id} data-contents-action="true" aria-label={`restore ${work.title}`} disabled={blocking} onClick={() => {
-      if (!blocking) void run({ kind: "restore", candidate: work.candidate_id, body: { expected_version: work.candidate_version, expected_navigation_key: null, decision: "accepted", part_id: work.media_id } });
+    : <Button data-contents-work={work.media_id} data-contents-action="true" aria-label={`restore ${work.title}`} disabled={blocking || !matched} onClick={() => {
+      if (matched && !blocking) void run({ kind: "restore", candidate: work.candidate_id, body: { expected_version: work.candidate_version, expected_navigation_key: null, decision: "accepted", part_id: work.media_id } });
     }}>restore</Button>;
   const exactWork = (section: string) => works.find(work => work.placement.section_ids?.length === 1 && work.placement.section_ids[0] === section) ?? null;
   const exactCandidate = (section: string) => page?.candidates.find(candidate => candidate.placement.section_ids?.length === 1 && candidate.placement.section_ids[0] === section) ?? null;
@@ -154,7 +178,7 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
     if (node.sectionId === null) return null;
     const work = exactWork(node.sectionId);
     if (work) return workAction(work);
-    if (!creator) return null;
+    if (!creator || !matched) return null;
     const choice = page?.section_choices.find(choice => choice.section_id === node.sectionId);
     if (!choice) return null;
     if (choice.creation_conflict !== null) return <Button data-contents-action="true" aria-label={`unavailable: ${node.label}`} onClick={() => openIntent({ kind: "unavailable", node: node.id, message: partBlockMessage(choice.creation_conflict!.reason), media: choice.creation_conflict!.media_id })}>unavailable</Button>;
@@ -197,46 +221,61 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
   for (const candidate of page?.candidates ?? []) {
     if (candidate.placement.section_ids?.length === 1 && represented.has(candidate.placement.section_ids[0])) continue;
     attach(candidate.id, candidate.title ?? "untitled suggestion", candidate.placement,
-      <Button data-contents-candidate={candidate.id} data-contents-action="true" aria-label={`review ${candidate.title ?? "untitled suggestion"}`} onClick={() => openIntent({ kind: "review", candidate: candidate.id, node: candidate.placement.anchor_node_id })}>review</Button>, candidate.user_decision === "rejected");
+      <Button data-contents-candidate={candidate.id} data-contents-action="true" disabled={!matched} aria-label={`review ${candidate.title ?? "untitled suggestion"}`} onClick={() => openIntent({ kind: "review", candidate: candidate.id, node: candidate.placement.anchor_node_id })}>review</Button>, candidate.user_decision === "rejected");
   }
   const position = (point: Schema<"NavigationTextPointOut">) => snapshot?.offset({ unit: point.fragment_id, offset: point.offset }) ?? 0;
   for (const rows of attachments.values()) rows.sort((a, b) => position(a.placement.extent.start) - position(b.placement.extent.start) || position(b.placement.extent.end) - position(a.placement.extent.end) || a.id.localeCompare(b.id));
   const operation = page?.operation;
-  const operationText = preparationActive ? "preparing text." : operation?.status === "pending" ? "waiting to start."
+  const preparationRequired = page?.capabilities.discover.reason === "preparing_structure";
+  const preparationFailed = preparationRequired && page?.preparation?.classification === "NeedsAttention";
+  const operationText = preparationFailed ? "couldn’t prepare sections."
+    : preparationActive ? page?.preparation?.waiting_reason === "RetryBackoff" ? "waiting to retry preparation." : "preparing sections."
+    : operation?.status === "pending" ? "waiting to start."
     : operation?.status === "running" ? `checking ${operation.completed_sections} of ${operation.total_sections} sections.`
     : operation?.status === "held" ? "extraction needs a repair." : operation?.status === "failed" ? "waiting to retry." : operation?.status === "dead" ? "couldn’t extract independent works."
     : operation?.outcome === "superseded" ? "the source changed. run extraction again." : completed ? "extraction complete." : null;
   return <section ref={root} className={styles.panel} aria-label="contents" tabIndex={-1}>
-    {contents.status === "loading" ? <Ruling /> : null}
-    {contents.status === "failed" ? <Failed error={contents.error} noun="contents" retry={{ run: () => void refresh(), busy: contents.retrying }} /> : null}
+    {contents.status === "loading" || page === null && readError === null && contents.status === "ready" && contents.refreshing ? <Ruling /> : null}
+    {readError ? <Failed error={readError} noun="contents" retry={{ run: () => void refresh(), busy: contents.status === "ready" ? contents.refreshing : contents.status === "failed" && contents.retrying }} /> : null}
+    {page !== null ? <SourceIssuesNotice issues={navigation?.source_issues ?? shown?.sourceIssues ?? []} /> : null}
     {page ? <>
-      {creator && (page.capabilities.discover.allowed || operationActive || operation?.status === "dead") && navigation ? <Button data-contents-top="true" disabled={blocking || operationActive} aria-busy={commands.value.busy || undefined} onClick={() => {
-        if (!blocking && page.capabilities.discover.allowed) void run({ kind: "discover", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation, expected_latest_job_id: operation?.job_id ?? null } });
+      {creator && preparationRequired && navigation && !preparationActive ? <Button data-contents-top="true" disabled={blocking || !matched}
+        aria-busy={commands.value.busy || undefined} onClick={() => void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } })}>
+        {preparationFailed ? "retry" : "prepare sections"}
+      </Button> : null}
+      {creator && !preparationRequired && (page.capabilities.discover.allowed || operationActive || operation?.status === "dead") && navigation ? <Button data-contents-top="true" disabled={blocking || operationActive || !matched} aria-busy={commands.value.busy || undefined} onClick={() => {
+        if (matched && !blocking && page.capabilities.discover.allowed) void run({ kind: "discover", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation, expected_latest_job_id: operation?.job_id ?? null } });
       }}>{operation?.status === "dead" || operation?.outcome === "superseded" ? "retry" : "extract independent works"}</Button> : null}
       {/* a job's progress stays quiet; its death speaks, once per line. */}
-      {operationText ? <Fact line={{ fact: operationText }} speak={speak && operation?.status === "dead"} /> : null}
+      {operationText ? <Fact line={{ fact: operationText }} speak={speak && (preparationFailed || operation?.status === "dead")} /> : null}
       {navigation === null ? <><p>{partBlockMessage(page.capabilities.create.reason)}</p><Contents reader={reader} onNavigate={onNavigate} /></> : snapshot ? <>
         {/* the contents stay inert until the reader shows their version; a load that ended behind it says so */}
-        {behind && mounted.status === "ready" && !mounted.refreshing && acted.current === pair
-          ? <Fact line={{ fact: "couldn’t load the current text.", reason: "contents open once it loads." }}
-            verbs={[{ label: "retry", commandKey: "ReloadSourceText", run: () => reader.reload() }]} /> : null}
         <nav aria-label="Contents"><ContentsList reader={reader} nodes={snapshot.nodes} current={current} disabled={!matched} onNavigate={onNavigate}
           target={node => node.at === null ? null : { kind: "point", point: { kind: "text", ...node.at } }} actions={actions}
           detail={node => { const work = node.sectionId === null ? null : exactWork(node.sectionId); const candidate = node.sectionId === null ? null : exactCandidate(node.sectionId);
             return work && work.title !== node.label ? <small className={styles.rowNote}>extracted as {work.title}</small>
               : candidate?.user_decision === "rejected" ? <small className={styles.rowNote}>dismissed</small> : null; }}
           attachments={id => attachments.get(id) ?? []} /></nav>
-        {snapshot.nodes.length === 0 && works.length === 0 && page.candidates.length === 0 ? <p>no sections available</p> : null}
+        {matched && snapshot.nodes.length === 0 && works.length === 0 && page.candidates.length === 0 ? <p>no sections available</p> : null}
       </> : null}
     </> : null}
+    {readError === null && mounted.status === "ready" && !mounted.refreshing
+      && (mounted.refreshFailed || pair !== null && !sameProof && acted.current === pair
+        && contents.status === "ready" && !contents.refreshing)
+      ? <Fact line={{ fact: "couldn’t load the current contents." }}
+        verbs={[{ label: "retry", commandKey: "ReloadSourceText", run: () => { reader.reload(); contents.revalidate(); } }]} /> : null}
     {commands.value.request !== null && commands.value.attempt > 0 ? <Hold id={`contents-command:${source}`} attempt={commands.value.attempt}
-      {...resendFeedback({ line: commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE,
+      {...resendFeedback({ line: commands.value.request.kind === "prepare" ? unsure("not sure preparation started.")
+        : commands.value.request.kind === "discover" ? unsure("not sure extraction started.") : UNSURE,
         resend: { label: "retry", commandKey: "RetryContentsCommand", busy: commands.value.busy, run: () => void run(commands.value.request!, true) } })} /> : null}
     {intent?.kind === "manual" ? <PartEditor key={`manual:${source}:${intent.section}`} source={source} initialSection={intent.section} initialTitle={intent.title} initialSelection={intent.selection} page={page} definition={null}
-      onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} onRefresh={refresh} readError={contents.status === "failed" ? contents.error : null} readPending={contents.status === "ready" && contents.refreshing} returnFocusTo={focusTarget} /> : null}
-    {intent?.kind === "review" ? <CandidateReview key={`${source}:${intent.candidate}`} source={source} candidate={intent.candidate} onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} returnFocusTo={focusTarget}
+      navigationReady={matched} onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} onRefresh={refresh}
+      readError={readError} readPending={contents.status === "ready" && contents.refreshing} returnFocusTo={focusTarget} /> : null}
+    {intent?.kind === "review" ? <CandidateReview key={`${source}:${intent.candidate}`} source={source} candidate={intent.candidate}
+      navigationKey={matched ? page?.navigation_key ?? null : null} prepared={!preparationRequired}
+      onClose={() => setIntent(current => current === intent ? null : current)} onSaved={saved} returnFocusTo={focusTarget}
       onChoose={detail => {
-        const valid = detail.selection !== null && detail.selection.source_generation === navigation?.generation && detail.selection.navigation_key === page?.navigation_key;
+        const valid = matched && detail.selection !== null && detail.selection.source_generation === navigation?.generation && detail.selection.navigation_key === page?.navigation_key;
         setIntent({ kind: "manual", section: valid ? detail.selection!.section_ids[0] ?? null : null, selection: valid ? detail.selection : null, title: detail.finding.title ?? "", node: intent.node });
       }} /> : null}
     {intent?.kind === "unavailable" ? <Dialog open title="unavailable" onClose={() => setIntent(current => current === intent ? null : current)} returnFocusTo={focusTarget}><p>{intent.message}</p>{intent.media === null ? null : works.filter(work => work.media_id === intent.media).map(work => <div key={work.media_id}><p>{work.title}</p>{workAction(work)}</div>)}</Dialog> : null}
@@ -244,24 +283,40 @@ export function SourcePieces({ source, reader, onNavigate }: { readonly source: 
 }
 
 export function PieceDetails({ id, sourceHref }: { readonly id: string; readonly sourceHref: string | null }) {
-  const observing = useObservationDemand(usePaneIsPresented());
-  const stale = `${useChangeStamp("Metadata", "Entries")}:${useRefreshStamp(observing, 0)}`;
+  const presented = usePaneIsPresented();
+  const observing = useObservationDemand(presented);
+  const [editing, setEditing] = useState(false);
+  const [observedSource, setObservedSource] = useState<string | null>(null);
+  const observation = useMediaObservation(observedSource, presented && editing);
+  const processing = observation.status === "ready" ? observation.observation?.processing : null;
+  const stale = JSON.stringify([
+    useChangeStamp("Metadata", "Entries"), useRefreshStamp(observing, 0), processing?.navigation_key ?? null,
+    processing?.section_preparation_key ?? null,
+  ]);
   const detail = usePaneFreeServerValue({ key: `/media/${id}/part`, stale, enabled: observing, load: signal => partDefinition(id, signal) });
   const definition = detail.status === "ready" ? detail.data : null;
   const source = definition?.source_media_id ?? null;
-  const contents = usePaneFreeServerValue({ key: definition?.capabilities.edit_bounds.allowed && source !== null ? `/media/${source}/parts` : null, stale, enabled: observing,
+  const canPrepare = definition?.capabilities.edit_bounds.allowed || definition?.capabilities.edit_bounds.reason === "preparing_structure";
+  const contents = usePaneFreeServerValue({ key: editing && canPrepare && source !== null ? `/media/${source}/parts` : null, stale, enabled: observing,
     load: signal => sourceContents(source!, signal) });
-  const [editing, setEditing] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const refresh = async () => {
-    try { await Promise.all([detail.refetch(), ...(definition?.capabilities.edit_bounds.allowed ? [contents.refetch()] : [])]); }
+    try { await Promise.all([detail.refetch(), ...(editing && canPrepare ? [contents.refetch()] : [])]); }
     catch (error) { if (!isAbortError(error) && (!isApiError(error) || isSameSystemApiDefect(error))) throw error; }
   };
   return definition ? <section className={styles.panel} aria-label="work details">
     <p>from {definition.source_title}</p>
     {sourceHref !== null ? <ButtonLink href={sourceHref}>{definition.source_format === "epub" ? "open in book" : "open in article"}</ButtonLink> : null}
-    {definition.capabilities.edit_metadata.allowed ? <Button ref={editButton} onClick={() => setEditing(true)}>edit work</Button> : null}
+    {definition.capabilities.edit_metadata.allowed ? <Button ref={editButton} onClick={() => {
+      setObservedSource(canPrepare ? definition.source_media_id : null);
+      setEditing(true);
+    }}>edit work</Button> : null}
     {editing ? <PartEditor key={id} source={definition.source_media_id} initialSection={definition.selection?.section_ids[0] ?? null} initialTitle={definition.title}
-      page={contents.status === "ready" ? contents.data : null} definition={definition} onClose={() => setEditing(false)} onSaved={refresh} onRefresh={refresh} readError={detail.status === "failed" ? detail.error : contents.status === "failed" ? contents.error : null} readPending={detail.status === "ready" && detail.refreshing || contents.status === "ready" && contents.refreshing} returnFocusTo={() => editButton.current} /> : null}
+      page={contents.status === "ready" ? contents.data : null} definition={definition}
+      navigationReady={contents.status === "ready" && contents.fresh && contents.error === null}
+      onClose={() => setEditing(false)} onSaved={refresh} onRefresh={refresh}
+      readError={detail.status === "failed" ? detail.error : contents.status === "loading" ? null : contents.error}
+      readPending={detail.status === "ready" && detail.refreshing || contents.status === "ready" && contents.refreshing}
+      returnFocusTo={() => editButton.current} /> : null}
   </section> : null;
 }

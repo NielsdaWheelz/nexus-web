@@ -1,7 +1,7 @@
 // GENERATED from the FastAPI wire schema by scripts/gen-wire.mjs; do not edit.
 // Regenerate: cd apps/web && bun run gen:wire
 
-export const WIRE_REVISION = 25;
+export const WIRE_REVISION = 26;
 
 export interface paths {
     "/assistant-writes": {
@@ -5328,9 +5328,9 @@ export interface components {
         Data_ScopeTextPage_: {
             data: components["schemas"]["ScopeTextPage"];
         };
-        /** Data[SearchRepairAdmission] */
-        Data_SearchRepairAdmission_: {
-            data: components["schemas"]["SearchRepairAdmission"];
+        /** Data[SectionPreparationAdmission] */
+        Data_SectionPreparationAdmission_: {
+            data: components["schemas"]["SectionPreparationAdmission"];
         };
         /** Data[SittingPageOut] */
         Data_SittingPageOut_: {
@@ -8629,11 +8629,15 @@ export interface components {
          * @description The current source work, transcript and indexing facts.
          */
         MediaProcessingSnapshotOut: {
+            /** Apparatus Changed At */
+            apparatus_changed_at: string | null;
             capabilities: components["schemas"]["CapabilitiesOut"];
             /** Last Error Code */
             last_error_code: string | null;
             /** Linked Article Attempt Id */
             linked_article_attempt_id: string | null;
+            /** Navigation Key */
+            navigation_key: string | null;
             /**
              * Processing Status
              * @enum {string}
@@ -8647,6 +8651,8 @@ export interface components {
             retrieval_status: string | null;
             /** Retrieval Status Reason */
             retrieval_status_reason: string | null;
+            /** Section Preparation Key */
+            section_preparation_key: string | null;
             /** Text Search Ready */
             text_search_ready: boolean;
             transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
@@ -11206,6 +11212,13 @@ export interface components {
              */
             status: "ready" | "empty" | "partial";
         };
+        /** ReaderDocumentResponseOut */
+        ReaderDocumentResponseOut: {
+            /** Data */
+            data: components["schemas"]["ReaderTextDocumentOut"] | components["schemas"]["ReaderCaptureDocumentOut"] | components["schemas"]["ReaderPartDocumentOut"] | components["schemas"]["ReaderTranscriptDocumentOut"] | components["schemas"]["ReaderPdfDocumentOut"];
+            /** Navigation Key */
+            navigation_key: string | null;
+        };
         /** ReaderEpubTarget */
         ReaderEpubTarget: {
             /** Anchor Id */
@@ -13011,6 +13024,40 @@ export interface components {
              */
             view: "resources";
         };
+        /** SectionPreparationAdmission */
+        SectionPreparationAdmission: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** SectionPreparationOut */
+        SectionPreparationOut: {
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "Active" | "NeedsAttention" | "Complete";
+            /** Failure Code */
+            failure_code: string | null;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Next Retry At */
+            next_retry_at: string | null;
+            /** Status */
+            status: ("Queued" | "Processing") | null;
+            /** Waiting Reason */
+            waiting_reason: ("Queue" | "Capacity" | "RetryBackoff" | "AwaitingUploadConfirmation") | null;
+        };
         /** SectionSelection */
         SectionSelection: {
             /** Navigation Key */
@@ -13382,7 +13429,7 @@ export interface components {
             /** Navigation Key */
             navigation_key: string | null;
             operation: components["schemas"]["PartOperation"] | null;
-            preparation: components["schemas"]["ImportObligation"] | null;
+            preparation: components["schemas"]["SectionPreparationOut"] | null;
             /** Section Choices */
             section_choices: components["schemas"]["PartSectionChoice"][];
             /** Set Revision */
@@ -20156,7 +20203,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderCaptureDocumentOut__ReaderPartDocumentOut__ReaderTranscriptDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                    "application/json": components["schemas"]["ReaderDocumentResponseOut"];
                 };
             };
             /** @description Validation Error */
@@ -20693,7 +20740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_SearchRepairAdmission_"];
+                    "application/json": components["schemas"]["Data_SectionPreparationAdmission_"];
                 };
             };
             /** @description Validation Error */

@@ -11,6 +11,7 @@ import json
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import dataclass
+from typing import Literal
 
 from lxml.html import HtmlElement, fragment_fromstring
 
@@ -19,7 +20,12 @@ from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.html_tree import inner_html
 from nexus.services.reader_structure import DomCut, NavigationProof, SectionProof
 
-SECTION_DETECTOR_VERSION = 3
+NAVIGATION_PROOF_EPOCH = 3
+type SectionFormat = Literal["epub", "web_article"]
+
+
+def section_detector_revision(format: SectionFormat) -> int:
+    return 4 if format == "epub" else 3
 
 
 @dataclass(frozen=True)
@@ -29,7 +35,9 @@ class ReaderTextSlice:
     source_start_offset: int
 
 
-def section_witness_key(generation: int, sections: Sequence[SectionProof]) -> str:
+def section_witness_key(
+    *, format: SectionFormat, generation: int, sections: Sequence[SectionProof]
+) -> str:
     """Preparation identity excludes the rich cuts being prepared."""
     geometry = [
         (
@@ -41,7 +49,9 @@ def section_witness_key(generation: int, sections: Sequence[SectionProof]) -> st
         for section in sections
     ]
     return hashlib.sha256(
-        json.dumps((generation, geometry, SECTION_DETECTOR_VERSION), separators=(",", ":")).encode()
+        json.dumps(
+            (generation, geometry, section_detector_revision(format)), separators=(",", ":")
+        ).encode()
     ).hexdigest()
 
 
@@ -58,7 +68,7 @@ def navigation_proof(
     ]
     key = hashlib.sha256(
         json.dumps(
-            (navigation.model_dump(mode="json"), cuts, SECTION_DETECTOR_VERSION),
+            (navigation.model_dump(mode="json"), cuts, NAVIGATION_PROOF_EPOCH),
             sort_keys=True,
             separators=(",", ":"),
         ).encode()

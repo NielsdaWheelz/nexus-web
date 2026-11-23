@@ -259,7 +259,7 @@ export default function TextSurface({
       const note = link.matches("[data-reader-apparatus-item-id]") ? link : link.querySelector<HTMLElement>("[data-reader-apparatus-item-id]");
       const target = readerLinkTarget(link);
       const portable=target?sourceTarget(doc,target):null;
-      const destination = note ? apparatusDestination?.(note.dataset.readerApparatusItemId!) ?? null : portable ? { source_identity: identity, target:portable } : null;
+      const destination = note && apparatusDestination ? apparatusDestination(note.dataset.readerApparatusItemId!) : portable ? { source_identity: identity, target:portable } : null;
       if (!destination) continue;
       changes.push({ link, href: link.getAttribute("href")!, rich: link.getAttribute("data-workspace-rich-target"), role: link.getAttribute("role"), tabIndex: link.getAttribute("tabindex") });
       bound.set(link, destination);

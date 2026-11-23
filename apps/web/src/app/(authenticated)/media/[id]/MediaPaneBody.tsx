@@ -459,7 +459,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const authored = useAuthoredStore();
   const [evidenceRevision, setEvidenceRevision] = useState(0);
   const citationStamp = useChangeStamp("Entries", "Metadata");
-  const acceptedInputs = useRef<{ stamp: string; evidenceRevision: number; metadata: string | null; generation: number | null }>({ stamp: citationStamp, evidenceRevision, metadata: null, generation: null });
+  const acceptedInputs = useRef<{
+    stamp: string; evidenceRevision: number; metadata: string | null; generation: number | null; navigationKey: string | null;
+  }>({ stamp: citationStamp, evidenceRevision, metadata: null, generation: null, navigationKey: null });
   useEffect(() => readable ? authored.evidence_changed(() => setEvidenceRevision(revision => revision + 1)) : undefined, [authored, readable]);
   useEffect(() => {
     if (!observing || !readable || doc === null) return;
@@ -469,8 +471,12 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
         && (doc.transcriptNavigation?.key !== snapshot.transcript_reader_key || doc.transcriptCoverage !== snapshot.transcript_coverage)
       : acceptedInputs.current.metadata !== metadata;
     const generationChanged = acceptedInputs.current.generation !== media.reader_generation;
-    let changed = metadataChanged || acceptedInputs.current.stamp !== citationStamp || acceptedInputs.current.evidenceRevision !== evidenceRevision;
-    acceptedInputs.current = { stamp: citationStamp, evidenceRevision, metadata, generation: media.reader_generation };
+    const navigationKey = snapshot === null ? acceptedInputs.current.navigationKey : snapshot.navigation_key;
+    const navigationChanged = navigationKey !== null && navigationKey !== acceptedInputs.current.navigationKey
+      && doc.kind === "text" && doc.navigationKey !== navigationKey;
+    let changed = navigationChanged || metadataChanged || acceptedInputs.current.stamp !== citationStamp
+      || acceptedInputs.current.evidenceRevision !== evidenceRevision;
+    acceptedInputs.current = { stamp: citationStamp, evidenceRevision, metadata, generation: media.reader_generation, navigationKey };
     for (const id of childPublications.current.keys()) if (!children.has(id)) childPublications.current.delete(id);
     for (const [id, state] of children) {
       if (state.status !== "ready") continue;
@@ -531,7 +537,11 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   useEffect(() => store.invalidateChats(chatStamp), [store, chatStamp]);
   const documentFailed = useReaderState(reader, (s) => s.document.status === "failed");
   const sourceAbsent = documentFailed || !readable;
-  useEffect(() => { if (doc) store.bind(doc); else if (sourceAbsent) store.bind(null); }, [doc, sourceAbsent, store]);
+  const apparatusVersion = snapshot?.apparatus_changed_at ?? null;
+  useEffect(() => {
+    if (doc) store.bind(doc, apparatusVersion);
+    else if (sourceAbsent) store.bind(null, null);
+  }, [apparatusVersion, doc, sourceAbsent, store]);
   const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   useFailedReadRepair(observing && annotations.remoteRead.failed, annotations.remoteRead.running, () => {
     if (liveObservation.current && document.visibilityState === "visible") store.refresh();
@@ -892,9 +902,9 @@ function MediaPane({ id, record }: { readonly id: string; readonly record: Extra
   const contents = useMemo(
     () =>
       doc?.kind === "text" && (media.kind === "text_part" || media.kind === "epub" || media.kind === "web_article" || doc.toc.length > 0 || doc.sourceIssues.length > 0) ? (
-        <HostedContents id={id} media={media} reader={reader} focusTarget={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? null} />
+        <HostedContents id={id} media={media} reader={reader} observation={snapshot} focusTarget={() => root.current?.querySelector<HTMLElement>("[data-pane-content]") ?? null} />
       ) : undefined,
-    [doc, id, media, reader],
+    [doc, id, media, reader, snapshot],
   );
   const markerTarget = useCallback((marker: string): ReaderDestination["target"] => {
     const embed = doc?.kind === "text" ? doc.embeds.find((entry) => `embed:${entry.id}` === marker) : null;

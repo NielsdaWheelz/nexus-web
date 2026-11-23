@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import text
@@ -36,6 +37,13 @@ def main() -> None:
         "sync-gutenberg-catalog",
         help="download the Project Gutenberg feed and reconcile the mirror",
     )
+    epub = subparsers.add_parser("epub-repair", help="review or apply a retained EPUB projection")
+    epub_commands = epub.add_subparsers(dest="action", required=True)
+    preview = epub_commands.add_parser("preview")
+    preview.add_argument("media_id", type=UUID)
+    preview.add_argument("--projection", choices=("navigation", "apparatus"), required=True)
+    apply = epub_commands.add_parser("apply")
+    apply.add_argument("review_file", type=Path)
     args = parser.parse_args()
 
     bind_database_role("maintenance")
@@ -49,6 +57,25 @@ def main() -> None:
                 print(json.dumps(memory_capture.status(), sort_keys=True))
         except ValueError as error:
             raise SystemExit(str(error)) from None
+        return
+    if args.command == "epub-repair":
+        from nexus.services.section_preparation import (
+            EpubRepairReview,
+            apply_epub_repair,
+            preview_epub_repair,
+        )
+
+        try:
+            if args.action == "preview":
+                result = preview_epub_repair(args.media_id, args.projection)
+            else:
+                review = EpubRepairReview.model_validate_json(args.review_file.read_bytes())
+                result = {"status": apply_epub_repair(review)}
+        except ApiError as exc:
+            raise SystemExit(f"{exc.code.value}: {exc.message}") from exc
+        except (OSError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
         return
     if args.command == "native-repair":
         from nexus.services.generation.native_execution import repair

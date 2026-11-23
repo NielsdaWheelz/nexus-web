@@ -527,33 +527,6 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
     )
 
 
-def read_media_search_obligation(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> ImportObligation | None:
-    """A visible media's current index obligation, independent of import lineage.
-
-    Imports membership remains lineage-bound; section preparation observes the same
-    actual index work for every readable source, including sources outside Imports.
-    """
-    row = (
-        db.execute(
-            text(
-                f"""{_CTE}
-                SELECT *, {_queue_code("index_job_error_code")} AS search_failure_code,
-                    now() AS database_now
-                FROM media_classified WHERE media_id = :media_id"""
-            ),
-            {**_params(viewer_id), "media_id": media_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        return None
-    facts, progress = _hydrate(db, viewer_id, [row]).get(media_id, (None, None))
-    return _obligation(row, "search", facts, progress)
-
-
 def read_media_source_obligations(
     db: Session, *, viewer_id: UUID, media_ids: Sequence[UUID]
 ) -> dict[UUID, tuple[UUID, ImportObligation]]:

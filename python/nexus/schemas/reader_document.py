@@ -221,3 +221,8 @@ ReaderDocumentOut = Annotated[
     | ReaderPdfDocumentOut,
     Field(discriminator="kind"),
 ]
+
+
+class ReaderDocumentResponseOut(_Out):
+    data: ReaderDocumentOut
+    navigation_key: str | None

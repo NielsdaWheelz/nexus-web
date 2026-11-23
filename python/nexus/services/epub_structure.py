@@ -13,15 +13,17 @@ An anchored `[n] <em>incipit` sequence remains a supported source division.
 
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from itertools import pairwise
 from typing import Literal
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 from uuid import UUID, uuid4, uuid5
 
+from lxml.etree import iterwalk
 from lxml.html import HtmlElement
 
+from nexus.errors import ResourceLimitError
 from nexus.schemas.reader_apparatus import NoteGroupRegion, NoteRegion
 from nexus.services.canonicalize import (
     HEADING_TAGS,
@@ -36,6 +38,7 @@ from nexus.services.html_tree import parse_html_document, serialize_html
 from nexus.services.reader_structure import (
     DocumentPoint,
     DomCut,
+    FragmentIntervals,
     NavigationNoteIndex,
     SectionRangeInput,
     resolve_section_extents,
@@ -117,11 +120,40 @@ class _Section:
     parent: str | None
     container_end: DocumentPoint | None
     source: SectionSource
-    boundary_scope: str
+    boundary_scope: str | None
     owns_container: bool = False
     publisher_parent: str | None = None
     start_cut: DomCut | None = None
     container_end_cut: DomCut | None = None
+
+
+def _aria_heading_level(node: HtmlElement) -> int | None:
+    if (node.get("role") or "").strip().lower() != "heading":
+        return None
+    level = (node.get("aria-level") or "").strip()
+    if not re.fullmatch(r"[0-9]+", level):
+        return None
+    try:
+        return int(level) or None
+    except ValueError:
+        return None
+
+
+def _declared_division(node: HtmlElement) -> Literal["chapter", "part", "volume"] | None:
+    types = set(
+        (node.get("epub:type") or node.get("{http://www.idpf.org/2007/ops}type") or "")
+        .lower()
+        .split()
+    )
+    roles = set((node.get("role") or "").lower().split())
+    divisions: list[Literal["chapter", "part", "volume"]] = []
+    if "chapter" in types or "doc-chapter" in roles:
+        divisions.append("chapter")
+    if "part" in types or "doc-part" in roles:
+        divisions.append("part")
+    if "volume" in types:
+        divisions.append("volume")
+    return divisions[0] if len(divisions) == 1 else None
 
 
 def bind_epub_source_structure(
@@ -139,7 +171,7 @@ def bind_epub_source_structure(
     body_id = element_id(body)
 
     prefix = "nexus-structure-" + uuid4().hex + "-"
-    facts: list[tuple[str, str, tuple[str, ...], frozenset[str], bool, str | None]] = []
+    facts: list[tuple[HtmlElement, frozenset[str], bool, str | None]] = []
     original_nodes = [node for node in body.iterdescendants() if isinstance(node, HtmlElement)]
     body_id_reused = body_id is not None and any(
         body_id in (element_id(node), node.get("name")) for node in original_nodes
@@ -155,7 +187,13 @@ def bind_epub_source_structure(
     marker_ids = {node: prefix + str(index) for index, node in enumerate(original_nodes)}
     for node in original_nodes:
         tag = str(node.tag).lower()
-        if tag not in HEADING_TAGS | STRUCTURE_CAPTURE_TAGS or tag == "hgroup":
+        if (
+            tag not in HEADING_TAGS | STRUCTURE_CAPTURE_TAGS
+            and not (
+                (tag in {"p", "em"} or identities[node] or tag == "a" and node.get("href"))
+                and (_aria_heading_level(node) is not None or _declared_division(node) is not None)
+            )
+        ) or tag == "hgroup":
             continue
         roles: set[str] = set()
         in_navigation = False
@@ -171,9 +209,7 @@ def bind_epub_source_structure(
             ancestor = ancestor.getparent()
         in_navigation |= bool(roles & {"toc", "doc-toc", "landmarks", "page-list"})
         if roles or in_navigation or group is not None:
-            facts.append(
-                (marker_ids[node], tag, identities[node], frozenset(roles), in_navigation, group)
-            )
+            facts.append((node, frozenset(roles), in_navigation, group))
     for node, marker in marker_ids.items():
         node.set("id", marker)
     source_structure = canonicalize_structure(sanitize_epub_chapter(serialize_html(body)))
@@ -202,11 +238,22 @@ def bind_epub_source_structure(
             raise ValueError("EPUB authored structure has no unique retained correspondence")
         return position + len(before), position + len(before) + len(content)
 
-    for marker, tag, names, source_roles, in_navigation, group in facts:
-        source_index = source_structure.anchors.get(marker)
+    grouped_headings: dict[str, list[CanonicalElement]] = {}
+    for node, _source_roles, _navigation, group in facts:
+        src = source_structure.anchors.get(marker_ids[node])
+        if (
+            group
+            and src is not None
+            and (node.tag in HEADING_TAGS or _aria_heading_level(node) is not None)
+        ):
+            grouped_headings.setdefault(group, []).append(source_structure.elements[src])
+    for node, source_roles, in_navigation, group in facts:
+        names = identities[node]
+        source_index = source_structure.anchors.get(marker_ids[node])
         if source_index is None:
             continue
         source_element = source_structure.elements[source_index]
+        tag = source_element.tag
         start, end = retained_span(source_element.start_offset, source_element.end_offset)
         anchored = {structure.anchors[name] for name in names if name in structure.anchors}
         if len(anchored) > 1:
@@ -240,16 +287,14 @@ def bind_epub_source_structure(
         element = elements[index]
         element.roles = source_roles
         element.in_navigation = in_navigation
-        if group is not None and tag in HEADING_TAGS:
+        element.declared_division = _declared_division(node)
+        if tag not in HEADING_TAGS:
+            element.heading_level = _aria_heading_level(node)
+        if group is not None and element.heading_level is not None:
             group_index = source_structure.anchors.get(group)
             if group_index is not None:
                 source_group = source_structure.elements[group_index]
-                headings = [
-                    heading
-                    for heading in source_structure.elements
-                    if heading.tag in HEADING_TAGS
-                    and source_group.start_offset <= heading.start_offset < source_group.end_offset
-                ]
+                headings = grouped_headings[group]
                 cursor = source_group.start_offset
                 only_headings = True
                 for heading in headings:
@@ -275,6 +320,7 @@ def bind_epub_source_structure(
         for attribute in ("role", "epub:type", "{http://www.idpf.org/2007/ops}type", "type")
         for token in (body.get(attribute) or "").lower().split()
     )
+    body_labels = tuple((body.get("aria-labelledby") or "").split())
     if body_roles and body_id is None:
         start, end = retained_span(0, 0)
         elements.append(
@@ -284,9 +330,10 @@ def bind_epub_source_structure(
                 end,
                 None,
                 None,
-                (),
+                body_labels,
                 False,
                 roles=body_roles,
+                declared_division=_declared_division(body),
                 in_navigation=bool(body_roles & {"toc", "doc-toc", "landmarks", "page-list"}),
                 dom_path=(),
             )
@@ -296,6 +343,8 @@ def bind_epub_source_structure(
         start, end = retained_span(0, 0)
         if element.tag != "span" or (element.start_offset, element.end_offset) != (start, end):
             raise ValueError("EPUB authored body anchor has no retained marker correspondence")
+        element.declared_division = _declared_division(body)
+        element.labelled_by = body_labels
         element.roles = body_roles
         element.in_navigation = bool(element.roles & {"toc", "doc-toc", "landmarks", "page-list"})
     return CanonicalStructure(
@@ -312,42 +361,480 @@ def _heading_location_id(media_id: UUID, fragment_id: UUID, start_offset: int, r
     return "heading:" + str(uuid5(media_id, f"{fragment_id}:{start_offset}:{rank}"))
 
 
-def _contents_fragments(
-    fragments: Sequence[EpubStructureFragment], toc_nodes: Sequence[EpubStructureTocNode]
-) -> set[int]:
+@dataclass(frozen=True)
+class SourceDivisionStarts:
+    """Raw source anchors, never retained DOM paths."""
+
+    element_ids: frozenset[str]
+    at_file_start: bool
+
+
+@dataclass(frozen=True)
+class EpubContents:
+    nodes: tuple[EpubStructureTocNode, ...]
+    entry_anchors: dict[str, dict[str, str | None]]
+    division_starts: dict[str, SourceDivisionStarts]
+
+
+@dataclass(frozen=True)
+class _ContentsEntry:
+    identity: str
+    position: tuple[int, int]
+    source_href: str
+    anchors: tuple[str, ...]
+    label: str
+    target: str | None
+    parent_id: str | None
+
+
+@dataclass(frozen=True)
+class _Return:
+    position: tuple[int, int]
+    href: str
+    designation: str
+    standalone: bool
+    at_file_start: bool
+
+
+def _link_key(href: str) -> tuple[str, str]:
+    path, _, anchor = href.partition("#")
+    return path, unquote(anchor)
+
+
+def recognize_epub_contents(
+    *,
+    media_id: UUID,
+    documents: Iterable[tuple[str, str]],
+    toc_nodes: Sequence[EpubStructureTocNode],
+    package_navigation_hrefs: Collection[str],
+    resolve_href: Callable[[str, str], str | None],
+) -> EpubContents:
+    """Read one bounded source document at a time; no apparatus evidence is needed.
+
+    A typed contents list authors its own entries. An untyped run needs individual
+    reciprocal, ordered chapter designations. Preserve the actual link destination
+    even when the index and printed title use different words.
+    """
+    package: dict[str, list[EpubStructureTocNode]] = {}
+    for node in toc_nodes:
+        if node.nav_type == "toc" and node.href is not None:
+            package.setdefault(_link_key(node.href)[0], []).append(node)
+    entries: list[_ContentsEntry] = []
+    runs: list[list[_ContentsEntry]] = []
+    returns: dict[tuple[str, str], _Return] = {}
+    file_openings: set[str] = set()
+    raw_starts: dict[str, set[str]] = {}
+    by_id = {node.node_id: node for node in toc_nodes}
+    material_bytes = 0
+    material_count = 0
+
+    def account(*values: str | None) -> None:
+        nonlocal material_bytes, material_count
+        material_count += 1
+        material_bytes += sum(len(value.encode("utf-8")) for value in values if value)
+        if material_count > 10_000 or material_bytes > 8 * 1024 * 1024:
+            raise ResourceLimitError(
+                "EPUB embedded contents exceed the source evidence budget", dimension="Output"
+            )
+
+    def read_document(spine_index: int, source_href: str, source_html: str) -> None:
+        source = parse_html_document(source_html)
+        original_body = source.body if source.body is not None else source
+        body_id = element_id(original_body)
+        # Only these direct source declarations need transfer through sanitation.
+        # Transient titles leave the real ids and link identities intact.
+        stamp = "nexus-source-" + uuid4().hex
+        for element in original_body.iter():
+            if not isinstance(element, HtmlElement):
+                continue
+            roles = set(
+                (
+                    element.get("epub:type")
+                    or element.get("{http://www.idpf.org/2007/ops}type")
+                    or ""
+                ).split()
+            ) | set((element.get("role") or "").split())
+            if roles & {"toc", "doc-toc"}:
+                element.set("title", stamp + "-toc")
+            elif {role.removeprefix("doc-") for role in roles} & {
+                "page-list",
+                "pagelist",
+                "landmarks",
+                "bibliography",
+                "biblioentry",
+                "index",
+                "glossary",
+                "footnote",
+                "footnotes",
+                "endnote",
+                "endnotes",
+            }:
+                element.set("title", stamp + "-other")
+            elif (
+                _aria_heading_level(element) is not None or _declared_division(element) is not None
+            ):
+                element.set("title", stamp + "-division")
+        body_toc = original_body.get("title") == stamp + "-toc"
+        if original_body.get("title") == stamp + "-division":
+            file_openings.add(source_href)
+        clean = sanitize_epub_chapter(serialize_html(source))
+        if not clean.strip():
+            return
+        doc = parse_html_document(clean)
+        body = doc.body if doc.body is not None else doc
+        elements = [e for e in body.iter() if isinstance(e, HtmlElement)]
+        position = {e: i for i, e in enumerate(elements)}
+        anchors: dict[str, HtmlElement | None] = {}
+        for element in elements:
+            for name in {element_id(element), element.get("name") if element.tag == "a" else None}:
+                if name:
+                    anchors[name] = element if name not in anchors else None
+        if body_id:
+            anchors[body_id] = body if body_id not in anchors else None
+        suppliers: dict[HtmlElement, list[str]] = {}
+        for node in package.get(source_href, []):
+            assert node.href is not None
+            _, name = _link_key(node.href)
+            source_element = anchors.get(name) if name else body
+            if source_element is not None:
+                suppliers.setdefault(source_element, []).append(node.node_id)
+
+        def source_nodes(element: HtmlElement) -> list[str]:
+            for owner in (element, *element.iterancestors()):
+                candidates = suppliers.get(owner, [])
+                if candidates:
+                    return candidates
+                previous = owner.getprevious()
+                if previous is not None:
+                    candidates = [n for k in previous.iter() for n in suppliers.get(k, [])]
+                    if candidates:
+                        return candidates
+            return []
+
+        def row_names(link: HtmlElement, row: HtmlElement) -> tuple[str, ...]:
+            return tuple(
+                name
+                for el in (link, row)
+                if (name := element_id(el) or el.get("name")) and anchors.get(name) is el
+            )
+
+        def entry(
+            element: HtmlElement,
+            names: tuple[str, ...],
+            label: str,
+            href: str | None,
+            parent: str | None,
+        ) -> _ContentsEntry:
+            origin = "#" + names[0] if names else "@" + element.getroottree().getpath(element)
+            identity = str(uuid5(media_id, "contents:" + source_href + origin))
+            target = resolve_href(source_href, href) if href else None
+            account(identity, *names, target, label[:512])
+            return _ContentsEntry(
+                identity,
+                (spine_index, position[element]),
+                source_href,
+                names,
+                label[:512],
+                target,
+                parent,
+            )
+
+        visited_lists: set[HtmlElement] = set()
+
+        def read_list(parent: HtmlElement, parent_id: str | None, depth: int) -> None:
+            for ol in [parent] if parent.tag in {"ol", "ul"} else parent:
+                if ol.tag not in {"ol", "ul"} or ol in visited_lists:
+                    continue
+                visited_lists.add(ol)
+                if depth > 16:
+                    raise ResourceLimitError(
+                        "EPUB embedded contents exceed navigation depth", dimension="Structure"
+                    )
+                for li in ol:
+                    if li.tag != "li":
+                        continue
+                    label = next((child for child in li if child.tag in {"a", "span"}), None)
+                    if label is None:
+                        continue
+                    printed = normalize_whitespace("".join(label.itertext()))
+                    if printed:
+                        item = entry(
+                            label,
+                            row_names(label, li),
+                            printed,
+                            label.get("href") if label.tag == "a" else None,
+                            parent_id,
+                        )
+                        entries.append(item)
+                        read_list(li, item.identity, depth + 1)
+
+        marked = {e for e in elements if e.get("title") == stamp + "-toc"}
+        if body_toc:
+            marked.add(body)
+        if source_href not in package_navigation_hrefs:
+            for nav in sorted(marked, key=position.__getitem__):
+                supplying = source_nodes(nav)
+                read_list(nav, supplying[0] if len(supplying) == 1 else None, 0)
+        excluded = marked | {e for e in elements if e.get("title") == stamp + "-other"}
+        if original_body.get("title") == stamp + "-other":
+            excluded.add(body)
+        # An element before any text need not be the first meaningful block:
+        # images and tables are content too; a framing rule contains no prose.
+        first = None
+        for event, el in iterwalk(body, events=("start", "end")):
+            if event == "start" and (el.tag in {"img", "svg", "table"} or (el.text or "").strip()):
+                first = el
+                break
+            if event == "end" and (el.tail or "").strip():
+                first = el.getparent()
+                break
+        first_chain = set((first, *first.iterancestors())) if first is not None else set()
+        for heading in elements:
+            if heading.tag in HEADING_TAGS or heading.get("title") == stamp + "-division":
+                if any(owner in excluded for owner in (heading, *heading.iterancestors())):
+                    continue
+                name = element_id(heading)
+                if name and anchors.get(name) is heading:
+                    raw_starts.setdefault(source_href, set()).add(name)
+                if heading in first_chain:
+                    file_openings.add(source_href)
+        if source_href in package_navigation_hrefs:
+            return
+        run: list[_ContentsEntry] = []
+        last_block: HtmlElement | None = None
+        for block in elements:
+            if (
+                block.tag not in {"p", "li"} | HEADING_TAGS
+                and block.get("title") != stamp + "-division"
+            ):
+                continue
+            links = [
+                a
+                for a in block.iterdescendants("a")
+                if isinstance(a, HtmlElement) and a.get("href")
+            ]
+            if not links or any(owner in excluded for owner in (block, *block.iterancestors())):
+                continue
+            link = links[0]
+            printed = normalize_whitespace("".join(link.itertext()))
+            if not printed:
+                continue
+            full = normalize_whitespace("".join(block.itertext()))
+            names = row_names(link, block)
+            raw_href = link.get("href")
+            assert raw_href is not None
+            target = resolve_href(source_href, raw_href)
+            if not target:
+                continue
+            if (
+                block in first_chain
+                and link in first_chain
+                and full == printed
+                and any(
+                    _match_label(by_id[n].label) == _match_label(printed)
+                    for n in suppliers.get(body, [])
+                )
+            ):
+                file_openings.add(source_href)
+            if not names or len(printed) > 512:
+                continue
+            unique_link = len(links) == 1 and full == printed
+            designation = _boundary_label(printed)
+            # The designation is a whole opening. An attached reference glyph,
+            # as in Norton's chapter 41, adds no prose to that opening.
+            reference_labels = [normalize_whitespace("".join(a.itertext())) for a in links[1:]]
+            if unique_link or (
+                re.fullmatch(r"chapter [1-9][0-9]*", designation)
+                and reference_labels
+                and all(
+                    re.fullmatch(r"(?:\[?\d{1,4}\]?\.?|[*†‡])", text) for text in reference_labels
+                )
+                and full.replace(" ", "") == "".join([printed, *reference_labels]).replace(" ", "")
+            ):
+                account(*names, target, designation)
+                opening = _Return(
+                    (spine_index, position[link]),
+                    target,
+                    designation,
+                    unique_link,
+                    link in first_chain,
+                )
+                for name in names:
+                    returns[(source_href, name)] = opening
+            if not unique_link or block.tag not in {"p", "li"} or source_href not in package:
+                continue
+            adjacent = last_block is not None and last_block is block.getprevious()
+            supplying = source_nodes(block)
+            if len(supplying) == 1:
+                source_node = supplying[0]
+            elif not supplying and adjacent:
+                source_node = run[-1].parent_id
+            else:
+                continue
+            if not adjacent or run[-1].parent_id != source_node:
+                run = []
+                runs.append(run)
+            last_block = block
+            run.append(entry(link, names, printed, raw_href, source_node))
+
+    for index, (href, html) in enumerate(documents):
+        read_document(index, href, html)
+
+    for run in runs:
+        accepted: list[tuple[_ContentsEntry, _Return]] = []
+        previous_number: str | None = None
+        numbers = 0
+        for item in run:
+            if item.parent_id is None or item.target is None:
+                continue
+            candidate = returns.get(_link_key(item.target))
+            if candidate is None:
+                continue
+            origin, anchor = _link_key(candidate.href)
+            if origin != item.source_href or anchor not in item.anchors:
+                continue
+            number = re.match(r"([1-9][0-9]*)(?:\s|$)", _boundary_label(item.label))
+            if number is not None:
+                n = number[1]
+                if candidate.designation != "chapter " + n:
+                    continue
+                if previous_number is not None and (len(n), n) <= (
+                    len(previous_number),
+                    previous_number,
+                ):
+                    break
+                previous_number = n
+                numbers += 1
+            elif not candidate.standalone or candidate.designation != _boundary_label(item.label):
+                continue
+            if accepted and candidate.position <= accepted[-1][1].position:
+                break
+            accepted.append((item, candidate))
+        else:
+            if numbers >= 2:
+                for item, opening in accepted:
+                    entries.append(item)
+                    assert item.target is not None
+                    path, name = _link_key(item.target)
+                    raw_starts.setdefault(path, set()).add(name)
+                    if opening.at_file_start:
+                        file_openings.add(path)
+
+    nodes: list[EpubStructureTocNode] = []
+    next_order: dict[str | None, int] = {}
+    for node in toc_nodes:
+        if node.nav_type == "toc":
+            parent = node.parent_node_id
+            next_order[parent] = max(
+                next_order.get(parent, 0), int(node.order_key.rsplit(".", 1)[-1]) + 1
+            )
+    entry_anchors: dict[str, dict[str, str | None]] = {}
+    package_arrivals: dict[tuple[tuple[str, str], str], list[EpubStructureTocNode]] = {}
+    for node in toc_nodes:
+        if node.nav_type == "toc" and node.href:
+            package_arrivals.setdefault((_link_key(node.href), node.label), []).append(node)
+    for item in sorted(entries, key=lambda entry: entry.position):
+        for anchor in item.anchors:
+            entry_anchors.setdefault(item.source_href, {})[anchor] = item.target
+        parent = by_id[item.parent_id] if item.parent_id is not None else None
+        represented = (
+            package_arrivals.get((_link_key(item.target), item.label), []) if item.target else []
+        )
+        if len(represented) == 1 and (
+            parent is None or represented[0].parent_node_id == parent.node_id
+        ):
+            by_id[item.identity] = represented[0]
+            continue
+        parent_id = parent.node_id if parent else None
+        ordinal = next_order.get(parent_id, 0)
+        depth = parent.depth + 1 if parent else 0
+        if depth > 16 or ordinal > 9999:
+            raise ResourceLimitError(
+                "EPUB embedded contents exceed navigation depth or order", dimension="Structure"
+            )
+        next_order[parent_id] = ordinal + 1
+        node = EpubStructureTocNode(
+            "toc",
+            item.identity,
+            parent_id,
+            item.label,
+            item.target,
+            None,
+            depth,
+            (parent.order_key + "." if parent else "") + f"{ordinal:04d}",
+        )
+        nodes.append(node)
+        by_id[node.node_id] = node
+    return EpubContents(
+        tuple(nodes),
+        entry_anchors,
+        {
+            path: SourceDivisionStarts(
+                frozenset(raw_starts.get(path, set())), path in file_openings
+            )
+            for path in raw_starts.keys() | file_openings
+        },
+    )
+
+
+@dataclass(frozen=True)
+class _Arrival:
+    fragment: EpubStructureFragment
+    anchor: str
+    element_index: int | None
+    point: DocumentPoint
+
+
+def _resolve_arrival(
+    href: str | None, fragments: dict[str, EpubStructureFragment]
+) -> _Arrival | None:
+    if not href:
+        return None
+    path, anchor = _link_key(href)
+    fragment = fragments.get(path)
+    if fragment is None:
+        return None
+    index = fragment.canonical.anchors.get(anchor) if anchor else None
+    if anchor and index is None:
+        return None
+    offset = fragment.canonical.elements[index].start_offset if index is not None else 0
+    return _Arrival(fragment, anchor, index, DocumentPoint(fragment.fragment_idx, offset))
+
+
+def _contents_regions(
+    fragments: Sequence[EpubStructureFragment],
+    toc_nodes: Sequence[EpubStructureTocNode],
+    contents: EpubContents,
+) -> FragmentIntervals:
     """Corroborate an untyped contents page against the authored contents itself."""
     by_href = {fragment.package_href: fragment for fragment in fragments}
 
-    def destination(href: str) -> DocumentPoint | None:
-        parsed = urlparse(href)
-        if parsed.scheme or parsed.netloc or parsed.query or parsed.path.startswith(("/", "../")):
-            return None
-        target = by_href.get(unquote(parsed.path))
-        if target is None:
-            return None
-        if not parsed.fragment:
-            return DocumentPoint(target.fragment_idx, 0)
-        index = target.canonical.anchors.get(unquote(parsed.fragment))
-        if index is None:
-            return None
-        return DocumentPoint(target.fragment_idx, target.canonical.elements[index].start_offset)
-
-    destinations: set[tuple[DocumentPoint, str]] = set()
-    for node in toc_nodes:
-        if node.nav_type != "toc" or node.href is None:
-            continue
-        target = destination(node.href)
-        if target is not None:
-            destinations.add((target, _boundary_label(node.label)))
-    contents: set[int] = set()
+    destinations = {
+        (arrival.point, _boundary_label(node.label))
+        for node in toc_nodes
+        if node.nav_type == "toc"
+        if (arrival := _resolve_arrival(node.href, by_href)) is not None
+    }
+    regions: dict[int, list[tuple[int, int]]] = {}
     for fragment in fragments:
         elements = fragment.canonical.elements
+        spans = regions.setdefault(fragment.fragment_idx, [])
+        for name in contents.entry_anchors.get(fragment.package_href, ()):
+            index = fragment.canonical.anchors.get(name)
+            if index is not None:
+                el = elements[index]
+                spans.append((el.start_offset, el.end_offset))
+        spans.extend(
+            (el.start_offset, el.end_offset)
+            for el in elements
+            if el.in_navigation and el.end_offset > el.start_offset
+        )
         if any(
             element.roles & {"chapter", "doc-chapter", "part", "doc-part", "volume"}
             for element in elements
         ):
             continue
-        headings = [element for element in elements if element.tag in HEADING_TAGS]
+        headings = [element for element in elements if element.heading_level is not None]
         links = [
             element
             for element in elements
@@ -358,30 +845,154 @@ def _contents_fragments(
                 for heading in headings
             )
         ]
-        targets = [
-            (
-                destination(
-                    fragment.package_href + element.link_href
-                    if element.link_href is not None and element.link_href.startswith("#")
-                    else element.link_href or ""
-                ),
-                _boundary_label(fragment.canonical.text[element.start_offset : element.end_offset]),
+        targets: set[tuple[DocumentPoint, str]] = set()
+        for link in links:
+            assert link.link_href is not None
+            href = (
+                fragment.package_href + link.link_href
+                if link.link_href.startswith("#")
+                else link.link_href
             )
-            for element in links
-        ]
-        if len({target for target, _ in targets}) < 2 or any(
-            target not in destinations for target in targets
+            arrival = _resolve_arrival(href, by_href)
+            if arrival is None:
+                break
+            label = _boundary_label(fragment.canonical.text[link.start_offset : link.end_offset])
+            targets.add((arrival.point, label))
+        else:
+            if len({target for target, _ in targets}) >= 2 and targets <= destinations:
+                cursor = 0
+                for el in sorted([*headings, *links], key=lambda el: el.start_offset):
+                    if fragment.canonical.text[cursor : el.start_offset].strip():
+                        break
+                    cursor = max(cursor, el.end_offset)
+                else:
+                    if not fragment.canonical.text[cursor:].strip():
+                        spans[:] = [(0, len(fragment.canonical.text))]
+    return FragmentIntervals(regions)
+
+
+@dataclass(frozen=True)
+class _NamedOpening:
+    label: str
+    members: tuple[int, ...]
+    end: int
+
+
+def _named_openings(
+    fragment: EpubStructureFragment, contents: EpubContents
+) -> dict[int, _NamedOpening]:
+    """Only the division's own visible opening names, or one authored title group."""
+    canonical = fragment.canonical
+    elements = canonical.elements
+    groups: dict[int, _NamedOpening] = {}
+    seen: set[int] = set()
+    for index, element in enumerate(elements):
+        if element.declared_division is None or not element.labelled_by or element.in_navigation:
+            continue
+        members = tuple(canonical.anchors.get(name, -1) for name in element.labelled_by)
+        if -1 in members or len(set(members)) != len(members):
+            continue
+        names = [elements[m] for m in members]
+        if len(names) == 1 and names[0].heading_level is not None:
+            # A division naming its own heading corroborates that heading. A
+            # separate section here would split an authored number/title header.
+            continue
+        body_marker = element.tag == "span" and element.start_offset == element.end_offset == 0
+        if not body_marker and any(
+            n.dom_path is None
+            or element.dom_path is None
+            or n.dom_path[: len(element.dom_path)] != element.dom_path
+            or n.dom_path == element.dom_path
+            for n in names
         ):
             continue
-        cursor = 0
-        for element in sorted([*headings, *links], key=lambda element: element.start_offset):
-            if fragment.canonical.text[cursor : element.start_offset].strip():
+        cursor = element.start_offset
+        for n in sorted(names, key=lambda e: e.start_offset):
+            if n.end_offset <= n.start_offset or n.start_offset < cursor:
                 break
-            cursor = max(cursor, element.end_offset)
+            if canonical.text[cursor : n.start_offset].strip():
+                # A labelled title can follow its number in a single opening header.
+                parent = n.parent_element
+                while parent is not None and elements[parent].tag != "header":
+                    parent = elements[parent].parent_element
+                if parent is None or elements[parent].start_offset != cursor:
+                    break
+            cursor = n.end_offset
         else:
-            if not fragment.canonical.text[cursor:].strip():
-                contents.add(fragment.fragment_idx)
-    return contents
+            label = normalize_whitespace(
+                " ".join(canonical.text[n.start_offset : n.end_offset] for n in names)
+            )
+            if label:
+                groups[index] = _NamedOpening(label, members, cursor)
+                seen.update(members)
+    by_group: dict[tuple[int, int], list[int]] = {}
+    for i, el in enumerate(elements):
+        if el.heading_group is not None and el.heading_level is not None:
+            by_group.setdefault(el.heading_group, []).append(i)
+    for (lo, hi), headings in by_group.items():
+        if len(headings) > 1 and not any(i in seen for i in headings):
+            groups[headings[0]] = _NamedOpening(
+                normalize_whitespace(canonical.text[lo:hi]), tuple(headings), hi
+            )
+    # Source headings split across adjacent blocks can name one embedded index
+    # destination. The two return links, not textual similarity, establish it.
+    previous: dict[tuple[str, str], tuple[int, int, int]] = {}
+    for i, link in enumerate(elements):
+        if not link.link_href:
+            continue
+        origin, anchor = _link_key(
+            fragment.package_href + link.link_href
+            if link.link_href.startswith("#")
+            else link.link_href
+        )
+        destination = contents.entry_anchors.get(origin, {}).get(anchor)
+        if destination is None:
+            continue
+        path, target_name = _link_key(destination)
+        if path != fragment.package_href:
+            continue
+        block_index = link.parent_element
+        while block_index is not None:
+            block = elements[block_index]
+            if block.tag == "p" or block.heading_level is not None:
+                break
+            block_index = block.parent_element
+        if block_index is None:
+            continue
+        block = elements[block_index]
+        if block.start_offset != link.start_offset or block.dom_path is None or not block.dom_path:
+            continue
+        key = origin, anchor
+        if canonical.anchors.get(target_name) in {i, block_index}:
+            owner = block_index if block.heading_level is not None else i
+            previous[key] = (owner, block_index, i)
+            continue
+        prior = previous.pop(key, None)
+        if prior is None:
+            continue
+        owner, first, first_link = prior
+        left = elements[first]
+        if (
+            left.dom_path is None
+            or left.dom_path[:-1] != block.dom_path[:-1]
+            or left.dom_path[-1] + 1 != block.dom_path[-1]
+            or left.heading_level is None
+            and block.heading_level is None
+            or owner in groups
+            or owner in seen
+            or block_index in seen
+            or canonical.text[left.end_offset : block.start_offset].strip()
+        ):
+            continue
+        labels = (elements[first_link], link)
+        groups[owner] = _NamedOpening(
+            normalize_whitespace(
+                " ".join(canonical.text[h.start_offset : h.end_offset] for h in labels)
+            ),
+            (first, block_index),
+            block.end_offset,
+        )
+    return groups
 
 
 def build_epub_structure(
@@ -390,31 +1001,37 @@ def build_epub_structure(
     fragments: Sequence[EpubStructureFragment],
     toc_nodes: Sequence[EpubStructureTocNode],
     note_regions: Sequence[NoteRegion],
+    contents: EpubContents,
 ) -> EpubStructureResult:
     """Build the exact semantic rows one publication installs."""
     by_href = {fragment.package_href: fragment for fragment in fragments}
     fragment_order = {fragment.fragment_id: fragment.fragment_idx for fragment in fragments}
     note_index = NavigationNoteIndex(note_regions, fragment_order)
-    contents_fragments = _contents_fragments(fragments, toc_nodes)
+    contents_regions = _contents_regions(fragments, toc_nodes, contents)
+
+    def routine(point: DocumentPoint) -> bool:
+        return note_index.is_routine(point) and not contents_regions.contains(point)
+
+    openings = {f.fragment_idx: _named_openings(f, contents) for f in fragments}
+    embedded = {n.node_id for n in contents.nodes}
+    package_nodes = toc_nodes
+    toc_nodes = [*toc_nodes, *contents.nodes]
     by_toc = {node.node_id: node for node in toc_nodes}
     sections: list[_Section] = []
     by_source_node: dict[str, _Section] = {}
-    publisher_boundaries: dict[tuple[DocumentPoint, str], _Section] = {}
+    publisher_boundaries: dict[tuple[DocumentPoint, str, DomCut | None], _Section] = {}
+    by_arrival: dict[DocumentPoint, list[_Section]] = {}
     by_element: dict[tuple[int, int], list[_Section]] = {}
     used_ids: set[str] = set()
     claimed_headings: set[tuple[int, int]] = set()
 
     headings_by_label: dict[str, list[tuple[EpubStructureFragment, int]]] = {}
     for fragment in fragments:
-        if fragment.fragment_idx in contents_fragments:
-            continue
         for index, element in enumerate(fragment.canonical.elements):
             if (
-                element.tag in HEADING_TAGS
+                element.heading_level is not None
                 and not element.in_navigation
-                and note_index.is_routine(
-                    DocumentPoint(fragment.fragment_idx, element.start_offset)
-                )
+                and routine(DocumentPoint(fragment.fragment_idx, element.start_offset))
             ):
                 label = _match_label(
                     fragment.canonical.text[element.start_offset : element.end_offset]
@@ -426,42 +1043,51 @@ def build_epub_structure(
         node.target_offset = None
         node.section_id = None
         node.resolution = "Unresolved"
-        source_fragment = by_href.get(node.href.split("#", 1)[0]) if node.href else None
-        node.fragment_idx = source_fragment.fragment_idx if source_fragment is not None else None
-        if source_fragment is None:
+        arrival = _resolve_arrival(node.href, by_href)
+        node.fragment_idx = None
+        if arrival is None:
             continue
-        fragment = source_fragment
-        href_fragment = (
-            unquote(node.href.split("#", 1)[1]) if node.href and "#" in node.href else ""
-        )
-        element_index: int | None = None
-        if href_fragment:
-            index = fragment.canonical.anchors.get(href_fragment)
-            if index is None:
-                node.fragment_idx = None
-                continue
-            node.target_offset = fragment.canonical.elements[index].start_offset
-            ancestor = fragment.canonical.elements[index].parent_element
+        fragment = arrival.fragment
+        href_fragment = arrival.anchor
+        arrival_index = arrival.element_index
+        element_index = arrival_index
+        node.fragment_idx = fragment.fragment_idx
+        node.target_offset = arrival.point.offset
+        if arrival_index is not None:
+            ancestor = fragment.canonical.elements[arrival_index].parent_element
             while ancestor is not None:
                 element = fragment.canonical.elements[ancestor]
-                if element.tag in HEADING_TAGS:
+                if element.heading_level is not None:
                     if element.start_offset == node.target_offset:
-                        index = ancestor
+                        element_index = ancestor
                     break
                 ancestor = element.parent_element
-            element_index = index
-        else:
-            node.target_offset = 0
-        arrival_index = fragment.canonical.anchors.get(href_fragment) if href_fragment else None
         arrival_path = (
             fragment.canonical.elements[arrival_index].dom_path if arrival_index is not None else ()
         )
         arrival_cut = DomCut(arrival_path, "before") if arrival_path is not None else None
-        arrival_target = DocumentPoint(fragment.fragment_idx, node.target_offset)
+        arrival_target = arrival.point
         node.resolution = "SourceTarget"
         if node.nav_type != "toc":
             continue
-        match = _matching_heading(fragment, node.target_offset, node.label)
+        opening = next(
+            (
+                idx
+                for idx, value in openings[fragment.fragment_idx].items()
+                if fragment.canonical.elements[idx].start_offset == node.target_offset
+                and _boundary_label(value.label) == _boundary_label(node.label)
+            ),
+            None,
+        )
+        match = (
+            (opening,)
+            if opening is not None
+            else _matching_heading(fragment, node.target_offset, node.label)
+        )
+        if match is not None and node.node_id in embedded:
+            path = fragment.canonical.elements[match[0]].dom_path
+            if path is None or not _same_rich_start(arrival_cut, DomCut(path, "before")):
+                match = None
         if match is not None:
             element_index = match[0]
             node.target_offset = fragment.canonical.elements[match[0]].start_offset
@@ -470,15 +1096,18 @@ def build_epub_structure(
         else:
             candidates = headings_by_label.get(_match_label(node.label), [])
             if (
-                len(candidates) == 1
-                and _source_target_incompatible(node, fragment, candidates[0], toc_nodes, by_href)
+                node.node_id not in embedded
+                and len(candidates) == 1
+                and _source_target_incompatible(
+                    node, fragment, candidates[0], package_nodes, by_href
+                )
                 and _repair_has_neighbor_agreement(
                     node,
                     DocumentPoint(
                         candidates[0][0].fragment_idx,
                         candidates[0][0].canonical.elements[candidates[0][1]].start_offset,
                     ),
-                    toc_nodes,
+                    package_nodes,
                     by_href,
                     note_index,
                 )
@@ -503,18 +1132,20 @@ def build_epub_structure(
                     claimed_headings.add((fragment.fragment_idx, repaired_index))
             elif element_index is not None:
                 current = fragment.canonical.elements[element_index]
-                if current.tag in HEADING_TAGS and _match_label(
-                    fragment.canonical.text[current.start_offset : current.end_offset]
-                ) == _match_label(node.label):
+                if current.heading_level is not None and (
+                    (
+                        node.node_id in embedded
+                        and current.dom_path is not None
+                        and _same_rich_start(arrival_cut, DomCut(current.dom_path, "before"))
+                    )
+                    or _match_label(
+                        fragment.canonical.text[current.start_offset : current.end_offset]
+                    )
+                    == _match_label(node.label)
+                ):
                     claimed_headings.add((fragment.fragment_idx, element_index))
         if (
-            fragment.fragment_idx in contents_fragments
-            or not note_index.is_routine(DocumentPoint(fragment.fragment_idx, node.target_offset))
-            or any(
-                element.in_navigation
-                and element.start_offset <= node.target_offset < element.end_offset
-                for element in fragment.canonical.elements
-            )
+            not routine(DocumentPoint(fragment.fragment_idx, node.target_offset))
             or not fragment.canonical.text.strip()
         ):
             continue
@@ -528,11 +1159,18 @@ def build_epub_structure(
         boundary = (
             DocumentPoint(fragment.fragment_idx, node.target_offset),
             _match_label(node.label),
+            arrival_cut,
         )
         prior = publisher_boundaries.get(boundary)
+        if prior is None and node.node_id in embedded and arrival_cut is not None:
+            same = [
+                s
+                for s in by_arrival.get(boundary[0], [])
+                if _same_rich_start(s.start_cut, arrival_cut)
+            ]
+            if len(same) == 1:
+                prior = same[0]
         if prior is not None:
-            if not _same_rich_start(prior.start_cut, arrival_cut):
-                prior.start_cut = None
             node.section_id = prior.location_id
             by_source_node[node.node_id] = prior
             continue
@@ -556,21 +1194,22 @@ def build_epub_structure(
             parent=None,
             container_end=None,
             source="Publisher",
-            boundary_scope="publisher",
+            boundary_scope=None if node.node_id in embedded else "publisher",
             start_cut=arrival_cut,
         )
         sections.append(section)
         publisher_boundaries[boundary] = section
+        by_arrival.setdefault(boundary[0], []).append(section)
         node.section_id = section.location_id
         by_source_node[node.node_id] = section
         if element_index is not None and (
-            fragment.canonical.elements[element_index].tag not in HEADING_TAGS
+            fragment.canonical.elements[element_index].heading_level is None
             or (fragment.fragment_idx, element_index) in claimed_headings
         ):
             by_element.setdefault((fragment.fragment_idx, element_index), []).append(section)
 
     parented_sections: set[str] = set()
-    for node in toc_nodes:
+    for node in package_nodes:
         section = by_source_node.get(node.node_id)
         if section is None:
             continue
@@ -589,36 +1228,55 @@ def build_epub_structure(
                 break
             parent_id = by_toc[parent_id].parent_node_id
 
+    competing_openings: set[DocumentPoint] = set()
     for fragment in fragments:
-        if fragment.fragment_idx in contents_fragments:
-            continue
+        local_groups = openings[fragment.fragment_idx]
+        grouped = {m for owner, g in local_groups.items() for m in g.members if m != owner}
         for index, element in enumerate(fragment.canonical.elements):
-            if element.tag not in HEADING_TAGS:
+            opening_group = local_groups.get(index)
+            if (element.heading_level is None and opening_group is None) or index in grouped:
                 continue
-            if element.in_navigation:
-                continue
-            if not note_index.is_routine(
+            if element.in_navigation or not routine(
                 DocumentPoint(fragment.fragment_idx, element.start_offset)
             ):
                 continue
-            label = normalize_whitespace(
-                fragment.canonical.text[element.start_offset : element.end_offset]
+            label = (
+                opening_group.label
+                if opening_group
+                else normalize_whitespace(
+                    fragment.canonical.text[element.start_offset : element.end_offset]
+                )
             )
             if not label:
                 continue
-            rank = int(element.tag[1])
+            rank = element.heading_level
+            scope: str | None = f"heading:{fragment.fragment_idx}"
+            if opening_group is not None and element.declared_division is not None:
+                body_end = (
+                    len(fragment.canonical.text) if element.tag == "span" else element.end_offset
+                )
+                if not fragment.canonical.text[opening_group.end : body_end].strip():
+                    scope = None
+            if rank is not None and element.declared_division in {"part", "volume"}:
+                # A title head alone cannot delimit the work it introduces.
+                scope = None
+            if scope is None:
+                competing_openings.add(DocumentPoint(fragment.fragment_idx, element.start_offset))
             matched = by_element.get((fragment.fragment_idx, index))
             if matched:
                 for section in matched:
                     section.heading_rank = rank
                     section.source = "Both"
+                    if section.boundary_scope is None:
+                        section.boundary_scope = scope
                 continue
             if (fragment.fragment_idx, index) in claimed_headings:
-                # A publisher's adjacent number/title group claims both headings;
-                # only its first heading owns the section boundary.
                 continue
-            location_id = _heading_location_id(
-                media_id, fragment.fragment_id, element.start_offset, rank
+            location_id = (
+                _heading_location_id(media_id, fragment.fragment_id, element.start_offset, rank)
+                if rank is not None
+                else "heading:"
+                + str(uuid5(media_id, f"division:{fragment.fragment_id}:{element.dom_path}"))
             )
             if location_id in used_ids:
                 raise ValueError("EPUB heading identity is duplicated")
@@ -639,17 +1297,17 @@ def build_epub_structure(
                 parent=None,
                 container_end=None,
                 source="Heading",
-                boundary_scope=f"heading:{fragment.fragment_idx}",
+                boundary_scope=scope,
             )
             sections.append(section)
             by_element[(fragment.fragment_idx, index)] = [section]
 
     _add_inferred_numbered_entries(
         media_id,
-        [fragment for fragment in fragments if fragment.fragment_idx not in contents_fragments],
+        fragments,
         sections,
         by_element,
-        note_index,
+        routine,
     )
     for section in sections:
         if section.source in {"Publisher", "Both"}:
@@ -658,8 +1316,13 @@ def build_epub_structure(
         element = section.fragment.canonical.elements[section.element_index]
         if element.dom_path is not None:
             section.start_cut = DomCut(element.dom_path, "before")
-    by_container = _bind_containers(fragments, sections, by_element)
-    _assign_parents(sections, by_container)
+    # Contents-only arrivals participate in neither ownership nor peer/range inference.
+    eligible = [section for section in sections if section.boundary_scope is not None]
+    eligible_elements = {
+        key: [s for s in ss if s.boundary_scope is not None] for key, ss in by_element.items()
+    }
+    by_container = _bind_containers(fragments, eligible, eligible_elements, openings)
+    _assign_parents(eligible, by_container)
     by_section_id = {section.location_id: section for section in sections}
     unmatched_members: dict[tuple[int, str, str], list[_Section]] = {}
     for section in sections:
@@ -711,7 +1374,7 @@ def build_epub_structure(
         if section.fragment is not last or section.element_index is None or section.owns_container:
             continue
         element = last.canonical.elements[section.element_index]
-        if element.tag not in HEADING_TAGS or element.parent_element is not None:
+        if element.heading_level is None or element.parent_element is not None:
             continue
         following = [
             item for item in last.canonical.elements if item.start_offset >= element.end_offset
@@ -720,11 +1383,13 @@ def build_epub_structure(
             not any(
                 item.tag == "p"
                 and last.canonical.text[item.start_offset : item.end_offset].strip()
-                and note_index.is_routine(DocumentPoint(last.fragment_idx, item.start_offset))
+                and routine(DocumentPoint(last.fragment_idx, item.start_offset))
                 for item in following
             )
             or any(
-                item.tag in STRUCTURE_CAPTURE_TAGS | HEADING_TAGS or item.roles & _PARATEXT_ROLES
+                item.tag in STRUCTURE_CAPTURE_TAGS
+                or item.heading_level is not None
+                or item.roles & _PARATEXT_ROLES
                 for item in following
             )
             or any(region.range.start.fragment_id == last.fragment_id for region in note_regions)
@@ -743,14 +1408,15 @@ def build_epub_structure(
             section.start_cut,
             section.container_end_cut,
         )
-        for section in sections
+        for section in eligible
     ]
     ends = resolve_section_extents(
         range_inputs,
         None,
-        unproved_boundaries=_unproved_spine_boundaries(
-            fragments, sections, range_inputs, note_regions
-        ),
+        unproved_boundaries=[
+            *competing_openings,
+            *_unproved_spine_boundaries(fragments, eligible, range_inputs, note_regions),
+        ],
     )
     for section in sections:
         if section.publisher_parent is None:
@@ -760,9 +1426,10 @@ def build_epub_structure(
             ancestor = by_section_id[ancestor].parent
         if ancestor is None and not by_section_id[section.publisher_parent].owns_container:
             ends[section.publisher_parent] = None
+    sections.sort(key=lambda s: (s.target, s.element_index if s.element_index is not None else -1))
     published_sections: list[EpubStructureSection] = []
     for section in sections:
-        end = ends[section.location_id]
+        end = ends.get(section.location_id)
         published_sections.append(
             EpubStructureSection(
                 location_id=section.location_id,
@@ -780,7 +1447,12 @@ def build_epub_structure(
         )
     return EpubStructureResult(
         published_sections,
-        _supplemental_toc_nodes(media_id, fragments, toc_nodes, sections, note_regions, note_index),
+        [
+            *contents.nodes,
+            *_supplemental_toc_nodes(
+                media_id, fragments, toc_nodes, sections, note_regions, note_index
+            ),
+        ],
     )
 
 
@@ -800,7 +1472,7 @@ def _matching_heading(
     headings = [
         (index, element)
         for index, element in enumerate(elements)
-        if element.tag in HEADING_TAGS and target_offset <= element.start_offset
+        if element.heading_level is not None and target_offset <= element.start_offset
     ]
     if not headings or fragment.canonical.text[target_offset : headings[0][1].start_offset].strip():
         return None
@@ -848,7 +1520,7 @@ def _source_target_incompatible(
         (
             index
             for index in range(len(elements) - 1, -1, -1)
-            if elements[index].tag in HEADING_TAGS
+            if elements[index].heading_level is not None
             and elements[index].start_offset <= node.target_offset
         ),
         None,
@@ -858,17 +1530,10 @@ def _source_target_incompatible(
     for other in toc_nodes:
         if other.node_id == node.node_id or other.nav_type != "toc" or other.href is None:
             continue
-        if by_href.get(other.href.split("#", 1)[0]) is not source:
+        arrival = _resolve_arrival(other.href, by_href)
+        if arrival is None or arrival.fragment is not source:
             continue
-        anchor = unquote(other.href.split("#", 1)[1]) if "#" in other.href else ""
-        if anchor:
-            index = source.canonical.anchors.get(anchor)
-            if index is None:
-                continue
-            offset = source.canonical.elements[index].start_offset
-        else:
-            offset = 0
-        matched = _matching_heading(source, offset, other.label)
+        matched = _matching_heading(source, arrival.point.offset, other.label)
         if matched is None:
             continue
         boundary_offset = source.canonical.elements[matched[0]].start_offset
@@ -889,20 +1554,11 @@ def _repair_has_neighbor_agreement(
     note_index: NavigationNoteIndex,
 ) -> bool:
     def valid_boundary(sibling: EpubStructureTocNode) -> DocumentPoint | None:
-        if sibling.href is None:
+        arrival = _resolve_arrival(sibling.href, by_href)
+        if arrival is None:
             return None
-        fragment = by_href.get(sibling.href.split("#", 1)[0])
-        if fragment is None:
-            return None
-        anchor = unquote(sibling.href.split("#", 1)[1]) if "#" in sibling.href else ""
-        if anchor:
-            index = fragment.canonical.anchors.get(anchor)
-            if index is None:
-                return None
-            offset = fragment.canonical.elements[index].start_offset
-        else:
-            offset = 0
-        matched = _matching_heading(fragment, offset, sibling.label)
+        fragment = arrival.fragment
+        matched = _matching_heading(fragment, arrival.point.offset, sibling.label)
         if matched is None:
             return None
         point = DocumentPoint(
@@ -943,8 +1599,9 @@ def _supplemental_toc_nodes(
         section_id: str | None,
     ) -> EpubStructureTocNode:
         element = fragment.canonical.elements[index]
+        assert element.heading_level is not None
         node_id = _heading_location_id(
-            media_id, fragment.fragment_id, element.start_offset, int(element.tag[1])
+            media_id, fragment.fragment_id, element.start_offset, element.heading_level
         )
         if node_id in used_ids:
             raise ValueError("EPUB source contents identity is duplicated")
@@ -1008,7 +1665,7 @@ def _supplemental_toc_nodes(
                 (
                     index
                     for index, element in enumerate(fragment.canonical.elements)
-                    if element.tag in HEADING_TAGS and element.start_offset == point.offset
+                    if element.heading_level is not None and element.start_offset == point.offset
                 ),
                 None,
             )
@@ -1019,7 +1676,7 @@ def _supplemental_toc_nodes(
 
     for fragment in fragments:
         for index, element in enumerate(fragment.canonical.elements):
-            if element.tag not in HEADING_TAGS:
+            if element.heading_level is None:
                 continue
             point = DocumentPoint(fragment.fragment_idx, element.start_offset)
             if note_index.is_routine(point):
@@ -1058,7 +1715,7 @@ def _add_inferred_numbered_entries(
     fragments: Sequence[EpubStructureFragment],
     sections: list[_Section],
     by_element: dict[tuple[int, int], list[_Section]],
-    note_index: NavigationNoteIndex,
+    routine: Callable[[DocumentPoint], bool],
 ) -> None:
     """Infer only a complete, anchored sequence with typographic opening evidence."""
     numbered: list[tuple[EpubStructureFragment, int, int, str, str]] = []
@@ -1081,9 +1738,7 @@ def _add_inferred_numbered_entries(
         for index, element in enumerate(elements):
             if element.tag != "p" or not element.numbering_allowed:
                 continue
-            if not note_index.is_routine(
-                DocumentPoint(fragment.fragment_idx, element.start_offset)
-            ):
+            if not routine(DocumentPoint(fragment.fragment_idx, element.start_offset)):
                 continue
             text = fragment.canonical.text[element.start_offset : element.end_offset]
             marker = re.match(r"\[([1-9][0-9]*)\]", text)
@@ -1180,7 +1835,8 @@ def _unproved_spine_boundaries(
 
     def competing_structure(fragment: EpubStructureFragment) -> bool:
         return any(
-            element.tag in HEADING_TAGS | STRUCTURAL_TAGS | {"nav"}
+            element.heading_level is not None
+            or element.tag in STRUCTURAL_TAGS | {"nav"}
             or element.in_navigation
             or element.roles
             & (
@@ -1305,6 +1961,7 @@ def _bind_containers(
     fragments: Sequence[EpubStructureFragment],
     sections: list[_Section],
     by_element: dict[tuple[int, int], list[_Section]],
+    openings: dict[int, dict[int, _NamedOpening]],
 ) -> dict[tuple[int, int], _Section]:
     """Bind complete authored divisions; a title wrapper proves no body end."""
     by_container: dict[tuple[int, int], _Section] = {}
@@ -1312,7 +1969,10 @@ def _bind_containers(
     for fragment in fragments:
         elements = fragment.canonical.elements
         for index, container in enumerate(elements):
-            if container.tag not in STRUCTURAL_TAGS | {"div", "main"} or container.in_navigation:
+            if (
+                container.tag not in STRUCTURAL_TAGS | {"div", "main"}
+                and not (container.tag == "span" and index in openings[fragment.fragment_idx])
+            ) or container.in_navigation:
                 continue
             labelled = {
                 fragment.canonical.anchors[label]
@@ -1354,7 +2014,9 @@ def _bind_containers(
                     owner
                     for owner in owners
                     if (
-                        owner.source == "Both"
+                        container.declared_division is not None
+                        and index in openings[fragment.fragment_idx]
+                        or owner.source == "Both"
                         or (
                             owner is publisher
                             and container.roles
@@ -1381,15 +2043,21 @@ def _bind_containers(
             headings = [
                 element
                 for element in elements
-                if element.tag in HEADING_TAGS
+                if element.heading_level is not None
                 and container.start_offset <= element.start_offset < container.end_offset
             ]
-            opening_end = container.start_offset
+            own_group = openings[fragment.fragment_idx].get(index)
+            opening_end = own_group.end if own_group is not None else container.start_offset
             for heading in headings:
+                if heading.start_offset < opening_end:
+                    continue
                 if fragment.canonical.text[opening_end : heading.start_offset].strip():
                     break
                 opening_end = heading.end_offset
-            if not fragment.canonical.text[opening_end : container.end_offset].strip():
+            body_end = (
+                len(fragment.canonical.text) if container.tag == "span" else container.end_offset
+            )
+            if not fragment.canonical.text[opening_end:body_end].strip():
                 continue
             owner = next((section for section in owners if section.source == "Both"), owners[0])
             by_container[(fragment.fragment_idx, index)] = owner
@@ -1398,7 +2066,7 @@ def _bind_containers(
                 (
                     element
                     for element in elements
-                    if opening_end <= element.start_offset < container.end_offset
+                    if opening_end <= element.start_offset < body_end
                     and (
                         element.tag == "footer"
                         or (element.roles - container.roles) & _PARATEXT_ROLES
@@ -1409,13 +2077,18 @@ def _bind_containers(
             )
             end = DocumentPoint(
                 fragment.fragment_idx,
-                excluded.start_offset if excluded is not None else container.end_offset,
+                excluded.start_offset if excluded is not None else body_end,
             )
             boundary = excluded if excluded is not None else container
             if owner.container_end is None or end > owner.container_end:
                 owner.container_end = end
                 owner.container_end_cut = (
-                    DomCut(boundary.dom_path, "before" if excluded is not None else "after")
+                    DomCut(
+                        ()
+                        if boundary is container and container.tag == "span"
+                        else boundary.dom_path,
+                        "before" if excluded is not None else "after",
+                    )
                     if boundary.dom_path is not None
                     else None
                 )
@@ -1464,8 +2137,8 @@ def _assign_parents(
             and element.parent_element
             == section.fragment.canonical.elements[section.element_index].parent_element
             and not any(
-                candidate.tag in HEADING_TAGS
-                and int(candidate.tag[1]) <= parent_rank
+                candidate.heading_level is not None
+                and candidate.heading_level <= parent_rank
                 and parent.target.offset < candidate.start_offset < section.target.offset
                 for candidate in parent.fragment.canonical.elements
             )

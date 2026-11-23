@@ -1,4 +1,4 @@
-// Paint with css custom highlights: the document dom is never rewritten.
+// Paint with css custom highlights and bind exact source references to existing links.
 // Each unit within one viewport of the visible band registers StaticRanges in
 // shared highlight names. Marks (topmost first) split into disjoint segments;
 // a segment paints in its topmost mark's colour and keeps every covering id,
@@ -11,6 +11,7 @@ import type { TextPoint } from "../model";
 import type { TextGeometry } from "./geometry";
 
 type Piece = { start: number; end: number; ids: readonly string[] };
+type NoteBinding = { before: string | null; written: string };
 type FocusMode = Schema<"ReaderProfileOut">["focus_mode"];
 
 // Strict order; colour-setting highlights sit above background-only ones (webkit).
@@ -24,6 +25,7 @@ const PRIORITY: Record<string, number> = {
 const shares = new Map<string, Map<string, readonly StaticRange[]>>();
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const BLOCK = "p,li,dd,dt,pre,blockquote,figcaption,td,th,h1,h2,h3,h4,h5,h6";
+const NOTE_ATTRIBUTE = "data-reader-apparatus-item-id";
 let instances = 0;
 
 /** One owner's ranges in a highlight name; every reader instance shares the names. */
@@ -82,6 +84,7 @@ export function createPainter(
   const near = new Set<string>();
   const painted = new Map<string, readonly string[]>();
   const index = new Map<string, Map<Node, Piece[]>>();
+  const noteBindings = new Map<string, Map<HTMLAnchorElement, NoteBinding>>();
   let decorations: Decorations | null = null;
   let passage: TextRange | null = null;
   let inspection: Inspection | null = null;
@@ -141,12 +144,36 @@ export function createPainter(
       if (anchor.kind === "text" && anchor.unit === unit)
         add(inspection?.precision === "exact" ? "source-inspection" : "source-inspection-coarse", pieces(unit, anchor.start, anchor.end));
     }
+    const wanted = new Map<HTMLAnchorElement, string | null>();
     for (const ref of near.has(unit) ? (decorations?.noteRefs ?? []) : []) {
       if (ref.unit !== unit) continue;
-      const [range] = geometry.ranges(unit, ref.start, ref.end);
-      const link = range?.startContainer.parentElement?.closest("a");
-      link?.setAttribute("data-reader-apparatus-item-id", ref.key);
+      const ranges = geometry.ranges(unit, ref.start, ref.end);
+      const link = ranges[0]?.startContainer.parentElement?.closest("a");
+      if (!link || !ranges.every(range => link.contains(range.startContainer) && link.contains(range.endContainer))) continue;
+      const existing = wanted.get(link);
+      wanted.set(link, existing === undefined || existing === ref.key ? ref.key : null);
     }
+    const bindings = noteBindings.get(unit) ?? new Map<HTMLAnchorElement, NoteBinding>();
+    for (const [link, { before, written }] of bindings) {
+      if (wanted.get(link) === written) {
+        wanted.delete(link);
+        continue;
+      }
+      if (link.getAttribute(NOTE_ATTRIBUTE) === written) {
+        if (before === null) link.removeAttribute(NOTE_ATTRIBUTE);
+        else link.setAttribute(NOTE_ATTRIBUTE, before);
+      }
+      bindings.delete(link);
+    }
+    for (const [link, key] of wanted) {
+      if (key === null) continue;
+      const before = link.getAttribute(NOTE_ATTRIBUTE);
+      if (before === key) continue;
+      link.setAttribute(NOTE_ATTRIBUTE, key);
+      bindings.set(link, { before, written: key });
+    }
+    if (bindings.size > 0) noteBindings.set(unit, bindings);
+    else noteBindings.delete(unit);
     index.set(unit, nodes);
     for (const name of new Set([...(painted.get(unit) ?? []), ...names.keys()]))
       share(`${id}:${unit}`, name, names.get(name) ?? []);

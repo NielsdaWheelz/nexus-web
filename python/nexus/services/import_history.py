@@ -100,10 +100,21 @@ def delete_upload_history_in_current_transaction(db: Session, *, session_id: UUI
 
 
 def delete_processing_history_in_current_transaction(db: Session, *, media_id: UUID) -> None:
-    """history and frozen discovery catalogues die with the physically collected source."""
+    """Work receipts die with the physically collected source."""
+    from nexus.jobs import queue
     from nexus.services.part_discovery import delete_source_discovery
+    from nexus.services.section_preparation import JOB_KIND as PREPARATION_JOB
 
     delete_source_discovery(db, source_media_id=media_id)
+    queue.delete_jobs(
+        db,
+        job_ids=[
+            job.id
+            for job in queue.jobs_for_payload(
+                db, kind=PREPARATION_JOB, match={"media_id": str(media_id)}
+            )
+        ],
+    )
     db.execute(text("DELETE FROM media_processing_events WHERE media_id = :id"), {"id": media_id})
 
 

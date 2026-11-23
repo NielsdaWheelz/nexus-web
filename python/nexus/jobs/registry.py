@@ -126,6 +126,13 @@ def registry() -> dict[str, JobDefinition]:
             keep_dead=True,
             on_history="nexus.services.import_history:on_index_job_outcome",
         ),
+        "prepare_reader_sections": JobDefinition(
+            "background",
+            "nexus.services.section_preparation:run_job",
+            heavy=True,
+            keep_succeeded=True,
+            keep_dead=True,
+        ),
         "authored_text_reindex_job": JobDefinition(
             "background",
             "nexus.services.authored_text_indexing:run_authored_text_reindex_job",
