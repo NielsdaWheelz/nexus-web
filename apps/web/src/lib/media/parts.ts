@@ -2,6 +2,7 @@
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { publishChange } from "@/lib/api/changes";
+import { reconnectMetadataOperations } from "./mediaMetadataOperations";
 
 export const sourceContents = (source: string, signal: AbortSignal) => apiFetch<ApiJson<"/media/{source_media_id}/parts", "get">>(`/api/media/${source}/parts`, { signal }).then(body => body.data);
 export const candidateDetail = (source: string, candidate: string, signal: AbortSignal) => apiFetch<ApiJson<"/media/{source_media_id}/part-candidates/{candidate_id}", "get">>(`/api/media/${source}/part-candidates/${candidate}`, { signal }).then(body => body.data);
@@ -16,7 +17,7 @@ export async function savePart(source: string, id: string | null, request: Schem
 }
 export async function prepareParts(source: string, request: Schema<"PartPrepare">) {
   await apiFetch<ApiJson<"/media/{source_media_id}/parts/prepare", "post">>(`/api/media/${source}/parts/prepare`, { method: "POST", body: JSON.stringify(request) });
-  publishChange("Metadata");
+  reconnectMetadataOperations(source);
 }
 export async function discoverParts(source: string, request: Schema<"PartDiscovery">) {
   const result = await apiFetch<ApiJson<"/media/{source_media_id}/part-discovery", "post">>(`/api/media/${source}/part-discovery`, { method: "POST", body: JSON.stringify(request) });

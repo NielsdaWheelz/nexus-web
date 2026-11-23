@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+from datetime import datetime
+from hashlib import sha256
 from typing import Literal
 from uuid import UUID
 
@@ -23,6 +27,7 @@ from nexus.services.epub_read import read_epub_navigation_proof
 from nexus.services.reader_publication import (
     read_publication_generation,
     read_publication_source_issues,
+    ready_publication_rows_sql,
 )
 from nexus.services.reader_structure import (
     DocumentPoint,
@@ -277,3 +282,40 @@ def read_media_navigation(
     return read_media_navigation_proof(
         db, media_id=media_id, kind=kind, generation=generation
     ).navigation
+
+
+def read_epub_projection_observations(
+    db: Session, *, authorized_media_ids: Sequence[UUID]
+) -> dict[UUID, tuple[str, datetime | None]]:
+    """Metadata-only projections for authorized epub roots and bounded pieces."""
+    if not authorized_media_ids:
+        return {}
+    rows = db.execute(
+        text(f"""
+        SELECT m.id, source.id AS source_id, source_pub.generation, a.updated_at
+        FROM media m
+        JOIN ({ready_publication_rows_sql()}) reading ON reading.media_id=m.id
+        LEFT JOIN media_parts p ON p.media_id=m.id
+        JOIN media source ON source.id=COALESCE(p.source_media_id,m.id) AND source.kind='epub'
+        JOIN ({ready_publication_rows_sql()}) source_pub ON source_pub.media_id=source.id
+            AND (p.media_id IS NULL OR source_pub.generation=p.source_generation)
+        LEFT JOIN reader_apparatus_states a ON a.media_id=source.id
+        WHERE m.id=ANY(:ids)
+    """),
+        {"ids": list(authorized_media_ids)},
+    ).all()
+    keys = {
+        source_id: read_epub_navigation_proof(db, media_id=source_id, generation=generation).key
+        for source_id, generation in {(row.source_id, row.generation) for row in rows}
+    }
+    return {
+        row.id: (
+            keys[row.source_id]
+            if row.id == row.source_id
+            else sha256(
+                json.dumps([str(row.id), keys[row.source_id]], separators=(",", ":")).encode()
+            ).hexdigest(),
+            row.updated_at,
+        )
+        for row in rows
+    }

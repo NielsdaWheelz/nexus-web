@@ -126,6 +126,7 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
   const listeners = new Set<() => void>();
   let doc: ReaderDocument | null = null;
   let bound = false;
+  let apparatusVersion: string | null = null;
   let wires: WireDocumentMap[] = [];
   let links: MediaAnnotationsState["links"] = { status: "loading" };
   let remote: MediaAnnotationsState["remote"] = { status: "loading" };
@@ -260,12 +261,14 @@ export function createMediaAnnotations(store: AuthoredStore, mediaId: string) {
 
   return {
     /** null: this device cannot show the source; local annotations still list. */
-    bind(next: ReaderDocument | null) {
-      if (bound && next === doc) return;
+    bind(next: ReaderDocument | null, nextApparatusVersion: string | null) {
+      if (bound && next === doc && nextApparatusVersion === apparatusVersion) return;
       controller.abort();
+      const documentChanged = !bound || next !== doc;
       bound = true;
       doc = next;
-      local.bind(next);
+      apparatusVersion = nextApparatusVersion;
+      if (documentChanged) local.bind(next);
       if (next !== null) {
         const wanted = new Set(remoteMediaIds(next));
         wires = wires.filter(wire => wanted.has(wire.media_id));

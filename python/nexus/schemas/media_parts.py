@@ -5,10 +5,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nexus.schemas.imports import ImportObligation
 from nexus.schemas.reader import MediaNavigationOut, NavigationTextRangeOut
 from nexus.schemas.reader_document import ReaderPartDocumentOut
 from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.section_preparation import SectionPreparationOut
 from nexus.services.contributor_taxonomy import ContributorRole
 
 PartBlockReason = Literal[
@@ -236,7 +236,7 @@ class SourceContentsOut(_Closed):
     works: list[ContentsWork]
     candidates: list[CandidateSummary]
     operation: PartOperation | None
-    preparation: ImportObligation | None
+    preparation: SectionPreparationOut | None
     capabilities: SourceContentsCapabilities
 
 

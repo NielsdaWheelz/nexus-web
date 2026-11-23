@@ -18,9 +18,10 @@ import hashlib
 import json
 import re
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any, Literal, TypedDict
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
@@ -55,6 +56,16 @@ _BIBLIOGRAPHY_TAGS = frozenset(
     {"ref", "ref-list", "d-citation-list", "d-bibliography", "dt-bibliography"}
 )
 _BIBLIOGRAPHY_CONTAINER_TAGS = frozenset({"d-citation-list", "d-bibliography", "dt-bibliography"})
+_APPARATUS_STAMP_ATTRIBUTES = frozenset(
+    {
+        "data-reader-apparatus-item-id",
+        "data-reader-apparatus-kind",
+        "data-reader-apparatus-confidence",
+    }
+)
+_START_TAG_ATTRIBUTE = re.compile(
+    r"""\s+(?P<name>[^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?"""
+)
 # target context -> (marker kind, target kind, edge relation)
 _CONTEXT_KINDS = {
     "note": ("footnote_ref", "footnote", "points_to_note"),
@@ -108,6 +119,21 @@ class HtmlApparatusEntryOpener:
 
     label: str
     role: Literal["Symbol", "Division", "UnpairedReference"]
+
+
+type HtmlNoteBlockSignature = tuple[str, tuple[str, ...], str]
+type HtmlParagraphBacklinks = Mapping[str, Mapping[str, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class HtmlParagraphNoteEvidence:
+    """Package evidence shared with one staged document's body pass."""
+
+    paragraph_backlinks: HtmlParagraphBacklinks
+    chapter_opening_ids: frozenset[str]
+    next_file_has_opening: bool
+    outside_signatures: set[HtmlNoteBlockSignature]
+    continuation_witnesses: dict[HtmlNoteBlockSignature, set[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,6 +501,262 @@ def _unique_authored_targets(root: HtmlElement) -> dict[str, HtmlElement]:
     return targets
 
 
+@dataclass(frozen=True, slots=True)
+class _ParagraphNoteWindow:
+    blocks: list[HtmlElement]
+    entries: list[tuple[int, str, str]]
+    division: HtmlElement | None
+    has_closing_opening: bool
+
+
+def _short_note_label(text: str) -> str | None:
+    if re.fullmatch(r"(?:\[\d{1,4}\]|\d{1,4}\.?)", text):
+        return text.strip("[].")
+    return text if text in {"*", "†", "‡"} else None
+
+
+def _authored_heading(element: HtmlElement) -> bool:
+    return str(element.tag).lower() in HEADING_TAGS or (
+        "heading" in (element.get("role") or "").split()
+        and re.fullmatch(r"0*[1-9][0-9]*", (element.get("aria-level") or "").strip()) is not None
+    )
+
+
+def _paragraph_note_marker_label(marker: HtmlElement, printed: str) -> str | None:
+    if str(marker.tag).lower() != "a" or not (label := _short_note_label(printed)):
+        return None
+    if any(
+        hides(element)
+        for element in [marker, *marker.iterancestors()]
+        if element.tag not in {"html", "body"}
+    ):
+        return None
+    context = next(
+        (
+            element
+            for element in marker.iterancestors()
+            if element.tag == "p" or _authored_heading(element)
+        ),
+        None,
+    )
+    # A linked title still surrounds its separate short note reference. The short
+    # label contains no letters, so only the surrounding content can supply them.
+    if context is None or not any(char.isalpha() for text in context.itertext() for char in text):
+        return None
+    return label
+
+
+def _paragraph_note_windows(
+    document: _TargetDocument,
+    document_href: str,
+    evidence: HtmlParagraphNoteEvidence,
+) -> Iterator[_ParagraphNoteWindow]:
+    returns: dict[HtmlElement, tuple[str, str]] = {}
+    for element, aliases in document.aliases.items():
+        if element.tag != "a" or not (href := element.get("href")):
+            continue
+        if not (label := _short_note_label(document.text(element))):
+            continue
+        marker_ref = _canonical_target_ref(href, document_href)
+        anchor = next(
+            (
+                f"{document_href}#{name}"
+                for name in sorted(aliases)
+                if evidence.paragraph_backlinks.get(f"{document_href}#{name}", {}).get(marker_ref)
+                == label
+            ),
+            None,
+        )
+        if anchor is None:
+            continue
+        paragraph = next(element.iterancestors("p"), None)
+        if paragraph is None or not _leading_note_link(element, paragraph):
+            continue
+        if not re.search(r"\w", document.text(paragraph)[len(document.text(element)) :]):
+            continue
+        if any(
+            hides(node)
+            for node in [element, *element.iterancestors()]
+            if node.tag not in {"html", "body"}
+        ):
+            continue
+        returns[paragraph] = (anchor, marker_ref)
+
+    openings: set[HtmlElement] = set()
+    for name in evidence.chapter_opening_ids:
+        if (element := document.unique_names.get(name)) is not None:
+            openings.add(next(element.iterancestors("p"), element))
+
+    def visible(element: HtmlElement) -> bool:
+        return not hides(element) and (
+            element.tag in {"img", "svg", "table"}
+            or bool(document.text(element) or element.xpath(".//img|.//svg|.//table"))
+        )
+
+    for parent in dict.fromkeys(note.getparent() for note in returns):
+        if parent is None:
+            continue
+        division: HtmlElement | None = None
+        after_divider = False
+        blocks: list[HtmlElement] = []
+        for block in [*parent, None]:
+            if block is not None and not isinstance(block, HtmlElement):
+                continue
+            opening = block is not None and (
+                block in openings or (_authored_heading(block) and visible(block))
+            )
+            divider = block is not None and block.tag == "hr" and not hides(block)
+            if block is not None and not divider and not opening:
+                if after_divider:
+                    blocks.append(block)
+                continue
+            if blocks and next((part for part in blocks if visible(part)), None) in returns:
+                positions = set(blocks)
+                entries: list[tuple[int, str, str]] = []
+                for index, part in enumerate(blocks):
+                    if (pair := returns.get(part)) is None:
+                        continue
+                    anchor, marker_ref = pair
+                    marker_path, _, marker_id = marker_ref.partition("#")
+                    if marker_path == document_href:
+                        marker = document.unique_names.get(marker_id)
+                        if (
+                            marker is None
+                            or marker in positions
+                            or any(ancestor in positions for ancestor in marker.iterancestors())
+                        ):
+                            continue
+                    entries.append((index, anchor, marker_ref))
+                if entries and all(not visible(part) for part in blocks[: entries[0][0]]):
+                    closes = opening or (
+                        block is None
+                        and evidence.next_file_has_opening
+                        and not any(
+                            (ancestor.tail or "").strip()
+                            or any(
+                                visible(later)
+                                for later in ancestor.itersiblings()
+                                if isinstance(later, HtmlElement)
+                            )
+                            for ancestor in [parent, *parent.iterancestors()]
+                            if ancestor.tag not in {"html", "body"}
+                        )
+                    )
+                    yield _ParagraphNoteWindow(blocks, entries, division, closes)
+            blocks = []
+            if opening:
+                division = block
+            after_divider = divider
+
+
+def _note_block_signature(block: HtmlElement) -> HtmlNoteBlockSignature | None:
+    if block.tag not in {"p", "blockquote", "ul", "ol"}:
+        return None
+    classes = tuple(sorted(set((block.get("class") or "").split())))
+    if not classes:
+        return None
+    return str(block.tag), classes, _parent_tag(block) or ""
+
+
+def _note_continuation_signature(block: HtmlElement) -> HtmlNoteBlockSignature | None:
+    if _authored_names(block) or block.xpath(".//a[@id or @name]") or (block.tail or "").strip():
+        return None
+    return _note_block_signature(block)
+
+
+def collect_html_apparatus_note_window_evidence(
+    html: str,
+    *,
+    document_href: str,
+    evidence: HtmlParagraphNoteEvidence,
+    max_retained_utf8_bytes: int,
+) -> int:
+    """Count outside shapes and witnesses before interpreting any continuation."""
+    if not evidence.paragraph_backlinks:
+        return 0
+    document = _target_document(html)
+    if document is None:
+        return 0
+    retained_bytes = 0
+    inside: set[HtmlElement] = set()
+    for window in _paragraph_note_windows(document, document_href, evidence):
+        first, last = window.entries[0][0], window.entries[-1][0]
+        inside.update(window.blocks[first:])
+        entries = {index for index, _, _ in window.entries}
+        witness = window.entries[0][1]
+        for index in range(first + 1, last):
+            if index in entries:
+                continue
+            if (signature := _note_continuation_signature(window.blocks[index])) is not None:
+                peers = evidence.continuation_witnesses.setdefault(signature, set())
+                if len(peers) < 2 and witness not in peers:
+                    peers.add(witness)
+                    retained_bytes += nested_utf8_byte_length((signature, witness))
+                    if retained_bytes > max_retained_utf8_bytes:
+                        raise ResourceLimitError(
+                            "HTML apparatus note shape index exceeded", dimension="Output"
+                        )
+    for element in document.root.iter():
+        if not isinstance(element, HtmlElement) or element in inside:
+            continue
+        signature = _note_block_signature(element)
+        if signature is not None and signature not in evidence.outside_signatures:
+            evidence.outside_signatures.add(signature)
+            retained_bytes += nested_utf8_byte_length(signature)
+            if retained_bytes > max_retained_utf8_bytes:
+                raise ResourceLimitError(
+                    "HTML apparatus note shape index exceeded", dimension="Output"
+                )
+    return retained_bytes
+
+
+def _paragraph_note_bodies(
+    document: _TargetDocument,
+    document_href: str,
+    evidence: HtmlParagraphNoteEvidence,
+) -> dict[str, tuple[str, str]]:
+    windows = list(_paragraph_note_windows(document, document_href, evidence))
+    corroborated_openers = {
+        (window.division, _note_block_signature(window.blocks[index]))
+        for window in windows
+        if window.division is not None and len(window.entries) >= 2
+        for index, _, _ in window.entries
+    }
+    bodies: dict[str, tuple[str, str]] = {}
+    for window in windows:
+        witness = window.entries[0][1]
+        for position, (first, target, marker) in enumerate(window.entries):
+            # An independently proved opener bounds the preceding body even
+            # when the new body's own end cannot be proved.
+            if position + 1 < len(window.entries):
+                last = window.entries[position + 1][0]
+            elif window.has_closing_opening:
+                last = len(window.blocks)
+            else:
+                continue
+            if (
+                len(window.entries) == 1
+                and (window.division, _note_block_signature(window.blocks[first]))
+                not in corroborated_openers
+            ):
+                continue
+            if (window.blocks[first].tail or "").strip():
+                continue
+            parts = [serialize_html(window.blocks[first])]
+            for block in window.blocks[first + 1 : last]:
+                signature = _note_continuation_signature(block)
+                if (
+                    signature is None
+                    or signature in evidence.outside_signatures
+                    or not evidence.continuation_witnesses.get(signature, set()) - {witness}
+                ):
+                    break
+                parts.append(serialize_html(block))
+            else:
+                bodies[target] = ("".join(parts), marker)
+    return bodies
+
+
 def collect_html_apparatus_targets(
     html: str,
     *,
@@ -487,6 +769,7 @@ def collect_html_apparatus_targets(
     extraction_method: str = "html_semantic",
     marker_backlinks: Mapping[str, set[str]] | None = None,
     entry_openers: Mapping[str, Mapping[str, HtmlApparatusEntryOpener]],
+    paragraph_notes: HtmlParagraphNoteEvidence | None = None,
 ) -> tuple[dict[str, dict[str, object]], int, int, int]:
     """Index one document's note/bibliography targets so other documents can cite them."""
     if max_targets < 0 or max_backlinks < 0 or max_retained_utf8_bytes < 0:
@@ -498,6 +781,11 @@ def collect_html_apparatus_targets(
     targets: dict[str, dict[str, object]] = {}
     reference_targets, entry_boundaries, unresolved_paragraphs = _proved_note_entries(
         document_href, marker_backlinks or {}, entry_openers, document.unique_names
+    )
+    paragraph_bodies = (
+        _paragraph_note_bodies(document, document_href, paragraph_notes)
+        if paragraph_notes is not None and paragraph_notes.paragraph_backlinks
+        else {}
     )
     ordinal = 0
     retained_count = 0
@@ -512,7 +800,8 @@ def collect_html_apparatus_targets(
         reciprocal_aliases = sorted(
             alias
             for alias in aliases
-            if marker_backlinks and marker_backlinks.get(f"{document_href}#{alias}")
+            if (marker_backlinks and marker_backlinks.get(f"{document_href}#{alias}"))
+            or f"{document_href}#{alias}" in paragraph_bodies
         )
         if len(reciprocal_aliases) > 1:
             raise _ambiguous("EPUB target has multiple reciprocal authored names")
@@ -530,6 +819,11 @@ def collect_html_apparatus_targets(
         facts = _target_context(element, ancestor_prefixes, text)
         body = _note_body_element(element)
         target_ref = f"{document_href}#{target_id}"
+        paragraph_body = (
+            paragraph_bodies.get(target_ref)
+            if facts.semantic is None and facts.loose != "bibliography"
+            else None
+        )
         reciprocal_marker = bool(marker_backlinks and marker_backlinks.get(target_ref))
         paragraph = (
             element if str(element.tag).lower() == "p" else next(element.iterancestors("p"), None)
@@ -538,6 +832,7 @@ def collect_html_apparatus_targets(
             source_ref.get("format") == "xhtml"
             and facts.semantic is None
             and facts.loose != "bibliography"
+            and paragraph_body is None
             and (target_ref not in reference_targets or paragraph in unresolved_paragraphs)
         ):
             continue
@@ -545,6 +840,7 @@ def collect_html_apparatus_targets(
             _inline_note_html(element, body, entry_boundaries)
             if source_ref.get("format") == "xhtml"
             and reciprocal_marker
+            and paragraph_body is None
             and facts.semantic != "bibliography"
             and facts.loose != "bibliography"
             else None
@@ -553,11 +849,13 @@ def collect_html_apparatus_targets(
             _untyped_note_body(element, text, entry_boundaries)
             if source_ref.get("format") == "xhtml"
             and facts.semantic is None
+            and paragraph_body is None
             and (facts.loose != "bibliography" or reciprocal_marker)
             else None
         )
         inferred_note = (
             facts.semantic is None
+            and paragraph_body is None
             and (facts.loose != "bibliography" or reciprocal_marker)
             and _looks_like_note_body(body, text)
         )
@@ -566,11 +864,11 @@ def collect_html_apparatus_targets(
             facts,
             ancestor_prefixes,
             bounded=boundary is not None,
-            evidence=inline_html is not None or inferred_note,
+            evidence=paragraph_body is not None or inline_html is not None or inferred_note,
         )
         if context is None:
             continue
-        body_html = inline_html
+        body_html = paragraph_body[0] if paragraph_body is not None else inline_html
         if body_html is None:
             body_html = (
                 _inferred_note_html(boundary, text, entry_boundaries, unresolved_paragraphs)
@@ -587,11 +885,17 @@ def collect_html_apparatus_targets(
         allowed_hrefs = (
             marker_backlinks.get(target_ref, set()) if marker_backlinks is not None else None
         )
-        backlinks = _link_hrefs(
-            parse_html_document(body_html),
-            max_count=max_backlinks - backlink_count,
-            allowed_hrefs=allowed_hrefs if facts.semantic is None else None,
+        backlinks = (
+            [paragraph_body[1]]
+            if paragraph_body is not None
+            else _link_hrefs(
+                parse_html_document(body_html),
+                max_count=max_backlinks - backlink_count,
+                allowed_hrefs=allowed_hrefs if facts.semantic is None else None,
+            )
         )
+        if len(backlinks) > max_backlinks - backlink_count:
+            raise ResourceLimitError("HTML apparatus backlink count exceeded", dimension="Output")
         candidate_ordinal = ordinal
         ordinal += 1
         if facts.semantic is None and marker_backlinks is not None and not backlinks:
@@ -605,13 +909,15 @@ def collect_html_apparatus_targets(
             "target_href": document_href,
             "target_id": target_id,
             "context": context,
-            "_has_note_context": facts.is_note,
+            "_has_note_context": paragraph_body is not None or facts.is_note,
             "kind": _target_kind_for_context(context),
             "label": _target_label(body_text),
             "body_text": body_text,
             "_body_html": body_html,
             "confidence": "exact" if facts.semantic and boundary is None else "strong",
-            "extraction_method": "html_note_boundary"
+            "extraction_method": "html_paragraph_note"
+            if paragraph_body is not None
+            else "html_note_boundary"
             if boundary is not None or inline_html is not None
             else extraction_method
             if facts.semantic
@@ -708,6 +1014,7 @@ def collect_html_apparatus_marker_backlinks(
     entry_openers: dict[str, dict[str, HtmlApparatusEntryOpener]],
     max_markers: int,
     max_retained_utf8_bytes: int,
+    paragraph_backlinks: dict[str, dict[str, str]] | None = None,
 ) -> tuple[int, int]:
     if max_markers < 0 or max_retained_utf8_bytes < 0:
         raise ValueError("HTML apparatus marker budgets cannot be negative")
@@ -734,11 +1041,17 @@ def collect_html_apparatus_marker_backlinks(
             or "doc-biblioref" in tokens
             or (marker.get("ref-type") or "").strip().lower() in {"fn", "bibr"}
         )
+        printed = _element_text(marker)
         numeric_sup = (
             str(marker.tag).lower() == "a" and _numeric_marker(marker) and _is_sup_marker(marker)
         )
+        paragraph_label = (
+            _paragraph_note_marker_label(marker, printed)
+            if paragraph_backlinks is not None and not explicit and not numeric_sup
+            else None
+        )
         entry_opener = None
-        label = _element_text(marker)
+        label = printed
         if not explicit and not numeric_sup:
             paragraph = next(marker.iterancestors("p"), None)
             if _is_sup_marker(marker) and label in {"†", "‡", "*"}:
@@ -762,7 +1075,7 @@ def collect_html_apparatus_marker_backlinks(
                         division_label = plain_label
                 if division_label is not None:
                     entry_opener = HtmlApparatusEntryOpener(division_label, "Division")
-        if not explicit and not numeric_sup and entry_opener is None:
+        if not explicit and not numeric_sup and entry_opener is None and paragraph_label is None:
             continue
         if _is_ignored_margin_note_context(marker):
             continue
@@ -778,7 +1091,33 @@ def collect_html_apparatus_marker_backlinks(
                 for a in marker.iterancestors()
             )
         )
-        if not candidate_backlink_exists(target_ref, marker_id, document_href, heading_reference):
+        has_backlink = candidate_backlink_exists(
+            target_ref, marker_id, document_href, heading_reference
+        )
+        if paragraph_label is not None and (
+            has_backlink
+            or (
+                heading_reference
+                and candidate_backlink_exists(target_ref, marker_id, document_href, False)
+            )
+        ):
+            if source_ids.get(marker_id) is not _source_element_id_owner(marker):
+                continue
+            assert paragraph_backlinks is not None
+            source_ref = f"{document_href}#{marker_id}"
+            refs = paragraph_backlinks.setdefault(target_ref, {})
+            if source_ref not in refs:
+                added_bytes = nested_utf8_byte_length((target_ref, source_ref, paragraph_label))
+                if count >= max_markers or retained_bytes + added_bytes > max_retained_utf8_bytes:
+                    raise ResourceLimitError(
+                        "HTML apparatus marker index exceeded", dimension="Output"
+                    )
+                refs[source_ref] = paragraph_label
+                count += 1
+                retained_bytes += added_bytes
+        if not explicit and not numeric_sup and entry_opener is None:
+            continue
+        if not has_backlink:
             if heading_reference or not numeric_sup:
                 continue
             entry_opener = HtmlApparatusEntryOpener(label, "UnpairedReference")
@@ -875,6 +1214,9 @@ def attach_fragment_locators(
         raw_locator_text = str(item.pop("_locator_text", "") or "")
         locator_text = locator_text_by_key.get(stable_key) or raw_locator_text
         span_with_text = accepted_spans.get(stable_key)
+        if item.get("extraction_method") == "html_paragraph_note" and span_with_text is None:
+            result.append({**item, "locator_status": "missing", "locator": None})
+            continue
         if item["kind"] in {"footnote", "endnote", "bibliography_entry"}:
             body_text = str(item.get("body_text") or "")
             if not complete_source_paragraph or normalize_whitespace(
@@ -940,6 +1282,130 @@ def attach_fragment_locators(
             item["source_ref"] = source
         result.append(item)
     return result
+
+
+def incomplete_epub_paragraph_note_keys(
+    items: Iterable[Mapping[str, object]], edges: Iterable[Mapping[str, object]]
+) -> frozenset[str]:
+    """Only publish a new inferred note when both exact ends and rich body survived."""
+    candidates = {
+        str(item["stable_key"]): item
+        for item in items
+        if item.get("extraction_method") == "html_paragraph_note"
+    }
+    complete: set[str] = set()
+    for edge in edges:
+        if edge.get("extraction_method") != "html_paragraph_note":
+            continue
+        source = str(edge["from_stable_key"])
+        target = str(edge["to_stable_key"])
+        marker, body = candidates.get(source), candidates.get(target)
+        if (
+            marker is not None
+            and marker.get("locator_status") == "exact"
+            and body is not None
+            and body.get("locator_status") == "exact"
+            and body.get("body_html_sanitized")
+            and body.get("body_text")
+        ):
+            complete.update((source, target))
+    return frozenset(candidates.keys() - complete)
+
+
+def prune_epub_paragraph_note_stamps(html: str, keys: frozenset[str]) -> str:
+    """Remove only generated note attributes, leaving actual source markup byte-identical."""
+    if not keys:
+        return html
+    lines = [0, *(index + 1 for index, char in enumerate(html) if char == "\n")]
+    cuts: list[tuple[int, int]] = []
+
+    class StampedTags(HTMLParser):
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if dict(attrs).get("data-reader-apparatus-item-id") not in keys:
+                return
+            start_tag = self.get_starttag_text()
+            assert start_tag is not None
+            line, column = self.getpos()
+            base = lines[line - 1] + column
+            for attribute in _START_TAG_ATTRIBUTE.finditer(start_tag):
+                if attribute["name"] in _APPARATUS_STAMP_ATTRIBUTES:
+                    cuts.append((base + attribute.start(), base + attribute.end()))
+
+    parser = StampedTags(convert_charrefs=False)
+    parser.feed(html)
+    parser.close()
+    parts: list[str] = []
+    previous = 0
+    for start, end in cuts:
+        parts.append(html[previous:start])
+        previous = end
+    parts.append(html[previous:])
+    return "".join(parts)
+
+
+def bind_retained_epub_apparatus(
+    *,
+    source_html: str,
+    retained_html: str,
+    source: CanonicalStructure,
+    retained: CanonicalStructure,
+    source_fragment_id: UUID,
+    retained_fragment_id: UUID,
+    items: list[dict[str, object]],
+    note_groups: list[NotesGroup],
+) -> tuple[list[dict[str, object]], list[NotesGroup]]:
+    """Bind a proved source extraction to an unchanged retained document."""
+
+    def without_stamps(html: str) -> str:
+        document = parse_html_document(html)
+        for node in document.iter():
+            if not isinstance(node, HtmlElement):
+                continue
+            for attribute in _APPARATUS_STAMP_ATTRIBUTES:
+                node.attrib.pop(attribute, None)
+        return serialize_html(document)
+
+    if source.text != retained.text or without_stamps(source_html) != without_stamps(retained_html):
+        raise ValueError("EPUB apparatus source differs from the retained fragment")
+
+    def retained_point(point: NavigationTextPointOut) -> NavigationTextPointOut:
+        if point.fragment_id != source_fragment_id or not 0 <= point.offset <= len(retained.text):
+            raise ValueError("EPUB apparatus point has no retained correspondence")
+        return NavigationTextPointOut(fragment_id=retained_fragment_id, offset=point.offset)
+
+    rebound: list[dict[str, object]] = []
+    for item in items:
+        locator = _object_dict(item.get("locator"))
+        if not locator:
+            if item.get("extraction_method") == "html_paragraph_note":
+                raise ValueError("EPUB paragraph note has no exact source locator")
+            rebound.append(item)
+            continue
+        start, end = locator.get("start_offset"), locator.get("end_offset")
+        if (
+            item.get("locator_status") != "exact"
+            or locator.get("type") != "epub_fragment_offsets"
+            or locator.get("fragment_id") != str(source_fragment_id)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= len(retained.text)
+            or _object_dict(locator.get("text_quote_selector")).get("exact")
+            != retained.text[start:end]
+        ):
+            raise ValueError("EPUB apparatus locator disagrees with the retained fragment")
+        rebound.append({**item, "locator": {**locator, "fragment_id": str(retained_fragment_id)}})
+
+    groups = [
+        NotesGroup(
+            range=NavigationTextRangeOut(
+                start=retained_point(group.range.start), end=retained_point(group.range.end)
+            ),
+            heading=retained_point(group.heading) if group.heading is not None else None,
+            provenance=group.provenance,
+        )
+        for group in note_groups
+    ]
+    return rebound, groups
 
 
 def derive_fragment_note_groups(
@@ -1266,6 +1732,10 @@ def _materialize_external_targets_in_document(
         paragraph = (
             target if str(target.tag).lower() == "p" else next(target.iterancestors("p"), None)
         )
+        if external_target.get("extraction_method") == "html_paragraph_note":
+            if paragraph is None:
+                continue
+            body = paragraph
         complete_source_paragraph = bool(
             paragraph_names
             and paragraph is not None
@@ -1361,6 +1831,13 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
         if semantic == "bibliography":
             return declared("bibliography")
         return inferred("bibliography") if loose == "bibliography" else None
+    if (
+        inferred_marker
+        and facts.method == "html_paragraph_note"
+        and facts.has_backlink
+        and _paragraph_note_marker_label(marker, _element_text(marker)) is not None
+    ):
+        return inferred(loose)
     if (
         inferred_marker
         and facts.method == "html_note_boundary"
@@ -1489,17 +1966,36 @@ def _untyped_note_body(
     return paragraph if anchor is paragraph or _leading_note_link(anchor, paragraph) else None
 
 
+def _has_authored_note_scope(paragraph: HtmlElement, text: Callable[[HtmlElement], str]) -> bool:
+    for node in [paragraph, *paragraph.iterancestors()]:
+        if _semantic_tokens(node) & {"footnotes", "endnotes", "doc-footnotes", "doc-endnotes"}:
+            return True
+        rank = 7
+        for prior in node.itersiblings(preceding=True):
+            if str(prior.tag).lower() not in HEADING_TAGS or hides(prior):
+                continue
+            level = int(str(prior.tag)[1])
+            if level >= rank:
+                continue
+            if normalize_whitespace(text(prior)).casefold() in {"notes", "footnotes", "endnotes"}:
+                return True
+            rank = level
+    return False
+
+
 def _inferred_note_html(
     paragraph: HtmlElement,
     text: Callable[[HtmlElement], str] | None = None,
     entry_boundaries: set[HtmlElement] | None = None,
     unresolved_paragraphs: set[HtmlElement] | None = None,
 ) -> str | None:
-    """Keep continuation paragraphs up to the next note, heading or container end.
+    """Bound inferred paragraphs inside an independently authored notes collection.
 
-    A different intervening structure has no proven boundary: retain navigation,
-    but do not call the leading paragraph the complete body.
+    A reciprocal link alone supplies direction. Extending past its opening
+    paragraph requires an independent closing boundary.
     """
+    if not _has_authored_note_scope(paragraph, text or _element_text):
+        return None
     parts = [serialize_html(paragraph)]
     for sibling in paragraph.itersiblings():
         if not isinstance(sibling, HtmlElement):
@@ -1532,6 +2028,9 @@ def _inferred_note_html(
         ):
             return None
         parts.append(serialize_html(sibling))
+    else:
+        if len(parts) > 1:
+            return None
     return "".join(parts)
 
 

@@ -32,7 +32,7 @@ from nexus.schemas.reader import (
     ReaderCursorSnapshot,
     ReadingCopyOut,
 )
-from nexus.schemas.reader_document import ReaderDocumentOut
+from nexus.schemas.reader_document import ReaderDocumentResponseOut
 from nexus.schemas.reader_document_map import ReaderApparatusDetailOut, ReaderDocumentMapOut
 from nexus.services import (
     media_file_access,
@@ -62,10 +62,8 @@ class _ReaderDocumentResponse(Response):
 
             def prepare() -> int:
                 with get_session_factory()() as db:
-                    payload = Data[ReaderDocumentOut](
-                        data=reader_document.read_reader_document(
-                            get_repeatable_read_db(db), self.viewer_id, self.media_id
-                        )
+                    payload = reader_document.read_hosted_reader(
+                        get_repeatable_read_db(db), self.viewer_id, self.media_id
                     ).model_dump(mode="json")
                 writer = TextIOWrapper(output, encoding="utf-8")
                 try:
@@ -98,7 +96,7 @@ class _ReaderDocumentResponse(Response):
             await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
-@router.get("/media/{media_id}/reader", response_model=Data[ReaderDocumentOut])
+@router.get("/media/{media_id}/reader", response_model=ReaderDocumentResponseOut)
 def get_reader_document(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],

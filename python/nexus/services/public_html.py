@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlparse
 
 from lxml.html import fragment_fromstring
 
@@ -34,10 +34,6 @@ _TAG_ATTRIBUTES = {
     "td": frozenset({"colspan", "rowspan", "headers"}),
     "th": frozenset({"colspan", "rowspan", "headers", "scope", "abbr"}),
 }
-_MEDIA_ASSET_RE = re.compile(
-    r"^/api/media/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/assets/([A-Za-z0-9_./-]+)$"
-)
 
 
 def sanitize_public_html(
@@ -49,13 +45,14 @@ def sanitize_public_html(
     apparatus: Mapping[str, str] | None = None,
     anchors: Mapping[str, str],
     expected_identity: str,
+    marker_notes: Mapping[str, str] | None = None,
 ) -> str:
     """Keep only allowlisted tags and attributes; nothing private crosses.
 
     External http(s) links open referrer-free in a new tab; `#id` links stay in their unit; an
     EPUB link to another unit becomes `#` naming that unit's ordinal (`units`: private id ->
     ordinal). Every image loses its source; an EPUB image whose source is exactly a private
-    asset path gets its public ordinal (`assets`: asset key -> ordinal) as
+    asset path gets its public ordinal (`assets`: authorized source URL -> ordinal) as
     `data-nexus-public-asset`.
     """
     root = fragment_fromstring(raw_html, create_parent=True)
@@ -75,7 +72,7 @@ def sanitize_public_html(
             element.drop_tree()
             continue
         tag = element.tag.lower().rsplit("}", 1)[-1]
-        original_id = element.get("id")
+        original_id = element.get("id") or (element.get("name") if tag == "a" else None)
         if original_id is not None:
             if original_id in anchors:
                 element.set("id", anchors[original_id])
@@ -96,8 +93,7 @@ def sanitize_public_html(
                 src = element.get("href") or element.get("xlink:href") or ""
                 for key in ("href", "xlink:href"):
                     element.attrib.pop(key, None)
-                source_asset = _MEDIA_ASSET_RE.fullmatch(urlsplit(src).path)
-                if (ordinal := assets.get(source_asset[1] if source_asset else src)) is not None:
+                if (ordinal := assets.get(src)) is not None:
                     element.set("data-nexus-public-asset", ordinal)
                     element.set("data-nexus-public-identity", expected_identity)
             for attribute, value in list(element.attrib.items()):
@@ -132,8 +128,9 @@ def sanitize_public_html(
         src = element.get("src") or next(
             (url for url, _ in srcset_candidates(element.get("srcset") or "")), ""
         )
-        asset = _MEDIA_ASSET_RE.fullmatch(urlsplit(src).path)
         note = (apparatus or {}).get(element.get("data-reader-apparatus-item-id") or "")
+        if note is None and tag == "a" and original_id is not None and marker_notes is not None:
+            note = marker_notes.get(original_id)
         if element.get("headers") is not None:
             header_ids = [
                 anchors[value] for value in element.get("headers", "").split() if value in anchors
@@ -178,7 +175,7 @@ def sanitize_public_html(
                 element.set("href", "#" + anchors[href[1:]])
             else:
                 del element.attrib["href"]
-        elif tag == "img" and (ordinal := assets.get(asset[1] if asset else src)) is not None:
+        elif tag == "img" and (ordinal := assets.get(src)) is not None:
             element.set("data-nexus-public-asset", ordinal)
             element.set("data-nexus-public-identity", expected_identity)
     result = inner_html(root)

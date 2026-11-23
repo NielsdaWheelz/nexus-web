@@ -5,6 +5,7 @@
 // The reader owns departure/progress; the shell owns presentation and focus.
 import { useLayoutEffect, useRef } from "react";
 import { assertNever } from "@/lib/assertNever";
+import type { Schema } from "@/lib/api/wire";
 import { PieceDetails, SourcePieces } from "@/components/media/containedWorks/Pieces";
 import { Contents, SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
@@ -14,16 +15,18 @@ import type { MediaDetail } from "@/lib/media/mediaDetail";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { getInteractionGeneration, getInteractionOwner } from "@/lib/ui/overlay";
 
-export default function HostedContents({ id, media, reader, focusTarget }: {
+export default function HostedContents({ id, media, reader, observation, focusTarget }: {
   readonly id: string;
   readonly media: MediaDetail | null;
   readonly reader: Reader;
+  readonly observation: Schema<"MediaProcessingSnapshotOut"> | null;
   readonly focusTarget: () => HTMLElement | null;
 }) {
   const runtime = requirePaneRuntime(usePaneRuntime(), "HostedContents");
   const doc = useReaderState(reader, state => state.document.status === "ready" && state.document.doc.kind === "text" ? state.document.doc : null);
   const request = useRef<AbortController | null>(null);
-  const publication = doc ? JSON.stringify([doc.identity, doc.generation, doc.part]) : null;
+  const observedKey = observation?.navigation_key ?? null;
+  const publication = doc ? JSON.stringify([doc.identity, doc.generation, doc.part, doc.navigationKey, observedKey]) : null;
   useLayoutEffect(() => () => {
     request.current?.abort();
     request.current = null;
@@ -38,7 +41,7 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
     const current = () => {
       const state = reader.getState().document;
       return request.current === controller && !controller.signal.aborted && state.status === "ready"
-        && state.doc.kind === "text" && JSON.stringify([state.doc.identity, state.doc.generation, state.doc.part]) === publication
+        && state.doc.kind === "text" && JSON.stringify([state.doc.identity, state.doc.generation, state.doc.part, state.doc.navigationKey, observedKey]) === publication
         && getInteractionOwner() === owner && getInteractionGeneration() === generation;
     };
     const outcome = await reader.inspect({ signal: controller.signal, target: () => {
@@ -70,9 +73,10 @@ export default function HostedContents({ id, media, reader, focusTarget }: {
   const onNavigate = (destination: ReaderDestination) => { void navigate(destination); };
   const rich = media?.kind === "epub" || media?.kind === "web_article" && media.provider !== "x"
     && !doc.embeds.some(embed => embed.provider === "x" && embed.kind === "post");
+  if (rich) return <SourcePieces source={id} reader={reader} observation={observation} onNavigate={onNavigate} />;
   return <>
     <SourceIssuesNotice issues={doc.sourceIssues} />
     {media?.kind === "text_part" ? <><PieceDetails id={id} sourceHref={media.part_source?.href ?? null} /><Contents reader={reader} onNavigate={onNavigate} /></>
-      : rich ? <SourcePieces source={id} reader={reader} onNavigate={onNavigate} /> : <Contents reader={reader} onNavigate={onNavigate} />}
+      : <Contents reader={reader} onNavigate={onNavigate} />}
   </>;
 }

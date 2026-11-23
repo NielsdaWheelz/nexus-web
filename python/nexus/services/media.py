@@ -77,6 +77,7 @@ from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source, episode_playback_source
 from nexus.services.podcasts.episodes import episode_source_rows_sql
 from nexus.services.publication_facts import earliest_publisher_fact_sql
+from nexus.services.reader_navigation import read_epub_projection_observations
 from nexus.services.reader_publication import ready_publication_rows_sql
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.search_recovery import SearchRecoveryFacts, search_recovery
@@ -654,9 +655,22 @@ def media_observations(
                 occurrence_id=occurrence.id, retrieval=jobs[occurrence.capture_job_id]
             )
         )
+    from nexus.services.section_preparation import read_preparation_observations
+
+    epub_projections = read_epub_projection_observations(db, authorized_media_ids=ids)
+    preparations = read_preparation_observations(
+        db,
+        sources={
+            media_id: (row.kind, row.reader_generation)
+            for media_id, row in rows.items()
+            if row.is_creator and row.kind in ("epub", "web_article") and row.publication_ready
+        },
+    )
     observations: dict[UUID, MediaObservationOut] = {}
     for media_id, row in rows.items():
         status, retrieval = _status(row), _retrieval_status(row)
+        navigation_key, apparatus_changed_at = epub_projections.get(media_id, (None, None))
+        prep_key, prep_active = preparations.get(media_id, (None, False))
         observations[media_id] = MediaObservationOut(
             processing=MediaProcessingSnapshotOut(
                 linked_article_attempt_id=(
@@ -682,7 +696,11 @@ def media_observations(
                 and row.transcript_coverage in ("full", "partial")
                 else None,
                 quote_retrievals=quotes[media_id],
+                navigation_key=navigation_key,
+                apparatus_changed_at=apparatus_changed_at,
+                section_preparation_key=prep_key,
                 work_in_flight=_in_flight(row, status, retrieval)
+                or prep_active
                 or any(
                     quote.retrieval is not None
                     and quote.retrieval.status in ("queued", "running", "recovering")

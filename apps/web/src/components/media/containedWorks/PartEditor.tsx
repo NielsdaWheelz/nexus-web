@@ -25,7 +25,7 @@ import styles from "./parts.module.css";
 type Request = { kind: "prepare"; body: Schema<"PartPrepare"> }
   | { kind: "save"; id: string | null; body: Schema<"PartCreate"> | Schema<"PartUpdate"> };
 type Draft = {
-  title: string; first: string | null; last: string | null; generation: number | null;
+  title: string; first: string | null; last: string | null; generation: number | null; navigationKey: string | null;
   baseline: string; version: number | null; baselineSelection: Schema<"SectionSelection"> | null; request: Request | null;
   busy: boolean; failed: boolean; attempt: number; conflict: boolean; retired: boolean;
 };
@@ -49,7 +49,7 @@ export function partBlockMessage(reason: Schema<"PartAction">["reason"]): string
     case "missing_title": return "choose a title before extracting.";
     case "existing_piece": return "this range already belongs to an extracted work.";
     case "bound_candidate": return "this range already belongs to a work whose sections changed.";
-    case "preparing_structure": return "prepare text before extracting this section.";
+    case "preparing_structure": return "prepare sections before extracting this work.";
     case "not_creator": return "only the source creator can extract works.";
     case "unsupported_source": return "independent works aren’t available for this source.";
     case "not_ready": return "the source text isn’t ready yet.";
@@ -58,10 +58,11 @@ export function partBlockMessage(reason: Schema<"PartAction">["reason"]): string
   }
 }
 
-export default function PartEditor({ source, initialSection, initialTitle, initialSelection = null, page, definition, onClose, onSaved, onRefresh, readError, readPending, returnFocusTo }: {
+export default function PartEditor({ source, initialSection, initialTitle, initialSelection = null, page, definition, navigationReady, onClose, onSaved, onRefresh, readError, readPending, returnFocusTo }: {
   readonly source: string; readonly initialSection: string | null; readonly initialTitle: string;
   readonly initialSelection?: Schema<"SectionSelection"> | null;
   readonly page: Schema<"SourceContentsOut"> | null; readonly definition: Schema<"PartDefinition"> | null;
+  readonly navigationReady: boolean;
   readonly onClose: () => void; readonly onSaved: (id: string) => Promise<void>;
   readonly onRefresh: () => Promise<void>;
   /** The sections' failed read, if it failed. */
@@ -72,22 +73,24 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
   const fieldId = useId();
   const blockedId = useId();
   const navigation = page?.navigation ?? null;
+  const navigationKey = page?.navigation_key ?? null;
   const initial = useMemo(() => ({ title: definition?.title ?? initialTitle,
     first: definition?.selection?.section_ids[0] ?? initialSelection?.section_ids[0] ?? initialSection,
     last: definition?.selection?.section_ids.at(-1) ?? initialSelection?.section_ids.at(-1) ?? initialSection }), [definition, initialTitle, initialSection, initialSelection]);
   const state = useResourceDraft<Draft>(definition === null ? `extract:${source}:${initialSection}` : `work:${definition.media_id}`, () => ({
     ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
+    navigationKey: definition?.selection?.navigation_key ?? initialSelection?.navigation_key ?? navigationKey,
     baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, attempt: 0, conflict: false, retired: false,
   }), value => ({ changed: JSON.stringify({ title: value.title, first: value.first, last: value.last }) !== value.baseline,
     unconfirmed: value.request !== null, stopsBrowserWork: false }));
   useEffect(() => {
     if (!state.read().retired) return;
     state.set({ ...initial, generation: definition?.selection?.source_generation ?? initialSelection?.source_generation ?? navigation?.generation ?? null,
+      navigationKey: definition?.selection?.navigation_key ?? initialSelection?.navigation_key ?? navigationKey,
       baseline: JSON.stringify(initial), version: definition?.version ?? null, baselineSelection: definition?.selection ?? null, request: null, busy: false, failed: false, attempt: 0, conflict: false, retired: false });
-  }, [state, initial, definition, initialSelection, navigation]);
+  }, [state, initial, definition, initialSelection, navigation, navigationKey]);
   const { title, first, last, busy, request, failed, conflict } = state.value;
   const [adjacent, setAdjacent] = useState(first !== last);
-  const [preparationStarted, setPreparationStarted] = useState(false);
   const guard = useWorkGuard();
   const canBounds = definition === null || definition.capabilities.edit_bounds.allowed;
   const choices = page?.section_choices ?? [];
@@ -109,12 +112,16 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
       previous = candidate;
     }
   }
-  const preparing = page?.preparation?.classification === "Active" && page.capabilities.create.reason === "preparing_structure";
-  const needsPreparation = canBounds && page?.capabilities.create.reason === "preparing_structure";
+  const canPrepare = canBounds || definition?.capabilities.edit_bounds.reason === "preparing_structure";
+  const needsPreparation = canPrepare && page?.capabilities.create.reason === "preparing_structure";
+  const preparing = needsPreparation && page?.preparation?.classification === "Active";
+  const preparationFailed = needsPreparation && (page?.preparation?.classification === "NeedsAttention" || failed && request === null);
   const endIndex = ends.findIndex(section => section.section_id === last);
-  const selector: Schema<"SectionSelection"> | null = navigation && page?.navigation_key && endIndex >= 0 &&
-    state.value.generation === navigation.generation && !preparing && !needsPreparation
-    ? { source_generation: navigation.generation, navigation_key: page.navigation_key, section_ids: ends.slice(0, endIndex + 1).map(section => section.section_id) } : null;
+  const selectionCurrent = navigation !== null && state.value.generation === navigation.generation
+    && state.value.navigationKey === navigationKey;
+  const selector: Schema<"SectionSelection"> | null = navigationReady && navigationKey !== null && selectionCurrent
+    && endIndex >= 0 && !needsPreparation
+    ? { source_generation: navigation.generation, navigation_key: navigationKey, section_ids: ends.slice(0, endIndex + 1).map(section => section.section_id) } : null;
   const preview = usePartPreview(source, canBounds ? selector : null);
   const previewConflict = preview.status === "ready" ? preview.data.creation_conflict : null;
   const blockedPreview = previewConflict !== null && !(definition !== null && (previewConflict.reason === "bound_candidate" || previewConflict.media_id === definition.media_id));
@@ -136,32 +143,27 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
       return;
     }
     if (!isCurrentApiAccount(account)) return;
-    state.set(value => ({ ...value, request: null, busy: receipt !== null,
+    state.set(value => ({ ...value, request: null, busy: true, failed: false,
       version: receipt?.version ?? value.version,
       baselineSelection: sent.kind === "save" ? sent.body.selection ?? value.baselineSelection : value.baselineSelection,
       baseline: receipt === null ? value.baseline : JSON.stringify({ title: value.title, first: value.first, last: value.last }) }));
-    if (receipt === null) { setPreparationStarted(true); await onRefresh(); }
+    if (receipt === null) { try { await onRefresh(); } finally { state.set(value => ({ ...value, busy: false })); } }
     else { try { await onSaved(receipt.media_id); } finally { if (isCurrentApiAccount(account)) { state.set(value => ({ ...value, busy: false, retired: true })); onClose(); } } }
   };
-  // Manual intent opens first. Only this owner admits its preparation command.
-  useEffect(() => {
-    if (state.read().retired || !needsPreparation || preparing || preparationStarted || page?.preparation?.classification === "NeedsAttention" || blocking || navigation === null) return;
-    setPreparationStarted(true);
-    void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } });
-    // The current snapshot and retained request are checked before admission.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsPreparation, preparing, preparationStarted, page?.preparation?.classification]);
-  const chooseFirst = (id: string) => state.set(value => ({ ...value, first: id, last: id, generation: navigation?.generation ?? null, failed: false }));
+  const chooseFirst = (id: string) => state.set(value => ({
+    ...value, first: id, last: id, generation: navigation?.generation ?? null, navigationKey, failed: false,
+  }));
   const save = () => {
     const current = state.read();
     if (current.busy || current.request !== null || conflict || title.trim() === "" || canBounds && (selector === null || preview.status !== "ready" || preview.error !== null || blockedPreview)) return;
     const unchangedBounds = current.baselineSelection !== null && current.baselineSelection.source_generation === selector?.source_generation &&
+      current.baselineSelection.navigation_key === selector?.navigation_key &&
       JSON.stringify(current.baselineSelection.section_ids) === JSON.stringify(selector?.section_ids);
     void run({ kind: "save", id: definition?.media_id ?? null, body: definition === null
       ? { id: crypto.randomUUID(), title: current.title, selection: selector! }
       : { expected_version: current.version!, title: current.title, selection: unchangedBounds || !canBounds ? null : selector } });
   };
-  const freshChoice = canBounds && (!start || navigation?.generation !== state.value.generation);
+  const freshChoice = canBounds && (!start || !selectionCurrent);
   const savedLabels = definition?.selection?.section_ids.map(id => navigation?.sections.find(section => section.section_id === id)?.label ?? null) ?? null;
   return <Dialog open title={definition === null ? "extract work" : "edit work"} onClose={onClose} returnFocusTo={returnFocusTo}
     onDismissRequest={() => {
@@ -172,11 +174,12 @@ export default function PartEditor({ source, initialSection, initialTitle, initi
     }}>
     <div className={styles.editor}>
       <label>title<Input value={title} disabled={blocking} onChange={event => state.set(value => ({ ...value, title: event.target.value }))} /></label>
+      {canPrepare && (readError ? <Failed error={readError} noun="sections" retry={{ run: () => void onRefresh(), busy: readPending }} /> : page === null ? <Ruling /> : null)}
+      {preparing ? <Fact line={{ fact: page?.preparation?.waiting_reason === "RetryBackoff" ? "waiting to retry preparation." : "preparing sections." }} /> : null}
+      {needsPreparation && !preparing && navigation ? <Fact line={{ fact: preparationFailed ? "couldn’t prepare sections." : "prepare sections before choosing a range." }}
+        verbs={[{ label: preparationFailed ? "retry" : "prepare sections", commandKey: "RetryPreparePart", busy: blocking || !navigationReady,
+          run: () => { if (navigationReady && !blocking) void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } }); } }]} /> : null}
       {canBounds ? <>
-        {readError ? <Failed error={readError} noun="sections" retry={{ run: () => void onRefresh(), busy: readPending }} /> : page === null ? <Ruling /> : null}
-        {preparing || needsPreparation && !failed ? <Fact line={{ fact: "preparing text." }} /> : null}
-        {(page?.preparation?.classification === "NeedsAttention" || failed && request === null) && needsPreparation ? <Fact line={{ fact: "couldn’t prepare the text." }}
-          verbs={[{ label: "retry", commandKey: "RetryPreparePart", busy: blocking, run: () => { if (navigation && !blocking) void run({ kind: "prepare", body: { id: crypto.randomUUID(), expected_source_generation: navigation.generation } }); } }]} /> : null}
         {freshChoice ? <Field id={fieldId} line={{ fact: "the sections changed. choose again." }} /> : null}
         {navigation && (definition !== null || freshChoice) ? <SelectField aria-describedby={[freshChoice ? fieldId : null, blockedPreview ? blockedId : null].filter(Boolean).join(" ") || undefined} label="first section" value={freshChoice ? "" : first ?? ""} disabled={blocking} onChange={event => chooseFirst(event.target.value)}>
           {freshChoice ? <option value="" disabled>choose a section</option> : null}

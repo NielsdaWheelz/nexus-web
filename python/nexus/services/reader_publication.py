@@ -282,6 +282,26 @@ def delete_reader_publication(db: Session, *, media_id: UUID) -> None:
         db.flush()
 
 
+def replace_source_issues(db: Session, *, media_id: UUID, issues: tuple[SourceIssue, ...]) -> None:
+    """Install diagnostics for a retained projection under its family barrier."""
+    if len(issues) > MAX_SOURCE_ISSUES:
+        raise ResourceLimitError("Source diagnostics exceed the output limit", dimension="Output")
+    _validate_source_issues(db, media_id=media_id, issues=issues)
+    publication = db.scalar(select(ReaderPublication).where(ReaderPublication.media_id == media_id))
+    if publication is None:
+        raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
+    publication.source_issues = source_issues_payload(issues)
+    db.flush()
+
+
+def unresolved_local_navigation(href: str | None, target_offset: int | None) -> bool:
+    return (
+        href is not None
+        and target_offset is None
+        and not (urlsplit(href).scheme or urlsplit(href).netloc)
+    )
+
+
 def _validate_source_issues(
     db: Session, *, media_id: UUID, issues: tuple[SourceIssue, ...]
 ) -> None:
@@ -345,9 +365,7 @@ def _validate_source_issues(
     unresolved_nodes = {
         (node.node_id, node.href)
         for node in nodes.values()
-        if node.href is not None
-        and node.target_offset is None
-        and not (urlsplit(node.href).scheme or urlsplit(node.href).netloc)
+        if unresolved_local_navigation(node.href, node.target_offset)
     }
     if issue_nodes != unresolved_nodes:
         raise ValueError("unresolved navigation target has no source issue")

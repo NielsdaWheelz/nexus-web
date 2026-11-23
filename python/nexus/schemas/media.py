@@ -189,6 +189,9 @@ class MediaProcessingSnapshotOut(BaseModel):
     transcript_coverage: MediaTranscriptCoverage | None
     reader_generation: int | None
     transcript_reader_key: str | None
+    navigation_key: str | None
+    apparatus_changed_at: datetime | None
+    section_preparation_key: str | None
     work_in_flight: bool
     quote_retrievals: list[XQuoteProcessingOut]
 

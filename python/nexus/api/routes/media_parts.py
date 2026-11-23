@@ -23,8 +23,8 @@ from nexus.schemas.media_parts import (
     PartUpdate,
     SourceContentsOut,
 )
-from nexus.schemas.media_sources import SearchRepairAdmission
-from nexus.services import content_indexing, media_parts, part_discovery
+from nexus.schemas.section_preparation import SectionPreparationAdmission
+from nexus.services import media_parts, part_discovery, section_preparation
 
 router = APIRouter(tags=["media"])
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
@@ -103,9 +103,9 @@ def preview_part(
 @router.post("/media/{source_media_id}/parts/prepare")
 def prepare_parts(
     source_media_id: UUID, body: PartPrepare, viewer: ViewerDep, db: DbSession
-) -> Data[SearchRepairAdmission]:
+) -> Data[SectionPreparationAdmission]:
     return Data(
-        data=content_indexing.prepare_media_parts(
+        data=section_preparation.prepare_media_parts(
             db, viewer_id=viewer.user_id, source_media_id=source_media_id, request=body
         )
     )

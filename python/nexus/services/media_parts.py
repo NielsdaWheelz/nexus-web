@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import (
-    ContentIndexState,
     Media,
     MediaPart,
     MediaPartCandidate,
@@ -72,9 +71,9 @@ from nexus.services.reader_structure import DocumentPoint, DomCut, NavigationPro
 from nexus.services.reader_text_slice import (
     clip_reader_fragment,
     dom_cuts_equivalent,
-    section_witness_key,
 )
 from nexus.services.search import projection
+from nexus.services.section_preparation import read_preparation, sections_prepared
 from nexus.services.suggestion_changes import record_input_change
 
 
@@ -225,14 +224,7 @@ def _resolve_selection(
         or selection.navigation_key != proof.key
     ):
         raise _conflict("navigation_changed", "these sections changed; reload them")
-    state = db.scalar(
-        select(ContentIndexState).where(
-            ContentIndexState.owner_kind == "media", ContentIndexState.owner_id == source.id
-        )
-    )
-    if state is None or state.section_witness_key != section_witness_key(
-        selection.source_generation, proof.sections
-    ):
+    if not sections_prepared(db, source=source, proof=proof):
         raise _conflict("preparing_structure", "prepare sections before choosing a piece")
     offered = {section.section_id: section for section in proof.sections}
     if any(section_id not in offered for section_id in selection.section_ids):
@@ -903,14 +895,7 @@ def get_part_definition(db: Session, *, viewer_id: UUID, media_id: UUID) -> Part
     prepared = False
     if root:
         proof = _proof(db, source)
-        state = db.scalar(
-            select(ContentIndexState).where(
-                ContentIndexState.owner_kind == "media", ContentIndexState.owner_id == source.id
-            )
-        )
-        prepared = state is not None and state.section_witness_key == section_witness_key(
-            proof.navigation.generation, proof.sections
-        )
+        prepared = sections_prepared(db, source=source, proof=proof)
         recovered = _recover_section_ids(
             proof,
             part.source_generation,
@@ -1223,14 +1208,7 @@ def list_parts(db: Session, *, viewer_id: UUID, source_media_id: UUID) -> Source
                 placement=_placement(proof, candidate.source_generation, start, end),
             )
         )
-    state = db.scalar(
-        select(ContentIndexState).where(
-            ContentIndexState.owner_kind == "media", ContentIndexState.owner_id == source_media_id
-        )
-    )
-    prepared = state is not None and state.section_witness_key == section_witness_key(
-        proof.navigation.generation, proof.sections
-    )
+    prepared = sections_prepared(db, source=source, proof=proof)
     choices = [
         PartSectionChoice(
             section_id=section.section_id,
@@ -1257,7 +1235,6 @@ def list_parts(db: Session, *, viewer_id: UUID, source_media_id: UUID) -> Source
         )
         for section in proof.sections
     ]
-    from nexus.services.imports import read_media_search_obligation
     from nexus.services.part_discovery import read_part_operation
 
     operation = read_part_operation(db, source_media_id=source_media_id)
@@ -1266,6 +1243,17 @@ def list_parts(db: Session, *, viewer_id: UUID, source_media_id: UUID) -> Source
     )
     if creator and operation is not None and operation.status in ("pending", "running", "failed"):
         capabilities.discover = PartAction(allowed=False, reason="active")
+    preparation = (
+        read_preparation(
+            db,
+            media_id=source_media_id,
+            format=cast(Literal["epub", "web_article"], source.kind),
+            generation=proof.navigation.generation,
+            prepared=prepared,
+        )
+        if creator
+        else None
+    )
     return SourceContentsOut(
         navigation=proof.navigation,
         navigation_key=proof.key,
@@ -1274,7 +1262,7 @@ def list_parts(db: Session, *, viewer_id: UUID, source_media_id: UUID) -> Source
         works=works,
         candidates=summaries,
         operation=operation,
-        preparation=read_media_search_obligation(db, viewer_id=viewer_id, media_id=source_media_id),
+        preparation=preparation,
         capabilities=SourceContentsCapabilities(
             create=capabilities.create, discover=capabilities.discover
         ),

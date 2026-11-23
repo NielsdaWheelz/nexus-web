@@ -14,12 +14,14 @@ to this grant's exact manifest before any summary, document or asset is exposed.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+from hashlib import sha256
 from typing import Literal, NoReturn
 from urllib.parse import parse_qs, quote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from lxml.html import fragment_fromstring
+from rfc8785 import dumps as canonical_json
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -46,6 +48,7 @@ from nexus.schemas.public_resource_sharing import (
 from nexus.schemas.reader import PdfPageGeometryTargetOut
 from nexus.schemas.reader_document import (
     ReaderPartDocumentOut,
+    ReaderPartUnitOut,
     ReaderPdfDocumentOut,
     ReaderPdfFileOut,
     ReaderSectionOut,
@@ -62,6 +65,7 @@ from nexus.schemas.reader_document import (
     TranscriptReaderSearchExtentOut,
 )
 from nexus.schemas.reader_point import ReaderPointOut
+from nexus.schemas.retrieval import EpubFragmentOffsetsLocator
 from nexus.services import media_locks, resource_grants
 from nexus.services.canonicalize import canonicalize_structure, generate_canonical_text
 from nexus.services.capabilities import is_text_document_ready
@@ -330,6 +334,7 @@ def _read_document(
             file=document.file,
         )
     manifest = _text_manifest(db, share, document)
+    identity = manifest.identity(document.identity)
     assets = {image.key: str(index) for index, image in enumerate(manifest.assets)}
     ordinals = {unit.id: str(unit.idx) for unit in document.units}
     section_ids = {section.id: f"s{index}" for index, section in enumerate(document.sections)}
@@ -516,16 +521,17 @@ def _read_document(
             )
         )
 
-    def public_html(html: str) -> str:
+    def public_html(unit: ReaderUnitOut) -> str:
         try:
             return sanitize_public_html(
-                html,
+                unit.html_sanitized,
                 units=ordinals,
                 assets=assets,
                 embed_slots=slots,
                 apparatus=manifest.note_ordinals,
                 anchors=manifest.anchors,
-                expected_identity=document.identity,
+                expected_identity=identity,
+                marker_notes=manifest.marker_notes.get(unit.id),
             )
         except ValueError:
             _gone()
@@ -544,13 +550,13 @@ def _read_document(
 
     body = ReaderTextBodyOut(
         citation_occurrences=[],
-        identity=document.identity,
+        identity=identity,
         title=document.title,
         units=[
             ReaderUnitOut(
                 id=ordinals[unit.id],
                 idx=unit.idx,
-                html_sanitized=public_html(unit.html_sanitized),
+                html_sanitized=public_html(unit),
                 canonical_text=unit.canonical_text,
                 char_count=unit.char_count,
                 href_path=None,
@@ -692,6 +698,12 @@ class _TextManifest:
     notes: tuple[_PublicNote, ...]
     note_ordinals: dict[str, str]
     anchors: dict[str, str]
+    marker_notes: dict[str, dict[str, str]]
+    note_edges: tuple[tuple[str, str, str], ...]
+
+    def identity(self, coordinate_identity: str) -> str:
+        digest = sha256(canonical_json(asdict(self))).hexdigest()
+        return f"{coordinate_identity}:public:{digest}"
 
 
 def _text_manifest(
@@ -708,6 +720,10 @@ def _text_manifest(
     notes: list[_PublicNote] = []
     note_ordinals: dict[str, str] = {}
     note_html: list[str] = []
+    marker_notes: dict[str, dict[str, str]] = {}
+    note_edges: list[tuple[str, str, str]] = []
+    marker_candidates: dict[str, list[tuple[str, str, EpubFragmentOffsetsLocator]]] = {}
+    unit_ids = {unit.id for unit in document.units}
     if scope is not None and scope.permitted_apparatus:
         rows = read_scoped_apparatus_bodies(db, scope)
         targets = {
@@ -737,7 +753,7 @@ def _text_manifest(
         references: dict[UUID, tuple[str, list[int]]] = {}
         for edge in db.execute(
             text("""
-            SELECT marker.id,marker.stable_key,edge.to_item_id FROM reader_apparatus_edges edge
+            SELECT marker.id,marker.stable_key,edge.to_item_id,edge.relation FROM reader_apparatus_edges edge
             JOIN reader_apparatus_items marker ON marker.id=edge.from_item_id
             WHERE edge.media_id=:source AND edge.from_item_id=ANY(:ids)
             ORDER BY edge.sort_key,edge.id
@@ -745,6 +761,7 @@ def _text_manifest(
             {"source": scope.source_media_id, "ids": list(scope.permitted_apparatus)},
         ):
             if str(edge.to_item_id) in note_ordinals:
+                note_edges.append((str(edge.id), str(edge.to_item_id), edge.relation))
                 references.setdefault(edge.id, (edge.stable_key, []))[1].append(
                     int(note_ordinals[str(edge.to_item_id)])
                 )
@@ -757,12 +774,40 @@ def _text_manifest(
             notes.append(_PublicNote(by_id[marker_id].label, content))
             note_ordinals[str(marker_id)] = ordinal
             note_ordinals[stable_key] = ordinal
+            marker = by_id[marker_id]
+            anchor = marker.source_ref.get("marker_id")
+            locator = marker.locator
+            if (
+                isinstance(anchor, str)
+                and isinstance(locator, EpubFragmentOffsetsLocator)
+                and marker.locator_status == "exact"
+                and (unit_id := str(locator.fragment_id)) in unit_ids
+            ):
+                marker_candidates.setdefault(unit_id, []).append((anchor, ordinal, locator))
+    for unit in document.units:
+        candidates = marker_candidates.get(unit.id)
+        if not candidates:
+            continue
+        canonical = canonicalize_structure(unit.html_sanitized)
+        source_start = unit.source_start_offset if isinstance(unit, ReaderPartUnitOut) else 0
+        for anchor, ordinal, locator in candidates:
+            index = canonical.anchors.get(anchor)
+            if index is None:
+                continue
+            element = canonical.elements[index]
+            if element.tag == "a" and (
+                element.start_offset + source_start,
+                element.end_offset + source_start,
+            ) == (locator.start_offset, locator.end_offset):
+                marker_notes.setdefault(unit.id, {})[anchor] = ordinal
     html_bodies = [unit.html_sanitized for unit in document.units] + note_html
     anchors: dict[str, str] = {}
     for html in html_bodies:
         root = fragment_fromstring(html, create_parent=True)
-        for node in root.xpath(".//*[@id]"):
-            anchors.setdefault(node.get("id"), f"a{len(anchors)}")
+        for node in root.xpath(".//*[@id] | .//a[@name]"):
+            name = node.get("id") or node.get("name")
+            if name:
+                anchors.setdefault(name, f"a{len(anchors)}")
     referenced = sorted(set().union(*(html_asset_urls(html) for html in html_bodies)))
     images = (
         {}
@@ -788,20 +833,17 @@ def _text_manifest(
             url = f"/api/x/captures/{asset.capture_id}/assets/{quote(asset.asset_key, safe='')}"
             x_assets[url] = asset
     for src in referenced:
-        match = re.fullmatch(
-            r"/api/media/[0-9a-fA-F-]{36}/assets/([A-Za-z0-9_./-]+)", urlsplit(src).path
-        )
-        key = match[1] if match else src
-        if any(asset.key == key for asset in assets):
-            continue
         if src in x_assets:
             image = x_assets[src]
             assets.append(_PublicAsset(src, image.storage_path, image.mime, image.size_bytes, None))
-        elif key in images:
-            image = images[key]
-            assets.append(
-                _PublicAsset(key, image.storage_path, image.content_type, image.size_bytes, None)
-            )
+        elif scope is not None and src.startswith(f"/api/media/{scope.reading_media_id}/assets/"):
+            image = images.get(src.removeprefix(f"/api/media/{scope.reading_media_id}/assets/"))
+            if image is not None:
+                assets.append(
+                    _PublicAsset(
+                        src, image.storage_path, image.content_type, image.size_bytes, None
+                    )
+                )
         elif (
             scope is not None
             and scope.source_format == "web_article"
@@ -811,7 +853,9 @@ def _text_manifest(
             urls = parse_qs(proxy.query).get("url", []) if proxy.path == "/api/media/image" else []
             if len(urls) == 1:
                 assets.append(_PublicAsset(src, None, None, None, urls[0]))
-    return _TextManifest(tuple(assets), tuple(notes), note_ordinals, anchors)
+    return _TextManifest(
+        tuple(assets), tuple(notes), note_ordinals, anchors, marker_notes, tuple(note_edges)
+    )
 
 
 def _captured_manifest(
@@ -828,13 +872,14 @@ def _captured_manifest(
     )
     if expected_identity is None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "expected_identity is required")
-    if expected_identity != document.identity:
-        raise ConflictError(
-            ApiErrorCode.E_READER_CONTENT_CHANGED, "this piece changed. reload to continue."
-        )
     if not isinstance(document, (ReaderTextBodyOut, ReaderPartDocumentOut)):
         _gone()
-    return document, _text_manifest(db, share, document)
+    manifest = _text_manifest(db, share, document)
+    if expected_identity != manifest.identity(document.identity):
+        raise ConflictError(
+            ApiErrorCode.E_READER_CONTENT_CHANGED, "this reading changed. reload to continue."
+        )
+    return document, manifest
 
 
 def _read_asset(
@@ -866,6 +911,7 @@ def _read_apparatus(
     document, manifest = _captured_manifest(db, token, expected_identity)
     if not re.fullmatch(r"[0-9]{1,9}", ordinal) or int(ordinal) >= len(manifest.notes):
         _gone()
+    identity = manifest.identity(document.identity)
     note = manifest.notes[int(ordinal)]
     content: list[PublicApparatusContentOut] = []
     for body in note.content:
@@ -876,7 +922,7 @@ def _read_apparatus(
                 assets={image.key: str(index) for index, image in enumerate(manifest.assets)},
                 apparatus=manifest.note_ordinals,
                 anchors=manifest.anchors,
-                expected_identity=document.identity,
+                expected_identity=identity,
             )
         except ValueError:
             _gone()
@@ -886,7 +932,7 @@ def _read_apparatus(
             )
         )
     return PublicApparatusOut(
-        ordinal=int(ordinal), identity=document.identity, label=note.label, content=content
+        ordinal=int(ordinal), identity=identity, label=note.label, content=content
     )
 
 
